@@ -64,26 +64,6 @@ Iteration State Management Functions
 ==========================================================#
 
 """
-    next_iteration!(state::IterationState, settings::IterationSettings)
-
-Advance to the next iteration, handling phase transitions.
-Returns false if all 3 phases are exhausted.
-"""
-function next_iteration!(state::IterationState, settings::IterationSettings)
-    state.total_iterations += 1
-    state.current_iteration_in_phase += 1
-    
-    # Check if we need to transition to a new phase
-    if state.current_iteration_in_phase > settings.iterations_per_phase
-        state.current_phase += 1
-        state.current_iteration_in_phase = 1
-    end
-    
-    # Always exactly 3 phases
-    return state.current_phase <= 3
-end
-
-"""
     calculate_phase_bias_shift(phase::Int64, params)
 
 Calculate the bias shift for a given phase.
@@ -123,8 +103,8 @@ function reset_for_new_phase!(search_context, ms_file_idx, params, phase::Int64,
     
     setMassErrorModel!(search_context, ms_file_idx, new_model)
     
-    @info "Phase $phase: Reset to initial tolerance (±$(round(initial_tolerance, digits=1)) ppm) " *
-          "with bias shift $(round(bias_shift, digits=1)) ppm"
+    # @info "Phase $phase: Reset to initial tolerance (±$(round(initial_tolerance, digits=1)) ppm) " *
+    #       "with bias shift $(round(bias_shift, digits=1)) ppm"
 end
 
 #==========================================================
@@ -205,12 +185,12 @@ function get_fallback_parameters(
     # Return borrowed parameters or conservative defaults
     if borrowed_from !== nothing
         borrowed_fname = getParsedFileName(search_context, borrowed_from)
-        @info "Borrowing parameters from file $borrowed_fname (index $borrowed_from) for file $ms_file_idx"
+        # @info "Borrowing parameters from file $borrowed_fname (index $borrowed_from) for file $ms_file_idx"
         push!(warnings, "BORROWED: Using parameters from file $borrowed_fname")
         return fallback_mass_err, fallback_rt_model, borrowed_from
     else
         # Use conservative defaults if no other files available
-        @info "No successfully tuned files available. Using conservative defaults for file $ms_file_idx"
+        # @info "No successfully tuned files available. Using conservative defaults for file $ms_file_idx"
         push!(warnings, "FALLBACK: Used conservative default parameters (no borrowing available)")
         return MassErrorModel(0.0f0, (50.0f0, 50.0f0)), IdentityModel(), nothing
     end
@@ -303,7 +283,7 @@ Collect PSMs and log the count with context message.
 function collect_and_log_psms(filtered_spectra, spectra, search_context, params, ms_file_idx, context_msg::String)
     psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
     psm_count = size(psms, 1)
-    @info "Collected $psm_count PSMs $context_msg"
+    # @info "Collected $psm_count PSMs $context_msg"
     return psms, psm_count
 end
 
@@ -350,7 +330,7 @@ function check_and_store_convergence!(results, search_context, params, ms_file_i
         return false
     end
     
-    @info "Converged after $strategy_name"
+    # @info "Converged after $strategy_name"
     
     # Test tolerance expansion (always enabled)
     final_psms = psms
@@ -368,7 +348,7 @@ function check_and_store_convergence!(results, search_context, params, ms_file_i
         )
         
         if was_expanded
-            @info "Using expanded tolerance results for final model"
+            # @info "Using expanded tolerance results for final model"
         end
     else
         @warn "Invalid collection tolerance, skipping expansion test"
@@ -381,41 +361,18 @@ function check_and_store_convergence!(results, search_context, params, ms_file_i
     if final_ppm_errs !== nothing && length(final_ppm_errs) > 0
         resize!(results.ppm_errs, 0)
         append!(results.ppm_errs, final_ppm_errs)
-        @info "Stored $(length(results.ppm_errs)) ppm errors for plotting"
+        # @info "Stored $(length(results.ppm_errs)) ppm errors for plotting"
     end
     
     # Store RT model from final PSMs
     rt_model_data = fit_irt_model(params, final_psms)
     set_rt_to_irt_model!(results, search_context, params, ms_file_idx, rt_model_data)
-    @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points"
+    # @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points"
     
     return true
 end
 
-"""
-    add_scans_for_iteration!(filtered_spectra, params, iteration::Int)
-
-Add scans using doubling strategy for current iteration.
-Returns false if maximum scan count reached.
-"""
-function add_scans_for_iteration!(filtered_spectra, params, iteration::Int)
-    if iteration == 0
-        additional_scans = getInitialScanCount(params)
-    else
-        current_scans = length(filtered_spectra)
-        target_scans = min(current_scans * 2, getMaxParameterTuningScans(params))
-        additional_scans = target_scans - current_scans
-        
-        if additional_scans <= 0
-            @info "Reached maximum scan count of $(getMaxParameterTuningScans(params))"
-            return false
-        end
-    end
-    
-    @info "Iteration $(iteration+1): Adding $additional_scans scans (total: $(length(filtered_spectra) + additional_scans))"
-    append!(filtered_spectra; max_additional_scans = additional_scans)
-    return true
-end
+# DEPRECATED: add_scans_for_iteration! removed - use run_single_phase_attempt and run_all_phases_with_scan_count instead
 
 """
     expand_mass_tolerance!(search_context, ms_file_idx, params, scale_factor::Float32 = 2.0f0)
@@ -437,30 +394,11 @@ function expand_mass_tolerance!(search_context, ms_file_idx, params, scale_facto
     
     setMassErrorModel!(search_context, ms_file_idx, new_model)
     
-    @info "Scaled tolerance by factor $(scale_factor): " *
-          "from ($(round(current_left, digits=1)), $(round(current_right, digits=1))) " *
-          "to ($(round(new_left, digits=1)), $(round(new_right, digits=1))) ppm"
+    # @info "Scaled tolerance by factor $(scale_factor): " *
+    #       "from ($(round(current_left, digits=1)), $(round(current_right, digits=1))) " *
+    #       "to ($(round(new_left, digits=1)), $(round(new_right, digits=1))) ppm"
 end
 
-"""
-    adjust_mass_bias!(search_context, ms_file_idx, new_mass_err_model, params)
-
-Adjust mass bias while keeping current tolerances.
-"""
-function adjust_mass_bias!(search_context, ms_file_idx, new_mass_err_model, params)
-    current_model = getMassErrorModel(search_context, ms_file_idx)
-    new_bias = getMassOffset(new_mass_err_model)
-    old_bias = getMassOffset(current_model)
-    
-    @info "Adjusting mass bias from $(round(old_bias, digits=2)) to $(round(new_bias, digits=2)) ppm"
-    
-    new_model = MassErrorModel(
-        new_bias,
-        (getLeftTol(current_model), getRightTol(current_model))
-    )
-    
-    setMassErrorModel!(search_context, ms_file_idx, new_model)
-end
 
 """
     execute_strategy(strategy_num::Int, filtered_spectra, spectra, search_context, params, ms_file_idx, iteration_state)
@@ -469,53 +407,7 @@ Execute one of two convergence strategies:
 - Strategy 1: Try with current parameters
 - Strategy 2: Expand mass tolerance AND adjust bias
 """
-function execute_strategy(strategy_num::Int, filtered_spectra, spectra, search_context, 
-                         params, ms_file_idx, iteration_state::IterationState)
-    
-    # Track the actual collection tolerance being used
-    current_model = getMassErrorModel(search_context, ms_file_idx)
-    iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
-    
-    if strategy_num == 1
-        @info "Strategy 1: Collecting PSMs with current parameters"
-        psms, _ = collect_and_log_psms(filtered_spectra, spectra, search_context, 
-                                       params, ms_file_idx, "with current parameters")
-    
-    elseif strategy_num == 2
-        @info "Strategy 2: Adjusting bias with current tolerance"
-        
-        # Note: Tolerance expansion is now handled in the main loop before calling this
-        
-        # Collect PSMs with current tolerance to estimate bias
-        psms_temp, _ = collect_and_log_psms(filtered_spectra, spectra, search_context,
-                                           params, ms_file_idx, "with current tolerance for bias estimation")
-        
-        # Fit mass error model to get bias estimate
-        mass_err_temp, _, _ = fit_models_from_psms(psms_temp, spectra, search_context, 
-                                                   params, ms_file_idx)
-        
-        if mass_err_temp === nothing
-            @info "No valid mass error model for bias adjustment, using current tolerance only"
-            psms = psms_temp  # Use the PSMs we already collected
-        else
-            # Adjust bias based on the fitted model
-            adjust_mass_bias!(search_context, ms_file_idx, mass_err_temp, params)
-            
-            # Collect final PSMs with current tolerance AND adjusted bias
-            psms, _ = collect_and_log_psms(filtered_spectra, spectra, search_context,
-                                           params, ms_file_idx, "with current tolerance and adjusted bias")
-        end
-    
-    else
-        error("Invalid strategy number: $strategy_num. Only strategies 1 and 2 are supported.")
-    end
-    
-    # Fit models from collected PSMs
-    mass_err_model, ppm_errs, psm_count = fit_models_from_psms(psms, spectra, 
-                                                                search_context, params, ms_file_idx)
-    
-    return psms, mass_err_model, ppm_errs
-end
+# execute_strategy function removed - logic now inline in run_single_phase
 
 """
     initialize_models!(search_context, ms_file_idx, params)
@@ -536,23 +428,9 @@ function initialize_models!(search_context, ms_file_idx, params)
     # Set initial quad transmission model
     setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
     
-    @info "Initial mass error model for file $ms_file_idx: $(getMassErrorModel(search_context, ms_file_idx))"
+    # @info "Initial mass error model for file $ms_file_idx: $(getMassErrorModel(search_context, ms_file_idx))"
 end
 
-"""
-    initialize_filtered_spectra(spectra, params)
-
-Create FilteredMassSpecData with initial settings.
-"""
-function initialize_filtered_spectra(spectra, params)
-    topn_peaks = something(getTopNPeaks(params), 200)
-    return FilteredMassSpecData(
-        spectra,
-        max_scans = 0,  # Start with zero scans
-        topn = topn_peaks,
-        target_ms_order = UInt8(2)  # Only MS2 for presearch
-    )
-end
 
 """
     store_final_results!(results, search_context, params, ms_file_idx, converged, n_attempts, final_psm_count, warnings)
@@ -564,11 +442,11 @@ function store_final_results!(results, search_context, params, ms_file_idx,
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     
     # Log final status
-    @info "Final data status for file $ms_file_idx:"
-    @info "  - RT points: $(length(results.rt))"
-    @info "  - iRT points: $(length(results.irt))" 
-    @info "  - PPM errors: $(length(results.ppm_errs))"
-    @info "  - Converged: $converged"
+    # @info "Final data status for file $ms_file_idx:"
+    # @info "  - RT points: $(length(results.rt))"
+    # @info "  - iRT points: $(length(results.irt))" 
+    # @info "  - PPM errors: $(length(results.ppm_errs))"
+    # @info "  - Converged: $converged"
     
     # Record tuning results
     tuning_result = TuningResults(
@@ -602,94 +480,190 @@ function store_final_results!(results, search_context, params, ms_file_idx,
     results.mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
 end
 
-"""
-    handle_non_convergence!(results, search_context, ms_file_idx, n_attempts, warnings)
 
-Handle case when parameter tuning fails to converge.
+
+#==========================================================
+New Scan Scaling Functions
+==========================================================#
+
 """
-function handle_non_convergence!(results, search_context, ms_file_idx, n_attempts, warnings)
-    parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    @warn "Failed to converge mass error model after $n_attempts attempts for file $ms_file_idx."
+    run_single_phase_attempt(phase::Int64, scan_count::Int64, iteration_state, 
+                            results, params, search_context, ms_file_idx, spectra)
+
+Run a single phase (with configured iterations) using fixed scan count.
+Returns true if converged, false otherwise.
+"""
+function run_single_phase(
+    phase::Int64,
+    filtered_spectra::FilteredMassSpecData,
+    iteration_state::IterationState,
+    results::ParameterTuningSearchResults,
+    params::ParameterTuningSearchParameters,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+)
+    settings = getIterationSettings(params)
     
-    # Try to borrow parameters from neighboring files or use defaults
-    fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
-        search_context, ms_file_idx, warnings
+    # Set up phase
+    iteration_state.current_phase = phase
+    iteration_state.current_iteration_in_phase = 0
+    
+    # Apply phase bias shift and reset tolerance
+    reset_for_new_phase!(search_context, ms_file_idx, params, phase, iteration_state)
+    
+    # @info "-"^40
+    # @info "Beginning Phase $phase of Attempt $(iteration_state.scan_attempt)"
+    # @info "-"^40
+    
+    # ========================================
+    # INITIAL ATTEMPT (before iteration loop)
+    # ========================================
+    
+    # @info "Initial attempt at base tolerance ($(settings.init_mass_tol_ppm) ppm)"
+    
+    # Collect PSMs at initial tolerance with phase bias
+    psms_initial, _ = collect_and_log_psms(
+        filtered_spectra, spectra, search_context, 
+        params, ms_file_idx, "initial attempt"
     )
     
-    # Apply fallback/borrowed parameters
-    results.mass_err_model[] = fallback_mass_err
-    results.rt_to_irt_model[] = fallback_rt_model
+    # Fit models and check initial convergence
+    mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
+        psms_initial, spectra, search_context, params, ms_file_idx
+    )
     
-    # Store models in SearchContext for downstream methods
-    setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
-    setRtIrtMap!(search_context, results.rt_to_irt_model[], ms_file_idx)
+    # Track collection tolerance
+    current_model = getMassErrorModel(search_context, ms_file_idx)
+    iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
     
-    # Set default IRT error for fallback/borrowed parameters
-    if borrowed_from !== nothing && haskey(getIrtErrors(search_context), borrowed_from)
-        getIrtErrors(search_context)[ms_file_idx] = getIrtErrors(search_context)[borrowed_from]
-    else
-        getIrtErrors(search_context)[ms_file_idx] = 2.0f0  # Conservative default
+    if check_and_store_convergence!(
+        results, search_context, params, ms_file_idx,
+        psms_initial, mass_err_model, ppm_errs,
+        "Initial attempt (Phase $phase)",
+        iteration_state, filtered_spectra, spectra
+    )
+        return true
     end
     
-    if borrowed_from !== nothing
-        borrowed_fname = getParsedFileName(search_context, borrowed_from)
-        @warn "PARAMETER_TUNING_BORROWED: File $parsed_fname borrowed parameters from $borrowed_fname"
-    else
-        @warn "PARAMETER_TUNING_FALLBACK: File $parsed_fname used fallback values (±50 ppm, identity RT)"
+    # @info "Initial attempt did not converge, starting expand/adjust iterations"
+    
+    # ========================================
+    # ITERATION LOOP (expand → collect → adjust → collect cycles)
+    # ========================================
+    
+    for iter in 1:settings.iterations_per_phase
+        iteration_state.current_iteration_in_phase = iter
+        iteration_state.total_iterations += 1
+        
+        # @info "\nIteration $iter of Phase $phase (Total: $(iteration_state.total_iterations))"
+        
+        # Step 1: EXPAND TOLERANCE
+        expand_mass_tolerance!(search_context, ms_file_idx, params, 
+                              settings.mass_tolerance_scale_factor)
+        current_tolerance = settings.init_mass_tol_ppm * 
+                          (settings.mass_tolerance_scale_factor ^ iter)
+        # @info "  Step 1: Expanded tolerance to $(round(current_tolerance, digits=1)) ppm while bias is getMassOffset(getMassErrorModel(search_context, ms_file_idx)) $(getMassOffset(getMassErrorModel(search_context, ms_file_idx))) ppm"
+        
+        # Step 2: COLLECT PSMs with expanded tolerance (to determine bias)
+        psms_for_bias, _ = collect_and_log_psms(
+            filtered_spectra, spectra, search_context,
+            params, ms_file_idx, "with expanded tolerance for bias determination"
+        )
+        
+        # Step 3: FIT MODEL to determine bias adjustment
+        mass_err_for_bias, _, _ = fit_models_from_psms(
+            psms_for_bias, spectra, search_context, params, ms_file_idx
+        )
+        
+        # Step 4: ADJUST BIAS based on fitted model
+        if mass_err_for_bias !== nothing
+            new_bias = getMassOffset(mass_err_for_bias)
+            current_model = getMassErrorModel(search_context, ms_file_idx)
+            old_bias = getMassOffset(current_model)
+            
+            # Update the bias while keeping the expanded tolerance
+            adjusted_model = MassErrorModel(
+                new_bias,
+                (getLeftTol(current_model), getRightTol(current_model))
+            )
+            setMassErrorModel!(search_context, ms_file_idx, adjusted_model)
+            
+            # @info "  Step 4: Adjusted bias from $(round(old_bias, digits=2)) to $(round(new_bias, digits=2)) ppm"
+        else
+            # @info "  Step 4: Could not fit model for bias adjustment, keeping current bias"
+        end
+        
+        # Step 5: COLLECT PSMs again with adjusted bias
+        psms_adjusted, _ = collect_and_log_psms(
+            filtered_spectra, spectra, search_context,
+            params, ms_file_idx, "with adjusted bias"
+        )
+        
+        # Step 6: FIT FINAL MODELS with bias-adjusted PSMs
+        mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
+            psms_adjusted, spectra, search_context, params, ms_file_idx
+        )
+        
+        # Update collection tolerance tracking
+        current_model = getMassErrorModel(search_context, ms_file_idx)
+        iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
+        
+        # Step 7: CHECK CONVERGENCE
+        if check_and_store_convergence!(
+            results, search_context, params, ms_file_idx,
+            psms_adjusted, mass_err_model, ppm_errs,
+            "Iteration $iter (Phase $phase)",
+            iteration_state, filtered_spectra, spectra
+        )
+            return true
+        end
+        
+        # @info "  Iteration $iter did not converge"
     end
+    
+    # @info "Phase $phase completed without convergence"
+    return false
 end
 
 """
-    handle_error!(results, search_context, ms_file_idx, e, parsed_fname)
+    run_all_phases_with_scan_count(scan_count, iteration_state, results, 
+                                   params, search_context, ms_file_idx, spectra)
 
-Handle errors during parameter tuning.
+Run all 3 phases with a fixed scan count.
+Returns true if any phase achieves convergence.
 """
-function handle_error!(results, search_context, ms_file_idx, e, parsed_fname)
-    @warn "Parameter tuning failed for file $parsed_fname with error." exception=(e, catch_backtrace())
+function run_all_phases_with_scan_count(
+    filtered_spectra::FilteredMassSpecData,
+    iteration_state::IterationState,
+    results::ParameterTuningSearchResults,
+    params::ParameterTuningSearchParameters,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+)
+    # @info "="^60
+    # @info "Starting scan attempt $(iteration_state.scan_attempt) with $(length(filtered_spectra)) scans"
+    # @info "="^60
     
-    error_warnings = String["Error: $(string(e))"]
-    fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
-        search_context, ms_file_idx, error_warnings
-    )
+    # Update iteration state
+    iteration_state.current_scan_count = length(filtered_spectra)
     
-    # Apply fallback parameters
-    results.mass_err_model[] = fallback_mass_err
-    results.rt_to_irt_model[] = fallback_rt_model
-    setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
-    setRtIrtMap!(search_context, results.rt_to_irt_model[], ms_file_idx)
-    
-    # Set default IRT error
-    if borrowed_from !== nothing && haskey(getIrtErrors(search_context), borrowed_from)
-        getIrtErrors(search_context)[ms_file_idx] = getIrtErrors(search_context)[borrowed_from]
-    else
-        getIrtErrors(search_context)[ms_file_idx] = 2.0f0
+    # Run all 3 phases with the same filtered_spectra
+    for phase in 1:3
+        converged = run_single_phase(
+            phase, filtered_spectra, iteration_state,
+            results, params, search_context, ms_file_idx, spectra
+        )
+        
+        if converged
+            # @info "✓ Converged in Phase $phase of Attempt $(iteration_state.scan_attempt)!"
+            return true
+        end
     end
     
-    # Record error status
-    mass_tols = (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[]))
-    status = ParameterTuningStatus(
-        ms_file_idx,
-        parsed_fname,
-        false,  # not converged
-        true,   # used fallback
-        "Exception: $(typeof(e))",
-        0,      # n_iterations
-        0,      # psm_count
-        getMassOffset(results.mass_err_model[]),
-        mass_tols,
-        error_warnings
-    )
-    record_tuning_status!(results.diagnostics, status)
-    
-    if borrowed_from !== nothing
-        borrowed_fname = getParsedFileName(search_context, borrowed_from)
-        @warn "PARAMETER_TUNING_ERROR: File $parsed_fname had error $(typeof(e)). Borrowed from $borrowed_fname."
-    else
-        @warn "PARAMETER_TUNING_ERROR: File $parsed_fname had error $(typeof(e)). Used fallback values."
-    end
-    
-    # Store final model in results
-    results.mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
+    # @info "All 3 phases completed without convergence"
+    return false
 end
 
 #==========================================================
@@ -716,116 +690,128 @@ function process_file!(
     iteration_state = IterationState()
     settings = getIterationSettings(params)
     
+    # Get scan count parameters
+    scan_count = getInitialScanCount(params)
+    max_scans = getMaxParameterTuningScans(params)
+    scan_scale_factor = settings.scan_scale_factor
+    
     try
-        @info "Processing file: $parsed_fname (index: $ms_file_idx)"
-        @info "Iteration settings: scale_factor=$(settings.mass_tolerance_scale_factor), " *
-              "iterations_per_phase=$(settings.iterations_per_phase) (3 phases fixed)"
+        # @info "Processing file: $parsed_fname (index: $ms_file_idx)"
+        # @info "Scan scaling strategy: initial=$scan_count, max=$max_scans, scale_factor=$scan_scale_factor"
+        # @info "Mass tolerance scaling: init=$(settings.init_mass_tol_ppm) ppm, " *
+        #       "scale_factor=$(settings.mass_tolerance_scale_factor), " *
+        #       "iterations_per_phase=$(settings.iterations_per_phase)"
         
         # Initialize models
         initialize_models!(search_context, ms_file_idx, params)
         
-        # Initialize filtered spectra
-        filtered_spectra = initialize_filtered_spectra(spectra, params)
+        # Create filtered spectra ONCE with initial scan count
+        filtered_spectra = FilteredMassSpecData(
+            spectra,
+            max_scans = scan_count,
+            topn = something(getTopNPeaks(params), 200),
+            target_ms_order = UInt8(2)
+        )
         
-        # Main convergence loop
-        while next_iteration!(iteration_state, settings)
-            # Check if we're starting a new phase
-            if iteration_state.current_iteration_in_phase == 1 && iteration_state.current_phase > 1
-                # Reset for new phase
-                reset_for_new_phase!(search_context, ms_file_idx, params, 
-                                   iteration_state.current_phase, iteration_state)
-                
-                # Reset filtered spectra for new phase
-                filtered_spectra = initialize_filtered_spectra(spectra, params)
-            end
+        # Track current scan count
+        current_scan_count = scan_count
+        attempt_count = 0
+        
+        # Main scan scaling loop
+        while true
+            attempt_count += 1
+            iteration_state.scan_attempt = attempt_count
             
-            # Add scans for this iteration
-            if !add_scans_for_iteration!(filtered_spectra, params, 
-                                        iteration_state.total_iterations - 1)
-                @info "Reached maximum scan count"
-                # Don't break - continue with current scans or move to next phase
-            end
-            
-            @info "Phase $(iteration_state.current_phase), " *
-                  "Iteration $(iteration_state.current_iteration_in_phase) " *
-                  "(Total: $(iteration_state.total_iterations))"
-            
-            # Strategy 1: Try with current parameters
-            psms, mass_err_model, ppm_errs = execute_strategy(
-                1, filtered_spectra, spectra, 
-                search_context, params, ms_file_idx, iteration_state
+            # Run all phases with current filtered_spectra
+            converged = run_all_phases_with_scan_count(
+                filtered_spectra, iteration_state, results,
+                params, search_context, ms_file_idx, spectra
             )
             
-            # Check convergence after Strategy 1
-            if check_and_store_convergence!(
-                results, search_context, params, ms_file_idx,
-                psms, mass_err_model, ppm_errs, 
-                "Strategy 1 (Phase $(iteration_state.current_phase))",
-                iteration_state, filtered_spectra, spectra
-            )
-                converged = true
+            if converged
                 iteration_state.converged = true
-                final_psm_count = psms !== nothing ? size(psms, 1) : 0
+                # @info "SUCCESS: Converged after $attempt_count attempt(s) " *
+                #       "with $current_scan_count scans"
                 break
-            else
-                # Only expand tolerance if we're past the first iteration of the phase
-                if iteration_state.current_iteration_in_phase > 1
-                    expand_mass_tolerance!(search_context, ms_file_idx, params, 
-                                          settings.mass_tolerance_scale_factor)
-                end
-                
-                # Strategy 2: Adjust bias with current (possibly expanded) tolerance
-                psms, mass_err_model, ppm_errs = execute_strategy(
-                    2, filtered_spectra, spectra,
-                    search_context, params, ms_file_idx, iteration_state
-                )
-                
-                # Calculate cumulative scale for logging
-                cumulative_scale = settings.mass_tolerance_scale_factor ^ 
-                                  (iteration_state.current_iteration_in_phase - 1)
-                
-                # Check convergence after Strategy 2
-                if check_and_store_convergence!(
-                    results, search_context, params, ms_file_idx,
-                    psms, mass_err_model, ppm_errs, 
-                    "Strategy 2 (Phase $(iteration_state.current_phase), " *
-                    "scale=$(round(cumulative_scale, digits=2))x)",
-                    iteration_state, filtered_spectra, spectra
-                )
-                    converged = true
-                    iteration_state.converged = true
-                    final_psm_count = psms !== nothing ? size(psms, 1) : 0
+            end
+            
+            # Check if we've reached or exceeded max scans
+            if current_scan_count >= max_scans
+                @warn "Reached maximum scan count ($max_scans) without convergence"
+                iteration_state.max_scan_count_reached = true
+                break
+            end
+            
+            # Calculate next scan count
+            next_scan_count = Int64(ceil(current_scan_count * scan_scale_factor))
+            
+            # Check if next iteration would exceed max
+            if next_scan_count > max_scans
+                if current_scan_count < max_scans
+                    # Do one final attempt with exactly max_scans
+                    additional_scans = max_scans - current_scan_count
+                    # @info "Adding final $additional_scans scans to reach maximum of $max_scans"
+                    
+                    append!(filtered_spectra; max_additional_scans = additional_scans)
+                    current_scan_count = max_scans
+                    # Loop will continue for one more attempt
+                else
+                    # Already at max, break
                     break
                 end
+            else
+                # Normal scaling - append more scans
+                additional_scans = next_scan_count - current_scan_count
+                # @info "Appending $additional_scans scans (total will be $next_scan_count)"
+                
+                append!(filtered_spectra; max_additional_scans = additional_scans)
+                current_scan_count = next_scan_count
             end
-            
-            @info "Phase $(iteration_state.current_phase), " *
-                  "Iteration $(iteration_state.current_iteration_in_phase) complete"
         end
         
-        # Log phase summary
-        @info "Completed $(iteration_state.total_iterations) total iterations across " *
-              "$(iteration_state.current_phase) of 3 phases. Converged: $converged"
-        
-        if !isempty(iteration_state.phase_bias_shifts)
-            @info "Phase bias shifts attempted: $(iteration_state.phase_bias_shifts)"
+        # Get final PSM count if converged
+        if converged
+            final_psm_count = size(results.rt, 1)  # Track from results
         end
         
-        # Store results
-        store_final_results!(results, search_context, params, ms_file_idx, 
-                           converged, iteration_state.total_iterations, 
-                           final_psm_count, warnings)
-        
-        # Handle non-convergence
-        if !converged
-            push!(warnings, "Failed after $(iteration_state.current_phase) phases")
-            handle_non_convergence!(results, search_context, ms_file_idx, 
-                                   iteration_state.total_iterations, warnings)
-        end
+        # @info "Completed $(iteration_state.total_iterations) total iterations " *
+        #       "across $(iteration_state.scan_attempt) attempt(s). " *
+        #       "Converged: $converged"
         
     catch e
-        handle_error!(results, search_context, ms_file_idx, e, parsed_fname)
+        @warn "Parameter tuning failed for file $parsed_fname with error" exception=e
+        push!(warnings, "ERROR: $(string(e))")
     end
+    
+    # Store results and handle fallback if needed
+    if !converged
+        @warn "Failed to converge for file $ms_file_idx after " *
+              "$(iteration_state.scan_attempt) attempts"
+        
+        # Apply fallback strategy
+        fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
+            search_context, params, ms_file_idx, warnings
+        )
+        
+        setMassErrorModel!(search_context, ms_file_idx, fallback_mass_err)
+        setRtConversionModel!(search_context, ms_file_idx, fallback_rt_model)
+        
+        # Update results with fallback
+        results.mass_err_model[] = fallback_mass_err
+        results.rt_to_irt_model[] = fallback_rt_model
+    end
+    
+    # Record tuning status
+    store_final_results!(
+        results, search_context, params, ms_file_idx,
+        converged, iteration_state.scan_attempt, final_psm_count, warnings
+    )
+    
+    # Add to diagnostics
+    record_file_status!(
+        results.diagnostics, ms_file_idx, parsed_fname,
+        converged, !converged, warnings, iteration_state
+    )
     
     return results
 end
@@ -850,26 +836,26 @@ function process_search_results!(
     
     # Generate RT alignment plot
     rt_plot_path = joinpath(rt_alignment_folder, parsed_fname*".pdf")
-    @info "Generating RT plot for $parsed_fname: RT points = $(length(results.rt)), iRT points = $(length(results.irt))"
+    # @info "Generating RT plot for $parsed_fname: RT points = $(length(results.rt)), iRT points = $(length(results.irt))"
     if length(results.rt) > 0
         generate_rt_plot(results, rt_plot_path, parsed_fname)
-        @info "Generated normal RT plot"
+        # @info "Generated normal RT plot"
     else
         # Create a diagnostic plot showing fallback/borrowed status
         generate_fallback_rt_plot(results, rt_plot_path, parsed_fname, search_context, ms_file_idx)
-        @info "Generated fallback RT plot"
+        # @info "Generated fallback RT plot"
     end
     
     # Generate mass error plot
     mass_plot_path = joinpath(mass_error_folder, parsed_fname*".pdf")
-    @info "Generating mass error plot for $parsed_fname: PPM errors = $(length(results.ppm_errs))"
+    # @info "Generating mass error plot for $parsed_fname: PPM errors = $(length(results.ppm_errs))"
     if length(results.ppm_errs) > 0
         generate_mass_error_plot(results, parsed_fname, mass_plot_path)
-        @info "Generated normal mass error plot"
+        # @info "Generated normal mass error plot"
     else
         # Create a diagnostic plot showing fallback/borrowed status
         generate_fallback_mass_error_plot(results, mass_plot_path, parsed_fname, search_context, ms_file_idx)
-        @info "Generated fallback mass error plot"
+        # @info "Generated fallback mass error plot"
     end
     
     # Clear plotting data to save memory
@@ -910,9 +896,9 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
         rt_pdf_files = filter(f -> !endswith(f, "_combined.pdf"), rt_pdf_files)
         if !isempty(rt_pdf_files)
             merge_pdfs(rt_pdf_files, rt_merged_path)
-            @info "Merged $(length(rt_pdf_files)) RT alignment plots to $rt_merged_path"
+            # @info "Merged $(length(rt_pdf_files)) RT alignment plots to $rt_merged_path"
         else
-            @info "No RT alignment plots to merge"
+            # @info "No RT alignment plots to merge"
         end
         
         # Merge mass error plots into their subdirectory
@@ -922,9 +908,9 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
         mass_pdf_files = filter(f -> !endswith(f, "_combined.pdf"), mass_pdf_files)
         if !isempty(mass_pdf_files)
             merge_pdfs(mass_pdf_files, mass_merged_path)
-            @info "Merged $(length(mass_pdf_files)) mass error plots to $mass_merged_path"
+            # @info "Merged $(length(mass_pdf_files)) mass error plots to $mass_merged_path"
         else
-            @info "No mass error plots to merge"
+            # @info "No mass error plots to merge"
         end
         
         # Generate summary report
@@ -943,10 +929,10 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
     fallback_count = sum(s.used_fallback for s in file_statuses)
     total_files = length(file_statuses)
     
-    @info "Parameter Tuning Summary:"
-    @info "  - Total files: $total_files"
-    @info "  - Converged: $converged_count"
-    @info "  - Used fallback: $fallback_count"
+    # @info "Parameter Tuning Summary:"
+    # @info "  - Total files: $total_files"
+    # @info "  - Converged: $converged_count"
+    # @info "  - Used fallback: $fallback_count"
     
     # Log any warnings
     for status in file_statuses

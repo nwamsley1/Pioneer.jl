@@ -50,7 +50,8 @@
         "iteration_settings": {
             "init_mass_tol_ppm": 20.0,
             "mass_tolerance_scale_factor": 1.5,
-            "iterations_per_phase": 3
+            "iterations_per_phase": 3,
+            "scan_scale_factor": 2.0
         }
     },
     "first_search": {
