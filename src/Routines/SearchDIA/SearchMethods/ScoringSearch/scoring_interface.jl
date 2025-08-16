@@ -32,7 +32,7 @@ Calculate global protein scores and add them to files via references.
 Returns the score dictionary for downstream use.
 """
 function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileReference})
-    sqrt_n_runs = max(1, floor(Int, sqrt(length(pg_refs))))
+    sqrt_n_runs = max(3, floor(Int, sqrt(length(pg_refs))))
     acc_to_scores = Dict{ProteinKey, Vector{Float32}}()
 
     # First pass: collect scores per protein across all files
@@ -50,6 +50,7 @@ function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileRefere
     # Compute global score using log-odds combination
     acc_to_global_score = Dict{ProteinKey, Float32}()
     for (key, scores) in acc_to_scores
+        println("logodds for key: $key with scores: $scores logodds(scores, sqrt_n_runs) = $(logodds(scores, sqrt_n_runs))")
         acc_to_global_score[key] = logodds(scores, sqrt_n_runs)
     end
     
@@ -157,12 +158,13 @@ The final value is converted back to a probability via the logistic function.
 function logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
     isempty(probs) && return 0.0f0
     n = min(length(probs), top_n)
+    @info "top_n: $top_n, n: $n, probs: $(probs[1:min(10, end)])"
     # Sort descending and select the top n probabilities
     sorted = sort(probs; rev=true)
     selected = sorted[1:n]
     eps = 1f-6
     # Convert to log-odds, clip to avoid Inf or negative contribution
-    logodds = log.(clamp.(selected, 0.1f0, 1 - eps) ./ (1 .- clamp.(selected, 0.1f0, 1 - eps)))
+    logodds = log.(clamp.(selected, 0.0001f0, 1 - eps) ./ (1 .- clamp.(selected, 0.0001f0, 1 - eps)))
     avg = sum(logodds) / n
     return 1.0f0 / (1 + exp(-avg))
 end

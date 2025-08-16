@@ -223,7 +223,8 @@ function get_qvalue_spline(
 
 
     psms_scores = DataFrame(Arrow.Table(merged_psms_path))
-
+    Arrow.write("/Users/nathanwamsley/Desktop/test_prot.arrow", psms_scores)
+    @info "Targets $(sum(psms_scores[!,:target])) Decoys $(sum(.!psms_scores[!,:target]))"
     if use_unique
         # select the columns needed to identify globally unique precursors or proteins
         if score_col == :global_prob # precursors
@@ -231,7 +232,9 @@ function get_qvalue_spline(
         elseif score_col == :global_pg_score # proteins
             select!(psms_scores, [:protein_name, :target, :entrap_id, score_col])
         end
+        Arrow.write("/Users/nathanwamsley/Desktop/glob_test_all.arrow", psms_scores)
         psms_scores = unique(psms_scores)
+        Arrow.write("/Users/nathanwamsley/Desktop/glob_test_uniq.arrow", psms_scores)
     end
 
     Q = size(psms_scores, 1)
@@ -244,6 +247,7 @@ function get_qvalue_spline(
         targets += psms_scores[!, :target][i]
         decoys += (1 - psms_scores[!, :target][i])
     end
+    @warn "Total targets: $targets, Total decoys: $decoys"
 
     min_q_val = typemax(Float32)
     for i in reverse(range(1, Q))
@@ -314,6 +318,7 @@ function get_qvalue_spline(
     xs   = xs[mask]
     ys   = ys[mask]
     =#
+    Arrow.write("/Users/nathanwamsley/Desktop/test_bins.arrow", DataFrame(hcat(xs, ys), :auto))
     return linear_interpolation(xs, ys; extrapolation_bc = Line())
 end
 #==========================================================
