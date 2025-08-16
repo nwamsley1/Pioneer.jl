@@ -1069,15 +1069,15 @@ function check_convergence(
     min_psms::Int64
 )
     if size(psms, 1) < min_psms
-        # @info "size(psms, 1) < $min_psms, skipping convergence check"
+        @info "size(psms, 1) < $min_psms, skipping convergence check"
         return false 
     end
     if (getLeftTol(old_mass_err_model) - getLeftTol(new_mass_err_model))/(getLeftTol(new_mass_err_model)) < 0.05
-        # @info "Left tolerance failed to converge getLeftTol(old_mass_err_model) $(getLeftTol(old_mass_err_model)) getLeftTol(new_mass_err_model) $(getLeftTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
+        @info "Left tolerance failed to converge getLeftTol(old_mass_err_model) $(getLeftTol(old_mass_err_model)) getLeftTol(new_mass_err_model) $(getLeftTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
         return false 
     end
     if (getRightTol(old_mass_err_model) - getRightTol(new_mass_err_model))/(getRightTol(new_mass_err_model)) < 0.05
-        # @info "Right tolerance failed to converge getRightTol(old_mass_err_model) $(getRightTol(old_mass_err_model)) getRightTol(new_mass_err_model) $(getRightTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
+        @info "Right tolerance failed to converge getRightTol(old_mass_err_model) $(getRightTol(old_mass_err_model)) getRightTol(new_mass_err_model) $(getRightTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
         return false 
     end
     return true
@@ -1120,12 +1120,12 @@ function test_tolerance_expansion!(
         (expanded_tolerance, expanded_tolerance)
     )
     
-    # @info "Testing tolerance expansion for PSM collection:" *
-    #       "\n  Original collection tolerance: ±$(round(collection_tolerance, digits=1)) ppm" *
-    #       "\n  Expanded collection tolerance: ±$(round(expanded_tolerance, digits=1)) ppm" *
-    #       "\n  Current PSM count: $current_psm_count"
+     @info "Testing tolerance expansion for PSM collection:" *
+           "\n  Original collection tolerance: ±$(round(collection_tolerance, digits=1)) ppm" *
+           "\n  Expanded collection tolerance: ±$(round(expanded_tolerance, digits=1)) ppm" *
+           "\n  Current PSM count: $current_psm_count"
     
-    # Store original model
+           # Store original model
     original_model = getMassErrorModel(search_context, ms_file_idx)
     
     # Set expanded model for collection
