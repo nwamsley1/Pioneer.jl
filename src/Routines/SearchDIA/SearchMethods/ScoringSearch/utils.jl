@@ -685,6 +685,32 @@ function perform_protein_probit_regression(
             )
         else
             @info "Skipping Probit analysis: insufficient data (targets: $n_targets, decoys: $n_decoys)"
+            
+            # Mimic exactly what probit does, but without the scoring transformation
+            # This matches the behavior of apply_probit_scores_multifold! without the model application
+            @info "Processing protein groups with original scores (mimicking probit workflow)..."
+            
+            # Process each file individually (like apply_probit_scores_multifold! does)
+            total_pg_processed = 0
+            for ref in pg_refs
+                if exists(ref)
+                    # Load this specific file's data
+                    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+                    n_groups = nrow(df)
+                    
+                    # Sort by pg_score and target in descending order
+                    # This is exactly what apply_probit_scores_multifold! does at line 1708
+                    sort!(df, [:pg_score, :target], rev = [true, true])
+                    
+                    # Write back THIS file's data only (not all groups)
+                    writeArrow(file_path(ref), df)
+                    
+                    total_pg_processed += n_groups
+                    @info "Processed protein group file" path=file_path(ref) n_groups=n_groups
+                end
+            end
+            
+            @info "Completed: Processed $(length(pg_refs)) protein group files with original scores, total $(total_pg_processed) protein groups"
         end
     end
 end
@@ -730,6 +756,8 @@ function update_psms_with_probit_scores_refs(
         pg_score_lookup = Dict{ProteinKey, Tuple{Float32, Float32}}()
         n_pg_rows = length(pg_table[:protein_name])
         
+        @debug "Building protein group lookup" file=file_path(pg_ref) n_protein_groups=n_pg_rows
+        
         for i in 1:n_pg_rows
             key = ProteinKey(
                 pg_table[:protein_name][i],
@@ -740,9 +768,13 @@ function update_psms_with_probit_scores_refs(
             pg_score_lookup[key] = (pg_table[:pg_score][i], pep_val) # pg_score is now the probit score
         end
         
+        @debug "Protein group lookup built" n_entries=length(pg_score_lookup)
+        
         # Transform PSM file
         transform_and_write!(psm_ref) do psms_df
             n_psms = nrow(psms_df)
+            n_missing_pg = 0
+            n_not_for_quant = 0
             
             # Update pg_score column with probit scores
             probit_pg_scores = Vector{Union{Missing, Float32}}(undef, n_psms)
@@ -759,6 +791,7 @@ function update_psms_with_probit_scores_refs(
                 
                 # Skip if peptide didn't match to a distinct protein group
                 if psms_df[i,:use_for_protein_quant] == false
+                    n_not_for_quant += 1
                     #Should be able to make this 'missing' since that is more clear 
                     probit_pg_scores[i] = missing
                     global_pg_scores[i] =  missing
@@ -777,6 +810,8 @@ function update_psms_with_probit_scores_refs(
                 
                 # Get scores and PEP
                 if !haskey(pg_score_lookup, key)
+                    n_missing_pg += 1
+                    @debug "Protein group not found in lookup" key=key psm_idx=i
                     #Should be able to make this 'missing' since that is more clear 
                     probit_pg_scores[i] = missing
                     global_pg_scores[i] = missing
@@ -807,6 +842,10 @@ function update_psms_with_probit_scores_refs(
             psms_df[!, :pg_pep] = pg_peps
             
             total_psms_updated += n_psms
+            
+            if n_missing_pg > 0 || n_not_for_quant > 0
+                @warn "PSMs with missing protein scores" file=file_path(psm_ref) total_psms=n_psms missing_pg=n_missing_pg not_for_quant=n_not_for_quant psms_with_scores=(n_psms - n_missing_pg - n_not_for_quant)
+            end
             
             return psms_df
         end
