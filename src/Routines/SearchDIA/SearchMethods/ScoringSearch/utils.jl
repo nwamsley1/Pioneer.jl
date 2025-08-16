@@ -693,7 +693,7 @@ function perform_protein_probit_regression(
         est_targets = n_sample_targets * (total_protein_groups / nrow(sample_df))
         est_decoys = n_sample_decoys * (total_protein_groups / nrow(sample_df))
         
-        skip_scoring_oom = !(est_targets > 50 && est_decoys > 50 && total_protein_groups > 1000)
+        skip_scoring_oom = !(est_targets > 10 && est_decoys > 10 && total_protein_groups > 1000)
         
         if skip_scoring_oom
             @info "Insufficient data for probit scoring in OOM path - will process with original scores"
