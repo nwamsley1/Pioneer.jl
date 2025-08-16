@@ -1738,8 +1738,14 @@ function apply_probit_scores_multifold!(
                         df[mask, :pg_score] = Float32.(calculate_probit_scores(X, model))
                     end
                 end
+            else
+                # When skip_scoring is true, pg_score contains log-sum scores: -sum(log1p(-p))
+                # Convert to probabilities: p = 1 - exp(-pg_score)
+                @info "Converting log-sum scores to probabilities (skip_scoring=true)"
+                df[!, :pg_score] = 1.0f0 .- exp.(-df.pg_score)
+                # Clamp to avoid numerical issues with logodds function
+                df[!, :pg_score] = clamp.(df.pg_score, 1f-6, 1f0 - 1f-6)
             end
-            # If skip_scoring, pg_score remains unchanged
             
             # Sort by pg_score and target in descending order
             sort!(df, [:pg_score, :target], rev = [true, true])
