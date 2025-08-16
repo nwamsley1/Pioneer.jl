@@ -189,3 +189,25 @@ end
 ## Key Insight
 
 The probit workflow doesn't redistribute protein groups across files - it only updates scores within each file. Our fix was creating duplicates by writing all groups to each file, which breaks the 1:1 pairing assumption in Step 23.
+
+## Remaining Issue: Why This Still Might Not Work
+
+The fundamental problem is that protein groups are created **per PSM file** in Step 12. This means:
+1. A protein that appears in multiple MS files will have separate protein group entries in different files
+2. Step 23 looks for protein groups in the **paired** file only
+3. If a PSM's protein group is in a different file, it won't be found
+
+### The Real Problem
+The issue isn't with how we write the files back - it's with the fundamental assumption that protein groups are file-specific. When probit runs, it might be doing something else that ensures protein groups are properly distributed or accessible.
+
+### Hypothesis: The Missing Link
+When probit analysis runs successfully, it might:
+1. Create a global protein group mapping that persists
+2. Update some shared state in SearchContext
+3. Modify the protein group files in a way that makes them globally accessible
+
+### The Ultimate Solution
+We need to either:
+1. **Option A**: Build a global protein group lookup in Step 23 that searches ALL files
+2. **Option B**: Redistribute protein groups so each file contains all proteins referenced by its PSMs
+3. **Option C**: Investigate what additional state probit creates that we're missing
