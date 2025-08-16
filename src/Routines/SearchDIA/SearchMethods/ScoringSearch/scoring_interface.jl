@@ -94,11 +94,16 @@ end
 """
     label_transfer_candidates(threshold::Float32)
 
-Label MBR transfer candidates based on trace q-values and presence of a best decoy.
+Label MBR transfer candidates based on trace q-values, presence of a
+best decoy, and a passing best-pair probability.
 """
 function label_transfer_candidates(threshold::Float32)
     op = function(df)
-        df[!, :MBR_transfer_candidate] = (df.trace_qval .> threshold) .& .!ismissing.(df.MBR_is_best_decoy)
+        pass_mask = (df.trace_qval .<= threshold) .& df.target
+        prob_thresh = any(pass_mask) ? minimum(df.prob[pass_mask]) : typemax(Float32)
+        df[!, :MBR_transfer_candidate] = (df.trace_qval .> threshold) .&
+                                         .!ismissing.(df.MBR_is_best_decoy) .&
+                                         (df.MBR_max_pair_prob .>= prob_thresh)
         return df
     end
     return "label_transfer_candidates" => op

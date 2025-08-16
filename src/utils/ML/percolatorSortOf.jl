@@ -107,7 +107,12 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         # Determine which precursors failed the q-value cutoff prior to MBR
         qvals_prev = Vector{Float32}(undef, length(prob_estimates))
         get_qvalues!(prob_estimates, psms.target, qvals_prev)
-        psms[!, :MBR_transfer_candidate] .= qvals_prev .> max_q_value_xgboost_rescore
+        pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore) .& psms.target
+        prob_thresh = any(pass_mask) ? minimum(prob_estimates[pass_mask]) : typemax(Float32)
+        # Label as transfer candidates only those failing the q-value cutoff but
+        # whose best matched pair surpassed the passing probability threshold.
+        psms[!, :MBR_transfer_candidate] .= (qvals_prev .> max_q_value_xgboost_rescore) .&
+                                            (psms.MBR_max_pair_prob .>= prob_thresh)
 
         # Use the final MBR probabilities for all precursors
         psms[!, :MBR_prob] = MBR_estimates
@@ -720,8 +725,9 @@ end
 """
     update_mbr_probs!(df, probs, qval_thresh)
 
-Store final MBR probabilities and mark transfer candidates using the
-pre-MBR scores stored in `df.prob`.
+Store final MBR probabilities and mark transfer candidates as those
+failing the pre-MBR q-value threshold but whose best matched pair passed
+the corresponding probability cutoff.
 """
 function update_mbr_probs!(
     df::AbstractDataFrame,
@@ -730,7 +736,10 @@ function update_mbr_probs!(
 )
     prev_qvals = similar(df.prob)
     get_qvalues!(df.prob, df.target, prev_qvals)
-    df[!, :MBR_transfer_candidate] = prev_qvals .> qval_thresh
+    pass_mask = (prev_qvals .<= qval_thresh) .& df.target
+    prob_thresh = any(pass_mask) ? minimum(df.prob[pass_mask]) : typemax(Float32)
+    df[!, :MBR_transfer_candidate] = (prev_qvals .> qval_thresh) .&
+                                     (df.MBR_max_pair_prob .>= prob_thresh)
     df[!, :MBR_prob] = probs
     df[!, :prob] = probs
     return df
