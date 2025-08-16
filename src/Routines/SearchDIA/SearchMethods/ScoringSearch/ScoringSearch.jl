@@ -429,6 +429,15 @@ function summarize_results!(
         # Step 14: Perform protein probit regression
         @info "Step 14: Performing protein probit regression..."
         step14_time = @elapsed begin
+            # Count protein groups before probit
+            total_pg_before_probit = 0
+            for ref in pg_refs
+                if exists(ref)
+                    total_pg_before_probit += row_count(ref)
+                end
+            end
+            @info "Protein groups before probit regression" total=total_pg_before_probit
+            
             qc_folder = joinpath(dirname(temp_folder), "qc_plots")
             !isdir(qc_folder) && mkdir(qc_folder)
             
@@ -439,6 +448,15 @@ function summarize_results!(
                 getPrecursors(getSpecLib(search_context));
                 protein_to_cv_fold = protein_to_cv_fold
             )
+            
+            # Count protein groups after probit
+            total_pg_after_probit = 0
+            for ref in pg_refs
+                if exists(ref)
+                    total_pg_after_probit += row_count(ref)
+                end
+            end
+            @info "Protein groups after probit regression" total=total_pg_after_probit
         end
         @info "Step 14 completed in $(round(step14_time, digits=2)) seconds"
 
@@ -498,6 +516,15 @@ function summarize_results!(
         # Step 22: Add q-values and passing flags to protein groups
         @info "Step 22: Adding q-values and passing flags to protein groups..."
         step22_time = @elapsed begin
+            # Count protein groups before filtering
+            total_pg_before = 0
+            for ref in pg_refs
+                if exists(ref)
+                    total_pg_before += row_count(ref)
+                end
+            end
+            @info "Protein groups before q-value filtering" total=total_pg_before q_threshold=params.q_value_threshold
+            
             protein_qval_pipeline = TransformPipeline() |>
                 add_interpolated_column(:global_pg_qval, :global_pg_score, search_context.global_pg_score_to_qval[]) |>
                 add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
@@ -507,6 +534,15 @@ function summarize_results!(
                     (:pg_qval, params.q_value_threshold)
                 ]) 
             apply_pipeline!(pg_refs, protein_qval_pipeline)
+            
+            # Count protein groups after filtering
+            total_pg_after = 0
+            for ref in pg_refs
+                if exists(ref)
+                    total_pg_after += row_count(ref)
+                end
+            end
+            @info "Protein groups after q-value filtering" total=total_pg_after filtered_out=(total_pg_before - total_pg_after)
         end
 
         @info "Step 22 completed in $(round(step22_time, digits=2)) seconds"
