@@ -757,7 +757,7 @@ function update_psms_with_probit_scores_refs(
         pg_score_lookup = Dict{ProteinKey, Tuple{Float32, Float32}}()
         n_pg_rows = length(pg_table[:protein_name])
         
-        @debug "Building protein group lookup" file=file_path(pg_ref) n_protein_groups=n_pg_rows
+        @info "Building protein group lookup" file=file_path(pg_ref) n_protein_groups=n_pg_rows
         
         for i in 1:n_pg_rows
             key = ProteinKey(
@@ -812,7 +812,10 @@ function update_psms_with_probit_scores_refs(
                 # Get scores and PEP
                 if !haskey(pg_score_lookup, key)
                     n_missing_pg += 1
-                    @debug "Protein group not found in lookup" key=key psm_idx=i
+                    # Add detailed logging to understand why keys don't match
+                    if n_missing_pg <= 5  # Only log first few to avoid spam
+                        @warn "Protein group not found in lookup" missing_key=key psm_idx=i available_keys_sample=collect(keys(pg_score_lookup))[1:min(5, length(pg_score_lookup))]
+                    end
                     #Should be able to make this 'missing' since that is more clear 
                     probit_pg_scores[i] = missing
                     global_pg_scores[i] = missing
