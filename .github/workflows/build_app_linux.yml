@@ -1,0 +1,174 @@
+name: Build Linux
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      version:
+        description: 'Build version'
+        value: ${{ jobs.build.outputs.version }}
+
+jobs:
+  build:
+    name: Build & Package Linux
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'workflow_call' &&
+            format('call-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.identifier) ||
+            format('{0}-{1}-{2}', github.workflow, github.ref_name, matrix.identifier) }}
+      cancel-in-progress: true
+    runs-on: self-hosted
+    env:
+      JULIA_NUM_THREADS: auto
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            identifier: linux-x64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine VERSION
+        id: get_version
+        uses: ./.github/actions/determine-version
+        with:
+          fallback: "dev"
+
+      - name: Normalize versions
+        id: norm
+        uses: ./.github/actions/normalize-versions
+        with:
+          raw: ${{ steps.get_version.outputs.version }}
+
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.11'
+
+      - name: Cache Julia packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.julia/registries
+            ~/.julia/packages
+          key: julia-linux-${{ matrix.identifier }}-${{ hashFiles('**/Project.toml','**/Manifest.toml') }}
+          restore-keys: julia-linux-${{ matrix.identifier }}-
+
+      - name: Install dependencies
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
+
+      - name: Precompile data (cache & download)
+        uses: ./.github/actions/precompile-data
+        with:
+          cache-key: precompile-data-v1
+
+      - name: Compile application
+        run: |
+          julia --project=. -e '
+            using PackageCompiler;
+            create_app(
+              ".",
+              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
+              incremental=false, force=true,
+              executables=[
+                "GetSearchParams"=>"main_GetSearchParams",
+                "GetBuildLibParams"=>"main_GetBuildLibParams",
+                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
+                "ParseSpecLib"=>"main_ParseSpecLib",
+                "BuildSpecLib"=>"main_BuildSpecLib",
+                "SearchDIA"=>"main_SearchDIA",
+                "convertMzML"=>"main_convertMzML"
+              ],
+              precompile_execution_file="src/build/snoop.jl"
+            );
+          '
+
+      - name: Download PioneerConverter
+        shell: bash
+        run: |
+          mkdir -p converter
+          PATTERN="${{ matrix.identifier }}"
+          ASSET=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest \
+            | jq -r --arg PATTERN "$PATTERN" '.assets[]
+              | select(.name|test("PioneerConverter-"+$PATTERN+".*\\.zip"))
+              | .name' | head -n1)
+
+          if [[ -z "$ASSET" ]]; then
+            echo "Error: ASSET not found"
+            exit 1
+          fi
+
+          curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" \
+            -o converter.zip
+          unzip -q converter.zip -d converter
+          cp -r "converter/PioneerConverter-${PATTERN}/bin/"* \
+            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/"
+          mkdir -p "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib"
+          cp -r "converter/PioneerConverter-${PATTERN}/lib/"* \
+            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib/"
+
+      - name: Add wrapper scripts
+        shell: bash
+        run: |
+          cp src/build/CLI/pioneer \
+            build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
+          chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
+
+      - name: Package Linux .deb
+        run: |
+          mkdir -p deb/usr/local/Pioneer
+          cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
+          mkdir -p deb/usr/local/Pioneer/data
+          cp -r assets/* deb/usr/local/Pioneer/data/
+          mkdir -p deb/usr/local/bin
+          ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
+          chmod -R a+rwx deb/usr/local/Pioneer/share/julia
+          info=src/build/package_info.json
+          PACKAGE=$(jq -r '.package' $info)
+          MAINTAINER=$(jq -r '.maintainer' $info)
+          DESCRIPTION=$(jq -r '.description' $info)
+          DEB_VERSION='${{ steps.norm.outputs.deb }}'
+
+          mkdir -p deb/DEBIAN
+          cat <<EOF > deb/DEBIAN/control
+          Package: $PACKAGE
+          Version: $DEB_VERSION
+          Architecture: amd64
+          Maintainer: $MAINTAINER
+          Description: $DESCRIPTION
+          EOF
+
+          dpkg-deb --build --root-owner-group deb \
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
+
+      - name: Package zipped binaries
+        run: |
+          cd build/Pioneer_${{ matrix.identifier }}/Applications
+          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}
+          path: |
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip

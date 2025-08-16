@@ -298,7 +298,7 @@ the respective number of Sulfur's in the ion. See Examples below.
 -'::Dict{String, String}'
 
 ### Examples
-julia> getImmoniumToFormulaDict("data/immonium.txt")
+julia> getImmoniumToFormulaDict("assets/immonium.txt")
 Dict{String, Int8} with 64 entries:
   "IQ" => 0x0
   "IW" => 0x0

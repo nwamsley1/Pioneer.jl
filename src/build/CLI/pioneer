@@ -1,0 +1,156 @@
+#!/bin/bash
+
+# Set default threads to auto if not specified
+if [ -z "$JULIA_NUM_THREADS" ]; then
+    export JULIA_NUM_THREADS=auto
+fi
+
+# Valid subcommands
+VALID_COMMANDS="search predict params-search params-predict convert-raw convert-mzml"
+# empirical params-empirical 
+
+show_help() {
+    echo "Pioneer - Mass Spectrometry Data Analysis"
+    echo ""
+    echo "Usage: pioneer [options] <subcommand> [subcommand-args...]"
+    echo ""
+    echo "Options:"
+    echo "  --threads N        Set number of Julia threads (default: auto)"
+    echo "  --threads=N        Alternative syntax for setting threads"
+    echo "  --help, -h         Show this help message"
+    echo ""
+    echo "Subcommands:"
+    echo "  search <params.json>                        Perform DIA search analysis"
+    echo "  predict <params.json>                       Predict spectral library"
+    #echo "  empirical <params.json>                     Parse spectral library"
+    echo "  params-search <library_path> <ms_data_path> <results_path> [--params-path <params_out_path>]"
+    echo "                                              Generate search parameter template."
+    echo "                                              Default params output path: ./search_parameters.json"
+    echo "  params-predict <library_outpath> <lib_name> <fasta_path> [--params-path <params_out_path>]"
+    echo "                                              Generate library build parameter template."
+    echo "                                              Default params output path: ./buildspeclib_params.json"
+    #echo "  params-empirical <empirical_lib_path> <library_outpath> [--params-path <params_out_path>]"
+    #echo "                                              Generate parse parameter template"
+    #echo "                                              Default params output path: ./parsespeclib_params.json"
+    echo "  convert-raw <data_path> [options]"
+    echo "                                              Convert Thermo RAW files"
+    echo "  convert-mzml <data_path> [skip_header]"
+    echo "                                              Convert mzML files"
+    echo ""
+    echo "Examples:"
+    echo "  pioneer params-predict yeast.poin yeast fasta/ --params-path predict_params.json"
+    echo "  pioneer predict predict_params.json"
+    echo "  pioneer params-search yeast.poin data/ results/ --params-path search_params.json"
+    echo "  pioneer search search_params.json                                        # Use auto threading"
+    echo "  pioneer --threads=8 search search_params.json                            # Use 8 threads"
+    echo ""
+    echo "For subcommand-specific help:"
+    echo "  pioneer <subcommand> --help"
+}
+# Parse command line arguments for thread override
+SUBCOMMAND=""
+SUBCOMMAND_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --threads)
+            if [[ -n "$2" && "$2" != --* ]]; then
+                export JULIA_NUM_THREADS="$2"
+                shift 2
+            else
+                echo "Error: --threads requires a value"
+                exit 1
+            fi
+            ;;
+        --threads=*)
+            export JULIA_NUM_THREADS="${1#*=}"
+            shift
+            ;;
+        --help|-h|-help|/\?)
+            if [[ -z "$SUBCOMMAND" ]]; then
+                show_help
+                exit 0
+            else
+                SUBCOMMAND_ARGS+=("$1")
+                shift
+            fi
+            ;;
+        -*)
+            if [[ -z "$SUBCOMMAND" ]]; then
+                echo "Error: Unknown option $1"
+                echo "Use --help for usage information"
+                exit 1
+            else
+                SUBCOMMAND_ARGS+=("$1")
+                shift
+            fi
+            ;;
+        *)
+            # First non-option argument should be the subcommand
+            if [[ -z "$SUBCOMMAND" ]]; then
+                # Check if it's a valid subcommand
+                if [[ " $VALID_COMMANDS " =~ " $1 " ]]; then
+                    SUBCOMMAND="$1"
+                else
+                    echo "Error: Unknown subcommand '$1'"
+                    echo "Valid subcommands: $VALID_COMMANDS"
+                    echo "Use --help for usage information"
+                    exit 1
+                fi
+            else
+                # All remaining arguments go to the subcommand
+                SUBCOMMAND_ARGS+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check if subcommand was provided
+if [[ -z "$SUBCOMMAND" ]]; then
+    echo "Error: Subcommand required"
+    echo "Valid subcommands: $VALID_COMMANDS"
+    echo "Use --help for usage information"
+    exit 1
+fi
+
+# Map aliases to the canonical executable names
+case "$SUBCOMMAND" in
+    search)
+        SUBCOMMAND="SearchDIA"
+        ;;
+    predict)
+        SUBCOMMAND="BuildSpecLib"
+        ;;
+    params-search)
+        SUBCOMMAND="GetSearchParams"
+        ;;
+    params-predict)
+        SUBCOMMAND="GetBuildLibParams"
+        ;;
+    convert-raw)
+        SUBCOMMAND="PioneerConverter"
+        ;;
+    convert-mzml)
+        SUBCOMMAND="convertMzML"
+        ;;
+esac
+    #empirical)
+    #    SUBCOMMAND="ParseSpecLib"
+    #    ;;
+    #params-empirical)
+    #    SUBCOMMAND="GetParseSpecLibParams"
+    #    ;;
+
+# Resolve the actual script location, handling symlinks
+SCRIPT_PATH="$0"
+while [ -L "$SCRIPT_PATH" ]; do
+    SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# Call the actual Pioneer executable with subcommand and its arguments
+# The executables are in the bin/ subdirectory relative to the script location
+exec "$SCRIPT_DIR/bin/$SUBCOMMAND" "${SUBCOMMAND_ARGS[@]}"

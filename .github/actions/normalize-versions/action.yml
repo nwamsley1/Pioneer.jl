@@ -1,0 +1,75 @@
+name: "Normalize Versions"
+description: "Outputs Debian, macOS pkg, and MSI-safe versions from a raw tag."
+inputs:
+  raw:
+    description: "Raw version/tag (e.g., v1.2.3, v1.2.3-rc.1, 1.2.3+build)"
+    required: true
+    type: string
+outputs:
+  deb:
+    description: "Debian-safe version"
+    value: ${{ steps.mk.outputs.deb }}
+  pkg:
+    description: "macOS pkgbuild-safe version (x.y.z)"
+    value: ${{ steps.mk.outputs.pkg }}
+  msi:
+    description: "MSI-safe version (x.y.z[.w])"
+    value: ${{ steps.mk.outputs.msi }}
+runs:
+  using: "composite"
+  steps:
+    - id: mk
+      shell: bash
+      run: |
+        RAW="${{ inputs.raw }}"
+        # strip leading v/V and drop +build metadata
+        CLEAN="${RAW#[vV]}"
+        CLEAN="${CLEAN%%+*}"
+
+        BASE="${CLEAN%%-*}"   # before any -pre
+        PRE="${CLEAN#*-}"
+        HAS_PRE=0; [[ "$CLEAN" == *-* ]] && HAS_PRE=1
+
+        # ---- Debian: allow prerelease using ~, hyphens -> dots in pre ----
+        if [[ $HAS_PRE -eq 1 ]]; then
+          PRE_CLEAN=${PRE//-/.}
+          DEB="${BASE}~${PRE_CLEAN}"
+        else
+          DEB="${BASE}"
+        fi
+        [[ "$DEB" =~ ^[0-9] ]] || DEB="0.0.0"
+
+        # ---- macOS pkg: numeric dotted, up to 3 parts (x.y.z) ----
+        PKG="$BASE"
+        IFS='.' read -r -a parts <<< "$PKG"
+        nums=(); ok=1
+        for p in "${parts[@]}"; do
+          [[ "$p" =~ ^[0-9]+$ ]] && nums+=("$p") || { ok=0; break; }
+        done
+        if [[ $ok -eq 0 || ${#nums[@]} -eq 0 ]]; then
+          PKG="0.0.0"
+        else
+          while [[ ${#nums[@]} -lt 3 ]]; do nums+=("0"); done
+          [[ ${#nums[@]} -gt 3 ]] && nums=("${nums[@]:0:3}")
+          PKG="$(IFS=.; echo "${nums[*]}")"
+        fi
+
+        # ---- MSI: numeric dotted, 3–4 parts ----
+        IFS='.' read -r -a mparts <<< "$BASE"
+        mnums=(); mok=1
+        for p in "${mparts[@]}"; do
+          [[ "$p" =~ ^[0-9]+$ ]] && mnums+=("$p") || { mok=0; break; }
+        done
+        if [[ $mok -eq 0 || ${#mnums[@]} -eq 0 ]]; then
+          MSI="0.0.0"
+        else
+          while [[ ${#mnums[@]} -lt 3 ]]; do mnums+=("0"); done
+          [[ ${#mnums[@]} -gt 4 ]] && mnums=("${mnums[@]:0:4}")
+          MSI="$(IFS=.; echo "${mnums[*]}")"
+        fi
+
+        {
+          echo "deb=$DEB"
+          echo "pkg=$PKG"
+          echo "msi=$MSI"
+        } >> "$GITHUB_OUTPUT"

@@ -10,3 +10,5 @@ data/param_test/
 test/data/ecoli_test/ecoli_test_results
 data/ecoli_test/
 data/convert_test/
+PioneerApp/
+/build/

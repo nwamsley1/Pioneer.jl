@@ -810,11 +810,10 @@ Creates scatter plot of RT vs iRT with fitted spline curve.
 """
 function generate_rt_plot(
     results::ParameterTuningSearchResults,
-    plot_path::String,
     title::String
 )
     n = length(results.rt)
-    p = Plots.plot(
+    p = plot(
         results.rt,
         results.irt,
         seriestype=:scatter,
@@ -827,8 +826,8 @@ function generate_rt_plot(
     )
     
     pbins = LinRange(minimum(results.rt), maximum(results.rt), 100)
-    Plots.plot!(pbins, getRtToIrtModel(results).(pbins), lw=3, label=nothing)
-    savefig(p, plot_path)
+    plot!(pbins, getRtToIrtModel(results).(pbins), lw=3, label=nothing)
+    return p
 end
 
 
@@ -846,8 +845,7 @@ Creates histogram of mass errors with marked boundaries and offset.
 """
 function generate_mass_error_plot(
     results::ParameterTuningSearchResults,
-    fname::String,
-    plot_path::String
+    fname::String
 )
     #p = histogram(results.ppm_errs)
     #savefig(p, plot_path)
@@ -883,7 +881,7 @@ function generate_mass_error_plot(
     Plots.hline!([r_err], label = nothing, color = :black, lw = 2)
     Plots.annotate!(last(xlims(p)), r_err, text("$r_err", :black, :right, :bottom, 12))
 
-    savefig(p, plot_path)
+    return p
 
 end
 
@@ -977,8 +975,7 @@ end
 
 function generate_ms1_mass_error_plot(
     results::R,
-    fname::String,
-    plot_path::String
+    fname::String
 ) where {R<:SearchResults}
     #p = histogram(results.ppm_errs)
     #savefig(p, plot_path)
@@ -1014,7 +1011,7 @@ function generate_ms1_mass_error_plot(
     Plots.hline!([r_err], label = nothing, color = :black, lw = 2)
     Plots.annotate!(last(xlims(p)), r_err, text("$r_err", :black, :right, :bottom, 12))
 
-    savefig(p, plot_path)
+    return p
 
 end
 #==========================================================

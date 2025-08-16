@@ -15,6 +15,55 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# Entry point for PackageCompiler
+function main_SearchDIA(argv=ARGS)::Cint
+    
+    settings = ArgParseSettings(; autofix_names = true)
+    @add_arg_table! settings begin
+        "params_path"
+            help = "Path to search parameters JSON file"
+            arg_type = String
+    end
+    parsed_args = parse_args(argv, settings; as_symbols = true)
+    
+    try
+        SearchDIA(parsed_args[:params_path])
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
+"""
+    asset_path(parts...)
+    Return the path to a bundled asset. The function first checks the
+    compile-time `assets/` directory and falls back to a path relative to the
+    installed executable.
+"""
+function asset_path(parts...)
+    compile_dir = joinpath(@__DIR__, "..", "..", "assets", parts...)
+    if ispath(compile_dir)
+        return compile_dir
+    end
+    exe = PROGRAM_FILE
+    if !isabspath(exe)
+        exe_full = Sys.which(exe)
+        exe = exe_full !== nothing ? exe_full : exe
+    end
+    exe_dir = abspath(dirname(realpath(exe)))
+    return joinpath(exe_dir, "..", "data", parts...)
+
+
+    
+end
+
+"""
+    Locate the isotope spline XML file bundled with the application.
+"""
+isotope_spline_path() = asset_path("IsotopeSplines_10kDa_21isotopes.xml")
+
+
 """
     SearchDIA(params_path::String)
 
@@ -181,13 +230,16 @@ function SearchDIA(params_path::String)
             # Load isotope splines and initialize search context
             SEARCH_CONTEXT = initSearchContext(
                 SPEC_LIB,
-                parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")),
+                parseIsoXML(isotope_spline_path()),
                 ArrowTableReference(MS_TABLE_PATHS),
                 Threads.nthreads(),
-                250000 # Default temp array batch size 
+                250000 # Default temp array batch size
             )
             setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
-           
+
+            # Ensure temporary files are written to the results directory
+            ENV["TMPDIR"] = params.paths[:results]
+
             write( joinpath(normpath(params.paths[:results]), "config.json"), params_string)
             nothing
         end

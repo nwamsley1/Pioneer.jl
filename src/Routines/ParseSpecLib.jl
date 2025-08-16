@@ -16,6 +16,27 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # src/ParseSpecLib.jl
+
+# Entry point for PackageCompiler
+function main_ParseSpecLib(argv=ARGS)::Cint
+    
+    settings = ArgParseSettings(; autofix_names = true)
+    @add_arg_table! settings begin
+        "params_path"
+            help = "Path to ParseSpecLib parameters JSON file"
+            arg_type = String
+    end
+    parsed_args = parse_args(argv, settings; as_symbols = true)
+    
+    try
+        ParseSpecLib(parsed_args[:params_path])
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
 """
     nestedLibrarySort!(spec_lib::BasicEmpiricalLibrary; rt_bin_tol::Float64=0.1)
 
@@ -348,6 +369,7 @@ function ParseSpecLib(params_path::String)
         params["library_params"]["include_neutral_diff"],
         UInt8(params["library_params"]["max_frag_charge"]),
         UInt8(params["library_params"]["max_frag_rank"]),
+        Float32(params["library_params"]["length_to_frag_count_multiple"]),
         Float32(params["library_params"]["min_frag_intensity"]),
         UInt8.(params["library_params"]["rank_to_score"]),
         FragBoundModel(

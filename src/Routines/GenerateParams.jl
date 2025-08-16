@@ -15,6 +15,105 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# Entry point for PackageCompiler
+function main_GetSearchParams(argv=ARGS)::Cint
+    
+    settings = ArgParseSettings(; autofix_names = true)
+    @add_arg_table! settings begin
+        "library_path"
+            help = "Path to spectral library (.poin)"
+            arg_type = String
+        "ms_data_path"
+            help = "Directory containing MS data"
+            arg_type = String
+        "results_path"
+            help = "Output directory for search results"
+            arg_type = String
+        "--params-path"
+            help = "Output path for generated parameters file"
+            arg_type = String
+            default = joinpath(pwd(), "search_parameters.json")
+    end
+    parsed_args = parse_args(argv, settings; as_symbols = true)
+    
+    params_path = parsed_args[:params_path]
+    try
+       GetSearchParams(parsed_args[:library_path],
+                       parsed_args[:ms_data_path],
+                       parsed_args[:results_path];
+                       params_path=params_path)
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
+
+# Entry point for PackageCompiler
+function main_GetBuildLibParams(argv=ARGS)::Cint
+    
+    settings = ArgParseSettings(; autofix_names = true)
+    @add_arg_table! settings begin
+        "out_dir"
+            help = "Output directory for library"
+            arg_type = String
+        "lib_name"
+            help = "Name of the library"
+            arg_type = String
+        "fasta_dir"
+            help = "Directory containing FASTA files"
+            arg_type = String
+        "--params-path"
+            help = "Output path for generated parameters file"
+            arg_type = String
+            default = joinpath(pwd(), "buildspeclib_params.json")
+    end
+    parsed_args = parse_args(argv, settings; as_symbols = true)
+    
+    params_path = parsed_args[:params_path]
+    try
+        GetBuildLibParams(parsed_args[:out_dir],
+                          parsed_args[:lib_name],
+                          parsed_args[:fasta_dir];
+                          params_path=params_path)
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
+# Entry point for PackageCompiler
+function main_GetParseSpecLibParams(argv=ARGS)::Cint
+    
+    settings = ArgParseSettings(; autofix_names = true)
+    @add_arg_table! settings begin
+        "input_lib_path"
+            help = "Input empirical library TSV"
+            arg_type = String
+        "output_lib_path"
+            help = "Output path for processed library"
+            arg_type = String
+        "--params-path"
+            help = "Output path for generated parameters file"
+            arg_type = String
+            default = joinpath(pwd(), "parsespeclib_params.json")
+    end
+    parsed_args = parse_args(argv, settings; as_symbols = true)
+    
+    params_path = parsed_args[:params_path]
+    try
+        GetParseSpecLibParams(parsed_args[:input_lib_path], 
+                              parsed_args[:output_lib_path];
+                              params_path = params_path)
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
 
 """
     getSearchParams(template_path::String, lib_path::String, ms_data_path::String, results_path::String)
@@ -60,7 +159,7 @@ function GetSearchParams(lib_path::String, ms_data_path::String, results_path::S
     end
     
     # Read the JSON template and convert to OrderedDict
-    config_text = read(joinpath(@__DIR__, "../../data/example_config/defaultSearchParams.json"), String)
+    config_text = read(asset_path("example_config", "defaultSearchParams.json"), String)
     config = JSON.parse(config_text, dicttype=OrderedDict)
 
         
@@ -89,7 +188,7 @@ end
     GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String)
 
 Creates a new library build parameter file with updated paths and automatically discovered FASTA files.
-Uses a default template from data/example_config/defaultBuildLibParams.json.
+Uses a default template from assets/example_config/defaultBuildLibParams.json.
 
 Arguments:
 - out_dir: Output directory path
@@ -118,7 +217,7 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String;
     end
 
     # Parse JSON
-    config_text = read(joinpath(@__DIR__, "../../data/example_config/defaultBuildLibParams.json"), String)
+    config_text = read(asset_path("example_config", "defaultBuildLibParams.json"), String)
     config = JSON.parse(config_text, dicttype=OrderedDict)
 
     # Find all FASTA files in the specified directory
@@ -147,5 +246,51 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String;
         JSON.print(io, config, 4)  # indent with 4 spaces for readability
     end
     
+    return output_path
+end
+
+
+"""
+    GetParseSpecLibParams(input_lib_path::String, output_lib_path::String)
+
+Create a new parameter file for `ParseSpecLib` with updated input and output paths.
+Uses a default template from `assets/example_config/defaultParseSpecLibParams.json`.
+
+Arguments:
+- input_lib_path: Path to the empirical library TSV file
+- output_lib_path: Path where the processed library will be written
+- params_path: Optional path to folder or JSON file where the parameters will be
+  saved. Defaults to `parsespeclib_params.json` in the working directory.
+
+Returns:
+- String: Path to the newly created parameters file
+"""
+function GetParseSpecLibParams(input_lib_path::String, output_lib_path::String; params_path::Union{String, Missing}=missing)
+    GC.gc()
+
+    if ismissing(params_path)
+        output_path = joinpath(pwd(), "parsespeclib_params.json")
+    else
+        params_path = expanduser(params_path)
+        name, ext = splitext(params_path)
+        if isempty(ext)
+            mkpath(params_path)
+            output_path = joinpath(params_path, "parsespeclib_params.json")
+        else
+            output_path = params_path
+        end
+    end
+
+    config_text = read(asset_path("example_config", "defaultParseEmpiricalLibParams.json"), String)
+    config = JSON.parse(config_text, dicttype=OrderedDict)
+
+    config["library_params"]["input_lib_path"] = input_lib_path
+    config["library_params"]["output_lib_path"] = output_lib_path
+
+    @info "Writing default parameters .json to: $output_path"
+    open(output_path, "w") do io
+        JSON.print(io, config, 4)
+    end
+
     return output_path
 end

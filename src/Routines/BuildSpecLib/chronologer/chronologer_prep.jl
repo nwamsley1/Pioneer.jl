@@ -137,6 +137,7 @@ function prepare_chronologer_input(
     # Process FASTA files
     fasta_entries = Vector{FastaEntry}()
     protein_entries = Vector{FastaEntry}()
+
     for (proteome_name, fasta, acc_rgx, gene_rgx, prot_rgx, org_rgx) in zip(
             params["fasta_names"],
             params["fasta_paths"],
@@ -182,16 +183,15 @@ function prepare_chronologer_input(
         fixed_mods, 
         var_mods,
         _params.fasta_digest_params["max_var_mods"])
-  
+
+    # Add decoy sequences
+    fasta_entries = add_decoy_sequences(fasta_entries)
+        
     fasta_entries = add_charge(
         fasta_entries,
         _params.fasta_digest_params["min_charge"],
         _params.fasta_digest_params["max_charge"]
     )
-
-    # Add decoy sequences
-    fasta_entries = add_reverse_decoys(fasta_entries)
-  
     # Build UniSpec input dataframe
     fasta_df = build_fasta_df(
         fasta_entries,

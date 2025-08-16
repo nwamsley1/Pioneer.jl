@@ -209,6 +209,8 @@ end
         
         precursors_table = (
             mz = Float32[500.0, 600.0],
+            prec_length = UInt8[40, 40],
+            length = UInt8[50, 50],
             irt = Float32[10.0, 20.0],
             prec_charge = UInt8[2, 3]
         )
@@ -233,6 +235,7 @@ end
         include_neutral_diff = false
         max_frag_charge = UInt8(2)
         max_frag_rank = UInt8(10)
+        length_to_frag_count_multiple = Float32(10)
         min_frag_intensity = Float32(0.1)
         rank_to_score = UInt8[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
         
@@ -261,6 +264,7 @@ end
             include_neutral_diff,
             max_frag_charge,
             max_frag_rank,
+            length_to_frag_count_multiple,
             min_frag_intensity,
             rank_to_score,
             frag_bounds,
@@ -354,6 +358,7 @@ end
             include_neutral_diff,
             max_frag_charge,
             max_frag_rank,
+            length_to_frag_count_multiple,
             min_frag_intensity,
             rank_to_score,
             frag_bounds,
@@ -1051,7 +1056,7 @@ end
         
         precursor_mz = Float32[500.0, 600.0]
         precursor_charge = UInt8[2, 3]
-        
+        precursor_length = UInt8[50, 50]
         # Index mapping precursors to fragments
         # First precursor has fragments 1-2, second has fragments 3-4
         prec_to_frag_idx = UInt64[1, 3, 5]
@@ -1073,6 +1078,7 @@ end
         )
         
         max_frag_rank = UInt8(10)
+        length_to_frag_count_multiple = Float32(10)
         min_frag_intensity = Float32(0.1)
         model_type = InstrumentSpecificModel("test_model")
         
@@ -1093,6 +1099,7 @@ end
             frag_neutral_diff,
             precursor_mz,
             precursor_charge,
+            precursor_length,
             prec_to_frag_idx,
             y_start,
             b_start,
@@ -1104,6 +1111,7 @@ end
             max_frag_charge,
             frag_bounds,
             max_frag_rank,
+            length_to_frag_count_multiple,
             min_frag_intensity,
             model_type
         )
@@ -1160,6 +1168,7 @@ end
             frag_neutral_diff,
             precursor_mz,
             precursor_charge,
+            precursor_length,
             prec_to_frag_idx,
             y_start,
             b_start,
@@ -1171,6 +1180,7 @@ end
             max_frag_charge,
             frag_bounds,
             max_frag_rank,
+            length_to_frag_count_multiple,
             Float32(0.7),  # Only fragments with intensity >= 0.7
             model_type
         )
@@ -1218,6 +1228,7 @@ end
             rank_test_frag_neutral_diff,
             Float32[500.0],        # Single precursor
             UInt8[2],              # Single charge
+            UInt8[50],             # Single precursor length
             rank_test_prec_to_frag_idx,
             y_start,
             b_start,
@@ -1229,6 +1240,7 @@ end
             max_frag_charge,
             frag_bounds,
             small_max_rank,        # Only keep top 5 fragments
+            length_to_frag_count_multiple,
             min_frag_intensity,
             model_type
         )
@@ -1265,7 +1277,7 @@ end
         
         precursor_mz = Float32[500.0, 600.0]
         precursor_charge = UInt8[2, 3]
-        
+        precursor_length = UInt8[50, 50]
         # Index mapping precursors to fragments
         # First precursor has fragments 1-2, second has fragments 3-4
         prec_to_frag_idx = UInt64[1, 3, 5]
@@ -1287,6 +1299,7 @@ end
         )
         
         max_frag_rank = UInt8(10)
+        length_to_frag_count_multiple = Float32(10)
         min_frag_intensity = Float32(0.1)
         model_type = SplineCoefficientModel("test_spline_model")
         
@@ -1308,6 +1321,7 @@ end
             frag_neutral_diff,
             precursor_mz,
             precursor_charge,
+            precursor_length,
             prec_to_frag_idx,
             y_start,
             b_start,
@@ -1319,6 +1333,7 @@ end
             max_frag_charge,
             frag_bounds,
             max_frag_rank,
+            length_to_frag_count_multiple,
             min_frag_intensity,
             model_type
         )
@@ -1368,6 +1383,7 @@ end
             frag_neutral_diff,
             precursor_mz,
             precursor_charge,
+            precursor_length,
             prec_to_frag_idx,
             UInt8(4),  # Higher y-start value
             UInt8(4),
@@ -1379,6 +1395,7 @@ end
             max_frag_charge,
             frag_bounds,
             max_frag_rank,
+            length_to_frag_count_multiple,
             min_frag_intensity,
             model_type
         )
@@ -1409,6 +1426,7 @@ end
             frag_neutral_diff,
             precursor_mz,
             precursor_charge,
+            precursor_length,
             prec_to_frag_idx,
             y_start,
             b_start,
@@ -1420,6 +1438,7 @@ end
             max_frag_charge,
             frag_bounds,
             max_frag_rank,
+            length_to_frag_count_multiple,
             min_frag_intensity,
             model_type
         )

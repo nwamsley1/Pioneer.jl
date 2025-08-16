@@ -258,31 +258,6 @@
         @test ("ANOTHER", zero(UInt8)) in pss_from_entries
     end
     
-    @testset "shuffle_fast" begin
-        # Test basic shuffling preserves C-terminal
-        s = "PEPTIDEK"
-        shuffled = shuffle_fast(s)
-        @test shuffled[end] == 'K'  # Last AA preserved
-        @test length(shuffled) == length(s)  # Length preserved
-        @test Set(shuffled) == Set(s)  # Same character composition
-        
-        # Ensure some shuffling actually occurred
-        @test shuffled != s
-        
-        # Test with short strings
-        s = "AB"
-        shuffled = shuffle_fast(s)
-        @test shuffled == s  # Can't shuffle a 2-letter string with last preserved
-        
-        # Test with single character
-        s = "A"
-        @test shuffle_fast(s) == "A"
-        
-        # Test with empty string
-        s = ""
-        @test shuffle_fast(s) == ""
-    end
-    
     @testset "add_entrapment_sequences" begin
         # Create test entries
         entries = [
@@ -316,15 +291,15 @@
         @test all(length.(entrapment_groups) .== 2)
     end
     
-    @testset "add_reverse_decoys" begin
+    @testset "add_decoy_sequences" begin
         # Create test entries
         entries = [
             FastaEntry("P1", "", "", "", "human", "test", "PEPTIDEK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
             FastaEntry("P2", "", "", "", "human", "test", "MAKEPROTEIN", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
-        ]
+   ]
         
         # Test basic reversal
-        result = add_reverse_decoys(entries)
+        result = add_decoy_sequences(entries)
         
         @test length(result) == 4  # 2 original + 2 decoy
         
@@ -333,13 +308,16 @@
         @test length(decoys) == 2
         
         # Check decoy sequences are reversed except last AA
+        sort!(decoys, by = x-> x.base_prec_id)
+        sort!(entries, by = x->  x.base_prec_id)
         for i in 1:2
+            
             target_seq = get_sequence(entries[i])
             decoy = decoys[i]
             decoy_seq = get_sequence(decoy)
-            
             @test decoy_seq[end] == target_seq[end]  # Last AA preserved
-            @test decoy_seq[1:end-1] == reverse(target_seq[1:end-1])  # Rest is reversed
+            @test all(decoy_seq .== target_seq) == false
+            @test Set(decoy_seq[1:end-1]) == Set(target_seq[1:end-1])  # Rest is reversed
             
             # Check metadata preserved
             @test get_base_pep_id(decoy) == get_base_pep_id(entries[i])

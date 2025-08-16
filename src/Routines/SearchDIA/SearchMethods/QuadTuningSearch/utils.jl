@@ -267,9 +267,7 @@ function collect_psms(
                 quad_psms[!,:weight],
                 quad_psms[!,:charge],
                 params
-            ),
-            :
-        ]
+            ),:]
         
         processed_psms = process_quad_results(
             quad_psms,
@@ -910,7 +908,7 @@ function plot_charge_distributions(psms::DataFrame, results::QuadTuningSearchRes
             ylim = (-10.5, 10.5)
         )
     end
-    savefig(p, joinpath(results.quad_plot_dir, "quad_data", fname*".pdf"))
+   return p
 end
 
 
@@ -936,7 +934,7 @@ function plot_quad_model(quad_model::QuadTransmissionModel, window_width::Float6
 
     quad_func = getQuadTransmissionFunction(quad_model, 0.0f0, 2.0f0)
     p = plot(plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5, title = "$fname")
-    savefig(p, joinpath(results.quad_plot_dir, "quad_models", fname*".pdf"))
+    return p
 end
 
 
