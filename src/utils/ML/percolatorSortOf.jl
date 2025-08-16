@@ -27,7 +27,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   eta::Float64 = 0.15,
                   min_child_weight::Int = 1,
                   subsample::Float64 = 0.5,
-                  gamma::Int = 0,
+                  gamma::Float64 = 0.0,
                   max_depth::Int = 10,
                   iter_scheme::Vector{Int} = [100, 200, 200],
                   print_importance::Bool = true)
@@ -439,7 +439,7 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
                        eta::Float64,
                        min_child_weight::Int,
                        subsample::Float64,
-                       gamma::Int,
+                       gamma::Float64,
                        max_depth::Int)
 
     config = EvoTreeRegressor(
