@@ -95,22 +95,25 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         end
         # Make predictions on hold out data.
         if match_between_runs
-            MBR_estimates[test_fold_idxs] = psms[test_fold_idxs,:prob]
+            MBR_estimates[test_fold_idxs] = psms[test_fold_idxs, :prob]
         else
-            prob_estimates[test_fold_idxs] = psms[test_fold_idxs,:prob]
+            prob_estimates[test_fold_idxs] = psms[test_fold_idxs, :prob]
         end
         # Store models for this fold
         models[test_fold_idx] = fold_models
     end
-    psms[!,:prob] = prob_estimates
 
     if match_between_runs
+        # Determine which precursors failed the q-value cutoff prior to MBR
+        qvals_prev = Vector{Float32}(undef, length(prob_estimates))
+        get_qvalues!(prob_estimates, psms.target, qvals_prev)
+        psms[!, :MBR_transfer_candidate] .= qvals_prev .> max_q_value_xgboost_rescore
+
+        # Use the final MBR probabilities for all precursors
         psms[!, :MBR_prob] = MBR_estimates
-        @. psms.MBR_prob = clamp(
-            psms.MBR_prob,
-            0f0,
-            max(psms.prob, coalesce(psms.MBR_max_pair_prob, psms.prob))
-        )
+        psms[!, :prob] = MBR_estimates
+    else
+        psms[!, :prob] = prob_estimates
     end
     
     dropVectorColumns!(psms) # avoids writing issues
@@ -234,7 +237,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
             if is_last_iteration
                 if match_between_runs
-                    clamp_mbr_probs!(psms_subset, probs)
+                    update_mbr_probs!(psms_subset, probs, max_q_value_xgboost_rescore)
                 else
                     psms_subset.prob = probs
                 end
@@ -304,7 +307,14 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 end
             end
 
-            write_subset(file_path, psms_subset, probs, match_between_runs; dropVectors=is_last_iteration)
+            write_subset(
+                file_path,
+                psms_subset,
+                probs,
+                match_between_runs,
+                max_q_value_xgboost_rescore;
+                dropVectors = is_last_iteration,
+            )
         end
         
         return prec_to_best_score_new
@@ -708,34 +718,42 @@ function predict_cv_models(models::Dictionary{UInt8,EvoTrees.EvoTree},
 end
 
 """
-    clamp_mbr_probs!(df, probs)
+    update_mbr_probs!(df, probs, qval_thresh)
 
-Clamp probabilities for MBR search so they never exceed the current best
-probabilities for each PSM.
+Store final MBR probabilities and mark transfer candidates using the
+pre-MBR scores stored in `df.prob`.
 """
-function clamp_mbr_probs!(df::AbstractDataFrame, probs::AbstractVector{Float32})
+function update_mbr_probs!(
+    df::AbstractDataFrame,
+    probs::AbstractVector{Float32},
+    qval_thresh::Float32,
+)
+    prev_qvals = similar(df.prob)
+    get_qvalues!(df.prob, df.target, prev_qvals)
+    df[!, :MBR_transfer_candidate] = prev_qvals .> qval_thresh
     df[!, :MBR_prob] = probs
-    @. df.MBR_prob = clamp(
-        df.MBR_prob,
-        0f0,
-        max(df.prob, coalesce(df.MBR_max_pair_prob, df.prob)),
-    )
+    df[!, :prob] = probs
     return df
 end
 
 """
-    write_subset(file_path, df, probs, match_between_runs; dropVectors=false)
+    write_subset(file_path, df, probs, match_between_runs, qval_thresh; dropVectors=false)
 
 Write the updated subset to disk, optionally dropping vector columns.
+The `qval_thresh` argument is used to mark transfer candidates when
+`match_between_runs` is true and `dropVectors` is set.
 """
-function write_subset(file_path::String,
-                      df::DataFrame,
-                      probs::AbstractVector{Float32},
-                      match_between_runs::Bool;
-                      dropVectors::Bool=false)
+function write_subset(
+    file_path::String,
+    df::DataFrame,
+    probs::AbstractVector{Float32},
+    match_between_runs::Bool,
+    qval_thresh::Float32;
+    dropVectors::Bool=false,
+)
     if dropVectors
         if match_between_runs
-            clamp_mbr_probs!(df, probs)
+            update_mbr_probs!(df, probs, qval_thresh)
         else
             df[!, :prob] = probs
         end

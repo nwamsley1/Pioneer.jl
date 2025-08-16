@@ -214,26 +214,23 @@ function apply_mbr_filter!(
     fdr_scale_factor::Float32,
 )
     n = nrow(merged_df)
-
-    # 1) compute trace_qval locally
+    
+    # 1) compute q-values only for non-transfer candidates
+    candidate_mask = merged_df.MBR_transfer_candidate
+    non_mbr_mask = .!candidate_mask
     trace_qval = Vector{Float32}(undef, n)
     get_qvalues!(
-        merged_df.prob,
-        merged_df.target,
-        trace_qval;
-        fdr_scale_factor = fdr_scale_factor
+        merged_df.prob[non_mbr_mask],
+        merged_df.target[non_mbr_mask],
+        trace_qval[non_mbr_mask];
+        fdr_scale_factor = fdr_scale_factor,
     )
 
-    # 2) build boolean masks locally
-    candidate_mask = 
-        (trace_qval .> params.q_value_threshold) .& 
-        .!ismissing.(merged_df.MBR_is_best_decoy)
-
-    bad_mask =
-        candidate_mask .& (
+    # 2) identify bad transfers
+    bad_mask = candidate_mask .& (
         (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .|
         (merged_df.decoy  .& .!coalesce.(merged_df.MBR_is_best_decoy, true))
-        )
+    )
 
     # 3) compute threshold using the local bad_mask
     τ = get_ftr_threshold(
@@ -241,14 +238,14 @@ function apply_mbr_filter!(
         merged_df.target,
         bad_mask,
         params.max_MBR_false_transfer_rate;
-        mask = candidate_mask
+        mask = candidate_mask,
     )
 
     # 4) one fused pass to clamp probs
     merged_df._filtered_prob = ifelse.(
         candidate_mask .& (merged_df.MBR_prob .< τ),
         0.0f0,
-        merged_df.MBR_prob
+        merged_df.MBR_prob,
     )
 
     # if downstream code expects a Symbol for the prob-column
