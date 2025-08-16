@@ -196,7 +196,7 @@ function score_precursor_isotope_traces_in_memory!(
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32
 )
-    if size(best_psms, 1) > 100000
+    if size(best_psms, 1) > 100_000
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
         features = [
             :missed_cleavage,
@@ -277,7 +277,7 @@ function score_precursor_isotope_traces_in_memory!(
                                 colsample_bytree = 0.5, 
                                 colsample_bynode = 0.5,
                                 min_child_weight = 5, 
-                                gamma = 1,
+                                gamma = 1.0,
                                 subsample = 0.25, 
                                 max_depth = 10,
                                 eta = 0.05, 
@@ -285,6 +285,7 @@ function score_precursor_isotope_traces_in_memory!(
                                 print_importance = false);
         return models;#best_psms
     else
+        @warn "Less than 100,000 psms: $(size(best_psms, 1)). Training with simplified target-decoy discrimination model..."
         if size(best_psms, 1) > 1000
             @warn "Less than 100,000 psms. Training with simplified target-decoy discrimination model..."
             features = [ 
@@ -299,9 +300,13 @@ function score_precursor_isotope_traces_in_memory!(
                 :max_matched_residual,
                 :max_unmatched_residual,
                 :max_gof,
+                :fitted_spectral_contrast,
+                :spectral_contrast,
                 :err_norm,
                 :weight,
                 :log2_intensity_explained,
+                :percent_theoretical_ignored,
+                :scribe,
             ];
         else
              @warn "Less than 1,000 psms. Training with super simplified target-decoy discrimination model..."
@@ -328,15 +333,15 @@ function score_precursor_isotope_traces_in_memory!(
                                 max_q_value_xgboost_rescore,
                                 max_q_value_xgboost_mbr_rescore,
                                 min_PEP_neg_threshold_xgboost_rescore,
-                                colsample_bytree = 1.0, 
-                                colsample_bynode = 1.0,
-                                min_child_weight = 1, 
-                                gamma = 0,
-                                subsample = 1.0, 
-                                max_depth = 3,
-                                eta = 0.01,
-                                iter_scheme = [200],
-                                print_importance = false);
+                                colsample_bytree = 0.8, 
+                                colsample_bynode = 0.8,
+                                min_child_weight = 20, 
+                                gamma = 0.1,
+                                subsample = 0.8, 
+                                max_depth = 4,
+                                eta = 0.05,
+                                iter_scheme = [300],
+                                print_importance = true);
         return models
     end
 end
