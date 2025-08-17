@@ -165,6 +165,8 @@ struct ParameterTuningSearchResults <: SearchResults
     irt::Vector{Float32}
     rt::Vector{Float32}
     ppm_errs::Vector{Float32}
+    rt_plots::Vector{Plots.Plot}  # For combined PDF generation
+    mass_plots::Vector{Plots.Plot}  # For combined PDF generation
     qc_plots_folder_path::String
     diagnostics::ParameterTuningDiagnostics
     parameter_history::ParameterHistory
