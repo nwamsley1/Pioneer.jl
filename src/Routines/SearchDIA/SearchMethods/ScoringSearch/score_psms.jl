@@ -509,15 +509,12 @@ function score_precursor_isotope_traces_in_memory!(
         @info "prob column type: $(eltype(best_psms.prob))"
         @info "prob column stats: min=$(minimum(best_psms.prob)), max=$(maximum(best_psms.prob)), mean=$(mean(best_psms.prob))"
         
-        # Check what columns XGBoost would have vs what we have
-        expected_cols = Set(["prob", "q_value", "decoy", "accession_numbers", "target"])
-        current_cols = Set(names(best_psms))
-        @info "Expected columns present: $(intersect(expected_cols, current_cols))"
-        
-        # XGBoost adds best_psm column - probit doesn't. Add it to match.
-        if !(:best_psm in names(best_psms))
-            @info "Adding best_psm column to match XGBoost behavior"
-            best_psms[!, :best_psm] = zeros(Bool, size(best_psms, 1))
+        # Write the scored PSMs back to their original files, just like XGBoost does
+        @info "Writing scored PSMs back to files"
+        for (ms_file_idx, gpsms) in pairs(groupby(best_psms, :ms_file_idx))
+            fpath = file_paths[ms_file_idx[:ms_file_idx]]
+            # Use the same writeArrow function that XGBoost uses
+            writeArrow(fpath, gpsms)
         end
         
         models = nothing  # Probit doesn't return models
