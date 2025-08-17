@@ -220,7 +220,15 @@ function probit_regression_scoring_cv!(
 )
     # Step 1: Add CV fold column based on file index (same as XGBoost)
     psms[!, :cv_fold] = zeros(UInt8, size(psms, 1))
-    ms_file_idx_col = match_between_runs ? :ms_file_idx_matchbetweenruns : :ms_file_idx
+    
+    # Always use :ms_file_idx column - it's created by SecondPassSearch
+    ms_file_idx_col = :ms_file_idx
+    
+    # Check if the column exists
+    if !(ms_file_idx_col in propertynames(psms))
+        @error "Column :ms_file_idx not found in PSMs. Available columns: $(propertynames(psms))"
+        error("Required column :ms_file_idx is missing from PSMs DataFrame")
+    end
     
     for fold_idx in 1:n_folds
         fold_mask = (psms[!, ms_file_idx_col] .% n_folds) .== (fold_idx - 1)
@@ -466,19 +474,20 @@ function score_precursor_isotope_traces_in_memory!(
         best_psms[!,:decoy] = best_psms[!,:target].==false;
         
         # OPTION 1: Probit regression (SIMPLE, NO ITERATIVE REFINEMENT)
-        # @info "Using probit regression for small dataset (<100k PSMs)"
-        # probit_regression_scoring_cv!(
-        #     best_psms,
-        #     file_paths,
-        #     features,
-        #     match_between_runs;
-        #     n_folds = 3
-        # )
-        # models = nothing  # Probit doesn't return models
+        @info "Using probit regression for small dataset (<100k PSMs)"
+        probit_regression_scoring_cv!(
+             best_psms,
+             file_paths,
+             features,
+             match_between_runs;
+             n_folds = 3
+        )
+        models = nothing  # Probit doesn't return models
         
         # OPTION 2: XGBoost/EvoTrees (WITH ITERATIVE REFINEMENT)
         #see src/utils/ML/percolatorSortOf.jl
         #Train EvoTrees/XGBoost model to score each precursor trace. Target-decoy descrimination
+        #=
         @warn "TEST TEST TEST XGboost"
         models = sort_of_percolator_in_memory!(
                                 best_psms, 
@@ -497,7 +506,7 @@ function score_precursor_isotope_traces_in_memory!(
                                 eta = 0.1,
                                 iter_scheme = [300],
                                 print_importance = true);
-        
+        =#
         return models
     end
 end
