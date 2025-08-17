@@ -481,20 +481,7 @@ function score_precursor_isotope_traces_in_memory!(
         best_psms[!,:decoy] = best_psms[!,:target].==false;
         
         # OPTION 1: Probit regression (SIMPLE, NO ITERATIVE REFINEMENT)
-        @info "Using probit regression for small dataset (<100k PSMs)"
-        
-        # Debug: Check DataFrame state before probit
-        @info "DataFrame before probit: $(size(best_psms, 1)) rows, $(size(best_psms, 2)) columns"
-        @info "Column names: $(names(best_psms))"
-        
-        # Check accession_numbers column type
-        if :accession_numbers in names(best_psms)
-            @info "accession_numbers column type: $(eltype(best_psms.accession_numbers))"
-            # Check if it's a vector of vectors
-            if eltype(best_psms.accession_numbers) <: AbstractVector
-                @info "accession_numbers is a vector column - first element type: $(typeof(best_psms.accession_numbers[1]))"
-            end
-        end
+        # @info "Using probit regression for small dataset (<100k PSMs)"
         
         probit_regression_scoring_cv!(
              best_psms,
@@ -504,16 +491,12 @@ function score_precursor_isotope_traces_in_memory!(
              n_folds = 3
         )
         
-        # Debug: Check DataFrame state after probit
-        @info "DataFrame after probit: $(size(best_psms, 1)) rows, $(size(best_psms, 2)) columns"
-        @info "prob column type: $(eltype(best_psms.prob))"
-        @info "prob column stats: min=$(minimum(best_psms.prob)), max=$(maximum(best_psms.prob)), mean=$(mean(best_psms.prob))"
-        
         # Write the scored PSMs back to their original files, just like XGBoost does
-        @info "Writing scored PSMs back to files"
+        # CRITICAL: Drop vector columns before writing to avoid Arrow serialization issues
+        dropVectorColumns!(best_psms)
+        
         for (ms_file_idx, gpsms) in pairs(groupby(best_psms, :ms_file_idx))
             fpath = file_paths[ms_file_idx[:ms_file_idx]]
-            # Use the same writeArrow function that XGBoost uses
             writeArrow(fpath, gpsms)
         end
         
