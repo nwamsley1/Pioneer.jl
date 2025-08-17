@@ -324,8 +324,10 @@ function probit_regression_scoring_cv!(
         psms.prob[isnan.(psms.prob) .| isinf.(psms.prob)] .= 0.5f0
     end
     
-    # Ensure values are in valid range [0,1]
-    psms.prob = clamp.(psms.prob, 0.0f0, 1.0f0)
+    # Ensure values are in valid range [0,1] but avoid exact 0 and 1
+    # XGBoost/EvoTrees never produces exact 0 or 1, so match that behavior
+    # This is important for downstream log operations
+    psms.prob = clamp.(psms.prob, eps(Float32), 1.0f0 - eps(Float32))
     
     # Clean up columns added during probit regression that shouldn't be persisted
     if :intercept in propertynames(psms)
@@ -485,6 +487,15 @@ function score_precursor_isotope_traces_in_memory!(
         @info "DataFrame before probit: $(size(best_psms, 1)) rows, $(size(best_psms, 2)) columns"
         @info "Column names: $(names(best_psms))"
         
+        # Check accession_numbers column type
+        if :accession_numbers in names(best_psms)
+            @info "accession_numbers column type: $(eltype(best_psms.accession_numbers))"
+            # Check if it's a vector of vectors
+            if eltype(best_psms.accession_numbers) <: AbstractVector
+                @info "accession_numbers is a vector column - first element type: $(typeof(best_psms.accession_numbers[1]))"
+            end
+        end
+        
         probit_regression_scoring_cv!(
              best_psms,
              file_paths,
@@ -497,6 +508,17 @@ function score_precursor_isotope_traces_in_memory!(
         @info "DataFrame after probit: $(size(best_psms, 1)) rows, $(size(best_psms, 2)) columns"
         @info "prob column type: $(eltype(best_psms.prob))"
         @info "prob column stats: min=$(minimum(best_psms.prob)), max=$(maximum(best_psms.prob)), mean=$(mean(best_psms.prob))"
+        
+        # Check what columns XGBoost would have vs what we have
+        expected_cols = Set(["prob", "q_value", "decoy", "accession_numbers", "target"])
+        current_cols = Set(names(best_psms))
+        @info "Expected columns present: $(intersect(expected_cols, current_cols))"
+        
+        # XGBoost adds best_psm column - probit doesn't. Add it to match.
+        if !(:best_psm in names(best_psms))
+            @info "Adding best_psm column to match XGBoost behavior"
+            best_psms[!, :best_psm] = zeros(Bool, size(best_psms, 1))
+        end
         
         models = nothing  # Probit doesn't return models
         
