@@ -327,6 +327,14 @@ function probit_regression_scoring_cv!(
     # Ensure values are in valid range [0,1]
     psms.prob = clamp.(psms.prob, 0.0f0, 1.0f0)
     
+    # Clean up columns added during probit regression that shouldn't be persisted
+    if :intercept in propertynames(psms)
+        select!(psms, Not(:intercept))
+    end
+    if :cv_fold in propertynames(psms)
+        select!(psms, Not(:cv_fold))
+    end
+    
     @info "Probit regression scoring complete. Probabilities assigned to $(size(psms, 1)) PSMs (range: $(minimum(psms.prob)) to $(maximum(psms.prob)))"
     
     return nothing
@@ -489,34 +497,6 @@ function score_precursor_isotope_traces_in_memory!(
         @info "DataFrame after probit: $(size(best_psms, 1)) rows, $(size(best_psms, 2)) columns"
         @info "prob column type: $(eltype(best_psms.prob))"
         @info "prob column stats: min=$(minimum(best_psms.prob)), max=$(maximum(best_psms.prob)), mean=$(mean(best_psms.prob))"
-        
-        # Check for cv_fold column that was added by probit
-        if :cv_fold in names(best_psms)
-            @info "cv_fold column exists with type: $(eltype(best_psms.cv_fold))"
-        end
-        
-        # Check for intercept column that was added by probit
-        if :intercept in names(best_psms)
-            @info "Removing intercept column added by probit regression"
-            select!(best_psms, Not(:intercept))
-        end
-        
-        # Ensure all columns have proper types for Arrow writing
-        # Convert any problematic columns to proper types
-        for col in names(best_psms)
-            col_type = eltype(best_psms[!, col])
-            if col_type == Any
-                @warn "Column $col has type Any, attempting to convert"
-                # Try to infer proper type
-                if all(x -> x isa Number, skipmissing(best_psms[!, col]))
-                    best_psms[!, col] = Float32.(coalesce.(best_psms[!, col], 0.0f0))
-                end
-            elseif col_type == Union{Missing, Float64}
-                # Convert Float64 unions to Float32
-                @info "Converting column $col from $col_type to Float32"
-                best_psms[!, col] = Float32.(coalesce.(best_psms[!, col], 0.0f0))
-            end
-        end
         
         models = nothing  # Probit doesn't return models
         
