@@ -187,6 +187,146 @@ Train EvoTrees/XGBoost models for PSM scoring. All psms are kept in memory
 # Returns
 Trained EvoTrees/XGBoost models or simplified model if insufficient PSMs.
 """
+
+"""
+    probit_regression_scoring_cv!(psms::DataFrame,
+                                  file_paths::Vector{String},
+                                  features::Vector{Symbol},
+                                  match_between_runs::Bool;
+                                  n_folds::Int64 = 3)
+
+Alternative PSM scoring using probit regression with cross-validation.
+
+This is a simpler alternative to XGBoost/EvoTrees for small datasets (<100k PSMs).
+Uses linear probit model with cross-validation, similar to FirstPassSearch but with CV folds.
+No iterative refinement or max_prob updates - single pass training only.
+
+# Arguments
+- `psms`: DataFrame containing PSMs to score
+- `file_paths`: Vector of file paths for CV fold assignment
+- `features`: Feature columns to use for scoring (same as XGBoost)
+- `match_between_runs`: Whether MBR was performed
+- `n_folds`: Number of cross-validation folds (default: 3)
+
+# Modifies
+- Adds columns to psms: `:prob`, `:q_value`, `:best_psm`, `:cv_fold`
+"""
+function probit_regression_scoring_cv!(
+    psms::DataFrame,
+    file_paths::Vector{String},
+    features::Vector{Symbol},
+    match_between_runs::Bool;
+    n_folds::Int64 = 3
+)
+    # Step 1: Add CV fold column based on file index (same as XGBoost)
+    psms[!, :cv_fold] = zeros(UInt8, size(psms, 1))
+    ms_file_idx_col = match_between_runs ? :ms_file_idx_matchbetweenruns : :ms_file_idx
+    
+    for fold_idx in 1:n_folds
+        fold_mask = (psms[!, ms_file_idx_col] .% n_folds) .== (fold_idx - 1)
+        psms[fold_mask, :cv_fold] .= UInt8(fold_idx)
+    end
+    
+    # Step 2: Initialize score columns
+    psms[!, :prob] = zeros(Float32, size(psms, 1))
+    
+    # Step 3: Use the exact features passed in (already filtered by the caller)
+    # Add intercept column if not present
+    if !(:intercept in propertynames(psms))
+        psms[!, :intercept] = ones(Float32, size(psms, 1))
+    end
+    
+    # Filter features to those that exist in the DataFrame
+    available_features = filter(col -> col in propertynames(psms), features)
+    push!(available_features, :intercept)
+    
+    @info "Probit regression using $(length(available_features)-1) features (plus intercept)"
+    
+    # Step 4: Train probit model per CV fold
+    tasks_per_thread = 10
+    chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = Iterators.partition(1:size(psms, 1), chunk_size)
+    
+    for fold_idx in 1:n_folds
+        # Get train/test masks
+        test_mask = psms[!, :cv_fold] .== fold_idx
+        train_mask = .!test_mask
+        
+        # Check for sufficient training data
+        train_targets = train_mask .& psms[!, :target]
+        train_decoys = train_mask .& .!psms[!, :target]
+        
+        n_train_targets = sum(train_targets)
+        n_train_decoys = sum(train_decoys)
+        
+        if n_train_targets < 100 || n_train_decoys < 100
+            @warn "Insufficient training data for fold $fold_idx (targets: $n_train_targets, decoys: $n_train_decoys)"
+            psms[test_mask, :prob] .= 0.5f0
+            continue
+        end
+        
+        @info "Training probit model for fold $fold_idx with $n_train_targets targets and $n_train_decoys decoys"
+        
+        # Get training data
+        train_data = psms[train_mask, :]
+        train_targets_bool = train_data[!, :target]
+        
+        # Prepare chunks for training data
+        train_chunk_size = max(1, size(train_data, 1) ÷ (tasks_per_thread * Threads.nthreads()))
+        train_chunks = Iterators.partition(1:size(train_data, 1), train_chunk_size)
+        
+        # Initialize coefficients
+        β = zeros(Float64, length(available_features))
+        
+        # Fit probit model using existing ProbitRegression
+        β = Pioneer.ProbitRegression(
+            β, 
+            train_data[!, available_features], 
+            train_targets_bool, 
+            train_chunks, 
+            max_iter = 30
+        )
+        
+        # Predict probabilities on test set
+        test_data = psms[test_mask, :]
+        test_probs = zeros(Float32, size(test_data, 1))
+        
+        test_chunk_size = max(1, size(test_data, 1) ÷ (tasks_per_thread * Threads.nthreads()))
+        test_chunks = Iterators.partition(1:size(test_data, 1), test_chunk_size)
+        
+        # Use ModelPredictProbs! to get probabilities
+        Pioneer.ModelPredictProbs!(
+            test_probs,
+            test_data[!, available_features],
+            β,
+            test_chunks
+        )
+        
+        psms[test_mask, :prob] = test_probs
+    end
+    
+    # Step 5: Calculate q-values (same as XGBoost)
+    psms[!, :q_value] = Pioneer.getQvalues(
+        psms[!, :prob],
+        psms[!, :target],
+        1.0f0  # prior
+    )
+    
+    # Step 6: Select best PSM per precursor (same as XGBoost)
+    psms[!, :best_psm] = zeros(Bool, size(psms, 1))
+    gdf = DataFrames.groupby(psms, :precursor_idx)
+    for (key, group) in pairs(gdf)
+        if size(group, 1) > 0
+            best_idx = argmax(group[!, :prob])
+            group[best_idx, :best_psm] = true
+        end
+    end
+    
+    @info "Probit regression scoring complete. Best PSMs: $(sum(psms[!, :best_psm]))"
+    
+    return nothing
+end
+
 function score_precursor_isotope_traces_in_memory!(
     best_psms::DataFrame,
     file_paths::Vector{String},
@@ -324,6 +464,19 @@ function score_precursor_isotope_traces_in_memory!(
         best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
         best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
         best_psms[!,:decoy] = best_psms[!,:target].==false;
+        
+        # OPTION 1: Probit regression (SIMPLE, NO ITERATIVE REFINEMENT)
+        # @info "Using probit regression for small dataset (<100k PSMs)"
+        # probit_regression_scoring_cv!(
+        #     best_psms,
+        #     file_paths,
+        #     features,
+        #     match_between_runs;
+        #     n_folds = 3
+        # )
+        # models = nothing  # Probit doesn't return models
+        
+        # OPTION 2: XGBoost/EvoTrees (WITH ITERATIVE REFINEMENT)
         #see src/utils/ML/percolatorSortOf.jl
         #Train EvoTrees/XGBoost model to score each precursor trace. Target-decoy descrimination
         @warn "TEST TEST TEST XGboost"
@@ -344,6 +497,7 @@ function score_precursor_isotope_traces_in_memory!(
                                 eta = 0.1,
                                 iter_scheme = [300],
                                 print_importance = true);
+        
         return models
     end
 end
