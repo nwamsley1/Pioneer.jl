@@ -313,24 +313,8 @@ function probit_regression_scoring_cv!(
         psms[test_mask, :prob] = test_probs
     end
     
-    # Step 5: Calculate q-values (same as XGBoost)
-    psms[!, :q_value] = Pioneer.getQvalues(
-        psms[!, :prob],
-        psms[!, :target],
-        1.0f0  # prior
-    )
-    
-    # Step 6: Select best PSM per precursor (same as XGBoost)
-    psms[!, :best_psm] = zeros(Bool, size(psms, 1))
-    gdf = DataFrames.groupby(psms, :precursor_idx)
-    for (key, group) in pairs(gdf)
-        if size(group, 1) > 0
-            best_idx = argmax(group[!, :prob])
-            group[best_idx, :best_psm] = true
-        end
-    end
-    
-    @info "Probit regression scoring complete. Best PSMs: $(sum(psms[!, :best_psm]))"
+    # Match XGBoost behavior - just fill in prob column, no q-values or best_psm selection
+    @info "Probit regression scoring complete. Probabilities assigned to $(size(psms, 1)) PSMs"
     
     return nothing
 end
