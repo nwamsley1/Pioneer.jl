@@ -886,13 +886,13 @@ function generate_mass_error_plot(
 end
 
 """
-    generate_fallback_rt_plot(results, plot_path, fname, search_context, ms_file_idx)
+    generate_fallback_rt_plot_in_memory(results, fname, search_context, ms_file_idx)
 
 Generates a diagnostic RT plot when no data is available (fallback/borrowed parameters).
+Returns the plot object without saving to disk.
 """
-function generate_fallback_rt_plot(
+function generate_fallback_rt_plot_in_memory(
     results::ParameterTuningSearchResults,
-    plot_path::String,
     fname::String,
     search_context::SearchContext,
     ms_file_idx::Int64
@@ -927,18 +927,17 @@ function generate_fallback_rt_plot(
                         "Using conservative parameters", 
                         :center, 10))
     
-    savefig(p, plot_path)
     return p  # Return plot for collection
 end
 
 """
-    generate_fallback_mass_error_plot(results, plot_path, fname, search_context, ms_file_idx)
+    generate_fallback_mass_error_plot_in_memory(results, fname, search_context, ms_file_idx)
 
 Generates a diagnostic mass error plot when no data is available (fallback/borrowed parameters).
+Returns the plot object without saving to disk.
 """
-function generate_fallback_mass_error_plot(
+function generate_fallback_mass_error_plot_in_memory(
     results::ParameterTuningSearchResults,
-    plot_path::String,
     fname::String,
     search_context::SearchContext,
     ms_file_idx::Int64
@@ -971,8 +970,32 @@ function generate_fallback_mass_error_plot(
                         "Tolerance: ±$(round((left_tol+right_tol)/2, digits=1)) ppm",
                         :center, 10))
     
-    savefig(p, plot_path)
     return p  # Return plot for collection
+end
+
+# Legacy functions that save to disk (kept for backward compatibility)
+function generate_fallback_rt_plot(
+    results::ParameterTuningSearchResults,
+    plot_path::String,
+    fname::String,
+    search_context::SearchContext,
+    ms_file_idx::Int64
+)
+    p = generate_fallback_rt_plot_in_memory(results, fname, search_context, ms_file_idx)
+    savefig(p, plot_path)
+    return p
+end
+
+function generate_fallback_mass_error_plot(
+    results::ParameterTuningSearchResults,
+    plot_path::String,
+    fname::String,
+    search_context::SearchContext,
+    ms_file_idx::Int64
+)
+    p = generate_fallback_mass_error_plot_in_memory(results, fname, search_context, ms_file_idx)
+    savefig(p, plot_path)
+    return p
 end
 
 function generate_ms1_mass_error_plot(
