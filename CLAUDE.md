@@ -351,9 +351,34 @@ See `test/entrapment_analyses/PROTEIN_ANALYSIS_WORKFLOW.md` for detailed documen
 ## Memories
 - remember me as memory update
 
-## Current Development: SearchMethods Refactoring (2025-01)
+## Current Development: ParameterTuningSearch Improvements (2025-01)
 
-### Overview
+### Major ParameterTuningSearch Enhancements
+Successfully merged 358 commits from main branch while preserving 81 commits of improvements to ParameterTuningSearch:
+
+#### Key Improvements
+1. **3-Phase Convergence Algorithm**: Robust parameter tuning that tests zero bias, positive shift, and negative shift phases
+2. **Scan Scaling**: Dynamic scan count adjustment when insufficient PSMs are found
+3. **Cross-Run Learning**: Parameters learned from successful files applied to challenging ones
+4. **Comprehensive Diagnostics**: Detailed tracking of convergence status and fallback reasons
+5. **PDF Generation**: Matches main branch behavior - plots stored in memory, combined PDFs only
+
+#### Fixed Critical Bugs
+- **Protein Scoring Issue**: Fixed logodds function receiving log-sum scores instead of probabilities
+  - When probit regression is skipped, now converts: `p = 1 - exp(-pg_score)`
+  - Proper clamping to avoid numerical issues
+- **RT Bin Indexing**: Ensured 1-based indexing throughout
+- **ArrowTableReference Length**: Fixed method call compatibility
+
+#### Implementation Details
+- `ParameterTuningSearchResults` struct now includes `rt_plots` and `mass_plots` arrays
+- No individual PDF files created - only combined PDFs at end
+- Fallback plot functions generate in-memory Plot objects
+- Uses `save_multipage_pdf` from `pdfUtils.jl` for combined PDF generation
+
+### SearchMethods Refactoring (2025-01)
+
+#### Overview
 Refactoring ScoringSearch and MaxLFQSearch to improve encapsulation using file references instead of direct file access. See REFACTORING_PLAN_V2.md for detailed plan.
 
 ### Completed Work
