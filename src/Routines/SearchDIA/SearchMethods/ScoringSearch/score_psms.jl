@@ -341,7 +341,7 @@ function score_precursor_isotope_traces_in_memory!(
                                 gamma = 0.1,
                                 subsample = 0.8, 
                                 max_depth = 4,
-                                eta = 0.05,
+                                eta = 0.1,
                                 iter_scheme = [300],
                                 print_importance = true);
         return models
