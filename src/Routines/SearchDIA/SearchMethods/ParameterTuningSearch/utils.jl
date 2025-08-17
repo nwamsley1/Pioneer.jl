@@ -928,6 +928,7 @@ function generate_fallback_rt_plot(
                         :center, 10))
     
     savefig(p, plot_path)
+    return p  # Return plot for collection
 end
 
 """
@@ -971,6 +972,7 @@ function generate_fallback_mass_error_plot(
                         :center, 10))
     
     savefig(p, plot_path)
+    return p  # Return plot for collection
 end
 
 function generate_ms1_mass_error_plot(

@@ -218,6 +218,8 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
         Vector{Float32}(),
         Vector{Float32}(),
         Vector{Float32}(),
+        Plots.Plot[],  # rt_plots
+        Plots.Plot[],  # mass_plots
         qc_dir,
         ParameterTuningDiagnostics(),
         ParameterHistory()
@@ -819,7 +821,7 @@ function process_file!(
    # @info "manual set mass err model . "
     setMassErrorModel!(search_context, ms_file_idx, 
     MassErrorModel(getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
-    (5.0f0, 5.0f0)))
+    (10.0f0, 10.0f0)))
     return results
 end
 
@@ -846,11 +848,15 @@ function process_search_results!(
         @info "Generating RT plot for $parsed_fname: RT points = $(length(results.rt)), iRT points = $(length(results.irt))"
         if length(results.rt) > 0
             rt_plot = generate_rt_plot(results, parsed_fname)
-            savefig(rt_plot, rt_plot_path)
+            savefig(rt_plot, rt_plot_path)  # Save individual file
+            push!(results.rt_plots, rt_plot)  # Store for combined PDF
             @info "Generated normal RT plot"
         else
             # Create a diagnostic plot showing fallback/borrowed status
-            generate_fallback_rt_plot(results, rt_plot_path, parsed_fname, search_context, ms_file_idx)
+            fallback_plot = generate_fallback_rt_plot(results, rt_plot_path, parsed_fname, search_context, ms_file_idx)
+            if fallback_plot !== nothing
+                push!(results.rt_plots, fallback_plot)  # Store for combined PDF
+            end
             @info "Generated fallback RT plot"
         end
         
@@ -859,11 +865,15 @@ function process_search_results!(
         @info "Generating mass error plot for $parsed_fname: PPM errors = $(length(results.ppm_errs))"
         if length(results.ppm_errs) > 0
             mass_plot = generate_mass_error_plot(results, parsed_fname)
-            savefig(mass_plot, mass_plot_path)
+            savefig(mass_plot, mass_plot_path)  # Save individual file
+            push!(results.mass_plots, mass_plot)  # Store for combined PDF
             @info "Generated normal mass error plot"
         else
             # Create a diagnostic plot showing fallback/borrowed status
-            generate_fallback_mass_error_plot(results, mass_plot_path, parsed_fname, search_context, ms_file_idx)
+            fallback_plot = generate_fallback_mass_error_plot(results, mass_plot_path, parsed_fname, search_context, ms_file_idx)
+            if fallback_plot !== nothing
+                push!(results.mass_plots, fallback_plot)  # Store for combined PDF
+            end
             @info "Generated fallback mass error plot"
         end
         
@@ -898,49 +908,45 @@ end
 Summarize results across all MS files.
 """
 function summarize_results!(results::ParameterTuningSearchResults, params::P, search_context::SearchContext) where {P<:ParameterTuningSearchParameters}
-    # Combine individual plots into merged PDFs
+    # Combine individual plots into merged PDFs using save_multipage_pdf
+    @info "Writing combined QC plots..."
+    
     try
         rt_plots_folder = getRtAlignPlotFolder(search_context)
         mass_error_plots_folder = getMassErrPlotFolder(search_context)
         
-        # Merge RT alignment plots into their subdirectory
-        rt_merged_path = joinpath(rt_plots_folder, "rt_alignment_combined.pdf")
-        rt_pdf_files = filter(f -> endswith(f, ".pdf"), readdir(rt_plots_folder, join=true))
-        # Filter out any existing combined file to avoid including it in merge
-        rt_pdf_files = filter(f -> !endswith(f, "_combined.pdf"), rt_pdf_files)
-        if !isempty(rt_pdf_files)
+        # Create combined RT alignment PDF from collected plots
+        if !isempty(results.rt_plots)
+            rt_combined_path = joinpath(rt_plots_folder, "rt_alignment_combined.pdf")
             try
-                # Try to use merge_pdfs first (preferred for existing PDFs)
-                merge_pdfs(rt_pdf_files, rt_merged_path)
-                @info "Merged $(length(rt_pdf_files)) RT alignment plots to $rt_merged_path"
+                if isfile(rt_combined_path)
+                    safeRm(rt_combined_path, nothing)
+                end
             catch e
-                @warn "merge_pdfs failed, falling back to save_multipage_pdf" exception=e
-                # Fallback: load plots and use save_multipage_pdf
-                # This would require loading the PDFs as Plot objects which is not straightforward
-                # So we'll just log the issue for now
-                @warn "Could not merge RT plots - individual files remain available"
+                @warn "Could not clear existing combined RT file: $e"
             end
+            save_multipage_pdf(results.rt_plots, rt_combined_path)
+            @info "Created combined RT alignment PDF with $(length(results.rt_plots)) plots: $rt_combined_path"
+            empty!(results.rt_plots)  # Clear to free memory
         else
-            @info "No RT alignment plots to merge"
+            @info "No RT alignment plots to combine"
         end
         
-        # Merge mass error plots into their subdirectory
-        mass_merged_path = joinpath(mass_error_plots_folder, "mass_error_combined.pdf")
-        mass_pdf_files = filter(f -> endswith(f, ".pdf"), readdir(mass_error_plots_folder, join=true))
-        # Filter out any existing combined file to avoid including it in merge
-        mass_pdf_files = filter(f -> !endswith(f, "_combined.pdf"), mass_pdf_files)
-        if !isempty(mass_pdf_files)
+        # Create combined mass error PDF from collected plots
+        if !isempty(results.mass_plots)
+            mass_combined_path = joinpath(mass_error_plots_folder, "mass_error_combined.pdf")
             try
-                # Try to use merge_pdfs first (preferred for existing PDFs)
-                merge_pdfs(mass_pdf_files, mass_merged_path)
-                @info "Merged $(length(mass_pdf_files)) mass error plots to $mass_merged_path"
+                if isfile(mass_combined_path)
+                    safeRm(mass_combined_path, nothing)
+                end
             catch e
-                @warn "merge_pdfs failed, falling back to individual files" exception=e
-                # Fallback: individual files remain available
-                @warn "Could not merge mass error plots - individual files remain available"
+                @warn "Could not clear existing combined mass error file: $e"
             end
+            save_multipage_pdf(results.mass_plots, mass_combined_path)
+            @info "Created combined mass error PDF with $(length(results.mass_plots)) plots: $mass_combined_path"
+            empty!(results.mass_plots)  # Clear to free memory
         else
-            @info "No mass error plots to merge"
+            @info "No mass error plots to combine"
         end
         
         # Generate summary report
