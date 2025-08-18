@@ -245,19 +245,9 @@ function summarize_results!(
         second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
         # Step 2: Compute precursor probabilities and FTR filtering
+        # Step 2: Compute precursor probabilities and FTR filtering
         @info "Step 2: Computing precursor probabilities..."
         step2_time = @elapsed begin
-            # Debug: Check files BEFORE merging
-            @info "Step 2 Debug: Checking files BEFORE merge"
-            for (i, ref) in enumerate(second_pass_refs)
-                df_check = DataFrame(Arrow.Table(file_path(ref)))
-                if nrow(df_check) > 0 && :prob in names(df_check)
-                    @info "  File $i before merge: $(nrow(df_check)) rows, prob range: $(minimum(df_check.prob)) to $(maximum(df_check.prob))"
-                else
-                    @info "  File $i before merge: $(nrow(df_check)) rows, prob column exists: $(:prob in names(df_check))"
-                end
-            end
-            
             # Merge all second pass PSMs for experiment-wide calculations
             merged_scores_path = joinpath(temp_folder, "merged_trace_scores.arrow")
             sort_file_by_keys!(second_pass_refs, :prob, :target; reverse=[true, true])
@@ -265,14 +255,6 @@ function summarize_results!(
                                reverse=[true, true])
 
             merged_df = DataFrame(Arrow.Table(merged_scores_path))
-            
-            # Debug: Check merged DataFrame
-            @info "Step 2 Debug: Merged DF has $(nrow(merged_df)) rows"
-            @info "  Columns: $(names(merged_df))"
-            if nrow(merged_df) > 0
-                @info "  prob range: $(minimum(merged_df.prob)) to $(maximum(merged_df.prob))"
-            end
-            
             sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
 
             if params.match_between_runs
@@ -283,43 +265,15 @@ function summarize_results!(
             else
                 prob_col = :prob
             end
-
-            # Debug: Check what's being grouped
-            @info "Step 2 Debug: About to aggregate probabilities"
-            @info "  prob_col = $prob_col"
-            grouped = groupby(merged_df, [:precursor_idx, :ms_file_idx])
-            @info "  Number of groups: $(length(grouped))"
-            
-            # Check a few groups to see what's in them
-            for (i, group) in enumerate(grouped)
-                if i <= 3  # Just check first 3 groups
-                    @info "  Group $i: $(nrow(group)) rows, prob values: $(group[!, prob_col])"
-                end
-                if i > 3
-                    break
-                end
-            end
-            
             transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                        prob_col => (p -> begin
-                           max_val = Float32(maximum(p))
-                           if max_val == 0.0f0
-                               @warn "  Found group with max prob = 0.0, input values: $p"
-                           end
-                           max_val
-                       end) => :prec_prob)
-            
-            #= Original aggregation formula that doesn't work well with probit probabilities:
-            transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                       prob_col => (p -> begin
-                           prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))
-                           prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                           #prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))
+                           #prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                           prob = maximum(p)
                            Float32(prob)
                        end) => :prec_prob)
-            =#
             transform!(groupby(merged_df, :precursor_idx),
                        :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
-
             # Write updated data back to individual files
             for (idx, ref) in enumerate(second_pass_refs)
                 sub_df = merged_df[merged_df.ms_file_idx .== idx, :]
@@ -352,8 +306,9 @@ function summarize_results!(
                 sort_by([:global_prob, :target], rev=[true, true])
             
             apply_pipeline!(second_pass_refs, quant_processing_pipeline)
-            
             filtered_refs = second_pass_refs
+            
+            file_paths = [file_path(ref) for ref in second_pass_refs]
         end
         @info "Step 4 completed in $(round(step4_time, digits=2)) seconds"
 
