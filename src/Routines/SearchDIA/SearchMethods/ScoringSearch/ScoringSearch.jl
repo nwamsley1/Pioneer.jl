@@ -275,8 +275,17 @@ function summarize_results!(
 
             transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                        prob_col => (p -> begin
-                           prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))
-                           prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                           # Debug: Check what we're aggregating
+                           if length(p) == 1
+                               # Single trace - just use the probability directly
+                               prob = Float32(p[1])
+                           else
+                               # Multiple traces - use aggregation formula
+                               # But first clamp inputs to safe range
+                               p_safe = clamp.(p, 1e-6, 0.9999f0)
+                               prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p_safe)))
+                               prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                           end
                            Float32(prob)
                        end) => :prec_prob)
             transform!(groupby(merged_df, :precursor_idx),
