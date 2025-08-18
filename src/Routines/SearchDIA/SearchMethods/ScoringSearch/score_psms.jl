@@ -328,8 +328,9 @@ function probit_regression_scoring_cv!(
     
     # Ensure values are in valid range but avoid values too close to 0 or 1
     # The downstream aggregation formula breaks with probabilities > 0.999999
-    # Use conservative clamping to match what XGBoost effectively produces
-    psms.prob = clamp.(psms.prob, 1e-6, 0.999999f0)
+    # Use more conservative clamping to ensure we stay below the threshold
+    # Force Float32 to ensure proper clamping
+    psms.prob = Float32.(clamp.(psms.prob, Float32(1e-6), Float32(0.9999)))
     
     # Clean up columns added during probit regression that shouldn't be persisted
     if :intercept in propertynames(psms)
@@ -339,8 +340,11 @@ function probit_regression_scoring_cv!(
         select!(psms, Not(:cv_fold))
     end
     
+    # Debug: Verify clamping worked
+    @info "After clamping: prob range = $(minimum(psms.prob)) to $(maximum(psms.prob))"
+    
     Arrow.write("/Users/nathanwamsley/Desktop/test_arrow_psms.arrow", psms)
-    @info "Probit regression scoring complete. Probabilities assigned to $(size(psms, 1)) PSMs (range: $(minimum(psms.prob)) to $(maximum(psms.prob)))"
+    @info "Probit regression scoring complete. Probabilities assigned to $(size(psms, 1)) PSMs"
     
     return nothing
 end
