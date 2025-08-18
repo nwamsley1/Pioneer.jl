@@ -237,8 +237,9 @@ function probit_regression_scoring_cv!(
         psms[fold_mask, :cv_fold] .= UInt8(fold_idx)
     end
     
-    # Step 2: Initialize score columns
-    psms[!, :prob] = zeros(Float32, size(psms, 1))
+    # Step 2: Initialize probability array (like XGBoost does)
+    # Use a separate array instead of directly modifying DataFrame
+    prob_estimates = zeros(Float32, size(psms, 1))
     
     # Step 3: Use the exact features passed in (already filtered by the caller)
     # Add intercept column if not present
@@ -312,10 +313,21 @@ function probit_regression_scoring_cv!(
             test_chunks
         )
         
-        psms[test_mask, :prob] = test_probs
+        prob_estimates[test_mask] = test_probs
     end
     
-    # Match XGBoost behavior - just fill in prob column, no q-values or best_psm selection
+    # Step 5: Assign probabilities to DataFrame (like XGBoost does at line 105 of percolatorSortOf.jl)
+    psms[!, :prob] = prob_estimates
+    
+    # If MBR is enabled, create MBR columns (probit doesn't do separate MBR scoring)
+    # This is needed for compatibility with apply_mbr_filter! in ScoringSearch
+    if match_between_runs
+        psms[!, :MBR_prob] = copy(prob_estimates)
+        # MBR_is_best_decoy is required by apply_mbr_filter! 
+        # For probit, we don't have MBR transfer info, so set conservatively
+        psms[!, :MBR_is_best_decoy] = fill(missing, size(psms, 1))  # missing means not an MBR transfer
+        @info "Created MBR columns for compatibility (MBR_prob same as prob for probit)"
+    end
     
     # Ensure prob column has proper type and no NaN/Inf values
     # Check for any NaN or Inf values and replace them
@@ -501,6 +513,9 @@ function score_precursor_isotope_traces_in_memory!(
         # Debug: Check prob values BEFORE dropVectorColumns
         @info "Probit: BEFORE dropVectorColumns - prob range: $(minimum(best_psms.prob)) to $(maximum(best_psms.prob))"
         @info "  DataFrame has $(nrow(best_psms)) rows, $(ncol(best_psms)) columns"
+        if match_between_runs
+            @info "  MBR_prob exists: $(:MBR_prob in names(best_psms)), MBR_is_best_decoy exists: $(:MBR_is_best_decoy in names(best_psms))"
+        end
         
         # Write the scored PSMs back to their original files, just like XGBoost does
         # CRITICAL: Drop vector columns before writing to avoid Arrow serialization issues
@@ -509,7 +524,10 @@ function score_precursor_isotope_traces_in_memory!(
         # Debug: Check prob values AFTER dropVectorColumns
         @info "Probit: AFTER dropVectorColumns - prob range: $(minimum(best_psms.prob)) to $(maximum(best_psms.prob))"
         @info "  DataFrame has $(nrow(best_psms)) rows, $(ncol(best_psms)) columns"
-        @info "  Columns removed by dropVectorColumns: check if 'prob' still exists: $(:prob in names(best_psms))"
+        @info "  Columns: prob=$(:prob in names(best_psms)), decoy=$(:decoy in names(best_psms))"
+        if match_between_runs
+            @info "  MBR columns after drop: MBR_prob=$(:MBR_prob in names(best_psms)), MBR_is_best_decoy=$(:MBR_is_best_decoy in names(best_psms))"
+        end
         
         for (ms_file_idx, gpsms) in pairs(groupby(best_psms, :ms_file_idx))
             # Debug: Check each group before writing
@@ -524,6 +542,9 @@ function score_precursor_isotope_traces_in_memory!(
         for (i, fpath) in enumerate(file_paths)
             df_check = DataFrame(Arrow.Table(fpath))
             @info "  File $i after write: $(nrow(df_check)) rows, prob range: $(minimum(df_check.prob)) to $(maximum(df_check.prob))"
+            if match_between_runs && :MBR_prob in names(df_check)
+                @info "    MBR_prob range: $(minimum(df_check.MBR_prob)) to $(maximum(df_check.MBR_prob))"
+            end
             @info "    Columns in file: $(names(df_check)[1:min(10, length(names(df_check)))])..."
         end
         
@@ -536,6 +557,7 @@ function score_precursor_isotope_traces_in_memory!(
         @warn "TEST TEST TEST XGboost"
         models = sort_of_percolator_in_memory!(
                                 best_psms, 
+
                                 file_paths,
                                 features,
                                 match_between_runs;
@@ -552,7 +574,7 @@ function score_precursor_isotope_traces_in_memory!(
                                 iter_scheme = [300],
                                 print_importance = true);
         =#
-        return models
+        return models;
     end
 end
 
