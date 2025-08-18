@@ -326,10 +326,10 @@ function probit_regression_scoring_cv!(
         psms.prob[isnan.(psms.prob) .| isinf.(psms.prob)] .= 0.5f0
     end
     
-    # Ensure values are in valid range [0,1] but avoid exact 0 and 1
-    # XGBoost/EvoTrees never produces exact 0 or 1, so match that behavior
-    # This is important for downstream log operations
-    psms.prob = clamp.(psms.prob, eps(Float32), 1.0f0 - eps(Float32))
+    # Ensure values are in valid range but avoid values too close to 0 or 1
+    # The downstream aggregation formula breaks with probabilities > 0.999999
+    # Use conservative clamping to match what XGBoost effectively produces
+    psms.prob = clamp.(psms.prob, 1e-6, 0.999999f0)
     
     # Clean up columns added during probit regression that shouldn't be persisted
     if :intercept in propertynames(psms)
