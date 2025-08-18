@@ -498,20 +498,33 @@ function score_precursor_isotope_traces_in_memory!(
              n_folds = 3
         )
         
+        # Debug: Check prob values BEFORE dropVectorColumns
+        @info "Probit: BEFORE dropVectorColumns - prob range: $(minimum(best_psms.prob)) to $(maximum(best_psms.prob))"
+        @info "  DataFrame has $(nrow(best_psms)) rows, $(ncol(best_psms)) columns"
+        
         # Write the scored PSMs back to their original files, just like XGBoost does
         # CRITICAL: Drop vector columns before writing to avoid Arrow serialization issues
         dropVectorColumns!(best_psms)
         
+        # Debug: Check prob values AFTER dropVectorColumns
+        @info "Probit: AFTER dropVectorColumns - prob range: $(minimum(best_psms.prob)) to $(maximum(best_psms.prob))"
+        @info "  DataFrame has $(nrow(best_psms)) rows, $(ncol(best_psms)) columns"
+        @info "  Columns removed by dropVectorColumns: check if 'prob' still exists: $(:prob in names(best_psms))"
+        
         for (ms_file_idx, gpsms) in pairs(groupby(best_psms, :ms_file_idx))
+            # Debug: Check each group before writing
+            @info "  Writing group $ms_file_idx: $(nrow(gpsms)) rows, prob range: $(minimum(gpsms.prob)) to $(maximum(gpsms.prob))"
+            
             fpath = file_paths[ms_file_idx[:ms_file_idx]]
             writeArrow(fpath, gpsms)
         end
         
         # Debug: Check what was written to files
-        @info "Probit: Written PSMs to files" n_files=length(file_paths)
+        @info "Probit: Verifying written files"
         for (i, fpath) in enumerate(file_paths)
             df_check = DataFrame(Arrow.Table(fpath))
-            @info "  File $i: $(nrow(df_check)) rows, prob range: $(minimum(df_check.prob)) to $(maximum(df_check.prob))"
+            @info "  File $i after write: $(nrow(df_check)) rows, prob range: $(minimum(df_check.prob)) to $(maximum(df_check.prob))"
+            @info "    Columns in file: $(names(df_check)[1:min(10, length(names(df_check)))])..."
         end
         
         models = nothing  # Probit doesn't return models
