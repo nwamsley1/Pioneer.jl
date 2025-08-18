@@ -247,6 +247,17 @@ function summarize_results!(
         # Step 2: Compute precursor probabilities and FTR filtering
         @info "Step 2: Computing precursor probabilities..."
         step2_time = @elapsed begin
+            # Debug: Check files BEFORE merging
+            @info "Step 2 Debug: Checking files BEFORE merge"
+            for (i, ref) in enumerate(second_pass_refs)
+                df_check = DataFrame(Arrow.Table(file_path(ref)))
+                if nrow(df_check) > 0 && :prob in names(df_check)
+                    @info "  File $i before merge: $(nrow(df_check)) rows, prob range: $(minimum(df_check.prob)) to $(maximum(df_check.prob))"
+                else
+                    @info "  File $i before merge: $(nrow(df_check)) rows, prob column exists: $(:prob in names(df_check))"
+                end
+            end
+            
             # Merge all second pass PSMs for experiment-wide calculations
             merged_scores_path = joinpath(temp_folder, "merged_trace_scores.arrow")
             sort_file_by_keys!(second_pass_refs, :prob, :target; reverse=[true, true])
@@ -273,8 +284,30 @@ function summarize_results!(
                 prob_col = :prob
             end
 
+            # Debug: Check what's being grouped
+            @info "Step 2 Debug: About to aggregate probabilities"
+            @info "  prob_col = $prob_col"
+            grouped = groupby(merged_df, [:precursor_idx, :ms_file_idx])
+            @info "  Number of groups: $(length(grouped))"
+            
+            # Check a few groups to see what's in them
+            for (i, group) in enumerate(grouped)
+                if i <= 3  # Just check first 3 groups
+                    @info "  Group $i: $(nrow(group)) rows, prob values: $(group[!, prob_col])"
+                end
+                if i > 3
+                    break
+                end
+            end
+            
             transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                       prob_col => (p -> Float32(maximum(p))) => :prec_prob)
+                       prob_col => (p -> begin
+                           max_val = Float32(maximum(p))
+                           if max_val == 0.0f0
+                               @warn "  Found group with max prob = 0.0, input values: $p"
+                           end
+                           max_val
+                       end) => :prec_prob)
             
             #= Original aggregation formula that doesn't work well with probit probabilities:
             transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
