@@ -230,6 +230,8 @@ function probit_regression_scoring_cv!(
         error("Required column :ms_file_idx is missing from PSMs DataFrame")
     end
     
+    #Will need to determine this on the protien/accession_numbers level from the spectral library
+    #This is fine for testing atm. 
     for fold_idx in 1:n_folds
         fold_mask = (psms[!, ms_file_idx_col] .% n_folds) .== (fold_idx - 1)
         psms[fold_mask, :cv_fold] .= UInt8(fold_idx)
@@ -337,6 +339,7 @@ function probit_regression_scoring_cv!(
         select!(psms, Not(:cv_fold))
     end
     
+    Arrow.write("/Users/nathanwamsley/Desktop/test_arrow_psms.arrow", psms)
     @info "Probit regression scoring complete. Probabilities assigned to $(size(psms, 1)) PSMs (range: $(minimum(psms.prob)) to $(maximum(psms.prob)))"
     
     return nothing
@@ -498,6 +501,13 @@ function score_precursor_isotope_traces_in_memory!(
         for (ms_file_idx, gpsms) in pairs(groupby(best_psms, :ms_file_idx))
             fpath = file_paths[ms_file_idx[:ms_file_idx]]
             writeArrow(fpath, gpsms)
+        end
+        
+        # Debug: Check what was written to files
+        @info "Probit: Written PSMs to files" n_files=length(file_paths)
+        for (i, fpath) in enumerate(file_paths)
+            df_check = DataFrame(Arrow.Table(fpath))
+            @info "  File $i: $(nrow(df_check)) rows, prob range: $(minimum(df_check.prob)) to $(maximum(df_check.prob))"
         end
         
         models = nothing  # Probit doesn't return models

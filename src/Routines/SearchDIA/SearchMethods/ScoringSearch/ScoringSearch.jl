@@ -254,6 +254,14 @@ function summarize_results!(
                                reverse=[true, true])
 
             merged_df = DataFrame(Arrow.Table(merged_scores_path))
+            
+            # Debug: Check merged DataFrame
+            @info "Step 2 Debug: Merged DF has $(nrow(merged_df)) rows"
+            @info "  Columns: $(names(merged_df))"
+            if nrow(merged_df) > 0
+                @info "  prob range: $(minimum(merged_df.prob)) to $(maximum(merged_df.prob))"
+            end
+            
             sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
 
             if params.match_between_runs
@@ -346,6 +354,16 @@ function summarize_results!(
         # Step 9: Filter PSMs by q-value thresholds
         @info "Step 9: Filtering PSMs by q-value thresholds..."
         step9_time = @elapsed begin
+            # Debug: Check before q-value filtering
+            @info "Step 9 Debug: Before q-value filtering"
+            for (i, ref) in enumerate(filtered_refs)
+                df_check = DataFrame(Arrow.Table(file_path(ref)))
+                @info "  File $i: $(nrow(df_check)) rows"
+                if nrow(df_check) > 0 && :global_prob in names(df_check)
+                    @info "    global_prob range: $(minimum(df_check.global_prob)) to $(maximum(df_check.global_prob))"
+                end
+            end
+            
             qvalue_filter_pipeline = TransformPipeline() |>
                 add_interpolated_column(:global_qval, :global_prob, results.precursor_global_qval_interp[]) |>
                 add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
@@ -361,9 +379,24 @@ function summarize_results!(
                 qvalue_filter_pipeline,
                 passing_psms_folder
             )
+            
+            # Debug: Check after q-value filtering
+            @info "Step 9 Debug: After q-value filtering"
+            for (i, ref) in enumerate(passing_refs)
+                df_check = DataFrame(Arrow.Table(file_path(ref)))
+                @info "  Passing file $i: $(nrow(df_check)) rows"
+                if nrow(df_check) > 0
+                    if :global_qval in names(df_check) && :qval in names(df_check)
+                        @info "    global_qval range: $(minimum(df_check.global_qval)) to $(maximum(df_check.global_qval))"
+                        @info "    qval range: $(minimum(df_check.qval)) to $(maximum(df_check.qval))"
+                        n_passing = sum((df_check.global_qval .<= params.q_value_threshold) .& (df_check.qval .<= params.q_value_threshold))
+                        @info "    PSMs passing both filters (threshold=$(params.q_value_threshold)): $n_passing"
+                    end
+                end
+            end
         end
 
-        @info "Step 9 completed in $(round(step8_time, digits=2)) seconds"
+        @info "Step 9 completed in $(round(step9_time, digits=2)) seconds"
 
         @info "Step 10 Re-calculate Experiment-Wide Qvalue after filtering..."
         step10_time = @elapsed begin
@@ -394,6 +427,16 @@ function summarize_results!(
         # Step 11: Count protein peptides
         @info "Step 11: Counting protein peptides for feature calculation..."
         step11_time = @elapsed begin
+            # Debug: Verify passing PSMs before protein inference
+            @info "Step 11 Debug: Checking passing PSMs"
+            passing_psms_files = readdir(passing_psms_folder, join=true)
+            for fpath in passing_psms_files
+                if endswith(fpath, ".arrow")
+                    df_check = DataFrame(Arrow.Table(fpath))
+                    @info "  File $(basename(fpath)): $(nrow(df_check)) rows"
+                end
+            end
+            
             protein_to_possible_peptides = count_protein_peptides(
                 getPrecursors(getSpecLib(search_context))
             )
