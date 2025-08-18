@@ -274,30 +274,16 @@ function summarize_results!(
             end
 
             transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
+                       prob_col => (p -> Float32(maximum(p))) => :prec_prob)
+            
+            #= Original aggregation formula that doesn't work well with probit probabilities:
+            transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                        prob_col => (p -> begin
-                           if length(p) == 1
-                               # Single trace - use probability directly
-                               prob = Float32(p[1])
-                           else
-                               # Multiple traces - check if aggregation formula would work
-                               p_safe = clamp.(p, 1e-6, 0.999f0)
-                               
-                               # Check if any probability is too high for the formula
-                               if maximum(p) > 0.999
-                                   # Use geometric mean in probability space as fallback
-                                   # This is more stable for high probabilities
-                                   prob = Float32(prod(p_safe)^(1/length(p_safe)))
-                               else
-                                   # Safe to use original aggregation formula
-                                   prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p_safe)))
-                                   prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
-                               end
-                           end
-                           
-                           # Ensure result is in reasonable range for downstream logodds
-                           # This prevents the logodds function from clamping everything to 0.1
-                           prob = clamp(Float32(prob), 0.001f0, 0.999f0)
+                           prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))
+                           prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                           Float32(prob)
                        end) => :prec_prob)
+            =#
             transform!(groupby(merged_df, :precursor_idx),
                        :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
 
