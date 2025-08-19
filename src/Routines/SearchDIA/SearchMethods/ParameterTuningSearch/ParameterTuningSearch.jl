@@ -119,7 +119,7 @@ function update_best_attempt!(
     psm_count::Int64,
     mass_err_model::Union{Nothing, MassErrorModel},
     rt_model_data::Union{Nothing, Tuple},
-    ppm_errs::Union{Nothing, Vector{Float32}},
+    ppm_errs::Union{Nothing, Vector{Float64}},
     phase::Int64,
     score::UInt8,
     iteration::Int64,
@@ -926,7 +926,7 @@ function process_file!(
                                     iteration_state.best_rt_model)
             else
                 # If no RT model, use identity
-                setRtConversionModel!(search_context, ms_file_idx, IdentityModel())
+                setRtIrtMap!(search_context, IdentityModel(), ms_file_idx)
                 results.rt_to_irt_model[] = IdentityModel()
             end
             
@@ -956,7 +956,7 @@ function process_file!(
             )
             
             setMassErrorModel!(search_context, ms_file_idx, fallback_mass_err)
-            setRtConversionModel!(search_context, ms_file_idx, fallback_rt_model)
+            setRtIrtMap!(search_context, fallback_rt_model, ms_file_idx)
             
             # Update results with fallback
             results.mass_err_model[] = fallback_mass_err
