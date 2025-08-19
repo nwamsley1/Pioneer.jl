@@ -147,8 +147,20 @@ mutable struct IterationState
     current_scan_count::Int64        # Scan count for current attempt
     max_scan_count_reached::Bool     # Flag when we hit the maximum
     
+    # Best attempt tracking (for fallback when convergence fails)
+    best_psm_count::Int64
+    best_mass_error_model::Union{Nothing, MassErrorModel}
+    best_rt_model::Union{Nothing, Tuple{SplineRtConversionModel, Vector{Float32}, Vector{Float32}, Float32}}
+    best_ppm_errs::Union{Nothing, Vector{Float32}}
+    best_phase::Int64
+    best_score::UInt8
+    best_iteration::Int64
+    best_scan_count::Int64
+    
     function IterationState()
-        new(1, 0, 0, Float32[], false, 0.0f0, 1, 0, false)
+        new(1, 0, 0, Float32[], false, 0.0f0, 1, 0, false,
+            # Initialize best attempt tracking with defaults
+            0, nothing, nothing, nothing, 0, UInt8(0), 0, 0)
     end
 end
 
