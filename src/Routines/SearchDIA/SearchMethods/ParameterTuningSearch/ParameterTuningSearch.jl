@@ -107,6 +107,40 @@ function reset_for_new_phase!(search_context, ms_file_idx, params, phase::Int64,
            "with bias shift $(round(bias_shift, digits=1)) ppm"
 end
 
+"""
+    update_best_attempt!(iteration_state, psm_count, mass_err_model, rt_model_data, 
+                        ppm_errs, phase, score, iteration, scan_count)
+
+Update the best attempt tracking if the current attempt has more PSMs than the previous best.
+This allows us to use the best parameters as fallback when convergence fails.
+"""
+function update_best_attempt!(
+    iteration_state::IterationState,
+    psm_count::Int64,
+    mass_err_model::Union{Nothing, MassErrorModel},
+    rt_model_data::Union{Nothing, Tuple},
+    ppm_errs::Union{Nothing, Vector{Float32}},
+    phase::Int64,
+    score::UInt8,
+    iteration::Int64,
+    scan_count::Int64
+)
+    # Only update if we have more PSMs than the previous best and valid models
+    if psm_count > iteration_state.best_psm_count && mass_err_model !== nothing
+        iteration_state.best_psm_count = psm_count
+        iteration_state.best_mass_error_model = mass_err_model
+        iteration_state.best_rt_model = rt_model_data
+        iteration_state.best_ppm_errs = ppm_errs
+        iteration_state.best_phase = phase
+        iteration_state.best_score = score
+        iteration_state.best_iteration = iteration
+        iteration_state.best_scan_count = scan_count
+        
+        @info "    📊 New best attempt: $(psm_count) PSMs " *
+              "(Phase $phase, Score $score, Iteration $iteration)"
+    end
+end
+
 #==========================================================
 Results Access Methods
 ==========================================================#
@@ -440,20 +474,37 @@ end
 
 
 """
-    store_final_results!(results, search_context, params, ms_file_idx, converged, n_attempts, final_psm_count, warnings)
+    store_final_results!(results, search_context, params, ms_file_idx, converged, n_attempts, final_psm_count, warnings, iteration_state)
 
-Store tuning results and diagnostic information.
+Store tuning results and diagnostic information, including best attempt fallback status.
 """
 function store_final_results!(results, search_context, params, ms_file_idx, 
-                              converged, n_attempts, final_psm_count, warnings)
+                              converged, n_attempts, final_psm_count, warnings, iteration_state::IterationState)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     
+    # Determine convergence type
+    convergence_type = if converged
+        "CONVERGED"
+    elseif iteration_state.best_psm_count > 0
+        "BEST_ATTEMPT ($(iteration_state.best_psm_count) PSMs)"
+    else
+        "FAILED"
+    end
+    
     # Log final status
-    @info "Final data status for file $ms_file_idx:"
+    @info "Final parameter tuning status for file $ms_file_idx ($parsed_fname):"
+    @info "  - Status: $convergence_type"
     @info "  - RT points: $(length(results.rt))"
     @info "  - iRT points: $(length(results.irt))" 
     @info "  - PPM errors: $(length(results.ppm_errs))"
-    @info "  - Converged: $converged"
+    @info "  - Final PSM count: $final_psm_count"
+    
+    if !converged && iteration_state.best_psm_count > 0
+        @info "  - Best attempt: Phase $(iteration_state.best_phase), " *
+              "Score $(iteration_state.best_score), " *
+              "Iteration $(iteration_state.best_iteration), " *
+              "Scans: $(iteration_state.best_scan_count)"
+    end
     
     # Record tuning results
     tuning_result = TuningResults(
@@ -564,6 +615,18 @@ function run_single_phase(
         if mass_err_model !== nothing
             current_model = getMassErrorModel(search_context, ms_file_idx)
             iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
+            
+            # Track best attempt even if not converged
+            if psm_count > 0
+                # Fit RT model for best attempt tracking
+                rt_model_data = fit_irt_model(params, psms_initial)
+                
+                # Update best attempt
+                update_best_attempt!(
+                    iteration_state, psm_count, mass_err_model, rt_model_data, ppm_errs,
+                    phase, min_score, 0, iteration_state.current_scan_count
+                )
+            end
         end
         
         if mass_err_model !== nothing && check_and_store_convergence!(
@@ -640,6 +703,18 @@ function run_single_phase(
             # Update collection tolerance tracking
             current_model = getMassErrorModel(search_context, ms_file_idx)
             iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
+            
+            # Track best attempt after each iteration
+            if mass_err_model !== nothing && psm_count > 0
+                # Fit RT model for best attempt tracking
+                rt_model_data = fit_irt_model(params, psms_adjusted)
+                
+                # Update best attempt
+                update_best_attempt!(
+                    iteration_state, psm_count, mass_err_model, rt_model_data, ppm_errs,
+                    phase, min_score, iter, iteration_state.current_scan_count
+                )
+            end
             
             # Step 7: CHECK CONVERGENCE
             if check_and_store_convergence!(
@@ -835,23 +910,68 @@ function process_file!(
         @warn "Failed to converge for file $ms_file_idx after " *
               "$(iteration_state.scan_attempt) attempts"
         
-        # Apply fallback strategy
-        fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
-            search_context, params, ms_file_idx, warnings
-        )
-        
-        setMassErrorModel!(search_context, ms_file_idx, fallback_mass_err)
-        setRtConversionModel!(search_context, ms_file_idx, fallback_rt_model)
-        
-        # Update results with fallback
-        results.mass_err_model[] = fallback_mass_err
-        results.rt_to_irt_model[] = fallback_rt_model
+        # Check if we have a best attempt to use
+        if iteration_state.best_mass_error_model !== nothing
+            @info "Using best attempt as fallback: " *
+                  "$(iteration_state.best_psm_count) PSMs from " *
+                  "Phase $(iteration_state.best_phase), " *
+                  "Score $(iteration_state.best_score), " *
+                  "Iteration $(iteration_state.best_iteration)"
+            
+            # Apply best attempt models
+            setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+            
+            if iteration_state.best_rt_model !== nothing
+                set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
+                                    iteration_state.best_rt_model)
+            else
+                # If no RT model, use identity
+                setRtConversionModel!(search_context, ms_file_idx, IdentityModel())
+                results.rt_to_irt_model[] = IdentityModel()
+            end
+            
+            # Store best ppm errors for plotting
+            if iteration_state.best_ppm_errs !== nothing
+                resize!(results.ppm_errs, 0)
+                append!(results.ppm_errs, iteration_state.best_ppm_errs)
+            end
+            
+            # Update results with best attempt
+            results.mass_err_model[] = iteration_state.best_mass_error_model
+            
+            # Update warnings and final PSM count
+            push!(warnings, "BEST_ATTEMPT_FALLBACK: Used parameters from best attempt " *
+                           "($(iteration_state.best_psm_count) PSMs, " *
+                           "Phase $(iteration_state.best_phase), " *
+                           "Score $(iteration_state.best_score))")
+            
+            final_psm_count = iteration_state.best_psm_count
+            
+        else
+            # No valid attempts at all - use conservative defaults or borrow
+            @warn "No valid attempts found, using fallback strategy"
+            
+            fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
+                search_context, ms_file_idx, warnings
+            )
+            
+            setMassErrorModel!(search_context, ms_file_idx, fallback_mass_err)
+            setRtConversionModel!(search_context, ms_file_idx, fallback_rt_model)
+            
+            # Update results with fallback
+            results.mass_err_model[] = fallback_mass_err
+            results.rt_to_irt_model[] = fallback_rt_model
+            
+            if borrowed_from === nothing
+                push!(warnings, "CONSERVATIVE_FALLBACK: No valid attempts, used defaults")
+            end
+        end
     end
     
     # Record tuning status
     store_final_results!(
         results, search_context, params, ms_file_idx,
-        converged, iteration_state.scan_attempt, final_psm_count, warnings
+        converged, iteration_state.scan_attempt, final_psm_count, warnings, iteration_state
     )
     
     # Add to diagnostics
