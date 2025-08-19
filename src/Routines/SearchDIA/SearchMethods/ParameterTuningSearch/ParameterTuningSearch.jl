@@ -328,9 +328,10 @@ function check_and_store_convergence!(results, search_context, params, ms_file_i
     
     current_model = getMassErrorModel(search_context, ms_file_idx)
     
+    ppm_errs_count = ppm_errs !== nothing ? length(ppm_errs) : 0
     @warn "size(psms) = $(size(psms, 1)), " *
            "mass_err_model = $(mass_err_model), " *
-           "ppm_errs = $(length(ppm_errs))" *
+           "ppm_errs = $(ppm_errs_count)" *
            " min_psms = $(getMinPsms(params))"
     if !check_convergence(psms, mass_err_model, current_model, ppm_errs, getMinPsms(params))
         return false
@@ -515,120 +516,149 @@ function run_single_phase(
     iteration_state.current_phase = phase
     iteration_state.current_iteration_in_phase = 0
     
-    # Apply phase bias shift and reset tolerance
-    reset_for_new_phase!(search_context, ms_file_idx, params, phase, iteration_state)
-    
-    @info "-"^40
+    @info "="^50
     @info "Beginning Phase $phase of Attempt $(iteration_state.scan_attempt)"
-    @info "-"^40
+    @info "Phase bias shift: $(calculate_phase_bias_shift(phase, params)) ppm"
+    @info "="^50
     
-    # ========================================
-    # INITIAL ATTEMPT (before iteration loop)
-    # ========================================
+    # Get all score thresholds to try
+    score_thresholds = getMinIndexSearchScores(params)
     
-    @info "Initial attempt at base tolerance ($(settings.init_mass_tol_ppm) ppm)"
-    
-    # Collect PSMs at initial tolerance with phase bias
-    psms_initial, _ = collect_and_log_psms(
-        filtered_spectra, spectra, search_context, 
-        params, ms_file_idx, "initial attempt"
-    )
-    
-    # Fit models and check initial convergence
-    mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
-        psms_initial, spectra, search_context, params, ms_file_idx
-    )
-    
-    # Track collection tolerance
-    current_model = getMassErrorModel(search_context, ms_file_idx)
-    iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
-    
-    if check_and_store_convergence!(
-        results, search_context, params, ms_file_idx,
-        psms_initial, mass_err_model, ppm_errs,
-        "Initial attempt (Phase $phase)",
-        iteration_state, filtered_spectra, spectra
-    )
-        return true
-    end
-    
-    @info "Initial attempt did not converge, starting expand/adjust iterations"
-    
-    # ========================================
-    # ITERATION LOOP (expand → collect → adjust → collect cycles)
-    # ========================================
-    
-    for iter in 1:settings.iterations_per_phase
-        iteration_state.current_iteration_in_phase = iter
-        iteration_state.total_iterations += 1
+    # NEW: Score threshold loop INSIDE each phase
+    for (score_idx, min_score) in enumerate(score_thresholds)
+        @info ""
+        @info "  Phase $phase - Trying min_score = $min_score (threshold $score_idx of $(length(score_thresholds)))"
+        @info "  " * "-"^40
         
-        @info "\nIteration $iter of Phase $phase (Total: $(iteration_state.total_iterations))"
+        # Update current score threshold
+        setCurrentMinScore!(params, min_score)
         
-        # Step 1: EXPAND TOLERANCE
-        expand_mass_tolerance!(search_context, ms_file_idx, params, 
-                              settings.mass_tolerance_scale_factor)
-        current_tolerance = settings.init_mass_tol_ppm * 
-                          (settings.mass_tolerance_scale_factor ^ iter)
-        @info "  Step 1: Expanded tolerance to $(round(current_tolerance, digits=1)) ppm while bias is getMassOffset(getMassErrorModel(search_context, ms_file_idx)) $(getMassOffset(getMassErrorModel(search_context, ms_file_idx))) ppm"
+        # Apply phase bias shift and reset tolerance for this score
+        reset_for_new_phase!(search_context, ms_file_idx, params, phase, iteration_state)
+    
+        # ========================================
+        # INITIAL ATTEMPT (before iteration loop)
+        # ========================================
         
-        # Step 2: COLLECT PSMs with expanded tolerance (to determine bias)
-        psms_for_bias, _ = collect_and_log_psms(
-            filtered_spectra, spectra, search_context,
-            params, ms_file_idx, "with expanded tolerance for bias determination"
+        @info "    Initial attempt at base tolerance ($(settings.init_mass_tol_ppm) ppm) with min_score=$min_score"
+        
+        # Collect PSMs at initial tolerance with phase bias and current score
+        psms_initial, _ = collect_and_log_psms(
+            filtered_spectra, spectra, search_context, 
+            params, ms_file_idx, "initial attempt with min_score=$min_score"
         )
         
-        # Step 3: FIT MODEL to determine bias adjustment
-        mass_err_for_bias, _, _ = fit_models_from_psms(
-            psms_for_bias, spectra, search_context, params, ms_file_idx
+        # Fit models and check initial convergence
+        mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
+            psms_initial, spectra, search_context, params, ms_file_idx
         )
         
-        # Step 4: ADJUST BIAS based on fitted model
-        if mass_err_for_bias !== nothing
-            new_bias = getMassOffset(mass_err_for_bias)
-            current_model = getMassErrorModel(search_context, ms_file_idx)
-            old_bias = getMassOffset(current_model)
-            
-            # Update the bias while keeping the expanded tolerance
-            adjusted_model = MassErrorModel(
-                new_bias,
-                (getLeftTol(current_model), getRightTol(current_model))
-            )
-            setMassErrorModel!(search_context, ms_file_idx, adjusted_model)
-            
-            @info "  Step 4: Adjusted bias from $(round(old_bias, digits=2)) to $(round(new_bias, digits=2)) ppm"
+        # Only log MAD if we have ppm_errs
+        if ppm_errs !== nothing
+            @warn "    mass_err_model $mass_err_model, mad(ppm_errs) $(mad(ppm_errs)), min_score=$min_score"
         else
-            @info "  Step 4: Could not fit model for bias adjustment, keeping current bias"
+            @warn "    mass_err_model $mass_err_model, no ppm_errs available (psm_count: $psm_count), min_score=$min_score"
         end
         
-        # Step 5: COLLECT PSMs again with adjusted bias
-        psms_adjusted, _ = collect_and_log_psms(
-            filtered_spectra, spectra, search_context,
-            params, ms_file_idx, "with adjusted bias"
-        )
+        # Track collection tolerance if we have a model
+        if mass_err_model !== nothing
+            current_model = getMassErrorModel(search_context, ms_file_idx)
+            iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
+        end
         
-        # Step 6: FIT FINAL MODELS with bias-adjusted PSMs
-        mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
-            psms_adjusted, spectra, search_context, params, ms_file_idx
-        )
-        
-        # Update collection tolerance tracking
-        current_model = getMassErrorModel(search_context, ms_file_idx)
-        iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
-        
-        # Step 7: CHECK CONVERGENCE
-        if check_and_store_convergence!(
+        if mass_err_model !== nothing && check_and_store_convergence!(
             results, search_context, params, ms_file_idx,
-            psms_adjusted, mass_err_model, ppm_errs,
-            "Iteration $iter (Phase $phase)",
+            psms_initial, mass_err_model, ppm_errs,
+            "Initial attempt (Phase $phase, min_score=$min_score)",
             iteration_state, filtered_spectra, spectra
         )
+            @info "  ✓ Converged in Phase $phase with min_score=$min_score (initial tolerance)"
             return true
         end
         
-        @info "  Iteration $iter did not converge"
-    end
+        @info "    Initial attempt with min_score=$min_score did not converge, starting expand/adjust iterations"
+        
+        # ========================================
+        # ITERATION LOOP (expand → collect → adjust → collect cycles)
+        # ========================================
+        
+        for iter in 1:settings.iterations_per_phase
+            iteration_state.current_iteration_in_phase = iter
+            iteration_state.total_iterations += 1
+            
+            @info ""
+            @info "    Phase $phase, Score $min_score, Iteration $iter (Total: $(iteration_state.total_iterations))"
+            
+            # Step 1: EXPAND TOLERANCE
+            expand_mass_tolerance!(search_context, ms_file_idx, params, 
+                                  settings.mass_tolerance_scale_factor)
+            current_tolerance = settings.init_mass_tol_ppm * 
+                              (settings.mass_tolerance_scale_factor ^ iter)
+            current_model = getMassErrorModel(search_context, ms_file_idx)
+            @info "      Step 1: Expanded tolerance to $(round(current_tolerance, digits=1)) ppm while bias is $(getMassOffset(current_model)) ppm"
+            
+            # Step 2: COLLECT PSMs with expanded tolerance (to determine bias)
+            psms_for_bias, _ = collect_and_log_psms(
+                filtered_spectra, spectra, search_context,
+                params, ms_file_idx, "with expanded tolerance and min_score=$min_score"
+            )
+            
+            # Step 3: FIT MODEL to determine bias adjustment
+            mass_err_for_bias, _, _ = fit_models_from_psms(
+                psms_for_bias, spectra, search_context, params, ms_file_idx
+            )
+            
+            # Step 4: ADJUST BIAS based on fitted model
+            if mass_err_for_bias !== nothing
+                new_bias = getMassOffset(mass_err_for_bias)
+                current_model = getMassErrorModel(search_context, ms_file_idx)
+                old_bias = getMassOffset(current_model)
+                
+                # Update the bias while keeping the expanded tolerance
+                adjusted_model = MassErrorModel(
+                    new_bias,
+                    (getLeftTol(current_model), getRightTol(current_model))
+                )
+                setMassErrorModel!(search_context, ms_file_idx, adjusted_model)
+                
+                @info "      Step 4: Adjusted bias from $(round(old_bias, digits=2)) to $(round(new_bias, digits=2)) ppm"
+            else
+                @info "      Step 4: Could not fit model for bias adjustment, keeping current bias"
+            end
+            
+            # Step 5: COLLECT PSMs again with adjusted bias
+            psms_adjusted, _ = collect_and_log_psms(
+                filtered_spectra, spectra, search_context,
+                params, ms_file_idx, "with adjusted bias and min_score=$min_score"
+            )
+            
+            # Step 6: FIT FINAL MODELS with bias-adjusted PSMs
+            mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
+                psms_adjusted, spectra, search_context, params, ms_file_idx
+            )
+            
+            # Update collection tolerance tracking
+            current_model = getMassErrorModel(search_context, ms_file_idx)
+            iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
+            
+            # Step 7: CHECK CONVERGENCE
+            if check_and_store_convergence!(
+                results, search_context, params, ms_file_idx,
+                psms_adjusted, mass_err_model, ppm_errs,
+                "Phase $phase, Iteration $iter with min_score=$min_score",
+                iteration_state, filtered_spectra, spectra
+            )
+                @info "  ✓ Converged in Phase $phase with min_score=$min_score (iteration $iter)"
+                return true
+            end
+            
+            @info "      Iteration $iter with min_score=$min_score did not converge"
+        end
+        
+        @info "  Phase $phase with min_score=$min_score did not converge"
+    end  # End of score threshold loop
     
-    @info "Phase $phase completed without convergence"
+    @info "Phase $phase completed without convergence (tried all score thresholds)"
     return false
 end
 
@@ -774,18 +804,26 @@ function process_file!(
                 current_scan_count = next_scan_count
             end
         end
-        @info "manual set mass err model . "
-        setMassErrorModel!(search_context, ms_file_idx, 
-        MassErrorModel(getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
-        (7.0f0, 7.0f0)))
+        #@info "manual set mass err model . "
+        #setMassErrorModel!(search_context, ms_file_idx, 
+        #MassErrorModel(getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+        #(7.0f0, 7.0f0)))
         # Get final PSM count if converged
         if converged
             final_psm_count = size(results.rt, 1)  # Track from results
         end
         
-        @info "Completed $(iteration_state.total_iterations) total iterations " *
-               "across $(iteration_state.scan_attempt) attempt(s). " *
-               "Converged: $converged"
+        converged_score = converged ? getMinIndexSearchScore(params) : nothing
+        if converged
+            @info "Completed $(iteration_state.total_iterations) total iterations " *
+                   "across $(iteration_state.scan_attempt) attempt(s). " *
+                   "✓ CONVERGED with min_score=$converged_score"
+            push!(warnings, "Converged with min_score=$converged_score")
+        else
+            @info "Completed $(iteration_state.total_iterations) total iterations " *
+                   "across $(iteration_state.scan_attempt) attempt(s). " *
+                   "✗ Did not converge with any score threshold: $(getMinIndexSearchScores(params))"
+        end
         
     catch e
         @warn "Parameter tuning failed for file $parsed_fname with error" exception=e

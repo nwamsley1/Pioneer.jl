@@ -176,7 +176,7 @@ end
 Parameters for parameter tuning search.
 Configures fragment matching, RT alignment, and general search behavior.
 """
-struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
+mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
     # Core parameters from the original struct
     isotope_err_bounds::Tuple{UInt8, UInt8}
     min_fraction_transmitted::Float32
@@ -185,7 +185,8 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     min_psms::Int64
     max_q_val::Float32
     max_presearch_iters::Int64
-    min_index_search_score::UInt8
+    min_index_search_scores::Vector{UInt8}  # Now supports multiple score thresholds
+    current_min_score::UInt8  # Tracks the currently active score threshold
     min_frag_count::Int64
     min_spectral_contrast::Float32
     min_log2_matched_ratio::Float32
@@ -272,7 +273,24 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Int64(search_params.min_samples),
             max_q_value,  # Use extracted parameter-tuning-specific q-value
             Int64(search_params.max_presearch_iters),
-            UInt8(frag_params.min_score),
+            # Handle min_score as either single value or array
+            begin
+                min_score_raw = frag_params.min_score
+                if min_score_raw isa Vector
+                    Vector{UInt8}(min_score_raw)
+                else
+                    [UInt8(min_score_raw)]  # Convert single value to array
+                end
+            end,
+            # Initialize current_min_score to first value
+            begin
+                min_score_raw = frag_params.min_score
+                if min_score_raw isa Vector
+                    UInt8(first(min_score_raw))
+                else
+                    UInt8(min_score_raw)
+                end
+            end,
             Int64(frag_params.min_count),
             Float32(frag_params.min_spectral_contrast),
             Float32(frag_params.min_log2_ratio),
@@ -319,3 +337,10 @@ getFragTolPpm(params::ParameterTuningSearchParameters) = params.iteration_settin
 # This is for PSM filtering in LibrarySearch, not mass error estimation
 import Pioneer: getMaxBestRank
 getMaxBestRank(params::ParameterTuningSearchParameters) = UInt8(1)  # Default value for PSM filtering
+
+# New getters and setters for multi-score support
+getMinIndexSearchScores(params::ParameterTuningSearchParameters) = params.min_index_search_scores
+getMinIndexSearchScore(params::ParameterTuningSearchParameters) = params.current_min_score
+function setCurrentMinScore!(params::ParameterTuningSearchParameters, score::UInt8)
+    params.current_min_score = score
+end
