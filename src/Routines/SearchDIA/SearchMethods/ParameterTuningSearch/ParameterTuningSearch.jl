@@ -266,6 +266,7 @@ Helper Functions for Refactored process_file!
 
 """
 Collect PSMs from filtered spectra using library search.
+Returns tuple (psms::DataFrame, was_filtered::Bool) where was_filtered indicates if PSMs passed scoring/filtering.
 """
 function collect_psms(
     filtered_spectra::FilteredMassSpecData,
@@ -277,6 +278,7 @@ function collect_psms(
     
     # Perform library search on filtered data
     psms = library_search(filtered_spectra, search_context, params, ms_file_idx)
+    was_filtered = false
     
     if !iszero(size(psms, 1))
         # CRITICAL: Map filtered scan indices back to original
@@ -299,27 +301,40 @@ function collect_psms(
             getTICs(spectra)
         )
         
-        # Score and filter PSMs
-        filter_and_score_psms!(psms, params, search_context)
+        # Score and filter PSMs - check if filtering succeeded
+        n_filtered = filter_and_score_psms!(psms, params, search_context)
+        was_filtered = n_filtered != -1
         
-        # Clean up temporary column
-        if "filtered_scan_idx" in names(psms)
+        # If filtering failed, return empty DataFrame
+        if !was_filtered
+            psms = DataFrame()
+        end
+        
+        # Clean up temporary column if DataFrame not empty
+        if !isempty(psms) && "filtered_scan_idx" in names(psms)
             select!(psms, Not(:filtered_scan_idx))
         end
     end
     
-    return psms
+    return psms, was_filtered
 end
 
 """
     collect_and_log_psms(filtered_spectra, spectra, search_context, params, ms_file_idx, context_msg::String)
 
 Collect PSMs and log the count with context message.
+Returns (psms, psm_count) where psm_count is the number of filtered PSMs (0 if filtering failed).
 """
 function collect_and_log_psms(filtered_spectra, spectra, search_context, params, ms_file_idx, context_msg::String)
-    psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
+    psms, was_filtered = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
     psm_count = size(psms, 1)
-    @info "Collected $psm_count PSMs $context_msg"
+    
+    if was_filtered
+        @info "Collected $psm_count filtered PSMs $context_msg"
+    else
+        @info "Collected 0 filtered PSMs $context_msg (filtering failed)"
+    end
+    
     return psms, psm_count
 end
 
@@ -405,10 +420,14 @@ function check_and_store_convergence!(results, search_context, params, ms_file_i
         @info "Stored $(length(results.ppm_errs)) ppm errors for plotting"
     end
     
-    # Store RT model from final PSMs
-    rt_model_data = fit_irt_model(params, final_psms)
-    set_rt_to_irt_model!(results, search_context, params, ms_file_idx, rt_model_data)
-    @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points"
+    # Store RT model from final PSMs (should always have filtered PSMs at convergence)
+    if !isempty(final_psms)
+        rt_model_data = fit_irt_model(params, final_psms)
+        set_rt_to_irt_model!(results, search_context, params, ms_file_idx, rt_model_data)
+        @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points"
+    else
+        @warn "No PSMs available for RT model at convergence - this should not happen"
+    end
     
     return true
 end
@@ -617,11 +636,11 @@ function run_single_phase(
             iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
             
             # Track best attempt even if not converged
-            if psm_count > 0
-                # Fit RT model for best attempt tracking
+            if psm_count > 0 && !isempty(psms_initial)
+                # Fit RT model for best attempt tracking (only if we have filtered PSMs)
                 rt_model_data = fit_irt_model(params, psms_initial)
                 
-                # Update best attempt
+                # Update best attempt with filtered PSM count
                 update_best_attempt!(
                     iteration_state, psm_count, mass_err_model, rt_model_data, ppm_errs,
                     phase, min_score, 0, iteration_state.current_scan_count
@@ -705,11 +724,11 @@ function run_single_phase(
             iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
             
             # Track best attempt after each iteration
-            if mass_err_model !== nothing && psm_count > 0
-                # Fit RT model for best attempt tracking
+            if mass_err_model !== nothing && psm_count > 0 && !isempty(psms_adjusted)
+                # Fit RT model for best attempt tracking (only if we have filtered PSMs)
                 rt_model_data = fit_irt_model(params, psms_adjusted)
                 
-                # Update best attempt
+                # Update best attempt with filtered PSM count
                 update_best_attempt!(
                     iteration_state, psm_count, mass_err_model, rt_model_data, ppm_errs,
                     phase, min_score, iter, iteration_state.current_scan_count

@@ -112,10 +112,11 @@ Filters PSMs based on score and selects best matches per precursor.
 4. Selects best PSM per precursor based on probability score
 
 # Returns
-- Number of passing PSMs if above minimum threshold
-- -1 if insufficient PSMs pass threshold
+- Number of PSMs after all filtering (q-value, best per precursor, targets only) if successful
+- -1 if insufficient PSMs pass q-value threshold (DataFrame is NOT filtered in this case)
 
-Modifies psms DataFrame in place by filtering to best matches.
+Modifies psms DataFrame in place by filtering to best matches ONLY if successful.
+If returns -1, DataFrame contains scored but unfiltered PSMs.
 """
 function filter_and_score_psms!(
     psms::DataFrame,
@@ -142,10 +143,13 @@ function filter_and_score_psms!(
         end
         
         filter!(x -> x.best_psms::Bool, psms)
-        filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys. 
-        return n_passing_psms
+        filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys.
+        
+        # Return actual count after all filtering (not n_passing_psms which was pre-filtering)
+        return size(psms, 1)
     end
     
+    # Filtering failed - DataFrame remains with scored but unfiltered PSMs
     return -1
 end
 
