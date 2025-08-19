@@ -265,26 +265,20 @@ function summarize_results!(
             else
                 prob_col = :prob
             end
-            Arrow.write("/Users/nathanwamsley/Desktop/merged_scores_B1.arrow", merged_df)
             transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                        prob_col => (p -> begin
-                           #prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))
-                           #prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
-                           prob = maximum(p)
+                           prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))
+                           prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
                            Float32(prob)
                        end) => :prec_prob)
 
-            #transform!(groupby(merged_df, :precursor_idx),
-            #           :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
-
             transform!(groupby(merged_df, :precursor_idx),
-                       :prec_prob => (p -> maximum(p)) => :global_prob)           
+                       :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+                       
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
-            Arrow.write("/Users/nathanwamsley/Desktop/merged_scores_B2.arrow", merged_df)
             # Write updated data back to individual files
             for (idx, ref) in enumerate(second_pass_refs)
                 sub_df = merged_df[merged_df.ms_file_idx .== idx, :]
-                @warn "ref $(file_path(ref)) has $(nrow(sub_df)) rows"
                 write_arrow_file(ref, sub_df)
             end
         end
@@ -315,9 +309,6 @@ function summarize_results!(
             
             apply_pipeline!(second_pass_refs, quant_processing_pipeline)
             filtered_refs = second_pass_refs
-            
-            file_paths = [file_path(ref) for ref in second_pass_refs]
-            @warn "First file after quant processing: $(nrow(DataFrame(Arrow.Table(file_paths[1])))) rows file_path=$(file_paths[1])"
         end
         @info "Step 4 completed in $(round(step4_time, digits=2)) seconds"
 
@@ -326,8 +317,6 @@ function summarize_results!(
         step5_time = @elapsed begin
             stream_sorted_merge(filtered_refs, results.merged_quant_path, :global_prob, :target;
                                batch_size=10_000_000, reverse=[true,true])
-
-            @warn "Size of step 5 size(DataFrame(Arrow.Table(results.merged_quant_path)), 1) $(size(DataFrame(Arrow.Table(results.merged_quant_path)), 1))"
         end
         @info "Step 5 completed in $(round(step5_time, digits=2)) seconds"
 
@@ -344,7 +333,6 @@ function summarize_results!(
             sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true,true])
             stream_sorted_merge(filtered_refs, results.merged_quant_path, :prec_prob, :target;
                                batch_size=10_000_000, reverse=[true,true])
-            @warn "Size of step 7 size(DataFrame(Arrow.Table(results.merged_quant_path)), 1) $(size(DataFrame(Arrow.Table(results.merged_quant_path)), 1))"
         end
         @info "Step 7 completed in $(round(step7_time, digits=2)) seconds"
 

@@ -218,23 +218,19 @@ function probit_regression_scoring_cv!(
     match_between_runs::Bool;
     n_folds::Int64 = 3
 )
-    # Step 1: Add CV fold column based on file index (same as XGBoost)
+    # Step 1: Add CV fold column based on row index for even distribution
     psms[!, :cv_fold] = zeros(UInt8, size(psms, 1))
     
-    # Always use :ms_file_idx column - it's created by SecondPassSearch
-    ms_file_idx_col = :ms_file_idx
-    
-    # Check if the column exists
-    if !(ms_file_idx_col in propertynames(psms))
-        @error "Column :ms_file_idx not found in PSMs. Available columns: $(propertynames(psms))"
-        error("Required column :ms_file_idx is missing from PSMs DataFrame")
+    # Assign CV folds based on row index for even distribution across all folds
+    # This ensures each fold gets approximately equal number of PSMs
+    for i in 1:size(psms, 1)
+        psms[i, :cv_fold] = UInt8(((i - 1) % n_folds) + 1)
     end
     
-    #Will need to determine this on the protien/accession_numbers level from the spectral library
-    #This is fine for testing atm. 
+    # Verify fold assignment
     for fold_idx in 1:n_folds
-        fold_mask = (psms[!, ms_file_idx_col] .% n_folds) .== (fold_idx - 1)
-        psms[fold_mask, :cv_fold] .= UInt8(fold_idx)
+        n_in_fold = sum(psms.cv_fold .== fold_idx)
+        @info "CV fold $fold_idx: $n_in_fold PSMs"
     end
     
     # Step 2: Initialize probability array (like XGBoost does)
@@ -370,7 +366,7 @@ function score_precursor_isotope_traces_in_memory!(
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32
 )
-    if size(best_psms, 1) > 100_000
+    if size(best_psms, 1) > 1#100_000
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
         features = [
             :missed_cleavage,
@@ -483,6 +479,60 @@ function score_precursor_isotope_traces_in_memory!(
                 :percent_theoretical_ignored,
                 :scribe,
             ];
+
+                    features = [
+            :missed_cleavage,
+            :Mox,
+            :prec_mz,
+            :sequence_length,
+            :charge,
+            :irt_pred,
+            :irt_error,
+            :irt_diff,
+            :max_y_ions,
+            :y_ions_sum,
+            :longest_y,
+            :y_count,
+            :b_count,
+            :isotope_count,
+            :total_ions,
+            :best_rank,
+            :best_rank_iso,
+            :topn,
+            :topn_iso,
+            :gof,
+            :max_fitted_manhattan_distance,
+            :max_fitted_spectral_contrast,
+            :max_matched_residual,
+            :max_unmatched_residual,
+            :max_gof,
+            :fitted_spectral_contrast,
+            :spectral_contrast,
+            :max_matched_ratio,
+            :err_norm,
+            :poisson,
+            :weight,
+            :log2_intensity_explained,
+            :tic,
+            :num_scans,
+            :smoothness,
+            :rt_diff,
+            :ms1_irt_diff,
+            :weight_ms1,
+            :gof_ms1,
+            :max_matched_residual_ms1,
+            :max_unmatched_residual_ms1,
+            :fitted_spectral_contrast_ms1,
+            :error_ms1,
+            :m0_error_ms1,
+            :n_iso_ms1,
+            :big_iso_ms1,
+            :ms1_features_missing,
+            :percent_theoretical_ignored,
+            :scribe,
+            :max_scribe
+        ];
+
         else
              @warn "Less than 1,000 psms. Training with super simplified target-decoy discrimination model..."
              features = [ 
@@ -501,15 +551,16 @@ function score_precursor_isotope_traces_in_memory!(
         
         # OPTION 1: Probit regression (SIMPLE, NO ITERATIVE REFINEMENT)
         # @info "Using probit regression for small dataset (<100k PSMs)"
-        
+        #=
+        testnfolds = 9
         probit_regression_scoring_cv!(
              best_psms,
              file_paths,
              features,
              match_between_runs;
-             n_folds = 3
+             n_folds =  testnfolds 
         )
-        
+        @warn "TESTNFOLDS $testnfolds"
         # Debug: Check prob values BEFORE dropVectorColumns
         @info "Probit: BEFORE dropVectorColumns - prob range: $(minimum(best_psms.prob)) to $(maximum(best_psms.prob))"
         @info "  DataFrame has $(nrow(best_psms)) rows, $(ncol(best_psms)) columns"
@@ -553,7 +604,7 @@ function score_precursor_isotope_traces_in_memory!(
         # OPTION 2: XGBoost/EvoTrees (WITH ITERATIVE REFINEMENT)
         #see src/utils/ML/percolatorSortOf.jl
         #Train EvoTrees/XGBoost model to score each precursor trace. Target-decoy descrimination
-        #=
+        =#
         @warn "TEST TEST TEST XGboost"
         models = sort_of_percolator_in_memory!(
                                 best_psms, 
@@ -571,9 +622,9 @@ function score_precursor_isotope_traces_in_memory!(
                                 subsample = 0.8, 
                                 max_depth = 4,
                                 eta = 0.1,
-                                iter_scheme = [300],
+                                iter_scheme = [150, 300, 300],
                                 print_importance = true);
-        =#
+        
         return models;
     end
 end

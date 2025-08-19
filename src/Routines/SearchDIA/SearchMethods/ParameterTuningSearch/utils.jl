@@ -702,8 +702,11 @@ function fit_mass_err_model(
     
     # Calculate error bounds using configured quantile
     frag_err_quantile = getFragErrQuantile(params)
-    l_bound = quantile(ppm_errs, frag_err_quantile)
-    r_bound = quantile(ppm_errs, 1 - frag_err_quantile)
+
+    _mad = mad(ppm_errs)
+    #r_mad = mad(ppm_errs[ppm_errs .> 0.0f0])
+    l_bound = min(abs(quantile(ppm_errs, frag_err_quantile)), 5*_mad)
+    r_bound = min(abs(quantile(ppm_errs, 1 - frag_err_quantile)), 5*_mad)
     
     # Diagnostic logging
     # @info "Mass error model: offset=$(round(mass_err, digits=2)) ppm, " *
@@ -1228,7 +1231,9 @@ function get_fallback_parameters(
     borrowed_from = nothing
     
     for other_idx in 1:n_files
-        if other_idx != ms_file_idx && hasMassErrorModel(search_context, other_idx)
+        if other_idx != ms_file_idx && 
+           haskey(search_context.mass_error_model, other_idx) &&
+           haskey(search_context.rt_conversion_model, other_idx)
             mass_err = getMassErrorModel(search_context, other_idx)
             rt_model = getRtConversionModel(search_context, other_idx)
             push!(warnings, "Borrowed parameters from file $other_idx")
