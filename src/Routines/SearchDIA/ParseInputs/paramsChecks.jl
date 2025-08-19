@@ -67,7 +67,19 @@ function checkParams(json_path::String)
     check_param(frag_settings, "min_count", Integer)
     check_param(frag_settings, "max_rank", Integer)
     # tol_ppm moved to iteration_settings as init_mass_tol_ppm
-    check_param(frag_settings, "min_score", Integer)
+    # min_score can be either Integer or Vector of Integers
+    if !haskey(frag_settings, "min_score")
+        throw(InvalidParametersError("Missing parameter: min_score", frag_settings))
+    elseif !(frag_settings["min_score"] isa Integer || frag_settings["min_score"] isa Vector)
+        throw(InvalidParametersError("Invalid type for parameter min_score: expected Integer or Vector, got $(typeof(frag_settings["min_score"]))", frag_settings))
+    elseif frag_settings["min_score"] isa Vector
+        # If it's a vector, make sure all elements are integers
+        for (i, val) in enumerate(frag_settings["min_score"])
+            if !(val isa Integer)
+                throw(InvalidParametersError("Invalid type for min_score[$i]: expected Integer, got $(typeof(val))", frag_settings))
+            end
+        end
+    end
     check_param(frag_settings, "min_spectral_contrast", Real)
     check_param(frag_settings, "relative_improvement_threshold", Real)
     check_param(frag_settings, "min_log2_ratio", Real)

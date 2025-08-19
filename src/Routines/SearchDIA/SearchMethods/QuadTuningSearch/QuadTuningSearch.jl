@@ -144,7 +144,15 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             params.acquisition.quad_transmission.fit_from_data,
             (UInt8(0), UInt8(0)),  # Fixed isotope bounds for quad tuning
             init_tol,
-            UInt8(frag_params.min_score),
+            # Handle min_score as either single value or array (use first value if array)
+            begin
+                min_score_raw = frag_params.min_score
+                if min_score_raw isa Vector
+                    UInt8(first(min_score_raw))
+                else
+                    UInt8(min_score_raw)
+                end
+            end,
             typemin(Float32),  # Minimum possible value for min_log2_matched_ratio
             Int64(frag_params.min_count),
             Float32(frag_params.min_spectral_contrast),
