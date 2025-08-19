@@ -267,13 +267,14 @@ function summarize_results!(
             end
             transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                        prob_col => (p -> begin
-                           #prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))
-                           #prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
-                           prob = maximum(p)
+                           prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))
+                           prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
                            Float32(prob)
                        end) => :prec_prob)
             transform!(groupby(merged_df, :precursor_idx),
                        :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+                       
+            prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
             # Write updated data back to individual files
             for (idx, ref) in enumerate(second_pass_refs)
                 sub_df = merged_df[merged_df.ms_file_idx .== idx, :]
@@ -307,8 +308,6 @@ function summarize_results!(
             
             apply_pipeline!(second_pass_refs, quant_processing_pipeline)
             filtered_refs = second_pass_refs
-            
-            file_paths = [file_path(ref) for ref in second_pass_refs]
         end
         @info "Step 4 completed in $(round(step4_time, digits=2)) seconds"
 
