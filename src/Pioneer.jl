@@ -24,7 +24,7 @@ using Base64
 using Base.Order
 using Base.Iterators: partition
 using CSV, Combinatorics, CodecZlib
-using DataFrames, DataStructures, Dictionaries
+using DataFrames, DataStructures, Dictionaries, Distributions
 using EzXML
 using FASTX
 using Interpolations
