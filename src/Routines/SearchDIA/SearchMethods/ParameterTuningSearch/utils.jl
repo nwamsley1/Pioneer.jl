@@ -709,12 +709,37 @@ function fit_mass_err_model(
     
     # Calculate error bounds using configured quantile
     frag_err_quantile = getFragErrQuantile(params)
+    @warn "fit_mass_err_model: Using frag_err_quantile = $frag_err_quantile from parameters.json"
 
     _mad = mad(ppm_errs)
-    #r_mad = mad(ppm_errs[ppm_errs .> 0.0f0])
-    l_bound = min(abs(quantile(ppm_errs, frag_err_quantile)), 5*_mad)
-    r_bound = min(abs(quantile(ppm_errs, 1 - frag_err_quantile)), 5*_mad)
-    
+    r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
+    r_est = quantile(Exponential(
+        (1/
+        (length(r_errs)/sum(r_errs))
+        ))
+        , 0.995)
+    l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
+    l_est = quantile(Exponential(
+        (1/
+        (length(l_errs)/sum(l_errs))
+        ))
+        , 0.995)
+    l_quantile = abs(quantile(ppm_errs, frag_err_quantile))
+    r_quantile = abs(quantile(ppm_errs, 1 - frag_err_quantile))
+
+    l_bound = max(
+        l_quantile, 
+        l_est)
+    r_bound = max(
+        r_quantile, 
+        r_est)
+    r_bound = r_est
+    l_bound = l_est
+    @warn "l_quantile = $l_quantile, l_est = $l_est, " *
+          "r_quantile = $r_quantile, r_est = $r_est, " *
+          "l_bound = $l_bound, r_bound = $r_bound"
+    #l_bound = abs(quantile(ppm_errs, frag_err_quantile))
+    #r_bound = abs(quantile(ppm_errs, 1 - frag_err_quantile))
     # Diagnostic logging
     # @info "Mass error model: offset=$(round(mass_err, digits=2)) ppm, " *
     #       "tolerance=(-$(round(abs(l_bound), digits=1)), +$(round(abs(r_bound), digits=1))) ppm, " *
