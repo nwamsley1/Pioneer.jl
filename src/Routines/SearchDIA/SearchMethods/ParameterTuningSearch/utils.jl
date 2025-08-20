@@ -131,28 +131,31 @@ function filter_and_score_psms!(
     
     max_q_val, min_psms = getMaxQVal(params), getMinPsms(params)
     n_passing_psms = sum(psms[!,:q_value] .<= max_q_val)
-    
-    if n_passing_psms >= min_psms
-        filter!(row -> row.q_value::Float16 <= max_q_val, psms)
-        psms[!,:best_psms] = zeros(Bool, size(psms, 1))
-        
-        # Select best PSM per precursor
-        for sub_psms in groupby(psms, :precursor_idx)
-            best_idx = argmax(sub_psms.prob::AbstractVector{Float32})
-            sub_psms[best_idx,:best_psms] = true
-        end
-        
-        filter!(x -> x.best_psms::Bool, psms)
-        filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys.
-        
-        # Return actual count after all filtering (not n_passing_psms which was pre-filtering)
-        return size(psms, 1)
-    end
-    
-    # Filtering failed - DataFrame remains with scored but unfiltered PSMs
-    return -1
-end
+    @warn "n_passing_psms = $n_passing_psms max_q_val = $max_q_val min_psms = $min_psms"
+    @warn "size(psms, 1) before filtering = $(size(psms, 1)) "
+    filter!(row -> row.q_value::Float16 <= max_q_val, psms)
+    @warn "size(psms, 1) after filtering = $(size(psms, 1)) "
+    #psms[!,:best_psms] = zeros(Bool, size(psms, 1))
+   # 
+    # Select best PSM per precursor
+   # for sub_psms in groupby(psms, [:precursor_idx, :scan_idx])
+    #for sub_psms in groupby(psms, [:precursor_idx,:scan_idx])
+   #     best_idx = argmax(sub_psms.prob::AbstractVector{Float32})
+   #     sub_psms[best_idx,:best_psms] = true
+   # end
+    #@warn "size(psms, 1) after selecting best PSMs = $(size(psms, 1)) "
+    #filter!(x -> x.best_psms::Bool, psms)
+    @warn "size(psms, 1) after filtering to best PSMs = $(size(psms, 1)) "
+    filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys. 
+    @warn "size(psms, 1) after filtering to target PSMs = $(size(psms, 1)) "
 
+    n_passing_psms = size(psms, 1)
+    if n_passing_psms >= min_psms
+        return n_passing_psms
+    else
+        return -1
+    end
+end
 
 """
     score_presearch!(psms::DataFrame)
