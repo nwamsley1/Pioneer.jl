@@ -898,10 +898,10 @@ function process_file!(
                 current_scan_count = next_scan_count
             end
         end
-        #@info "manual set mass err model . "
-        #setMassErrorModel!(search_context, ms_file_idx, 
-        #MassErrorModel(getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
-        #(7.0f0, 7.0f0)))
+        @info "manual set mass err model . "
+        setMassErrorModel!(search_context, ms_file_idx, 
+        MassErrorModel(getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+        (7.0f0, 7.0f0)))
         # Get final PSM count if converged
         if converged
             final_psm_count = size(results.rt, 1)  # Track from results
