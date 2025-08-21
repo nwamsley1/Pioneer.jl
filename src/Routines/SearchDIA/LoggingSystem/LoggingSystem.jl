@@ -1,28 +1,6 @@
-module LoggingSystem
-
-using Logging
-using LoggingExtras
-using Dates
-using ProgressBars
-using DataFrames
-using Printf
-
-# Export main functionality
-export initialize_logging, finalize_logging, get_logger_state, update_console_verbosity
-export @user_info, @user_warn, @user_error
-export @debug_l1, @debug_l2, @debug_l3
-export @trace
-export with_logging_context
-export ProgressLogger, update_progress!, finish_progress!
-
-# Include sub-modules
-include("WarningTracker.jl")
-include("WarningCapturingLogger.jl")
-include("Configuration.jl")  # Must come before Loggers.jl which uses LoggingConfig
-include("Loggers.jl")
-include("Macros.jl")
-include("ProgressIntegration.jl")
-include("FileManagement.jl")
+# LoggingSystem.jl
+# Main orchestration functions for the Pioneer logging system
+# All dependencies are loaded through Pioneer.jl and importScripts.jl
 
 # Module-level state
 const LOGGER_STATE = Ref{Union{Nothing, LoggerState}}(nothing)
@@ -269,4 +247,3 @@ function display_warnings_summary(warnings::Vector{WarningEntry})
     println("=" ^ 60)
 end
 
-end # module LoggingSystem

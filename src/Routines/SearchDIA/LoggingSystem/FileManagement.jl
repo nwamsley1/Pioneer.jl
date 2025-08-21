@@ -1,8 +1,6 @@
 # FileManagement.jl
 # File management utilities for the logging system
 
-using Dates
-
 export ensure_log_directory, archive_old_logs, cleanup_logs
 export get_log_paths, estimate_log_size
 
@@ -172,8 +170,6 @@ function compress_log_file(filepath::String)
     if !isfile(filepath)
         return
     end
-    
-    using CodecZlib
     
     compressed_path = filepath * ".gz"
     

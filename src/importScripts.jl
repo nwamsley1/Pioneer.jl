@@ -272,6 +272,21 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "utils", "profile.jl"))
     safe_include!(joinpath(package_root, "src", "utils", "pdfUtils.jl"))
 
+    # LoggingSystem
+    include_files!(
+        joinpath(package_root, "src", "Routines", "SearchDIA", "LoggingSystem"),
+        [
+            "WarningTracker.jl",
+            "WarningCapturingLogger.jl",
+            "Configuration.jl",
+            "Loggers.jl",
+            "Macros.jl",
+            "ProgressIntegration.jl",
+            "FileManagement.jl",
+            "LoggingSystem.jl"  # Main orchestration file should be last
+        ]
+    )
+
     #importSpecLibScripts()
 
     return files_loaded

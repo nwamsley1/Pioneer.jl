@@ -15,10 +15,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# Include the LoggingSystem module
-include("SearchDIA/LoggingSystem/LoggingSystem.jl")
-using .LoggingSystem
-
 # Entry point for PackageCompiler
 function main_SearchDIA(argv=ARGS)::Cint
     
