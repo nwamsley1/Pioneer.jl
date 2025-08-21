@@ -133,7 +133,7 @@ function SearchDIA(params_path::String)
     mkpath(params.paths[:results])  # Ensure directory exists
     
     # Set debug console level from parameters (default to 0)
-    if haskey(params, :logging) && haskey(params.logging, :debug_console_level)
+    if haskey(params.logging, :debug_console_level)
         Pioneer.DEBUG_CONSOLE_LEVEL[] = params.logging.debug_console_level
     else
         Pioneer.DEBUG_CONSOLE_LEVEL[] = 0  # Default: no debug on console
