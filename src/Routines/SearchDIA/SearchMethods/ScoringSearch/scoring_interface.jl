@@ -91,53 +91,7 @@ function add_trace_qvalues(fdr_scale_factor::Float32)
     return "add_trace_qvalues" => op
 end
 
-"""
-    label_transfer_candidates(threshold::Float32)
 
-Label MBR transfer candidates based on trace q-values, presence of a
-best decoy, and a passing best-pair probability.
-"""
-function label_transfer_candidates(threshold::Float32)
-    op = function(df)
-        pass_mask = (df.trace_qval .<= threshold) .& df.target
-        prob_thresh = any(pass_mask) ? minimum(df.prob[pass_mask]) : typemax(Float32)
-        df[!, :MBR_transfer_candidate] = (df.trace_qval .> threshold) .&
-                                         .!ismissing.(df.MBR_is_best_decoy) .&
-                                         (df.MBR_max_pair_prob .>= prob_thresh)
-        return df
-    end
-    return "label_transfer_candidates" => op
-end
-
-"""
-    label_bad_transfers()
-
-Mark transfers that appear to come from the wrong class (target/decoy).
-"""
-function label_bad_transfers()
-    op = function(df)
-        mask = df.MBR_transfer_candidate
-        df[!, :MBR_bad_transfer] = mask .& ((df.target .& coalesce.(df.MBR_is_best_decoy, false)) .|
-                                           (df.decoy .& .!coalesce.(df.MBR_is_best_decoy, true)))
-        return df
-    end
-    return "label_bad_transfers" => op
-end
-
-"""
-    apply_ftr_threshold(max_ftr::Float32)
-
-Clamp `:MBR_prob` values based on the false transfer rate threshold.
-"""
-function apply_ftr_threshold(max_ftr::Float32)
-    op = function(df)
-        τ = get_ftr_threshold(df.MBR_prob, df.target, df.MBR_bad_transfer, max_ftr; mask=df.MBR_transfer_candidate)
-        mask = df.MBR_transfer_candidate .& (df.MBR_prob .< τ)
-        df.MBR_prob[mask] .= 0.0f0
-        return df
-    end
-    return "apply_ftr_threshold" => op
-end
 
 """
     add_prec_prob(prob_col::Symbol)
@@ -232,14 +186,15 @@ function apply_mbr_filter!(
     )
 
     # 2) identify bad transfers
+    
     bad_mask = candidate_mask .& (
         (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .|
-        (merged_df.decoy  .& .!coalesce.(merged_df.MBR_is_best_decoy, true))
+        merged_df.decoy
     )
 
     # 3) compute threshold using the local bad_mask
     τ = get_ftr_threshold(
-        merged_df.MBR_prob,
+        merged_df.prob,
         merged_df.target,
         bad_mask,
         params.max_MBR_false_transfer_rate;
@@ -248,9 +203,9 @@ function apply_mbr_filter!(
 
     # 4) one fused pass to clamp probs
     merged_df._filtered_prob = ifelse.(
-        candidate_mask .& (merged_df.MBR_prob .< τ),
+        candidate_mask .& (merged_df.prob .< τ),
         0.0f0,
-        merged_df.MBR_prob,
+        merged_df.prob,
     )
 
     # if downstream code expects a Symbol for the prob-column

@@ -107,15 +107,14 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         # Determine which precursors failed the q-value cutoff prior to MBR
         qvals_prev = Vector{Float32}(undef, length(prob_estimates))
         get_qvalues!(prob_estimates, psms.target, qvals_prev)
-        pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore) .& psms.target
+        pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore)
         prob_thresh = any(pass_mask) ? minimum(prob_estimates[pass_mask]) : typemax(Float32)
         # Label as transfer candidates only those failing the q-value cutoff but
         # whose best matched pair surpassed the passing probability threshold.
-        psms[!, :MBR_transfer_candidate] .= (qvals_prev .> max_q_value_xgboost_rescore) .&
+        psms[!, :MBR_transfer_candidate] .= (prob_estimates .< prob_thresh) .&
                                             (psms.MBR_max_pair_prob .>= prob_thresh)
 
         # Use the final MBR probabilities for all precursors
-        psms[!, :MBR_prob] = MBR_estimates
         psms[!, :prob] = MBR_estimates
     else
         psms[!, :prob] = prob_estimates
@@ -573,7 +572,6 @@ function initialize_prob_group_features!(
     psms[!, :q_value]   = zeros(Float64, n)
 
     if match_between_runs
-        psms[!, :MBR_prob]                      = zeros(Float32, n)
         psms[!, :MBR_max_pair_prob]             = zeros(Float32, n)
         psms[!, :MBR_best_irt_diff]             = zeros(Float32, n)
         psms[!, :MBR_log2_weight_ratio]         = zeros(Float32, n)
@@ -740,7 +738,6 @@ function update_mbr_probs!(
     prob_thresh = any(pass_mask) ? minimum(df.prob[pass_mask]) : typemax(Float32)
     df[!, :MBR_transfer_candidate] = (prev_qvals .> qval_thresh) .&
                                      (df.MBR_max_pair_prob .>= prob_thresh)
-    df[!, :MBR_prob] = probs
     df[!, :prob] = probs
     return df
 end
