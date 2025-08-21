@@ -130,34 +130,48 @@ function SearchDIA(params_path::String)
     params_string = read(params_path, String)
 
     params = parse_pioneer_parameters(params_path)
-    log_path = joinpath(params.paths[:results], "pioneer_search_log.txt")
-    mkpath(dirname(log_path))  # Ensure directory exists
+    mkpath(params.paths[:results])  # Ensure directory exists
 
-
-    open(log_path, "w") do log_file
-        # Utility functions for dual console/file output
-        function dual_println(args...)
-            println(stdout, args...)  # Write to console
-            println(log_file, args...)  # Write to file
-        end
-        
-        function dual_print(args...)
-            print(stdout, args...)  # Write to console
-            print(log_file, args...)  # Write to file
-        end
-
-        dual_println("\n", repeat("=", 90))
-        dual_println("Sarting SearchDIA")
-        dual_println(repeat("=", 90))
-        dual_println("\nStarting search at: ", Dates.now())
-        dual_println("Output directory: ", params.paths[:results])
+    # Initialize the new logging system
+    include("SearchDIA/LoggingSystem/LoggingSystem.jl")
+    using .LoggingSystem
+    
+    # Determine console verbosity from parameters or environment
+    console_level = get(ENV, "PIONEER_LOG_LEVEL", "normal")
+    config = LoggingConfig(
+        console_level = Symbol(console_level),
+        simple_level = :info,
+        full_level = :trace,
+        enable_progress = true,
+        enable_warnings = true
+    )
+    
+    initialize_logging(params.paths[:results]; config = config)
+    
+    # For backward compatibility - create dual_println function that uses our new system
+    function dual_println(args...)
+        msg = join(string.(args))
+        @user_info msg
+    end
+    
+    function dual_print(args...)
+        msg = join(string.(args))
+        @user_info msg
+    end
+    
+    try
+        @user_info "\n" * repeat("=", 90)
+        @user_info "Starting SearchDIA"
+        @user_info repeat("=", 90)
+        @user_info "\nStarting search at: $(Dates.now())"
+        @user_info "Output directory: $(params.paths[:results])"
         
 
         # === Initialize performance tracking ===
         timings = Dict{String, Any}()
         
         # === Load and validate data paths ===
-        @info "Loading Parameters..."
+        @user_info "Loading Parameters..."
         params_timing = @timed begin
             # Setup MS data directory
             MS_DATA_DIR = params.paths[:ms_data]
@@ -172,7 +186,7 @@ function SearchDIA(params_path::String)
             end
 
             if !isdir(MS_DATA_DIR)
-                @error "ms_data directory does not exist: " * MS_DATA_DIR
+                @user_error "ms_data directory does not exist: " * MS_DATA_DIR
                 return
             end
 
@@ -183,13 +197,13 @@ function SearchDIA(params_path::String)
                                match(r"\.arrow$", file) != nothing]
 
             if length(MS_TABLE_PATHS) <= 0
-                @error "No .arrow files found in ms_data directory: " * MS_DATA_DIR
+                @user_error "No .arrow files found in ms_data directory: " * MS_DATA_DIR
                 return
             end
 
             # Disable match-between-runs if only a single run is provided
             if length(MS_TABLE_PATHS) == 1 && params.global_settings.match_between_runs
-                @warn "Only one run detected; disabling match_between_runs (MBR)."
+                @user_warn "Only one run detected; disabling match_between_runs (MBR)."
 
                 params_dict = JSON.parse(params_string)
                 params_dict["global"]["match_between_runs"] = false
@@ -216,7 +230,7 @@ function SearchDIA(params_path::String)
         timings["Parameter Loading"] = params_timing
 
         # === Initialize spectral library and search context ===
-        @info "Loading Spectral Library..."
+        @user_info "Loading Spectral Library..."
         lib_timing = @timed begin
             SPEC_LIB = loadSpectralLibrary(SPEC_LIB_DIR, params)
             nothing
@@ -225,7 +239,7 @@ function SearchDIA(params_path::String)
         timings["Spectral Library Loading"] = lib_timing
 
         # Initialize Search Context
-        @info "Initializing Search Context..."
+        @user_info "Initializing Search Context..."
         context_timing = @timed begin
             # Load isotope splines and initialize search context
             SEARCH_CONTEXT = initSearchContext(
@@ -263,14 +277,23 @@ function SearchDIA(params_path::String)
 
         # Execute each search phase and record timing
         for (name, search) in searches
-            @info "Executing $name..."
+            @user_info "Executing $name..."
             search_timing = @timed execute_search(search, SEARCH_CONTEXT, params)
             timings[name] = search_timing
         end
 
         # === Generate performance report ===
         print_performance_report(timings, MS_TABLE_PATHS, SEARCH_CONTEXT, dual_println)
+        
+    catch e
+        @user_error "Search failed with error: $(e)"
+        @user_error "Stacktrace: $(stacktrace(catch_backtrace()))"
+        rethrow(e)
+    finally
+        # Finalize logging system
+        finalize_logging()
     end
+    
     return nothing
 end
 
