@@ -7,8 +7,8 @@ export create_console_logger, create_simplified_logger, create_full_logger
 const VERBOSITY_LEVELS = Dict(
     :silent => LogLevel(2001),    # Error + 1 (only critical)
     :minimal => LogLevel(1000),   # Warn level
-    :normal => LogLevel(0),       # Info level
-    :verbose => LogLevel(-100),   # Info - 100 (include @user_info)
+    :normal => LogLevel(-1),      # Just below Info to include user messages
+    :verbose => LogLevel(-500),   # More detailed info
     :debug => LogLevel(-1000)     # Debug level
 )
 
