@@ -20,10 +20,13 @@ Create a console logger with progress bar awareness and runtime-adjustable verbo
 function create_console_logger(config::LoggingConfig)
     level = get(VERBOSITY_LEVELS, config.console_level, Logging.Info)
     
+    # Debug: Print the actual level being used
+    println("DEBUG: Console logger level set to: $(level) (value: $(Int(level))) for config level: $(config.console_level)")
+    
     # Create base console logger with custom formatting for colored prefixes
     console_logger = ConsoleLogger(
         stdout,
-        level;
+        level;  # This is the minimum level for ConsoleLogger
         meta_formatter = custom_meta_formatter,  # Use our custom formatter for colored prefixes
         show_limited = false,
         right_justify = 0
@@ -64,7 +67,8 @@ function create_console_logger(config::LoggingConfig)
         return merge(log, (kwargs = clean_kwargs,))
     end
     
-    return MinLevelLogger(console_logger, level)
+    # ConsoleLogger already filters by level, so we don't need MinLevelLogger wrapper
+    return console_logger
 end
 
 """
@@ -80,6 +84,7 @@ function create_simplified_logger(filepath::String, config::LoggingConfig)
     file_logger = FormatLogger(io) do io, args
         # Simple format - just output the message
         println(io, args.message)
+        flush(io)  # Ensure immediate write to disk
     end
     
     # Add timestamp formatting
@@ -138,6 +143,7 @@ function create_full_logger(filepath::String, config::LoggingConfig)
         
         # Add separator for readability
         println(io, "  " * "-"^60)
+        flush(io)  # Ensure immediate write to disk
     end
     
     return MinLevelLogger(file_logger, LogLevel(-2000))  # Capture everything (Debug - 1000)
