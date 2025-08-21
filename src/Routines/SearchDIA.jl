@@ -15,6 +15,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# Include the LoggingSystem module
+include("SearchDIA/LoggingSystem/LoggingSystem.jl")
+using .LoggingSystem
+
 # Entry point for PackageCompiler
 function main_SearchDIA(argv=ARGS)::Cint
     
@@ -131,10 +135,6 @@ function SearchDIA(params_path::String)
 
     params = parse_pioneer_parameters(params_path)
     mkpath(params.paths[:results])  # Ensure directory exists
-
-    # Initialize the new logging system
-    include("SearchDIA/LoggingSystem/LoggingSystem.jl")
-    using .LoggingSystem
     
     # Determine console verbosity from parameters or environment
     console_level = get(ENV, "PIONEER_LOG_LEVEL", "normal")
