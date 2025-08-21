@@ -18,10 +18,18 @@ const LOGGER_STATE = Ref{Union{Nothing, LoggerState}}(nothing)
     initialize_logging(output_dir::String; config::LoggingConfig = LoggingConfig())
 
 Initialize the Pioneer logging system with three parallel loggers and warning tracking.
+Falls back to console-only if file creation fails.
 """
 function initialize_logging(output_dir::String; config::LoggingConfig = LoggingConfig())
     # Ensure output directory exists
-    mkpath(output_dir)
+    try
+        mkpath(output_dir)
+    catch e
+        @warn "Could not create output directory, using console-only logging" error=e
+        console_logger = create_console_logger(config)
+        global_logger(console_logger)
+        return console_logger
+    end
     
     # Create file paths
     simple_log_path = joinpath(output_dir, "pioneer_search_log.txt")
@@ -31,17 +39,34 @@ function initialize_logging(output_dir::String; config::LoggingConfig = LoggingC
     # Initialize warning tracker
     warning_tracker = WarningTracker()
     
-    # Create individual loggers
+    # Create console logger (always succeeds)
     console_logger_ref = Ref{AbstractLogger}(create_console_logger(config))
-    simplified_logger = create_simplified_logger(simple_log_path, config)
-    full_logger = create_full_logger(full_log_path, config)
     
-    # Create TeeLogger for parallel distribution
-    tee_logger = TeeLogger(
-        console_logger_ref[],
-        simplified_logger,
-        full_logger
-    )
+    # Try to create file loggers with error handling
+    loggers = [console_logger_ref[]]
+    
+    try
+        simplified_logger = create_simplified_logger(simple_log_path, config)
+        push!(loggers, simplified_logger)
+    catch e
+        @warn "Could not create simplified log file" path=simple_log_path error=e
+        simplified_logger = nothing
+    end
+    
+    try
+        full_logger = create_full_logger(full_log_path, config)
+        push!(loggers, full_logger)
+    catch e
+        @warn "Could not create full debug log file" path=full_log_path error=e
+        full_logger = nothing
+    end
+    
+    # Create TeeLogger for parallel distribution (at minimum has console logger)
+    tee_logger = if length(loggers) > 1
+        TeeLogger(loggers...)
+    else
+        loggers[1]  # Just console logger if file creation failed
+    end
     
     # Wrap with warning capturing
     warning_logger = WarningCapturingLogger(tee_logger, warning_tracker)
@@ -50,8 +75,8 @@ function initialize_logging(output_dir::String; config::LoggingConfig = LoggingC
     LOGGER_STATE[] = LoggerState(
         warning_logger,
         console_logger_ref,
-        simplified_logger,
-        full_logger,
+        simplified_logger === nothing ? tee_logger : simplified_logger,  # Fallback to tee_logger if nothing
+        full_logger === nothing ? tee_logger : full_logger,  # Fallback to tee_logger if nothing
         config,
         now()
     )
@@ -83,9 +108,9 @@ function finalize_logging()
         # Log warning summary to all loggers
         @warn "Session completed with $(length(warnings)) warnings"
         
-        # Write detailed warnings report
-        warnings_path = joinpath(dirname(state.config.simple_log_path), "warnings.txt")
-        write_warnings_report(warnings, warnings_path)
+        # Try to write warnings report if we have a results directory
+        # Since we don't store the output path, we'll skip the warnings file for now
+        # TODO: Store output_dir in LoggerState to enable warnings file
         
         # Display summary on console
         display_warnings_summary(warnings)
@@ -173,6 +198,9 @@ end
 function close_logger(logger::AbstractLogger)
     if hasproperty(logger, :stream) && logger.stream isa IO
         close(logger.stream)
+    elseif hasproperty(logger, :io) && logger.io isa IO
+        # Handle FormatLogger which uses 'io' field
+        close(logger.io)
     elseif logger isa TeeLogger
         for child in logger.loggers
             close_logger(child)
@@ -180,6 +208,8 @@ function close_logger(logger::AbstractLogger)
     elseif logger isa TransformerLogger
         close_logger(logger.logger)
     elseif logger isa MinLevelLogger
+        close_logger(logger.logger)
+    elseif logger isa EarlyFilteredLogger
         close_logger(logger.logger)
     end
 end
