@@ -51,9 +51,9 @@ function load_config(path::String)
         return LoggingConfig()  # Return defaults
     end
     
-    using JSON3
+    using JSON
     
-    config_dict = JSON3.read(read(path, String))
+    config_dict = JSON.parsefile(path)
     
     # Convert to LoggingConfig, handling missing fields
     return LoggingConfig(;
@@ -74,7 +74,7 @@ end
 Save logging configuration to a JSON file.
 """
 function save_config(config::LoggingConfig, path::String)
-    using JSON3
+    using JSON
     
     config_dict = Dict(
         :console_level => string(config.console_level),
@@ -88,7 +88,7 @@ function save_config(config::LoggingConfig, path::String)
     )
     
     open(path, "w") do io
-        JSON3.pretty(io, config_dict, indent=2)
+        JSON.print(io, config_dict, 2)  # 2 is for indent
     end
 end
 
