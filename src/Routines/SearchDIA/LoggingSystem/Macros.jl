@@ -21,7 +21,7 @@ Log a user-facing informational message that appears in all outputs.
 """
 macro user_info(msg, args...)
     quote
-        @logmsg USER_INFO_LEVEL $(esc(msg)) $(esc.(args)...) is_user_message=true _group=:user_info
+        @info $(esc(msg)) $(esc.(args)...) is_user_message=true _group=:user_info
     end
 end
 
