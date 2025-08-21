@@ -188,6 +188,7 @@ function importScripts()
             "WarningTracker.jl",
             "WarningCapturingLogger.jl",
             "Configuration.jl",
+            "AsyncFileLogger.jl",  # Add async logger before Loggers.jl
             "Loggers.jl",
             "Macros.jl",
             "ProgressIntegration.jl",

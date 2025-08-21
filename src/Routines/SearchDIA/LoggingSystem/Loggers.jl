@@ -73,41 +73,34 @@ end
 """
     create_simplified_logger(filepath::String, config::LoggingConfig) -> AbstractLogger
 
-Create a simplified file logger similar to current dual_println output.
+Create a simplified file logger using async I/O to prevent blocking.
 """
 function create_simplified_logger(filepath::String, config::LoggingConfig)
-    # Open file in append mode
-    io = open(filepath, "a")
-    
-    # Create base file logger using FormatLogger
-    file_logger = FormatLogger(io) do io, args
-        # Simple format - just output the message
-        println(io, args.message)
-        flush(io)  # Ensure immediate write to disk
+    # Create formatter for simplified output
+    formatter = (msg::LogMessage) -> begin
+        timestamp = Dates.format(msg.timestamp, "yyyy-mm-dd HH:MM:SS")
+        return "[$(timestamp)] $(msg.message)"
     end
     
-    # Add timestamp formatting
-    file_logger = TransformerLogger(file_logger) do log
-        # Add timestamp
-        timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS")
-        formatted_msg = "[$(timestamp)] $(log.message)"
-        return merge(log, (message = formatted_msg,))
-    end
+    # Create async logger
+    logger = create_async_file_logger(
+        filepath,
+        Logging.Info;
+        formatter = formatter,
+        channel_size = 10000
+    )
     
-    # Filter to only user messages and warnings
-    file_logger = EarlyFilteredLogger(file_logger) do log
+    # Add filtering for user messages - wrap async logger
+    return EarlyFilteredLogger(logger) do log
         return log.level >= Logging.Info || 
                (haskey(log.kwargs, :is_user_message) && log.kwargs[:is_user_message])
     end
-    
-    # Wrap with MinLevelLogger to respect minimum level
-    return MinLevelLogger(file_logger, Logging.Info)
 end
 
 """
     create_full_logger(filepath::String, config::LoggingConfig) -> AbstractLogger
 
-Create a comprehensive debug file logger with all metadata.
+Create a comprehensive debug file logger with all metadata using async I/O.
 """
 function create_full_logger(filepath::String, config::LoggingConfig)
     # Check for rotation needs
@@ -115,37 +108,38 @@ function create_full_logger(filepath::String, config::LoggingConfig)
         rotate_log_file(filepath)
     end
     
-    # Open file in append mode
-    io = open(filepath, "a")
-    
-    # Create comprehensive file logger
-    file_logger = FormatLogger(io) do io, args
-        # Full format with all metadata
-        timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        level_str = string(args.level)
-        module_str = string(args._module)
-        file_line = "$(basename(string(args.file))):$(args.line)"
+    # Create formatter for full debug output
+    formatter = (msg::LogMessage) -> begin
+        timestamp = Dates.format(msg.timestamp, "yyyy-mm-dd HH:MM:SS.sss")
+        level_str = string(msg.level)
+        module_str = string(msg._module)
+        file_line = "$(basename(string(msg.file))):$(msg.line)"
         
-        # Format main message
-        println(io, "[$(timestamp)] [$(level_str)] [$(module_str)] [$(file_line)]")
-        println(io, "  Message: ", args.message)
+        output = IOBuffer()
+        println(output, "[$(timestamp)] [$(level_str)] [$(module_str)] [$(file_line)]")
+        println(output, "  Message: ", msg.message)
         
         # Add all kwargs
-        if !isempty(args.kwargs)
-            println(io, "  Context:")
-            for (k, v) in args.kwargs
+        if !isempty(msg.kwargs)
+            println(output, "  Context:")
+            for (k, v) in msg.kwargs
                 if k != :is_user_message && k != :progress_active
-                    println(io, "    $(k): $(v)")
+                    println(output, "    $(k): $(v)")
                 end
             end
         end
         
-        # Add separator for readability
-        println(io, "  " * "-"^60)
-        flush(io)  # Ensure immediate write to disk
+        println(output, "  " * "-"^60)
+        return String(take!(output))
     end
     
-    return MinLevelLogger(file_logger, LogLevel(-2000))  # Capture everything (Debug - 1000)
+    # Create async logger with larger buffer for debug
+    return create_async_file_logger(
+        filepath,
+        LogLevel(-2000);  # Capture everything
+        formatter = formatter,
+        channel_size = 50000  # Larger buffer for debug logger
+    )
 end
 
 # Helper functions
