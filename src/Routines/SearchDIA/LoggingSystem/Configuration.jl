@@ -34,11 +34,11 @@ Base.@kwdef struct LoggingConfig
     buffer_size::Int = 4096          # IO buffer size
     
     # Custom level definitions
-    user_info_level::Int = Logging.Info - 100
-    debug_l1_level::Int = Logging.Debug
-    debug_l2_level::Int = Logging.Debug - 100
-    debug_l3_level::Int = Logging.Debug - 200
-    trace_level::Int = Logging.Debug - 1000
+    user_info_level::Int = Int(Logging.Info) - 100
+    debug_l1_level::Int = Int(Logging.Debug)
+    debug_l2_level::Int = Int(Logging.Debug) - 100
+    debug_l3_level::Int = Int(Logging.Debug) - 200
+    trace_level::Int = Int(Logging.Debug) - 1000
 end
 
 """
