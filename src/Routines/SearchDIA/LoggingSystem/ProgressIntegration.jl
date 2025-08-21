@@ -1,7 +1,7 @@
 # ProgressIntegration.jl
-# Integration with ProgressMeter.jl for progress bars
+# Integration with ProgressBars.jl for progress bars
 
-using ProgressMeter
+using ProgressBars
 using Logging
 
 export ProgressLogger, update_progress!, finish_progress!
@@ -13,7 +13,7 @@ export with_progress_bar
 Wrapper for managing progress bars with logging integration.
 """
 mutable struct ProgressLogger
-    progress::Union{Progress, Nothing}
+    progress::Union{ProgressBar, Nothing}
     name::String
     active::Bool
     suppress_logs::Bool
@@ -31,8 +31,8 @@ function ProgressLogger(total::Int, name::String; suppress_logs::Bool = true)
     # Log start of operation
     @info "Starting: $(name)" progress_step=true total=total
     
-    # Create progress bar
-    progress = Progress(total, desc=name, barlen=50, showspeed=true)
+    # Create progress bar using ProgressBars syntax
+    progress = ProgressBar(total=total)
     
     logger = ProgressLogger(progress, name, true, suppress_logs)
     
@@ -51,7 +51,9 @@ Update the progress bar.
 """
 function update_progress!(logger::ProgressLogger, increment::Int = 1)
     if logger.progress !== nothing && logger.active
-        ProgressMeter.update!(logger.progress, increment)
+        for _ in 1:increment
+            update(logger.progress)
+        end
     end
 end
 
@@ -62,7 +64,7 @@ Complete and close the progress bar.
 """
 function finish_progress!(logger::ProgressLogger)
     if logger.progress !== nothing && logger.active
-        ProgressMeter.finish!(logger.progress)
+        # ProgressBars doesn't have a finish method, just mark as inactive
         logger.active = false
         
         # Clear active progress if this was it
@@ -131,10 +133,7 @@ function temporarily_hide_progress(f)
         
         result = f()
         
-        # Redraw progress bar
-        if active.progress !== nothing
-            ProgressMeter.showprogress(active.progress)
-        end
+        # With ProgressBars, we can't easily redraw, so just continue
         
         return result
     else
@@ -142,23 +141,17 @@ function temporarily_hide_progress(f)
     end
 end
 
-# Integration with existing ProgressMeter usage
+# Integration with existing ProgressBars usage
 
 """
-    create_progress_bar(total::Int, desc::String = "Processing") -> Progress
+    create_progress_bar(total::Int, desc::String = "Processing") -> ProgressBar
 
 Create a progress bar that integrates with the logging system.
 """
 function create_progress_bar(total::Int, desc::String = "Processing")
     @info "Starting: $(desc)" progress_step=true total=total
     
-    progress = Progress(
-        total,
-        desc=desc,
-        barlen=50,
-        showspeed=true,
-        enabled=!haskey(ENV, "CI")  # Disable in CI environments
-    )
+    progress = ProgressBar(total=total)
     
     # Store reference for log suppression
     if ACTIVE_PROGRESS[] === nothing
@@ -169,21 +162,23 @@ function create_progress_bar(total::Int, desc::String = "Processing")
 end
 
 """
-    update_progress_bar!(p::Progress, increment::Int = 1)
+    update_progress_bar!(p::ProgressBar, increment::Int = 1)
 
 Update a progress bar created with create_progress_bar.
 """
-function update_progress_bar!(p::Progress, increment::Int = 1)
-    ProgressMeter.update!(p, increment)
+function update_progress_bar!(p::ProgressBar, increment::Int = 1)
+    for _ in 1:increment
+        update(p)
+    end
 end
 
 """
-    finish_progress_bar!(p::Progress)
+    finish_progress_bar!(p::ProgressBar)
 
 Finish a progress bar created with create_progress_bar.
 """
-function finish_progress_bar!(p::Progress)
-    ProgressMeter.finish!(p)
+function finish_progress_bar!(p::ProgressBar)
+    # ProgressBars doesn't have a finish method
     
     # Clear active progress if this was it
     if ACTIVE_PROGRESS[] !== nothing && ACTIVE_PROGRESS[].progress === p
