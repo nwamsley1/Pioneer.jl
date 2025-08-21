@@ -1,10 +1,6 @@
 # Loggers.jl
 # Factory functions for creating the three logger types
 
-using Logging
-using LoggingExtras
-using Dates
-
 export create_console_logger, create_simplified_logger, create_full_logger
 
 # Log level mappings

@@ -1,9 +1,6 @@
 # WarningTracker.jl
 # Manages warning collection and categorization
 
-using Dates
-using DataStructures
-
 export WarningTracker, WarningEntry, WarningCategory
 export add_warning!, get_warnings, get_warnings_by_category, clear_warnings!
 export categorize_warning

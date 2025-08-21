@@ -1,9 +1,6 @@
 # ProgressIntegration.jl
 # Integration with ProgressBars.jl for progress bars
 
-using ProgressBars
-using Logging
-
 export ProgressLogger, update_progress!, finish_progress!
 export with_progress_bar
 

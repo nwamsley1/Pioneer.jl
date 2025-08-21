@@ -1,8 +1,6 @@
 # Macros.jl
 # Custom logging macros for Pioneer
 
-using Logging
-
 # Export all custom macros
 export @user_info, @user_warn, @user_error
 export @debug_l1, @debug_l2, @debug_l3

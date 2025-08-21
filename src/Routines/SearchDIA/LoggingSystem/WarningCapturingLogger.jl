@@ -1,8 +1,6 @@
 # WarningCapturingLogger.jl
 # Custom logger that captures warnings while forwarding all messages
 
-using Logging
-
 export WarningCapturingLogger
 
 """
