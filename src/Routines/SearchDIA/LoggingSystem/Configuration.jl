@@ -33,12 +33,12 @@ Base.@kwdef struct LoggingConfig
     max_warnings::Int = 10000        # Maximum warnings to track
     buffer_size::Int = 4096          # IO buffer size
     
-    # Custom level definitions
-    user_info_level::Int = Int(Logging.Info) - 100
-    debug_l1_level::Int = Int(Logging.Debug)
-    debug_l2_level::Int = Int(Logging.Debug) - 100
-    debug_l3_level::Int = Int(Logging.Debug) - 200
-    trace_level::Int = Int(Logging.Debug) - 1000
+    # Custom level definitions (using integer values directly)
+    user_info_level::Int = -100        # Info (0) - 100
+    debug_l1_level::Int = -1000        # Debug level
+    debug_l2_level::Int = -1100        # Debug - 100
+    debug_l3_level::Int = -1200        # Debug - 200
+    trace_level::Int = -2000           # Debug - 1000
 end
 
 """
