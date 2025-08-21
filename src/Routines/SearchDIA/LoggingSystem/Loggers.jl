@@ -3,13 +3,13 @@
 
 export create_console_logger, create_simplified_logger, create_full_logger
 
-# Log level mappings
+# Log level mappings (using integer values directly)
 const VERBOSITY_LEVELS = Dict(
-    :silent => LogLevel(Int(Logging.Error) + 1),  # Only critical errors
-    :minimal => Logging.Warn,                      # Warnings and errors
-    :normal => Logging.Info,                       # Standard user messages
-    :verbose => LogLevel(Int(Logging.Info) - 100), # Include @user_info and similar
-    :debug => Logging.Debug                        # All debug messages
+    :silent => LogLevel(2001),    # Error + 1 (only critical)
+    :minimal => LogLevel(1000),   # Warn level
+    :normal => LogLevel(0),       # Info level
+    :verbose => LogLevel(-100),   # Info - 100 (include @user_info)
+    :debug => LogLevel(-1000)     # Debug level
 )
 
 """
@@ -128,7 +128,7 @@ function create_full_logger(filepath::String, config::LoggingConfig)
         println(io, "  " * "-"^60)
     end
     
-    return MinLevelLogger(file_logger, LogLevel(Int(Logging.Debug) - 1000))  # Capture everything
+    return MinLevelLogger(file_logger, LogLevel(-2000))  # Capture everything (Debug - 1000)
 end
 
 # Helper functions

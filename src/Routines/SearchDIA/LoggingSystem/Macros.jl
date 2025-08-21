@@ -7,12 +7,12 @@ export @debug_l1, @debug_l2, @debug_l3
 export @trace
 export @progress_start, @progress_update, @progress_end
 
-# Define custom log levels
-const USER_INFO_LEVEL = LogLevel(Int(Logging.Info) - 100)
-const DEBUG_L1_LEVEL = Logging.Debug
-const DEBUG_L2_LEVEL = LogLevel(Int(Logging.Debug) - 100)
-const DEBUG_L3_LEVEL = LogLevel(Int(Logging.Debug) - 200)
-const TRACE_LEVEL = LogLevel(Int(Logging.Debug) - 1000)
+# Define custom log levels (using integer values directly)
+const USER_INFO_LEVEL = LogLevel(-100)   # Info - 100
+const DEBUG_L1_LEVEL = LogLevel(-1000)   # Debug
+const DEBUG_L2_LEVEL = LogLevel(-1100)   # Debug - 100
+const DEBUG_L3_LEVEL = LogLevel(-1200)   # Debug - 200
+const TRACE_LEVEL = LogLevel(-2000)      # Debug - 1000
 
 """
     @user_info msg [key=value...]
