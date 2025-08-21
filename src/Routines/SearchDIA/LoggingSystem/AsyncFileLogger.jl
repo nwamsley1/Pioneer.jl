@@ -12,7 +12,7 @@ struct LogMessage
     level::LogLevel
     message::String
     _module::Module
-    _group::Symbol
+    _group::Any  # Can be Symbol or LoggingExtras.Verbosity
     id::Symbol
     file::String
     line::Int
