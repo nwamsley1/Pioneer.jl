@@ -73,11 +73,11 @@ end
 """
     create_simplified_logger(filepath::String, config::LoggingConfig) -> AbstractLogger
 
-Create a simplified file logger using direct thread-safe writes (like dual_println).
+Create a simplified file logger using dual_println-style direct writes.
 """
 function create_simplified_logger(filepath::String, config::LoggingConfig)
-    # Use the simple formatter from SimpleFileLogger
-    logger = create_simple_file_logger(
+    # Use DualPrintLogger for simple, non-blocking file output
+    logger = create_dual_print_logger(
         filepath,
         Logging.Info;
         formatter = simple_formatter
@@ -93,7 +93,7 @@ end
 """
     create_full_logger(filepath::String, config::LoggingConfig) -> AbstractLogger
 
-Create a comprehensive debug file logger with all metadata using direct writes.
+Create a comprehensive debug file logger with all metadata using dual_println-style writes.
 """
 function create_full_logger(filepath::String, config::LoggingConfig)
     # Check for rotation needs
@@ -101,8 +101,8 @@ function create_full_logger(filepath::String, config::LoggingConfig)
         rotate_log_file(filepath)
     end
     
-    # Use the full formatter from SimpleFileLogger
-    return create_simple_file_logger(
+    # Use DualPrintLogger for non-blocking output
+    return create_dual_print_logger(
         filepath,
         LogLevel(-2000);  # Capture everything
         formatter = full_formatter
