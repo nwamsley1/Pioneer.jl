@@ -189,7 +189,8 @@ function importScripts()
             "WarningCapturingLogger.jl",
             "Configuration.jl",
             "AsyncFileLogger.jl",  # Keep for future use
-            "SimpleFileLogger.jl",  # Add simple logger for current use
+            "SimpleFileLogger.jl",  # Keep for comparison
+            "DualPrintLogger.jl",  # New minimal logger like dual_println
             "Loggers.jl",
             "Macros.jl",
             "ProgressIntegration.jl",
