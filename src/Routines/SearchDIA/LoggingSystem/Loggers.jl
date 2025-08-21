@@ -20,8 +20,7 @@ Create a console logger with progress bar awareness and runtime-adjustable verbo
 function create_console_logger(config::LoggingConfig)
     level = get(VERBOSITY_LEVELS, config.console_level, Logging.Info)
     
-    # Debug: Print the actual level being used
-    println("DEBUG: Console logger level set to: $(level) (value: $(Int(level.level))) for config level: $(config.console_level)")
+    # Level is correctly set based on config.console_level
     
     # Create base console logger with custom formatting for colored prefixes
     console_logger = ConsoleLogger(

@@ -43,7 +43,8 @@ function initialize_logging(output_dir::String; config::LoggingConfig = LoggingC
     console_logger_ref = Ref{AbstractLogger}(create_console_logger(config))
     
     # Try to create file loggers with error handling
-    loggers = [console_logger_ref[]]
+    # Use AbstractLogger array to allow different logger types
+    loggers = AbstractLogger[console_logger_ref[]]
     
     # Declare variables in outer scope
     simplified_logger = nothing
