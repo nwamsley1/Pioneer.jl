@@ -73,24 +73,17 @@ end
 """
     create_simplified_logger(filepath::String, config::LoggingConfig) -> AbstractLogger
 
-Create a simplified file logger using async I/O to prevent blocking.
+Create a simplified file logger using direct thread-safe writes (like dual_println).
 """
 function create_simplified_logger(filepath::String, config::LoggingConfig)
-    # Create formatter for simplified output
-    formatter = (msg::LogMessage) -> begin
-        timestamp = Dates.format(msg.timestamp, "yyyy-mm-dd HH:MM:SS")
-        return "[$(timestamp)] $(msg.message)"
-    end
-    
-    # Create async logger
-    logger = create_async_file_logger(
+    # Use the simple formatter from SimpleFileLogger
+    logger = create_simple_file_logger(
         filepath,
         Logging.Info;
-        formatter = formatter,
-        channel_size = 10000
+        formatter = simple_formatter
     )
     
-    # Add filtering for user messages - wrap async logger
+    # Add filtering for user messages
     return EarlyFilteredLogger(logger) do log
         return log.level >= Logging.Info || 
                (haskey(log.kwargs, :is_user_message) && log.kwargs[:is_user_message])
@@ -100,7 +93,7 @@ end
 """
     create_full_logger(filepath::String, config::LoggingConfig) -> AbstractLogger
 
-Create a comprehensive debug file logger with all metadata using async I/O.
+Create a comprehensive debug file logger with all metadata using direct writes.
 """
 function create_full_logger(filepath::String, config::LoggingConfig)
     # Check for rotation needs
@@ -108,37 +101,11 @@ function create_full_logger(filepath::String, config::LoggingConfig)
         rotate_log_file(filepath)
     end
     
-    # Create formatter for full debug output
-    formatter = (msg::LogMessage) -> begin
-        timestamp = Dates.format(msg.timestamp, "yyyy-mm-dd HH:MM:SS.sss")
-        level_str = string(msg.level)
-        module_str = string(msg._module)
-        file_line = "$(basename(string(msg.file))):$(msg.line)"
-        
-        output = IOBuffer()
-        println(output, "[$(timestamp)] [$(level_str)] [$(module_str)] [$(file_line)]")
-        println(output, "  Message: ", msg.message)
-        
-        # Add all kwargs
-        if !isempty(msg.kwargs)
-            println(output, "  Context:")
-            for (k, v) in msg.kwargs
-                if k != :is_user_message && k != :progress_active
-                    println(output, "    $(k): $(v)")
-                end
-            end
-        end
-        
-        println(output, "  " * "-"^60)
-        return String(take!(output))
-    end
-    
-    # Create async logger with larger buffer for debug
-    return create_async_file_logger(
+    # Use the full formatter from SimpleFileLogger
+    return create_simple_file_logger(
         filepath,
         LogLevel(-2000);  # Capture everything
-        formatter = formatter,
-        channel_size = 50000  # Larger buffer for debug logger
+        formatter = full_formatter
     )
 end
 
