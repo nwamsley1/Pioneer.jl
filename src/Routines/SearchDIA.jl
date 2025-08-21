@@ -147,17 +147,6 @@ function SearchDIA(params_path::String)
     console_logger = create_console_logger(config)
     global_logger(console_logger)
     
-    # For backward compatibility - create dual_println function that uses our new system
-    function dual_println(args...)
-        msg = join(string.(args))
-        @user_info msg
-    end
-    
-    function dual_print(args...)
-        msg = join(string.(args))
-        @user_info msg
-    end
-    
     try
         @user_print "\n" * repeat("=", 90)
         @user_print "Starting SearchDIA"
@@ -283,7 +272,7 @@ function SearchDIA(params_path::String)
         end
 
         # === Generate performance report ===
-        print_performance_report(timings, MS_TABLE_PATHS, SEARCH_CONTEXT, dual_println)
+        print_performance_report(timings, MS_TABLE_PATHS, SEARCH_CONTEXT)
         
     catch e
         @user_error "Search failed with error: $(e)"
@@ -301,21 +290,21 @@ end
 """
 Helper function to print formatted performance metrics
 """
-function print_performance_report(timings, ms_table_paths, search_context, println_func)
+function print_performance_report(timings, ms_table_paths, search_context)
     # Header
     @user_print "\n" * repeat("=", 90)
     @user_print "DIA Search Performance Report"
     @user_print repeat("=", 90)
 
     # Detailed analysis
-    println_func("\nDetailed Step Analysis:")
-    println_func(repeat("-", 90))
-    println_func(rpad("Step", 30), " ", 
-            rpad("Time (s)", 12), " ",
-            rpad("Memory (GB)", 12), " ", 
-            rpad("GC Time (s)", 12), " ",
-            rpad("GC %", 12))
-    println_func(repeat("-", 90))
+    @user_print "\nDetailed Step Analysis:"
+    @user_print repeat("-", 90)
+    @user_print rpad("Step", 30) * " " * 
+            rpad("Time (s)", 12) * " " *
+            rpad("Memory (GB)", 12) * " " * 
+            rpad("GC Time (s)", 12) * " " *
+            rpad("GC %", 12)
+    @user_print repeat("-", 90)
 
     # Calculate totals
     peak_memory = peak_rss()
@@ -336,18 +325,18 @@ function print_performance_report(timings, ms_table_paths, search_context, print
         total_memory += timing.bytes
         total_gc += gc_s
 
-        println_func(rpad(step, 30), " ",
-            rpad(@sprintf("%.2f", time_s), 12), " ",
-            rpad(@sprintf("%.2f", mem_gb), 12), " ",
-            rpad(@sprintf("%.2f", gc_s), 12), " ",
-            rpad(@sprintf("%.1f", gc_pct), 12))
+        @user_print rpad(step, 30) * " " *
+            rpad(@sprintf("%.2f", time_s), 12) * " " *
+            rpad(@sprintf("%.2f", mem_gb), 12) * " " *
+            rpad(@sprintf("%.2f", gc_s), 12) * " " *
+            rpad(@sprintf("%.1f", gc_pct), 12)
     end
 
     # Print summary statistics
     print_summary_statistics(
         total_time, total_memory, peak_memory, total_gc,
         length(timings), length(ms_table_paths),
-        println_func, search_context
+        search_context
     )
 end
 
@@ -355,29 +344,29 @@ end
 Helper function to print summary statistics
 """
 function print_summary_statistics(total_time, total_memory, peak_memory, total_gc, 
-                                n_steps, n_files, println_func, search_context)
+                                n_steps, n_files, search_context)
     # Print totals
-    println_func(repeat("-", 90))
-    println_func(rpad("TOTAL", 30), " ",
-            rpad(@sprintf("%.2f", total_time), 12), " ",
-            rpad(@sprintf("%.2f", total_memory/(1024^3)), 12), " ",
-            rpad(@sprintf("%.2f", total_gc), 12), " ",
-            rpad(@sprintf("%.1f",(total_gc/total_time)*100), 12))
+    @user_print repeat("-", 90)
+    @user_print rpad("TOTAL", 30) * " " *
+            rpad(@sprintf("%.2f", total_time), 12) * " " *
+            rpad(@sprintf("%.2f", total_memory/(1024^3)), 12) * " " *
+            rpad(@sprintf("%.2f", total_gc), 12) * " " *
+            rpad(@sprintf("%.1f",(total_gc/total_time)*100), 12)
 
     # Memory summary
-    println_func("\nMemory Usage Summary:")
-    println_func(repeat("-", 90))
+    @user_print "\nMemory Usage Summary:"
+    @user_print repeat("-", 90)
     current_mem = Sys.total_memory() / 1024^3
-    println_func("Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB")
-    println_func("Peak  Memory Allocated: $(round(peak_memory/1024^3, digits=2)) GB")
-    println_func("Total Available Memory: $(round(current_mem, digits=2)) GB")
+    @user_print "Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB"
+    @user_print "Peak  Memory Allocated: $(round(peak_memory/1024^3, digits=2)) GB"
+    @user_print "Total Available Memory: $(round(current_mem, digits=2)) GB"
     
     # Runtime summary
-    println_func("\nRuntime Summary:")
-    println_func(repeat("-", 90))
-    println_func("Total Runtime: $(round(total_time/60, digits=2)) minutes")
-    println_func("Average Runtime per Step: $(round(total_time/n_steps, digits=2)) seconds")
-    println_func("Average Runtime per Raw File: $(round(total_time/n_files, digits=2)) seconds")
-    println_func("\n" * repeat("=", 90))
-    println_func("Huber δ: ", getHuberDelta(search_context))
+    @user_print "\nRuntime Summary:"
+    @user_print repeat("-", 90)
+    @user_print "Total Runtime: $(round(total_time/60, digits=2)) minutes"
+    @user_print "Average Runtime per Step: $(round(total_time/n_steps, digits=2)) seconds"
+    @user_print "Average Runtime per Raw File: $(round(total_time/n_files, digits=2)) seconds"
+    @user_print "\n" * repeat("=", 90)
+    @user_print "Huber δ: " * string(getHuberDelta(search_context))
 end
