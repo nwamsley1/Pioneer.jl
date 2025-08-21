@@ -10,10 +10,12 @@ mutable struct SimpleFileLogger <: AbstractLogger
     lock::ReentrantLock
     min_level::LogLevel
     formatter::Function
+    last_flush_time::Ref{Float64}
+    flush_interval::Float64  # seconds between flushes
 end
 
 """
-    create_simple_file_logger(filepath, min_level; formatter)
+    create_simple_file_logger(filepath, min_level; formatter, flush_interval)
 
 Create a simple thread-safe file logger that writes directly to file.
 Similar to the original dual_println approach but integrated with logging system.
@@ -21,7 +23,8 @@ Similar to the original dual_println approach but integrated with logging system
 function create_simple_file_logger(
     filepath::String, 
     min_level::LogLevel;
-    formatter::Function = default_formatter
+    formatter::Function = default_formatter,
+    flush_interval::Float64 = 1.0  # Flush every second by default
 )
     # Open file for appending
     io = open(filepath, "a")
@@ -31,7 +34,9 @@ function create_simple_file_logger(
         io,
         ReentrantLock(),
         min_level,
-        formatter
+        formatter,
+        Ref(time()),  # Initialize last flush time
+        flush_interval
     )
 end
 
@@ -71,11 +76,17 @@ function Logging.handle_message(
         # Format the message
         formatted = logger.formatter(msg)
         
-        # Thread-safe write with immediate flush (like dual_println)
+        # Thread-safe write WITHOUT immediate flush (prevents Arrow.Table deadlock)
         lock(logger.lock) do
             try
                 println(logger.io, formatted)
-                flush(logger.io)  # Immediate write to disk
+                
+                # Only flush periodically to avoid blocking I/O
+                current_time = time()
+                if current_time - logger.last_flush_time[] > logger.flush_interval
+                    flush(logger.io)
+                    logger.last_flush_time[] = current_time
+                end
             catch e
                 # If write fails, print to stderr but don't crash
                 println(stderr, "Failed to write to log file: ", e)
