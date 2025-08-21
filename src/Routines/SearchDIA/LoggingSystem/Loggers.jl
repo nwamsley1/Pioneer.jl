@@ -20,12 +20,12 @@ Create a console logger with progress bar awareness and runtime-adjustable verbo
 function create_console_logger(config::LoggingConfig)
     level = get(VERBOSITY_LEVELS, config.console_level, Logging.Info)
     
-    # Create base console logger
+    # Create base console logger with minimal formatting
     console_logger = ConsoleLogger(
         stdout,
         level;
-        meta_formatter = console_meta_formatter,
-        show_limited = true,
+        meta_formatter = (args...) -> (:normal, "", ""),  # No prefix/suffix
+        show_limited = false,
         right_justify = 0
     )
     
@@ -41,15 +41,22 @@ function create_console_logger(config::LoggingConfig)
         end
     end
     
-    # Add custom formatting for user messages
+    # Add custom formatting for user messages and clean kwargs
     console_logger = TransformerLogger(console_logger) do log
+        # Remove internal metadata from kwargs
+        clean_kwargs = Dict{Symbol,Any}()
+        for (k, v) in log.kwargs
+            if k != :is_user_message && k != :_group && k != :progress_step && k != :progress_active
+                clean_kwargs[k] = v
+            end
+        end
+        
         # Format based on custom log level
         if haskey(log.kwargs, :is_user_message) && log.kwargs[:is_user_message]
-            # Clean user message formatting
-            formatted_msg = format_user_message(log.level, log.message, log.kwargs)
-            return merge(log, (message = formatted_msg,))
+            # Just return the message without special formatting
+            return merge(log, (kwargs = clean_kwargs,))
         end
-        return log
+        return merge(log, (kwargs = clean_kwargs,))
     end
     
     return MinLevelLogger(console_logger, level)
