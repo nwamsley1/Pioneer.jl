@@ -101,6 +101,9 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
     
+    # SimpleLogging - Load EARLY so macros are available throughout SearchDIA
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SimpleLogging.jl"))
+    
     include_files!(
         joinpath(package_root, "src","structs"),
         [
@@ -180,9 +183,6 @@ function importScripts()
     # Include remaining files using safe import for directories
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils"))
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs"))
-    
-    # SimpleLogging - Load BEFORE SearchMethods so macros are available
-    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SimpleLogging.jl"))
     
     # SearchMethods (excluding the old FileReferences.jl and FileOperations.jl files)
     search_methods_dir = joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")
@@ -274,6 +274,13 @@ function importScripts()
     # Profiling
     safe_include!(joinpath(package_root, "src", "utils", "profile.jl"))
     safe_include!(joinpath(package_root, "src", "utils", "pdfUtils.jl"))
+
+    # Main routines that use logging macros - load at the end
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "BuildSpecLib.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "ParseSpecLib.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "GenerateParams.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "mzmlConverter", "convertMzML.jl"))
 
     #importSpecLibScripts()
 
