@@ -48,9 +48,7 @@ using InlineStrings
 using HTTP
 
 
-"""
-Simple console logger - detailed logging handled by SimpleLogging module
-"""
+# Simple console logger - detailed logging handled by SimpleLogging module
 global_logger(ConsoleLogger())
 
 
@@ -75,18 +73,44 @@ const InterpolationTypeAlias = Interpolations.Extrapolation{
 #Set Seed 
 Random.seed!(1776);
 
+# Define placeholder logging macros to prevent UndefVarError during loading
+# These will be replaced when SimpleLogging is loaded
+macro user_info(msg)
+    :(println("INFO: ", $(esc(msg))))
+end
+macro user_warn(msg, category=nothing)
+    :(println("WARN: ", $(esc(msg))))
+end
+macro user_error(msg)
+    :(println("ERROR: ", $(esc(msg))))
+end
+macro user_print(msg)
+    :(println($(esc(msg))))
+end
+macro debug_l1(msg)
+    :() # No-op for debug during loading
+end
+macro debug_l2(msg)
+    :() # No-op
+end
+macro debug_l3(msg)
+    :() # No-op
+end
+macro trace(msg)
+    :() # No-op
+end
+
 #Import Pioneer Files 
 include("importScripts.jl")
 files_loaded = importScripts()
 
+# Import SimpleLogging macros into Pioneer module scope
+import .SimpleLogging: @user_info, @user_warn, @user_error, @user_print, 
+                       @debug_l1, @debug_l2, @debug_l3, @trace
+
 #importScriptsSpecLib(files_loaded)
 #include(joinpath(@__DIR__, "Routines","LibrarySearch","method"s,"loadSpectralLibrary.jl"))
-const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
-include(joinpath(@__DIR__, "Routines","SearchDIA.jl"))
-include(joinpath(@__DIR__, "Routines","BuildSpecLib.jl"))
-include(joinpath(@__DIR__, "Routines","ParseSpecLib.jl"))
-include(joinpath(@__DIR__, "Routines","GenerateParams.jl"))
-include(joinpath(@__DIR__, "Routines","mzmlConverter","convertMzML.jl"))
+const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")
 const CHARGE_ADJUSTMENT_FACTORS = Float64[1, 0.9, 0.85, 0.8, 0.75]
 
 # H2O, PROTON, NEUTRON constants are defined in get_mz.jl and available via importScripts()
@@ -133,5 +157,6 @@ function __init__()
     ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
 end
 
-export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, GetParseSpecLibParams, convertMzML
+export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, GetParseSpecLibParams, convertMzML,
+       SimpleLogging, @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
 end
