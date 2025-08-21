@@ -2,9 +2,6 @@
 # Main orchestration functions for the Pioneer logging system
 # All dependencies are loaded through Pioneer.jl and importScripts.jl
 
-# Module-level state
-const LOGGER_STATE = Ref{Union{Nothing, LoggerState}}(nothing)
-
 struct LoggerState
     warning_logger::WarningCapturingLogger
     console_logger::Ref{AbstractLogger}
@@ -13,6 +10,9 @@ struct LoggerState
     config::LoggingConfig
     start_time::DateTime
 end
+
+# Module-level state
+const LOGGER_STATE = Ref{Union{Nothing, LoggerState}}(nothing)
 
 """
     initialize_logging(output_dir::String; config::LoggingConfig = LoggingConfig())
