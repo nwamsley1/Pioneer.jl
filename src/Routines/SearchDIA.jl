@@ -132,7 +132,6 @@ function SearchDIA(params_path::String)
     params = parse_pioneer_parameters(params_path)
     mkpath(params.paths[:results])  # Ensure directory exists
     
-    # TEMPORARY: Use simple console logger to debug hanging issue
     # Get logging configuration from parameters
     config = LoggingConfig(
         console_level = Symbol(get(params.logging, :console_level, "normal")),
@@ -144,11 +143,9 @@ function SearchDIA(params_path::String)
         max_warnings = get(params.logging, :max_warnings, 10000)
     )
     
-    # TEMPORARILY DISABLED: Complex logging causing hangs
-    # initialize_logging(params.paths[:results]; config = config)
-    
-    # Use simple console logger instead
-    global_logger(ConsoleLogger(stdout, Logging.Info))
+    # TEST: Try just console logger from our system
+    console_logger = create_console_logger(config)
+    global_logger(console_logger)
     
     # For backward compatibility - create dual_println function that uses our new system
     function dual_println(args...)
