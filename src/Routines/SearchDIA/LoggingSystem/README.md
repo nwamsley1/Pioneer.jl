@@ -32,7 +32,9 @@ Add a `logging` section to your parameters JSON file:
 
 ### Output Files
 
-After running SearchDIA, find logs in your results directory:
+**Note**: File logging is currently disabled. All output goes to console only.
+
+When file logging is re-enabled, logs will be in your results directory:
 
 - **`pioneer_search_log.txt`** - Clean, timestamped log of the run
 - **`pioneer_debug.log`** - Comprehensive debug information (if issues occur)
@@ -84,6 +86,13 @@ After running SearchDIA, find logs in your results directory:
 @user_info "Loading Spectral Library..."
 @user_info "Processing $(n_files) MS files"
 @user_info "Search completed in $(elapsed_time) seconds"
+```
+
+**`@user_print`** - Decorative output without any prefix (for tables, separators)
+```julia
+@user_print "=" ^ 80  # Separator line
+@user_print "DIA Search Performance Report"  # Header without prefix
+@user_print rpad("Step", 30) * " " * rpad("Time", 10)  # Table formatting
 ```
 
 **`@user_warn`** - Issues users should be aware of but aren't fatal

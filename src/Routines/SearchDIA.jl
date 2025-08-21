@@ -143,9 +143,8 @@ function SearchDIA(params_path::String)
         max_warnings = get(params.logging, :max_warnings, 10000)
     )
     
-    # TEST: Try just console logger from our system
-    console_logger = create_console_logger(config)
-    global_logger(console_logger)
+    # Initialize full logging system with all three loggers
+    initialize_logging(params.paths[:results], config=config)
     
     try
         @user_print "\n" * repeat("=", 90)
@@ -279,8 +278,8 @@ function SearchDIA(params_path::String)
         @user_error "Stacktrace: $(stacktrace(catch_backtrace()))"
         rethrow(e)
     finally
-        # TEMPORARILY DISABLED: Finalize logging system
-        # finalize_logging()
+        # Finalize logging system
+        finalize_logging()
     end
     
     return nothing
