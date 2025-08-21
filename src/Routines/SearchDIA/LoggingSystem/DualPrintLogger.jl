@@ -5,8 +5,9 @@
 export DualPrintLogger, create_dual_print_logger, close_dual_print_logger
 
 # Minimal logger that writes directly to file like dual_println
+# Uses lazy file opening - opens and closes file for each write to avoid Arrow.Table conflicts
 mutable struct DualPrintLogger <: AbstractLogger
-    io::IOStream
+    filepath::String  # Store filepath instead of open handle
     min_level::LogLevel
     formatter::Function
 end
@@ -15,17 +16,15 @@ end
     create_dual_print_logger(filepath, min_level; formatter)
 
 Create a minimal logger that mimics dual_println behavior.
-No locks, no flush - just direct println to file.
+Opens and closes file for each write to avoid conflicts with Arrow.Table async operations.
 """
 function create_dual_print_logger(
     filepath::String, 
     min_level::LogLevel;
     formatter::Function = simple_formatter
 )
-    # Open file for appending
-    io = open(filepath, "a")
-    
-    return DualPrintLogger(io, min_level, formatter)
+    # Don't open file here - will open/close for each write
+    return DualPrintLogger(filepath, min_level, formatter)
 end
 
 # Simple formatter - just timestamp and message
@@ -79,19 +78,22 @@ function Logging.handle_message(
             logger.formatter(level, string(message), now(), _module, file, line, kwargs)
         end
         
-        # Just println - no lock, no flush, exactly like dual_println
-        println(logger.io, formatted)
-        # That's it! Let the OS handle buffering
+        # Open, write, close - exactly like dual_println did
+        # This avoids keeping file handles open during Arrow.Table operations
+        try
+            open(logger.filepath, "a") do io
+                println(io, formatted)
+            end
+        catch e
+            # If file write fails, don't crash - just skip this message
+            # This matches dual_println's resilient behavior
+        end
     end
 end
 
 # Close the logger
 function close_dual_print_logger(logger::DualPrintLogger)
-    try
-        # One final flush when closing
-        flush(logger.io)
-        close(logger.io)
-    catch
-        # Ignore errors on close
-    end
+    # Nothing to close since we open/close for each write
+    # This function exists for API compatibility
+    return nothing
 end
