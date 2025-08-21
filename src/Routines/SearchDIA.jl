@@ -132,18 +132,84 @@ function SearchDIA(params_path::String)
     params = parse_pioneer_parameters(params_path)
     mkpath(params.paths[:results])  # Ensure directory exists
     
-    # Parse logging configuration from params
-    console_level = Symbol(get(params.logging, :console_level, "normal"))
-    file_level = Symbol(get(params.logging, :file_level, "info"))
-    debug_level = Symbol(get(params.logging, :debug_level, "trace"))
+    # Set debug console level from parameters (default to 0)
+    if haskey(params, :logging) && haskey(params.logging, :debug_console_level)
+        Pioneer.DEBUG_CONSOLE_LEVEL[] = params.logging.debug_console_level
+    else
+        Pioneer.DEBUG_CONSOLE_LEVEL[] = 0  # Default: no debug on console
+    end
     
-    # Initialize simple logging system
-    SimpleLogging.init_logging(
-        params.paths[:results];
-        console_level = console_level,
-        file_level = file_level,
-        debug_file_level = debug_level
-    )
+    # Open FOUR log files
+    essential_path = joinpath(params.paths[:results], "pioneer_search_report.txt")
+    console_path = joinpath(params.paths[:results], "pioneer_search_log.log")
+    debug_path = joinpath(params.paths[:results], "pioneer_search_debug.log")
+    warnings_path = joinpath(params.paths[:results], "pioneer_warnings.log")
+    
+    Pioneer.ESSENTIAL_FILE[] = open(essential_path, "w")
+    Pioneer.CONSOLE_FILE[] = open(console_path, "w")
+    Pioneer.DEBUG_FILE[] = open(debug_path, "w")
+    Pioneer.WARNINGS_FILE[] = open(warnings_path, "w")
+    
+    # Get Pioneer version from Project.toml
+    project_toml = joinpath(pkgdir(Pioneer), "Project.toml")
+    pioneer_version = "unknown"
+    if isfile(project_toml)
+        content = read(project_toml, String)
+        version_match = match(r"version\s*=\s*\"([^\"]+)\"", content)
+        if version_match !== nothing
+            pioneer_version = version_match[1]
+        end
+    end
+    
+    # Essential file - clean header (like dual_println)
+    essential_header = [
+        "=" ^ 90,
+        "Pioneer Search Log",
+        "Version: $pioneer_version",
+        "Started: $(Dates.now())",
+        "Output Directory: $(params.paths[:results])",
+        "=" ^ 90,
+        ""
+    ]
+    for line in essential_header
+        println(Pioneer.ESSENTIAL_FILE[], line)
+    end
+    
+    # Console file - same header
+    for line in essential_header
+        println(Pioneer.CONSOLE_FILE[], line)
+    end
+    
+    # Debug file - detailed header
+    debug_header = [
+        "=" ^ 90,
+        "Pioneer Debug Log (Full Trace)",
+        "Version: $pioneer_version",
+        "Started: $(Dates.now())",
+        "Output Directory: $(params.paths[:results])",
+        "Julia Version: $(VERSION)",
+        "Threads: $(Threads.nthreads())",
+        "=" ^ 90,
+        ""
+    ]
+    for line in debug_header
+        println(Pioneer.DEBUG_FILE[], line)
+    end
+    
+    # Warnings file - simple header
+    warnings_header = [
+        "=" ^ 90,
+        "Pioneer Warnings Log",
+        "Started: $(Dates.now())",
+        "=" ^ 90,
+        ""
+    ]
+    for line in warnings_header
+        println(Pioneer.WARNINGS_FILE[], line)
+    end
+    
+    # Log initialization message
+    @user_info "Pioneer logging system initialized"
     
     try
         @user_print "\n" * repeat("=", 90)
@@ -277,8 +343,63 @@ function SearchDIA(params_path::String)
         @user_error "Stacktrace: $(stacktrace(catch_backtrace()))"
         rethrow(e)
     finally
-        # Close logging system
-        SimpleLogging.close_logging()
+        # Count warnings if any exist
+        warning_count = 0
+        warnings_full_path = ""  # Store full path for display
+        if Pioneer.WARNINGS_FILE[] !== nothing
+            # Close and get full path
+            close(Pioneer.WARNINGS_FILE[])
+            warnings_full_path = abspath(warnings_path)  # Get absolute path
+            if isfile(warnings_path)
+                warning_count = max(0, countlines(warnings_path) - 5)  # Subtract header lines
+            end
+            Pioneer.WARNINGS_FILE[] = nothing
+        end
+        
+        # Close all four files with appropriate footers
+        if Pioneer.ESSENTIAL_FILE[] !== nothing
+            footer = ["", "=" ^ 90]
+            if warning_count > 0
+                push!(footer, "⚠️  $warning_count warnings were generated during search")
+            end
+            push!(footer, "Search completed at: $(Dates.now())")
+            push!(footer, "=" ^ 90)
+            for line in footer
+                println(Pioneer.ESSENTIAL_FILE[], line)
+            end
+            close(Pioneer.ESSENTIAL_FILE[])
+            Pioneer.ESSENTIAL_FILE[] = nothing
+        end
+        
+        if Pioneer.CONSOLE_FILE[] !== nothing
+            footer = ["", "=" ^ 90]
+            if warning_count > 0
+                push!(footer, "⚠️  $warning_count warnings were generated during search")
+            end
+            push!(footer, "Search completed at: $(Dates.now())")
+            push!(footer, "=" ^ 90)
+            for line in footer
+                println(Pioneer.CONSOLE_FILE[], line)
+            end
+            close(Pioneer.CONSOLE_FILE[])
+            Pioneer.CONSOLE_FILE[] = nothing
+        end
+        
+        if Pioneer.DEBUG_FILE[] !== nothing
+            footer = ["", "=" ^ 90, "Search completed at: $(Dates.now())", "=" ^ 90]
+            for line in footer
+                println(Pioneer.DEBUG_FILE[], line)
+            end
+            close(Pioneer.DEBUG_FILE[])
+            Pioneer.DEBUG_FILE[] = nothing
+        end
+        
+        # Print warning count to console if there were any
+        if warning_count > 0
+            printstyled("┌ ", color=:yellow)
+            printstyled("Warning:", bold=true, color=:yellow)
+            println(" $warning_count warnings were generated during search - see $warnings_full_path")
+        end
     end
     
     return nothing
