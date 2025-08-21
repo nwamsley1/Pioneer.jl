@@ -64,12 +64,11 @@ function create_simplified_logger(filepath::String, config::LoggingConfig)
     # Open file in append mode
     io = open(filepath, "a")
     
-    # Create base file logger
-    file_logger = SimpleLogger(
-        io,
-        Logging.Info;  # Only user-facing messages
-        format = simple_format
-    )
+    # Create base file logger using FormatLogger
+    file_logger = FormatLogger(io) do io, args
+        # Simple format - just output the message
+        println(io, args.message)
+    end
     
     # Add timestamp formatting
     file_logger = TransformerLogger(file_logger) do log
@@ -85,7 +84,8 @@ function create_simplified_logger(filepath::String, config::LoggingConfig)
                (haskey(log.kwargs, :is_user_message) && log.kwargs[:is_user_message])
     end
     
-    return file_logger
+    # Wrap with MinLevelLogger to respect minimum level
+    return MinLevelLogger(file_logger, Logging.Info)
 end
 
 """
@@ -146,10 +146,6 @@ function console_meta_formatter(level, _module, group, id, file, line)
     end
 end
 
-function simple_format(io, args)
-    # Clean, simple format for the simplified log
-    println(io, args.message)
-end
 
 function format_user_message(level, message, kwargs)
     # Format user-facing messages cleanly
