@@ -132,14 +132,15 @@ function SearchDIA(params_path::String)
     params = parse_pioneer_parameters(params_path)
     mkpath(params.paths[:results])  # Ensure directory exists
     
-    # Determine console verbosity from parameters or environment
-    console_level = get(ENV, "PIONEER_LOG_LEVEL", "normal")
+    # Get logging configuration from parameters
     config = LoggingConfig(
-        console_level = Symbol(console_level),
+        console_level = Symbol(get(params.logging, :console_level, "normal")),
         simple_level = :info,
         full_level = :trace,
-        enable_progress = true,
-        enable_warnings = true
+        enable_progress = get(params.logging, :enable_progress, true),
+        enable_warnings = get(params.logging, :enable_warnings, true),
+        rotation_size_mb = get(params.logging, :rotation_size_mb, 100.0),
+        max_warnings = get(params.logging, :max_warnings, 10000)
     )
     
     initialize_logging(params.paths[:results]; config = config)
@@ -217,6 +218,7 @@ function SearchDIA(params_path::String)
                     params.protein_inference,
                     params.maxLFQ,
                     params.output,
+                    params.logging,
                     params.paths,
                 )
             end
