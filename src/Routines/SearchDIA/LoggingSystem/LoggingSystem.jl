@@ -128,10 +128,18 @@ function finalize_logging()
     
     # Close file loggers (if they exist)
     if state.simplified_logger !== nothing
-        close_logger(state.simplified_logger)
+        if isa(state.simplified_logger, AsyncFileLogger)
+            close_async_logger(state.simplified_logger)
+        else
+            close_logger(state.simplified_logger)
+        end
     end
     if state.full_logger !== nothing
-        close_logger(state.full_logger)
+        if isa(state.full_logger, AsyncFileLogger)
+            close_async_logger(state.full_logger)
+        else
+            close_logger(state.full_logger)
+        end
     end
     
     # Reset global state
@@ -204,7 +212,10 @@ end
 
 # Helper function to close loggers
 function close_logger(logger::AbstractLogger)
-    if hasproperty(logger, :stream) && logger.stream isa IO
+    # Handle AsyncFileLogger specifically
+    if isa(logger, AsyncFileLogger)
+        close_async_logger(logger)
+    elseif hasproperty(logger, :stream) && logger.stream isa IO
         close(logger.stream)
     elseif hasproperty(logger, :io) && logger.io isa IO
         # Handle FormatLogger which uses 'io' field
