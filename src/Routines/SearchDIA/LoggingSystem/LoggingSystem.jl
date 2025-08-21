@@ -132,6 +132,8 @@ function finalize_logging()
             close_async_logger(state.simplified_logger)
         elseif isa(state.simplified_logger, SimpleFileLogger)
             close_simple_logger(state.simplified_logger)
+        elseif isa(state.simplified_logger, DualPrintLogger)
+            close_dual_print_logger(state.simplified_logger)
         else
             close_logger(state.simplified_logger)
         end
@@ -141,6 +143,8 @@ function finalize_logging()
             close_async_logger(state.full_logger)
         elseif isa(state.full_logger, SimpleFileLogger)
             close_simple_logger(state.full_logger)
+        elseif isa(state.full_logger, DualPrintLogger)
+            close_dual_print_logger(state.full_logger)
         else
             close_logger(state.full_logger)
         end
@@ -221,6 +225,8 @@ function close_logger(logger::AbstractLogger)
         close_async_logger(logger)
     elseif isa(logger, SimpleFileLogger)
         close_simple_logger(logger)
+    elseif isa(logger, DualPrintLogger)
+        close_dual_print_logger(logger)
     elseif hasproperty(logger, :stream) && logger.stream isa IO
         close(logger.stream)
     elseif hasproperty(logger, :io) && logger.io isa IO
