@@ -132,6 +132,7 @@ function SearchDIA(params_path::String)
     params = parse_pioneer_parameters(params_path)
     mkpath(params.paths[:results])  # Ensure directory exists
     
+    # TEMPORARY: Use simple console logger to debug hanging issue
     # Get logging configuration from parameters
     config = LoggingConfig(
         console_level = Symbol(get(params.logging, :console_level, "normal")),
@@ -143,7 +144,11 @@ function SearchDIA(params_path::String)
         max_warnings = get(params.logging, :max_warnings, 10000)
     )
     
-    initialize_logging(params.paths[:results]; config = config)
+    # TEMPORARILY DISABLED: Complex logging causing hangs
+    # initialize_logging(params.paths[:results]; config = config)
+    
+    # Use simple console logger instead
+    global_logger(ConsoleLogger(stdout, Logging.Info))
     
     # For backward compatibility - create dual_println function that uses our new system
     function dual_println(args...)
@@ -288,8 +293,8 @@ function SearchDIA(params_path::String)
         @user_error "Stacktrace: $(stacktrace(catch_backtrace()))"
         rethrow(e)
     finally
-        # Finalize logging system
-        finalize_logging()
+        # TEMPORARILY DISABLED: Finalize logging system
+        # finalize_logging()
     end
     
     return nothing
