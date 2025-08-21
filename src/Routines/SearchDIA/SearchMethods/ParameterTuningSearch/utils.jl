@@ -131,10 +131,10 @@ function filter_and_score_psms!(
     
     max_q_val, min_psms = getMaxQVal(params), getMinPsms(params)
     n_passing_psms = sum(psms[!,:q_value] .<= max_q_val)
-    @warn "n_passing_psms = $n_passing_psms max_q_val = $max_q_val min_psms = $min_psms"
-    @warn "size(psms, 1) before filtering = $(size(psms, 1)) "
+    @user_warn "n_passing_psms = $n_passing_psms max_q_val = $max_q_val min_psms = $min_psms"
+    @user_warn "size(psms, 1) before filtering = $(size(psms, 1)) "
     filter!(row -> row.q_value::Float16 <= max_q_val, psms)
-    @warn "size(psms, 1) after filtering = $(size(psms, 1)) "
+    @user_warn "size(psms, 1) after filtering = $(size(psms, 1)) "
     #psms[!,:best_psms] = zeros(Bool, size(psms, 1))
    # 
     # Select best PSM per precursor
@@ -145,9 +145,9 @@ function filter_and_score_psms!(
    # end
     #@warn "size(psms, 1) after selecting best PSMs = $(size(psms, 1)) "
     #filter!(x -> x.best_psms::Bool, psms)
-    @warn "size(psms, 1) after filtering to best PSMs = $(size(psms, 1)) "
+    @user_warn "size(psms, 1) after filtering to best PSMs = $(size(psms, 1)) "
     filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys. 
-    @warn "size(psms, 1) after filtering to target PSMs = $(size(psms, 1)) "
+    @user_warn "size(psms, 1) after filtering to target PSMs = $(size(psms, 1)) "
 
     n_passing_psms = size(psms, 1)
     if n_passing_psms >= min_psms
@@ -698,7 +698,7 @@ function fit_mass_err_model(
     
     # Check if we have enough fragments after filtering
     if length(fragments) == 0
-        @warn "No fragments remaining after intensity filtering"
+        @user_warn "No fragments remaining after intensity filtering"
         return MassErrorModel(0.0f0, (30.0f0, 30.0f0)), Float32[]
     end
     
@@ -709,7 +709,7 @@ function fit_mass_err_model(
     
     # Calculate error bounds using configured quantile
     frag_err_quantile = getFragErrQuantile(params)
-    @warn "fit_mass_err_model: Using frag_err_quantile = $frag_err_quantile from parameters.json"
+    @debug_l1 "fit_mass_err_model: Using frag_err_quantile = $frag_err_quantile from parameters.json"
 
     _mad = mad(ppm_errs)
     r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
@@ -735,7 +735,7 @@ function fit_mass_err_model(
         r_est)
     r_bound = r_est
     l_bound = l_est
-    @warn "l_quantile = $l_quantile, l_est = $l_est, " *
+    @debug_l1 "l_quantile = $l_quantile, l_est = $l_est, " *
           "r_quantile = $r_quantile, r_est = $r_est, " *
           "l_bound = $l_bound, r_bound = $r_bound"
     #l_bound = abs(quantile(ppm_errs, frag_err_quantile))
@@ -1129,15 +1129,15 @@ function check_convergence(
     min_psms::Int64
 )
     if size(psms, 1) < min_psms
-        @info "size(psms, 1) < $min_psms, skipping convergence check"
+        @debug_l1 "size(psms, 1) < $min_psms, skipping convergence check"
         return false 
     end
     if (getLeftTol(old_mass_err_model) - getLeftTol(new_mass_err_model))/(getLeftTol(new_mass_err_model)) < 0.05
-        @info "Left tolerance failed to converge getLeftTol(old_mass_err_model) $(getLeftTol(old_mass_err_model)) getLeftTol(new_mass_err_model) $(getLeftTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
+        @debug_l1 "Left tolerance failed to converge getLeftTol(old_mass_err_model) $(getLeftTol(old_mass_err_model)) getLeftTol(new_mass_err_model) $(getLeftTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
         return false 
     end
     if (getRightTol(old_mass_err_model) - getRightTol(new_mass_err_model))/(getRightTol(new_mass_err_model)) < 0.05
-        @info "Right tolerance failed to converge getRightTol(old_mass_err_model) $(getRightTol(old_mass_err_model)) getRightTol(new_mass_err_model) $(getRightTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
+        @debug_l1 "Right tolerance failed to converge getRightTol(old_mass_err_model) $(getRightTol(old_mass_err_model)) getRightTol(new_mass_err_model) $(getRightTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
         return false 
     end
     return true
@@ -1180,7 +1180,7 @@ function test_tolerance_expansion!(
         (expanded_tolerance, expanded_tolerance)
     )
     
-     @info "Testing tolerance expansion for PSM collection:" *
+     @debug_l1 "Testing tolerance expansion for PSM collection:" *
            "\n  Original collection tolerance: ±$(round(collection_tolerance, digits=1)) ppm" *
            "\n  Expanded collection tolerance: ±$(round(expanded_tolerance, digits=1)) ppm" *
            "\n  Current PSM count: $current_psm_count"
@@ -1220,7 +1220,7 @@ function test_tolerance_expansion!(
     if length(fragments) == 0
         # Failed to get fragments, restore original
         setMassErrorModel!(search_context, ms_file_idx, original_model)
-        @warn "Failed to extract fragments from expanded PSM set, keeping original"
+        @user_warn "Failed to extract fragments from expanded PSM set, keeping original"
         return current_psms, current_model, current_ppm_errs, false
     end
     
@@ -1230,7 +1230,7 @@ function test_tolerance_expansion!(
     if refitted_model === nothing
         # Failed to fit model, restore original
         setMassErrorModel!(search_context, ms_file_idx, original_model)
-        @warn "Failed to fit mass error model from expanded PSM set, keeping original"
+        @user_warn "Failed to fit mass error model from expanded PSM set, keeping original"
         return current_psms, current_model, current_ppm_errs, false
     end
     
@@ -1274,7 +1274,7 @@ function get_fallback_parameters(
     end
     
     # Use default fallback
-    @warn "No successful files to borrow from, using default parameters"
+    @user_warn "No successful files to borrow from, using default parameters"
     push!(warnings, "Using default fallback parameters")
     
     # Default mass error model

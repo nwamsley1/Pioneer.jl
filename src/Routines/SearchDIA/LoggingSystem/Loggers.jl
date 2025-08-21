@@ -7,7 +7,7 @@ export create_console_logger, create_simplified_logger, create_full_logger
 const VERBOSITY_LEVELS = Dict(
     :silent => LogLevel(2001),    # Error + 1 (only critical)
     :minimal => LogLevel(1000),   # Warn level
-    :normal => LogLevel(-1),      # Just below Info to include user messages
+    :normal => LogLevel(-100),    # User info level to include user messages
     :verbose => LogLevel(-500),   # More detailed info
     :debug => LogLevel(-1000)     # Debug level
 )
@@ -20,11 +20,11 @@ Create a console logger with progress bar awareness and runtime-adjustable verbo
 function create_console_logger(config::LoggingConfig)
     level = get(VERBOSITY_LEVELS, config.console_level, Logging.Info)
     
-    # Create base console logger with minimal formatting
+    # Create base console logger with custom formatting for colored prefixes
     console_logger = ConsoleLogger(
         stdout,
         level;
-        meta_formatter = (args...) -> (:normal, "", ""),  # No prefix/suffix
+        meta_formatter = custom_meta_formatter,  # Use our custom formatter for colored prefixes
         show_limited = false,
         right_justify = 0
     )
@@ -43,19 +43,24 @@ function create_console_logger(config::LoggingConfig)
     
     # Add custom formatting for user messages and clean kwargs
     console_logger = TransformerLogger(console_logger) do log
-        # Remove internal metadata from kwargs
+        # Check if this is a no-prefix message - handle it specially
+        if get(log.kwargs, :no_prefix, false)
+            # For no-prefix messages, create a simple logger that just prints
+            # We bypass the normal ConsoleLogger formatting
+            println(stdout, log.message)
+            # Return a modified log that won't be processed further
+            # Set level to below any threshold so it gets filtered out
+            return merge(log, (level = LogLevel(-10000),))
+        end
+        
+        # For normal messages, clean kwargs
         clean_kwargs = Dict{Symbol,Any}()
         for (k, v) in log.kwargs
-            if k != :is_user_message && k != :_group && k != :progress_step && k != :progress_active
+            if k != :is_user_message && k != :_group && k != :progress_step && k != :progress_active && k != :no_prefix
                 clean_kwargs[k] = v
             end
         end
         
-        # Format based on custom log level
-        if haskey(log.kwargs, :is_user_message) && log.kwargs[:is_user_message]
-            # Just return the message without special formatting
-            return merge(log, (kwargs = clean_kwargs,))
-        end
         return merge(log, (kwargs = clean_kwargs,))
     end
     
@@ -139,6 +144,35 @@ function create_full_logger(filepath::String, config::LoggingConfig)
 end
 
 # Helper functions
+
+"""
+    custom_meta_formatter(level, _module, group, id, file, line)
+
+Provides colored prefixes for different log levels, including custom Pioneer levels.
+"""
+function custom_meta_formatter(level, _module, group, id, file, line)
+    level_value = Logging.LogLevel(level)
+    
+    # Handle standard Julia log levels
+    if level_value == Logging.Error
+        return (:error, "Error", "")
+    elseif level_value == Logging.Warn
+        return (:yellow, "Warning", "")
+    elseif level_value == Logging.Info
+        return (:cyan, "Info", "")  # Use cyan for standard Info too
+    # Handle custom Pioneer log levels (using numeric values)
+    elseif level_value == LogLevel(-100)  # USER_INFO_LEVEL
+        return (:cyan, "Info", "")
+    elseif level_value == LogLevel(900)  # USER_WARN_LEVEL
+        return (:yellow, "Warning", "")
+    elseif level_value == LogLevel(-1000) || level_value == LogLevel(-1100) || level_value == LogLevel(-1200)  # DEBUG levels
+        return (:blue, "Debug", "")
+    elseif level_value == LogLevel(-2000)  # TRACE_LEVEL
+        return (:light_black, "Trace", "")
+    else
+        return (:normal, "", "")
+    end
+end
 
 function console_meta_formatter(level, _module, group, id, file, line)
     color = Logging.default_logcolor(level)
