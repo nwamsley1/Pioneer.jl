@@ -1,10 +1,6 @@
 {
     "logging": {
-        "console_level": "normal",
-        "enable_progress": true,
-        "enable_warnings": true,
-        "rotation_size_mb": 100.0,
-        "max_warnings": 10000
+        "debug_console_level": 0
     },
     "global": {
         "isotope_settings": {
