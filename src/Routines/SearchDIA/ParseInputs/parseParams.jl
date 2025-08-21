@@ -26,6 +26,7 @@ struct PioneerParameters
     protein_inference::NamedTuple
     maxLFQ::NamedTuple
     output::NamedTuple
+    logging::NamedTuple
     paths::NamedTuple
 end
 
@@ -81,6 +82,21 @@ function parse_pioneer_parameters(json_path::String)
     protein_inference = dict_to_namedtuple(params["proteinInference"])
     maxLFQ = dict_to_namedtuple(params["maxLFQ"])
     output = dict_to_namedtuple(params["output"])
+    
+    # Parse logging section with defaults if not present
+    logging = if haskey(params, "logging")
+        dict_to_namedtuple(params["logging"])
+    else
+        # Default logging configuration
+        NamedTuple((
+            console_level = "normal",
+            enable_progress = true,
+            enable_warnings = true,
+            rotation_size_mb = 100.0,
+            max_warnings = 10000
+        ))
+    end
+    
     paths = expand_user_paths(dict_to_namedtuple(params["paths"]))
 
     return PioneerParameters(
@@ -94,6 +110,7 @@ function parse_pioneer_parameters(json_path::String)
         protein_inference,
         maxLFQ,
         output,
+        logging,
         paths
     )
 end
