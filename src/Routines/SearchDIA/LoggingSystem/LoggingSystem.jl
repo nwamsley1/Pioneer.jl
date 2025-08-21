@@ -5,8 +5,8 @@
 struct LoggerState
     warning_logger::WarningCapturingLogger
     console_logger::Ref{AbstractLogger}
-    simplified_logger::AbstractLogger
-    full_logger::AbstractLogger
+    simplified_logger::Union{Nothing, AbstractLogger}
+    full_logger::Union{Nothing, AbstractLogger}
     config::LoggingConfig
     start_time::DateTime
 end
@@ -74,12 +74,12 @@ function initialize_logging(output_dir::String; config::LoggingConfig = LoggingC
     warning_logger = WarningCapturingLogger(tee_logger, warning_tracker)
     
     # Store logger state
-    # Use console logger as fallback for type compatibility
+    # Store nothing for file loggers if they failed to create
     LOGGER_STATE[] = LoggerState(
         warning_logger,
         console_logger_ref,
-        simplified_logger === nothing ? console_logger_ref[] : simplified_logger,
-        full_logger === nothing ? console_logger_ref[] : full_logger,
+        simplified_logger,  # Will be nothing if creation failed
+        full_logger,        # Will be nothing if creation failed
         config,
         now()
     )
@@ -125,9 +125,13 @@ function finalize_logging()
     runtime = now() - state.start_time
     @info "Total runtime: $(runtime)"
     
-    # Close file loggers
-    close_logger(state.simplified_logger)
-    close_logger(state.full_logger)
+    # Close file loggers (if they exist)
+    if state.simplified_logger !== nothing
+        close_logger(state.simplified_logger)
+    end
+    if state.full_logger !== nothing
+        close_logger(state.full_logger)
+    end
     
     # Reset global state
     LOGGER_STATE[] = nothing
