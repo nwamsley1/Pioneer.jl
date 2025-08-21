@@ -16,7 +16,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 module Pioneer
-#__precompile__(false)
+__precompile__(false)
 using Arrow, ArrowTypes, ArgParse
 #using Profile
 #using PProf
@@ -73,8 +73,7 @@ const InterpolationTypeAlias = Interpolations.Extrapolation{
 #Set Seed 
 Random.seed!(1776);
 
-# Define placeholder logging macros to prevent UndefVarError during loading
-# These will be replaced when SimpleLogging is loaded
+# Define temporary placeholder macros before loading
 macro user_info(msg)
     :(println("INFO: ", $(esc(msg))))
 end
@@ -88,7 +87,7 @@ macro user_print(msg)
     :(println($(esc(msg))))
 end
 macro debug_l1(msg)
-    :() # No-op for debug during loading
+    :() # No-op during loading
 end
 macro debug_l2(msg)
     :() # No-op
@@ -104,9 +103,43 @@ end
 include("importScripts.jl")
 files_loaded = importScripts()
 
-# Import SimpleLogging macros into Pioneer module scope
-import .SimpleLogging: @user_info, @user_warn, @user_error, @user_print, 
-                       @debug_l1, @debug_l2, @debug_l3, @trace
+# Replace placeholder macros with real SimpleLogging macros
+macro user_info(msg)
+    :(SimpleLogging.log_message(:info, string($(esc(msg)))))
+end
+macro user_warn(msg, category=nothing)
+    quote
+        local msg_str = string($(esc(msg)))
+        local cat = $(esc(category))
+        
+        if cat === nothing
+            SimpleLogging.log_message(:warn, msg_str; 
+                _module=$(string(__module__)), _file=$(string(__source__.file)), _line=$(__source__.line))
+        else
+            SimpleLogging.log_message(:warn, msg_str; category=cat,
+                _module=$(string(__module__)), _file=$(string(__source__.file)), _line=$(__source__.line))
+        end
+    end
+end
+macro user_error(msg)
+    :(SimpleLogging.log_message(:error, string($(esc(msg)));
+        _module=$(string(__module__)), _file=$(string(__source__.file)), _line=$(__source__.line)))
+end
+macro user_print(msg)
+    :(SimpleLogging.write_direct(string($(esc(msg)))))
+end
+macro debug_l1(msg)
+    :(SimpleLogging.log_message(:debug, string($(esc(msg)))))
+end
+macro debug_l2(msg)
+    :(SimpleLogging.log_message(:debug, "[L2] " * string($(esc(msg)))))
+end
+macro debug_l3(msg)
+    :(SimpleLogging.log_message(:debug, "[L3] " * string($(esc(msg)))))
+end
+macro trace(msg)
+    :(SimpleLogging.log_message(:trace, string($(esc(msg)))))
+end
 
 #importScriptsSpecLib(files_loaded)
 #include(joinpath(@__DIR__, "Routines","LibrarySearch","method"s,"loadSpectralLibrary.jl"))
