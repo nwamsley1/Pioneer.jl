@@ -3,9 +3,10 @@ module LoggingSystem
 using Logging
 using LoggingExtras
 using Dates
-using ProgressMeter
+using ProgressBars
 using DataFrames
 using Printf
+using JSON3
 
 # Export main functionality
 export initialize_logging, finalize_logging, get_logger_state, update_console_verbosity
