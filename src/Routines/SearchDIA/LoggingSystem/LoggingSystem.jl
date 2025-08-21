@@ -130,6 +130,8 @@ function finalize_logging()
     if state.simplified_logger !== nothing
         if isa(state.simplified_logger, AsyncFileLogger)
             close_async_logger(state.simplified_logger)
+        elseif isa(state.simplified_logger, SimpleFileLogger)
+            close_simple_logger(state.simplified_logger)
         else
             close_logger(state.simplified_logger)
         end
@@ -137,6 +139,8 @@ function finalize_logging()
     if state.full_logger !== nothing
         if isa(state.full_logger, AsyncFileLogger)
             close_async_logger(state.full_logger)
+        elseif isa(state.full_logger, SimpleFileLogger)
+            close_simple_logger(state.full_logger)
         else
             close_logger(state.full_logger)
         end
@@ -212,9 +216,11 @@ end
 
 # Helper function to close loggers
 function close_logger(logger::AbstractLogger)
-    # Handle AsyncFileLogger specifically
+    # Handle specific logger types
     if isa(logger, AsyncFileLogger)
         close_async_logger(logger)
+    elseif isa(logger, SimpleFileLogger)
+        close_simple_logger(logger)
     elseif hasproperty(logger, :stream) && logger.stream isa IO
         close(logger.stream)
     elseif hasproperty(logger, :io) && logger.io isa IO
