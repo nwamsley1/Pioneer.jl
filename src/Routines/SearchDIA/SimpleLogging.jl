@@ -281,31 +281,40 @@ Core logging function called by all macros.
 """
 function log_message(level::Symbol, msg::String; 
                     category::Union{Nothing, Symbol} = nothing,
+                    _module=nothing, _file=nothing, _line=nothing,
                     kwargs...)
     
-    # Console output
+    # Console output - match Julia's default @warn/@info style exactly
     if should_log(level, CONSOLE_LEVEL[])
-        # Format for console
-        formatted = if level in [:error, :warn]
-            # Colored output for warnings/errors
-            color = get(LEVEL_COLORS, level, :normal)
-            
-            # Special formatting for warnings with category
-            if level == :warn && category !== nothing
-                prefix = LEVEL_PREFIXES[:warn]
-                # Don't include category in console output to reduce clutter
-                "┌ $prefix $msg"
-            else
-                format_message(level, msg; with_timestamp=false)
+        if level == :warn
+            # Match Julia's @warn format exactly: ┌ Warning: message
+            formatted_msg = "┌ Warning: $msg"
+            if category !== nothing
+                formatted_msg *= " [category: $category]"
             end
+            # Add location info if available (like Julia's @warn)
+            if _module !== nothing && _file !== nothing && _line !== nothing
+                formatted_msg *= "\n└ @ $_module $_file:$_line"
+            end
+            printstyled(formatted_msg, "\n"; color=:yellow)
+            
+        elseif level == :error
+            # Match Julia's @error format
+            formatted_msg = "┌ Error: $msg"
+            if _module !== nothing && _file !== nothing && _line !== nothing
+                formatted_msg *= "\n└ @ $_module $_file:$_line"
+            end
+            printstyled(formatted_msg, "\n"; color=:red)
+            
+        elseif level == :info
+            # Match Julia's @info format: ┌ Info (no line numbers for info)  
+            formatted_msg = "┌ Info: $msg"
+            printstyled(formatted_msg, "\n"; color=:cyan)
+            
         else
-            # Regular info messages
-            format_message(level, msg; with_timestamp=false)
+            # Debug levels - simpler format
+            println("$msg")
         end
-        
-        # Write to console with color
-        color = get(LEVEL_COLORS, level, :normal)
-        write_to_console(formatted; color=color)
     end
     
     # Main log file output
@@ -366,11 +375,13 @@ macro user_warn(msg, category=nothing)
         local msg_str = string($(esc(msg)))
         local cat = $(esc(category))
         
-        # Only pass category if it's not nothing
+        # Pass location information for warnings (to get line numbers like Julia's @warn)
         if cat === nothing
-            SimpleLogging.log_message(:warn, msg_str)
+            SimpleLogging.log_message(:warn, msg_str; 
+                _module=$(string(__module__)), _file=$(string(__source__.file)), _line=$(__source__.line))
         else
-            SimpleLogging.log_message(:warn, msg_str; category=cat)
+            SimpleLogging.log_message(:warn, msg_str; category=cat,
+                _module=$(string(__module__)), _file=$(string(__source__.file)), _line=$(__source__.line))
         end
     end
 end
@@ -378,7 +389,8 @@ end
 # Error messages
 macro user_error(msg)
     quote
-        SimpleLogging.log_message(:error, string($(esc(msg))))
+        SimpleLogging.log_message(:error, string($(esc(msg)));
+            _module=$(string(__module__)), _file=$(string(__source__.file)), _line=$(__source__.line))
     end
 end
 
