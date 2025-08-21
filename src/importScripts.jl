@@ -181,23 +181,8 @@ function importScripts()
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils"))
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs"))
     
-    # LoggingSystem - Load BEFORE SearchMethods so macros are available
-    include_files!(
-        joinpath(package_root, "src", "Routines", "SearchDIA", "LoggingSystem"),
-        [
-            "WarningTracker.jl",
-            "WarningCapturingLogger.jl",
-            "Configuration.jl",
-            "AsyncFileLogger.jl",  # Keep for future use
-            "SimpleFileLogger.jl",  # Keep for comparison
-            "DualPrintLogger.jl",  # New minimal logger like dual_println
-            "Loggers.jl",
-            "Macros.jl",
-            "ProgressIntegration.jl",
-            "FileManagement.jl",
-            "LoggingSystem.jl"  # Main orchestration file should be last
-        ]
-    )
+    # SimpleLogging - Load BEFORE SearchMethods so macros are available
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SimpleLogging.jl"))
     
     # SearchMethods (excluding the old FileReferences.jl and FileOperations.jl files)
     search_methods_dir = joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")
