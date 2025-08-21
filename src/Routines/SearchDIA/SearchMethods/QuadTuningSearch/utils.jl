@@ -419,12 +419,7 @@ function summarize_precursor(
                     x0 = iso_mz[m0_idx]-center_mz[m0_idx], 
                     x1 = iso_mz[m1_idx]-center_mz[m1_idx], 
                     prec_charge = prec_charge[m0_idx])
-        else
-            println("iso_idx $iso_idx")
         end
-    end
-    if length(iso_idx) == 3
-        println("bro... $iso_idx")
     end
     
     #If we only got the M0
