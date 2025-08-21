@@ -45,12 +45,15 @@ function initialize_logging(output_dir::String; config::LoggingConfig = LoggingC
     # Try to create file loggers with error handling
     loggers = [console_logger_ref[]]
     
+    # Declare variables in outer scope
+    simplified_logger = nothing
+    full_logger = nothing
+    
     try
         simplified_logger = create_simplified_logger(simple_log_path, config)
         push!(loggers, simplified_logger)
     catch e
         @warn "Could not create simplified log file" path=simple_log_path error=e
-        simplified_logger = nothing
     end
     
     try
@@ -58,7 +61,6 @@ function initialize_logging(output_dir::String; config::LoggingConfig = LoggingC
         push!(loggers, full_logger)
     catch e
         @warn "Could not create full debug log file" path=full_log_path error=e
-        full_logger = nothing
     end
     
     # Create TeeLogger for parallel distribution (at minimum has console logger)
@@ -72,11 +74,12 @@ function initialize_logging(output_dir::String; config::LoggingConfig = LoggingC
     warning_logger = WarningCapturingLogger(tee_logger, warning_tracker)
     
     # Store logger state
+    # Use console logger as fallback for type compatibility
     LOGGER_STATE[] = LoggerState(
         warning_logger,
         console_logger_ref,
-        simplified_logger === nothing ? tee_logger : simplified_logger,  # Fallback to tee_logger if nothing
-        full_logger === nothing ? tee_logger : full_logger,  # Fallback to tee_logger if nothing
+        simplified_logger === nothing ? console_logger_ref[] : simplified_logger,
+        full_logger === nothing ? console_logger_ref[] : full_logger,
         config,
         now()
     )
