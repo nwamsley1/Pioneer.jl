@@ -2,13 +2,14 @@
 # Custom logging macros for Pioneer
 
 # Export all custom macros
-export @user_info, @user_warn, @user_error
+export @user_info, @user_warn, @user_error, @user_print
 export @debug_l1, @debug_l2, @debug_l3
 export @trace
 export @progress_start, @progress_update, @progress_end
 
 # Define custom log levels (using integer values directly)
 const USER_INFO_LEVEL = LogLevel(-100)   # Info - 100
+const USER_WARN_LEVEL = LogLevel(900)    # Just below Warn (1000)
 const DEBUG_L1_LEVEL = LogLevel(-1000)   # Debug
 const DEBUG_L2_LEVEL = LogLevel(-1100)   # Debug - 100
 const DEBUG_L3_LEVEL = LogLevel(-1200)   # Debug - 200
@@ -21,7 +22,18 @@ Log a user-facing informational message that appears in all outputs.
 """
 macro user_info(msg, args...)
     quote
-        @info $(esc(msg)) $(esc.(args)...) is_user_message=true _group=:user_info
+        @logmsg USER_INFO_LEVEL $(esc(msg)) $(esc.(args)...) is_user_message=true _group=:user_info
+    end
+end
+
+"""
+    @user_print msg [key=value...]
+
+Print a user-facing message without any prefix (for decorative output like separators).
+"""
+macro user_print(msg, args...)
+    quote
+        @logmsg USER_INFO_LEVEL $(esc(msg)) $(esc.(args)...) is_user_message=true no_prefix=true _group=:user_print
     end
 end
 
@@ -43,8 +55,15 @@ macro user_warn(msg, args...)
         end
     end
     
-    quote
-        @warn $(esc(msg)) $(esc.(other_args)...) is_user_message=true category=$(esc(category_expr))
+    # Build the log message conditionally based on whether category was provided
+    if category_expr !== nothing
+        quote
+            @logmsg USER_WARN_LEVEL $(esc(msg)) $(esc.(other_args)...) is_user_message=true category=$(esc(category_expr)) _group=:user_warn
+        end
+    else
+        quote
+            @logmsg USER_WARN_LEVEL $(esc(msg)) $(esc.(other_args)...) is_user_message=true _group=:user_warn
+        end
     end
 end
 

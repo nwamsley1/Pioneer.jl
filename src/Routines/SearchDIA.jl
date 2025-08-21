@@ -159,9 +159,9 @@ function SearchDIA(params_path::String)
     end
     
     try
-        @user_info "\n" * repeat("=", 90)
-        @user_info "Starting SearchDIA"
-        @user_info repeat("=", 90)
+        @user_print "\n" * repeat("=", 90)
+        @user_print "Starting SearchDIA"
+        @user_print repeat("=", 90)
         @user_info "\nStarting search at: $(Dates.now())"
         @user_info "Output directory: $(params.paths[:results])"
         
@@ -303,9 +303,9 @@ Helper function to print formatted performance metrics
 """
 function print_performance_report(timings, ms_table_paths, search_context, println_func)
     # Header
-    println_func("\n" * repeat("=", 90))
-    println_func("DIA Search Performance Report")
-    println_func(repeat("=", 90))
+    @user_print "\n" * repeat("=", 90)
+    @user_print "DIA Search Performance Report"
+    @user_print repeat("=", 90)
 
     # Detailed analysis
     println_func("\nDetailed Step Analysis:")

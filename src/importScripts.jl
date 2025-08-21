@@ -181,6 +181,21 @@ function importScripts()
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils"))
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs"))
     
+    # LoggingSystem - Load BEFORE SearchMethods so macros are available
+    include_files!(
+        joinpath(package_root, "src", "Routines", "SearchDIA", "LoggingSystem"),
+        [
+            "WarningTracker.jl",
+            "WarningCapturingLogger.jl",
+            "Configuration.jl",
+            "Loggers.jl",
+            "Macros.jl",
+            "ProgressIntegration.jl",
+            "FileManagement.jl",
+            "LoggingSystem.jl"  # Main orchestration file should be last
+        ]
+    )
+    
     # SearchMethods (excluding the old FileReferences.jl and FileOperations.jl files)
     search_methods_dir = joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")
     
@@ -271,21 +286,6 @@ function importScripts()
     # Profiling
     safe_include!(joinpath(package_root, "src", "utils", "profile.jl"))
     safe_include!(joinpath(package_root, "src", "utils", "pdfUtils.jl"))
-
-    # LoggingSystem
-    include_files!(
-        joinpath(package_root, "src", "Routines", "SearchDIA", "LoggingSystem"),
-        [
-            "WarningTracker.jl",
-            "WarningCapturingLogger.jl",
-            "Configuration.jl",
-            "Loggers.jl",
-            "Macros.jl",
-            "ProgressIntegration.jl",
-            "FileManagement.jl",
-            "LoggingSystem.jl"  # Main orchestration file should be last
-        ]
-    )
 
     #importSpecLibScripts()
 
