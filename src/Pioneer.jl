@@ -48,7 +48,7 @@ using InlineStrings
 using HTTP
 
 
-# Simple console logger - detailed logging handled by SimpleLogging module
+# Simple console logger - detailed logging handled by custom logging system
 global_logger(ConsoleLogger())
 
 
@@ -147,28 +147,37 @@ function user_warn(msg::String, file::String="", line::String="", mod::String=""
     
     timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS")
     
+    # Build source location string for files
+    source_loc = ""
+    if !isempty(file) && !isempty(line)
+        source_loc = " @ $mod $file:$line"
+    end
+    
     # Essential file - only critical warnings
     if is_essential_message(msg) && ESSENTIAL_FILE[] !== nothing
-        println(ESSENTIAL_FILE[], "[$timestamp] WARNING: $msg")
+        println(ESSENTIAL_FILE[], "[$timestamp] WARNING: $msg$source_loc")
         flush(ESSENTIAL_FILE[])
     end
     
-    # Console file - all warnings
+    # Console file - mirror console format exactly
     if CONSOLE_FILE[] !== nothing
         println(CONSOLE_FILE[], "[$timestamp] [WARN] $msg")
+        if !isempty(source_loc)
+            println(CONSOLE_FILE[], "                        └$source_loc")  # Indented continuation
+        end
         flush(CONSOLE_FILE[])
     end
     
-    # Debug file - everything
+    # Debug file - everything with full details
     if DEBUG_FILE[] !== nothing
         debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        println(DEBUG_FILE[], "[$debug_timestamp] [warn] $msg")
+        println(DEBUG_FILE[], "[$debug_timestamp] [warn] $msg$source_loc")
         flush(DEBUG_FILE[])
     end
     
-    # Warnings file - all warnings for tracking
+    # Warnings file - all warnings with source for easy debugging
     if WARNINGS_FILE[] !== nothing
-        println(WARNINGS_FILE[], "[$timestamp] $msg")
+        println(WARNINGS_FILE[], "[$timestamp] $msg$source_loc")
         flush(WARNINGS_FILE[])
     end
 end
@@ -187,22 +196,31 @@ function user_error(msg::String, file::String="", line::String="", mod::String="
     
     timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS")
     
+    # Build source location string for files
+    source_loc = ""
+    if !isempty(file) && !isempty(line)
+        source_loc = " @ $mod $file:$line"
+    end
+    
     # Essential file - errors are always essential
     if ESSENTIAL_FILE[] !== nothing
-        println(ESSENTIAL_FILE[], "[$timestamp] ERROR: $msg")
+        println(ESSENTIAL_FILE[], "[$timestamp] ERROR: $msg$source_loc")
         flush(ESSENTIAL_FILE[])
     end
     
-    # Console file - all errors
+    # Console file - mirror console format exactly
     if CONSOLE_FILE[] !== nothing
         println(CONSOLE_FILE[], "[$timestamp] [ERROR] $msg")
+        if !isempty(source_loc)
+            println(CONSOLE_FILE[], "                         └$source_loc")  # Indented continuation
+        end
         flush(CONSOLE_FILE[])
     end
     
-    # Debug file - everything
+    # Debug file - everything with full details
     if DEBUG_FILE[] !== nothing
         debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        println(DEBUG_FILE[], "[$debug_timestamp] [error] $msg")
+        println(DEBUG_FILE[], "[$debug_timestamp] [error] $msg$source_loc")
         flush(DEBUG_FILE[])
     end
 end
@@ -244,10 +262,14 @@ function debug_l1(msg::String, file::String="", line::String="", mod::String="")
         end
     end
     
-    # Always write to debug file
+    # Always write to debug file with source location
     if DEBUG_FILE[] !== nothing
         debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG1] $msg")
+        source_loc = ""
+        if !isempty(file) && !isempty(line)
+            source_loc = " @ $mod $file:$line"
+        end
+        println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG1] $msg$source_loc")
         flush(DEBUG_FILE[])
     end
 end
@@ -265,10 +287,14 @@ function debug_l2(msg::String, file::String="", line::String="", mod::String="")
         end
     end
     
-    # Always write to debug file
+    # Always write to debug file with source location
     if DEBUG_FILE[] !== nothing
         debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG2] $msg")
+        source_loc = ""
+        if !isempty(file) && !isempty(line)
+            source_loc = " @ $mod $file:$line"
+        end
+        println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG2] $msg$source_loc")
         flush(DEBUG_FILE[])
     end
 end
@@ -286,10 +312,14 @@ function debug_l3(msg::String, file::String="", line::String="", mod::String="")
         end
     end
     
-    # Always write to debug file
+    # Always write to debug file with source location
     if DEBUG_FILE[] !== nothing
         debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG3] $msg")
+        source_loc = ""
+        if !isempty(file) && !isempty(line)
+            source_loc = " @ $mod $file:$line"
+        end
+        println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG3] $msg$source_loc")
         flush(DEBUG_FILE[])
     end
 end
@@ -307,10 +337,14 @@ function trace_msg(msg::String, file::String="", line::String="", mod::String=""
         end
     end
     
-    # Always write to debug file
+    # Always write to debug file with source location
     if DEBUG_FILE[] !== nothing
         debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        println(DEBUG_FILE[], "[$debug_timestamp] [TRACE] $msg")
+        source_loc = ""
+        if !isempty(file) && !isempty(line)
+            source_loc = " @ $mod $file:$line"
+        end
+        println(DEBUG_FILE[], "[$debug_timestamp] [TRACE] $msg$source_loc")
         flush(DEBUG_FILE[])
     end
 end

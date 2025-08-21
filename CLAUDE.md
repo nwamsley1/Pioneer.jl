@@ -259,12 +259,83 @@ All major functions use JSON parameter files. Examples in `data/example_config/`
 - **prosit_2020_hcd** - Instrument-agnostic HCD fragmentation model
 - **AlphaPeptDeep** - Supports QE, LUMOS, TIMSTOF, SCIEXTOF instruments
 
+### Logging System
+
+Pioneer.jl implements a comprehensive four-tier logging system that matches Julia's native formatting exactly:
+
+#### Log Files
+SearchDIA creates four log files in the results directory:
+
+1. **`pioneer_search_report.txt`** - Essential messages only (clean overview)
+   - High-level status messages and performance reports
+   - Replicates original dual_println behavior
+   - For management overview and essential tracking
+
+2. **`pioneer_search_log.log`** - Complete console mirror  
+   - Everything visible on console with timestamps
+   - Two-line format for warnings/errors with source location
+   - Perfect for debugging user-visible issues
+
+3. **`pioneer_search_debug.log`** - Everything including debug messages
+   - All console output PLUS debug statements
+   - Single-line format with millisecond timestamps
+   - Source location included for all messages
+   - Debug messages never appear on console
+
+4. **`pioneer_warnings.log`** - All warnings for review
+   - Every warning message with source location
+   - Easy to scan for issues across the entire run
+   - Automatic counting and reporting at completion
+
+#### Logging Macros
+- `@user_info` - Information messages (`[ Info:` format, matches Julia)
+- `@user_warn` - Warning messages (with `└ @ Module file:line` source location) 
+- `@user_error` - Error messages (with `└ @ Module file:line` source location)
+- `@user_print` - Direct output (for performance reports, goes to essential file)
+- `@debug_l1/l2/l3` - Debug levels 1-3 (blue color, with source location)
+- `@trace` - Trace messages (level 4+)
+
+#### Configuration
+JSON parameters control debug verbosity:
+```json
+"logging": {
+    "debug_console_level": 0  // 0-3, controls which debug levels show on console
+}
+```
+
+- `0` (default): No debug messages on console (only in debug file)
+- `1`: Show DEBUG1 messages on console  
+- `2`: Show DEBUG1 and DEBUG2 messages on console
+- `3`: Show all debug messages on console
+
+#### Features
+- **Source Location Tracking**: All warnings, errors, and debug messages include `@ Module file:line`
+- **Julia-Style Formatting**: Exact match to `@info`, `@warn`, `@debug` formatting
+- **Automatic Warning Counting**: Reports total warnings at search completion with full path
+- **File-Specific Formatting**: Each log file optimized for its intended use case
+
+#### Usage Examples
+```julia
+# Basic logging
+@user_info "Loading Parameters..."           # [ Info: Loading Parameters...
+@user_warn "Low PSM count detected"          # ┌ Warning: Low PSM count detected
+                                             # └ @ Module file:line
+@user_error "Failed to load file"            # ┌ Error: Failed to load file  
+                                             # └ @ Module file:line
+
+# Debug logging (controlled by debug_console_level)
+@debug_l1 "Processing batch 1"               # Only in debug file (level 0)
+@debug_l2 "Detailed fragment matching"       # Only in debug file (level 0-1)
+@debug_l3 "Low-level algorithm details"      # Only in debug file (level 0-2)
+
+# Performance reporting (always goes to essential file)
+@user_print "Total Runtime: 2.5 minutes"    # Direct output, no formatting
+```
+
 ### Current Development Focus
 - Refactoring ScoringSearch and MaxLFQSearch for better encapsulation
-- See src/Routines/SearchDIA/SearchMethods/REFACTORING_PLAN_V2.md for detailed plan
 - Adding FileReference abstraction layer for type-safe file operations
 - Protein group ML scoring integration using EvoTrees/XGBoost gradient boosting
-- See PROTEIN_ML_SCORING_INTEGRATION.md for implementation details
 - Features top-N precursor scores with cross-validation consistency
 
 ### Protein Group ML Scoring
