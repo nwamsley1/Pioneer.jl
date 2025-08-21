@@ -18,9 +18,9 @@ export ProgressLogger, update_progress!, finish_progress!
 # Include sub-modules
 include("WarningTracker.jl")
 include("WarningCapturingLogger.jl")
+include("Configuration.jl")  # Must come before Loggers.jl which uses LoggingConfig
 include("Loggers.jl")
 include("Macros.jl")
-include("Configuration.jl")
 include("ProgressIntegration.jl")
 include("FileManagement.jl")
 
