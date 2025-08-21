@@ -132,19 +132,18 @@ function SearchDIA(params_path::String)
     params = parse_pioneer_parameters(params_path)
     mkpath(params.paths[:results])  # Ensure directory exists
     
-    # Get logging configuration from parameters
-    config = LoggingConfig(
-        console_level = Symbol(get(params.logging, :console_level, "normal")),
-        simple_level = :info,
-        full_level = :trace,
-        enable_progress = get(params.logging, :enable_progress, true),
-        enable_warnings = get(params.logging, :enable_warnings, true),
-        rotation_size_mb = get(params.logging, :rotation_size_mb, 100.0),
-        max_warnings = get(params.logging, :max_warnings, 10000)
-    )
+    # Parse logging configuration from params
+    console_level = Symbol(get(params.logging, :console_level, "normal"))
+    file_level = Symbol(get(params.logging, :file_level, "info"))
+    debug_level = Symbol(get(params.logging, :debug_level, "trace"))
     
-    # Initialize full logging system with all three loggers
-    initialize_logging(params.paths[:results], config=config)
+    # Initialize simple logging system
+    SimpleLogging.init_logging(
+        params.paths[:results];
+        console_level = console_level,
+        file_level = file_level,
+        debug_file_level = debug_level
+    )
     
     try
         @user_print "\n" * repeat("=", 90)
@@ -278,8 +277,8 @@ function SearchDIA(params_path::String)
         @user_error "Stacktrace: $(stacktrace(catch_backtrace()))"
         rethrow(e)
     finally
-        # Finalize logging system
-        finalize_logging()
+        # Close logging system
+        SimpleLogging.close_logging()
     end
     
     return nothing
