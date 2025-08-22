@@ -142,7 +142,7 @@ function get_default_parameters()
                 "min_PEP_neg_threshold_xgboost_rescore" => 0.90,
                 "spline_points" => 500,
                 "interpolation_points" => 10,
-                "enable_model_comparison" => false,
+                "enable_model_comparison" => true,
                 "validation_split_ratio" => 0.2,
                 "qvalue_threshold" => 0.01,
                 "min_psms_for_comparison" => 1000,
