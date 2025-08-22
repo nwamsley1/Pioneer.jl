@@ -230,7 +230,7 @@ function probit_regression_scoring_cv!(
     # Verify fold assignment
     for fold_idx in 1:n_folds
         n_in_fold = sum(psms.cv_fold .== fold_idx)
-        @info "CV fold $fold_idx: $n_in_fold PSMs"
+        @debug_l1 "CV fold $fold_idx: $n_in_fold PSMs"
     end
     
     # Step 2: Initialize probability array (like XGBoost does)
@@ -247,7 +247,7 @@ function probit_regression_scoring_cv!(
     available_features = filter(col -> col in propertynames(psms), features)
     push!(available_features, :intercept)
     
-    @info "Probit regression using $(length(available_features)-1) features (plus intercept)"
+    @debug_l1 "Probit regression using $(length(available_features)-1) features (plus intercept)"
     
     # Step 4: Train probit model per CV fold
     tasks_per_thread = 10
@@ -267,12 +267,12 @@ function probit_regression_scoring_cv!(
         n_train_decoys = sum(train_decoys)
         
         if n_train_targets < 100 || n_train_decoys < 100
-            @warn "Insufficient training data for fold $fold_idx (targets: $n_train_targets, decoys: $n_train_decoys)"
+            @user_warn "Insufficient training data for fold $fold_idx (targets: $n_train_targets, decoys: $n_train_decoys)"
             psms[test_mask, :prob] .= 0.5f0
             continue
         end
         
-        @info "Training probit model for fold $fold_idx with $n_train_targets targets and $n_train_decoys decoys"
+        @debug_l1 "Training probit model for fold $fold_idx with $n_train_targets targets and $n_train_decoys decoys"
         
         # Get training data
         train_data = psms[train_mask, :]
@@ -322,7 +322,7 @@ function probit_regression_scoring_cv!(
         # MBR_is_best_decoy is required by apply_mbr_filter! 
         # For probit, we don't have MBR transfer info, so set conservatively
         psms[!, :MBR_is_best_decoy] = fill(missing, size(psms, 1))  # missing means not an MBR transfer
-        @info "Created MBR columns for compatibility (MBR_prob same as prob for probit)"
+        @debug_l1 "Created MBR columns for compatibility (MBR_prob same as prob for probit)"
     end
     
     # Ensure prob column has proper type and no NaN/Inf values
@@ -330,7 +330,7 @@ function probit_regression_scoring_cv!(
     n_nan = sum(isnan.(psms.prob))
     n_inf = sum(isinf.(psms.prob))
     if n_nan > 0 || n_inf > 0
-        @warn "Found $n_nan NaN and $n_inf Inf values in probabilities, replacing with 0.5"
+        @user_warn "Found $n_nan NaN and $n_inf Inf values in probabilities, replacing with 0.5"
         psms.prob[isnan.(psms.prob) .| isinf.(psms.prob)] .= 0.5f0
     end
     
@@ -349,10 +349,10 @@ function probit_regression_scoring_cv!(
     end
     
     # Debug: Verify clamping worked
-    @info "After clamping: prob range = $(minimum(psms.prob)) to $(maximum(psms.prob))"
+    @debug_l1 "After clamping: prob range = $(minimum(psms.prob)) to $(maximum(psms.prob))"
     
     Arrow.write("/Users/nathanwamsley/Desktop/test_arrow_psms.arrow", psms)
-    @info "Probit regression scoring complete. Probabilities assigned to $(size(psms, 1)) PSMs"
+    @debug_l1 "Probit regression scoring complete. Probabilities assigned to $(size(psms, 1)) PSMs"
     
     return nothing
 end
@@ -456,9 +456,9 @@ function score_precursor_isotope_traces_in_memory!(
                                 print_importance = false);
         return models;#best_psms
     else
-        @warn "Less than 100,000 psms: $(size(best_psms, 1)). Training with simplified target-decoy discrimination model..."
+        @user_warn "Less than 100,000 psms: $(size(best_psms, 1)). Training with simplified target-decoy discrimination model..."
         if size(best_psms, 1) > 1000
-            @warn "Less than 100,000 psms. Training with simplified target-decoy discrimination model..."
+            @user_warn "Less than 100,000 psms. Training with simplified target-decoy discrimination model..."
             features = [ 
                 :missed_cleavage,
                 :Mox,
@@ -534,7 +534,7 @@ function score_precursor_isotope_traces_in_memory!(
         ];
 
         else
-             @warn "Less than 1,000 psms. Training with super simplified target-decoy discrimination model..."
+             @user_warn "Less than 1,000 psms. Training with super simplified target-decoy discrimination model..."
              features = [ 
                 :fitted_spectral_contrast,
                 :max_matched_residual,
@@ -560,12 +560,12 @@ function score_precursor_isotope_traces_in_memory!(
              match_between_runs;
              n_folds =  testnfolds 
         )
-        @warn "TESTNFOLDS $testnfolds"
+        @user_warn "TESTNFOLDS $testnfolds"
         # Debug: Check prob values BEFORE dropVectorColumns
-        @info "Probit: BEFORE dropVectorColumns - prob range: $(minimum(best_psms.prob)) to $(maximum(best_psms.prob))"
-        @info "  DataFrame has $(nrow(best_psms)) rows, $(ncol(best_psms)) columns"
+        @debug_l1 "Probit: BEFORE dropVectorColumns - prob range: $(minimum(best_psms.prob)) to $(maximum(best_psms.prob))"
+        @debug_l1 "  DataFrame has $(nrow(best_psms)) rows, $(ncol(best_psms)) columns"
         if match_between_runs
-            @info "  MBR_prob exists: $(:MBR_prob in names(best_psms)), MBR_is_best_decoy exists: $(:MBR_is_best_decoy in names(best_psms))"
+            @debug_l1 "  MBR_prob exists: $(:MBR_prob in names(best_psms)), MBR_is_best_decoy exists: $(:MBR_is_best_decoy in names(best_psms))"
         end
         
         # Write the scored PSMs back to their original files, just like XGBoost does
@@ -573,30 +573,30 @@ function score_precursor_isotope_traces_in_memory!(
         dropVectorColumns!(best_psms)
         
         # Debug: Check prob values AFTER dropVectorColumns
-        @info "Probit: AFTER dropVectorColumns - prob range: $(minimum(best_psms.prob)) to $(maximum(best_psms.prob))"
-        @info "  DataFrame has $(nrow(best_psms)) rows, $(ncol(best_psms)) columns"
-        @info "  Columns: prob=$(:prob in names(best_psms)), decoy=$(:decoy in names(best_psms))"
+        @debug_l1 "Probit: AFTER dropVectorColumns - prob range: $(minimum(best_psms.prob)) to $(maximum(best_psms.prob))"
+        @debug_l1 "  DataFrame has $(nrow(best_psms)) rows, $(ncol(best_psms)) columns"
+        @debug_l1 "  Columns: prob=$(:prob in names(best_psms)), decoy=$(:decoy in names(best_psms))"
         if match_between_runs
-            @info "  MBR columns after drop: MBR_prob=$(:MBR_prob in names(best_psms)), MBR_is_best_decoy=$(:MBR_is_best_decoy in names(best_psms))"
+            @debug_l1 "  MBR columns after drop: MBR_prob=$(:MBR_prob in names(best_psms)), MBR_is_best_decoy=$(:MBR_is_best_decoy in names(best_psms))"
         end
         
         for (ms_file_idx, gpsms) in pairs(groupby(best_psms, :ms_file_idx))
             # Debug: Check each group before writing
-            @info "  Writing group $ms_file_idx: $(nrow(gpsms)) rows, prob range: $(minimum(gpsms.prob)) to $(maximum(gpsms.prob))"
+            @debug_l1 "  Writing group $ms_file_idx: $(nrow(gpsms)) rows, prob range: $(minimum(gpsms.prob)) to $(maximum(gpsms.prob))"
             
             fpath = file_paths[ms_file_idx[:ms_file_idx]]
             writeArrow(fpath, gpsms)
         end
         
         # Debug: Check what was written to files
-        @info "Probit: Verifying written files"
+        @debug_l1 "Probit: Verifying written files"
         for (i, fpath) in enumerate(file_paths)
             df_check = DataFrame(Arrow.Table(fpath))
-            @info "  File $i after write: $(nrow(df_check)) rows, prob range: $(minimum(df_check.prob)) to $(maximum(df_check.prob))"
+            @debug_l1 "  File $i after write: $(nrow(df_check)) rows, prob range: $(minimum(df_check.prob)) to $(maximum(df_check.prob))"
             if match_between_runs && :MBR_prob in names(df_check)
-                @info "    MBR_prob range: $(minimum(df_check.MBR_prob)) to $(maximum(df_check.MBR_prob))"
+                @debug_l1 "    MBR_prob range: $(minimum(df_check.MBR_prob)) to $(maximum(df_check.MBR_prob))"
             end
-            @info "    Columns in file: $(names(df_check)[1:min(10, length(names(df_check)))])..."
+            @debug_l1 "    Columns in file: $(names(df_check)[1:min(10, length(names(df_check)))])..."
         end
         
         models = nothing  # Probit doesn't return models
@@ -605,7 +605,7 @@ function score_precursor_isotope_traces_in_memory!(
         #see src/utils/ML/percolatorSortOf.jl
         #Train EvoTrees/XGBoost model to score each precursor trace. Target-decoy descrimination
         =#
-        @warn "TEST TEST TEST XGboost"
+        @user_warn "TEST TEST TEST XGboost"
         models = sort_of_percolator_in_memory!(
                                 best_psms, 
 
@@ -743,7 +743,7 @@ function score_precursor_isotope_traces_out_of_memory!(
                                 print_importance = false);
         return models;#best_psms
     else
-        @warn "Less than 100,000 psms. Training with simplified target-decoy discrimination model..."
+        @user_warn "Less than 100,000 psms. Training with simplified target-decoy discrimination model..."
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
         features = [ 
             :missed_cleavage,

@@ -126,7 +126,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             reg_type = L2Norm()
         else
             reg_type = NoNorm()
-            @warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+            @user_warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
 
         ms1_scoring = Bool(global_params.ms1_scoring)
@@ -281,7 +281,7 @@ function process_file!(
         results.ms1_psms[] = ms1_psms
 
     catch e
-        @warn "Second pass search failed" ms_file_idx exception=e
+        @user_warn "Second pass search failed" ms_file_idx exception=e
         rethrow(e)
     end
 
@@ -408,7 +408,7 @@ function process_search_results!(
         writeArrow(temp_path, psms)
         setSecondPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
     catch e
-        @warn "Failed to process search results" ms_file_idx exception=e
+        @user_warn "Failed to process search results" ms_file_idx exception=e
         rethrow(e)
     end
 

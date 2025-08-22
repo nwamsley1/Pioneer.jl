@@ -10,7 +10,7 @@ function maybe_run(f, name)
         try
             f()
         catch e
-            @warn "Error executing $name during precompile of $cmd " exception=(e, catch_backtrace()) 
+            @user_warn "Error executing $name during precompile of $cmd " exception=(e, catch_backtrace()) 
         end
     end
 end

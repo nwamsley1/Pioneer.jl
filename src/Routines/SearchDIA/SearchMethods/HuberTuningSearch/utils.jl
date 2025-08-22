@@ -570,7 +570,7 @@ function get_median_huber_delta(
         end
     end
     
-    @warn "Could not estimate huber delta"
+    @user_warn "Could not estimate huber delta"
     return first(δ)
 end
 

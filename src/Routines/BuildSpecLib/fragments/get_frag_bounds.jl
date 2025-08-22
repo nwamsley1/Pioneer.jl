@@ -77,11 +77,11 @@ function get_fragment_bounds(
             return (frag_bounds = frag_bounds, prec_mz_min = prec_mz_min, prec_mz_max = prec_mz_max)
             catch# e 
                 #throw(e)
-                @warn "failed to estimate fragbounds from the example raw file.
+                @user_warn "failed to estimate fragbounds from the example raw file.
                 Using default values. Frag bounds: $default_frag_bounds, precursor bounds: $default_precursor_bounds"
             end
         else
-            @warn "Could not find example file $frag_bounds_detection_raw_file_path to determine frag bounds. 
+            @user_warn "Could not find example file $frag_bounds_detection_raw_file_path to determine frag bounds. 
             Using default values. Frag bounds: $default_frag_bounds, precursor bounds: $default_precursor_bounds"
         end
     end

@@ -347,7 +347,7 @@ function map_retention_times!(
     results::FirstPassSearchResults,
     params::FirstPassSearchParameters
 )
-    @info "Mapping library to empirical retention times..."
+    @debug_l1 "Mapping library to empirical retention times..."
     
     for (ms_file_idx, psms_path) in enumerate(getFirstPassPsms(getMSData(search_context)))
         #if getFailedIndicator(getMSData(search_context), ms_file_idx)==true
@@ -417,13 +417,13 @@ function create_rt_indices!(
 
 
     # Calculate iRT errors
-    @info "Calculating iRT errors..."
+    @debug_l1 "Calculating iRT errors..."
     irt_errs = get_irt_errs(results.fwhms, precursor_dict, params)
 
 
     setIrtErrors!(search_context, irt_errs)
 
-    @info "Creating RT indices..."
+    @debug_l1 "Creating RT indices..."
     # Create precursor to iRT mapping
     prec_to_irt = map(x -> (irt=x[:best_irt], mz=x[:mz]), 
                       precursor_dict)

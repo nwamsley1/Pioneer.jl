@@ -119,7 +119,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
             reg_type = L2Norm()
         else
             reg_type = NoNorm()
-            @warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+            @user_warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
 
         new{typeof(prec_estimation)}(
@@ -209,7 +209,7 @@ function process_file!(
         push!(results.tuning_psms, tuning_results)
         
     catch e
-        @warn "Huber tuning failed for file $ms_file_idx" exception=e
+        @user_warn "Huber tuning failed for file $ms_file_idx" exception=e
     end
     
     return results
@@ -260,7 +260,7 @@ function summarize_results!(
         
     catch e
         throw(e)
-        @warn "Failed to determine optimal Huber delta, using default" exception=e
+        @user_warn "Failed to determine optimal Huber delta, using default" exception=e
         default_delta = params.huber_override_delta
         results.huber_delta[] = default_delta
         setHuberDelta!(search_context, default_delta)

@@ -46,7 +46,7 @@ function get_mz_to_ev_interp(
         savefig(joinpath(plot_dir, "mz_to_ev_plot.pdf"))
         return mz_to_ev_interp
     else
-        @warn "Collision eV data missing from raw file. Resorting to defaults"
+        @user_warn "Collision eV data missing from raw file. Resorting to defaults"
         return missing
     end
 end

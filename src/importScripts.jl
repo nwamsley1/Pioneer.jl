@@ -46,7 +46,7 @@ function importScripts()
         
         # Check if file exists
         if !isfile(file_path)
-            @warn "File not found: $file_path"
+            @user_warn "File not found: $file_path"
             return false
         end
         
@@ -57,7 +57,7 @@ function importScripts()
             successful_includes += 1
             return true
         catch e
-            @warn "Failed to include $file_path: $e"
+            @user_warn "Failed to include $file_path: $e"
             return false
         end
     end

@@ -377,13 +377,13 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     prot = DataFrame(Arrow.Table(file_path(prot_ref)))
     
     # Log initial data state
-    @info "LFQ input data" total_rows=nrow(prot) unique_proteins=length(unique(prot.inferred_protein_group))
+    @debug_l1 "LFQ input data - total_rows: $(nrow(prot)), unique_proteins: $(length(unique(prot.inferred_protein_group)))"
     
     # Check for missing values in key columns
     n_missing_pg_qval = sum(ismissing.(prot.pg_qval))
     n_missing_global_qval = sum(ismissing.(prot.qlobal_pg_qval))
     n_not_for_quant = sum(.!prot.use_for_protein_quant)
-    @info "Missing values check" missing_pg_qval=n_missing_pg_qval missing_global_qval=n_missing_global_qval not_for_quant=n_not_for_quant
+    @debug_l1 "Missing values check - missing_pg_qval: $n_missing_pg_qval, missing_global_qval: $n_missing_global_qval, not_for_quant: $n_not_for_quant"
     
     # Create pipeline operations for batch-wise application
     preprocessing_pipeline = TransformPipeline() |>
@@ -397,7 +397,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
     n_writes = 0
     is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
-    @info "Is prot sorted? $is_prot_sorted"
+    @debug_l1 "Is prot sorted? $is_prot_sorted"
 
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx, :inferred_protein_group]
@@ -421,7 +421,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         
         # Log batch status after filtering
         if nrow(subdf) == 0
-            @warn "Batch filtered to 0 rows" batch_start=batch_start_idx batch_end=batch_end_idx
+            @user_warn "Batch filtered to 0 rows" batch_start=batch_start_idx batch_end=batch_end_idx
             continue  # Skip empty batches
         end
         
@@ -539,7 +539,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     
     # Check if we processed all rows
     if batch_start_idx <= size(prot, 1)
-        @warn "Not all rows processed!" last_processed_idx=batch_end_idx total_rows=size(prot, 1) unprocessed_rows=size(prot, 1)-batch_end_idx
+        @user_warn "Not all rows processed!" last_processed_idx=batch_end_idx total_rows=size(prot, 1) unprocessed_rows=size(prot, 1)-batch_end_idx
         throw(ErrorException("Not all rows processed! last_processed_idx=$batch_end_idx, total_rows=$(size(prot, 1)), unprocessed_rows=$(size(prot, 1)-batch_end_idx)"))
     end
     

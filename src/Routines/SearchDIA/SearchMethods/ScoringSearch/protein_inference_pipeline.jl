@@ -431,7 +431,7 @@ function perform_protein_inference_pipeline(
         protein_groups_df = group_psms_by_protein(updated_psms)
         
         # Log initial protein groups
-        @info "Created protein groups from PSMs" file_idx=idx n_psms=nrow(updated_psms) n_protein_groups=nrow(protein_groups_df)
+        @debug_l1 "Created protein groups from PSMs - file_idx: $idx, n_psms: $(nrow(updated_psms)), n_protein_groups: $(nrow(protein_groups_df))"
         
         # Build post-inference pipeline
         post_inference_pipeline = TransformPipeline() |>
@@ -447,7 +447,7 @@ function perform_protein_inference_pipeline(
         end
         
         # Log final protein groups
-        @info "Final protein groups after filtering" file_idx=idx n_protein_groups=nrow(protein_groups_df)
+        @debug_l1 "Final protein groups after filtering - file_idx: $idx, n_protein_groups: $(nrow(protein_groups_df))"
         
         # Write protein groups
         pg_filename = "protein_groups_$(lpad(idx, 3, '0')).arrow"
@@ -458,9 +458,9 @@ function perform_protein_inference_pipeline(
             pg_ref = ProteinGroupFileReference(pg_path)
             push!(pg_refs, pg_ref)
             psm_to_pg_mapping[file_path(psm_ref)] = pg_path
-            @info "Wrote protein groups file" path=pg_path n_rows=nrow(protein_groups_df)
+            @debug_l1 "Wrote protein groups file - path: $pg_path, n_rows: $(nrow(protein_groups_df))"
         else
-            @warn "No protein groups to write after filtering" file_idx=idx pg_path=pg_path
+            @user_warn "No protein groups to write after filtering" file_idx=idx pg_path=pg_path
         end
     end
     

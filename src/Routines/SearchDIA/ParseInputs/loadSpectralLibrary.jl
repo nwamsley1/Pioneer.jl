@@ -92,7 +92,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
                 3
             )
         catch e
-            @warn "Could not load `spline_knots.jld2`"
+            @user_warn "Could not load `spline_knots.jld2`"
             throw(e)
         end
 

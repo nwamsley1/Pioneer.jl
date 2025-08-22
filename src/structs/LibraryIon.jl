@@ -693,7 +693,7 @@ struct StandardLibraryPrecursors <: LibraryPrecursors
                 pid_to_cv_fold[pid] = pg_to_cv_fold[accession_numbers[pid]]
             end
             if length(keys(accession_number_to_pgid)) <= 1
-                @warn "Library did not include protein accession numbers. Seeting cross-validation folds based on precursor_idx"
+                @user_warn "Library did not include protein accession numbers. Seeting cross-validation folds based on precursor_idx"
                 for pid in range(1, n)
                     pid_to_cv_fold[pid] = rand(cv_folds)
                 end
@@ -702,7 +702,7 @@ struct StandardLibraryPrecursors <: LibraryPrecursors
                 precursor_table, n, accession_number_to_pgid, pid_to_cv_fold
             )
         catch e
-            @warn "Failed to load precursor_table_path: $precursor_table_path"
+            @user_warn "Failed to load precursor_table_path: $precursor_table_path"
             throw(e)
         end
     end
@@ -738,7 +738,7 @@ struct PlexedLibraryPrecursors <: LibraryPrecursors
                 pid_to_cv_fold[pid] = pg_to_cv_fold[accession_numbers[pid]]
             end
             if length(keys(accession_number_to_pgid)) <= 1
-                @warn "Library did not include protein accession numbers. Seeting cross-validation folds based on precursor_idx"
+                @user_warn "Library did not include protein accession numbers. Seeting cross-validation folds based on precursor_idx"
                 for pid in range(1, n)
                     pid_to_cv_fold[pid] = rand(cv_folds)
                 end
@@ -747,7 +747,7 @@ struct PlexedLibraryPrecursors <: LibraryPrecursors
                 precursor_table, n, accession_number_to_pgid, pid_to_cv_fold
             )
         catch e
-            @warn "Failed to load precursor_table_path: $precursor_table_path"
+            @user_warn "Failed to load precursor_table_path: $precursor_table_path"
             throw(e)
         end
     end

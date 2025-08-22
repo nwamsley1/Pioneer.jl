@@ -38,9 +38,9 @@ function make_koina_request(json_data::String,
                 rethrow(e)
             end
             if e isa KoinaRequestError
-                @warn "Request failed (attempt $attempt): $(e.message)"
+                @user_warn "Request failed (attempt $attempt): $(e.message)"
             else
-                @warn "Request failed (attempt $attempt): $(sprint(showerror, e))"
+                @user_warn "Request failed (attempt $attempt): $(sprint(showerror, e))"
             end
         end
         sleep(retry_delay)
