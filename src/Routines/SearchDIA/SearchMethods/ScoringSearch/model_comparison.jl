@@ -19,13 +19,8 @@
 Model Comparison Framework for ScoringSearch
 ==========================================================#
 
-using DataFrames, Random, StatsBase, CSV, FileIO, JLD2
-using EvoTrees
-using ..Pioneer: @user_warn, @user_info, get_qvalues!, sort_of_percolator_in_memory!, probit_regression_scoring_cv!
-
-# We need to access the original function for fallback
-# This will be available from the parent module after include
-# score_precursor_isotope_traces_in_memory!
+# All packages imported in Pioneer.jl are available in module scope
+# All functions are available through the module scope
 
 """
 Configuration for a single model in the comparison framework.
