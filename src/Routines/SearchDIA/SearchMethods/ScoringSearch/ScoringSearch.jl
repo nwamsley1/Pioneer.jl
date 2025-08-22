@@ -274,8 +274,6 @@ function summarize_results!(
 
             transform!(groupby(merged_df, :precursor_idx),
                        :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
-                       
-            prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
             # Write updated data back to individual files
             for (idx, ref) in enumerate(second_pass_refs)
                 sub_df = merged_df[merged_df.ms_file_idx .== idx, :]
