@@ -33,15 +33,22 @@ function main_GetSearchParams(argv=ARGS)::Cint
             help = "Output path for generated parameters file"
             arg_type = String
             default = joinpath(pwd(), "search_parameters.json")
+        "--full"
+            help = "Generate full parameter template with all advanced options"
+            action = :store_true
     end
     parsed_args = parse_args(argv, settings; as_symbols = true)
+    
+    # Determine template type (simplified is default)
+    simplified = !parsed_args[:full]
     
     params_path = parsed_args[:params_path]
     try
        GetSearchParams(parsed_args[:library_path],
                        parsed_args[:ms_data_path],
                        parsed_args[:results_path];
-                       params_path=params_path)
+                       params_path=params_path,
+                       simplified=simplified)
     catch
         Base.invokelatest(Base.display_error, Base.catch_stack())
         return 1
@@ -141,7 +148,9 @@ output_path = getSearchParams(
 )
 ```
 """
-function GetSearchParams(lib_path::String, ms_data_path::String, results_path::String; params_path::Union{String, Missing} = missing)
+function GetSearchParams(lib_path::String, ms_data_path::String, results_path::String; 
+                        params_path::Union{String, Missing} = missing,
+                        simplified::Bool = true)
     # Clean up any old file handlers in case the program crashed
     GC.gc()
     
@@ -158,8 +167,11 @@ function GetSearchParams(lib_path::String, ms_data_path::String, results_path::S
         end
     end
     
+    # Choose template based on simplified flag
+    template_name = simplified ? "defaultSearchParamsSimplified.json" : "defaultSearchParams.json"
+    
     # Read the JSON template and convert to OrderedDict
-    config_text = read(asset_path("example_config", "defaultSearchParams.json"), String)
+    config_text = read(asset_path("example_config", template_name), String)
     config = JSON.parse(config_text, dicttype=OrderedDict)
 
         
