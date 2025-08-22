@@ -62,6 +62,13 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     max_MBR_false_transfer_rate::Float32
     q_value_threshold::Float32
     isotope_tracetype::I
+    
+    # Model comparison parameters
+    enable_model_comparison::Bool
+    validation_split_ratio::Float64
+    qvalue_threshold_comparison::Float64
+    min_psms_for_comparison::Int64
+    max_psms_for_comparison::Int64
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
@@ -90,7 +97,14 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Float32(ml_params.min_PEP_neg_threshold_xgboost_rescore),
             Float32(global_params.scoring.q_value_threshold),
             Float32(global_params.scoring.q_value_threshold),
-            isotope_trace_type
+            isotope_trace_type,
+            
+            # Model comparison parameters with defaults
+            Bool(get(ml_params, :enable_model_comparison, true)),
+            Float64(get(ml_params, :validation_split_ratio, 0.2)),
+            Float64(get(ml_params, :qvalue_threshold, 0.01)),
+            Int64(get(ml_params, :min_psms_for_comparison, 1000)),
+            Int64(get(ml_params, :max_psms_for_comparison, 100000))
         )
     end
 end
@@ -236,17 +250,12 @@ function summarize_results!(
                 params.max_q_value_xgboost_mbr_rescore,
                 params.min_PEP_neg_threshold_xgboost_rescore,
                 params.max_psms_in_memory;
-                enable_model_comparison = haskey(getParams(search_context).optimization.machine_learning, :enable_model_comparison) ? 
-                    Bool(getParams(search_context).optimization.machine_learning.enable_model_comparison) : false,
-                validation_split_ratio = haskey(getParams(search_context).optimization.machine_learning, :validation_split_ratio) ? 
-                    Float64(getParams(search_context).optimization.machine_learning.validation_split_ratio) : 0.2,
-                qvalue_threshold = haskey(getParams(search_context).optimization.machine_learning, :qvalue_threshold) ? 
-                    Float64(getParams(search_context).optimization.machine_learning.qvalue_threshold) : 0.01,
-                min_psms_for_comparison = haskey(getParams(search_context).optimization.machine_learning, :min_psms_for_comparison) ? 
-                    Int(getParams(search_context).optimization.machine_learning.min_psms_for_comparison) : 1000,
-                max_psms_for_comparison = haskey(getParams(search_context).optimization.machine_learning, :max_psms_for_comparison) ? 
-                    Int(getParams(search_context).optimization.machine_learning.max_psms_for_comparison) : 100000,
-                output_dir = String(getParams(search_context).output_folder)
+                enable_model_comparison = params.enable_model_comparison,
+                validation_split_ratio = params.validation_split_ratio,
+                qvalue_threshold = params.qvalue_threshold_comparison,
+                min_psms_for_comparison = params.min_psms_for_comparison,
+                max_psms_for_comparison = params.max_psms_for_comparison,
+                output_dir = getDataOutDir(search_context)
             )
         end
         @debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
