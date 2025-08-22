@@ -117,9 +117,9 @@ struct ArrowTableReference{N} <: MassSpecDataReference
         file_id_to_name = parseFileNames(file_paths)
         if length(file_id_to_name) != length(file_paths)
             file_id_to_name = ["" for x in 1:length(file_id_to_name)]
-            @warn "Improper File Names Parsing. "
+            @user_warn "Improper File Names Parsing. "
         elseif length(file_paths) == 0
-            @warn "Could not find any files ending in `arrow` in the paths supplied: $file_paths"
+            @user_warn "Could not find any files ending in `arrow` in the paths supplied: $file_paths"
         end
         n = length(file_paths)
         new{n}(
@@ -138,7 +138,7 @@ struct ArrowTableReference{N} <: MassSpecDataReference
     function ArrowTableReference(file_dir::String)
         file_paths = [arrow_path for arrow_path in readdir(file_dir, join=true) if endswith(arrow_path, ".arrow")]
         if length(file_paths) == 0
-            @warn "Could not find any files ending in `arrow` in the directory: $file_dir"
+            @user_warn "Could not find any files ending in `arrow` in the directory: $file_dir"
         end
         n = length(file_paths)
         new{n}(
@@ -414,7 +414,7 @@ function getQuadTransmissionModel(s::SearchContext, index::I) where {I<:Integer}
    if haskey(s.quad_transmission_model,index)
        return s.quad_transmission_model[index]
    else
-       @warn "Quad Transmission model not found for ms_file_idx $index. Returning default GeneralGaussModel(5.0f0, 0.0f0)"
+       @user_warn "Quad Transmission model not found for ms_file_idx $index. Returning default GeneralGaussModel(5.0f0, 0.0f0)"
        return GeneralGaussModel(5.0f0, 0.0f0)
    end
 end
@@ -431,7 +431,7 @@ function getMassErrorModel(s::SearchContext, index::I) where {I<:Integer}
    if haskey(s.mass_error_model, index)
        return s.mass_error_model[index]
    else
-       @warn "Mass error model not found for ms_file_idx $index. Returning default +/- 30ppm"
+       @user_warn "Mass error model not found for ms_file_idx $index. Returning default +/- 30ppm"
        return MassErrorModel(zero(Float32), (30.0f0, 30.0f0))
    end
 end
@@ -446,7 +446,7 @@ function getMs1MassErrorModel(s::SearchContext, index::I) where {I<:Integer}
    if haskey(s.ms1_mass_error_model, index)
        return s.ms1_mass_error_model[index]
    else
-       @warn "Mass error model not found for ms_file_idx $index. Returning default +/- 30ppm"
+       @user_warn "Mass error model not found for ms_file_idx $index. Returning default +/- 30ppm"
        return MassErrorModel(zero(Float32), (30.0f0, 30.0f0))
    end
 end

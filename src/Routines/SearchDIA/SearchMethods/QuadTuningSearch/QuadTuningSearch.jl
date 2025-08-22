@@ -263,7 +263,7 @@ function process_file!(
         # Check window widths
         window_widths = check_window_widths(spectra)
         if length(window_widths) != 1
-            @warn "Multiple window sizes detected: $(join(collect(window_widths), ';'))"
+            @user_warn "Multiple window sizes detected: $(join(collect(window_widths), ';'))"
             setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
             return results
         end
@@ -272,7 +272,7 @@ function process_file!(
         total_psms = collect_psms(spectra, search_context, results, params, ms_file_idx)
         
         if nrow(total_psms) < 1000
-            @warn "Too few psms found for quad modeling. Using default model."
+            @user_warn "Too few psms found for quad modeling. Using default model."
             setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
             return results
         end
@@ -291,7 +291,7 @@ function process_file!(
         
     catch e
         throw(e)
-        @warn "Quad transmission function fit failed" exception=e
+        @user_warn "Quad transmission function fit failed" exception=e
         setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
     end
     
@@ -328,7 +328,7 @@ function summarize_results!(
             safeRm(data_path, nothing)
         end
     catch e
-        @warn "Could not clear existing file: $e"
+        @user_warn "Could not clear existing file: $e"
     end
 
     if !isempty(results.quad_model_plots)

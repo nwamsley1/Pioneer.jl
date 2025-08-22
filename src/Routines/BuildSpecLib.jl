@@ -174,7 +174,7 @@ function BuildSpecLib(params_path::String)
                         )
                         dual_println("Successfully created collision energy interpolator")
                     catch
-                        @warn "Could not estimate mz to ev conversion. Using default NCE."
+                        @user_warn "Could not estimate mz to ev conversion. Using default NCE."
                         dual_println("Warning: Using default NCE (collision energy interpolation failed)")
                     end
                 end

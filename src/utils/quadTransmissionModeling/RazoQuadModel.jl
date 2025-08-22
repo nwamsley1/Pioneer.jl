@@ -487,7 +487,7 @@ function fitRazoQuadModel(
             end
         end
     end
-    @warn "exceeded iters"
+    @user_warn "exceeded iters"
     return rqm
 end
 

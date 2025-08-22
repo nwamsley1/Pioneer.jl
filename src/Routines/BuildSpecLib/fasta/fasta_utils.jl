@@ -195,7 +195,7 @@ function add_entrapment_sequences(
             end
             
             if n_shuffle_attempts >= max_shuffle_attempts
-                @warn "Max shuffle attempts exceeded for $(get_sequence(target_entry))"
+                @user_warn "Max shuffle attempts exceeded for $(get_sequence(target_entry))"
             end
         end
     end
@@ -511,7 +511,7 @@ function add_decoy_sequences(
         end
         
         if n_shuffle_attempts >= max_shuffle_attempts
-            @warn "Exceeded max shuffle attempts for $(get_sequence(target_entry))"
+            @user_warn "Exceeded max shuffle attempts for $(get_sequence(target_entry))"
         else
             # Adjust modification positions based on sequence manipulation
             adjusted_structural_mods = adjust_mod_positions(
