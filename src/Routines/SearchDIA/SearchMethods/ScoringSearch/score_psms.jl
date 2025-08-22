@@ -19,8 +19,6 @@
 PSM sampling and scoring 
 ==========================================================#
 
-include("model_comparison.jl")
-
 """
     score_precursor_isotope_traces(second_pass_folder::String, 
                                   file_paths::Vector{String},
