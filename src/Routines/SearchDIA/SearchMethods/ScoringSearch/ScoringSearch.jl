@@ -235,7 +235,18 @@ function summarize_results!(
                 params.max_q_value_xgboost_rescore,
                 params.max_q_value_xgboost_mbr_rescore,
                 params.min_PEP_neg_threshold_xgboost_rescore,
-                params.max_psms_in_memory
+                params.max_psms_in_memory;
+                enable_model_comparison = haskey(getParams(search_context).optimization.machine_learning, :enable_model_comparison) ? 
+                    Bool(getParams(search_context).optimization.machine_learning.enable_model_comparison) : false,
+                validation_split_ratio = haskey(getParams(search_context).optimization.machine_learning, :validation_split_ratio) ? 
+                    Float64(getParams(search_context).optimization.machine_learning.validation_split_ratio) : 0.2,
+                qvalue_threshold = haskey(getParams(search_context).optimization.machine_learning, :qvalue_threshold) ? 
+                    Float64(getParams(search_context).optimization.machine_learning.qvalue_threshold) : 0.01,
+                min_psms_for_comparison = haskey(getParams(search_context).optimization.machine_learning, :min_psms_for_comparison) ? 
+                    Int(getParams(search_context).optimization.machine_learning.min_psms_for_comparison) : 1000,
+                max_psms_for_comparison = haskey(getParams(search_context).optimization.machine_learning, :max_psms_for_comparison) ? 
+                    Int(getParams(search_context).optimization.machine_learning.max_psms_for_comparison) : 100000,
+                output_dir = String(getParams(search_context).output_folder)
             )
         end
         @debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
