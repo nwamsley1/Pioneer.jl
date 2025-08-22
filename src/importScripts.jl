@@ -98,6 +98,7 @@ function importScripts()
         ]
     )
 
+    safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "paramDefaults.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
     

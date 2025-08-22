@@ -1,0 +1,67 @@
+{
+    "logging": {
+        "debug_console_level": 0
+    },
+    "global": {
+        "isotope_settings": {
+            "combine_traces": true,
+            "partial_capture": true,
+            "min_fraction_transmitted": 0.25
+        },
+        "scoring": {
+            "q_value_threshold": 0.01
+        },
+        "match_between_runs": true,
+        "ms1_quant": false,
+        "ms1_scoring": true
+    },
+    "parameter_tuning": {
+        "fragment_settings": {
+            "min_count": 7,
+            "min_score": [22, 17, 15]
+        },
+        "search_settings": {   
+            "topn_peaks": 200
+        },
+        "iteration_settings": {
+            "init_mass_tol_ppm": 10.0,
+            "mass_tolerance_scale_factor": 1.5,
+            "iterations_per_phase": 3
+        }
+    },
+    "first_search": {
+        "fragment_settings": {
+            "min_score": 15,
+            "n_isotopes": 1
+        }
+    },
+    "quant_search": {
+        "fragment_settings": {
+            "max_rank": 255,
+            "n_isotopes": 2
+        }
+    },
+    "acquisition": {
+        "nce": 25,
+        "quad_transmission": {
+            "fit_from_data": false
+        }
+    },
+    "proteinInference": {
+        "min_peptides": 1
+    },
+    "maxLFQ": {
+        "run_to_run_normalization": false
+    },
+    "output": {
+        "write_csv": true,
+        "write_decoys": false,
+        "delete_temp": true,
+        "plots_per_page": 12
+    },
+    "paths": {
+        "ms_data": "/path/to/ms/data/folder",
+        "library": "/path/to/ms/data/library.pion",
+        "results": "/path/to/results"
+    }
+}

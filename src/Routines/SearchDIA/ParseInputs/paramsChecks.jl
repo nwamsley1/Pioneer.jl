@@ -22,8 +22,16 @@ using JSON
 #    params::Dict{String, Any}
 #end
 
+# ParamDefaults module is loaded in importScripts.jl
+using .ParamDefaults
+
 function checkParams(json_path::String)
-    params = JSON.parsefile(json_path)
+    # Read user params
+    user_params = JSON.parsefile(json_path)
+    
+    # Apply defaults before validation
+    defaults = get_default_parameters()
+    params = merge_with_defaults(user_params, defaults)
     # Helper function to check if a key exists and has the correct type
     function check_param(dict, key, expected_type)
         if !haskey(dict, key)

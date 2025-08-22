@@ -15,6 +15,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# ParamDefaults module is loaded in importScripts.jl
+using .ParamDefaults
+
 struct PioneerParameters
     global_settings::NamedTuple
     parameter_tuning::NamedTuple
@@ -43,9 +46,19 @@ function merge_with_globals(specific_settings::NamedTuple, global_settings::Name
 end
 
 
-function parse_pioneer_parameters(json_path::String)
-    # Read and parse JSON
-    params = JSON.parsefile(json_path)
+function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true)
+    # Read user JSON
+    user_params = JSON.parsefile(json_path)
+    
+    # Apply defaults if requested
+    if apply_defaults
+        # Get defaults
+        defaults = get_default_parameters()
+        # Merge user params over defaults
+        params = merge_with_defaults(user_params, defaults)
+    else
+        params = user_params
+    end
     
     # Convert nested dictionaries to NamedTuples
     function dict_to_namedtuple(d::Dict)
@@ -83,19 +96,8 @@ function parse_pioneer_parameters(json_path::String)
     maxLFQ = dict_to_namedtuple(params["maxLFQ"])
     output = dict_to_namedtuple(params["output"])
     
-    # Parse logging section with defaults if not present
-    logging = if haskey(params, "logging")
-        dict_to_namedtuple(params["logging"])
-    else
-        # Default logging configuration
-        NamedTuple((
-            console_level = "normal",
-            enable_progress = true,
-            enable_warnings = true,
-            rotation_size_mb = 100.0,
-            max_warnings = 10000
-        ))
-    end
+    # Parse logging section (defaults already applied if apply_defaults=true)
+    logging = dict_to_namedtuple(params["logging"])
     
     paths = expand_user_paths(dict_to_namedtuple(params["paths"]))
 
