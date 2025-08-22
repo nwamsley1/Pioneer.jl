@@ -23,6 +23,10 @@ using DataFrames, Random, StatsBase, CSV, FileIO, JLD2
 using EvoTrees
 using ..Pioneer: @user_warn, @user_info, get_qvalues!, sort_of_percolator_in_memory!, probit_regression_scoring_cv!
 
+# We need to access the original function for fallback
+# This will be available from the parent module after include
+# score_precursor_isotope_traces_in_memory!
+
 """
 Configuration for a single model in the comparison framework.
 
@@ -578,4 +582,294 @@ function compute_sensitivity_specificity(predictions::Vector{Float32}, targets::
     specificity = tn > 0 ? tn / (tn + fp) : 0.0  # True negative rate
     
     return sensitivity, specificity
+end
+
+#==========================================================
+Model Selection and Integration
+==========================================================#
+
+"""
+    select_best_model(performances::Vector{ModelPerformance}) -> String
+
+Selects best model based on number of targets passing q-value threshold.
+Tie-breaking: highest AUC, then fastest training time.
+
+# Arguments
+- `performances`: Vector of performance results for all models
+
+# Returns
+- Name of the best performing model
+"""
+function select_best_model(performances::Vector{ModelPerformance})
+    # Primary metric: number of targets passing q-value threshold
+    max_targets = maximum([p.n_targets_passing_qval for p in performances])
+    best_candidates = filter(p -> p.n_targets_passing_qval == max_targets, performances)
+    
+    if length(best_candidates) == 1
+        best_model = best_candidates[1]
+    else
+        # Tie-breaking: highest AUC
+        max_auc = maximum([p.validation_auc for p in best_candidates])
+        auc_candidates = filter(p -> p.validation_auc == max_auc, best_candidates)
+        
+        if length(auc_candidates) == 1
+            best_model = auc_candidates[1]
+        else
+            # Final tie-breaking: fastest training time
+            best_model = auc_candidates[argmin([p.training_time for p in auc_candidates])]
+        end
+    end
+    
+    @user_info "Selected $(best_model.model_name) with $(best_model.n_targets_passing_qval) targets passing q-value threshold"
+    
+    return best_model.model_name
+end
+
+"""
+    train_selected_model_full_dataset(best_model_name::String, model_configs::Vector{ModelConfig}, psms_full::DataFrame, file_paths::Vector{String}, match_between_runs::Bool, max_q_value_xgboost_rescore::Float32, max_q_value_xgboost_mbr_rescore::Float32, min_PEP_neg_threshold_xgboost_rescore::Float32) -> Any
+
+Trains the selected best model on the full dataset (100% of PSMs) using existing procedures.
+
+# Arguments
+- `best_model_name`: Name of the selected best model
+- `model_configs`: Vector of all model configurations
+- `psms_full`: Full PSM DataFrame
+- `file_paths`: File paths for training
+- `match_between_runs`: Whether MBR is enabled
+- `max_q_value_xgboost_rescore`: Max q-value for XGBoost rescoring
+- `max_q_value_xgboost_mbr_rescore`: Max q-value for MBR rescoring
+- `min_PEP_neg_threshold_xgboost_rescore`: Min PEP threshold for negative relabeling
+
+# Returns
+- Trained model(s) or nothing for probit
+"""
+function train_selected_model_full_dataset(best_model_name::String,
+                                         model_configs::Vector{ModelConfig},
+                                         psms_full::DataFrame,
+                                         file_paths::Vector{String},
+                                         match_between_runs::Bool,
+                                         max_q_value_xgboost_rescore::Float32,
+                                         max_q_value_xgboost_mbr_rescore::Float32,
+                                         min_PEP_neg_threshold_xgboost_rescore::Float32)
+    
+    selected_config_idx = findfirst(c -> c.name == best_model_name, model_configs)
+    config = model_configs[selected_config_idx]
+    
+    @user_info "Training selected model $(config.name) on full dataset ($(nrow(psms_full)) PSMs)"
+    
+    # Filter features to those available and specified
+    available_features = filter(f -> f in propertynames(psms_full), config.features)
+    if match_between_runs
+        mbr_features = [f for f in propertynames(psms_full) if startswith(String(f), "MBR_")]
+        append!(available_features, mbr_features)
+    end
+    
+    # Use existing training procedures exactly as implemented
+    if config.model_type == :xgboost
+        # Call existing sort_of_percolator_in_memory! with selected config
+        return sort_of_percolator_in_memory!(
+            psms_full,
+            file_paths,
+            available_features,
+            match_between_runs;
+            max_q_value_xgboost_rescore,
+            max_q_value_xgboost_mbr_rescore,
+            min_PEP_neg_threshold_xgboost_rescore,
+            colsample_bytree = Float64(config.hyperparams[:colsample_bytree]),
+            colsample_bynode = Float64(config.hyperparams[:colsample_bynode]),
+            min_child_weight = Int(config.hyperparams[:min_child_weight]),
+            gamma = Float64(config.hyperparams[:gamma]),
+            subsample = Float64(config.hyperparams[:subsample]),
+            max_depth = Int(config.hyperparams[:max_depth]),
+            eta = Float64(config.hyperparams[:eta]),
+            iter_scheme = Vector{Int}(config.hyperparams[:iter_scheme]),
+            print_importance = true
+        )
+    elseif config.model_type == :probit
+        # Call existing probit_regression_scoring_cv! procedure
+        probit_regression_scoring_cv!(
+            psms_full,
+            file_paths,
+            available_features,
+            match_between_runs;
+            n_folds = Int(config.hyperparams[:n_folds])
+        )
+        return nothing  # Probit doesn't return models
+    end
+end
+
+"""
+    log_model_comparison_results(performances::Vector{ModelPerformance})
+
+Logs detailed comparison results for all models.
+
+# Arguments
+- `performances`: Vector of performance results for all models
+"""
+function log_model_comparison_results(performances::Vector{ModelPerformance})
+    @user_info "Model Comparison Results:"
+    @user_info "========================"
+    
+    # Sort by primary metric (targets passing q-value threshold)
+    sorted_perfs = sort(performances, by=p->p.n_targets_passing_qval, rev=true)
+    
+    for (i, perf) in enumerate(sorted_perfs)
+        @user_info "$(i). $(perf.model_name):"
+        @user_info "   Targets Passing Q≤0.01: $(perf.n_targets_passing_qval)"
+        @user_info "   AUC: $(round(perf.validation_auc, digits=4))"
+        @user_info "   Accuracy: $(round(perf.validation_accuracy, digits=4))"  
+        @user_info "   Sensitivity: $(round(perf.validation_sensitivity, digits=4))"
+        @user_info "   Specificity: $(round(perf.validation_specificity, digits=4))"
+        @user_info "   Training Time: $(round(perf.training_time, digits=2))s"
+        @user_info "   Features: $(perf.n_features)"
+        @user_info ""
+    end
+end
+
+"""
+    write_model_comparison_report(performances::Vector{ModelPerformance}, output_dir::String)
+
+Writes detailed CSV report of model comparison results.
+
+# Arguments
+- `performances`: Vector of performance results
+- `output_dir`: Directory to write the report
+"""
+function write_model_comparison_report(performances::Vector{ModelPerformance}, 
+                                     output_dir::String)
+    
+    report_path = joinpath(output_dir, "model_comparison_report.csv")
+    
+    df = DataFrame(
+        model_name = [p.model_name for p in performances],
+        n_targets_passing_qval = [p.n_targets_passing_qval for p in performances],
+        validation_auc = [p.validation_auc for p in performances],
+        validation_accuracy = [p.validation_accuracy for p in performances],
+        validation_sensitivity = [p.validation_sensitivity for p in performances], 
+        validation_specificity = [p.validation_specificity for p in performances],
+        training_time_seconds = [p.training_time for p in performances],
+        n_features = [p.n_features for p in performances]
+    )
+    
+    CSV.write(report_path, df)
+    @user_info "Model comparison report written to: $report_path"
+end
+
+#==========================================================
+Main Entry Point
+==========================================================#
+
+"""
+    score_precursor_isotope_traces_in_memory_with_comparison!(best_psms::DataFrame, file_paths::Vector{String}, precursors, match_between_runs::Bool, max_q_value_xgboost_rescore::Float32, max_q_value_xgboost_mbr_rescore::Float32, min_PEP_neg_threshold_xgboost_rescore::Float32, enable_model_comparison::Bool = false, validation_split_ratio::Float64 = 0.2, qvalue_threshold::Float64 = 0.01, output_dir::String = ".")
+
+Enhanced version of score_precursor_isotope_traces_in_memory! with model comparison.
+Only applies to in-memory approach (<100k PSMs).
+
+# Arguments
+- `best_psms`: PSM DataFrame for training
+- `file_paths`: File paths for training
+- `precursors`: Library precursors (for compatibility)
+- `match_between_runs`: Whether MBR is enabled
+- `max_q_value_xgboost_rescore`: Max q-value for XGBoost rescoring
+- `max_q_value_xgboost_mbr_rescore`: Max q-value for MBR rescoring
+- `min_PEP_neg_threshold_xgboost_rescore`: Min PEP threshold
+- `enable_model_comparison`: Whether to enable model comparison
+- `validation_split_ratio`: Fraction for validation split
+- `qvalue_threshold`: Q-value threshold for target counting
+- `output_dir`: Output directory for reports
+
+# Returns
+- Trained models from best performing approach
+"""
+function score_precursor_isotope_traces_in_memory_with_comparison!(
+    best_psms::DataFrame,
+    file_paths::Vector{String}, 
+    precursors,  # Keep for compatibility, not used in comparison logic
+    match_between_runs::Bool,
+    max_q_value_xgboost_rescore::Float32,
+    max_q_value_xgboost_mbr_rescore::Float32,
+    min_PEP_neg_threshold_xgboost_rescore::Float32,
+    enable_model_comparison::Bool = false,
+    validation_split_ratio::Float64 = 0.2,
+    qvalue_threshold::Float64 = 0.01,
+    output_dir::String = "."
+)
+    
+    n_psms = size(best_psms, 1)
+    
+    # Check if model comparison should be enabled (in-memory only)
+    if !enable_model_comparison || n_psms < 1000 || n_psms >= 100000
+        @user_info "Model comparison disabled - falling back to existing logic"
+        # Call the original score_precursor_isotope_traces_in_memory! function
+        return score_precursor_isotope_traces_in_memory!(
+            best_psms,
+            file_paths,
+            precursors,
+            match_between_runs,
+            max_q_value_xgboost_rescore,
+            max_q_value_xgboost_mbr_rescore,
+            min_PEP_neg_threshold_xgboost_rescore
+        )
+    end
+    
+    @user_info "Starting model comparison with $(n_psms) PSMs (in-memory approach)"
+    
+    # Phase 1: Create train/validation split
+    train_indices, val_indices = create_train_validation_split(best_psms, validation_split_ratio)
+    psms_train = best_psms[train_indices, :]
+    psms_val = best_psms[val_indices, :]
+    
+    @user_info "Split: $(nrow(psms_train)) training, $(nrow(psms_val)) validation PSMs"
+    
+    # Phase 2: Define model configurations  
+    model_configs = create_model_configurations()
+    
+    # Phase 3: Train all models on training set
+    model_results = ModelResult[]
+    for config in model_configs
+        @user_info "Training model: $(config.name)"
+        try
+            result = train_model(config, psms_train, match_between_runs)
+            push!(model_results, result)
+        catch e
+            @user_warn "Failed to train model $(config.name): $e"
+        end
+    end
+    
+    if isempty(model_results)
+        @user_warn "No models trained successfully - falling back to existing logic"
+        return nothing
+    end
+    
+    # Phase 4: Evaluate all models on validation set
+    performances = ModelPerformance[]
+    for result in model_results
+        @user_info "Evaluating model: $(result.model_config.name)"
+        try
+            perf = evaluate_model_performance(result, psms_val, match_between_runs, qvalue_threshold)
+            push!(performances, perf)
+        catch e
+            @user_warn "Failed to evaluate model $(result.model_config.name): $e"
+        end
+    end
+    
+    if isempty(performances)
+        @user_warn "No models evaluated successfully - falling back to existing logic"
+        return nothing
+    end
+    
+    # Phase 5: Select best model and log results
+    log_model_comparison_results(performances)
+    write_model_comparison_report(performances, output_dir)
+    best_model_name = select_best_model(performances)
+    
+    # Phase 6: Train selected model on full dataset using existing procedures
+    @user_info "Training $(best_model_name) on full dataset"
+    models = train_selected_model_full_dataset(
+        best_model_name, model_configs, best_psms, file_paths, 
+        match_between_runs, max_q_value_xgboost_rescore,
+        max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore
+    )
+    
+    return models
 end

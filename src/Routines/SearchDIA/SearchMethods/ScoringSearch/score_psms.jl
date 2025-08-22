@@ -19,6 +19,8 @@
 PSM sampling and scoring 
 ==========================================================#
 
+include("model_comparison.jl")
+
 """
     score_precursor_isotope_traces(second_pass_folder::String, 
                                   file_paths::Vector{String},
@@ -57,7 +59,13 @@ function score_precursor_isotope_traces(
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32,
-    max_psms_in_memory::Int64
+    max_psms_in_memory::Int64;
+    enable_model_comparison::Bool = false,
+    validation_split_ratio::Float64 = 0.2,
+    qvalue_threshold::Float64 = 0.01,
+    min_psms_for_comparison::Int = 1000,
+    max_psms_for_comparison::Int = 100000,
+    output_dir::String = "."
 )
     # Count total PSMs
     psms_count = get_psms_count(file_paths)
@@ -77,15 +85,51 @@ function score_precursor_isotope_traces(
     else
         # Use in-memory algorithm
         best_psms = load_psms_for_xgboost(second_pass_folder)
-        models = score_precursor_isotope_traces_in_memory!(
-            best_psms,
-            file_paths,
-            precursors,
-            match_between_runs,
-            max_q_value_xgboost_rescore,
-            max_q_value_xgboost_mbr_rescore,
-            min_PEP_neg_threshold_xgboost_rescore
-        )
+        
+        # Check if model comparison should be enabled
+        if enable_model_comparison && 
+           psms_count >= min_psms_for_comparison && 
+           psms_count <= max_psms_for_comparison
+            
+            models = score_precursor_isotope_traces_in_memory_with_comparison!(
+                best_psms,
+                file_paths,
+                precursors,
+                match_between_runs,
+                max_q_value_xgboost_rescore,
+                max_q_value_xgboost_mbr_rescore,
+                min_PEP_neg_threshold_xgboost_rescore,
+                enable_model_comparison,
+                validation_split_ratio,
+                qvalue_threshold,
+                output_dir
+            )
+            
+            # If model comparison fails, fall back to existing method
+            if models === nothing
+                @user_warn "Model comparison failed, falling back to standard approach"
+                models = score_precursor_isotope_traces_in_memory!(
+                    best_psms,
+                    file_paths,
+                    precursors,
+                    match_between_runs,
+                    max_q_value_xgboost_rescore,
+                    max_q_value_xgboost_mbr_rescore,
+                    min_PEP_neg_threshold_xgboost_rescore
+                )
+            end
+        else
+            # Use standard approach
+            models = score_precursor_isotope_traces_in_memory!(
+                best_psms,
+                file_paths,
+                precursors,
+                match_between_runs,
+                max_q_value_xgboost_rescore,
+                max_q_value_xgboost_mbr_rescore,
+                min_PEP_neg_threshold_xgboost_rescore
+            )
+        end
     end
     
     # Clean up
