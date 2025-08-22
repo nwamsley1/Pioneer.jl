@@ -65,7 +65,7 @@ function safeRm(fpath::String, file_handle; force::Bool=false)
                         backup_path = fpath * ".backup_" * string(time_ns())
                         try
                             mv(fpath, backup_path, force=true)
-                            @warn "Could not delete $fpath, renamed to $backup_path"
+                            @user_warn "Could not delete $fpath, renamed to $backup_path"
                             return nothing
                         catch
                             error("Unable to remove or rename file: $fpath")

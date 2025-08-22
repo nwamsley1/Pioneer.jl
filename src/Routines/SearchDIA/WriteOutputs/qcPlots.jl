@@ -587,7 +587,7 @@ function qcPlots(
             safeRm(output_path, nothing)
         end
     catch e
-        @warn "Could not clear existing file: $e"
+        @user_warn "Could not clear existing file: $e"
     end
     save_multipage_pdf(qc_plots, output_path)
 end

@@ -143,7 +143,7 @@ function filter_and_score_psms!(
    #     best_idx = argmax(sub_psms.prob::AbstractVector{Float32})
    #     sub_psms[best_idx,:best_psms] = true
    # end
-    #@warn "size(psms, 1) after selecting best PSMs = $(size(psms, 1)) "
+    #@user_warn "size(psms, 1) after selecting best PSMs = $(size(psms, 1)) "
     #filter!(x -> x.best_psms::Bool, psms)
     @user_warn "size(psms, 1) after filtering to best PSMs = $(size(psms, 1)) "
     filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys. 

@@ -381,7 +381,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         end
     end
     
-    @info "Scoring precursors with trained models"
+    @debug_l1 "Scoring precursors with trained models"
     pbar = ProgressBar(total=length(iter_scheme))
     prec_to_best_score = Dictionary{@NamedTuple{pair_id::UInt32,
                                                 isotopes::Tuple{Int8,Int8}},

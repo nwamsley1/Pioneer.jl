@@ -409,7 +409,7 @@ function process_file!(
             select!(results.psms[] , Not(:log2_summed_intensity))
         end
     catch e
-        @warn "First pass search failed" ms_file_idx exception=e
+        @user_warn "First pass search failed" ms_file_idx exception=e
         rethrow(e)
     end
 
@@ -434,7 +434,7 @@ function process_search_results!(
             median_fwhm = median(fwhms),
             mad_fwhm = mad(fwhms, normalize=true)))
     else
-        @warn "Insuficient fwhm_points to estimate for $ms_file_idx"
+        @user_warn "Insuficient fwhm_points to estimate for $ms_file_idx"
         insert!(results.fwhms, ms_file_idx, (
             median_fwhm = 0.2f0,
             mad_fwhm = 0.2f0))
@@ -485,7 +485,7 @@ function summarize_results!(
         results::FirstPassSearchResults,
         params::FirstPassSearchParameters
     )
-        @info "Finding best precursors across runs..."
+        @debug_l1 "Finding best precursors across runs..."
         
         # Get best precursors
         return get_best_precursors_accross_runs(
@@ -496,7 +496,7 @@ function summarize_results!(
         )
     end
     #isempty(results.psms_paths) && return nothing
-    @info "Summarizing first pass search results..."
+    @debug_l1 "Summarizing first pass search results..."
     # Map retention times
     map_retention_times!(search_context, results, params)
     # Process precursors
@@ -540,7 +540,7 @@ function summarize_results!(
     # Calculate RT indices
     create_rt_indices!(search_context, results, precursor_dict, params)
     
-    @info "Search results summarization complete"
+    @debug_l1 "Search results summarization complete"
 
     # Merge mass error plots
     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
@@ -550,7 +550,7 @@ function summarize_results!(
             rm(output_path)
         end
     catch e
-        @warn "Could not clear existing file: $e"
+        @user_warn "Could not clear existing file: $e"
     end
 
     if !isempty(results.ms1_mass_plots)
