@@ -101,8 +101,7 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
     
-    # SimpleLogging - Load EARLY so macros are available throughout SearchDIA
-    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SimpleLogging.jl"))
+    # Logging is now handled directly in Pioneer.jl
     
     include_files!(
         joinpath(package_root, "src","structs"),
