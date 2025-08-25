@@ -257,20 +257,24 @@ function probit_regression_scoring_cv!(
     psms::DataFrame,
     file_paths::Vector{String},
     features::Vector{Symbol},
-    match_between_runs::Bool;
-    n_folds::Int64 = 3
+    match_between_runs::Bool
 )
-    # Step 1: Add CV fold column based on row index for even distribution
-    psms[!, :cv_fold] = zeros(UInt8, size(psms, 1))
-    
-    # Assign CV folds based on row index for even distribution across all folds
-    # This ensures each fold gets approximately equal number of PSMs
-    for i in 1:size(psms, 1)
-        psms[i, :cv_fold] = UInt8(((i - 1) % n_folds) + 1)
+    # Step 1: Validate CV fold column exists (from library assignments)
+    if !(:cv_fold in propertynames(psms))
+        error("PSMs must have :cv_fold column from library assignments")
     end
     
-    # Verify fold assignment
-    for fold_idx in 1:n_folds
+    # Detect unique CV folds from data (should be [0, 1] from library)
+    unique_cv_folds = sort(unique(psms[!, :cv_fold]))
+    n_folds = length(unique_cv_folds)
+    
+    # Validate we have expected 2 folds with values 0 and 1
+    if unique_cv_folds != UInt8[0, 1]
+        @user_warn "Unexpected CV folds: $unique_cv_folds (expected [0, 1] from library)"
+    end
+    
+    # Verify fold distribution
+    for fold_idx in unique_cv_folds
         n_in_fold = sum(psms.cv_fold .== fold_idx)
         @debug_l1 "CV fold $fold_idx: $n_in_fold PSMs"
     end
@@ -296,8 +300,8 @@ function probit_regression_scoring_cv!(
     chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
     data_chunks = Iterators.partition(1:size(psms, 1), chunk_size)
     
-    for fold_idx in 1:n_folds
-        # Get train/test masks
+    for fold_idx in unique_cv_folds
+        # Get train/test masks (using actual fold values from library)
         test_mask = psms[!, :cv_fold] .== fold_idx
         train_mask = .!test_mask
         
@@ -594,15 +598,13 @@ function score_precursor_isotope_traces_in_memory!(
         # OPTION 1: Probit regression (SIMPLE, NO ITERATIVE REFINEMENT)
         # @info "Using probit regression for small dataset (<100k PSMs)"
         #=
-        testnfolds = 9
         probit_regression_scoring_cv!(
              best_psms,
              file_paths,
              features,
-             match_between_runs;
-             n_folds =  testnfolds 
+             match_between_runs
+             # No n_folds parameter - uses library-assigned CV folds
         )
-        @user_warn "TESTNFOLDS $testnfolds"
         # Debug: Check prob values BEFORE dropVectorColumns
         @debug_l1 "Probit: BEFORE dropVectorColumns - prob range: $(minimum(best_psms.prob)) to $(maximum(best_psms.prob))"
         @debug_l1 "  DataFrame has $(nrow(best_psms)) rows, $(ncol(best_psms)) columns"
