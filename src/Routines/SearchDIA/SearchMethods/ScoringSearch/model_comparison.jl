@@ -143,7 +143,6 @@ function create_model_configurations()
             :probit,
             REDUCED_FEATURE_SET,
             Dict(
-                :n_folds => 3,
                 :max_iter => 30
             )
         ),
@@ -221,7 +220,42 @@ function create_train_validation_split(psms::DataFrame,
         @user_warn "Few decoy PSMs in validation set: $(length(decoy_val))"
     end
     
+    # Critical validation check - if any set completely lacks a class, flag for simple model
+    if length(target_train) == 0 || length(decoy_train) == 0
+        @user_warn "CRITICAL: Training set lacks targets or decoys. Model comparison will default to SuperSimplified model."
+    end
+    if length(target_val) == 0 || length(decoy_val) == 0
+        @user_warn "CRITICAL: Validation set lacks targets or decoys. Model comparison will default to SuperSimplified model."
+    end
+    
     return train_indices, validation_indices
+end
+
+"""
+    is_split_valid_for_model_comparison(psms_train::DataFrame, psms_val::DataFrame) -> Bool
+
+Checks if the train/validation split is valid for model comparison.
+A split is valid if both sets contain both targets and decoys.
+
+# Arguments
+- `psms_train`: Training DataFrame
+- `psms_val`: Validation DataFrame
+
+# Returns
+- `Bool`: true if split is valid, false if any set lacks targets or decoys
+"""
+function is_split_valid_for_model_comparison(psms_train::DataFrame, psms_val::DataFrame)
+    train_targets = sum(psms_train.target)
+    train_decoys = nrow(psms_train) - train_targets
+    val_targets = sum(psms_val.target)
+    val_decoys = nrow(psms_val) - val_targets
+    
+    # Check if any set completely lacks a class
+    if train_targets == 0 || train_decoys == 0 || val_targets == 0 || val_decoys == 0
+        return false
+    end
+    
+    return true
 end
 
 #==========================================================
@@ -360,13 +394,17 @@ function train_probit_model(config::ModelConfig,
     # Create temporary file paths
     temp_file_paths = ["temp_training_file_$(i).arrow" for i in 1:3]
     
-    # Call existing probit function
+    # Ensure CV fold column exists (should come from SecondPassSearch)
+    if !(:cv_fold in propertynames(psms_copy))
+        error("PSMs must have :cv_fold column from library assignments. This is set in SecondPassSearch based on protein groups.")
+    end
+    
+    # Call existing probit function (no n_folds parameter - uses existing CV assignments)
     probit_regression_scoring_cv!(
         psms_copy,
         temp_file_paths, 
         available_features,
-        match_between_runs;
-        n_folds = Int(config.hyperparams[:n_folds])
+        match_between_runs
     )
     
     # Probit doesn't return models - extract coefficients if needed
@@ -681,13 +719,17 @@ function train_selected_model_full_dataset(best_model_name::String,
             print_importance = true
         )
     elseif config.model_type == :probit
-        # Call existing probit_regression_scoring_cv! procedure
+        # Ensure CV fold column exists
+        if !(:cv_fold in propertynames(psms_full))
+            error("PSMs must have :cv_fold column from library assignments for probit regression.")
+        end
+        
+        # Call existing probit_regression_scoring_cv! procedure  
         probit_regression_scoring_cv!(
             psms_full,
             file_paths,
             available_features,
-            match_between_runs;
-            n_folds = Int(config.hyperparams[:n_folds])
+            match_between_runs
         )
         return nothing  # Probit doesn't return models
     end
@@ -815,6 +857,37 @@ function score_precursor_isotope_traces_in_memory_with_comparison!(
     psms_val = best_psms[val_indices, :]
     
     @user_info "Split: $(nrow(psms_train)) training, $(nrow(psms_val)) validation PSMs"
+    
+    # Check if split is valid for model comparison
+    if !is_split_valid_for_model_comparison(psms_train, psms_val)
+        @user_warn "Invalid train/validation split detected - one or more sets lack targets or decoys"
+        @user_info "Defaulting to SuperSimplified model without comparison"
+        
+        # Train only the SuperSimplified model on full dataset
+        supersimplified_config = ModelConfig(
+            "SuperSimplified",
+            :xgboost,
+            MINIMAL_FEATURE_SET,
+            Dict(
+                :colsample_bytree => 0.8,
+                :colsample_bynode => 0.8,
+                :min_child_weight => 20,
+                :gamma => 0.1,
+                :subsample => 0.8,
+                :max_depth => 4,
+                :eta => 0.1,
+                :iter_scheme => [150, 300, 300]
+            )
+        )
+        
+        models = train_selected_model_full_dataset(
+            "SuperSimplified", [supersimplified_config], best_psms, file_paths,
+            match_between_runs, max_q_value_xgboost_rescore,
+            max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore
+        )
+        
+        return models
+    end
     
     # Phase 2: Define model configurations  
     model_configs = create_model_configurations()
