@@ -29,32 +29,34 @@
         "fragment_settings": {
             "min_count": 7,
             "max_rank": 25,
-            "min_score": 22,
-            "min_spectral_contrast": 0.9,
-            "relative_improvement_threshold": 1.25,
+            "min_score": [22,17,15],
+            "min_spectral_contrast": 0.5,
+            "relative_improvement_threshold": 1.5,
             "min_log2_ratio": 1.5,
-            "min_top_n": [3, 3],
+            "min_top_n": [
+                3,
+                3
+            ],
             "n_isotopes": 1,
-            "intensity_filter_quantile": 0.25
+            "intensity_filter_quantile": 0.50
         },
         "search_settings": {
-            "sample_rate": 0.02,
-            "min_samples": 3500,
+            "initial_scan_count":  10000,           
+            "max_parameter_tuning_scans": 40000,  
+            "max_q_value": 0.01, 
+            "min_samples": 1000,    
+            "topn_peaks": 200,
+            "max_frags_for_mass_err_estimation": 5,  
             "min_quad_tuning_psms": 5000,
             "min_quad_tuning_fragments": 3,
             "max_presearch_iters": 10,
-            "frag_err_quantile": 0.01,
-            "max_q_value": 0.01,
-            "topn_peaks": 200,
-            "initial_scan_count": 500,
-            "max_parameter_tuning_scans": 8000,
-            "max_frags_for_mass_err_estimation": 5
+            "frag_err_quantile": 0.0025
         },
-        "iteration_settings": {
-            "init_mass_tol_ppm": 5.0,
+        "iteration_settings" : {
+            "init_mass_tol_ppm": 10.0,
             "mass_tolerance_scale_factor": 1.5,
             "iterations_per_phase": 3,
-            "scan_scale_factor": 10.0
+            "scan_scale_factor": 4
         }
     },
     "first_search": {
