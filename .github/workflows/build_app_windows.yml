@@ -129,6 +129,13 @@ jobs:
         run: |
           Copy-Item src\build\CLI\pioneer.bat build\Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
 
+      - name: Bundle 7-Zip for gzip extraction
+        shell: pwsh
+        run: |
+          $sevenZipUrl = "https://www.7-zip.org/a/7zr.exe"
+          Invoke-WebRequest -Uri $sevenZipUrl -OutFile 7z.exe
+          Copy-Item 7z.exe "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\bin\7z.exe"
+
       - name: Normalize version for MSI
         id: semver
         shell: pwsh
