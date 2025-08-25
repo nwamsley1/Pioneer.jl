@@ -30,12 +30,17 @@ const MAX_FOR_MODEL_SELECTION = 100_000
                                   max_q_value_xgboost_rescore::Float32,
                                   max_q_value_xgboost_mbr_rescore::Float32,
                                   min_PEP_neg_threshold_xgboost_rescore::Float32,
-                                  q_value_threshold::Float32,
-                                  max_MBR_false_transfer_rate::Float32,
-                                  max_psms_in_memory::Int64)
+                                  max_psms_in_memory::Int64;
+                                  validation_split_ratio::Float64 = 0.2,
+                                  qvalue_threshold::Float64 = 0.01,
+                                  output_dir::String = ".")
 
-Main entry point for PSM scoring. Automatically chooses between in-memory and out-of-memory
-processing based on data size.
+Main entry point for PSM scoring with automatic model selection based on dataset size.
+
+# Three-Case Logic
+1. PSMs ≥ max_psms_in_memory: Out-of-memory processing with default XGBoost
+2. PSMs < max_psms_in_memory AND ≥ 100K: In-memory with default/advanced XGBoost
+3. PSMs < 100K: In-memory with automatic model comparison
 
 # Arguments
 - `second_pass_folder`: Folder containing second pass PSM files
@@ -45,12 +50,13 @@ processing based on data size.
 - `max_q_value_xgboost_rescore`: Max q-value for EvoTrees/XGBoost rescoring
 - `max_q_value_xgboost_mbr_rescore`: Max q-value for MBR rescoring
 - `min_PEP_neg_threshold_xgboost_rescore`: Min PEP for negative relabeling
-- `q_value_threshold`: Max q-value for final output
-- `max_MBR_false_transfer_rate`: Max FTR for MBR
 - `max_psms_in_memory`: Maximum PSMs to keep in memory
+- `validation_split_ratio`: Fraction for validation in model comparison (default: 0.2)
+- `qvalue_threshold`: Q-value threshold for model evaluation (default: 0.01)
+- `output_dir`: Directory for output files (default: ".")
 
 # Returns
-- Trained EvoTrees/XGBoost models
+- Trained EvoTrees/XGBoost models or nothing for probit regression
 """
 function score_precursor_isotope_traces(
     second_pass_folder::String,
@@ -61,18 +67,16 @@ function score_precursor_isotope_traces(
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32,
     max_psms_in_memory::Int64;
-    enable_model_comparison::Bool = false,
     validation_split_ratio::Float64 = 0.2,
     qvalue_threshold::Float64 = 0.01,
-    min_psms_for_comparison::Int = 1000,
-    max_psms_for_comparison::Int = 100000,
     output_dir::String = "."
 )
-    # Count total PSMs
+    # Step 1: Count PSMs and determine processing approach
     psms_count = get_psms_count(file_paths)
     
-    if psms_count > max_psms_in_memory
-        # Use out-of-memory algorithm
+    if psms_count >= max_psms_in_memory
+        # Case 1: Out-of-memory processing with default XGBoost
+        @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
         best_psms = sample_psms_for_xgboost(second_pass_folder, psms_count, max_psms_in_memory)
         models = score_precursor_isotope_traces_out_of_memory!(
             best_psms,
@@ -84,53 +88,32 @@ function score_precursor_isotope_traces(
             min_PEP_neg_threshold_xgboost_rescore
         )
     else
-        # Use in-memory algorithm
+        # In-memory processing - load PSMs first
         best_psms = load_psms_for_xgboost(second_pass_folder)
         
-        # Check if model comparison should be enabled
-        if enable_model_comparison && 
-           psms_count >= min_psms_for_comparison && 
-           psms_count <= max_psms_for_comparison
-            
-            models = score_precursor_isotope_traces_in_memory_with_comparison!(
-                best_psms,
-                file_paths,
-                precursors,
-                match_between_runs,
-                max_q_value_xgboost_rescore,
-                max_q_value_xgboost_mbr_rescore,
-                min_PEP_neg_threshold_xgboost_rescore,
-                enable_model_comparison,
-                validation_split_ratio,
-                qvalue_threshold,
-                output_dir
-            )
-            
-            # If model comparison fails, fall back to existing method
-            if models === nothing
-                @user_warn "Model comparison failed, falling back to standard approach"
-                models = score_precursor_isotope_traces_in_memory!(
-                    best_psms,
-                    file_paths,
-                    precursors,
-                    match_between_runs,
-                    max_q_value_xgboost_rescore,
-                    max_q_value_xgboost_mbr_rescore,
-                    min_PEP_neg_threshold_xgboost_rescore
-                )
-            end
+        if psms_count >= MAX_FOR_MODEL_SELECTION  # 100K
+            # Case 2: In-memory with default/advanced XGBoost (no comparison)
+            @user_info "Using in-memory advanced XGBoost for $psms_count PSMs (< $max_psms_in_memory but ≥ 100K)"
+            model_config = create_default_advanced_xgboost_config()
         else
-            # Use standard approach
-            models = score_precursor_isotope_traces_in_memory!(
-                best_psms,
-                file_paths,
-                precursors,
-                match_between_runs,
-                max_q_value_xgboost_rescore,
-                max_q_value_xgboost_mbr_rescore,
-                min_PEP_neg_threshold_xgboost_rescore
+            # Case 3: In-memory with automatic model comparison (<100K)
+            @user_info "Running automatic model comparison for $psms_count PSMs (< 100K)"
+            model_config = select_psm_scoring_model(
+                best_psms, file_paths, precursors, match_between_runs,
+                max_q_value_xgboost_rescore, max_q_value_xgboost_mbr_rescore,
+                min_PEP_neg_threshold_xgboost_rescore, validation_split_ratio,
+                qvalue_threshold, output_dir
             )
         end
+        
+        @user_info "Selected PSM scoring model: $(model_config.name)"
+        
+        # Execute selected model using unified function
+        models = score_precursor_isotope_traces_in_memory(
+            best_psms, file_paths, precursors, model_config,
+            match_between_runs, max_q_value_xgboost_rescore,
+            max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore
+        )
     end
     
     # Clean up
