@@ -130,7 +130,7 @@ Selects the appropriate PSM scoring model based on dataset size and characterist
 
 # Model Selection Logic
 - ≥100K PSMs: Returns default/advanced XGBoost configuration (no comparison)
-- <100K PSMs: Runs model comparison and returns best performing model
+- <100K PSMs: Trains each model and selects based on training performance
 
 # Returns
 - ModelConfig object specifying the selected model and its hyperparameters
@@ -143,9 +143,9 @@ function select_psm_scoring_model(
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32,
-    validation_split_ratio::Float64,
+    validation_split_ratio::Float64,  # Kept for API compatibility but unused
     qvalue_threshold::Float64,
-    output_dir::String
+    output_dir::String  # Kept for API compatibility but unused
 )
     psms_count = size(best_psms, 1)
     
@@ -155,39 +155,111 @@ function select_psm_scoring_model(
     else
         @user_info "Running model comparison for $psms_count PSMs (< 100K)"
         
-        # Use the existing model comparison framework from model_comparison.jl
-        models = score_precursor_isotope_traces_in_memory_with_comparison!(
-            best_psms,
-            file_paths,
-            precursors,
-            match_between_runs,
-            max_q_value_xgboost_rescore,
-            max_q_value_xgboost_mbr_rescore,
-            min_PEP_neg_threshold_xgboost_rescore,
-            true,  # enable_model_comparison
-            validation_split_ratio,
-            qvalue_threshold,
-            output_dir
-        )
+        # Get model configurations from model_comparison.jl
+        model_configs = create_model_configurations()
+        best_model_config = nothing
+        best_target_count = 0
         
-        # For now, return the SimpleXGBoost config as default
-        # In future, this should extract the best model config from the comparison
-        return ModelConfig(
-            "SimpleXGBoost",
-            :xgboost,
-            REDUCED_FEATURE_SET,
-            Dict(
-                :colsample_bytree => 0.8,
-                :colsample_bynode => 0.8,
-                :min_child_weight => 20,
-                :gamma => 0.1,
-                :subsample => 0.8,
-                :max_depth => 4,
-                :eta => 0.1,
-                :iter_scheme => [150, 300, 300]
-            )
-        )
+        # Store original file contents for restoration
+        original_file_contents = Dict{String, DataFrame}()
+        for fpath in file_paths
+            if endswith(fpath, ".arrow")
+                original_file_contents[fpath] = DataFrame(Arrow.Table(fpath))
+            end
+        end
+        
+        for config in model_configs
+            @user_info "Training $(config.name) model..."
+            
+            # Create deepcopy to avoid side effects between models
+            psms_copy = deepcopy(best_psms)
+            
+            try
+                # Train model using unified function
+                score_precursor_isotope_traces_in_memory(
+                    psms_copy, file_paths, precursors, config,
+                    match_between_runs, max_q_value_xgboost_rescore,
+                    max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore
+                )
+                
+                # Count passing targets
+                target_count = count_passing_targets(file_paths, qvalue_threshold)
+                @user_info "  $(config.name): $target_count targets at q-value ≤ $qvalue_threshold"
+                
+                # Update best model if this one is better
+                if target_count > best_target_count
+                    best_target_count = target_count
+                    best_model_config = config
+                end
+            catch e
+                @user_warn "Failed to train $(config.name): $e"
+                # Continue with next model
+            end
+            
+            # Restore original files for next model
+            for (fpath, original_df) in original_file_contents
+                writeArrow(fpath, original_df)
+            end
+        end
+        
+        # If no model succeeded, fall back to SimpleXGBoost
+        if best_model_config === nothing
+            @user_warn "All models failed, defaulting to SimpleXGBoost"
+            best_model_config = model_configs[1]  # SimpleXGBoost is first
+        else
+            @user_info "Selected best model: $(best_model_config.name) with $best_target_count passing targets"
+        end
+        
+        return best_model_config
     end
+end
+
+"""
+    count_passing_targets(file_paths::Vector{String}, qvalue_threshold::Float64) -> Int
+
+Counts the number of target PSMs passing the q-value threshold across all files.
+
+# Arguments
+- `file_paths`: Vector of Arrow file paths containing scored PSMs
+- `qvalue_threshold`: Q-value threshold for counting (typically 0.01)
+
+# Returns
+- Total count of target PSMs with q_value ≤ threshold or high probability
+"""
+function count_passing_targets(file_paths::Vector{String}, qvalue_threshold::Float64)
+    total_count = 0
+    
+    for fpath in file_paths
+        if !endswith(fpath, ".arrow")
+            continue
+        end
+        
+        try
+            # Read PSM file
+            psms = DataFrame(Arrow.Table(fpath))
+            
+            # Count targets passing threshold
+            if :q_value in propertynames(psms)
+                # Use q-value if available
+                passing = psms[psms.target .& (psms.q_value .<= qvalue_threshold), :]
+            elseif :prob in propertynames(psms)
+                # Use probability as fallback (high prob = low q-value)
+                # For a rough approximation: q-value of 0.01 ≈ prob of 0.99
+                prob_threshold = 1.0 - qvalue_threshold
+                passing = psms[psms.target .& (psms.prob .>= prob_threshold), :]
+            else
+                @debug_l1 "No scoring column found in $fpath"
+                continue
+            end
+            
+            total_count += nrow(passing)
+        catch e
+            @user_warn "Error reading $fpath: $e"
+            continue
+        end
+    end
+    
+    return total_count
 end
 
 """
