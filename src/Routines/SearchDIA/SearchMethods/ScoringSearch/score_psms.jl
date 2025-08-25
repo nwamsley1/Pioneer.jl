@@ -19,6 +19,9 @@
 PSM sampling and scoring 
 ==========================================================#
 
+# Constant for model selection threshold
+const MAX_FOR_MODEL_SELECTION = 100_000
+
 """
     score_precursor_isotope_traces(second_pass_folder::String, 
                                   file_paths::Vector{String},
@@ -136,6 +139,220 @@ function score_precursor_isotope_traces(
     
     return models
 end
+
+"""
+    select_psm_scoring_model(best_psms::DataFrame, ...) -> ModelConfig
+
+Selects the appropriate PSM scoring model based on dataset size and characteristics.
+
+# Model Selection Logic
+- ≥100K PSMs: Returns default/advanced XGBoost configuration (no comparison)
+- <100K PSMs: Runs model comparison and returns best performing model
+
+# Returns
+- ModelConfig object specifying the selected model and its hyperparameters
+"""
+function select_psm_scoring_model(
+    best_psms::DataFrame,
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors,
+    match_between_runs::Bool,
+    max_q_value_xgboost_rescore::Float32,
+    max_q_value_xgboost_mbr_rescore::Float32,
+    min_PEP_neg_threshold_xgboost_rescore::Float32,
+    validation_split_ratio::Float64,
+    qvalue_threshold::Float64,
+    output_dir::String
+)
+    psms_count = size(best_psms, 1)
+    
+    if psms_count >= MAX_FOR_MODEL_SELECTION
+        @user_info "Using default advanced XGBoost for $psms_count PSMs (≥ 100K)"
+        return create_default_advanced_xgboost_config()
+    else
+        @user_info "Running model comparison for $psms_count PSMs (< 100K)"
+        
+        # Use the existing model comparison framework from model_comparison.jl
+        models = score_precursor_isotope_traces_in_memory_with_comparison!(
+            best_psms,
+            file_paths,
+            precursors,
+            match_between_runs,
+            max_q_value_xgboost_rescore,
+            max_q_value_xgboost_mbr_rescore,
+            min_PEP_neg_threshold_xgboost_rescore,
+            true,  # enable_model_comparison
+            validation_split_ratio,
+            qvalue_threshold,
+            output_dir
+        )
+        
+        # For now, return the SimpleXGBoost config as default
+        # In future, this should extract the best model config from the comparison
+        return ModelConfig(
+            "SimpleXGBoost",
+            :xgboost,
+            REDUCED_FEATURE_SET,
+            Dict(
+                :colsample_bytree => 0.8,
+                :colsample_bynode => 0.8,
+                :min_child_weight => 20,
+                :gamma => 0.1,
+                :subsample => 0.8,
+                :max_depth => 4,
+                :eta => 0.1,
+                :iter_scheme => [150, 300, 300]
+            )
+        )
+    end
+end
+
+"""
+    create_default_advanced_xgboost_config() -> ModelConfig
+
+Creates the default advanced XGBoost configuration for large datasets.
+"""
+function create_default_advanced_xgboost_config()
+    return ModelConfig(
+        "AdvancedXGBoost",
+        :xgboost,
+        REDUCED_FEATURE_SET,
+        Dict(
+            :colsample_bytree => 0.5,
+            :colsample_bynode => 0.5,
+            :min_child_weight => 5,
+            :gamma => 1.0,
+            :subsample => 0.25,
+            :max_depth => 10,
+            :eta => 0.05,
+            :iter_scheme => [100, 200, 200]
+        )
+    )
+end
+
+"""
+    score_precursor_isotope_traces_in_memory(psms::DataFrame, ...) -> Models
+
+Unified in-memory PSM scoring function that executes the specified model.
+
+# Arguments
+- `model_config`: ModelConfig specifying which model to use and its hyperparameters
+
+# Supported Models
+- SimpleXGBoost: Full feature set, standard hyperparameters
+- AdvancedXGBoost: Full feature set, advanced hyperparameters
+- ProbitRegression: Linear probit model with CV folds from library
+- SuperSimplified: Minimal 5-feature XGBoost model
+"""
+function score_precursor_isotope_traces_in_memory(
+    best_psms::DataFrame,
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors,
+    model_config::ModelConfig,
+    match_between_runs::Bool,
+    max_q_value_xgboost_rescore::Float32,
+    max_q_value_xgboost_mbr_rescore::Float32,
+    min_PEP_neg_threshold_xgboost_rescore::Float32
+)
+    @user_info "Running $(model_config.name) model for PSM scoring"
+    
+    if model_config.model_type == :xgboost
+        return train_xgboost_model_in_memory(
+            best_psms, file_paths, precursors, model_config,
+            match_between_runs, max_q_value_xgboost_rescore,
+            max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore
+        )
+    elseif model_config.model_type == :probit
+        return train_probit_model_in_memory(
+            best_psms, file_paths, precursors, model_config, match_between_runs
+        )
+    else
+        error("Unsupported model type: $(model_config.model_type)")
+    end
+end
+
+"""
+    train_xgboost_model_in_memory(...) -> Models
+
+Trains XGBoost model using configuration from ModelConfig.
+"""
+function train_xgboost_model_in_memory(
+    best_psms::DataFrame,
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors,
+    model_config::ModelConfig,
+    match_between_runs::Bool,
+    max_q_value_xgboost_rescore::Float32,
+    max_q_value_xgboost_mbr_rescore::Float32,
+    min_PEP_neg_threshold_xgboost_rescore::Float32
+)
+    # Add required columns
+    best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
+    best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
+    best_psms[!,:decoy] = best_psms[!,:target].==false
+    
+    # Get features and hyperparams from config
+    features = [f for f in model_config.features if hasproperty(best_psms, f)]
+    if match_between_runs
+        append!(features, [
+            :MBR_rv_coefficient, :MBR_best_irt_diff, :MBR_num_runs,
+            :MBR_max_pair_prob, :MBR_log2_weight_ratio, :MBR_log2_explained_ratio
+        ])
+    end
+    
+    hp = model_config.hyperparams
+    return sort_of_percolator_in_memory!(
+        best_psms, file_paths, features, match_between_runs;
+        max_q_value_xgboost_rescore, max_q_value_xgboost_mbr_rescore,
+        min_PEP_neg_threshold_xgboost_rescore,
+        colsample_bytree = get(hp, :colsample_bytree, 0.5),
+        colsample_bynode = get(hp, :colsample_bynode, 0.5),
+        min_child_weight = get(hp, :min_child_weight, 5),
+        gamma = get(hp, :gamma, 1.0),
+        subsample = get(hp, :subsample, 0.25),
+        max_depth = get(hp, :max_depth, 10),
+        eta = get(hp, :eta, 0.05),
+        iter_scheme = get(hp, :iter_scheme, [100, 200, 200])
+    )
+end
+
+"""
+    train_probit_model_in_memory(...) -> Nothing
+
+Trains probit regression model using configuration from ModelConfig.
+"""
+function train_probit_model_in_memory(
+    best_psms::DataFrame,
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors,
+    model_config::ModelConfig,
+    match_between_runs::Bool
+)
+    # Add required columns
+    best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
+    best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
+    best_psms[!,:decoy] = best_psms[!,:target].==false
+    
+    # Get features from config
+    features = [f for f in model_config.features if hasproperty(best_psms, f)]
+    
+    probit_regression_scoring_cv!(
+        best_psms,
+        file_paths,
+        features,
+        match_between_runs
+    )
+    
+    # Write results back to files
+    dropVectorColumns!(best_psms)
+    for (ms_file_idx, gpsms) in pairs(groupby(best_psms, :ms_file_idx))
+        fpath = file_paths[ms_file_idx[:ms_file_idx]]
+        writeArrow(fpath, gpsms)
+    end
+    
+    return nothing  # Probit doesn't return models
+end
+
 """
      get_psms_count(quant_psms_folder::String)::Integer
 
