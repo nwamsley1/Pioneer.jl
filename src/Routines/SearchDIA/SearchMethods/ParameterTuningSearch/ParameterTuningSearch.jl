@@ -944,14 +944,14 @@ function process_file!(
             # Build detailed warning message
             phase_bias = getPhaseShift(iteration_state.best_phase, params)
             mass_offset = round(getMassOffset(iteration_state.best_mass_error_model), digits=1)
-            mass_tol = round((getLeftTol(iteration_state.best_mass_error_model) + getRightTol(iteration_state.best_mass_error_model))/2, digits=1)
-            
+            left_tol = round(getLeftTol(iteration_state.best_mass_error_model), digits = 1)
+            right_tol = round(getRightTol(iteration_state.best_mass_error_model), digits = 1)
             warning_msg = "⚠️ Parameter tuning did not converge after $(iteration_state.scan_attempt) attempt(s).\n" *
                          "Using best iteration: Phase $(iteration_state.best_phase) (bias=$phase_bias ppm), " *
                          "Score threshold $(iteration_state.best_score), Iteration $(iteration_state.best_iteration)\n" *
                          "Best iteration yielded $(iteration_state.best_psm_count) PSMs with mass offset $mass_offset ppm " *
-                         "and tolerance ±$mass_tol ppm"
-            
+                         "and tolerance -$left_tol ppm and + $right_tol ppm"
+    
             push!(warnings, warning_msg)
             
             final_psm_count = iteration_state.best_psm_count

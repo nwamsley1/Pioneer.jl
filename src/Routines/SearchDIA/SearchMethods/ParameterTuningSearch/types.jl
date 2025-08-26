@@ -124,7 +124,7 @@ struct IterationSettings
         @assert init_tol > 0.0f0 "Initial tolerance must be positive"
         @assert mass_scale_factor > 1.0f0 "Mass scale factor must be greater than 1"
         @assert iterations_per_phase > 0 "Iterations per phase must be positive"
-        @assert scan_scale_factor > 1.0f0 "Scan scale factor must be greater than 1"
+        @assert scan_scale_factor >= 1.0f0 "Scan scale factor must be greater than 1"
         
         new(init_tol, mass_scale_factor, iterations_per_phase, scan_scale_factor)
     end
