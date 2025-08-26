@@ -271,8 +271,13 @@ function collect_psms(
     ms_file_idx::Int64
 ) where {P<:ParameterTuningSearchParameters}
     
+    # Debug: Check min_psms value before library search
+    @user_info "Collecting PSMs with min_psms = $(getMinPsms(params))"
+    
     # Perform library search on filtered data
     psms = library_search(filtered_spectra, search_context, params, ms_file_idx)
+    
+    @user_info "Library search returned $(size(psms, 1)) raw PSMs"
     was_filtered = false
     
     if !iszero(size(psms, 1))
@@ -545,7 +550,7 @@ function run_single_phase(
     
     # Get all score thresholds to try
     score_thresholds = getMinIndexSearchScores(params)
-    
+    psm_count = 0
     # NEW: Score threshold loop INSIDE each phase
     for (score_idx, min_score) in enumerate(score_thresholds)
         
@@ -564,7 +569,7 @@ function run_single_phase(
             filtered_spectra, spectra, search_context, 
             params, ms_file_idx, "initial attempt with min_score=$min_score"
         )
-        
+        @user_info "psms_initial size = $(size(psms_initial, 1))"
         # Fit models and check initial convergence
         mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
             psms_initial, spectra, search_context, params, ms_file_idx
@@ -594,6 +599,7 @@ function run_single_phase(
             "Initial attempt (Phase $phase, min_score=$min_score)",
             iteration_state, filtered_spectra, spectra
         )
+            @user_warn "psm_count = $psm_count"
             return true
         end
         
@@ -671,11 +677,12 @@ function run_single_phase(
                 "Phase $phase, Iteration $iter with min_score=$min_score",
                 iteration_state, filtered_spectra, spectra
             )
+                @user_warn "a psm_count = $psm_count"
                 return true
             end
         end
     end  # End of score threshold loop
-    
+    @user_warn "b psm_count = $psm_count"
     return false
 end
 
@@ -701,6 +708,7 @@ function run_all_phases_with_scan_count(
     
     # Run all 3 phases with the same filtered_spectra
     for phase in 1:3
+        @info "Phase is $phase"
         converged = run_single_phase(
             phase, filtered_spectra, iteration_state,
             results, params, search_context, ms_file_idx, spectra
@@ -826,6 +834,7 @@ function process_file!(
         end
         
     catch e
+        throw(e)
         @user_warn "Parameter tuning failed for file $parsed_fname with error" exception=e
         push!(warnings, "ERROR: $(string(e))")
     end
@@ -1054,6 +1063,7 @@ function process_search_results!(
         resize!(results.ppm_errs, 0)
         results.current_iteration_state[] = nothing  # Clear iteration state after use
     catch e
+        throw(e)
         @user_warn "Failed to generate plots for file $ms_file_idx" exception=(e, catch_backtrace())
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
     end
@@ -1090,6 +1100,7 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
                     safeRm(rt_combined_path, nothing)
                 end
             catch e
+                throw(e)
                 @user_warn "Could not clear existing RT plots file: $e"
             end
             save_multipage_pdf(results.rt_plots, rt_combined_path)
@@ -1104,6 +1115,7 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
                     safeRm(mass_combined_path, nothing)
                 end
             catch e
+                throw(e)
                 @user_warn "Could not clear existing mass error plots file: $e"
             end
             save_multipage_pdf(results.mass_plots, mass_combined_path)
@@ -1115,6 +1127,7 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
         # For now, the diagnostic summary below provides the key information
         
     catch e
+        throw(e)
         @user_warn "Failed to merge QC plots" exception=(e, catch_backtrace())
     end
     

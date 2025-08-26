@@ -130,8 +130,14 @@ function filter_and_score_psms!(
     get_qvalues!(psms[!,:prob], psms[!,:target], psms[!,:q_value]; fdr_scale_factor = fdr_scale_factor)
     
     max_q_val, min_psms = getMaxQVal(params), getMinPsms(params)
+    
+    # Debug: Log PSM counts before and after filtering
+    @user_info "filter_and_score_psms!: Before q-value filtering: $(size(psms, 1)) PSMs, max_q_val = $max_q_val, min_psms = $min_psms"
+    
     n_passing_psms = sum(psms[!,:q_value] .<= max_q_val)
     filter!(row -> row.q_value::Float16 <= max_q_val, psms)
+    
+    @user_info "filter_and_score_psms!: After q-value filtering: $(size(psms, 1)) PSMs"
     #psms[!,:best_psms] = zeros(Bool, size(psms, 1))
    # 
     # Select best PSM per precursor
