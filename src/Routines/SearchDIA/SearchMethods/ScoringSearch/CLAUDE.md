@@ -11,8 +11,9 @@ ScoringSearch is the 7th stage in the Pioneer DIA search pipeline. It performs m
 ```
 ScoringSearch/
 ├── ScoringSearch.jl              # Main search method implementation with 23-step pipeline
-├── score_psms.jl                 # PSM scoring entry point with automatic in-memory/OOM selection
-├── model_comparison.jl           # Model comparison framework for adaptive model selection
+├── score_psms.jl                 # PSM scoring entry point with automatic in-memory/OOM selection and model comparison
+├── model_config.jl               # Model configurations for comparison (SimpleXGBoost, AdvancedXGBoost, ProbitRegression, SuperSimplified)
+├── model_comparison.jl           # DEPRECATED - Model comparison framework (functionality moved to score_psms.jl)
 ├── utils.jl                      # Protein group analysis and helper functions (legacy)
 ├── utils_protein_ml.jl           # ML-enhanced protein scoring (when enabled)
 ├── protein_inference_pipeline.jl # Modern composable protein inference pipeline
@@ -66,48 +67,59 @@ ScoringSearch implements a comprehensive 23-step pipeline:
 - MS1 isotope pattern features
 - Match-between-runs features (when enabled)
 
-### Model Comparison Framework (model_comparison.jl)
+### Model Comparison Framework (score_psms.jl and model_config.jl)
 
-**Adaptive Model Selection**: For datasets with 1,000-100,000 PSMs, ScoringSearch can automatically select the best-performing model through validation testing.
+**Adaptive Model Selection**: For datasets with 1,000-100,000 PSMs, ScoringSearch automatically selects the best-performing model through comparison testing with suppressed output for clean results.
 
-**Available Models**:
-1. **SimpleXGBoost** (Current Default)
-   - Full reduced feature set (40+ features)
-   - Standard XGBoost hyperparameters
-   - 3-fold cross-validation training
+**Available Models** (defined in model_config.jl):
+1. **SimpleXGBoost** (Default for small datasets)
+   - Reduced feature set (40+ features)
+   - Conservative hyperparameters for robust performance
+   - Suitable for datasets with limited PSMs
 
-2. **ProbitRegression** 
-   - Linear probit model with same feature set
-   - Fast training, interpretable coefficients
-   - Good baseline performance
+2. **AdvancedXGBoost** (Default for >100K PSMs)
+   - Full ADVANCED_FEATURE_SET (50 features including all available metrics)
+   - Aggressive hyperparameters for maximum performance
+   - Deeper trees (max_depth=10) and lower learning rate (eta=0.05)
 
-3. **SuperSimplified**
-   - Minimal feature set (5 core features)
-   - Same XGBoost architecture as SimpleXGBoost
-   - Fastest training, reduced overfitting risk
+3. **ProbitRegression** 
+   - Linear probit model using reduced feature set
+   - Fast training with interpretable coefficients
+   - Good baseline, especially for smaller datasets
 
-**Selection Process**:
-1. **Data Split**: 80% training, 20% validation with target/decoy stratification
-2. **Model Training**: All three models trained on training set
-3. **Validation Testing**: Models evaluated on held-out validation data
-4. **Performance Metrics**: Primary metric is number of targets passing q-value ≤ 0.01
-5. **Model Selection**: Best model retrained on full dataset (100% of PSMs)
+4. **SuperSimplified**
+   - Minimal feature set (5 core features: spectral contrast, residuals, error norms, intensity explained)
+   - XGBoost with conservative parameters
+   - Fastest training, minimal overfitting risk
 
-**Feature Sets**:
-- **Reduced Feature Set**: Core peptide properties, RT features, spectral features, quality metrics, MS1 features
-- **Minimal Feature Set**: 5 essential features (spectral contrast, residuals, error norms, intensity explained)
-- **MBR Features**: Automatically added when match_between_runs=true
+**Selection Process** (in select_psm_scoring_model):
+1. **Model Training**: Each model trained on full dataset with output suppression
+2. **Performance Evaluation**: Count targets passing user-defined q-value threshold
+3. **Model Selection**: Model with highest target count selected
+4. **Final Training**: Selected model retrained with progress bars visible
+
+**Feature Sets** (defined in model_config.jl):
+- **ADVANCED_FEATURE_SET**: 50 features including all spectral, RT, MS1, and quality metrics
+- **REDUCED_FEATURE_SET**: 40+ core features for balanced performance
+- **MINIMAL_FEATURE_SET**: 5 essential spectral matching features
+- **MBR Features**: Automatically appended when match_between_runs=true
+
+**Clean Output Design**:
+- Progress bars suppressed during comparison using `show_progress=false` parameter
+- stdout redirected to devnull to suppress EvoTrees output
+- Only essential results shown: model name and target count at q-value threshold
+- Final training shows normal progress bars for user feedback
 
 **Integration**:
-- Enabled via `enable_model_comparison: true` in parameters
-- Only active for in-memory processing (1K-100K PSMs)
-- Falls back to default XGBoost for other dataset sizes
-- Generates detailed performance reports in CSV format
+- Automatic for datasets with 1,000-100,000 PSMs
+- Uses user-defined q_value_threshold from parameters (not hardcoded 0.01)
+- Falls back to AdvancedXGBoost for >100K PSMs
+- Falls back to SimpleXGBoost if all models fail during comparison
 
 **Performance Evaluation**:
-- **Primary**: Number of target PSMs passing q-value threshold
-- **Secondary**: AUC, accuracy, sensitivity, specificity
-- **Efficiency**: Training time and feature count tracking
+- **Primary Metric**: Number of target PSMs passing q-value threshold
+- **Clean Reporting**: Shows results in format "ModelName: X IDs at q ≤ threshold"
+- **Selection Display**: Clear indication of selected model with checkmark
 
 ### Protein Group Analysis
 
@@ -166,14 +178,7 @@ ScoringSearch implements a comprehensive 23-step pipeline:
         "max_psms_in_memory": 100000,
         "min_trace_prob": 0.01,
         "spline_points": 100,
-        "interpolation_points": 100,
-        
-        // Model Comparison (NEW)
-        "enable_model_comparison": true,
-        "validation_split_ratio": 0.2,
-        "qvalue_threshold": 0.01,
-        "min_psms_for_comparison": 1000,
-        "max_psms_for_comparison": 100000
+        "interpolation_points": 100
     }
 },
 "protein_inference": {
@@ -181,18 +186,21 @@ ScoringSearch implements a comprehensive 23-step pipeline:
 },
 "global_settings": {
     "scoring": {
-        "q_value_threshold": 0.01
+        "q_value_threshold": 0.01  // Used for model comparison target counting
     },
     "match_between_runs": true
 }
 ```
 
-### Model Comparison Configuration
-- **enable_model_comparison**: Enable adaptive model selection (default: true)
-- **validation_split_ratio**: Fraction for validation split (default: 0.2)
-- **qvalue_threshold**: Q-value threshold for target counting (default: 0.01)
-- **min_psms_for_comparison**: Minimum PSMs to enable comparison (default: 1000)
-- **max_psms_for_comparison**: Maximum PSMs to enable comparison (default: 100000)
+### Model Comparison Behavior
+- **Automatic Selection**: Enabled by default for datasets with 1,000-100,000 PSMs
+- **Dataset Size Thresholds**:
+  - < 1,000 PSMs: Uses SimpleXGBoost directly (no comparison)
+  - 1,000-100,000 PSMs: Automatic model comparison and selection
+  - > 100,000 PSMs (in-memory): Uses AdvancedXGBoost directly
+  - > max_psms_in_memory: Out-of-memory processing with default XGBoost
+- **Q-value Threshold**: Uses the user-defined `q_value_threshold` from global_settings.scoring
+- **Clean Output**: Progress bars and verbose output suppressed during comparison
 
 ### ML Protein Scoring (Optional)
 When enabled via parameters:
@@ -297,12 +305,21 @@ include("test/UnitTests/ScoringSearch/test_protein_inference.jl")
 
 ## Recent Changes (2025-01)
 
-### Model Comparison Framework Implementation
-- **Adaptive Model Selection**: Added comparison of 3 models (SimpleXGBoost, ProbitRegression, SuperSimplified) for 1K-100K PSM datasets
-- **Validation-Based Selection**: 80/20 train/validation split with performance-based model selection
-- **Feature Set Optimization**: Defined reduced (40+ features) and minimal (5 features) feature sets
-- **Automatic Integration**: Seamless integration with existing scoring pipeline via `score_precursor_isotope_traces`
-- **Performance Reporting**: Detailed CSV reports with training times, AUC, and target yield metrics
+### Automatic Model Selection Feature (January 2025)
+- **Four-Model Comparison**: Added automatic comparison of SimpleXGBoost, AdvancedXGBoost, ProbitRegression, and SuperSimplified models
+- **Advanced Feature Set**: Added ADVANCED_FEATURE_SET with 50 features for maximum performance model
+- **User-Defined Q-value**: Model selection now uses q_value_threshold from parameters instead of hardcoded 0.01
+- **Clean Output Design**: 
+  - Implemented stdout redirection to suppress EvoTrees progress bars
+  - Added `show_progress` parameter to control ProgressBar display
+  - Removed `colsample_bynode` parameter (not supported by EvoTrees)
+  - Fixed duplicate parameter issues in train_booster calls
+- **Separation of Concerns**: Separated PSM scoring from file I/O operations
+  - Removed file writing from `sort_of_percolator_in_memory!`
+  - Added dedicated `write_scored_psms_to_files!` function
+  - Eliminated need for file backup/restore during model comparison
+- **Model Configuration**: Created `model_config.jl` with ModelConfig struct and feature set definitions
+- **Deprecated Code**: Marked `model_comparison.jl` as deprecated (functionality moved to score_psms.jl)
 
 ### 23-Step Pipeline Refinement
 - **Comprehensive Documentation**: Detailed step-by-step breakdown of entire ScoringSearch pipeline

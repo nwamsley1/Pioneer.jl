@@ -16,21 +16,20 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 function sort_of_percolator_in_memory!(psms::DataFrame, 
-                  file_paths::Vector{String},
                   features::Vector{Symbol},
                   match_between_runs::Bool = true;
                   max_q_value_xgboost_rescore::Float32 = 0.01f0,
                   max_q_value_xgboost_mbr_rescore::Float32 = 0.20f0,
                   min_PEP_neg_threshold_xgboost_rescore = 0.90f0,
                   colsample_bytree::Float64 = 0.5,
-                  colsample_bynode::Float64 = 0.5,
                   eta::Float64 = 0.15,
                   min_child_weight::Int = 1,
                   subsample::Float64 = 0.5,
                   gamma::Float64 = 0.0,
                   max_depth::Int = 10,
                   iter_scheme::Vector{Int} = [100, 200, 200],
-                  print_importance::Bool = true)
+                  print_importance::Bool = true,
+                  show_progress::Bool = true)
 
     
     #Faster if sorted first
@@ -50,7 +49,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     Random.seed!(1776)
     non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
 
-    pbar = ProgressBar(total=length(unique_cv_folds) * length(iter_scheme))
+    pbar = show_progress ? ProgressBar(total=length(unique_cv_folds) * length(iter_scheme)) : nothing
     for test_fold_idx in unique_cv_folds
         initialize_prob_group_features!(psms, match_between_runs)
         psms_train = @view psms[train_indices[test_fold_idx], :]
@@ -70,8 +69,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             train_feats = itr < mbr_start_iter ? non_mbr_features : features
             
             bst = train_booster(psms_train_itr, train_feats, num_round;
-                               colsample_bytree=colsample_bytree,
-                               colsample_bynode=colsample_bynode,
+                               colsample=colsample_bytree,
                                eta=eta,
                                min_child_weight=min_child_weight,
                                subsample=subsample,
@@ -87,7 +85,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                      max_q_value_xgboost_rescore)
             end
 
-            update(pbar)
+            show_progress && update(pbar)
 
             if (!match_between_runs) && itr == (mbr_start_iter - 1)
                 break
@@ -120,11 +118,6 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         psms[!, :prob] = prob_estimates
     end
     
-    dropVectorColumns!(psms) # avoids writing issues
-    for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
-        fpath = file_paths[ms_file_idx[:ms_file_idx]]
-        writeArrow(fpath, gpsms)
-    end
     return models
 end
 
@@ -139,7 +132,6 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     max_q_value_xgboost_mbr_rescore::Float32 = 0.20f0,
                     min_PEP_neg_threshold_xgboost_rescore::Float32 = 0.90f0,
                     colsample_bytree::Float64 = 0.5, 
-                    colsample_bynode::Float64 = 0.5,
                     eta::Float64 = 0.15, 
                     min_child_weight::Int = 1, 
                     subsample::Float64 = 0.5, 
@@ -351,8 +343,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             #Train a model on the n-1 training folds.
             train_feats = itr < length(iter_scheme) ? non_mbr_features : features
             bst = train_booster(psms_train_itr, train_feats, num_round;
-                               colsample_bytree=colsample_bytree,
-                               colsample_bynode=colsample_bynode,
+                               colsample=colsample_bytree,
                                eta=eta,
                                min_child_weight=min_child_weight,
                                subsample=subsample,
@@ -377,7 +368,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
             end
 
-            update(pbar)
+            show_progress && update(pbar)
         end
     end
     
@@ -434,8 +425,7 @@ end
 
 
 function train_booster(psms::AbstractDataFrame, features, num_round;
-                       colsample_bytree::Float64,
-                       colsample_bynode::Float64,
+                       colsample::Float64,
                        eta::Float64,
                        min_child_weight::Int,
                        subsample::Float64,
@@ -448,7 +438,7 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
         max_depth = max_depth,
         min_weight = min_child_weight,
         rowsample = subsample,
-        colsample = colsample_bytree,
+        colsample = colsample,
         eta = eta,
         gamma = gamma
     )
