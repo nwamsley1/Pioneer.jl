@@ -833,11 +833,14 @@ function process_file!(
         
         # Check if we have a best attempt to use
         if iteration_state.best_mass_error_model !== nothing
-            @debug_l1 "Using best attempt as fallback: " *
-                  "$(iteration_state.best_psm_count) PSMs from " *
-                  "Phase $(iteration_state.best_phase), " *
-                  "Score $(iteration_state.best_score), " *
+            @user_warn "Parameter tuning did not converge after $(iteration_state.scan_attempt) attempt(s)."
+            @debug_l1 "Using best iteration: Phase $(iteration_state.best_phase) " *
+                  "(bias=$(round(getPhaseShift(iteration_state.best_phase, params), digits=1)) ppm), " *
+                  "Score threshold $(iteration_state.best_score), " *
                   "Iteration $(iteration_state.best_iteration)"
+            @debug_l1 "Best iteration yielded $(iteration_state.best_psm_count) PSMs with " *
+                  "mass offset $(round(getMassOffset(iteration_state.best_mass_error_model), digits=1)) ppm and " *
+                  "tolerance ±$(round((getLeftTol(iteration_state.best_mass_error_model) + getRightTol(iteration_state.best_mass_error_model))/2, digits=1)) ppm"
             
             # Apply best attempt models
             setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
@@ -857,14 +860,84 @@ function process_file!(
                 append!(results.ppm_errs, iteration_state.best_ppm_errs)
             end
             
-            # Update results with best attempt
-            results.mass_err_model[] = iteration_state.best_mass_error_model
+            # Test 1.5x tolerance expansion on best iteration
+            @debug_l1 "Testing 1.5x tolerance expansion on best iteration parameters..."
+            expanded_model = MassErrorModel(
+                getMassOffset(iteration_state.best_mass_error_model),
+                (getLeftTol(iteration_state.best_mass_error_model) * 1.5f0,
+                 getRightTol(iteration_state.best_mass_error_model) * 1.5f0)
+            )
             
-            # Update warnings and final PSM count
-            push!(warnings, "BEST_ATTEMPT_FALLBACK: Used parameters from best attempt " *
-                           "($(iteration_state.best_psm_count) PSMs, " *
-                           "Phase $(iteration_state.best_phase), " *
-                           "Score $(iteration_state.best_score))")
+            # Apply expanded model and collect PSMs
+            setMassErrorModel!(search_context, ms_file_idx, expanded_model)
+            expanded_psms, expanded_ppm_errs = collect_psms_with_model(
+                filtered_spectra, search_context, params, ms_file_idx, spectra
+            )
+            
+            # Check if expansion yields significantly more PSMs (>10% increase)
+            expansion_threshold = iteration_state.best_psm_count * 1.1
+            if size(expanded_psms, 1) > expansion_threshold
+                # Refit model with expanded PSMs
+                if length(expanded_ppm_errs) > 0
+                    # Calculate mass error from expanded PSMs
+                    expanded_fragments = get_matched_fragments(
+                        spectra, expanded_psms, search_context, params, ms_file_idx
+                    )
+                    if length(expanded_fragments) > 0
+                        refitted_model, refitted_ppm_errs = fit_mass_err_model(params, expanded_fragments)
+                        if refitted_model !== nothing
+                            # Use expanded results
+                            psm_increase = size(expanded_psms, 1) - iteration_state.best_psm_count
+                            percent_increase = round(100 * psm_increase / iteration_state.best_psm_count, digits=1)
+                            
+                            @user_info "Tolerance expansion yielded $(size(expanded_psms, 1)) PSMs " *
+                                      "(+$psm_increase, $percent_increase% increase)"
+                            
+                            iteration_state.best_mass_error_model = refitted_model
+                            iteration_state.best_psm_count = size(expanded_psms, 1)
+                            iteration_state.best_ppm_errs = refitted_ppm_errs
+                            
+                            # Update results with expanded data
+                            results.mass_err_model[] = refitted_model
+                            resize!(results.ppm_errs, 0)
+                            append!(results.ppm_errs, refitted_ppm_errs)
+                            setMassErrorModel!(search_context, ms_file_idx, refitted_model)
+                            
+                            push!(warnings, "EXPANDED_BEST_ATTEMPT: Tolerance expansion increased PSMs by $percent_increase%")
+                        else
+                            # Revert to best iteration model if refitting failed
+                            setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+                            results.mass_err_model[] = iteration_state.best_mass_error_model
+                        end
+                    else
+                        # No fragments, revert to best iteration model
+                        setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+                        results.mass_err_model[] = iteration_state.best_mass_error_model
+                    end
+                else
+                    # No PPM errors, revert to best iteration model
+                    setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+                    results.mass_err_model[] = iteration_state.best_mass_error_model
+                end
+            else
+                # Expansion didn't help, revert to best iteration model
+                setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+                results.mass_err_model[] = iteration_state.best_mass_error_model
+                @debug_l1 "Tolerance expansion did not significantly improve PSM count"
+            end
+            
+            # Build detailed warning message
+            phase_bias = getPhaseShift(iteration_state.best_phase, params)
+            mass_offset = round(getMassOffset(iteration_state.best_mass_error_model), digits=1)
+            mass_tol = round((getLeftTol(iteration_state.best_mass_error_model) + getRightTol(iteration_state.best_mass_error_model))/2, digits=1)
+            
+            warning_msg = "⚠️ Parameter tuning did not converge after $(iteration_state.scan_attempt) attempt(s).\n" *
+                         "Using best iteration: Phase $(iteration_state.best_phase) (bias=$phase_bias ppm), " *
+                         "Score threshold $(iteration_state.best_score), Iteration $(iteration_state.best_iteration)\n" *
+                         "Best iteration yielded $(iteration_state.best_psm_count) PSMs with mass offset $mass_offset ppm " *
+                         "and tolerance ±$mass_tol ppm"
+            
+            push!(warnings, warning_msg)
             
             final_psm_count = iteration_state.best_psm_count
             

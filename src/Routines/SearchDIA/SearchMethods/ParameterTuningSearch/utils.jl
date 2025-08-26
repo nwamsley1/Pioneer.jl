@@ -1231,6 +1231,88 @@ function test_tolerance_expansion!(
 end
 
 """
+    getPhaseShift(phase::Int, params::ParameterTuningSearchParameters)
+
+Get the bias shift (in ppm) for a given phase.
+Phase 1: 0 ppm (no bias)
+Phase 2: +max_tolerance ppm (positive bias)
+Phase 3: -max_tolerance ppm (negative bias)
+"""
+function getPhaseShift(phase::Int, params::ParameterTuningSearchParameters)
+    if phase == 1
+        return 0.0
+    elseif phase == 2
+        # Positive shift - use maximum expected tolerance
+        return Float64(getInitialMassTol(params))
+    elseif phase == 3
+        # Negative shift - use negative maximum expected tolerance
+        return -Float64(getInitialMassTol(params))
+    else
+        return 0.0
+    end
+end
+
+"""
+    collect_psms_with_model(filtered_spectra, search_context, params, ms_file_idx, spectra)
+
+Helper function to collect PSMs with the current mass error model.
+Returns (psms, ppm_errs) tuple.
+"""
+function collect_psms_with_model(
+    filtered_spectra::FilteredMassSpecData,
+    search_context::SearchContext,
+    params::ParameterTuningSearchParameters,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+)
+    # Perform library search with current model
+    psms = library_search(
+        filtered_spectra,
+        search_context,
+        params,
+        ms_file_idx
+    )
+    
+    if isempty(psms)
+        return psms, Float32[]
+    end
+    
+    # Add necessary columns for scoring
+    add_tuning_search_columns!(
+        psms,
+        spectra,
+        getLibPrecursorIsDecoy(getSpecLib(search_context)),
+        getLibPrecursorIRT(getSpecLib(search_context)),
+        getLibPrecursorCharge(getSpecLib(search_context)),
+        getRetentionTime(spectra),
+        getTIC(spectra)
+    )
+    
+    # Score and filter PSMs
+    filter_and_score_psms!(psms, params)
+    
+    # Get matched fragments for error calculation
+    ppm_errs = Float32[]
+    if size(psms, 1) > 0
+        matched_frags = get_matched_fragments(
+            spectra,
+            psms,
+            search_context,
+            params,
+            ms_file_idx
+        )
+        if length(matched_frags) > 0
+            # Calculate PPM errors from fragments
+            for frag in matched_frags
+                push!(ppm_errs, Float32(frag.ppm_err))
+            end
+        end
+    end
+    
+    return psms, ppm_errs
+end
+
+"""
     get_fallback_parameters(search_context, params, ms_file_idx, warnings)
 
 Get fallback parameters from another file or use defaults.
