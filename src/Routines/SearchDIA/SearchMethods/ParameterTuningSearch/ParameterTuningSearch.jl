@@ -743,6 +743,9 @@ function process_file!(
     max_scans = getMaxParameterTuningScans(params)
     scan_scale_factor = settings.scan_scale_factor
     
+    # Define filtered_spectra outside try block for use in fallback
+    filtered_spectra = nothing
+    
     try
         
         # Initialize models
@@ -861,70 +864,75 @@ function process_file!(
                 append!(results.ppm_errs, iteration_state.best_ppm_errs)
             end
             
-            # Test 1.5x tolerance expansion on best iteration
-            @debug_l1 "Testing 1.5x tolerance expansion on best iteration parameters..."
-            expanded_model = MassErrorModel(
-                getMassOffset(iteration_state.best_mass_error_model),
-                (getLeftTol(iteration_state.best_mass_error_model) * 1.5f0,
-                 getRightTol(iteration_state.best_mass_error_model) * 1.5f0)
-            )
-            
-            # Apply expanded model and collect PSMs
-            setMassErrorModel!(search_context, ms_file_idx, expanded_model)
-            expanded_psms, expanded_ppm_errs = collect_psms_with_model(
-                filtered_spectra, search_context, params, ms_file_idx, spectra
-            )
-            
-            # Check if expansion yields significantly more PSMs (>10% increase)
-            expansion_threshold = iteration_state.best_psm_count * 1.1
-            if size(expanded_psms, 1) > expansion_threshold
-                # Refit model with expanded PSMs
-                if length(expanded_ppm_errs) > 0
-                    # Calculate mass error from expanded PSMs
-                    expanded_fragments = get_matched_fragments(
-                        spectra, expanded_psms, search_context, params, ms_file_idx
-                    )
-                    if length(expanded_fragments) > 0
-                        refitted_model, refitted_ppm_errs = fit_mass_err_model(params, expanded_fragments)
-                        if refitted_model !== nothing
-                            # Use expanded results
-                            psm_increase = size(expanded_psms, 1) - iteration_state.best_psm_count
-                            percent_increase = round(100 * psm_increase / iteration_state.best_psm_count, digits=1)
-                            
-                            @user_info "Tolerance expansion yielded $(size(expanded_psms, 1)) PSMs " *
-                                      "(+$psm_increase, $percent_increase% increase)"
-                            
-                            iteration_state.best_mass_error_model = refitted_model
-                            iteration_state.best_psm_count = size(expanded_psms, 1)
-                            iteration_state.best_ppm_errs = refitted_ppm_errs
-                            
-                            # Update results with expanded data
-                            results.mass_err_model[] = refitted_model
-                            resize!(results.ppm_errs, 0)
-                            append!(results.ppm_errs, refitted_ppm_errs)
-                            setMassErrorModel!(search_context, ms_file_idx, refitted_model)
-                            
-                            push!(warnings, "EXPANDED_BEST_ATTEMPT: Tolerance expansion increased PSMs by $percent_increase%")
+            # Test 1.5x tolerance expansion on best iteration (only if we have filtered_spectra)
+            if filtered_spectra !== nothing
+                @debug_l1 "Testing 1.5x tolerance expansion on best iteration parameters..."
+                expanded_model = MassErrorModel(
+                    getMassOffset(iteration_state.best_mass_error_model),
+                    (getLeftTol(iteration_state.best_mass_error_model) * 1.5f0,
+                     getRightTol(iteration_state.best_mass_error_model) * 1.5f0)
+                )
+                
+                # Apply expanded model and collect PSMs
+                setMassErrorModel!(search_context, ms_file_idx, expanded_model)
+                expanded_psms, expanded_ppm_errs = collect_psms_with_model(
+                    filtered_spectra, search_context, params, ms_file_idx, spectra
+                )
+                
+                # Check if expansion yields significantly more PSMs (>10% increase)
+                expansion_threshold = iteration_state.best_psm_count * 1.1
+                if size(expanded_psms, 1) > expansion_threshold
+                    # Refit model with expanded PSMs
+                    if length(expanded_ppm_errs) > 0
+                        # Calculate mass error from expanded PSMs
+                        expanded_fragments = get_matched_fragments(
+                            spectra, expanded_psms, search_context, params, ms_file_idx
+                        )
+                        if length(expanded_fragments) > 0
+                            refitted_model, refitted_ppm_errs = fit_mass_err_model(params, expanded_fragments)
+                            if refitted_model !== nothing
+                                # Use expanded results
+                                psm_increase = size(expanded_psms, 1) - iteration_state.best_psm_count
+                                percent_increase = round(100 * psm_increase / iteration_state.best_psm_count, digits=1)
+                                
+                                @user_info "Tolerance expansion yielded $(size(expanded_psms, 1)) PSMs " *
+                                          "(+$psm_increase, $percent_increase% increase)"
+                                
+                                iteration_state.best_mass_error_model = refitted_model
+                                iteration_state.best_psm_count = size(expanded_psms, 1)
+                                iteration_state.best_ppm_errs = refitted_ppm_errs
+                                
+                                # Update results with expanded data
+                                results.mass_err_model[] = refitted_model
+                                resize!(results.ppm_errs, 0)
+                                append!(results.ppm_errs, refitted_ppm_errs)
+                                setMassErrorModel!(search_context, ms_file_idx, refitted_model)
+                                
+                                push!(warnings, "EXPANDED_BEST_ATTEMPT: Tolerance expansion increased PSMs by $percent_increase%")
+                            else
+                                # Revert to best iteration model if refitting failed
+                                setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+                                results.mass_err_model[] = iteration_state.best_mass_error_model
+                            end
                         else
-                            # Revert to best iteration model if refitting failed
+                            # No fragments, revert to best iteration model
                             setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
                             results.mass_err_model[] = iteration_state.best_mass_error_model
                         end
                     else
-                        # No fragments, revert to best iteration model
+                        # No PPM errors, revert to best iteration model
                         setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
                         results.mass_err_model[] = iteration_state.best_mass_error_model
                     end
                 else
-                    # No PPM errors, revert to best iteration model
+                    # Expansion didn't help, revert to best iteration model
                     setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
                     results.mass_err_model[] = iteration_state.best_mass_error_model
+                    @debug_l1 "Tolerance expansion did not significantly improve PSM count"
                 end
             else
-                # Expansion didn't help, revert to best iteration model
-                setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
-                results.mass_err_model[] = iteration_state.best_mass_error_model
-                @debug_l1 "Tolerance expansion did not significantly improve PSM count"
+                # Could not test tolerance expansion - no filtered spectra available
+                @user_warn "Cannot test tolerance expansion - filtered spectra not available"
             end
             
             # Build detailed warning message
@@ -943,8 +951,8 @@ function process_file!(
             final_psm_count = iteration_state.best_psm_count
             
         else
-            # No valid attempts at all - use conservative defaults or borrow
-            @user_warn "No valid attempts found, using fallback strategy"
+            # No valid attempts found any PSMs - use conservative defaults or borrow
+            @user_warn "No attempts found sufficient PSMs (best was $(iteration_state.best_psm_count)), using fallback strategy"
             
             fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
                 search_context, ms_file_idx, warnings
