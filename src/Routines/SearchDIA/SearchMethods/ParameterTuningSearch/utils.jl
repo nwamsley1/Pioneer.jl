@@ -229,30 +229,69 @@ function fit_irt_model(
     psms::DataFrame
 ) where {P<:ParameterTuningSearchParameters}
     
-    # Initial spline fit
-    rt_to_irt_map = UniformSpline(
-        psms[!,:irt_predicted],
-        psms[!,:rt],
-        getSplineDegree(params),
-        getSplineNKnots(params)
-    )
+    n_psms = nrow(psms)
     
-    # Calculate residuals
-    psms[!,:irt_observed] = rt_to_irt_map.(psms.rt::Vector{Float32})
-    residuals = psms[!,:irt_observed] .- psms[!,:irt_predicted]
-    irt_mad = mad(residuals, normalize=false)::Float32
+    # Calculate maximum knots based on 5 PSMs per knot rule
+    max_knots_from_psms = max(2, floor(Int, n_psms / 5))  # Minimum 2 knots for spline
+    configured_knots = getSplineNKnots(params)
+    n_knots = min(configured_knots, max_knots_from_psms)
     
-    # Remove outliers and refit
-    valid_psms = psms[abs.(residuals) .< (irt_mad * getOutlierThreshold(params)), :]
+    # If we can't even support 2 knots, fall back to identity
+    if n_psms < 10  # Less than 2 knots * 5 PSMs per knot
+        @user_warn "Too few PSMs ($n_psms) for RT spline alignment (need ≥10), using identity model"
+        return (IdentityModel(), Float32[], Float32[], 0.0f0)
+    end
     
-    final_model = SplineRtConversionModel(UniformSpline(
-        valid_psms[!,:irt_predicted],
-        valid_psms[!,:rt],
-        getSplineDegree(params),
-        getSplineNKnots(params)
-    ))
+    # Log if we're using fewer knots than configured
+    if n_knots < configured_knots
+        @debug_l1 "Reducing RT spline knots from $configured_knots to $n_knots due to limited PSMs ($n_psms)"
+    end
     
-    return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
+    try
+        # Initial spline fit with adaptive knots
+        rt_to_irt_map = UniformSpline(
+            psms[!,:irt_predicted],
+            psms[!,:rt],
+            getSplineDegree(params),
+            n_knots
+        )
+        
+        # Calculate residuals
+        psms[!,:irt_observed] = rt_to_irt_map.(psms.rt::Vector{Float32})
+        residuals = psms[!,:irt_observed] .- psms[!,:irt_predicted]
+        irt_mad = mad(residuals, normalize=false)::Float32
+        
+        # Remove outliers and refit
+        valid_psms = psms[abs.(residuals) .< (irt_mad * getOutlierThreshold(params)), :]
+        
+        # Check if we still have enough PSMs after outlier removal
+        n_valid_psms = nrow(valid_psms)
+        if n_valid_psms < 10
+            @user_warn "Too few PSMs after outlier removal ($n_valid_psms), using identity model"
+            return (IdentityModel(), Float32[], Float32[], 0.0f0)
+        end
+        
+        # Recalculate knots for final fit if needed
+        max_knots_final = max(2, floor(Int, n_valid_psms / 5))
+        n_knots_final = min(n_knots, max_knots_final)
+        
+        final_model = SplineRtConversionModel(UniformSpline(
+            valid_psms[!,:irt_predicted],
+            valid_psms[!,:rt],
+            getSplineDegree(params),
+            n_knots_final
+        ))
+        
+        return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
+        
+    catch e
+        if isa(e, LinearAlgebra.SingularException)
+            @user_warn "RT spline fitting failed (singular matrix), using identity model" exception=e
+            return (IdentityModel(), Float32[], Float32[], 0.0f0)
+        else
+            rethrow(e)
+        end
+    end
 end
 
 """
