@@ -291,6 +291,16 @@ function fit_irt_model(
 end
 
 """
+    calculate_ppm_errors(fragments::Vector{FragmentMatch{T}}) where T
+
+Calculate PPM errors from fragment matches.
+Returns a vector of PPM errors calculated as (observed - theoretical) / (theoretical / 1e6).
+"""
+function calculate_ppm_errors(fragments::Vector{FragmentMatch{T}}) where T
+    return [(f.match_mz - f.theoretical_mz)/(f.theoretical_mz/1e6) for f in fragments]
+end
+
+"""
     fit_mass_err_model(params::P, fragments::Vector{FragmentMatch{Float32}}) where {P<:FragmentIndexSearchParameters}
 
 Fits mass error model from fragment matches.
@@ -738,7 +748,7 @@ function fit_mass_err_model(
     end
     
     # Calculate PPM errors
-    ppm_errs = [(f.match_mz - f.theoretical_mz)/(f.theoretical_mz/1e6) for f in fragments]
+    ppm_errs = calculate_ppm_errors(fragments)
     mass_err = median(ppm_errs)
     ppm_errs .-= mass_err
     
@@ -1572,9 +1582,7 @@ function collect_psms_with_model(
         )
         if length(matched_frags) > 0
             # Calculate PPM errors from fragments
-            for frag in matched_frags
-                push!(ppm_errs, Float32(frag.ppm_err))
-            end
+            ppm_errs = Float32.(calculate_ppm_errors(matched_frags))
         end
     end
     
