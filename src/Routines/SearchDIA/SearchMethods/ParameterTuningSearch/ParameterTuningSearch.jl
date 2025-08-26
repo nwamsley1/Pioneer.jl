@@ -301,14 +301,11 @@ function collect_psms(
             getTICs(spectra)
         )
         
-        # Score and filter PSMs - check if filtering succeeded
+        # Score and filter PSMs
         n_filtered = filter_and_score_psms!(psms, params, search_context)
-        was_filtered = n_filtered != -1
         
-        # If filtering failed, return empty DataFrame
-        if !was_filtered
-            psms = DataFrame()
-        end
+        # Note: filter_and_score_psms! now always returns the actual PSM count
+        # An empty DataFrame will naturally have 0 PSMs
         
         # Clean up temporary column if DataFrame not empty
         if !isempty(psms) && "filtered_scan_idx" in names(psms)
