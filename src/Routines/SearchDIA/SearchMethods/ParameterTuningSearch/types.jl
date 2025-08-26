@@ -182,6 +182,7 @@ struct ParameterTuningSearchResults <: SearchResults
     qc_plots_folder_path::String
     diagnostics::ParameterTuningDiagnostics
     parameter_history::ParameterHistory
+    current_iteration_state::Base.Ref{Union{Nothing, IterationState}}  # Store iteration state for plot generation
 end
 
 """
