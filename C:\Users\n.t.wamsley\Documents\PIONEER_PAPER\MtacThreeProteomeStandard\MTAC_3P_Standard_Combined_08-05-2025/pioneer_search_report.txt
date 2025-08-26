@@ -1,0 +1,18 @@
+==========================================================================================
+Pioneer Search Log
+Version: 0.2.8
+Started: 2025-08-26T09:51:23.987
+Output Directory: C:\Users\n.t.wamsley\Documents\PIONEER_PAPER\MtacThreeProteomeStandard\MTAC_3P_Standard_Combined_08-05-2025
+==========================================================================================
+
+
+==========================================================================================
+Starting SearchDIA
+==========================================================================================
+[2025-08-26 09:51:23] Output directory: C:\Users\n.t.wamsley\Documents\PIONEER_PAPER\MtacThreeProteomeStandard\MTAC_3P_Standard_Combined_08-05-2025
+[2025-08-26 09:51:23] Loading Parameters...
+[2025-08-26 09:51:23] ERROR: ms_data directory does not exist: /Users/nathanwamsley/Projects/Pioneer.jl/src/Routines/../../C:\Users\n.t.wamsley\Documents\PIONEER_PAPER\MtacThreeProteomeStandard @ Pioneer /Users/nathanwamsley/Projects/Pioneer.jl/src/Routines/SearchDIA.jl:241
+
+==========================================================================================
+Search completed at: 2025-08-26T09:51:23.988
+==========================================================================================
