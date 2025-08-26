@@ -243,17 +243,14 @@ function get_qvalue_spline(
 
 
     psms_scores = DataFrame(Arrow.Table(merged_psms_path))
-    Arrow.write("/Users/nathanwamsley/Desktop/test_prot.arrow", psms_scores)
     if use_unique
         # select the columns needed to identify globally unique precursors or proteins
         if score_col == :global_prob # precursors
             select!(psms_scores, [:precursor_idx, :target, score_col])
         elseif score_col == :global_pg_score # proteins
             select!(psms_scores, [:protein_name, :target, :entrap_id, score_col])
-        end
-        Arrow.write("/Users/nathanwamsley/Desktop/glob_test_all.arrow", psms_scores)
+        en
         psms_scores = unique(psms_scores)
-        Arrow.write("/Users/nathanwamsley/Desktop/glob_test_uniq.arrow", psms_scores)
     end
 
     Q = size(psms_scores, 1)
@@ -335,7 +332,6 @@ function get_qvalue_spline(
     xs   = xs[mask]
     ys   = ys[mask]
     =#
-    Arrow.write("/Users/nathanwamsley/Desktop/test_bins.arrow", DataFrame(hcat(xs, ys), :auto))
     return linear_interpolation(xs, ys; extrapolation_bc = Line())
 end
 #==========================================================
@@ -1857,6 +1853,7 @@ function perform_probit_analysis_multifold(
         old_passing = sum((old_qvalues .<= 0.01f0) .& all_protein_groups.target)
         new_passing = sum((new_qvalues .<= 0.01f0) .& all_protein_groups.target)
         
+        percent_improvement = 0.0
         if old_passing > 0
             percent_improvement = round(100.0 * (new_passing - old_passing) / old_passing, digits=1)
         end

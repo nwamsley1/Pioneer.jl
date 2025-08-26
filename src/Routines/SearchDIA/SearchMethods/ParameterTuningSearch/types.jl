@@ -36,7 +36,6 @@ struct ParameterTuningStatus
     final_psm_count::Int
     final_mass_offset::Float32
     final_mass_tolerance::Tuple{Float32, Float32}
-    warnings::Vector{String}
 end
 
 """
@@ -67,7 +66,6 @@ struct TuningResults
     converged::Bool
     psm_count::Int
     iterations::Int
-    warnings::Vector{String}
 end
 
 """

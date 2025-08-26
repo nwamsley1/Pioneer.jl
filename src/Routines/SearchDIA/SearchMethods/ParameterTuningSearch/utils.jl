@@ -133,22 +133,19 @@ function filter_and_score_psms!(
     
     max_q_val, min_psms = getMaxQVal(params), getMinPsms(params)
     
-    # Debug: Log PSM counts before and after filtering
-    @user_info "filter_and_score_psms!: Before q-value filtering: $(size(psms, 1)) PSMs, max_q_val = $max_q_val, min_psms = $min_psms"
-    
     n_passing_psms = sum(psms[!,:q_value] .<= max_q_val)
     filter!(row -> row.q_value::Float16 <= max_q_val, psms)
-    
-    @user_info "filter_and_score_psms!: After q-value filtering: $(size(psms, 1)) PSMs"
+
     #psms[!,:best_psms] = zeros(Bool, size(psms, 1))
-   # 
-    # Select best PSM per precursor
-   # for sub_psms in groupby(psms, [:precursor_idx, :scan_idx])
-    #for sub_psms in groupby(psms, [:precursor_idx,:scan_idx])
-   #     best_idx = argmax(sub_psms.prob::AbstractVector{Float32})
-   #     sub_psms[best_idx,:best_psms] = true
-   # end
-    #filter!(x -> x.best_psms::Bool, psms)
+    #= 
+    Select best PSM per precursor
+    #for sub_psms in groupby(psms, [:precursor_idx, :scan_idx])
+    for sub_psms in groupby(psms, [:precursor_idx,:scan_idx])
+        best_idx = argmax(sub_psms.prob::AbstractVector{Float32})
+        sub_psms[best_idx,:best_psms] = true
+    end
+    filter!(x -> x.best_psms::Bool, psms)
+    =#
     filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys. 
 
     n_passing_psms = size(psms, 1)
@@ -238,7 +235,7 @@ function fit_irt_model(
     
     # If we can't even support 2 knots, fall back to identity
     if n_psms < 10  # Less than 2 knots * 5 PSMs per knot
-        @user_warn "Too few PSMs ($n_psms) for RT spline alignment (need ≥10), using identity model"
+        @debug_l2 "Too few PSMs ($n_psms) for RT spline alignment (need ≥10), using identity model"
         return (IdentityModel(), Float32[], Float32[], 0.0f0)
     end
     
@@ -267,7 +264,7 @@ function fit_irt_model(
         # Check if we still have enough PSMs after outlier removal
         n_valid_psms = nrow(valid_psms)
         if n_valid_psms < 10
-            @user_warn "Too few PSMs after outlier removal ($n_valid_psms), using identity model"
+            @debug_l2 "Too few PSMs after outlier removal ($n_valid_psms), using identity model"
             return (IdentityModel(), Float32[], Float32[], 0.0f0)
         end
         
@@ -285,7 +282,7 @@ function fit_irt_model(
         return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
         
     catch e
-        @user_warn "RT spline fitting failed, using identity model exception=$e"
+        @debug_l1 "RT spline fitting failed, using identity model exception=$e"
         return (IdentityModel(), Float32[], Float32[], 0.0f0)
     end
 end
@@ -744,7 +741,10 @@ function fit_mass_err_model(
     
     # Check if we have enough fragments after filtering
     if length(fragments) == 0
-        return MassErrorModel(0.0f0, (30.0f0, 30.0f0)), Float32[]
+        return MassErrorModel(
+            zero(Float32),
+            (zero(Float32), zero(Float32))
+        ), Float32[]
     end
     
     # Calculate PPM errors
@@ -770,19 +770,12 @@ function fit_mass_err_model(
         ))
         , 1 - frag_err_quantile)
     catch e 
-        @user_warn "length(r_errs) $(length(r_errs)) length(l_errs) $(length(l_errs)) sum(r_errs) $(sum(r_errs)) sum(l_errs) $(sum(l_errs))"
+        @debug_l1 "length(r_errs) $(length(r_errs)) length(l_errs) $(length(l_errs)) sum(r_errs) $(sum(r_errs)) sum(l_errs) $(sum(l_errs))"
         return MassErrorModel(
             zero(Float32),
             (zero(Float32), zero(Float32))
         ), ppm_errs
     end
-    #l_bound = abs(quantile(ppm_errs, frag_err_quantile))
-    #r_bound = abs(quantile(ppm_errs, 1 - frag_err_quantile))
-    # Diagnostic logging
-    # @info "Mass error model: offset=$(round(mass_err, digits=2)) ppm, " *
-    #       "tolerance=(-$(round(abs(l_bound), digits=1)), +$(round(abs(r_bound), digits=1))) ppm, " *
-    #       "MAD=$(round(mad(ppm_errs, normalize=false)*4, digits=1)) ppm, " *
-    #       "error_quantile=$frag_err_quantile"
     
     return MassErrorModel(
         Float32(mass_err),
@@ -1028,72 +1021,6 @@ function generate_best_iteration_rt_plot_in_memory(
     return p
 end
 
-"""
-    generate_best_iteration_mass_error_plot_in_memory(results, fname, iteration_state)
-
-Generates mass error plot using best iteration data or fallback information.
-Returns the plot object without saving to disk.
-"""
-function generate_best_iteration_mass_error_plot_in_memory(
-    results::ParameterTuningSearchResults,
-    fname::String,
-    iteration_state::IterationState
-)
-    # Check if we have ppm error data from best iteration
-    # First check results.ppm_errs, then fall back to iteration_state.best_ppm_errs
-    ppm_data = if length(results.ppm_errs) > 0
-        results.ppm_errs
-    elseif iteration_state.best_ppm_errs !== nothing && length(iteration_state.best_ppm_errs) > 0
-        iteration_state.best_ppm_errs
-    else
-        nothing
-    end
-    
-    if ppm_data !== nothing
-        # We have data, generate normal histogram
-        mem = getMassErrorModel(results)
-        errs = ppm_data .+ getMassOffset(mem)
-        n = length(errs)
-        
-        plot_title = fname * "\n(Best Iteration: Phase $(iteration_state.best_phase), Score $(iteration_state.best_score))\nn = $n"
-        mass_err = getMassOffset(mem)
-        bins = LinRange(mass_err - 2*getLeftTol(mem), mass_err + 2*getRightTol(mem), 50)
-        
-        p = Plots.histogram(errs,
-            orientation = :h, 
-            yflip = true,
-            title = plot_title,
-            xlabel = "Count",
-            ylabel = "Mass Error (ppm)",
-            label = nothing,
-            bins = bins,
-            ylim = (mass_err - 2*getLeftTol(mem), mass_err + 2*getRightTol(mem)),
-            topmargin = 15mm
-        )
-        
-        # Add lines for mass error and tolerances
-        Plots.hline!([mass_err], label = nothing, color = :black, lw = 2)
-        Plots.annotate!(last(xlims(p)), mass_err, 
-                       text("$(round(mass_err, digits=1))", :black, :right, :bottom, 12))
-        
-        l_err = mass_err - getLeftTol(mem)
-        Plots.hline!([l_err], label = nothing, color = :red, lw = 1, ls = :dash)
-        Plots.annotate!(last(xlims(p)), l_err, 
-                       text("$(round(l_err, digits=1))", :red, :right, :bottom, 10))
-        
-        r_err = mass_err + getRightTol(mem)
-        Plots.hline!([r_err], label = nothing, color = :red, lw = 1, ls = :dash)
-        Plots.annotate!(last(xlims(p)), r_err, 
-                       text("$(round(r_err, digits=1))", :red, :right, :bottom, 10))
-    else
-        # No ppm error data, generate informative fallback plot
-        p = generate_fallback_mass_plot_with_iteration_info(
-            results, fname, iteration_state
-        )
-    end
-    
-    return p
-end
 
 """
     generate_fallback_rt_plot_with_iteration_info(results, fname, iteration_state)
@@ -1394,15 +1321,6 @@ function check_convergence(
     min_psms::Int64
 )
     if size(psms, 1) < min_psms
-        @debug_l1 "size(psms, 1) < $min_psms, skipping convergence check"
-        return false 
-    end
-    if (getLeftTol(old_mass_err_model) - getLeftTol(new_mass_err_model))/(getLeftTol(new_mass_err_model)) < 0.05
-        @debug_l1 "Left tolerance failed to converge getLeftTol(old_mass_err_model) $(getLeftTol(old_mass_err_model)) getLeftTol(new_mass_err_model) $(getLeftTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
-        return false 
-    end
-    if (getRightTol(old_mass_err_model) - getRightTol(new_mass_err_model))/(getRightTol(new_mass_err_model)) < 0.05
-        @debug_l1 "Right tolerance failed to converge getRightTol(old_mass_err_model) $(getRightTol(old_mass_err_model)) getRightTol(new_mass_err_model) $(getRightTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
         return false 
     end
     return true
@@ -1590,16 +1508,14 @@ function collect_psms_with_model(
 end
 
 """
-    get_fallback_parameters(search_context, params, ms_file_idx, warnings)
+    get_fallback_parameters(search_context, ms_file_idx)
 
 Get fallback parameters from another file or use defaults.
 Returns (mass_err_model, rt_model, borrowed_from_idx)
 """
 function get_fallback_parameters(
     search_context::SearchContext,
-    params::ParameterTuningSearchParameters,
-    ms_file_idx::Int64,
-    warnings::Vector{String}
+    ms_file_idx::Int64
 )
     # Try to borrow from another successful file
     n_files = length(getMSData(search_context).file_paths)
@@ -1611,14 +1527,13 @@ function get_fallback_parameters(
            haskey(search_context.rt_conversion_model, other_idx)
             mass_err = getMassErrorModel(search_context, other_idx)
             rt_model = getRtConversionModel(search_context, other_idx)
-            push!(warnings, "Borrowed parameters from file $other_idx")
+            @user_info "Borrowed parameters from file $other_idx"
             return mass_err, rt_model, other_idx
         end
     end
     
     # Use default fallback
     @user_warn "No successful files to borrow from, using default parameters"
-    push!(warnings, "Using default fallback parameters")
     
     # Default mass error model
     mass_err = MassErrorModel(0.0f0, (20.0f0, 20.0f0))
@@ -1630,7 +1545,7 @@ function get_fallback_parameters(
 end
 
 """
-    record_file_status!(diagnostics, ms_file_idx, file_name, converged, used_fallback, warnings, iteration_state)
+    record_file_status!(diagnostics, ms_file_idx, file_name, converged, used_fallback, iteration_state)
 
 Record the parameter tuning status for a file.
 """
@@ -1640,7 +1555,6 @@ function record_file_status!(
     file_name::String,
     converged::Bool,
     used_fallback::Bool,
-    warnings::Vector{String},
     iteration_state::IterationState
 )
     status = ParameterTuningStatus(
@@ -1652,8 +1566,7 @@ function record_file_status!(
         iteration_state.total_iterations,
         0,  # PSM count - could be tracked if needed
         0.0f0,  # Mass offset - could be extracted if needed
-        (0.0f0, 0.0f0),  # Tolerances - could be extracted if needed
-        warnings
+        (0.0f0, 0.0f0)  # Tolerances - could be extracted if needed
     )
     
     diagnostics.file_statuses[ms_file_idx] = status

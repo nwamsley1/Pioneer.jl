@@ -165,64 +165,6 @@ function set_rt_to_irt_model!(
     getIrtErrors(search_context)[ms_file_idx] = model[4] * params.irt_tol_sd
 end
 
-"""
-    get_fallback_parameters(search_context, ms_file_idx, warnings)
-
-Attempt to borrow parameters from successfully tuned neighboring files.
-Falls back to conservative defaults if no successfully tuned files are available.
-
-Returns: (mass_error_model, rt_model, borrowed_from_idx)
-"""
-function get_fallback_parameters(
-    search_context::SearchContext, 
-    ms_file_idx::Int64,
-    warnings::Vector{String}
-)
-    # Try to find a successfully tuned file's parameters
-    borrowed_from = nothing
-    fallback_mass_err = nothing
-    fallback_rt_model = nothing
-    
-    ms_data = getMSData(search_context)
-    n_files = length(ms_data.file_paths)
-    
-    # Check previous files first (prefer neighboring files)
-    for file_idx in (ms_file_idx-1):-1:1
-        if haskey(search_context.rt_irt_map, file_idx) && 
-           haskey(search_context.mass_error_model, file_idx)
-            borrowed_from = file_idx
-            fallback_mass_err = search_context.mass_error_model[file_idx]
-            fallback_rt_model = search_context.rt_irt_map[file_idx]
-            break
-        end
-    end
-    
-    # If no previous file, check subsequent files
-    if borrowed_from === nothing
-        for file_idx in (ms_file_idx+1):n_files
-            if haskey(search_context.rt_irt_map, file_idx) && 
-               haskey(search_context.mass_error_model, file_idx)
-                borrowed_from = file_idx
-                fallback_mass_err = search_context.mass_error_model[file_idx]
-                fallback_rt_model = search_context.rt_irt_map[file_idx]
-                break
-            end
-        end
-    end
-    
-    # Return borrowed parameters or conservative defaults
-    if borrowed_from !== nothing
-        borrowed_fname = getParsedFileName(search_context, borrowed_from)
-        @debug_l1 "Borrowing parameters from file $borrowed_fname (index $borrowed_from) for file $ms_file_idx"
-        push!(warnings, "BORROWED: Using parameters from file $borrowed_fname")
-        return fallback_mass_err, fallback_rt_model, borrowed_from
-    else
-        # Use conservative defaults if no other files available
-        @debug_l1 "No successfully tuned files available. Using conservative defaults for file $ms_file_idx"
-        push!(warnings, "FALLBACK: Used conservative default parameters (no borrowing available)")
-        return MassErrorModel(0.0f0, (50.0f0, 50.0f0)), IdentityModel(), nothing
-    end
-end
 
 #==========================================================
 Interface Implementation
@@ -271,13 +213,8 @@ function collect_psms(
     ms_file_idx::Int64
 ) where {P<:ParameterTuningSearchParameters}
     
-    # Debug: Check min_psms value before library search
-    @user_info "Collecting PSMs with min_psms = $(getMinPsms(params))"
-    
     # Perform library search on filtered data
     psms = library_search(filtered_spectra, search_context, params, ms_file_idx)
-    
-    @user_info "Library search returned $(size(psms, 1)) raw PSMs"
     was_filtered = false
     
     if !iszero(size(psms, 1))
@@ -467,12 +404,12 @@ end
 
 
 """
-    store_final_results!(results, search_context, params, ms_file_idx, converged, n_attempts, final_psm_count, warnings, iteration_state)
+    store_final_results!(results, search_context, params, ms_file_idx, converged, n_attempts, final_psm_count, iteration_state)
 
 Store tuning results and diagnostic information, including best attempt fallback status.
 """
 function store_final_results!(results, search_context, params, ms_file_idx, 
-                              converged, n_attempts, final_psm_count, warnings, iteration_state::IterationState)
+                              converged, n_attempts, final_psm_count, iteration_state::IterationState)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     
     # Determine convergence type
@@ -491,8 +428,7 @@ function store_final_results!(results, search_context, params, ms_file_idx,
          getRightTol(getMassErrorModel(search_context, ms_file_idx))),
         converged,
         final_psm_count,
-        n_attempts,
-        warnings
+        n_attempts
     )
     store_tuning_results!(results.parameter_history, ms_file_idx, tuning_result)
     
@@ -507,8 +443,7 @@ function store_final_results!(results, search_context, params, ms_file_idx,
         final_psm_count,
         getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
         (getLeftTol(getMassErrorModel(search_context, ms_file_idx)), 
-         getRightTol(getMassErrorModel(search_context, ms_file_idx))),
-        warnings
+         getRightTol(getMassErrorModel(search_context, ms_file_idx)))
     )
     record_tuning_status!(results.diagnostics, status)
     
@@ -566,7 +501,7 @@ function run_single_phase(
             filtered_spectra, spectra, search_context, 
             params, ms_file_idx, "initial attempt with min_score=$min_score"
         )
-        @user_info "psms_initial size = $(size(psms_initial, 1))"
+
         # Fit models and check initial convergence
         mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
             psms_initial, spectra, search_context, params, ms_file_idx
@@ -596,7 +531,6 @@ function run_single_phase(
             "Initial attempt (Phase $phase, min_score=$min_score)",
             iteration_state, filtered_spectra, spectra
         )
-            @user_warn "psm_count = $psm_count"
             return true
         end
         
@@ -674,12 +608,11 @@ function run_single_phase(
                 "Phase $phase, Iteration $iter with min_score=$min_score",
                 iteration_state, filtered_spectra, spectra
             )
-                @user_warn "a psm_count = $psm_count"
                 return true
             end
         end
     end  # End of score threshold loop
-    @user_warn "b psm_count = $psm_count"
+
     return false
 end
 
@@ -702,10 +635,8 @@ function run_all_phases_with_scan_count(
     
     # Update iteration state
     iteration_state.current_scan_count = length(filtered_spectra)
-    
     # Run all 3 phases with the same filtered_spectra
     for phase in 1:3
-        @info "Phase is $phase"
         converged = run_single_phase(
             phase, filtered_spectra, iteration_state,
             results, params, search_context, ms_file_idx, spectra
@@ -736,7 +667,6 @@ function process_file!(
     
     converged = false
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    warnings = String[]
     final_psm_count = 0
     
     # Initialize iteration state
@@ -823,7 +753,7 @@ function process_file!(
         
         converged_score = converged ? getMinIndexSearchScore(params) : nothing
         if converged
-            push!(warnings, "Converged with min_score=$converged_score")
+            @user_info "Converged with score threshold $converged_score"
         else
             @user_warn "Completed $(iteration_state.total_iterations) total iterations " *
                    "across $(iteration_state.scan_attempt) attempt(s). " *
@@ -833,24 +763,22 @@ function process_file!(
     catch e
         throw(e)
         @user_warn "Parameter tuning failed for file $parsed_fname with error" exception=e
-        push!(warnings, "ERROR: $(string(e))")
     end
     
     # Store results and handle fallback if needed
     if !converged
-        @user_warn "Failed to converge for file $ms_file_idx after " *
-              "$(iteration_state.scan_attempt) attempts"
-        
         # Check if we have a best attempt to use
         if iteration_state.best_mass_error_model !== nothing
-            @user_warn "Parameter tuning did not converge after $(iteration_state.scan_attempt) attempt(s)."
-            @user_warn "Using best iteration: Phase $(iteration_state.best_phase) " *
-                  "(bias=$(round(getPhaseShift(iteration_state.best_phase, params), digits=1)) ppm), " *
-                  "Score threshold $(iteration_state.best_score), " *
-                  "Iteration $(iteration_state.best_iteration)"
-            @user_warn "Best iteration yielded $(iteration_state.best_psm_count) PSMs with " *
-                  "mass offset $(round(getMassOffset(iteration_state.best_mass_error_model), digits=1)) ppm and " *
-                  "tolerance ±$(round((getLeftTol(iteration_state.best_mass_error_model) + getRightTol(iteration_state.best_mass_error_model))/2, digits=1)) ppm"
+            left_tol = round(getLeftTol(iteration_state.best_mass_error_model), digits = 1)
+            right_tol = round(getRightTol(iteration_state.best_mass_error_model), digits = 1)
+            @user_warn "Failed to converge for file $ms_file_idx after $(iteration_state.scan_attempt) attempts. \n" *
+                  "Using best iteration: Phase $(iteration_state.best_phase) \n" *
+                  "(bias=$(round(getPhaseShift(iteration_state.best_phase, params), digits=1)) ppm), \n" *
+                  "Score threshold $(iteration_state.best_score), \n" *
+                  "Iteration $(iteration_state.best_iteration). \n" *
+                  "Yielded $(iteration_state.best_psm_count) PSMs with \n" *
+                  "mass offset $(round(getMassOffset(iteration_state.best_mass_error_model), digits=1)) ppm and \n" *
+                  "tolerance -$left_tol/+$right_tol ppm \n"
             
             # Apply best attempt models
             setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
@@ -885,9 +813,7 @@ function process_file!(
                     filtered_spectra, search_context, params, ms_file_idx, spectra
                 )
                 
-                # Check if expansion yields significantly more PSMs (>10% increase)
-                expansion_threshold = iteration_state.best_psm_count * 1.1
-                if size(expanded_psms, 1) > expansion_threshold
+                if size(expanded_psms, 1) > iteration_state.best_psm_count
                     # Refit model with expanded PSMs
                     if length(expanded_ppm_errs) > 0
                         # Calculate mass error from expanded PSMs
@@ -914,7 +840,7 @@ function process_file!(
                                 append!(results.ppm_errs, refitted_ppm_errs)
                                 setMassErrorModel!(search_context, ms_file_idx, refitted_model)
                                 
-                                push!(warnings, "EXPANDED_BEST_ATTEMPT: Tolerance expansion increased PSMs by $percent_increase%")
+                                @user_info "EXPANDED_BEST_ATTEMPT: Tolerance expansion increased PSMs by $percent_increase%"
                             else
                                 # Revert to best iteration model if refitting failed
                                 setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
@@ -951,17 +877,16 @@ function process_file!(
                          "Score threshold $(iteration_state.best_score), Iteration $(iteration_state.best_iteration)\n" *
                          "Best iteration yielded $(iteration_state.best_psm_count) PSMs with mass offset $mass_offset ppm " *
                          "and tolerance -$left_tol ppm and + $right_tol ppm"
-    
-            push!(warnings, warning_msg)
             
             final_psm_count = iteration_state.best_psm_count
             
         else
             # No valid attempts found any PSMs - use conservative defaults or borrow
-            @user_warn "No attempts found sufficient PSMs (best was $(iteration_state.best_psm_count)), using fallback strategy"
+            @user_warn "Failed to converge for file $ms_file_idx after $(iteration_state.scan_attempt) attempts. " *
+                      "No attempts found sufficient PSMs (best was $(iteration_state.best_psm_count)), using fallback strategy"
             
             fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
-                search_context, ms_file_idx, warnings
+                search_context, ms_file_idx
             )
             
             setMassErrorModel!(search_context, ms_file_idx, fallback_mass_err)
@@ -972,7 +897,7 @@ function process_file!(
             results.rt_to_irt_model[] = fallback_rt_model
             
             if borrowed_from === nothing
-                push!(warnings, "CONSERVATIVE_FALLBACK: No valid attempts, used defaults")
+                @user_info "CONSERVATIVE_FALLBACK: No valid attempts, used defaults"
             end
         end
     end
@@ -980,13 +905,13 @@ function process_file!(
     # Record tuning status
     store_final_results!(
         results, search_context, params, ms_file_idx,
-        converged, iteration_state.scan_attempt, final_psm_count, warnings, iteration_state
+        converged, iteration_state.scan_attempt, final_psm_count, iteration_state
     )
     
     # Add to diagnostics
     record_file_status!(
         results.diagnostics, ms_file_idx, parsed_fname,
-        converged, !converged, warnings, iteration_state
+        converged, !converged, iteration_state
     )
 
     # Store iteration_state in results for use in process_search_results!
@@ -1141,10 +1066,4 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
                "  - Converged: $converged_count" * "\n" *
                "  - Used fallback: $fallback_count"
     
-    # Log any warnings
-    #for status in file_statuses
-    #    if !isempty(status.warnings)
-    #        @user_warn "File $(status.file_name) warnings:" warnings=status.warnings
-    #    end
-    #ßend
 end
