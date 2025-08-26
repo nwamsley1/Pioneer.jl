@@ -157,13 +157,22 @@ function select_psm_scoring_model(
             
             try
                 # Train model with suppressed output during comparison
-                redirect_stdout(devnull) do
+                # Redirect both stdout AND stderr to suppress all progress bars
+                original_stdout = stdout
+                original_stderr = stderr
+                try
+                    redirect_stdout(devnull)
+                    redirect_stderr(devnull)
+                    
                     score_precursor_isotope_traces_in_memory(
                         psms_copy, file_paths, precursors, config,
                         match_between_runs, max_q_value_xgboost_rescore,
                         max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore,
                         false  # show_progress = false during comparison
                     )
+                finally
+                    redirect_stdout(original_stdout)
+                    redirect_stderr(original_stderr)
                 end
                 
                 # Count passing targets from DataFrame
