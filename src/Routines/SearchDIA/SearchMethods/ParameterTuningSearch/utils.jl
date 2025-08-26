@@ -285,12 +285,8 @@ function fit_irt_model(
         return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
         
     catch e
-        if isa(e, LinearAlgebra.SingularException)
-            @user_warn "RT spline fitting failed (singular matrix), using identity model" exception=e
-            return (IdentityModel(), Float32[], Float32[], 0.0f0)
-        else
-            rethrow(e)
-        end
+        @user_warn "RT spline fitting failed, using identity model exception=$e"
+        return (IdentityModel(), Float32[], Float32[], 0.0f0)
     end
 end
 
@@ -750,29 +746,26 @@ function fit_mass_err_model(
     frag_err_quantile = getFragErrQuantile(params)
 
     r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
-    r_est = quantile(Exponential(
+    l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
+    r_bound, l_bound = nothing, nothing
+    try
+    r_bound = quantile(Exponential(
         (1/
         (length(r_errs)/sum(r_errs))
         ))
         , 1 - frag_err_quantile)
-    l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
-    l_est = quantile(Exponential(
+    l_bound = quantile(Exponential(
         (1/
         (length(l_errs)/sum(l_errs))
         ))
         , 1 - frag_err_quantile)
-    #l_quantile = abs(quantile(ppm_errs, frag_err_quantile))
-    #r_quantile = abs(quantile(ppm_errs, 1 - frag_err_quantile))
-    #=
-    l_bound = max(
-        l_quantile, 
-        l_est)
-    r_bound = max(
-        r_quantile, 
-        r_est)
-    =#
-    r_bound = r_est
-    l_bound = l_est
+    catch e 
+        @user_warn "length(r_errs) $(length(r_errs)) length(l_errs) $(length(l_errs)) sum(r_errs) $(sum(r_errs)) sum(l_errs) $(sum(l_errs))"
+        return MassErrorModel(
+            zero(Float32),
+            (zero(Float32), zero(Float32))
+        ), ppm_errs
+    end
     #l_bound = abs(quantile(ppm_errs, frag_err_quantile))
     #r_bound = abs(quantile(ppm_errs, 1 - frag_err_quantile))
     # Diagnostic logging
@@ -1550,19 +1543,22 @@ function collect_psms_with_model(
         return psms, Float32[]
     end
     
+    # Get precursors from spectral library
+    precursors = getPrecursors(getSpecLib(search_context))
+    
     # Add necessary columns for scoring
     add_tuning_search_columns!(
         psms,
         spectra,
-        getLibPrecursorIsDecoy(getSpecLib(search_context)),
-        getLibPrecursorIRT(getSpecLib(search_context)),
-        getLibPrecursorCharge(getSpecLib(search_context)),
-        getRetentionTime(spectra),
-        getTIC(spectra)
+        getIsDecoy(precursors),
+        getIrt(precursors),
+        getCharge(precursors),
+        getRetentionTimes(spectra),
+        getTICs(spectra)
     )
     
     # Score and filter PSMs
-    filter_and_score_psms!(psms, params)
+    filter_and_score_psms!(psms, params, search_context)
     
     # Get matched fragments for error calculation
     ppm_errs = Float32[]

@@ -130,8 +130,8 @@ function checkParams(json_path::String)
         if iter_settings["mass_tolerance_scale_factor"] <= 1.0
             error("iteration_settings.mass_tolerance_scale_factor must be greater than 1.0")
         end
-        if iter_settings["scan_scale_factor"] <= 1.0
-            error("iteration_settings.scan_scale_factor must be greater than 1.0")
+        if iter_settings["scan_scale_factor"] < 1.0
+            error("iteration_settings.scan_scale_factor must be greater than or equal to 1.0")
         end
         if iter_settings["init_mass_tol_ppm"] <= 0.0
             error("iteration_settings.init_mass_tol_ppm must be positive")
