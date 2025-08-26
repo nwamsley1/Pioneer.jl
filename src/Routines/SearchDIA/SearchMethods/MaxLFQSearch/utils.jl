@@ -32,7 +32,7 @@ function create_qc_plots(
     # - CV distributions
     # - Dynamic range
     # Implementation depends on plotting library
-    @debug_l1 "Generating final QC plots"
+    @user_info "Generating final QC plots"
     qcPlots(
         precursors_path,
         precursors_long_path,

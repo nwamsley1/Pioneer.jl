@@ -376,15 +376,11 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     # Always use lazy DataFrame loading (memory efficient)
     prot = DataFrame(Arrow.Table(file_path(prot_ref)))
     
-    # Log initial data state
-    @debug_l1 "LFQ input data - total_rows: $(nrow(prot)), unique_proteins: $(length(unique(prot.inferred_protein_group)))"
-    
     # Check for missing values in key columns
     n_missing_pg_qval = sum(ismissing.(prot.pg_qval))
     n_missing_global_qval = sum(ismissing.(prot.qlobal_pg_qval))
     n_not_for_quant = sum(.!prot.use_for_protein_quant)
-    @debug_l1 "Missing values check - missing_pg_qval: $n_missing_pg_qval, missing_global_qval: $n_missing_global_qval, not_for_quant: $n_not_for_quant"
-    
+ 
     # Create pipeline operations for batch-wise application
     preprocessing_pipeline = TransformPipeline() |>
         filter_by_multiple_thresholds([
@@ -397,7 +393,6 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
     n_writes = 0
     is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
-    @debug_l1 "Is prot sorted? $is_prot_sorted"
 
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx, :inferred_protein_group]

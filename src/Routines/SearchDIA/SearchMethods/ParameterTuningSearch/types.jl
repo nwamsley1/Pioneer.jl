@@ -243,7 +243,6 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
         
         # Extract topn_peaks if present
         topn_peaks = hasproperty(search_params, :topn_peaks) ? Int64(search_params.topn_peaks) : nothing
-        @debug_l1 "Using topn_peaks: $(topn_peaks === nothing ? "no topn peaks found" : topn_peaks)"
         # Extract scan count parameters
         initial_scan_count = hasproperty(search_params, :initial_scan_count) ? Int64(search_params.initial_scan_count) : Int64(2500)
         

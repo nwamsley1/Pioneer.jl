@@ -186,7 +186,7 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
     bin_idxs, n_bins = estimateKdeBins(isotopes_ratio_data[!,:x0])
     isotopes_ratio_data[!,:kde_bin_idx] = bin_idxs
     if n_bins < 4
-        println("<4")
+        #println("<4")
         #plot(isotopes_ratio_data[!,:x0], isotopes_ratio_data[!,:yt], seriestype=:scatter, alpha = 0.1, show = true)
     end
     #Use KDE bins or uniform bins? Base this decision on the median intra-bin standard deviation 

@@ -188,7 +188,6 @@ function GetSearchParams(lib_path::String, ms_data_path::String, results_path::S
     
 
     # Write the modified configuration to search_parameters.json in current directory
-    @debug_l1 "Writing default parameters .json to: $output_path"
     open(output_path, "w") do io
         JSON.print(io, config, 4)  # indent with 4 spaces for readability
     end
@@ -253,7 +252,6 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String;
     config["out_name"] = basename(lib_name) * ".tsv"
     
     # Write output using the same formatting as template
-    @debug_l1 "Writing default parameters .json to: $output_path"
     open(output_path, "w") do io
         JSON.print(io, config, 4)  # indent with 4 spaces for readability
     end
@@ -299,7 +297,6 @@ function GetParseSpecLibParams(input_lib_path::String, output_lib_path::String; 
     config["library_params"]["input_lib_path"] = input_lib_path
     config["library_params"]["output_lib_path"] = output_lib_path
 
-    @debug_l1 "Writing default parameters .json to: $output_path"
     open(output_path, "w") do io
         JSON.print(io, config, 4)
     end
