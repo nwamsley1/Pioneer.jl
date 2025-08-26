@@ -49,6 +49,8 @@ function get_ftr_threshold(scores::AbstractVector{U},
         end
     end
 
+    println(best_count, " ", τ, " ",  transfer_cum, " ",  target_cum, " ", transfer_cum / target_cum, " ", alpha, "\n\n")
+
     return τ
 end
 
