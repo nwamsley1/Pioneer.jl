@@ -30,10 +30,7 @@ const MAX_FOR_MODEL_SELECTION = 100_000
                                   max_q_value_xgboost_rescore::Float32,
                                   max_q_value_xgboost_mbr_rescore::Float32,
                                   min_PEP_neg_threshold_xgboost_rescore::Float32,
-                                  max_psms_in_memory::Int64;
-                                  validation_split_ratio::Float64 = 0.2,
-                                  qvalue_threshold::Float64 = 0.01,
-                                  output_dir::String = ".")
+                                  max_psms_in_memory::Int64)
 
 Main entry point for PSM scoring with automatic model selection based on dataset size.
 
@@ -51,9 +48,6 @@ Main entry point for PSM scoring with automatic model selection based on dataset
 - `max_q_value_xgboost_mbr_rescore`: Max q-value for MBR rescoring
 - `min_PEP_neg_threshold_xgboost_rescore`: Min PEP for negative relabeling
 - `max_psms_in_memory`: Maximum PSMs to keep in memory
-- `validation_split_ratio`: Fraction for validation in model comparison (default: 0.2)
-- `qvalue_threshold`: Q-value threshold for model evaluation (default: 0.01)
-- `output_dir`: Directory for output files (default: ".")
 
 # Returns
 - Trained EvoTrees/XGBoost models or nothing for probit regression
@@ -66,10 +60,8 @@ function score_precursor_isotope_traces(
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32,
-    max_psms_in_memory::Int64;
-    validation_split_ratio::Float64 = 0.2,
-    qvalue_threshold::Float64 = 0.01,
-    output_dir::String = "."
+    max_psms_in_memory::Int64,
+    q_value_threshold::Float32 = 0.01f0  # Default to 1% if not specified
 )
     # Step 1: Count PSMs and determine processing approach
     psms_count = get_psms_count(file_paths)
@@ -97,23 +89,23 @@ function score_precursor_isotope_traces(
             model_config = create_default_advanced_xgboost_config()
         else
             # Case 3: In-memory with automatic model comparison (<100K)
-            @user_info "Running automatic model comparison for $psms_count PSMs (< 100K)"
             model_config = select_psm_scoring_model(
                 best_psms, file_paths, precursors, match_between_runs,
                 max_q_value_xgboost_rescore, max_q_value_xgboost_mbr_rescore,
-                min_PEP_neg_threshold_xgboost_rescore, validation_split_ratio,
-                qvalue_threshold, output_dir
+                min_PEP_neg_threshold_xgboost_rescore, q_value_threshold
             )
         end
         
-        @user_info "Selected PSM scoring model: $(model_config.name)"
-        
         # Execute selected model using unified function
+        @user_info "Training final model: $(model_config.name)"
         models = score_precursor_isotope_traces_in_memory(
             best_psms, file_paths, precursors, model_config,
             match_between_runs, max_q_value_xgboost_rescore,
             max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore
         )
+        
+        # Write scored PSMs to files
+        write_scored_psms_to_files!(best_psms, file_paths)
     end
     
     # Clean up
@@ -143,9 +135,7 @@ function select_psm_scoring_model(
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32,
-    validation_split_ratio::Float64,  # Kept for API compatibility but unused
-    qvalue_threshold::Float64,
-    output_dir::String  # Kept for API compatibility but unused
+    q_value_threshold::Float32
 )
     psms_count = size(best_psms, 1)
     
@@ -153,38 +143,32 @@ function select_psm_scoring_model(
         @user_info "Using default advanced XGBoost for $psms_count PSMs (≥ 100K)"
         return create_default_advanced_xgboost_config()
     else
-        @user_info "Running model comparison for $psms_count PSMs (< 100K)"
-        
-        # Get model configurations from model_comparison.jl
+        # Get model configurations from model_config.jl
         model_configs = create_model_configurations()
         best_model_config = nothing
         best_target_count = 0
         
-        # Store original file contents for restoration
-        original_file_contents = Dict{String, DataFrame}()
-        for fpath in file_paths
-            if endswith(fpath, ".arrow")
-                original_file_contents[fpath] = DataFrame(Arrow.Table(fpath))
-            end
-        end
+        @user_info "Model comparison: Testing $(length(model_configs)) models on $psms_count PSMs"
+        @user_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         
         for config in model_configs
-            @user_info "Training $(config.name) model..."
-            
             # Create deepcopy to avoid side effects between models
             psms_copy = deepcopy(best_psms)
             
             try
-                # Train model using unified function
-                score_precursor_isotope_traces_in_memory(
-                    psms_copy, file_paths, precursors, config,
-                    match_between_runs, max_q_value_xgboost_rescore,
-                    max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore
-                )
+                # Train model with suppressed output during comparison
+                redirect_stdout(devnull) do
+                    score_precursor_isotope_traces_in_memory(
+                        psms_copy, file_paths, precursors, config,
+                        match_between_runs, max_q_value_xgboost_rescore,
+                        max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore,
+                        false  # show_progress = false during comparison
+                    )
+                end
                 
-                # Count passing targets
-                target_count = count_passing_targets(file_paths, qvalue_threshold)
-                @user_info "  $(config.name): $target_count targets at q-value ≤ $qvalue_threshold"
+                # Count passing targets from DataFrame
+                target_count = count_passing_targets(psms_copy, q_value_threshold)
+                @user_info "  $(config.name): $(target_count) IDs at q ≤ $q_value_threshold"
                 
                 # Update best model if this one is better
                 if target_count > best_target_count
@@ -192,22 +176,31 @@ function select_psm_scoring_model(
                     best_model_config = config
                 end
             catch e
-                @user_warn "Failed to train $(config.name): $e"
+                @user_warn "Failed to train $(config.name):"
+                # Show error type and message without data
+                if isa(e, MethodError)
+                    @user_warn "  MethodError: $(e.f) with $(length(e.args)) arguments"
+                    @user_warn "  Argument types: $(typeof.(e.args))"
+                else
+                    @user_warn "  $(typeof(e)): $(sprint(showerror, e))"
+                end
+                # Show just the top of stack trace
+                st = stacktrace(catch_backtrace())
+                if length(st) > 0
+                    @user_warn "  at $(st[1].file):$(st[1].line)"
+                end
                 # Continue with next model
             end
-            
-            # Restore original files for next model
-            for (fpath, original_df) in original_file_contents
-                writeArrow(fpath, original_df)
-            end
         end
+        
+        @user_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         
         # If no model succeeded, fall back to SimpleXGBoost
         if best_model_config === nothing
             @user_warn "All models failed, defaulting to SimpleXGBoost"
             best_model_config = model_configs[1]  # SimpleXGBoost is first
         else
-            @user_info "Selected best model: $(best_model_config.name) with $best_target_count passing targets"
+            @user_info "✓ Selected: $(best_model_config.name) ($(best_target_count) IDs)"
         end
         
         return best_model_config
@@ -215,51 +208,29 @@ function select_psm_scoring_model(
 end
 
 """
-    count_passing_targets(file_paths::Vector{String}, qvalue_threshold::Float64) -> Int
+    count_passing_targets(scored_psms::DataFrame, qvalue_threshold::Float64) -> Int
 
-Counts the number of target PSMs passing the q-value threshold across all files.
+Counts the number of target PSMs passing the q-value threshold.
 
 # Arguments
-- `file_paths`: Vector of Arrow file paths containing scored PSMs
+- `scored_psms`: DataFrame containing scored PSMs with :prob and :target columns
 - `qvalue_threshold`: Q-value threshold for counting (typically 0.01)
 
 # Returns
-- Total count of target PSMs with q_value ≤ threshold or high probability
+- Total count of target PSMs with q_value ≤ threshold
 """
-function count_passing_targets(file_paths::Vector{String}, qvalue_threshold::Float64)
-    total_count = 0
-    
-    for fpath in file_paths
-        if !endswith(fpath, ".arrow")
-            continue
-        end
+function count_passing_targets(scored_psms::DataFrame, qvalue_threshold::Float32)
+    # Use existing q-value calculation logic
+    if :prob in propertynames(scored_psms) && :target in propertynames(scored_psms)
+        # Calculate q-values from probabilities
+        qvals = Vector{Float32}(undef, nrow(scored_psms))
+        get_qvalues!(scored_psms.prob, scored_psms.target, qvals)
         
-        try
-            # Read PSM file
-            psms = DataFrame(Arrow.Table(fpath))
-            
-            # Count targets passing threshold
-            if :q_value in propertynames(psms)
-                # Use q-value if available
-                passing = psms[psms.target .& (psms.q_value .<= qvalue_threshold), :]
-            elseif :prob in propertynames(psms)
-                # Use probability as fallback (high prob = low q-value)
-                # For a rough approximation: q-value of 0.01 ≈ prob of 0.99
-                prob_threshold = 1.0 - qvalue_threshold
-                passing = psms[psms.target .& (psms.prob .>= prob_threshold), :]
-            else
-                @debug_l1 "No scoring column found in $fpath"
-                continue
-            end
-            
-            total_count += nrow(passing)
-        catch e
-            @user_warn "Error reading $fpath: $e"
-            continue
-        end
+        # Count targets passing threshold
+        return sum((scored_psms.target .== true) .& (qvals .<= qvalue_threshold))
+    else
+        error("DataFrame must contain :prob and :target columns")
     end
-    
-    return total_count
 end
 
 """
@@ -271,7 +242,7 @@ function create_default_advanced_xgboost_config()
     return ModelConfig(
         "AdvancedXGBoost",
         :xgboost,
-        REDUCED_FEATURE_SET,
+        ADVANCED_FEATURE_SET,
         Dict(
             :colsample_bytree => 0.5,
             :colsample_bynode => 0.5,
@@ -307,15 +278,16 @@ function score_precursor_isotope_traces_in_memory(
     match_between_runs::Bool,
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
-    min_PEP_neg_threshold_xgboost_rescore::Float32
+    min_PEP_neg_threshold_xgboost_rescore::Float32,
+    show_progress::Bool = true
 )
-    @user_info "Running $(model_config.name) model for PSM scoring"
     
     if model_config.model_type == :xgboost
         return train_xgboost_model_in_memory(
             best_psms, file_paths, precursors, model_config,
             match_between_runs, max_q_value_xgboost_rescore,
-            max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore
+            max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore,
+            show_progress
         )
     elseif model_config.model_type == :probit
         return train_probit_model_in_memory(
@@ -339,7 +311,8 @@ function train_xgboost_model_in_memory(
     match_between_runs::Bool,
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
-    min_PEP_neg_threshold_xgboost_rescore::Float32
+    min_PEP_neg_threshold_xgboost_rescore::Float32,
+    show_progress::Bool = true
 )
     # Add required columns
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
@@ -357,17 +330,17 @@ function train_xgboost_model_in_memory(
     
     hp = model_config.hyperparams
     return sort_of_percolator_in_memory!(
-        best_psms, file_paths, features, match_between_runs;
+        best_psms, features, match_between_runs;
         max_q_value_xgboost_rescore, max_q_value_xgboost_mbr_rescore,
         min_PEP_neg_threshold_xgboost_rescore,
         colsample_bytree = get(hp, :colsample_bytree, 0.5),
-        colsample_bynode = get(hp, :colsample_bynode, 0.5),
         min_child_weight = get(hp, :min_child_weight, 5),
         gamma = get(hp, :gamma, 1.0),
         subsample = get(hp, :subsample, 0.25),
         max_depth = get(hp, :max_depth, 10),
         eta = get(hp, :eta, 0.05),
-        iter_scheme = get(hp, :iter_scheme, [100, 200, 200])
+        iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
+        show_progress = show_progress
     )
 end
 
@@ -398,12 +371,7 @@ function train_probit_model_in_memory(
         match_between_runs
     )
     
-    # Write results back to files
-    dropVectorColumns!(best_psms)
-    for (ms_file_idx, gpsms) in pairs(groupby(best_psms, :ms_file_idx))
-        fpath = file_paths[ms_file_idx[:ms_file_idx]]
-        writeArrow(fpath, gpsms)
-    end
+    # File writing removed - will be done at higher level
     
     return nothing  # Probit doesn't return models
 end
@@ -545,12 +513,6 @@ function probit_regression_scoring_cv!(
         @user_warn "Unexpected CV folds: $unique_cv_folds (expected [0, 1] from library)"
     end
     
-    # Verify fold distribution
-    for fold_idx in unique_cv_folds
-        n_in_fold = sum(psms.cv_fold .== fold_idx)
-        @debug_l1 "CV fold $fold_idx: $n_in_fold PSMs"
-    end
-    
     # Step 2: Initialize probability array (like XGBoost does)
     # Use a separate array instead of directly modifying DataFrame
     prob_estimates = zeros(Float32, size(psms, 1))
@@ -564,8 +526,6 @@ function probit_regression_scoring_cv!(
     # Filter features to those that exist in the DataFrame
     available_features = filter(col -> col in propertynames(psms), features)
     push!(available_features, :intercept)
-    
-    @debug_l1 "Probit regression using $(length(available_features)-1) features (plus intercept)"
     
     # Step 4: Train probit model per CV fold
     tasks_per_thread = 10
@@ -589,8 +549,6 @@ function probit_regression_scoring_cv!(
             psms[test_mask, :prob] .= 0.5f0
             continue
         end
-        
-        @debug_l1 "Training probit model for fold $fold_idx with $n_train_targets targets and $n_train_decoys decoys"
         
         # Get training data
         train_data = psms[train_mask, :]
@@ -640,7 +598,6 @@ function probit_regression_scoring_cv!(
         # MBR_is_best_decoy is required by apply_mbr_filter! 
         # For probit, we don't have MBR transfer info, so set conservatively
         psms[!, :MBR_is_best_decoy] = fill(missing, size(psms, 1))  # missing means not an MBR transfer
-        @debug_l1 "Created MBR columns for compatibility (MBR_prob same as prob for probit)"
     end
     
     # Ensure prob column has proper type and no NaN/Inf values
@@ -666,11 +623,6 @@ function probit_regression_scoring_cv!(
         select!(psms, Not(:cv_fold))
     end
     
-    # Debug: Verify clamping worked
-    @debug_l1 "After clamping: prob range = $(minimum(psms.prob)) to $(maximum(psms.prob))"
-    
-    Arrow.write("/Users/nathanwamsley/Desktop/test_arrow_psms.arrow", psms)
-    @debug_l1 "Probit regression scoring complete. Probabilities assigned to $(size(psms, 1)) PSMs"
     
     return nothing
 end
@@ -699,137 +651,111 @@ function score_precursor_isotope_traces_out_of_memory!(
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32
 )
-    if size(best_psms, 1) > 100000
-        file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
-        features = [ 
-            :missed_cleavage,
-            :Mox,
-            :prec_mz,
-            :sequence_length,
-            :charge,
-            :irt_pred,
-            :irt_error,
-            :irt_diff,
-            :max_y_ions,
-            :y_ions_sum,
-            :longest_y,
-            :y_count,
-            :b_count,
-            :isotope_count,
-            :total_ions,
-            :best_rank,
-            :best_rank_iso,
-            :topn,
-            :topn_iso,
-            :gof,
-            :max_fitted_manhattan_distance,
-            :max_fitted_spectral_contrast,
-            :max_matched_residual,
-            :max_unmatched_residual,
-            :max_gof,
-            :fitted_spectral_contrast,
-            :spectral_contrast,
-            :max_matched_ratio,
-            :err_norm,
-            :poisson,
-            :weight,
-            :log2_intensity_explained,
-            :tic,
-            :num_scans,
-            :smoothness,
-            :rt_diff,
-            :ms1_irt_diff,
-            :weight_ms1,
-            :gof_ms1,
-            :max_matched_residual_ms1,
-            :max_unmatched_residual_ms1,
-            :fitted_spectral_contrast_ms1,
-            :error_ms1,
-            :m0_error_ms1,
-            :n_iso_ms1,
-            :big_iso_ms1,
-            :ms1_features_missing,
-            :percent_theoretical_ignored,
-            :scribe,
-            :max_scribe,
-            :target
-        ];
-        features = [f for f in features if hasproperty(best_psms, f)];
-        if match_between_runs
-            append!(features, [
-                :MBR_rv_coefficient,
-                :MBR_best_irt_diff,
-                :MBR_num_runs,
-                :MBR_max_pair_prob,
-                :MBR_log2_weight_ratio,
-                :MBR_log2_explained_ratio,
-                :MBR_is_missing
-                ])
-        end
+    file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
+    features = [ 
+        :missed_cleavage,
+        :Mox,
+        :prec_mz,
+        :sequence_length,
+        :charge,
+        :irt_pred,
+        :irt_error,
+        :irt_diff,
+        :max_y_ions,
+        :y_ions_sum,
+        :longest_y,
+        :y_count,
+        :b_count,
+        :isotope_count,
+        :total_ions,
+        :best_rank,
+        :best_rank_iso,
+        :topn,
+        :topn_iso,
+        :gof,
+        :max_fitted_manhattan_distance,
+        :max_fitted_spectral_contrast,
+        :max_matched_residual,
+        :max_unmatched_residual,
+        :max_gof,
+        :fitted_spectral_contrast,
+        :spectral_contrast,
+        :max_matched_ratio,
+        :err_norm,
+        :poisson,
+        :weight,
+        :log2_intensity_explained,
+        :tic,
+        :num_scans,
+        :smoothness,
+        :rt_diff,
+        :ms1_irt_diff,
+        :weight_ms1,
+        :gof_ms1,
+        :max_matched_residual_ms1,
+        :max_unmatched_residual_ms1,
+        :fitted_spectral_contrast_ms1,
+        :error_ms1,
+        :m0_error_ms1,
+        :n_iso_ms1,
+        :big_iso_ms1,
+        :ms1_features_missing,
+        :percent_theoretical_ignored,
+        :scribe,
+        :max_scribe,
+        :target
+    ];
+    features = [f for f in features if hasproperty(best_psms, f)];
+    if match_between_runs
+        append!(features, [
+            :MBR_rv_coefficient,
+            :MBR_best_irt_diff,
+            :MBR_num_runs,
+            :MBR_max_pair_prob,
+            :MBR_log2_weight_ratio,
+            :MBR_log2_explained_ratio,
+            :MBR_is_missing
+            ])
+    end
 
-        best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
-        best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
-        best_psms[!,:decoy] = best_psms[!,:target].==false;
+    best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
+    best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
+    best_psms[!,:decoy] = best_psms[!,:target].==false;
 
-        models = sort_of_percolator_out_of_memory!(
-                                best_psms, 
-                                file_paths,
-                                features,
-                                match_between_runs;
-                                max_q_value_xgboost_rescore,
-                                max_q_value_xgboost_mbr_rescore,
-                                min_PEP_neg_threshold_xgboost_rescore,
-                                colsample_bytree = 0.5, 
-                                colsample_bynode = 0.5,
-                                min_child_weight = 5, 
-                                gamma = 1,
-                                subsample = 0.25, 
-                                max_depth = 10,
-                                eta = 0.05, 
-                                iter_scheme = [100, 200, 200],
-                                print_importance = false);
-        return models;#best_psms
-    else
-        @user_warn "Less than 100,000 psms. Training with simplified target-decoy discrimination model..."
-        file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
-        features = [ 
-            :missed_cleavage,
-            :Mox,
-            :sequence_length,
-            :charge,
-            :irt_error,
-            :irt_diff,
-            :y_count,
-            :max_fitted_manhattan_distance,
-            :max_matched_residual,
-            :max_unmatched_residual,
-            :max_gof,
-            :err_norm,
-            :weight,
-            :log2_intensity_explained,
-        ];
-        best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
-        best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
-        best_psms[!,:decoy] = best_psms[!,:target].==false;
-        #see src/utils/ML/percolatorSortOf.jl
-        #Train EvoTrees/XGBoost model to score each precursor trace. Target-decoy descrimination
-        models = sort_of_percolator_out_of_memory!(
-                                best_psms, 
-                                file_paths,
-                                features,
-                                match_between_runs;
-                                max_q_value_xgboost_rescore,
-                                max_q_value_xgboost_mbr_rescore,
-                                min_PEP_neg_threshold_xgboost_rescore,
-                                colsample_bytree = 1.0, 
-                                colsample_bynode = 1.0,
-                                min_child_weight = 100, 
-                                gamma = 0,
-                                subsample = 1.0, 
-                                max_depth = 3,
-                                eta = 0.01, 
-                                iter_scheme = [200],
-                                print_importance = false);
-        return models;#best_psms
+    models = sort_of_percolator_out_of_memory!(
+                            best_psms, 
+                            file_paths,
+                            features,
+                            match_between_runs;
+                            max_q_value_xgboost_rescore,
+                            max_q_value_xgboost_mbr_rescore,
+                            min_PEP_neg_threshold_xgboost_rescore,
+                            colsample_bytree = 0.5, 
+                            colsample_bynode = 0.5,
+                            min_child_weight = 5, 
+                            gamma = 1,
+                            subsample = 0.25, 
+                            max_depth = 10,
+                            eta = 0.05, 
+                            iter_scheme = [100, 200, 200],
+                            print_importance = false);
+    return models;#best_psms
+end
+
+"""
+    write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})
+
+Write scored PSMs back to Arrow files, grouped by ms_file_idx.
+This function is separated from scoring to allow model comparison without file I/O.
+
+# Arguments
+- `psms`: DataFrame containing scored PSMs with ms_file_idx column
+- `file_paths`: Vector of file paths indexed by ms_file_idx
+"""
+function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})
+    dropVectorColumns!(psms) # avoids writing issues
+    for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
+        fpath = file_paths[ms_file_idx[:ms_file_idx]]
+        writeArrow(fpath, gpsms)
     end
 end
