@@ -752,9 +752,7 @@ function process_file!(
         end
         
         converged_score = converged ? getMinIndexSearchScore(params) : nothing
-        if converged
-            @user_info "Converged with score threshold $converged_score"
-        else
+        if !converged
             @user_warn "Completed $(iteration_state.total_iterations) total iterations " *
                    "across $(iteration_state.scan_attempt) attempt(s). " *
                    "✗ Did not converge with any score threshold: $(getMinIndexSearchScores(params))"
