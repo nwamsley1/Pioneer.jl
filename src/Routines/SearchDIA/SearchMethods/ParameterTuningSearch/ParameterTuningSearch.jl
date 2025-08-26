@@ -250,7 +250,8 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
         Plots.Plot[],  # mass_plots
         qc_dir,
         ParameterTuningDiagnostics(),
-        ParameterHistory()
+        ParameterHistory(),
+        Ref{Union{Nothing, IterationState}}(nothing)  # current_iteration_state
     )
 end
 
@@ -834,11 +835,11 @@ function process_file!(
         # Check if we have a best attempt to use
         if iteration_state.best_mass_error_model !== nothing
             @user_warn "Parameter tuning did not converge after $(iteration_state.scan_attempt) attempt(s)."
-            @debug_l1 "Using best iteration: Phase $(iteration_state.best_phase) " *
+            @user_warn "Using best iteration: Phase $(iteration_state.best_phase) " *
                   "(bias=$(round(getPhaseShift(iteration_state.best_phase, params), digits=1)) ppm), " *
                   "Score threshold $(iteration_state.best_score), " *
                   "Iteration $(iteration_state.best_iteration)"
-            @debug_l1 "Best iteration yielded $(iteration_state.best_psm_count) PSMs with " *
+            @user_warn "Best iteration yielded $(iteration_state.best_psm_count) PSMs with " *
                   "mass offset $(round(getMassOffset(iteration_state.best_mass_error_model), digits=1)) ppm and " *
                   "tolerance ±$(round((getLeftTol(iteration_state.best_mass_error_model) + getRightTol(iteration_state.best_mass_error_model))/2, digits=1)) ppm"
             
@@ -974,6 +975,9 @@ function process_file!(
         converged, !converged, warnings, iteration_state
     )
 
+    # Store iteration_state in results for use in process_search_results!
+    results.current_iteration_state[] = iteration_state
+
     return results
 end
 
@@ -992,13 +996,21 @@ function process_search_results!(
         mass_error_folder = getMassErrPlotFolder(search_context)
         parsed_fname = getParsedFileName(search_context, ms_file_idx)
         
+        # Get iteration_state from results
+        iteration_state = results.current_iteration_state[]
+        
         # Always generate plots, even with limited or no data
         # This ensures we have diagnostic output for all files
         
         # Generate RT alignment plot (only store in memory, no individual files)
         if length(results.rt) > 0
+            # If we have RT data, generate regular plot
             rt_plot = generate_rt_plot(results, parsed_fname)
             push!(results.rt_plots, rt_plot)  # Store for combined PDF
+        elseif iteration_state !== nothing && iteration_state.best_rt_model !== nothing
+            # Use best iteration data if available
+            rt_plot = generate_best_iteration_rt_plot_in_memory(results, parsed_fname, iteration_state)
+            push!(results.rt_plots, rt_plot)
         else
             # Create a diagnostic plot showing fallback/borrowed status
             fallback_plot = generate_fallback_rt_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
@@ -1009,8 +1021,13 @@ function process_search_results!(
         
         # Generate mass error plot (only store in memory, no individual files)
         if length(results.ppm_errs) > 0
+            # If we have mass error data, generate regular plot
             mass_plot = generate_mass_error_plot(results, parsed_fname)
             push!(results.mass_plots, mass_plot)  # Store for combined PDF
+        elseif iteration_state !== nothing && iteration_state.best_ppm_errs !== nothing
+            # Use best iteration data if available
+            mass_plot = generate_best_iteration_mass_error_plot_in_memory(results, parsed_fname, iteration_state)
+            push!(results.mass_plots, mass_plot)
         else
             # Create a diagnostic plot showing fallback/borrowed status
             fallback_plot = generate_fallback_mass_error_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
@@ -1027,6 +1044,7 @@ function process_search_results!(
         resize!(results.rt, 0)
         resize!(results.irt, 0)
         resize!(results.ppm_errs, 0)
+        results.current_iteration_state[] = nothing  # Clear iteration state after use
     catch e
         @user_warn "Failed to generate plots for file $ms_file_idx" exception=(e, catch_backtrace())
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
