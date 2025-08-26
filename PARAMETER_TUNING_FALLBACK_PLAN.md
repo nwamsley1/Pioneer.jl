@@ -44,6 +44,17 @@ The system doesn't:
 2. Generate proper diagnostic plots for best iteration parameters
 3. Provide detailed warnings about which iteration was used
 
+## Key Implementation Principle
+
+**Mass Error vs RT Model Timing**:
+- **Mass Error Model**: Fitted once per PSM collection via `fit_models_from_psms()` - no duplicate fitting occurs
+- **RT Model**: Can be deferred until final convergence or fallback since it's not needed for bias calculation during parameter tuning
+
+**Current Implementation Details**:
+- The `update_best_attempt!()` function stores already-fitted models, never re-fits them
+- Mass error models are fitted exactly once per PSM collection through the existing pipeline
+- The fallback plan preserves this efficient pattern and avoids unnecessary duplicate computations
+
 ## Proposed Enhancements
 
 ### 1. Enhanced Best Iteration Fallback
@@ -65,15 +76,15 @@ if iteration_state.best_mass_error_model !== nothing
     
     # Apply expanded model and collect PSMs
     setMassErrorModel!(search_context, ms_file_idx, expanded_model)
-    expanded_psms, expanded_ppm_errs = collect_psms_with_model(
+    expanded_psms, expanded_ppm_errs, expanded_mass_model = collect_psms_with_model(
         filtered_spectra, search_context, params, ms_file_idx
     )
     
     # Check if expansion yields significantly more PSMs
     expansion_threshold = iteration_state.best_psm_count * 1.1
     if size(expanded_psms, 1) > expansion_threshold
-        # Use expanded results
-        iteration_state.best_mass_error_model = fit_mass_err_model(expanded_ppm_errs, params)
+        # Use the refitted mass error model from expanded PSMs
+        iteration_state.best_mass_error_model = expanded_mass_model
         iteration_state.best_psm_count = size(expanded_psms, 1)
         iteration_state.best_ppm_errs = expanded_ppm_errs
         
@@ -184,15 +195,12 @@ function collect_psms_with_model(
     add_tuning_search_columns!(psms, ...)
     filter_and_score_psms!(psms, params)
     
-    # Get matched fragments for error calculation
-    if size(psms, 1) > 0
-        matched_frags = get_matched_fragments(...)
-        ppm_errs = calculate_ppm_errors(matched_frags)
-    else
-        ppm_errs = Float32[]
-    end
+    # Fit mass error model (using fit_models_from_psms to avoid duplication)
+    mass_err_model, ppm_errs, _ = fit_models_from_psms(
+        psms, spectra, search_context, params, ms_file_idx
+    )
     
-    return psms, ppm_errs
+    return psms, ppm_errs, mass_err_model
 end
 ```
 
@@ -201,12 +209,14 @@ end
 Ensure best iteration is properly tracked:
 
 ```julia
-# In process_file! after each iteration attempt
-if psm_count > iteration_state.best_psm_count
+# In update_best_attempt! function - stores already-fitted models
+if psm_count > iteration_state.best_psm_count && mass_err_model !== nothing
     iteration_state.best_psm_count = psm_count
+    # Store the already-fitted mass error model (fitted by fit_models_from_psms)
     iteration_state.best_mass_error_model = mass_err_model
-    iteration_state.best_rt_model = rt_model
-    iteration_state.best_ppm_errs = copy(ppm_errs)
+    # RT model can be deferred until final convergence or fallback
+    iteration_state.best_rt_model = rt_model_data  # May be nothing during search
+    iteration_state.best_ppm_errs = ppm_errs
     iteration_state.best_phase = current_phase
     iteration_state.best_score = current_score
     iteration_state.best_iteration = current_iteration

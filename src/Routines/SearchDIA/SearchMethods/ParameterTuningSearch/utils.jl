@@ -1663,4 +1663,126 @@ function record_file_status!(
     end
 end
 
+"""
+    generate_best_iteration_mass_error_plot_in_memory(results, fname, iteration_state)
+
+Generate mass error plot using best iteration data when convergence failed.
+Returns the plot object without saving to disk.
+"""
+function generate_best_iteration_mass_error_plot_in_memory(
+    results::ParameterTuningSearchResults,
+    fname::String,
+    iteration_state::IterationState
+)
+    # Check if we have mass error data from best iteration
+    ppm_errs = if length(results.ppm_errs) > 0
+        results.ppm_errs
+    elseif iteration_state.best_ppm_errs !== nothing
+        iteration_state.best_ppm_errs
+    else
+        nothing
+    end
+    
+    if ppm_errs === nothing || length(ppm_errs) == 0
+        # Generate fallback plot with iteration info
+        return generate_fallback_mass_error_plot_with_iteration_info(
+            results, fname, iteration_state
+        )
+    end
+    
+    # Calculate statistics for the plot
+    median_error = median(ppm_errs)
+    mad_error = mad(ppm_errs, normalize=true)
+    
+    # Create histogram of mass errors
+    p = Plots.histogram(
+        ppm_errs,
+        bins=50,
+        xlabel="Mass Error (ppm)",
+        ylabel="Count",
+        title="$fname - Mass Error Distribution (Best Iteration)",
+        label="PPM Errors",
+        alpha=0.7,
+        color=:blue
+    )
+    
+    # Add vertical lines for median and bounds
+    vline!([median_error], label="Median: $(round(median_error, digits=2)) ppm", 
+           color=:red, linewidth=2)
+    vline!([median_error - mad_error, median_error + mad_error], 
+           label="±MAD: $(round(mad_error, digits=2)) ppm", 
+           color=:green, linestyle=:dash, linewidth=1.5)
+    
+    # Add annotation with iteration info
+    annotation_text = """
+    Best Iteration Info:
+    Phase $(iteration_state.best_phase), Score $(iteration_state.best_score)
+    Iteration $(iteration_state.best_iteration)
+    $(iteration_state.best_psm_count) PSMs
+    """
+    
+    # Position annotation in top right
+    xlims = Plots.xlims(p)
+    ylims = Plots.ylims(p)
+    x_pos = xlims[1] + 0.7 * (xlims[2] - xlims[1])
+    y_pos = ylims[1] + 0.85 * (ylims[2] - ylims[1])
+    
+    Plots.annotate!(x_pos, y_pos, text(annotation_text, :left, 8))
+    
+    return p
+end
+
+"""
+    generate_fallback_mass_error_plot_with_iteration_info(results, fname, iteration_state)
+
+Generate fallback mass error plot with best iteration information when no PPM error data is available.
+"""
+function generate_fallback_mass_error_plot_with_iteration_info(
+    results::ParameterTuningSearchResults,
+    fname::String,
+    iteration_state::IterationState
+)
+    # Create empty plot with diagnostic information
+    p = Plots.plot(
+        [],
+        [],
+        xlabel="Mass Error (ppm)",
+        ylabel="Count",
+        title="$fname - Mass Error (Best Iteration Fallback)",
+        legend=:topright,
+        grid=true
+    )
+    
+    # Add diagnostic text
+    info_text = if iteration_state.best_mass_error_model !== nothing
+        model = iteration_state.best_mass_error_model
+        """
+        Best Iteration Results:
+        Phase $(iteration_state.best_phase), Score $(iteration_state.best_score)
+        $(iteration_state.best_psm_count) PSMs found
+        Iteration $(iteration_state.best_iteration)
+        
+        Mass Error Model:
+        Offset: $(round(getMassOffset(model), digits=2)) ppm
+        Left Tol: $(round(getLeftTol(model), digits=2)) ppm
+        Right Tol: $(round(getRightTol(model), digits=2)) ppm
+        """
+    else
+        """
+        No convergence achieved
+        No best iteration data available
+        Using fallback parameters
+        """
+    end
+    
+    # Add text in center of plot
+    Plots.annotate!(0, 0, text(info_text, :center, 10))
+    
+    # Set axis limits for better text visibility
+    xlims!(-10, 10)
+    ylims!(-1, 1)
+    
+    return p
+end
+
 
