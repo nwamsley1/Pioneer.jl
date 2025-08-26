@@ -1,0 +1,23 @@
+==========================================================================================
+Pioneer Debug Log (Full Trace)
+Version: 0.2.8
+Started: 2025-08-26T09:51:23.987
+Output Directory: C:\Users\n.t.wamsley\Documents\PIONEER_PAPER\MtacThreeProteomeStandard\MTAC_3P_Standard_Combined_08-05-2025
+Julia Version: 1.11.3
+Threads: 10
+==========================================================================================
+
+[2025-08-26 09:51:23.987] [info] Pioneer logging system initialized
+
+==========================================================================================
+Starting SearchDIA
+==========================================================================================
+[2025-08-26 09:51:23.988] [info] 
+Starting search at: 2025-08-26T09:51:23.988
+[2025-08-26 09:51:23.988] [info] Output directory: C:\Users\n.t.wamsley\Documents\PIONEER_PAPER\MtacThreeProteomeStandard\MTAC_3P_Standard_Combined_08-05-2025
+[2025-08-26 09:51:23.988] [info] Loading Parameters...
+[2025-08-26 09:51:23.988] [error] ms_data directory does not exist: /Users/nathanwamsley/Projects/Pioneer.jl/src/Routines/../../C:\Users\n.t.wamsley\Documents\PIONEER_PAPER\MtacThreeProteomeStandard @ Pioneer /Users/nathanwamsley/Projects/Pioneer.jl/src/Routines/SearchDIA.jl:241
+
+==========================================================================================
+Search completed at: 2025-08-26T09:51:23.988
+==========================================================================================

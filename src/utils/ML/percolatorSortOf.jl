@@ -441,7 +441,7 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
         eta = eta,
         gamma = gamma
     )
-    model = fit(config, psms; target_name = :target, feature_names = features)
+    model = fit(config, psms; target_name = :target, feature_names = features, verbosity = 0)
     return model
 end
 
