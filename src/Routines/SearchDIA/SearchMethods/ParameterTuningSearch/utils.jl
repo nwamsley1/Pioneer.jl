@@ -921,12 +921,28 @@ function generate_best_iteration_rt_plot_in_memory(
     iteration_state::IterationState
 )
     # Check if we have RT data from best iteration
-    if length(results.rt) > 0 && length(results.irt) > 0
+    # First check results.rt/irt, then fall back to iteration_state.best_rt_model data
+    rt_data, irt_data = if length(results.rt) > 0 && length(results.irt) > 0
+        (results.rt, results.irt)
+    elseif iteration_state.best_rt_model !== nothing
+        # Extract RT and iRT from the tuple stored in best_rt_model
+        # The tuple is (model, rt_data, irt_data, threshold)
+        model_tuple = iteration_state.best_rt_model
+        if length(model_tuple) >= 3
+            (model_tuple[2], model_tuple[3])
+        else
+            (nothing, nothing)
+        end
+    else
+        (nothing, nothing)
+    end
+    
+    if rt_data !== nothing && irt_data !== nothing && length(rt_data) > 0
         # We have data, generate normal plot with annotation
-        n = length(results.rt)
+        n = length(rt_data)
         p = plot(
-            results.rt,
-            results.irt,
+            rt_data,
+            irt_data,
             seriestype=:scatter,
             title = fname * "\n(Best Iteration: Phase $(iteration_state.best_phase), Score $(iteration_state.best_score))\nn = $n",
             xlabel = "Retention Time RT (min)",
@@ -939,7 +955,7 @@ function generate_best_iteration_rt_plot_in_memory(
         # Add fitted model if available
         rt_model = getRtToIrtModel(results)
         if !isa(rt_model, IdentityModel)
-            rt_sorted = sort(results.rt)
+            rt_sorted = sort(rt_data)
             irt_predicted = rt_model.(rt_sorted)
             Plots.plot!(rt_sorted, irt_predicted, lw=2, color=:red, 
                        label="Fitted Spline ($(iteration_state.best_psm_count) PSMs)")
@@ -975,10 +991,19 @@ function generate_best_iteration_mass_error_plot_in_memory(
     iteration_state::IterationState
 )
     # Check if we have ppm error data from best iteration
-    if length(results.ppm_errs) > 0
+    # First check results.ppm_errs, then fall back to iteration_state.best_ppm_errs
+    ppm_data = if length(results.ppm_errs) > 0
+        results.ppm_errs
+    elseif iteration_state.best_ppm_errs !== nothing && length(iteration_state.best_ppm_errs) > 0
+        iteration_state.best_ppm_errs
+    else
+        nothing
+    end
+    
+    if ppm_data !== nothing
         # We have data, generate normal histogram
         mem = getMassErrorModel(results)
-        errs = results.ppm_errs .+ getMassOffset(mem)
+        errs = ppm_data .+ getMassOffset(mem)
         n = length(errs)
         
         plot_title = fname * "\n(Best Iteration: Phase $(iteration_state.best_phase), Score $(iteration_state.best_score))\nn = $n"
