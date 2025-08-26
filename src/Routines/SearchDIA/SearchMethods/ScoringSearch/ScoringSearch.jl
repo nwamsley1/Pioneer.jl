@@ -352,7 +352,9 @@ function summarize_results!(
         # Step 8: Calculate experiment-wide precursor q-values and PEPs
         #@debug_l1 "Step 8: Calculating experiment-wide precursor q-values and PEPs..."
         step8_time = @elapsed begin
-            results.precursor_qval_interp[] = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
+            qval_interp = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
+            @debug_l1 "Type of qval_interp: $(typeof(qval_interp))"
+            results.precursor_qval_interp[] = qval_interp
             results.precursor_pep_interp[]  = get_precursor_pep_interpolation(results.merged_quant_path, params, search_context)
         end
         #@debug_l1 "Step 8 completed in $(round(step8_time, digits=2)) seconds"
@@ -412,7 +414,9 @@ function summarize_results!(
         stream_sorted_merge(passing_refs, results.merged_quant_path, :prec_prob, :target;
                             batch_size=10_000_000, reverse=[true,true])
 
-        results.precursor_qval_interp[] = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
+        qval_interp2 = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
+        @debug_l1 "Type of qval_interp2 at line 414: $(typeof(qval_interp2))"
+        results.precursor_qval_interp[] = qval_interp2
         
         recalculate_experiment_wide_qvalue = TransformPipeline() |>
             add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[])

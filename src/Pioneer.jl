@@ -135,12 +135,12 @@ end
 
 function user_warn(msg::String, file::String="", line::String="", mod::String="")
     # Console output
-    printstyled("┌ ", color=:yellow)
+    printstyled("┌ ", bold=true, color=:yellow)
     printstyled("Warning:", bold=true, color=:yellow)
     println(" ", msg)
     
-    # Add source location line if available
-    if !isempty(file) && !isempty(line)
+    # Add source location line if available and debug level > 0
+    if !isempty(file) && !isempty(line) && DEBUG_CONSOLE_LEVEL[] > 0
         printstyled("└ ", color=:yellow)
         println("@ $mod $file:$line")
     end
@@ -188,8 +188,8 @@ function user_error(msg::String, file::String="", line::String="", mod::String="
     printstyled("Error:", bold=true, color=:red)
     println(" ", msg)
     
-    # Add source location line if available
-    if !isempty(file) && !isempty(line)
+    # Add source location line if available and debug level > 0
+    if !isempty(file) && !isempty(line) && DEBUG_CONSOLE_LEVEL[] > 0
         printstyled("└ ", color=:red)
         println("@ $mod $file:$line")
     end
@@ -253,7 +253,7 @@ function debug_l1(msg::String, file::String="", line::String="", mod::String="")
     # Only process if debug level allows
     if DEBUG_CONSOLE_LEVEL[] >= 1
         # Console output WITHOUT line numbers
-        printstyled("┌ ", color=:blue)
+        printstyled("┌ ", bold=true, color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
         println(" ", msg)
         # NO LINE NUMBER OUTPUT for debug_l1
@@ -272,7 +272,7 @@ function debug_l2(msg::String, file::String="", line::String="", mod::String="")
     # Only process if debug level allows
     if DEBUG_CONSOLE_LEVEL[] >= 2
         # Console output WITH line numbers
-        printstyled("┌ ", color=:blue)
+        printstyled("┌ ", bold=true, color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
         println(" ", msg)
         
@@ -299,7 +299,7 @@ function debug_l3(msg::String, file::String="", line::String="", mod::String="")
     # Only process if debug level allows
     if DEBUG_CONSOLE_LEVEL[] >= 3
         # Console output WITH line numbers
-        printstyled("┌ ", color=:blue)
+        printstyled("┌ ", bold=true, color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
         println(" ", msg)
         
@@ -326,7 +326,7 @@ function trace_msg(msg::String, file::String="", line::String="", mod::String=""
     # Only process if debug level allows (4+)
     if DEBUG_CONSOLE_LEVEL[] >= 4
         # Console output WITH line numbers
-        printstyled("┌ ", color=:blue)
+        printstyled("┌ ", bold=true, color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
         println(" ", msg)
         
