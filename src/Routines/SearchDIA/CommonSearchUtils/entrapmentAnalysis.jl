@@ -34,7 +34,7 @@ function entrapmentAnalysis(
         target_size += iszero(groupid)
     end
     r = entrapment_size/target_size
-    println("r $r")
+    #println("r $r")
 
     target_scores = Vector{Union{Missing, Float32}}(undef, maximum(base_pep_ids))
     for i in range(1, length(target_scores))

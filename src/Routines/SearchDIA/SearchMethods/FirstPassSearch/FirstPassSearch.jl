@@ -485,8 +485,7 @@ function summarize_results!(
         results::FirstPassSearchResults,
         params::FirstPassSearchParameters
     )
-        @debug_l1 "Finding best precursors across runs..."
-        
+
         # Get best precursors
         return get_best_precursors_accross_runs(
             getFirstPassPsms(getMSData(search_context)),
@@ -495,8 +494,6 @@ function summarize_results!(
             max_q_val=params.max_q_val_for_irt
         )
     end
-    #isempty(results.psms_paths) && return nothing
-    @debug_l1 "Summarizing first pass search results..."
     # Map retention times
     map_retention_times!(search_context, results, params)
     # Process precursors
@@ -540,8 +537,6 @@ function summarize_results!(
     # Calculate RT indices
     create_rt_indices!(search_context, results, precursor_dict, params)
     
-    @debug_l1 "Search results summarization complete"
-
     # Merge mass error plots
     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
     output_path = joinpath(ms1_mass_error_folder, "ms1_mass_error_plots.pdf")

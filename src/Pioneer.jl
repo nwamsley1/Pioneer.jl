@@ -250,33 +250,28 @@ end
 
 # Debug logging functions - console output based on DEBUG_CONSOLE_LEVEL
 function debug_l1(msg::String, file::String="", line::String="", mod::String="")
-    # Console output only if debug level allows
+    # Only process if debug level allows
     if DEBUG_CONSOLE_LEVEL[] >= 1
+        # Console output WITHOUT line numbers
         printstyled("┌ ", color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
         println(" ", msg)
+        # NO LINE NUMBER OUTPUT for debug_l1
         
-        if !isempty(file) && !isempty(line)
-            printstyled("└ ", color=:blue)
-            println("@ $mod $file:$line")
+        # File output WITHOUT line numbers (only when debug level allows)
+        if DEBUG_FILE[] !== nothing
+            debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG1] $msg")
+            flush(DEBUG_FILE[])
         end
     end
-    
-    # Always write to debug file with source location
-    if DEBUG_FILE[] !== nothing
-        debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        source_loc = ""
-        if !isempty(file) && !isempty(line)
-            source_loc = " @ $mod $file:$line"
-        end
-        println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG1] $msg$source_loc")
-        flush(DEBUG_FILE[])
-    end
+    # If debug level < 1, no output at all
 end
 
 function debug_l2(msg::String, file::String="", line::String="", mod::String="")
-    # Console output only if debug level allows
+    # Only process if debug level allows
     if DEBUG_CONSOLE_LEVEL[] >= 2
+        # Console output WITH line numbers
         printstyled("┌ ", color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
         println(" ", msg)
@@ -285,23 +280,25 @@ function debug_l2(msg::String, file::String="", line::String="", mod::String="")
             printstyled("└ ", color=:blue)
             println("@ $mod $file:$line")
         end
-    end
-    
-    # Always write to debug file with source location
-    if DEBUG_FILE[] !== nothing
-        debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        source_loc = ""
-        if !isempty(file) && !isempty(line)
-            source_loc = " @ $mod $file:$line"
+        
+        # File output WITH line numbers (only when debug level allows)
+        if DEBUG_FILE[] !== nothing
+            debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+            source_loc = ""
+            if !isempty(file) && !isempty(line)
+                source_loc = " @ $mod $file:$line"
+            end
+            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG2] $msg$source_loc")
+            flush(DEBUG_FILE[])
         end
-        println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG2] $msg$source_loc")
-        flush(DEBUG_FILE[])
     end
+    # If debug level < 2, no output at all
 end
 
 function debug_l3(msg::String, file::String="", line::String="", mod::String="")
-    # Console output only if debug level allows
+    # Only process if debug level allows
     if DEBUG_CONSOLE_LEVEL[] >= 3
+        # Console output WITH line numbers
         printstyled("┌ ", color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
         println(" ", msg)
@@ -310,23 +307,25 @@ function debug_l3(msg::String, file::String="", line::String="", mod::String="")
             printstyled("└ ", color=:blue)
             println("@ $mod $file:$line")
         end
-    end
-    
-    # Always write to debug file with source location
-    if DEBUG_FILE[] !== nothing
-        debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        source_loc = ""
-        if !isempty(file) && !isempty(line)
-            source_loc = " @ $mod $file:$line"
+        
+        # File output WITH line numbers (only when debug level allows)
+        if DEBUG_FILE[] !== nothing
+            debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+            source_loc = ""
+            if !isempty(file) && !isempty(line)
+                source_loc = " @ $mod $file:$line"
+            end
+            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG3] $msg$source_loc")
+            flush(DEBUG_FILE[])
         end
-        println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG3] $msg$source_loc")
-        flush(DEBUG_FILE[])
     end
+    # If debug level < 3, no output at all
 end
 
 function trace_msg(msg::String, file::String="", line::String="", mod::String="")
-    # Trace messages are debug level 4+ (never shown on console by default)
+    # Only process if debug level allows (4+)
     if DEBUG_CONSOLE_LEVEL[] >= 4
+        # Console output WITH line numbers
         printstyled("┌ ", color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
         println(" ", msg)
@@ -335,18 +334,19 @@ function trace_msg(msg::String, file::String="", line::String="", mod::String=""
             printstyled("└ ", color=:blue)
             println("@ $mod $file:$line")
         end
-    end
-    
-    # Always write to debug file with source location
-    if DEBUG_FILE[] !== nothing
-        debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        source_loc = ""
-        if !isempty(file) && !isempty(line)
-            source_loc = " @ $mod $file:$line"
+        
+        # File output WITH line numbers (only when debug level allows)
+        if DEBUG_FILE[] !== nothing
+            debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+            source_loc = ""
+            if !isempty(file) && !isempty(line)
+                source_loc = " @ $mod $file:$line"
+            end
+            println(DEBUG_FILE[], "[$debug_timestamp] [TRACE] $msg$source_loc")
+            flush(DEBUG_FILE[])
         end
-        println(DEBUG_FILE[], "[$debug_timestamp] [TRACE] $msg$source_loc")
-        flush(DEBUG_FILE[])
     end
+    # If debug level < 4, no output at all
 end
 
 # MACROS - defined once, used everywhere

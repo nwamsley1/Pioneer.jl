@@ -202,7 +202,6 @@ end
 Create experiment-wide protein q-value spline (all protein groups).
 """
 function get_protein_qval_spline(merged_path::String, params::ScoringSearchParameters)
-    @user_warn "params.pg_q_value_interpolation_points_per_bin $(params.pg_q_value_interpolation_points_per_bin)"
     return get_qvalue_spline(
         merged_path, :pg_score, false;
         min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin

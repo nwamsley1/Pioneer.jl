@@ -216,7 +216,7 @@ function BuildSpecLib(params_path::String)
                     params["isotope_mod_groups"],
                     Float32(_params.library_params["rt_bin_tol"])
                 )
-                println("precursors_arrow_path $precursors_arrow_path")
+                #println("precursors_arrow_path $precursors_arrow_path")
                 # Cleanup temporary files
                 GC.gc()
                 rm(chronologer_in_path, force=true)
@@ -272,7 +272,7 @@ function BuildSpecLib(params_path::String)
                     )
 
                 catch
-                    println("No spline knots. static library")
+                    #println("No spline knots. static library")
 
                     # Process ion annotations
                     ion_annotation_set = get_ion_annotation_set(fragments_table[:annotation])

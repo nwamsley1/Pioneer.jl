@@ -131,10 +131,7 @@ function filter_and_score_psms!(
     
     max_q_val, min_psms = getMaxQVal(params), getMinPsms(params)
     n_passing_psms = sum(psms[!,:q_value] .<= max_q_val)
-    @user_warn "n_passing_psms = $n_passing_psms max_q_val = $max_q_val min_psms = $min_psms"
-    @user_warn "size(psms, 1) before filtering = $(size(psms, 1)) "
     filter!(row -> row.q_value::Float16 <= max_q_val, psms)
-    @user_warn "size(psms, 1) after filtering = $(size(psms, 1)) "
     #psms[!,:best_psms] = zeros(Bool, size(psms, 1))
    # 
     # Select best PSM per precursor
@@ -143,11 +140,8 @@ function filter_and_score_psms!(
    #     best_idx = argmax(sub_psms.prob::AbstractVector{Float32})
    #     sub_psms[best_idx,:best_psms] = true
    # end
-    #@user_warn "size(psms, 1) after selecting best PSMs = $(size(psms, 1)) "
     #filter!(x -> x.best_psms::Bool, psms)
-    @user_warn "size(psms, 1) after filtering to best PSMs = $(size(psms, 1)) "
     filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys. 
-    @user_warn "size(psms, 1) after filtering to target PSMs = $(size(psms, 1)) "
 
     n_passing_psms = size(psms, 1)
     if n_passing_psms >= min_psms
@@ -698,7 +692,6 @@ function fit_mass_err_model(
     
     # Check if we have enough fragments after filtering
     if length(fragments) == 0
-        @user_warn "No fragments remaining after intensity filtering"
         return MassErrorModel(0.0f0, (30.0f0, 30.0f0)), Float32[]
     end
     
@@ -709,35 +702,31 @@ function fit_mass_err_model(
     
     # Calculate error bounds using configured quantile
     frag_err_quantile = getFragErrQuantile(params)
-    @debug_l1 "fit_mass_err_model: Using frag_err_quantile = $frag_err_quantile from parameters.json"
 
-    _mad = mad(ppm_errs)
     r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
     r_est = quantile(Exponential(
         (1/
         (length(r_errs)/sum(r_errs))
         ))
-        , 0.995)
+        , 1 - frag_err_quantile)
     l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
     l_est = quantile(Exponential(
         (1/
         (length(l_errs)/sum(l_errs))
         ))
-        , 0.995)
-    l_quantile = abs(quantile(ppm_errs, frag_err_quantile))
-    r_quantile = abs(quantile(ppm_errs, 1 - frag_err_quantile))
-
+        , 1 - frag_err_quantile)
+    #l_quantile = abs(quantile(ppm_errs, frag_err_quantile))
+    #r_quantile = abs(quantile(ppm_errs, 1 - frag_err_quantile))
+    #=
     l_bound = max(
         l_quantile, 
         l_est)
     r_bound = max(
         r_quantile, 
         r_est)
+    =#
     r_bound = r_est
     l_bound = l_est
-    @debug_l1 "l_quantile = $l_quantile, l_est = $l_est, " *
-          "r_quantile = $r_quantile, r_est = $r_est, " *
-          "l_bound = $l_bound, r_bound = $r_bound"
     #l_bound = abs(quantile(ppm_errs, frag_err_quantile))
     #r_bound = abs(quantile(ppm_errs, 1 - frag_err_quantile))
     # Diagnostic logging
@@ -1179,11 +1168,6 @@ function test_tolerance_expansion!(
         getMassOffset(current_model),
         (expanded_tolerance, expanded_tolerance)
     )
-    
-     @debug_l1 "Testing tolerance expansion for PSM collection:" *
-           "\n  Original collection tolerance: ±$(round(collection_tolerance, digits=1)) ppm" *
-           "\n  Expanded collection tolerance: ±$(round(expanded_tolerance, digits=1)) ppm" *
-           "\n  Current PSM count: $current_psm_count"
     
            # Store original model
     original_model = getMassErrorModel(search_context, ms_file_idx)

@@ -244,7 +244,6 @@ function get_qvalue_spline(
 
     psms_scores = DataFrame(Arrow.Table(merged_psms_path))
     Arrow.write("/Users/nathanwamsley/Desktop/test_prot.arrow", psms_scores)
-    @debug_l1 "Targets $(sum(psms_scores[!,:target])) Decoys $(sum(.!psms_scores[!,:target]))"
     if use_unique
         # select the columns needed to identify globally unique precursors or proteins
         if score_col == :global_prob # precursors
@@ -267,8 +266,6 @@ function get_qvalue_spline(
         targets += psms_scores[!, :target][i]
         decoys += (1 - psms_scores[!, :target][i])
     end
-    @user_warn "Total targets: $targets, Total decoys: $decoys"
-
     min_q_val = typemax(Float32)
     for i in reverse(range(1, Q))
         bin_size += 1
@@ -541,8 +538,6 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
     
     # Write to Arrow file
     writeArrow(output_path, df)
-    
-    @debug_l1 "Wrote $(n_groups) protein groups to $output_path"
 end
 
 """
@@ -681,7 +676,6 @@ function perform_protein_probit_regression(
     
     if total_protein_groups > max_protein_groups_in_memory_limit
         #Need to implement safety checks for minimal number of targets/decoys in each split 
-        @debug_l1 "Using out-of-memory probit regression (exceeds limit of $max_protein_groups_in_memory_limit)"
         
         # Check if we should skip scoring in OOM path
         # We need to load a sample to check targets/decoys
@@ -700,14 +694,9 @@ function perform_protein_probit_regression(
         
         skip_scoring_oom = !(est_targets > 10 && est_decoys > 10 && total_protein_groups > 1000)
         
-        if skip_scoring_oom
-            @debug_l1 "Insufficient data for probit scoring in OOM path - will process with original scores"
-        end
-        
         perform_probit_analysis_oom(pg_refs, total_protein_groups, max_protein_groups_in_memory_limit, qc_folder; 
                                    skip_scoring = skip_scoring_oom)
     else
-        @debug_l1 "Using in-memory probit regression"
         # Load all protein group tables into a single DataFrame
         all_protein_groups = DataFrame()
         for pg_path in passing_pg_paths
@@ -722,12 +711,6 @@ function perform_protein_probit_regression(
         
         # Always run through the same probit workflow, just skip scoring if insufficient data
         skip_scoring = !(n_targets > 50 && n_decoys > 50 && nrow(all_protein_groups) > 1000)
-        
-        if skip_scoring
-            @debug_l1 "Insufficient data for probit scoring - will process with original scores (targets: $n_targets, decoys: $n_decoys)"
-        else
-            @debug_l1 "Performing Probit Analysis (targets: $n_targets, decoys: $n_decoys)"
-        end
         
         # Always use the same function, just with different skip_scoring parameter
         perform_probit_analysis_multifold(
@@ -782,8 +765,6 @@ function update_psms_with_probit_scores_refs(
         pg_score_lookup = Dict{ProteinKey, Tuple{Float32, Float32}}()
         n_pg_rows = length(pg_table[:protein_name])
         
-        @debug_l1 "Building protein group lookup - file: $(file_path(pg_ref)), n_protein_groups: $n_pg_rows"
-        
         for i in 1:n_pg_rows
             key = ProteinKey(
                 pg_table[:protein_name][i],
@@ -793,8 +774,6 @@ function update_psms_with_probit_scores_refs(
             pep_val = hasproperty(pg_table, :pg_pep) ? pg_table[:pg_pep][i] : 1.0f0
             pg_score_lookup[key] = (pg_table[:pg_score][i], pep_val) # pg_score is now the probit score
         end
-        
-        @debug "Protein group lookup built" n_entries=length(pg_score_lookup)
         
         # Transform PSM file
         transform_and_write!(psm_ref) do psms_df
@@ -838,9 +817,9 @@ function update_psms_with_probit_scores_refs(
                 if !haskey(pg_score_lookup, key)
                     n_missing_pg += 1
                     # Add detailed logging to understand why keys don't match
-                    if n_missing_pg <= 5  # Only log first few to avoid spam
-                        @user_warn "Protein group not found in lookup" missing_key=key psm_idx=i available_keys_sample=collect(keys(pg_score_lookup))[1:min(5, length(pg_score_lookup))]
-                    end
+                    #if n_missing_pg <= 5  # Only log first few to avoid spam
+                    #    @user_warn "Protein group not found in lookup" missing_key=key psm_idx=i available_keys_sample=collect(keys(pg_score_lookup))[1:min(5, length(pg_score_lookup))]
+                    #end
                     #Should be able to make this 'missing' since that is more clear 
                     probit_pg_scores[i] = missing
                     global_pg_scores[i] = missing
@@ -872,9 +851,9 @@ function update_psms_with_probit_scores_refs(
             
             total_psms_updated += n_psms
             
-            if n_missing_pg > 0 || n_not_for_quant > 0
-                @user_warn "PSMs with missing protein scores" file=file_path(psm_ref) total_psms=n_psms missing_pg=n_missing_pg not_for_quant=n_not_for_quant psms_with_scores=(n_psms - n_missing_pg - n_not_for_quant)
-            end
+            #if n_missing_pg > 0 || n_not_for_quant > 0
+            #    @user_warn "PSMs with missing protein scores" file=file_path(psm_ref) total_psms=n_psms missing_pg=n_missing_pg not_for_quant=n_not_for_quant psms_with_scores=(n_psms - n_missing_pg - n_not_for_quant)
+            #end
             
             return psms_df
         end
@@ -912,7 +891,6 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     
     # Calculate sampling ratio
     sampling_ratio = max_protein_groups_in_memory / total_protein_groups
-    @debug_l1 "Sampling ratio: $(round(sampling_ratio * 100, digits=2))%"
     sampled_targets, sampled_decoys = 0, 0
     # Sample protein groups from each file
     sampled_protein_groups = DataFrame()
@@ -944,8 +922,6 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         @user_warn "Insufficient sampled protein groups for OOM probit regression: targets=$sampled_targets, decoys=$sampled_decoys"
         return
     end
-
-    @debug_l1 "Sampled $(nrow(sampled_protein_groups)) protein groups for training"
     
     # Define features to use
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff, :any_common_peps]
@@ -956,10 +932,8 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     # Fit probit model on sampled data (skip if skip_scoring = true)
     if !skip_scoring
         β_fitted = fit_probit_model(X, y)
-        @debug_l1 "Fitted probit model coefficients: $β_fitted"
     else
         β_fitted = Float64[]  # Empty model when skipping
-        @debug_l1 "Skipping model training (skip_scoring = true)"
     end
     
     total_targets, total_decoys = 0, 0
@@ -988,19 +962,6 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
             writeArrow(file_path(ref), df)
         end
     end
-    
-    # Report results
-    if !skip_scoring
-        @debug_l1 "Out-of-Memory Probit Regression Results:"
-        @debug_l1 "  Total protein groups: $(total_targets + total_decoys) (targets: $total_targets, decoys: $total_decoys)"
-        @debug_l1 "  Training sample size: $(nrow(sampled_protein_groups))"
-        @debug_l1 "  Model features: $(join(feature_names, ", "))"
-        @debug_l1 "  Model coefficients: $(round.(β_fitted, digits=3))"
-    else
-        @debug_l1 "Out-of-Memory Processing Results (no scoring):"
-        @debug_l1 "  Total protein groups: $(total_targets + total_decoys) (targets: $total_targets, decoys: $total_decoys)"
-        @debug_l1 "  Files processed with original scores"
-    end
 end
 
 """
@@ -1026,7 +987,6 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
                                show_improvement = true)
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
-    @debug_l1 "In memory probit regression analysis - n_targets: $n_targets, n_decoys: $n_decoys, total_protein_groups: $(nrow(all_protein_groups))"
     # Define features to use
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps] # :log_binom_coeff] 
     adjust_any_common_peps!(feature_names, sampled_protein_groups)
@@ -1037,18 +997,12 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     #β_fitted, X_mean, X_std = fit_probit_model(X, y)
     β_fitted = fit_probit_model(X, y)
     # Report basic model statistics
-    @debug_l1 "Probit Regression completed:"
-    @debug_l1 "  Total protein groups: $(n_targets + n_decoys) (targets: $n_targets, decoys: $n_decoys)"
-    @debug_l1 "  Model features: $(join(feature_names, ", "))"
-    @debug_l1 "  Model coefficients: $(round.(β_fitted, digits=3))"
-    
     # Create decision boundary plots
     # TODO: Fix plotting type error
     # plot_probit_decision_boundary(all_protein_groups, β_fitted, X_mean, X_std, feature_names, qc_folder)
     
     # Re-process individual files if references are provided
     if !isempty(pg_refs)
-        @debug_l1 "Re-processing individual protein group files with probit scores"
         # Use the new apply_probit_scores! function with references
         apply_probit_scores!(pg_refs, β_fitted, feature_names)
     end
@@ -1708,8 +1662,7 @@ function assign_protein_group_cv_folds!(
     if missing_count > 0
         @user_warn "There were $missing_count protein groups without matching peptides, assigned to fold 0"
     end
-    @debug_l1 "sum(cv_folds.==0) = $(sum(cv_folds .== 0))"
-    @debug_l1 "sum(cv_folds.==1) = $(sum(cv_folds .== 1))"
+
     all_protein_groups[!, :cv_fold] = cv_folds
 end
 
@@ -1763,7 +1716,6 @@ function apply_probit_scores_multifold!(
             else
                 # When skip_scoring is true, pg_score contains log-sum scores: -sum(log1p(-p))
                 # Convert to probabilities: p = 1 - exp(-pg_score)
-                @debug_l1 "Converting log-sum scores to probabilities (skip_scoring=true)"
                 df[!, :pg_score] = 1.0f0 .- exp.(-df.pg_score)
                 # Clamp to avoid numerical issues with logodds function
                 df[!, :pg_score] = clamp.(df.pg_score, 1f-6, 1f0 - 1f-6)
@@ -1819,8 +1771,6 @@ function perform_probit_analysis_multifold(
     unique_cv_folds = detect_unique_cv_folds(precursors)
     n_folds = length(unique_cv_folds)
     
-    @debug_l1 "Multi-fold probit regression analysis - n_folds: $n_folds, cv_folds: $unique_cv_folds"
-    
     # 2. Use provided mapping or build it if not provided
     if protein_to_cv_fold === nothing
         # Build the mapping from PSM files
@@ -1836,8 +1786,7 @@ function perform_probit_analysis_multifold(
     for fold in all_protein_groups.cv_fold
         fold_counts[fold] = get(fold_counts, fold, 0) + 1
     end
-    @debug_l1 "Protein group distribution across folds: $fold_counts"
-    
+
     # 4. Define features (same as original)
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps]
     adjust_any_common_peps!(feature_names, all_protein_groups)
@@ -1872,11 +1821,7 @@ function perform_probit_analysis_multifold(
             # Fit model
             β_fitted = fit_probit_model(X_train, y_train)
             models[test_fold] = β_fitted
-            
-            @debug_l1 "Fitted model for fold $test_fold - n_train: $(sum(train_mask)), coefficients: $(round.(β_fitted, digits=3))"
         end
-    else
-        @debug_l1 "Skipping model training (skip_scoring = true)"
     end
     
     # 6. Apply models to their respective test folds (skip if skip_scoring = true)
@@ -1896,17 +1841,12 @@ function perform_probit_analysis_multifold(
                 X_test = Matrix{Float64}(all_protein_groups[test_mask, feature_names])
                 prob_scores = calculate_probit_scores(X_test, models[test_fold])
                 all_protein_groups[test_mask, :pg_score] = Float32.(prob_scores)
-                
-                @debug_l1 "Applied model to fold $test_fold - n_test: $n_test"
             end
         end
-    else
-        @debug_l1 "Keeping original pg_scores (skip_scoring = true)"
     end
     
     # 7. Report improvement if requested (skip if skip_scoring = true)
     if show_improvement && !skip_scoring
-        @debug_l1 "Show improvement "
         # Calculate improvement at 1% FDR
         old_qvalues = zeros(Float32, nrow(all_protein_groups))
         new_qvalues = zeros(Float32, nrow(all_protein_groups))
@@ -1919,19 +1859,11 @@ function perform_probit_analysis_multifold(
         
         if old_passing > 0
             percent_improvement = round(100.0 * (new_passing - old_passing) / old_passing, digits=1)
-            @debug_l1 "Multi-fold probit regression results - old_passing: $old_passing, new_passing: $new_passing, improvement: $percent_improvement%"
-        else
-            @debug_l1 "Multi-fold probit regression results - old_passing: $old_passing, new_passing: $new_passing"
         end
     end
     
     # 8. Update protein group files if provided
     if !isempty(pg_refs)
-        if !skip_scoring
-            @debug_l1 "Updating individual protein group files with probit scores"
-        else
-            @debug_l1 "Updating individual protein group files (keeping original scores)"
-        end
         apply_probit_scores_multifold!(pg_refs, protein_to_cv_fold, models, feature_names; skip_scoring = skip_scoring)
     end
     

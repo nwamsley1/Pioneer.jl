@@ -68,8 +68,6 @@ function detect_mass_bias(
     best_psm_count = 0
     best_bias = 0.0f0
     
-    @debug_l1 "Starting mass bias detection for file $ms_file_idx"
-    
     # Create a modified params with reduced sample rate for quick search
     quick_params = create_quick_search_params(params, strategy.quick_search_sample_rate)
     
@@ -93,15 +91,12 @@ function detect_mass_bias(
         
         # Early termination if found good yield
         if psm_count > strategy.min_psms_for_detection * 2
-            @debug_l1 "Found sufficient PSMs with bias $bias_guess ppm. Stopping search."
             break
         end
     end
     
     if best_psm_count < strategy.min_psms_for_detection
         @user_warn "Bias detection yielded only $best_psm_count PSMs. May be unreliable."
-    else
-        @debug_l1 "Best mass bias estimate: $best_bias ppm with $best_psm_count PSMs"
     end
     
     return best_bias, best_psm_count

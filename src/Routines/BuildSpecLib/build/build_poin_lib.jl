@@ -95,7 +95,7 @@ function buildPionLib(spec_lib_path::String,
     end
 
     #Simple fragments that go into the fragment index 
-    println("Get index fragments...")
+    #println("Get index fragments...")
     simple_frags = getSimpleFrags(
         fragments_table[:mz],
         fragments_table[:is_y],
@@ -123,7 +123,7 @@ function buildPionLib(spec_lib_path::String,
         rank_to_score
     );
 
-    println("Build fragment index...")
+    #println("Build fragment index...")
     ##########
     #Builds fragment indexes and saves them for the spec_lib_path
     sort!(simple_frags, by = x->x.prec_irt)
@@ -134,7 +134,7 @@ function buildPionLib(spec_lib_path::String,
         rt_bin_tol_ppm,  #irt_bin_width
         index_name = ""
     );
-    println("Build presearch fragment index...")
+    #println("Build presearch fragment index...")
     sort!(simple_frags, by = x->x.prec_irt)
     buildFragmentIndex!(
         spec_lib_path,
@@ -146,7 +146,7 @@ function buildPionLib(spec_lib_path::String,
     simple_frags = nothing
     GC.gc()
 
-    println("Get full fragments list...")
+    #println("Get full fragments list...")
     detailed_frags, pid_to_fid = getDetailedFrags(
     fragments_table[:mz],
     fragments_table[:intensity],
@@ -290,7 +290,7 @@ function buildPionLib(spec_lib_path::String,
     end
 
     #Simple fragments that go into the fragment index 
-    println("Get index fragments...")
+    #println("Get index fragments...")
     simple_frags = getSimpleFrags(
         fragments_table[:mz],
         fragments_table[:is_y],
@@ -318,7 +318,7 @@ function buildPionLib(spec_lib_path::String,
         rank_to_score
     );
 
-    println("Build fragment index...")
+    #println("Build fragment index...")
     ##########
     #Builds fragment indexes and saves them for the spec_lib_path
     sort!(simple_frags, by = x->x.prec_irt)
@@ -329,7 +329,7 @@ function buildPionLib(spec_lib_path::String,
         rt_bin_tol_ppm,  #irt_bin_width
         index_name = ""
     );
-    println("Build presearch fragment index...")
+    #println("Build presearch fragment index...")
     sort!(simple_frags, by = x->x.prec_irt)
     buildFragmentIndex!(
         spec_lib_path,
@@ -341,7 +341,7 @@ function buildPionLib(spec_lib_path::String,
     simple_frags = nothing
     GC.gc()
 
-    println("Get full fragments list...")
+    #println("Get full fragments list...")
     detailed_frags, pid_to_fid = getDetailedFrags(
     fragments_table[:mz],
     fragments_table[:coefficients],
@@ -620,7 +620,7 @@ function getSimpleFrags(
     rank_to_score::Vector{UInt8},
     )
     if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
-        println("mistake")
+        #println("mistake")
     end
     #Maximum ranked fragment that can be included in the fragment index
     max_rank_index = length(rank_to_score)
@@ -884,7 +884,7 @@ function buildFragmentIndex!(
     index_fragments = Vector{IndexFragment{T}}(undef, length(frag_ions))
     rt_bins = Vector{FragIndexBin{T}}(undef, length(frag_ions))
     frag_bins = Vector{FragIndexBin{T}}(undef, length(frag_ions))
-    println("building fragment index...")
+    #println("building fragment index...")
     frag_bin_idx, rt_bin_idx = buildFragIndex!(index_fragments,
                     rt_bins,
                     frag_bins,
@@ -895,7 +895,7 @@ function buildFragmentIndex!(
     fragments = (IndexFragment = index_fragments,)
     rt_bins  = (FragIndexBin = rt_bins[1:rt_bin_idx-1],)
     frag_bins = (FragIndexBin = frag_bins[1:frag_bin_idx-1],)
-    println("writing tables...")
+    #println("writing tables...")
     if !isdir(folder_out)
         mkdir(folder_out)
     end
@@ -1016,7 +1016,7 @@ function getDetailedFrags(
     koina_model::KoinaModelType)
 
     if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
-        println("mistake")
+        #println("mistake")
     end
 
     #Maximum ranked fragment that can be included in the fragment index
@@ -1025,7 +1025,7 @@ function getDetailedFrags(
     n_precursors = UInt32(length(precursor_mz))
     #Keep track of number of fragments to allocate 
     n_frags = zero(UInt64)
-    println("counting fragments...")
+    #println("counting fragments...")
     for pid in ProgressBar(range(one(UInt32), n_precursors))
         prec_mz = precursor_mz[pid] #Filter on precursor mass
         frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
@@ -1072,7 +1072,7 @@ function getDetailedFrags(
                                     n_frags)   
     prec_to_frag_idx_new = Vector{UInt64}(undef, n_precursors + 1)
     detailed_frag_idx = 1
-    println("writing fragments...")
+    #println("writing fragments...")
     for pid in ProgressBar(range(one(UInt32), n_precursors))
         prec_mz = precursor_mz[pid]
         #Index of the first fragment for the precursor 
@@ -1246,7 +1246,7 @@ function getDetailedFrags(
     koina_model::SplineCoefficientModel) where {N}
 
     if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
-        println("mistake")
+        #println("mistake")
     end
 
     #Maximum ranked fragment that can be included in the fragment index
@@ -1255,7 +1255,7 @@ function getDetailedFrags(
     n_precursors = UInt32(length(precursor_mz))
     #Keep track of number of fragments to allocate 
     n_frags = zero(UInt64)
-    println("counting fragments...")
+    #println("counting fragments...")
     for pid in ProgressBar(range(one(UInt32), n_precursors))
         prec_mz = precursor_mz[pid] #Filter on precursor mass
         frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
@@ -1302,7 +1302,7 @@ function getDetailedFrags(
                                     n_frags)   
     prec_to_frag_idx_new = Vector{UInt64}(undef, n_precursors + 1)
     detailed_frag_idx = 1
-    println("writing fragments...")
+    #println("writing fragments...")
     for pid in ProgressBar(range(one(UInt32), n_precursors))
         prec_mz = precursor_mz[pid]
         #Index of the first fragment for the precursor 
