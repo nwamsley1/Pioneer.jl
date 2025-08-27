@@ -1,6 +1,6 @@
 name = "Pioneer"
 uuid = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
-authors = ["Natahan Wamsley"]
+authors = ["Nathan Wamsley"]
 version = "0.2.8"
 
 [deps]

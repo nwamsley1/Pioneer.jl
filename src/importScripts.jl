@@ -201,11 +201,24 @@ function importScripts()
         ]
     )
     
+    # Load ScoringSearch files in dependency order
+    include_files!(
+        joinpath(search_methods_dir, "ScoringSearch"),
+        [
+            "utils.jl",                        # Contains get_qvalue_spline and other utility functions
+            "model_config.jl",                 # Model configuration
+            "score_psms.jl",                   # PSM scoring functions
+            "scoring_interface.jl",            # Interface functions
+            "protein_inference_pipeline.jl",   # Protein inference pipeline
+            "ScoringSearch.jl"                 # Main implementation - depends on utils.jl
+        ]
+    )
+    
     # Include remaining SearchMethods files (excluding old FileReferences and FileOperations)
-    # Skip ParameterTuningSearch since we loaded it above
+    # Skip ParameterTuningSearch and ScoringSearch since we loaded them above
     for (root, dirs, files) in walkdir(search_methods_dir)
-        # Skip ParameterTuningSearch directory
-        if occursin("ParameterTuningSearch", root)
+        # Skip ParameterTuningSearch and ScoringSearch directories
+        if occursin("ParameterTuningSearch", root) || occursin("ScoringSearch", root)
             continue
         end
         for file in files
