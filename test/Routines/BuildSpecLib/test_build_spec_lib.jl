@@ -33,7 +33,8 @@ function generate_build_params(
     entrapment_r::Float64 = 0.0
 )
     # Load default parameters as template
-    template_path = joinpath(dirname(@__DIR__), "..", "..", "..", "assets", "example_config", "defaultBuildLibParams.json")
+    project_root = joinpath(@__DIR__, "..", "..", "..")
+    template_path = joinpath(project_root, "assets", "example_config", "defaultBuildLibParams.json")
     params = JSON.parsefile(template_path, dicttype=OrderedDict)
     
     # Update parameters
@@ -159,8 +160,9 @@ end
     end
     
     # Base directories
-    test_data_dir = joinpath(dirname(@__DIR__), "..", "..", "..", "data", "test_build_spec_lib")
-    fasta_dir = joinpath(dirname(@__DIR__), "..", "..", "..", "data", "test_fasta_files")
+    project_root = joinpath(@__DIR__, "..", "..", "..")
+    test_data_dir = joinpath(project_root, "data", "test_build_spec_lib")
+    fasta_dir = joinpath(project_root, "data", "test_fasta_files")
     
     @testset "Scenario A - Missed Cleavage Verification" begin
         scenario_dir = joinpath(test_data_dir, "scenario_a_missed_cleavages")
