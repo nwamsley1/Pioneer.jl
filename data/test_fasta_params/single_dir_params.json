@@ -78,8 +78,8 @@
     "match_lib_build_batch": 100000,
     "include_contaminants": true,
     "fasta_paths": [
-        "/var/folders/9x/qjy0m5v93_13l4b_wjvr8gjm0000gn/T/jl_9pMo2b/fastas_dir1/proteins1.fasta",
-        "/var/folders/9x/qjy0m5v93_13l4b_wjvr8gjm0000gn/T/jl_9pMo2b/fastas_dir1/proteins2.fasta.gz"
+        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins1.fasta",
+        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins2.fasta.gz"
     ],
     "fasta_names": [
         "PROTEINS1",
