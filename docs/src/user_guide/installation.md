@@ -57,7 +57,13 @@ To work on Pioneer itself, set up a local development environment.
 5. Install [PioneerConverter](https://github.com/nwamsley1/PioneerConverter) to convert Thermo RAW files to Arrow format.
 6. Call the main functions directly, e.g.
    ```julia
+   # Option 1: Single FASTA directory (backward compatible)
    params = GetBuildLibParams(out_dir, lib_name, fasta_dir)
+   BuildSpecLib(params)
+   
+   # Option 2: Flexible input - files and/or directories
+   params = GetBuildLibParams(out_dir, lib_name, 
+       ["/path/to/dir1", "/path/to/file.fasta", "/path/to/dir2"])
    BuildSpecLib(params)
    params = GetSearchParams("library.poin", "ms_data", "results")
    SearchDIA(params)
