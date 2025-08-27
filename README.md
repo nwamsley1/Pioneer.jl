@@ -33,7 +33,7 @@ pioneer --help
 ```
 Lists subcommands such as `predict`, `params-predict`, `search`, `params-search`, `convert-raw`, and `convert-mzml`.
 
-On the first run, Windows and Linux download IntelOpenMP and MKL; macOS performs a Gatekeeper security check.
+On the first run macOS performs a Gatekeeper security check.
 
 ## Quick Start
 A minimal end-to-end workflow is:
