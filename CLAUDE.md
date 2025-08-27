@@ -46,7 +46,22 @@ julia --project=. make.jl
 using Pioneer
 
 # Build spectral library
+# Option 1: Single directory (backward compatible)
 params = GetBuildLibParams(output_dir, lib_name, fasta_dir)
+BuildSpecLib(params)
+
+# Option 2: Flexible input - files and/or directories
+params = GetBuildLibParams(output_dir, lib_name, 
+    ["/path/to/dir1", "/path/to/file.fasta", "/path/to/dir2"])
+BuildSpecLib(params)
+
+# Option 3: With custom regex codes for each input
+params = GetBuildLibParams(output_dir, lib_name,
+    ["/path/to/uniprot", "/path/to/custom.fasta"],
+    regex_codes = [
+        Dict("accessions" => "^\\w+\\|(\\w+)\\|", "genes" => " GN=(\\S+)"),
+        Dict("accessions" => "^>(\\S+)", "genes" => "gene=(\\S+)")
+    ])
 BuildSpecLib(params)
 
 # Search DIA data
@@ -418,6 +433,31 @@ See `test/entrapment_analyses/PROTEIN_ANALYSIS_WORKFLOW.md` for detailed documen
 - Common Search Utilities: See `src/Routines/SearchDIA/CommonSearchUtils/CLAUDE.md` for core algorithms
 - Transition Selection: See `src/Routines/SearchDIA/CommonSearchUtils/selectTransitions/CLAUDE.md` for transition selection
 - EntrapmentAnalysis: See `test/entrapment_analyses/PROTEIN_ANALYSIS_WORKFLOW.md` for empirical FDR analysis with entrapment sequences
+
+## Recent Improvements (2025-01)
+
+### FASTA Input Enhancement
+- **Flexible Input**: GetBuildLibParams now accepts:
+  - Single directory (backward compatible)
+  - Single FASTA file
+  - Array of directories and/or FASTA files
+- **Smart Regex Mapping**:
+  - Single regex set applies to all files
+  - Multiple sets with positional mapping
+  - Automatic validation and expansion
+- **Example Usage**:
+  ```julia
+  # Mixed inputs with corresponding regex patterns
+  GetBuildLibParams(out_dir, lib_name, 
+      ["/path/to/uniprot/", "/custom/proteins.fasta"],
+      regex_codes = [uniprot_regex, custom_regex])
+  ```
+
+### Koina API Warning Reduction
+- **Converted retry warnings to debug messages** (@debug_l2)
+- **Users only see errors for complete failures**, not retries
+- **Improved error messages** with troubleshooting suggestions
+- Set `debug_console_level: 2` in params to see retry attempts during debugging
 
 ## Memories
 - remember me as memory update
