@@ -2,6 +2,7 @@
 using Test
 using JSON
 using DataStructures: OrderedDict
+using CodecZlib
 
 @testset "GetBuildLibParams FASTA Input Enhancement" begin
     
@@ -22,12 +23,9 @@ using DataStructures: OrderedDict
     # Setup FASTA test files directory (permanent, not temp)
     fasta_test_dir = joinpath(dirname(@__DIR__), "..", "..", "..", "data", "test_fasta_files")
     
-    # Clean up existing test files if directory exists
-    if isdir(fasta_test_dir)
-        for item in readdir(fasta_test_dir, join=true)
-            rm(item, force=true, recursive=true)
-        end
-    else
+    # Create directory if it doesn't exist, but don't delete existing files
+    # This preserves files like minimal_protein.fasta used by other tests
+    if !isdir(fasta_test_dir)
         mkpath(fasta_test_dir)
     end
     
@@ -43,20 +41,42 @@ using DataStructures: OrderedDict
     fasta3_content = ">sp|Q11111|PROT3 Protein 3 OS=Mus musculus GN=GENE3\nMASSHLLLVLLCLGLTWGLRASPPGGSSGSGGAPLAGSPRSLPSSPTTYLSLAPLNPKVAPGA\n"
     custom_fasta_content = ">CustomID_001 Custom protein description gene=CUSTOM1\nMEPVDPRLEPWKHPGSQPKTACTNCYCKKCCFHCQVCFITKALGISYGRKKRRQRRRAHQNSY\n"
     
-    # Write FASTA files
-    open(joinpath(dir1, "proteins1.fasta"), "w") do f
-        write(f, fasta1_content)
+    # Create minimal_protein.fasta if it doesn't exist (used by BuildSpecLib tests)
+    minimal_protein_path = joinpath(fasta_test_dir, "minimal_protein.fasta")
+    if !isfile(minimal_protein_path)
+        open(minimal_protein_path, "w") do f
+            write(f, ">TEST_PROTEIN Test protein for missed cleavage testing\nMARALYKDERPK")
+        end
     end
-    open(joinpath(dir1, "proteins2.fasta.gz"), "w") do f
-        # For testing purposes, create .fasta.gz file (not actually compressed)
-        write(f, fasta2_content)
+    
+    # Write FASTA files only if they don't exist
+    proteins1_path = joinpath(dir1, "proteins1.fasta")
+    if !isfile(proteins1_path)
+        open(proteins1_path, "w") do f
+            write(f, fasta1_content)
+        end
     end
-    open(joinpath(dir2, "proteins3.fasta"), "w") do f
-        write(f, fasta3_content)
+    
+    proteins2_path = joinpath(dir1, "proteins2.fasta.gz")
+    if !isfile(proteins2_path)
+        # Actually compress the file since it has .gz extension
+        open(GzipCompressorStream, proteins2_path, "w") do f
+            write(f, fasta2_content)
+        end
     end
+    
+    proteins3_path = joinpath(dir2, "proteins3.fasta")
+    if !isfile(proteins3_path)
+        open(proteins3_path, "w") do f
+            write(f, fasta3_content)
+        end
+    end
+    
     single_file = joinpath(fasta_test_dir, "single_protein.fasta")
-    open(single_file, "w") do f
-        write(f, custom_fasta_content)
+    if !isfile(single_file)
+        open(single_file, "w") do f
+            write(f, custom_fasta_content)
+        end
     end
     
     # Setup output paths
@@ -202,8 +222,10 @@ using DataStructures: OrderedDict
         
         # Non-FASTA file
         non_fasta = joinpath(fasta_test_dir, "not_fasta.txt")
-        open(non_fasta, "w") do f
-            write(f, "This is not a FASTA file")
+        if !isfile(non_fasta)
+            open(non_fasta, "w") do f
+                write(f, "This is not a FASTA file")
+            end
         end
         @test_throws ErrorException Pioneer.GetBuildLibParams(output_dir, lib_name, non_fasta)
         
@@ -222,7 +244,9 @@ using DataStructures: OrderedDict
     
     @testset "Empty Directory Warning" begin
         empty_dir = joinpath(fasta_test_dir, "empty_dir")
-        mkpath(empty_dir)
+        if !isdir(empty_dir)
+            mkpath(empty_dir)
+        end
         
         # Should not error but should warn and produce empty arrays
         params_file = joinpath(test_data_dir, "empty_dir_params.json")

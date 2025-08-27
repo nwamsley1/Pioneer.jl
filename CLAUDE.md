@@ -248,9 +248,30 @@ results_dir/
 
 ### Parameter Files
 All major functions use JSON parameter files. Examples in `data/example_config/`:
-- `defaultBuildLibParams.json` - Library building parameters
-- `defaultSearchParams.json` - DIA search parameters
-- Key parameters control tolerances, scoring, and output formats
+
+#### BuildSpecLib Parameters
+- **`defaultBuildLibParamsSimplified.json`** - Simplified library building (recommended for most users)
+  - Contains only essential parameters users typically modify
+  - File paths placed at top for easy editing
+  - Reasonable defaults provided for advanced parameters
+- **`defaultBuildLibParams.json`** - Full library building configuration
+  - Complete control over all parameters
+  - Advanced options for digestion, fragmentation, and prediction
+
+To generate parameter templates:
+```julia
+# Generate simplified template (default)
+params = GetBuildLibParams(output_dir, lib_name, fasta_dir; simplified=true)
+
+# Generate full template with all parameters
+params = GetBuildLibParams(output_dir, lib_name, fasta_dir; simplified=false)
+```
+
+#### SearchDIA Parameters
+- **`defaultSearchParamsSimplified.json`** - Simplified search parameters (recommended)
+- **`defaultSearchParams.json`** - Full search configuration with all advanced options
+
+Key parameters control tolerances, scoring, FDR thresholds, and output formats.
 
 ### Testing Strategy
 - Unit tests in `test/UnitTests/` cover individual components
@@ -435,6 +456,19 @@ See `test/entrapment_analyses/PROTEIN_ANALYSIS_WORKFLOW.md` for detailed documen
 - EntrapmentAnalysis: See `test/entrapment_analyses/PROTEIN_ANALYSIS_WORKFLOW.md` for empirical FDR analysis with entrapment sequences
 
 ## Recent Improvements (2025-01)
+
+### BuildSpecLib Parameter Simplification
+- **Simplified Templates**: New simplified parameter file with only essential fields
+  - File paths moved to top for easier access
+  - Automatic defaults for advanced parameters (NCE, library params)
+  - Reduces initial configuration from ~90 to ~60 lines
+- **Flexible Parameter Handling**:
+  - Optional `nce_params` with sensible defaults (NCE=25.0, charge=2, dynamic=true)
+  - Missing library parameters filled with reasonable defaults
+  - Backward compatible with full parameter files
+- **Cleavage Pattern**: Default regex `[KR][^_|$]` allows cleavage after proline
+  - More flexible than standard trypsin `[KR][^P]`
+  - Intentional design choice for broader digestion patterns
 
 ### FASTA Input Enhancement
 - **Flexible Input**: GetBuildLibParams now accepts:

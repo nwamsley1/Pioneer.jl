@@ -25,6 +25,7 @@ using Base.Order
 using Base.Iterators: partition
 using CSV, Combinatorics, CodecZlib
 using DataFrames, DataStructures, Dictionaries, Distributions
+using HTTP
 using FASTX
 using Interpolations
 using Interpolations: Gridded, Linear, Throw, OnGrid, Line

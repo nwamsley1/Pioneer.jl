@@ -184,8 +184,10 @@ function prepare_chronologer_input(
         var_mods,
         _params.fasta_digest_params["max_var_mods"])
 
-    # Add decoy sequences
-    fasta_entries = add_decoy_sequences(fasta_entries)
+    # Add decoy sequences if requested
+    if _params.fasta_digest_params["add_decoys"]
+        fasta_entries = add_decoy_sequences(fasta_entries)
+    end
         
     fasta_entries = add_charge(
         fasta_entries,
