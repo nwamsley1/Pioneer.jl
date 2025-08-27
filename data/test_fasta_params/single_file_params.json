@@ -78,7 +78,7 @@
     "match_lib_build_batch": 100000,
     "include_contaminants": true,
     "fasta_paths": [
-        "/var/folders/9x/qjy0m5v93_13l4b_wjvr8gjm0000gn/T/jl_9pMo2b/single_protein.fasta"
+        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/single_protein.fasta"
     ],
     "fasta_names": [
         "SINGLE_PROTEIN"

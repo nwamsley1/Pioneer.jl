@@ -123,6 +123,9 @@ end
     # Test FASTA parameter enhancement
     include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
     
+    # Test BuildSpecLib functionality
+    include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
+    
     #=
     include("./UnitTests/buildDesignMatrix.jl")
     include("./UnitTests/isotopeSplines.jl")
