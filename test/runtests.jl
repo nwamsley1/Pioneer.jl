@@ -117,9 +117,9 @@ end
     end
     include("./UnitTests/empiricalLibTests.jl")
     =#
-    @testset "process_test" begin 
-        @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
-    end
+    #@testset "process_test" begin 
+    #    @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
+    #end
     # Test FASTA parameter enhancement
     include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
     

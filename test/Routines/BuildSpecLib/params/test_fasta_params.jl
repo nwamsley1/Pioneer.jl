@@ -7,14 +7,33 @@ using DataStructures: OrderedDict
     
     # Setup test data directory
     test_data_dir = joinpath(dirname(@__DIR__), "..", "..", "..", "data", "test_fasta_params")
-    mkpath(test_data_dir)
     
-    # Create temporary FASTA test files
-    temp_dir = mktempdir()
+    # Clean up existing parameter JSON files if directory exists
+    if isdir(test_data_dir)
+        for item in readdir(test_data_dir, join=true)
+            if endswith(item, ".json") || isdir(item)
+                rm(item, force=true, recursive=true)
+            end
+        end
+    else
+        mkpath(test_data_dir)
+    end
+    
+    # Setup FASTA test files directory (permanent, not temp)
+    fasta_test_dir = joinpath(dirname(@__DIR__), "..", "..", "..", "data", "test_fasta_files")
+    
+    # Clean up existing test files if directory exists
+    if isdir(fasta_test_dir)
+        for item in readdir(fasta_test_dir, join=true)
+            rm(item, force=true, recursive=true)
+        end
+    else
+        mkpath(fasta_test_dir)
+    end
     
     # Create test directory structure
-    dir1 = joinpath(temp_dir, "fastas_dir1")
-    dir2 = joinpath(temp_dir, "fastas_dir2")
+    dir1 = joinpath(fasta_test_dir, "fastas_dir1")
+    dir2 = joinpath(fasta_test_dir, "fastas_dir2")
     mkpath(dir1)
     mkpath(dir2)
     
@@ -35,7 +54,7 @@ using DataStructures: OrderedDict
     open(joinpath(dir2, "proteins3.fasta"), "w") do f
         write(f, fasta3_content)
     end
-    single_file = joinpath(temp_dir, "single_protein.fasta")
+    single_file = joinpath(fasta_test_dir, "single_protein.fasta")
     open(single_file, "w") do f
         write(f, custom_fasta_content)
     end
@@ -182,7 +201,7 @@ using DataStructures: OrderedDict
         @test_throws ErrorException Pioneer.GetBuildLibParams(output_dir, lib_name, "/nonexistent/path")
         
         # Non-FASTA file
-        non_fasta = joinpath(temp_dir, "not_fasta.txt")
+        non_fasta = joinpath(fasta_test_dir, "not_fasta.txt")
         open(non_fasta, "w") do f
             write(f, "This is not a FASTA file")
         end
@@ -202,7 +221,7 @@ using DataStructures: OrderedDict
     end
     
     @testset "Empty Directory Warning" begin
-        empty_dir = joinpath(temp_dir, "empty_dir")
+        empty_dir = joinpath(fasta_test_dir, "empty_dir")
         mkpath(empty_dir)
         
         # Should not error but should warn and produce empty arrays
@@ -215,8 +234,7 @@ using DataStructures: OrderedDict
         )
     end
     
-    # Cleanup temporary directory
-    rm(temp_dir, recursive=true)
+    # Don't cleanup - leave test files for inspection
 end
 
 println("✓ GetBuildLibParams FASTA enhancement tests completed")

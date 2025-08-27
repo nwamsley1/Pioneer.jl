@@ -1,0 +1,115 @@
+{
+    "fasta_digest_params": {
+        "min_length": 7,
+        "max_length": 30,
+        "min_charge": 2,
+        "max_charge": 4,
+        "cleavage_regex": "[KR][^_|$]",
+        "missed_cleavages": 1,
+        "max_var_mods": 1,
+        "add_decoys": true,
+        "entrapment_r": 0
+    },
+    "nce_params": {
+        "nce": 25.0,
+        "default_charge": 2,
+        "dynamic_nce": true
+    },
+    "library_params": {
+        "rt_bin_tol": 1.0,
+        "frag_bin_tol_ppm": 10.0,
+        "rank_to_score": [
+            8,
+            4,
+            4,
+            2,
+            2,
+            1,
+            1
+        ],
+        "y_start_index": 4,
+        "b_start_index": 3,
+        "y_start": 3,
+        "b_start": 2,
+        "include_p_index": false,
+        "include_p": false,
+        "auto_detect_frag_bounds": true,
+        "calibration_raw_file": "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/OlsenMixedSpeciesAstral200ng/20230324_OLEP08_200ng_30min_E5H50Y45_180K_2Th3p5ms_01.arrow",
+        "frag_mz_min": 150.0,
+        "frag_mz_max": 2020.0,
+        "prec_mz_min": 390.0,
+        "prec_mz_max": 1010.0,
+        "max_frag_charge": 3,
+        "max_frag_rank": 255,
+        "length_to_frag_count_multiple": 2,
+        "min_frag_intensity": 0.0,
+        "include_isotope": false,
+        "include_internal": false,
+        "include_immonium": false,
+        "include_neutral_diff": true,
+        "instrument_type": "NONE",
+        "prediction_model": "altimeter"
+    },
+    "variable_mods": {
+        "pattern": [
+            "M"
+        ],
+        "mass": [
+            15.99491
+        ],
+        "name": [
+            "Unimod:35"
+        ]
+    },
+    "fixed_mods": {
+        "pattern": [
+            "C"
+        ],
+        "mass": [
+            57.021464
+        ],
+        "name": [
+            "Unimod:4"
+        ]
+    },
+    "isotope_mod_groups": [],
+    "max_koina_requests": 24,
+    "max_koina_batch": 1000,
+    "match_lib_build_batch": 100000,
+    "include_contaminants": true,
+    "fasta_paths": [
+        "/var/folders/9x/qjy0m5v93_13l4b_wjvr8gjm0000gn/T/jl_9pMo2b/fastas_dir1/proteins1.fasta",
+        "/var/folders/9x/qjy0m5v93_13l4b_wjvr8gjm0000gn/T/jl_9pMo2b/fastas_dir1/proteins2.fasta.gz",
+        "/var/folders/9x/qjy0m5v93_13l4b_wjvr8gjm0000gn/T/jl_9pMo2b/single_protein.fasta"
+    ],
+    "fasta_names": [
+        "PROTEINS1",
+        "PROTEINS2",
+        "SINGLE_PROTEIN"
+    ],
+    "fasta_header_regex_accessions": [
+        "^\\w+\\|(\\w+)\\|",
+        "^\\w+\\|(\\w+)\\|",
+        "^>(\\S+)"
+    ],
+    "fasta_header_regex_genes": [
+        " GN=(\\S+)",
+        " GN=(\\S+)",
+        "gene=(\\S+)"
+    ],
+    "fasta_header_regex_proteins": [
+        "^\\w+\\|\\w+\\|\\S+ (.+?) OS=",
+        "^\\w+\\|\\w+\\|\\S+ (.+?) OS=",
+        "^>\\S+ (.+?)( gene=|$)"
+    ],
+    "fasta_header_regex_organisms": [
+        " OS=(.+?)( GN=|$)",
+        " OS=(.+?)( GN=|$)",
+        "organism=(\\S+)"
+    ],
+    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output",
+    "lib_name": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "new_lib_name": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "out_name": "test_lib.tsv",
+    "predict_fragments": true
+}
