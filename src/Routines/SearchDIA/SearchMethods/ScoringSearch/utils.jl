@@ -249,7 +249,7 @@ function get_qvalue_spline(
             select!(psms_scores, [:precursor_idx, :target, score_col])
         elseif score_col == :global_pg_score # proteins
             select!(psms_scores, [:protein_name, :target, :entrap_id, score_col])
-        en
+        end
         psms_scores = unique(psms_scores)
     end
 
@@ -1010,13 +1010,10 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         old_qvalues = zeros(Float32, size(all_pgs, 1))
         get_qvalues!(all_pgs[!,:old_pg_score], all_pgs[!,:target], old_qvalues)
         old_passing = sum((old_qvalues .<= 0.01f0) .& all_pgs.target)
-        @debug_l1 "Old passing qvals: $(sum((old_qvalues .<= 0.01f0) .& all_pgs.target))" # Count targets with qval < 0.01
         new_qvalues = zeros(Float32, size(all_pgs, 1))
         get_qvalues!(all_pgs[!,:pg_score], all_pgs[!,:target], new_qvalues)
         new_passing = sum((new_qvalues .<= 0.01f0) .& all_pgs.target)
-        @debug_l1 "New passing qvals: $(sum((new_qvalues .<= 0.01f0) .& all_pgs.target))" # Count targets with qval < 0.01
         percent_improv = 100.0*(new_passing - old_passing)/old_passing |> round 
-        @debug_l1 "Probit regression improved passing targets by $(percent_improv)%"
     end
     =#
 end
