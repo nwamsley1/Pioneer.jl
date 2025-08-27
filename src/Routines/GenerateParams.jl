@@ -219,7 +219,7 @@ Returns:
 """
 function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs; 
                          params_path::Union{String, Missing} = missing,
-                         regex_codes::Union{Missing, Dict, Vector{Dict}} = missing)
+                         regex_codes::Union{Missing, Dict, Vector} = missing)
     # Clean up any old file handlers in case the program crashed
     GC.gc()
 
@@ -313,7 +313,7 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs;
             config["fasta_header_regex_proteins"] = fill(proteins, length(fasta_files))
             config["fasta_header_regex_organisms"] = fill(organisms, length(fasta_files))
             
-        elseif isa(regex_codes, Vector{Dict})
+        elseif isa(regex_codes, Vector)
             # Multiple regex sets - apply based on mapping logic
             num_inputs = length(normalized_inputs)
             num_regex_sets = length(regex_codes)
@@ -361,7 +361,7 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs;
                 error("Number of regex code sets ($num_regex_sets) must be either 1 or match the number of inputs ($num_inputs)")
             end
         else
-            error("regex_codes must be either a Dict or Vector{Dict}")
+            error("regex_codes must be either a Dict or Vector of Dicts")
         end
     else
         # Use default regex from template, expanded to match number of files
@@ -395,20 +395,6 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs;
     return output_path
 end
 
-# Backward compatibility: maintain the old function signature
-"""
-    GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String; params_path)
-
-DEPRECATED: This is a compatibility wrapper for the old function signature.
-Please use the new signature that accepts flexible fasta_inputs instead.
-"""
-function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String; 
-                         params_path::Union{String, Missing} = missing)
-    # Call the new implementation with fasta_dir as a single directory input
-    return GetBuildLibParams(out_dir, lib_name, fasta_dir; 
-                            params_path = params_path, 
-                            regex_codes = missing)
-end
 
 """
     GetParseSpecLibParams(input_lib_path::String, output_lib_path::String)
