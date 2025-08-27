@@ -1,2 +1,2 @@
->TEST001|MINI Mini protein for cleavage testing OS=Test organism GN=TESTGENE
-MARALYKDERPK
+>TEST_PROTEIN Test protein for variable mods and fragment testing
+MCMKALYKMSRPKMCER

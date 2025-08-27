@@ -75,15 +75,22 @@ function main_GetBuildLibParams(argv=ARGS)::Cint
             help = "Output path for generated parameters file"
             arg_type = String
             default = joinpath(pwd(), "buildspeclib_params.json")
+        "--full"
+            help = "Generate full parameter template with all advanced options"
+            action = :store_true
     end
     parsed_args = parse_args(argv, settings; as_symbols = true)
+    
+    # Determine template type (simplified is default)
+    simplified = !parsed_args[:full]
     
     params_path = parsed_args[:params_path]
     try
         GetBuildLibParams(parsed_args[:out_dir],
                           parsed_args[:lib_name],
                           parsed_args[:fasta_dir];
-                          params_path=params_path)
+                          params_path=params_path,
+                          simplified=simplified)
     catch
         Base.invokelatest(Base.display_error, Base.catch_stack())
         return 1
@@ -199,7 +206,7 @@ end
     GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs)
 
 Creates a new library build parameter file with updated paths and automatically discovered FASTA files.
-Uses a default template from assets/example_config/defaultBuildLibParams.json.
+Uses a default template from assets/example_config/.
 
 Arguments:
 - out_dir: Output directory path
@@ -213,13 +220,15 @@ Arguments:
   - A single set of regex codes (applied to all FASTA files)
   - Multiple sets matching the number of fasta_inputs for positional mapping
   Default: uses the regex patterns from the template
+- simplified: If true, use the simplified template (default: true)
 
 Returns:
 - String: Path to the newly created parameters file
 """
 function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs; 
                          params_path::Union{String, Missing} = missing,
-                         regex_codes::Union{Missing, Dict, Vector} = missing)
+                         regex_codes::Union{Missing, Dict, Vector} = missing,
+                         simplified::Bool = true)
     # Clean up any old file handlers in case the program crashed
     GC.gc()
 
@@ -236,8 +245,11 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs;
         end
     end
 
+    # Choose template based on simplified flag
+    template_name = simplified ? "defaultBuildLibParamsSimplified.json" : "defaultBuildLibParams.json"
+    
     # Parse JSON
-    config_text = read(asset_path("example_config", "defaultBuildLibParams.json"), String)
+    config_text = read(asset_path("example_config", template_name), String)
     config = JSON.parse(config_text, dicttype=OrderedDict)
 
     # Process fasta_inputs to get list of FASTA files

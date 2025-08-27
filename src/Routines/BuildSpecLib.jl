@@ -127,9 +127,11 @@ function BuildSpecLib(params_path::String)
         # Get fragment bounds
         dual_println("\nDetecting fragment bounds...")
         bounds_timing = @timed begin
+            # calibration_raw_file is optional - use empty string if not provided
+            calibration_file = get(_params.library_params, "calibration_raw_file", "")
             frag_bounds, prec_mz_min, prec_mz_max = get_fragment_bounds(
                 _params.library_params["auto_detect_frag_bounds"],
-                _params.library_params["calibration_raw_file"],
+                calibration_file,
                 (Float32(_params.library_params["frag_mz_min"]), Float32(_params.library_params["frag_mz_max"])),
                 (Float32(_params.library_params["prec_mz_min"]), Float32(_params.library_params["prec_mz_max"]))
             )

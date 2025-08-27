@@ -2,14 +2,16 @@
 
 ## Executive Summary
 
-This feature branch contains **173 commits** spanning several months of development, focused primarily on making the ParameterTuningSearch method more robust and reliable for challenging datasets. The work expanded to include a complete logging system overhaul and a new parameter template system that significantly improves user experience.
+This feature branch contains **183 commits** spanning several months of development, focused primarily on making the ParameterTuningSearch method more robust and reliable for challenging datasets. The work expanded to include a complete logging system overhaul, a new parameter template system, and significant improvements to FASTA file handling and library building.
 
 ### Major Accomplishments
 
 1. **ParameterTuningSearch Robustness** - Complete redesign of the parameter tuning algorithm with 3-phase convergence, adaptive scan scaling, and cross-file parameter sharing
 2. **Logging System Overhaul** - Replaced complex LoggingExtras with a custom Julia-style logging system that avoids Arrow.Table conflicts
 3. **Simplified Parameter Templates** - New system allowing users to provide minimal 50-line configs while automatically applying sensible defaults
-4. **Critical Bug Fixes** - Resolved numerous edge cases in protein scoring, RT indexing, and DataFrame handling
+4. **FASTA Input Enhancement** - Flexible input handling supporting files, directories, and mixed inputs with custom regex patterns
+5. **BuildSpecLib Improvements** - Fixed critical bugs in decoy generation, improved FASTA compression handling, and enhanced test coverage
+6. **Critical Bug Fixes** - Resolved numerous edge cases in protein scoring, RT indexing, and DataFrame handling
 
 ---
 
@@ -117,7 +119,53 @@ The original LoggingExtras-based system caused deadlocks with Arrow.Table operat
 
 ---
 
-## 4. Critical Bug Fixes
+## 4. FASTA Input Enhancement & BuildSpecLib Improvements
+
+### FASTA Input Flexibility
+
+#### Multiple Input Types
+- **Single directory** - Backward compatible with original API
+- **Single FASTA file** - Direct file specification
+- **Array of mixed inputs** - Combine directories and files freely
+
+#### Smart Regex Mapping
+- Single regex set applies to all files when provided as Dict
+- Multiple sets with positional mapping for heterogeneous sources
+- Automatic validation and expansion of regex patterns
+
+#### Example Usage
+```julia
+# Mixed inputs with corresponding regex patterns
+GetBuildLibParams(out_dir, lib_name, 
+    ["/path/to/uniprot/", "/custom/proteins.fasta"],
+    regex_codes = [uniprot_regex, custom_regex])
+```
+
+### FASTA File Handling Improvements
+
+#### Robust Compression Detection
+- Try-catch approach for handling both compressed and uncompressed files
+- Automatically detects actual compression regardless of file extension
+- Supports .fasta, .fa, .fna, .faa, and .gz extensions
+- Graceful fallback when extension doesn't match actual format
+
+#### Bug Fixes
+- **Decoy generation** - Fixed bug where decoys were generated even when `add_decoys: false`
+- **Optional parameters** - Made `calibration_raw_file` parameter optional
+- **Test improvements** - Properly compress test files with .gz extension
+- **Arrow table support** - Tests now correctly check precursors_table.arrow instead of CSV
+
+### Koina API Integration
+
+#### Warning Reduction
+- Converted retry warnings to debug messages (`@debug_l2`)
+- Users only see errors for complete failures, not retries
+- Improved error messages with troubleshooting suggestions
+- Set `debug_console_level: 2` to see retry attempts during debugging
+
+---
+
+## 5. Critical Bug Fixes
 
 ### Protein Scoring
 - Fixed logodds function receiving log-sum scores instead of probabilities
@@ -141,23 +189,25 @@ The original LoggingExtras-based system caused deadlocks with Arrow.Table operat
 
 ---
 
-## 5. Code Quality Improvements
+## 6. Code Quality Improvements
 
 ### Refactoring
 - Extracted types to resolve circular dependencies
 - Improved module loading order in importScripts.jl
 - Separated concerns between data structures and algorithms
-- Cleaned up temporary files and documentation
+- Cleaned up temporary files and test artifacts
+- Removed obsolete documentation files
 
 ### Testing
-- Added unit tests for critical functions
+- Added comprehensive BuildSpecLib integration tests
+- Unit tests for FASTA parameter handling
 - Integration tests maintained and passing
-- Comprehensive parameter system testing
+- Test coverage for all major scenarios (A, B, C, D)
 - Diagnostic tools for debugging complex issues
 
 ### Documentation
 - Updated CLAUDE.md with logging system details
-- Added inline documentation for new features
+- Added documentation for FASTA input enhancement
 - Created troubleshooting guides for common issues
 - Maintained backwards compatibility documentation
 
@@ -173,23 +223,45 @@ The original LoggingExtras-based system caused deadlocks with Arrow.Table operat
 ✅ Logging system under high load  
 ✅ Arrow.Table compatibility  
 ✅ Backward compatibility with existing configs  
+✅ FASTA compression handling (both .fasta and .fasta.gz)  
+✅ Mixed FASTA input sources with custom regex  
+✅ BuildSpecLib with all test scenarios (A, B, C, D)  
 
 ### Performance
 - No performance regression from main branch
 - Improved reliability on challenging datasets
 - Consistent behavior across different instruments
 - Better diagnostic information for troubleshooting
+- Robust FASTA file handling regardless of compression
 
 ---
 
 ## Summary Statistics
 
-- **Total Commits**: 173
-- **Files Modified**: ~50+ core files
-- **Lines Added**: ~3,000+
-- **Lines Removed**: ~1,500+
+- **Total Commits**: 183
+- **Files Modified**: ~60+ core files
+- **Lines Added**: ~3,500+
+- **Lines Removed**: ~4,500+ (including cleanup of obsolete docs)
 - **Test Coverage**: Maintained/Improved
 - **Breaking Changes**: None (fully backward compatible)
+
+---
+
+## Recent Updates (Latest 10 commits)
+
+### BuildSpecLib Test Suite Restoration
+- Fixed decoy generation bug that created decoys even when disabled
+- Made calibration_raw_file parameter optional
+- Improved FASTA file handling to support both compressed and uncompressed files
+- Fixed test file creation to properly compress .gz files
+- Re-enabled all BuildSpecLib test scenarios (A, B, C, D)
+- Removed variable modifications from tests for simplification
+- Fixed entrapment_r to use integer values
+
+### Code Cleanup
+- Removed temporary test artifacts and training files
+- Cleaned up obsolete documentation and planning files
+- Consolidated feature documentation into CLAUDE.md
 
 ---
 
@@ -199,6 +271,10 @@ This feature branch is ready for:
 1. Final review and testing on production datasets
 2. Merge to main branch
 3. Version bump (suggested: 0.1.13 or 0.2.0 for the significant improvements)
-4. Release notes highlighting the robustness improvements
+4. Release notes highlighting:
+   - Robustness improvements for challenging datasets
+   - Simplified parameter configuration
+   - Enhanced FASTA input flexibility
+   - Improved BuildSpecLib reliability
 
-The improvements make Pioneer.jl significantly more reliable for challenging datasets while maintaining full backward compatibility and improving the user experience through simplified configuration options.
+The improvements make Pioneer.jl significantly more reliable for challenging datasets while maintaining full backward compatibility and improving the user experience through simplified configuration options and flexible input handling.

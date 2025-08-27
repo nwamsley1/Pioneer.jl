@@ -1,11 +1,4 @@
 # BuildSpecLib Integration Tests
-using Test
-using JSON
-using DataStructures: OrderedDict
-using CSV
-using DataFrames
-using Arrow
-using HTTP
 
 # Helper function to check network connectivity
 function has_network_connection()
@@ -18,6 +11,10 @@ function has_network_connection()
 end
 
 # Generate parameter JSON for BuildSpecLib
+# Note: Pioneer uses cleavage regex [KR][^_|$] by default, which allows cleavage
+# after K/R even when followed by P (unlike standard trypsin [KR][^P]).
+# This is intentional to provide more flexible digestion patterns.
+# The regex prevents cleavage only when K/R is followed by underscore, pipe, or dollar sign.
 function generate_build_params(
     fasta_path::String,
     output_dir::String,
@@ -68,6 +65,7 @@ function generate_build_params(
     params["predict_fragments"] = predict_fragments
     params["max_koina_requests"] = 12
     params["max_koina_batch"] = max_koina_batch
+    params["include_contaminants"] = false  # Don't add contaminants for testing
     
     # Set regex patterns for FASTA headers
     params["fasta_header_regex_accessions"] = ["^>(\\S+)"]
@@ -75,7 +73,204 @@ function generate_build_params(
     params["fasta_header_regex_proteins"] = ["\\s+(.+?)\\s+OS="]
     params["fasta_header_regex_organisms"] = ["OS=(.+?)(?:\\s+GN=|\$)"]
     
+    # Clear variable modifications for simpler testing
+    params["variable_mods"] = Dict(
+        "pattern" => [],
+        "mass" => [],
+        "name" => []
+    )
+    
     return params
+end
+
+# Generate parameters with variable modifications
+function generate_build_params_with_var_mods(
+    fasta_path::String,
+    output_dir::String,
+    lib_name::String;
+    max_var_mods::Int = 1,
+    include_oxidation::Bool = true,
+    include_phospho::Bool = false,
+    length_to_frag_count_multiple::Float64 = 2.0,
+    missed_cleavages::Int = 1,
+    min_length::Int = 7,
+    max_length::Int = 30,
+    min_charge::Int = 2,
+    max_charge::Int = 4,
+    add_decoys::Bool = true,
+    predict_fragments::Bool = true,
+    max_koina_batch::Int = 100
+)
+    # Start with base parameters
+    params = generate_build_params(
+        fasta_path, output_dir, lib_name;
+        missed_cleavages=missed_cleavages,
+        min_length=min_length,
+        max_length=max_length,
+        min_charge=min_charge,
+        max_charge=max_charge,
+        add_decoys=add_decoys,
+        predict_fragments=predict_fragments,
+        max_koina_batch=max_koina_batch
+    )
+    
+    # Set max variable modifications
+    params["fasta_digest_params"]["max_var_mods"] = max_var_mods
+    
+    # Set fragment count multiplier
+    params["library_params"]["length_to_frag_count_multiple"] = length_to_frag_count_multiple
+    
+    # Configure variable modifications
+    var_mods = Dict(
+        "pattern" => String[],
+        "mass" => Float64[],
+        "name" => String[]
+    )
+    
+    if include_oxidation && max_var_mods > 0
+        push!(var_mods["pattern"], "M")
+        push!(var_mods["mass"], 15.994915)
+        push!(var_mods["name"], "Unimod:35")
+    end
+    
+    if include_phospho && max_var_mods > 0
+        push!(var_mods["pattern"], "C")
+        push!(var_mods["mass"], 57.021464)
+        push!(var_mods["name"], "Unimod:4")
+    end
+    
+    params["variable_mods"] = var_mods
+    
+    return params
+end
+
+# Calculate expected number of modification combinations
+function calculate_expected_combinations(
+    sequence::String,
+    mod_patterns::Vector{String},
+    max_var_mods::Int
+)
+    if max_var_mods == 0 || isempty(mod_patterns)
+        return 1  # Only unmodified
+    end
+    
+    # Count occurrences of each modifiable residue
+    mod_counts = Dict{String, Int}()
+    for pattern in mod_patterns
+        mod_counts[pattern] = count(pattern, sequence)
+    end
+    
+    total_combinations = 1  # Start with unmodified
+    
+    # Calculate combinations for each number of modifications
+    for n_mods in 1:min(max_var_mods, sum(values(mod_counts)))
+        if length(mod_patterns) == 1
+            # Single modification type
+            pattern = mod_patterns[1]
+            n_sites = mod_counts[pattern]
+            if n_mods <= n_sites
+                total_combinations += binomial(n_sites, n_mods)
+            end
+        else
+            # Multiple modification types - more complex calculation
+            # For simplicity, we'll calculate some common cases
+            if n_mods == 1
+                # Single mod from any type
+                for pattern in mod_patterns
+                    total_combinations += mod_counts[pattern]
+                end
+            elseif n_mods == 2 && length(mod_patterns) == 2
+                # Two mods - could be same type or different
+                p1, p2 = mod_patterns
+                n1, n2 = mod_counts[p1], mod_counts[p2]
+                
+                # Two of same type
+                if n1 >= 2
+                    total_combinations += binomial(n1, 2)
+                end
+                if n2 >= 2
+                    total_combinations += binomial(n2, 2)
+                end
+                
+                # One of each type
+                total_combinations += n1 * n2
+            end
+            # For higher complexity, would need recursive calculation
+        end
+    end
+    
+    return total_combinations
+end
+
+# Verify fragment counts in library
+function verify_fragment_counts(
+    lib_dir::String,
+    expected_multiplier::Float64,
+    max_frag_rank::Int = 255
+)
+    # Load precursors to get peptide lengths
+    precursors_file = joinpath(lib_dir, "precursors_table.arrow")
+    precursors = Arrow.Table(precursors_file)
+    
+    # Look for fragment files
+    fragment_files = filter(f -> contains(f, "fragments_") && endswith(f, ".arrow"), readdir(lib_dir))
+    
+    if isempty(fragment_files)
+        @warn "No fragment files found in $lib_dir"
+        return false
+    end
+    
+    all_valid = true
+    
+    for frag_file in fragment_files
+        frag_table = Arrow.Table(joinpath(lib_dir, frag_file))
+        
+        # Group fragments by precursor
+        if :precursor_idx in propertynames(frag_table)
+            # Count fragments per precursor
+            precursor_frag_counts = Dict{Int, Int}()
+            for prec_idx in frag_table.precursor_idx
+                precursor_frag_counts[prec_idx] = get(precursor_frag_counts, prec_idx, 0) + 1
+            end
+            
+            # Verify counts match expected formula
+            for (prec_idx, frag_count) in precursor_frag_counts
+                if prec_idx <= length(precursors.sequence)
+                    seq_length = length(precursors.sequence[prec_idx])
+                    expected_max = min(max_frag_rank, round(Int, seq_length * expected_multiplier) + 1)
+                    
+                    if frag_count > expected_max
+                        @warn "Precursor $prec_idx has $frag_count fragments, expected max $expected_max"
+                        all_valid = false
+                    end
+                end
+            end
+        end
+    end
+    
+    return all_valid
+end
+
+# Count unique precursors with modifications
+function count_precursors_with_mods(peptides_file::String)
+    df = CSV.read(peptides_file, DataFrame)
+    
+    # Filter to targets only
+    df = filter(row -> row.target, df)
+    
+    # Count by modification status
+    unmodified = 0
+    modified = 0
+    
+    for row in eachrow(df)
+        if haskey(row, :structural_mods) && !ismissing(row.structural_mods) && row.structural_mods != ""
+            modified += 1
+        else
+            unmodified += 1
+        end
+    end
+    
+    return (total=nrow(df), unmodified=unmodified, modified=modified)
 end
 
 # Verify library structure was created
@@ -83,11 +278,14 @@ function verify_library_structure(lib_dir::String)
     @test isdir(lib_dir)
     
     # Check for essential files
-    peptides_file = joinpath(lib_dir, "peptides.csv")
-    @test isfile(peptides_file)
+    precursors_file = joinpath(lib_dir, "precursors_table.arrow")
+    @test isfile(precursors_file)
     
     config_file = joinpath(lib_dir, "config.json")
     @test isfile(config_file)
+    
+    proteins_file = joinpath(lib_dir, "proteins_table.arrow")
+    @test isfile(proteins_file)
     
     return true
 end
@@ -103,6 +301,9 @@ function verify_peptide_generation(peptides_file::String, expected_params::Dict)
     # Check charge states
     @test all(expected_params["min_charge"] .<= df.charge .<= expected_params["max_charge"])
     
+    for charge in range(expected_params["min_charge"], expected_params["max_charge"])
+        @test any(df.charge .== charge)
+    end
     # Count targets and decoys
     n_targets = sum(df.target)
     n_decoys = sum(.!df.target)
@@ -110,7 +311,7 @@ function verify_peptide_generation(peptides_file::String, expected_params::Dict)
     if expected_params["add_decoys"]
         @test n_decoys > 0
         # Decoys should be roughly equal to targets (allowing some variation)
-        @test 0.8 * n_targets <= n_decoys <= 1.2 * n_targets
+        @test n_targets == n_decoys
     else
         @test n_decoys == 0
     end
@@ -171,11 +372,20 @@ end
         
         # Verify FASTA file exists
         println("Looking for FASTA at: $minimal_fasta")
-        @test isfile(minimal_fasta) "FASTA file not found: $minimal_fasta"
+        @test isfile(minimal_fasta)
         
-        # Test with just one case for now
+        # Update expected peptides for new sequence MCMKALYKMSRPKMCER
+        # With [KR][^_|$] regex, this should cleave after K and R (including RP)
+        # Cleaving at positions: K5, K8, R11(before P), K14, R17
+        # Peptides with 0 missed cleavages: MCMK, ALYK, MSR, PK, MCER
+        # With 1 missed cleavage: MCMKALYK, ALYKMSR, MSRPK, PKMCER, and all 0-mc peptides
+        # With 2 missed cleavages: MCMKALYKMSR, ALYKMSRPK, MSRPKMCER, plus all shorter
+        # With 3 missed cleavages: MCMKALYKMSRPK, ALYKMSRPKMCER, plus all shorter
+        
         missed_cleavage_tests = [
-            (mc=1, expected_peptides=2),  # MARALYK, ALYKDER
+            (mc=1, expected_peptides=9),  # 5 base + 4 with 1 mc
+            (mc=2, expected_peptides=12), # Above + 3 with 2 mc
+            (mc=3, expected_peptides=14), # Above + 2 with 3 mc
         ]
         
         for test_case in missed_cleavage_tests
@@ -196,7 +406,7 @@ end
                     min_charge = 2,
                     max_charge = 2,
                     add_decoys = false,  # No decoys for easier counting
-                    predict_fragments = false,  # DISABLED for testing
+                    predict_fragments = true,  # Required for BuildSpecLib
                     max_koina_batch = 10
                 )
                 
@@ -219,30 +429,42 @@ end
                         println("  - $file")
                     end
                     
-                    # Check for peptides file
-                    peptides_file = joinpath(lib_dir, "peptides.csv")
-                    if isfile(peptides_file)
-                        n_peptides, sequences = count_peptides_by_sequence(peptides_file, true)
-                        println("Found $n_peptides unique peptides: $sequences")
-                        @test n_peptides == test_case.expected_peptides
+                    # Check precursors table
+                    precursors_file = joinpath(lib_dir, "precursors_table.arrow")
+                    if isfile(precursors_file)
+                        # Read Arrow table and extract sequences
+                        precursors = Arrow.Table(precursors_file)
+                        sequences = unique(precursors[:sequence])
+                        println("Found $(length(sequences)) unique peptide sequences")
+                        println("First 10 sequences: $(sequences[1:min(10, length(sequences))])")
                         
-                        # Verify specific peptides exist
+                        # For minimal protein MARALYKDERPK:
+                        # Using cleavage regex [KR][^_|$] (allows cleavage after K/R even when followed by P):
+                        # - Position 7: K → cleaves after to give "MARALYK" 
+                        # - Position 10: R → cleaves after to give "DER"
+                        # With 0 missed cleavages: MARALYK (7 aa), DER (3 aa), PK (2 aa)
+                        #   After length filtering (min=7): Only MARALYK passes
+                        # With 1 missed cleavage: MARALYKDER (10 aa), DERPK (5 aa), MARALYKDERPK (12 aa) 
+                        #   Plus the 0-MC peptides: MARALYK (7 aa)
                         if test_case.mc == 1
-                            @test "MARALYK" in sequences || "ALYKDER" in sequences
+                            # Check we got the expected peptides with 1 missed cleavage
+                            @test length(sequences) == test_case.expected_peptides
+                            @test "MARALYK" in sequences  # 0-MC peptide
+                            @test "MARALYKDER" in sequences  # 1-MC peptide
+                            @test "MARALYKDERPK" in sequences  # Full sequence with 1-MC
                         end
                     else
-                        @warn "Peptides file not created: $peptides_file"
-                        @test false "Peptides file was not created"
+                        @warn "Precursors file not created: $precursors_file"
+                        @test false
                     end
                 else
                     @warn "Library directory not created: $lib_dir"
-                    @test false "Library directory was not created"
+                    @test false
                 end
             end
         end
     end
     
-    #= Comment out other scenarios for now
     @testset "Scenario B - Standard Library Build" begin
         scenario_dir = joinpath(test_data_dir, "scenario_b_standard")
         output_dir = joinpath(scenario_dir, "output")
@@ -278,21 +500,18 @@ end
         # Verify outputs
         @test verify_library_structure(lib_dir)
         
-        # Verify peptide generation
-        peptides_file = joinpath(lib_dir, "peptides.csv")
-        df = verify_peptide_generation(
-            peptides_file,
-            Dict(
-                "min_length" => 7,
-                "max_length" => 12,
-                "min_charge" => 2,
-                "max_charge" => 3,
-                "add_decoys" => true
-            )
-        )
-        
-        # Check fragment predictions
-        @test verify_fragment_predictions(lib_dir)
+        # Check precursors table
+        precursors_file = joinpath(lib_dir, "precursors_table.arrow")
+        if isfile(precursors_file)
+            precursors = Arrow.Table(precursors_file)
+            sequences = unique(precursors[:sequence])
+            println("Scenario B: Found $(length(sequences)) unique peptide sequences")
+            # With decoys enabled, we should have both targets and decoys
+            @test length(sequences) > 0
+        else
+            @warn "Precursors file not created: $precursors_file"
+            @test false
+        end
     end
     
     @testset "Scenario C - Multi-file with Modifications" begin
@@ -303,12 +522,14 @@ end
         lib_dir = joinpath(output_dir, lib_name * ".poin")
         
         # Use GetBuildLibParams to handle multiple files
+        # Use full template for complex scenarios
         params_file = joinpath(scenario_dir, "params_altimeter.json")
         params_path = Pioneer.GetBuildLibParams(
             output_dir,
             lib_name,
             joinpath(fasta_dir, "fastas_dir1");
-            params_path = params_file
+            params_path = params_file,
+            simplified = false  # Use full template for complex test
         )
         
         # Load and modify the generated parameters
@@ -322,7 +543,10 @@ end
         params["library_params"]["prediction_model"] = "altimeter"
         params["library_params"]["auto_detect_frag_bounds"] = false
         params["max_koina_batch"] = 100
+        params["include_contaminants"] = false  # Don't add contaminants for testing
         delete!(params["library_params"], "calibration_raw_file")
+        # Clear variable modifications for simpler testing
+        params["variable_mods"] = Dict("pattern" => [], "mass" => [], "name" => [])
         
         # Save modified parameters
         open(params_file, "w") do io
@@ -335,16 +559,171 @@ end
         # Verify outputs
         @test verify_library_structure(lib_dir)
         
-        # Check that we processed multiple FASTA files
-        peptides_file = joinpath(lib_dir, "peptides.csv")
-        df = CSV.read(peptides_file, DataFrame)
+        # Check precursors table for multiple FASTA files
+        precursors_file = joinpath(lib_dir, "precursors_table.arrow")
+        if isfile(precursors_file)
+            precursors = Arrow.Table(precursors_file)
+            sequences = unique(precursors[:sequence])
+            proteome_ids = unique(precursors[:proteome_identifiers])
+            println("Scenario C: Found $(length(sequences)) unique sequences from $(length(proteome_ids)) proteomes")
+            # Should have peptides from both files in fastas_dir1
+            @test length(proteome_ids) >= 2  # At least 2 proteomes
+        else
+            @warn "Precursors file not created: $precursors_file"
+            @test false
+        end
+    end
+    
+    @testset "Variable Modification Tests" begin
+        scenario_base_dir = joinpath(test_data_dir, "scenario_var_mods")
+        minimal_fasta = joinpath(fasta_dir, "minimal_protein.fasta")
         
-        # Should have peptides from both proteins in dir1
-        unique_proteins = unique(df.protein_name)
-        @test length(unique_proteins) >= 2  # At least 2 proteins (plus possible decoys)
+        # Test different max_var_mods values
+        var_mod_tests = [
+            (max_var_mods=0, include_oxidation=true, include_phospho=true, desc="No mods allowed"),
+            (max_var_mods=1, include_oxidation=true, include_phospho=false, desc="Max 1 mod - M oxidation only"),
+            (max_var_mods=2, include_oxidation=true, include_phospho=true, desc="Max 2 mods - M ox and C carbamidomethyl"),
+            (max_var_mods=3, include_oxidation=true, include_phospho=true, desc="Max 3 mods"),
+            (max_var_mods=4, include_oxidation=true, include_phospho=true, desc="Max 4 mods"),
+        ]
         
-        # Verify fragment predictions
-        @test verify_fragment_predictions(lib_dir)
+        for test_case in var_mod_tests
+            @testset "$(test_case.desc)" begin
+                output_dir = joinpath(scenario_base_dir, "max_$(test_case.max_var_mods)_mods", "output")
+                lib_name = "var_mods_$(test_case.max_var_mods)"
+                lib_dir = joinpath(output_dir, lib_name * ".poin")
+                
+                # Generate parameters with variable modifications
+                params = generate_build_params_with_var_mods(
+                    minimal_fasta,
+                    output_dir,
+                    lib_name;
+                    max_var_mods = test_case.max_var_mods,
+                    include_oxidation = test_case.include_oxidation,
+                    include_phospho = test_case.include_phospho,
+                    missed_cleavages = 1,
+                    min_length = 4,  # Lower to catch smaller peptides
+                    max_length = 20,
+                    add_decoys = false,  # Simplify for testing
+                    predict_fragments = true,  # Required for library to build successfully
+                    max_koina_batch = 50
+                )
+                
+                # Save parameters
+                params_file = joinpath(dirname(output_dir), "params_var_$(test_case.max_var_mods).json")
+                mkpath(dirname(params_file))
+                open(params_file, "w") do io
+                    JSON.print(io, params, 4)
+                end
+                
+                # Run BuildSpecLib
+                @test Pioneer.BuildSpecLib(params_file) === nothing
+                
+                # Verify precursor generation with modifications
+                precursors_file = joinpath(lib_dir, "precursors_table.arrow")
+                if isfile(precursors_file)
+                    precursors = Arrow.Table(precursors_file)
+                    
+                    # Count unique sequences and modifications
+                    unique_seqs = unique(precursors[:sequence])
+                    println("Max var mods = $(test_case.max_var_mods): Found $(length(unique_seqs)) unique sequences")
+                    
+                    # Verify modification combinations
+                    # For sequence MCMKALYKMSRPKMCER with 4 M's and 3 C's
+                    if test_case.max_var_mods == 0
+                        # Should have no modifications
+                        @test !any(contains.(String.(precursors[:structural_mods]), "["))
+                    elseif test_case.max_var_mods == 1 && test_case.include_oxidation && !test_case.include_phospho
+                        # Should have unmodified + 4 positions for M oxidation
+                        # Each peptide can have 0 or 1 oxidation
+                        # Count precursors with oxidation marker
+                        has_ox = sum(contains.(String.(precursors[:structural_mods]), "15.995"))
+                        println("  Found $has_ox precursors with oxidation")
+                        @test has_ox > 0
+                    elseif test_case.max_var_mods >= 2 && test_case.include_oxidation && test_case.include_phospho
+                        # Should have combinations of M oxidation and C carbamidomethylation
+                        has_ox = sum(contains.(String.(precursors[:structural_mods]), "15.995"))
+                        has_carbamid = sum(contains.(String.(precursors[:structural_mods]), "57.021"))
+                        println("  Found $has_ox with oxidation, $has_carbamid with carbamidomethylation")
+                        @test has_ox > 0 || has_carbamid > 0
+                    end
+                else
+                    @warn "Precursors file not created: $precursors_file"
+                    @test false
+                end
+            end
+        end
+    end
+    
+    @testset "Fragment Count Rule Tests" begin
+        scenario_base_dir = joinpath(test_data_dir, "scenario_frag_count")
+        minimal_fasta = joinpath(fasta_dir, "minimal_protein.fasta")
+        
+        # Test different fragment count multipliers
+        frag_multiplier_tests = [
+            (multiplier=1.0, desc="1x peptide length"),
+            (multiplier=2.0, desc="2x peptide length (default)"),
+            (multiplier=3.0, desc="3x peptide length"),
+            (multiplier=4.0, desc="4x peptide length"),
+        ]
+        
+        for test_case in frag_multiplier_tests
+            @testset "$(test_case.desc)" begin
+                output_dir = joinpath(scenario_base_dir, "mult_$(Int(test_case.multiplier))", "output")
+                lib_name = "frag_mult_$(Int(test_case.multiplier))"
+                lib_dir = joinpath(output_dir, lib_name * ".poin")
+                
+                # Generate parameters with specific fragment multiplier
+                params = generate_build_params_with_var_mods(
+                    minimal_fasta,
+                    output_dir,
+                    lib_name;
+                    length_to_frag_count_multiple = test_case.multiplier,
+                    max_var_mods = 0,  # No mods to simplify fragment testing
+                    missed_cleavages = 1,
+                    min_length = 7,
+                    max_length = 20,
+                    add_decoys = false,
+                    predict_fragments = true,
+                    max_koina_batch = 50
+                )
+                
+                # Set max_frag_rank to a reasonable value
+                params["library_params"]["max_frag_rank"] = 100
+                
+                # Save parameters
+                params_file = joinpath(dirname(output_dir), "params_frag_$(Int(test_case.multiplier)).json")
+                mkpath(dirname(params_file))
+                open(params_file, "w") do io
+                    JSON.print(io, params, 4)
+                end
+                
+                # Run BuildSpecLib
+                @test Pioneer.BuildSpecLib(params_file) === nothing
+                
+                # Verify fragment counts
+                if verify_library_structure(lib_dir)
+                    is_valid = verify_fragment_counts(lib_dir, test_case.multiplier, 100)
+                    @test is_valid
+                    
+                    # Additional verification - check specific precursor
+                    precursors_file = joinpath(lib_dir, "precursors_table.arrow")
+                    if isfile(precursors_file)
+                        precursors = Arrow.Table(precursors_file)
+                        if length(precursors) > 0
+                            first_seq = precursors[:sequence][1]
+                            seq_length = length(first_seq)
+                            expected_frags = min(100, round(Int, seq_length * test_case.multiplier) + 1)
+                            println("  First precursor '$(first_seq)' (length $seq_length)")
+                            println("  Expected max fragments: $expected_frags with multiplier $(test_case.multiplier)")
+                        end
+                    end
+                else
+                    @warn "Library structure verification failed for multiplier $(test_case.multiplier)"
+                    @test false
+                end
+            end
+        end
     end
     
     @testset "Scenario D - Comprehensive Test" begin
@@ -367,7 +746,8 @@ end
             output_dir,
             lib_name,
             all_fastas;
-            params_path = params_file
+            params_path = params_file,
+            simplified = false  # Use full template for comprehensive test
         )
         
         # Modify for comprehensive testing
@@ -377,12 +757,15 @@ end
         params["fasta_digest_params"]["max_length"] = 20
         params["fasta_digest_params"]["min_charge"] = 2
         params["fasta_digest_params"]["max_charge"] = 4
-        params["fasta_digest_params"]["entrapment_r"] = 0.1
+        params["fasta_digest_params"]["entrapment_r"] = 1  # Integer ratio for entrapment
         params["predict_fragments"] = true
         params["library_params"]["prediction_model"] = "altimeter"
         params["library_params"]["auto_detect_frag_bounds"] = false
         params["max_koina_batch"] = 200
+        params["include_contaminants"] = false  # Don't add contaminants for testing
         delete!(params["library_params"], "calibration_raw_file")
+        # Clear variable modifications for simpler testing
+        params["variable_mods"] = Dict("pattern" => [], "mass" => [], "name" => [])
         
         # Save modified parameters
         open(params_file, "w") do io
@@ -395,27 +778,32 @@ end
         # Verify outputs
         @test verify_library_structure(lib_dir)
         
-        # Load peptides
-        peptides_file = joinpath(lib_dir, "peptides.csv")
-        df = CSV.read(peptides_file, DataFrame)
-        
-        # Check we have peptides from all sources
-        @test nrow(df) > 50  # Should have many peptides with 2 missed cleavages
-        
-        # Check entrapment sequences were added
-        if "entrap_id" in names(df)
-            n_entrapment = sum(df.entrap_id .> 0)
-            @test n_entrapment > 0
+        # Check comprehensive precursors table
+        precursors_file = joinpath(lib_dir, "precursors_table.arrow")
+        if isfile(precursors_file)
+            precursors = Arrow.Table(precursors_file)
+            sequences = unique(precursors[:sequence])
+            proteome_ids = unique(precursors[:proteome_identifiers])
+            entrapment_groups = unique(precursors[:entrapment_group_id])
+            println("Scenario D: Found $(length(sequences)) sequences from $(length(proteome_ids)) proteomes")
+            println("Entrapment groups: $entrapment_groups")
+            
+            # Should have peptides from all sources (3 FASTA sources)
+            @test length(proteome_ids) >= 3
+            
+            # Check entrapment sequences were added (group_id > 0)
+            n_entrapment = sum(precursors[:entrapment_group_id] .> 0)
+            @test n_entrapment > 0  # Should have entrapment sequences
+            
+            # Verify charge state range
+            charges = unique(precursors[:prec_charge])
+            @test minimum(charges) >= 2
+            @test maximum(charges) <= 4
+        else
+            @warn "Precursors file not created: $precursors_file"
+            @test false
         end
-        
-        # Verify charge state range
-        @test minimum(df.charge) >= 2
-        @test maximum(df.charge) <= 4
-        
-        # Verify fragment predictions
-        @test verify_fragment_predictions(lib_dir)
     end
-    =# # End of commented out scenarios
 end
 
 println("✓ BuildSpecLib integration tests completed")

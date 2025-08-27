@@ -61,12 +61,32 @@ function parse_fasta(
 )::Vector{FastaEntry}
     
     function get_reader(fasta_path::String)
-        if endswith(fasta_path, ".fasta.gz")
-            return FASTA.Reader(GzipDecompressorStream(open(fasta_path)))
-        elseif endswith(fasta_path, ".fasta")
+        # Try to open based on extension, but handle mismatched compression
+        if endswith(fasta_path, ".gz")
+            try
+                return FASTA.Reader(GzipDecompressorStream(open(fasta_path)))
+            catch e
+                if isa(e, ZlibError)
+                    # File has .gz extension but isn't actually gzipped
+                    return FASTA.Reader(open(fasta_path))
+                else
+                    rethrow(e)
+                end
+            end
+        elseif endswith(fasta_path, ".fasta") || endswith(fasta_path, ".fa") || endswith(fasta_path, ".fna") || endswith(fasta_path, ".faa")
+            # Try as plain text for common FASTA extensions
             return FASTA.Reader(open(fasta_path))
         else
-            throw(ErrorException("Invalid file extension: must be .fasta or .fasta.gz"))
+            # Unknown extension - try plain text first, then gzipped
+            try
+                return FASTA.Reader(open(fasta_path))
+            catch
+                try
+                    return FASTA.Reader(GzipDecompressorStream(open(fasta_path)))
+                catch
+                    throw(ErrorException("Unable to read file $fasta_path - not a valid FASTA or gzipped FASTA file"))
+                end
+            end
         end
     end
 
