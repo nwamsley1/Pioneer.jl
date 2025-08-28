@@ -1,0 +1,16 @@
+
+==========================================================================================
+Spectral Library Building Process
+==========================================================================================
+
+Starting library build at: 2025-08-28T12:26:57.662
+Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_4/output/frag_mult_4.poin
+
+Detecting fragment bounds...
+Fragment m/z range: Pioneer.FragBoundModel(ImmutablePolynomial(150.0f0), ImmutablePolynomial(2000.0f0))
+Precursor m/z range: (0.0f0, 5000.0f0)
+
+Starting fragment prediction workflow...
+Using prediction model: altimeter
+
+Preparing chronologer workflow...
