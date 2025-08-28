@@ -57,100 +57,81 @@ params = Dict(
 results = execute_search(ParameterTuningSearch(), search_context, params)
 ```
 """
-struct ParameterTuningSearch <: TuningMethod end
+# Type definitions moved to types.jl
 
 #==========================================================
-Type Definitions
+Iteration State Management Functions
 ==========================================================#
 
 """
-Results container for parameter tuning search.
-Holds mass error models, RT alignment models, and associated data.
+    calculate_phase_bias_shift(phase::Int64, params)
+
+Calculate the bias shift for a given phase.
+Phase 1: 0, Phase 2: +max_tolerance, Phase 3: -max_tolerance
 """
-struct ParameterTuningSearchResults <: SearchResults 
-    mass_err_model::Base.Ref{<:MassErrorModel}
-    rt_to_irt_model::Base.Ref{<:RtConversionModel}
-    irt::Vector{Float32}
-    rt::Vector{Float32}
-    ppm_errs::Vector{Float32}
-    rt_plots::Vector{Plots.Plot}
-    mass_plots::Vector{Plots.Plot}
-    qc_plots_folder_path::String
+function calculate_phase_bias_shift(phase::Int64, params)::Float32
+    max_tol = getMaxTolerancePpm(params)
+    
+    if phase == 1
+        return 0.0f0  # No shift in first phase
+    elseif phase == 2
+        return max_tol  # Positive shift in second phase
+    elseif phase == 3
+        return -max_tol  # Negative shift in third phase
+    else
+        error("Invalid phase: $phase. Only phases 1-3 are supported.")
+    end
 end
 
 """
-Parameters for parameter tuning search.
-Configures fragment matching, RT alignment, and general search behavior.
-"""
-struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
-    # Core parameters from the original struct
-    isotope_err_bounds::Tuple{UInt8, UInt8}
-    min_fraction_transmitted::Float32
-    frag_tol_ppm::Float32
-    frag_err_quantile::Float32
-    min_psms::Int64
-    max_q_val::Float32
-    max_presearch_iters::Int64
-    min_index_search_score::UInt8
-    min_frag_count::Int64
-    min_spectral_contrast::Float32
-    min_log2_matched_ratio::Float32
-    min_topn_of_m::Tuple{Int64, Int64}
-    max_best_rank::UInt8
-    n_frag_isotopes::Int64
-    max_frag_rank::UInt8
-    sample_rate::Float32
-    irt_tol::Float32
-    spec_order::Set{Int64}
-    relative_improvement_threshold::Float32
-    spline_degree::Int64
-    spline_n_knots::Int64
-    spline_fit_outlier_sd::Int64
-    irt_tol_sd::Int64
-    prec_estimation::P
+    reset_for_new_phase!(search_context, ms_file_idx, params, phase, iteration_state)
 
-    function ParameterTuningSearchParameters(params::PioneerParameters)
-        # Extract relevant parameter groups
-        global_params = params.global_settings
-        tuning_params = params.parameter_tuning
-        frag_params = tuning_params.fragment_settings
-        search_params = tuning_params.search_settings
-        rt_params = params.rt_alignment
-        
-        # Convert isotope error bounds
-        isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
-        
-        # Create precursor estimation type
-        prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        
-        # Construct with appropriate type conversions
-        new{typeof(prec_estimation)}(
-            # Core parameters
-            (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
-            Float32(global_params.isotope_settings.min_fraction_transmitted),
-            Float32(frag_params.tol_ppm),
-            Float32(search_params.frag_err_quantile),
-            Int64(search_params.min_samples),
-            Float32(global_params.scoring.q_value_threshold),
-            Int64(search_params.max_presearch_iters),
-            UInt8(frag_params.min_score),
-            Int64(frag_params.min_count),
-            Float32(frag_params.min_spectral_contrast),
-            Float32(frag_params.min_log2_ratio),
-            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
-            UInt8(1), # max_best_rank default
-            Int64(frag_params.n_isotopes),
-            UInt8(frag_params.max_rank),
-            Float32(search_params.sample_rate),
-            typemax(Float32), # irt_tol default
-            Set{Int64}([2]), # spec_order default
-            Float32(frag_params.relative_improvement_threshold),
-            3,  # spline_degree default
-            5,  # spline_n_knots default
-            5,  # spline_fit_outlier_sd default
-            Int64(rt_params.sigma_tolerance),
-            prec_estimation
-        )
+Reset parameters for a new phase with appropriate bias shift.
+"""
+function reset_for_new_phase!(search_context, ms_file_idx, params, phase::Int64, iteration_state::IterationState)
+    initial_tolerance = getFragTolPpm(params)
+    
+    # Calculate and store bias shift for this phase (simplified - no settings needed)
+    bias_shift = calculate_phase_bias_shift(phase, params)
+    push!(iteration_state.phase_bias_shifts, bias_shift)
+    
+    # Reset to initial tolerance with new bias
+    new_model = MassErrorModel(
+        bias_shift,
+        (initial_tolerance, initial_tolerance)
+    )
+    
+    setMassErrorModel!(search_context, ms_file_idx, new_model)
+end
+
+"""
+    update_best_attempt!(iteration_state, psm_count, mass_err_model, rt_model_data, 
+                        ppm_errs, phase, score, iteration, scan_count)
+
+Update the best attempt tracking if the current attempt has more PSMs than the previous best.
+This allows us to use the best parameters as fallback when convergence fails.
+"""
+function update_best_attempt!(
+    iteration_state::IterationState,
+    psm_count::Int64,
+    mass_err_model::Union{Nothing, MassErrorModel},
+    rt_model_data::Union{Nothing, Tuple},
+    ppm_errs::Union{Nothing, Vector{Float64}},
+    phase::Int64,
+    score::UInt8,
+    iteration::Int64,
+    scan_count::Int64
+)
+    # Only update if we have more PSMs than the previous best and valid models
+    if psm_count > iteration_state.best_psm_count && mass_err_model !== nothing
+        iteration_state.best_psm_count = psm_count
+        iteration_state.best_mass_error_model = mass_err_model
+        iteration_state.best_rt_model = rt_model_data
+        iteration_state.best_ppm_errs = ppm_errs
+        iteration_state.best_phase = phase
+        iteration_state.best_score = score
+        iteration_state.best_iteration = iteration
+        iteration_state.best_scan_count = scan_count
     end
 end
 
@@ -158,9 +139,10 @@ end
 Results Access Methods
 ==========================================================#
 getMassErrorModel(ptsr::ParameterTuningSearchResults) = ptsr.mass_err_model[]
-getMs1MassErrorModel(ptsr::ParameterTuningSearchResults) = ptsr.ms1_mass_err_model[]
 getRtToIrtModel(ptsr::ParameterTuningSearchResults) = ptsr.rt_to_irt_model[]
 getQcPlotsFolder(ptsr::ParameterTuningSearchResults) = ptsr.qc_plots_folder_path
+getDiagnostics(ptsr::ParameterTuningSearchResults) = ptsr.diagnostics
+getParameterHistory(ptsr::ParameterTuningSearchResults) = ptsr.parameter_history
 
 function set_rt_to_irt_model!(
     ptsr::ParameterTuningSearchResults, 
@@ -176,15 +158,19 @@ function set_rt_to_irt_model!(
     append!(ptsr.rt, model[2])
     append!(ptsr.irt, model[3])
     
+    # CRITICAL: Store RT model in SearchContext for downstream methods
+    setRtIrtMap!(search_context, model[1], ms_file_idx)
+    
     #parsed_fname = getParsedFileName(search_context, ms_file_idx)
     getIrtErrors(search_context)[ms_file_idx] = model[4] * params.irt_tol_sd
 end
+
 
 #==========================================================
 Interface Implementation
 ==========================================================#
 
-get_parameters(::ParameterTuningSearch, params::PioneerParameters) = ParameterTuningSearchParameters(params)
+get_parameters(::ParameterTuningSearch, params::Any) = ParameterTuningSearchParameters(params)
 
 function init_search_results(::ParameterTuningSearchParameters, search_context::SearchContext)
     out_dir = getDataOutDir(search_context)
@@ -198,117 +184,737 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
     !isdir(ms1_mass_error_plots ) && mkdir(ms1_mass_error_plots )
     return ParameterTuningSearchResults(
         Base.Ref{MassErrorModel}(),
-        Ref{SplineRtConversionModel}(),
+        Ref{RtConversionModel}(),
         Vector{Float32}(),
         Vector{Float32}(),
         Vector{Float32}(),
-        Plots.Plot[],
-        Plots.Plot[],
-        qc_dir
+        Plots.Plot[],  # rt_plots
+        Plots.Plot[],  # mass_plots
+        qc_dir,
+        ParameterTuningDiagnostics(),
+        ParameterHistory(),
+        Ref{Union{Nothing, IterationState}}(nothing)  # current_iteration_state
     )
 end
 
+#==========================================================
+Helper Functions for Refactored process_file!
+==========================================================#
+
 """
-Main file processing method for parameter tuning search.
+Collect PSMs from filtered spectra using library search.
+Returns tuple (psms::DataFrame, was_filtered::Bool) where was_filtered indicates if PSMs passed scoring/filtering.
+"""
+function collect_psms(
+    filtered_spectra::FilteredMassSpecData,
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    params::P,
+    ms_file_idx::Int64
+) where {P<:ParameterTuningSearchParameters}
+    
+    # Perform library search on filtered data
+    psms = library_search(filtered_spectra, search_context, params, ms_file_idx)
+    was_filtered = false
+    
+    if !iszero(size(psms, 1))
+        # CRITICAL: Map filtered scan indices back to original
+        # library_search returns scan_idx relative to filtered_spectra
+        psms[!, :filtered_scan_idx] = psms[!, :scan_idx]
+        psms[!, :scan_idx] = [
+            getOriginalScanIndex(filtered_spectra, idx) 
+            for idx in psms[!, :filtered_scan_idx]
+        ]
+        
+        # Add metadata columns using ORIGINAL spectra
+        precursors = getPrecursors(getSpecLib(search_context))
+        add_tuning_search_columns!(
+            psms,
+            spectra,
+            getIsDecoy(precursors),
+            getIrt(precursors),
+            getCharge(precursors),
+            getRetentionTimes(spectra),
+            getTICs(spectra)
+        )
+        
+        # Score and filter PSMs
+        n_filtered = filter_and_score_psms!(psms, params, search_context)
+        
+        # Note: filter_and_score_psms! now always returns the actual PSM count
+        # An empty DataFrame will naturally have 0 PSMs
+        
+        # Clean up temporary column if DataFrame not empty
+        if !isempty(psms) && "filtered_scan_idx" in names(psms)
+            select!(psms, Not(:filtered_scan_idx))
+        end
+    end
+    
+    return psms, was_filtered
+end
+
+"""
+    collect_and_log_psms(filtered_spectra, spectra, search_context, params, ms_file_idx, context_msg::String)
+
+Collect PSMs and log the count with context message.
+Returns (psms, psm_count) where psm_count is the number of filtered PSMs (0 if filtering failed).
+"""
+function collect_and_log_psms(filtered_spectra, spectra, search_context, params, ms_file_idx, context_msg::String)
+    psms, was_filtered = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
+    psm_count = size(psms, 1)
+    
+    return psms, psm_count
+end
+
+"""
+    fit_models_from_psms(psms, spectra, search_context, params, ms_file_idx)
+
+Fit mass error and RT models from PSMs.
+"""
+function fit_models_from_psms(psms, spectra, search_context, params, ms_file_idx)
+    psm_count = size(psms, 1)
+    
+    if psm_count == 0
+        return nothing, nothing, 0
+    end
+    
+    fragments = get_matched_fragments(spectra, psms, search_context, params, ms_file_idx)
+    
+    if length(fragments) == 0
+        return nothing, nothing, psm_count
+    end
+    
+    mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
+    return mass_err_model, ppm_errs, psm_count
+end
+
+"""
+    check_and_store_convergence!(results, search_context, params, ms_file_idx, 
+                                 psms, mass_err_model, ppm_errs, strategy_name::String,
+                                 iteration_state::IterationState, filtered_spectra, spectra)
+
+Check convergence criteria and store results if converged.
+Optionally tests tolerance expansion if enabled.
+"""
+function check_and_store_convergence!(results, search_context, params, ms_file_idx, 
+                                      psms, mass_err_model, ppm_errs, strategy_name::String,
+                                      iteration_state::IterationState, filtered_spectra, spectra)
+    if mass_err_model === nothing || psms === nothing
+        return false
+    end
+    
+    current_model = getMassErrorModel(search_context, ms_file_idx)
+    
+    ppm_errs_count = ppm_errs !== nothing ? length(ppm_errs) : 0
+
+    if !check_convergence(psms, mass_err_model, current_model, ppm_errs, getMinPsms(params))
+        return false
+    end
+    
+    # Test tolerance expansion (always enabled)
+    final_psms = psms
+    final_model = mass_err_model
+    final_ppm_errs = ppm_errs
+    was_expanded = false
+    
+    collection_tol = iteration_state.collection_tolerance
+    
+    if collection_tol > 0.0f0
+        final_psms, final_model, final_ppm_errs, was_expanded = test_tolerance_expansion!(
+            search_context, params, ms_file_idx,
+            psms, mass_err_model, ppm_errs,
+            collection_tol, filtered_spectra, spectra
+        )
+    else
+        @user_warn "Invalid collection tolerance, skipping expansion test"
+    end
+    
+    # Store final mass error model (original or expanded)
+    setMassErrorModel!(search_context, ms_file_idx, final_model)
+    
+    # Store final ppm errors for plotting
+    if final_ppm_errs !== nothing && length(final_ppm_errs) > 0
+        resize!(results.ppm_errs, 0)
+        append!(results.ppm_errs, final_ppm_errs)
+    end
+    
+    # Store RT model from final PSMs (should always have filtered PSMs at convergence)
+    if !isempty(final_psms)
+        rt_model_data = fit_irt_model(params, final_psms)
+        set_rt_to_irt_model!(results, search_context, params, ms_file_idx, rt_model_data)
+    else
+        @user_warn "No PSMs available for RT model at convergence - this should not happen"
+    end
+    
+    return true
+end
+
+# DEPRECATED: add_scans_for_iteration! removed - use run_single_phase_attempt and run_all_phases_with_scan_count instead
+
+"""
+    expand_mass_tolerance!(search_context, ms_file_idx, params, scale_factor::Float32 = 2.0f0)
+
+Scale the current mass tolerance by the given factor up to maximum.
+"""
+function expand_mass_tolerance!(search_context, ms_file_idx, params, scale_factor::Float32 = 2.0f0)
+    current_model = getMassErrorModel(search_context, ms_file_idx)
+    current_left = getLeftTol(current_model)
+    current_right = getRightTol(current_model)
+    
+    new_left = current_left * scale_factor
+    new_right = current_right * scale_factor
+    
+    new_model = MassErrorModel(
+        getMassOffset(current_model),
+        (new_left, new_right)
+    )
+    
+    setMassErrorModel!(search_context, ms_file_idx, new_model)
+end
+
+
+"""
+    execute_strategy(strategy_num::Int, filtered_spectra, spectra, search_context, params, ms_file_idx, iteration_state)
+
+Execute one of two convergence strategies:
+- Strategy 1: Try with current parameters
+- Strategy 2: Expand mass tolerance AND adjust bias
+"""
+# execute_strategy function removed - logic now inline in run_single_phase
+
+"""
+    initialize_models!(search_context, ms_file_idx, params)
+
+Initialize mass error and quad transmission models for file.
+"""
+function initialize_models!(search_context, ms_file_idx, params)
+    # Use fixed initial parameters from JSON configuration
+    initial_bias = 0.0f0  # Always start with zero bias
+    initial_tolerance = getFragTolPpm(params)
+    
+    # Set initial mass error model
+    setMassErrorModel!(search_context, ms_file_idx, MassErrorModel(
+        initial_bias,
+        (initial_tolerance, initial_tolerance)
+    ))
+    
+    # Set initial quad transmission model
+    setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
+end
+
+
+"""
+    store_final_results!(results, search_context, params, ms_file_idx, converged, n_attempts, final_psm_count, iteration_state)
+
+Store tuning results and diagnostic information, including best attempt fallback status.
+"""
+function store_final_results!(results, search_context, params, ms_file_idx, 
+                              converged, n_attempts, final_psm_count, iteration_state::IterationState)
+    parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    
+    # Determine convergence type
+    convergence_type = if converged
+        "CONVERGED"
+    elseif iteration_state.best_psm_count > 0
+        "BEST_ATTEMPT ($(iteration_state.best_psm_count) PSMs)"
+    else
+        "FAILED"
+    end
+    
+    # Record tuning results
+    tuning_result = TuningResults(
+        getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+        (getLeftTol(getMassErrorModel(search_context, ms_file_idx)), 
+         getRightTol(getMassErrorModel(search_context, ms_file_idx))),
+        converged,
+        final_psm_count,
+        n_attempts
+    )
+    store_tuning_results!(results.parameter_history, ms_file_idx, tuning_result)
+    
+    # Record diagnostic status
+    status = ParameterTuningStatus(
+        ms_file_idx,
+        parsed_fname,
+        converged,
+        !converged,  # used_fallback
+        !converged ? "Failed to converge after $n_attempts attempts" : "",
+        n_attempts,
+        final_psm_count,
+        getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+        (getLeftTol(getMassErrorModel(search_context, ms_file_idx)), 
+         getRightTol(getMassErrorModel(search_context, ms_file_idx)))
+    )
+    record_tuning_status!(results.diagnostics, status)
+    
+    # Store final mass error model in results
+    results.mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
+end
+
+
+
+#==========================================================
+New Scan Scaling Functions
+==========================================================#
+
+"""
+    run_single_phase_attempt(phase::Int64, scan_count::Int64, iteration_state, 
+                            results, params, search_context, ms_file_idx, spectra)
+
+Run a single phase (with configured iterations) using fixed scan count.
+Returns true if converged, false otherwise.
+"""
+function run_single_phase(
+    phase::Int64,
+    filtered_spectra::FilteredMassSpecData,
+    iteration_state::IterationState,
+    results::ParameterTuningSearchResults,
+    params::ParameterTuningSearchParameters,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+)
+    settings = getIterationSettings(params)
+    
+    # Set up phase
+    iteration_state.current_phase = phase
+    iteration_state.current_iteration_in_phase = 0
+    
+    # Get all score thresholds to try
+    score_thresholds = getMinIndexSearchScores(params)
+    psm_count = 0
+    # NEW: Score threshold loop INSIDE each phase
+    for (score_idx, min_score) in enumerate(score_thresholds)
+        
+        # Update current score threshold
+        setCurrentMinScore!(params, min_score)
+        
+        # Apply phase bias shift and reset tolerance for this score
+        reset_for_new_phase!(search_context, ms_file_idx, params, phase, iteration_state)
+    
+        # ========================================
+        # INITIAL ATTEMPT (before iteration loop)
+        # ========================================
+        
+        # Collect PSMs at initial tolerance with phase bias and current score
+        psms_initial, _ = collect_and_log_psms(
+            filtered_spectra, spectra, search_context, 
+            params, ms_file_idx, "initial attempt with min_score=$min_score"
+        )
+
+        # Fit models and check initial convergence
+        mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
+            psms_initial, spectra, search_context, params, ms_file_idx
+        )
+        
+        # Track collection tolerance if we have a model
+        if mass_err_model !== nothing
+            current_model = getMassErrorModel(search_context, ms_file_idx)
+            iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
+            
+            # Track best attempt even if not converged
+            if psm_count > 0 && !isempty(psms_initial)
+                # Fit RT model for best attempt tracking (only if we have filtered PSMs)
+                rt_model_data = fit_irt_model(params, psms_initial)
+                
+                # Update best attempt with filtered PSM count
+                update_best_attempt!(
+                    iteration_state, psm_count, mass_err_model, rt_model_data, ppm_errs,
+                    phase, min_score, 0, iteration_state.current_scan_count
+                )
+            end
+        end
+        
+        if mass_err_model !== nothing && check_and_store_convergence!(
+            results, search_context, params, ms_file_idx,
+            psms_initial, mass_err_model, ppm_errs,
+            "Initial attempt (Phase $phase, min_score=$min_score)",
+            iteration_state, filtered_spectra, spectra
+        )
+            return true
+        end
+        
+        # ========================================
+        # ITERATION LOOP (expand → collect → adjust → collect cycles)
+        # ========================================
+        
+        for iter in 1:settings.iterations_per_phase
+            iteration_state.current_iteration_in_phase = iter
+            iteration_state.total_iterations += 1
+            
+            # Step 1: EXPAND TOLERANCE
+            expand_mass_tolerance!(search_context, ms_file_idx, params, 
+                                  settings.mass_tolerance_scale_factor)
+            current_tolerance = settings.init_mass_tol_ppm * 
+                              (settings.mass_tolerance_scale_factor ^ iter)
+            current_model = getMassErrorModel(search_context, ms_file_idx)
+
+            # Step 2: COLLECT PSMs with expanded tolerance (to determine bias)
+            psms_for_bias, _ = collect_and_log_psms(
+                filtered_spectra, spectra, search_context,
+                params, ms_file_idx, "with expanded tolerance and min_score=$min_score"
+            )
+            
+            # Step 3: FIT MODEL to determine bias adjustment
+            mass_err_for_bias, _, _ = fit_models_from_psms(
+                psms_for_bias, spectra, search_context, params, ms_file_idx
+            )
+            
+            # Step 4: ADJUST BIAS based on fitted model
+            if mass_err_for_bias !== nothing
+                new_bias = getMassOffset(mass_err_for_bias)
+                current_model = getMassErrorModel(search_context, ms_file_idx)
+                old_bias = getMassOffset(current_model)
+                
+                # Update the bias while keeping the expanded tolerance
+                adjusted_model = MassErrorModel(
+                    new_bias,
+                    (getLeftTol(current_model), getRightTol(current_model))
+                )
+                setMassErrorModel!(search_context, ms_file_idx, adjusted_model)
+            end
+            
+            # Step 5: COLLECT PSMs again with adjusted bias
+            psms_adjusted, _ = collect_and_log_psms(
+                filtered_spectra, spectra, search_context,
+                params, ms_file_idx, "with adjusted bias and min_score=$min_score"
+            )
+            
+            # Step 6: FIT FINAL MODELS with bias-adjusted PSMs
+            mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
+                psms_adjusted, spectra, search_context, params, ms_file_idx
+            )
+            
+            # Update collection tolerance tracking
+            current_model = getMassErrorModel(search_context, ms_file_idx)
+            iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
+            
+            # Track best attempt after each iteration
+            if mass_err_model !== nothing && psm_count > 0 && !isempty(psms_adjusted)
+                # Fit RT model for best attempt tracking (only if we have filtered PSMs)
+                rt_model_data = fit_irt_model(params, psms_adjusted)
+                
+                # Update best attempt with filtered PSM count
+                update_best_attempt!(
+                    iteration_state, psm_count, mass_err_model, rt_model_data, ppm_errs,
+                    phase, min_score, iter, iteration_state.current_scan_count
+                )
+            end
+            
+            # Step 7: CHECK CONVERGENCE
+            if check_and_store_convergence!(
+                results, search_context, params, ms_file_idx,
+                psms_adjusted, mass_err_model, ppm_errs,
+                "Phase $phase, Iteration $iter with min_score=$min_score",
+                iteration_state, filtered_spectra, spectra
+            )
+                return true
+            end
+        end
+    end  # End of score threshold loop
+
+    return false
+end
+
+"""
+    run_all_phases_with_scan_count(scan_count, iteration_state, results, 
+                                   params, search_context, ms_file_idx, spectra)
+
+Run all 3 phases with a fixed scan count.
+Returns true if any phase achieves convergence.
+"""
+function run_all_phases_with_scan_count(
+    filtered_spectra::FilteredMassSpecData,
+    iteration_state::IterationState,
+    results::ParameterTuningSearchResults,
+    params::ParameterTuningSearchParameters,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+)
+    
+    # Update iteration state
+    iteration_state.current_scan_count = length(filtered_spectra)
+    # Run all 3 phases with the same filtered_spectra
+    for phase in 1:3
+        converged = run_single_phase(
+            phase, filtered_spectra, iteration_state,
+            results, params, search_context, ms_file_idx, spectra
+        )
+        
+        if converged
+            return true
+        end
+    end
+    @user_warn "All 3 phases completed without convergence"
+    return false
+end
+
+#==========================================================
+Main Refactored process_file! Function
+==========================================================#
+
+"""
+Process a single MS file to determine optimal mass error and RT parameters.
 """
 function process_file!(
     results::ParameterTuningSearchResults,
-    params::P, 
-    search_context::SearchContext,    
+    params::P,
+    search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
-
-    """
-    Collect PSMs through multiple iterations until sufficient high-quality PSMs found.
-    """
-    function collect_psms(
-        spectra::MassSpecData,
-        search_context::SearchContext,
-        params::P,
-        ms_file_idx::Int64
-    ) where {P<:ParameterTuningSearchParameters}
-        
-        """
-        Add columns and concatenate new PSMs to existing DataFrame.
-        """
-        function add_columns_and_concat!(
-                psms::DataFrame,
-                new_psms::DataFrame,
-                spectra::MassSpecData,
-                precursors::LibraryPrecursors,
-                params::P
-            ) where {P<:ParameterTuningSearchParameters}
-                
-                add_tuning_search_columns!(
-                    new_psms,
-                    spectra,
-                    getIsDecoy(precursors),#[:is_decoy],
-                    getIrt(precursors),#[:irt],
-                    getCharge(precursors),#[:prec_charge],
-                    getRetentionTimes(spectra),
-                    getTICs(spectra)
-                )
-                
-                if new_psms !== nothing
-                    append!(psms, new_psms)
-                end
-        end
-
-        psms = DataFrame()
-        for i in 1:getMaxPresearchIters(params)
-            new_psms = library_search(spectra, search_context, params, ms_file_idx)
-            iszero(size(new_psms, 1)) && continue
-            
-            add_columns_and_concat!(psms, new_psms, spectra, 
-                                getPrecursors(getSpecLib(search_context)), params)
-            try 
-                filter_and_score_psms!(psms, params, search_context) >= getMinPsms(params) && break
-            catch e
-                throw(e)
-            end
-        end
-        return psms
-    end
-
+    
+    converged = false
+    parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    final_psm_count = 0
+    
+    # Initialize iteration state
+    iteration_state = IterationState()
+    settings = getIterationSettings(params)
+    
+    # Get scan count parameters
+    scan_count = getInitialScanCount(params)
+    max_scans = getMaxParameterTuningScans(params)
+    scan_scale_factor = settings.scan_scale_factor
+    
+    # Define filtered_spectra outside try block for use in fallback
+    filtered_spectra = nothing
+    
     try
-        mass_err_passing = false
-        results.mass_err_model[] =  MassErrorModel(
-            0.0f0, 
-            (getFragTolPpm(params), getFragTolPpm(params)))
-        ppm_errs = nothing
-        prev_mass_err = 0.0f0
-        for i in range(0, 1)
-            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
-            setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
-
-            # Collect PSMs through iterations
-            psms = collect_psms(spectra, search_context, params, ms_file_idx)
+        
+        # Initialize models
+        initialize_models!(search_context, ms_file_idx, params)
+        
+        # Create filtered spectra ONCE with initial scan count
+        filtered_spectra = FilteredMassSpecData(
+            spectra,
+            max_scans = scan_count,
+            topn = something(getTopNPeaks(params), 200),
+            target_ms_order = UInt8(2)
+        )
+        
+        # Track current scan count
+        current_scan_count = scan_count
+        attempt_count = 0
+        
+        # Main scan scaling loop
+        while true
+            attempt_count += 1
+            iteration_state.scan_attempt = attempt_count
             
-            # Fit RT alignment model
-            set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
-                                fit_irt_model(params, psms))
-
-            # Get fragments and fit mass error model
-            fragments = get_matched_fragments(spectra, psms, results,search_context, params, ms_file_idx)
-            mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
-            #If the mass offset is much larger than expected, need to research with an updated mass offset estimate 
-            if abs(getMassOffset(mass_err_model))>(getFragTolPpm(params)/4)
-                prev_mass_err = getMassOffset(mass_err_model)
-                results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model), (getFragTolPpm(params), getFragTolPpm(params)))
-            else
-                results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model) + prev_mass_err, (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
+            # Run all phases with current filtered_spectra
+            converged = run_all_phases_with_scan_count(
+                filtered_spectra, iteration_state, results,
+                params, search_context, ms_file_idx, spectra
+            )
+            
+            if converged
+                iteration_state.converged = true
                 break
             end
+            
+            # Check if we've reached or exceeded max scans
+            if current_scan_count >= max_scans
+                iteration_state.max_scan_count_reached = true
+                break
+            end
+            
+            # Calculate next scan count
+            next_scan_count = Int64(ceil(current_scan_count * scan_scale_factor))
+            
+            # Check if next iteration would exceed max
+            if next_scan_count > max_scans
+                if current_scan_count < max_scans
+                    # Do one final attempt with exactly max_scans
+                    additional_scans = max_scans - current_scan_count
+                    append!(filtered_spectra; max_additional_scans = additional_scans)
+                    current_scan_count = max_scans
+                    # Loop will continue for one more attempt
+                else
+                    # Already at max, break
+                    break
+                end
+            else
+                # Normal scaling - append more scans
+                additional_scans = next_scan_count - current_scan_count
+                append!(filtered_spectra; max_additional_scans = additional_scans)
+                current_scan_count = next_scan_count
+            end
         end
-
-        append!(results.ppm_errs, ppm_errs)
+        #@debug_l1 "manual set mass err model . "
+        #setMassErrorModel!(search_context, ms_file_idx, 
+        #MassErrorModel(getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+        #(7.0f0, 7.0f0)))
+        # Get final PSM count if converged
+        if converged
+            final_psm_count = size(results.rt, 1)  # Track from results
+        end
+        
+        converged_score = converged ? getMinIndexSearchScore(params) : nothing
+        if !converged
+            @user_warn "Completed $(iteration_state.total_iterations) total iterations " *
+                   "across $(iteration_state.scan_attempt) attempt(s). " *
+                   "✗ Did not converge with any score threshold: $(getMinIndexSearchScores(params))"
+        end
+        
     catch e
-        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
-        @warn "Could not tune parameters for $ms_file_idx"
         throw(e)
+        @user_warn "Parameter tuning failed for file $parsed_fname with error" exception=e
     end
     
+    # Store results and handle fallback if needed
+    if !converged
+        # Check if we have a best attempt to use
+        if iteration_state.best_mass_error_model !== nothing
+            left_tol = round(getLeftTol(iteration_state.best_mass_error_model), digits = 1)
+            right_tol = round(getRightTol(iteration_state.best_mass_error_model), digits = 1)
+            @user_warn "Failed to converge for file $ms_file_idx after $(iteration_state.scan_attempt) attempts. \n" *
+                  "Using best iteration: Phase $(iteration_state.best_phase) \n" *
+                  "(bias=$(round(getPhaseShift(iteration_state.best_phase, params), digits=1)) ppm), \n" *
+                  "Score threshold $(iteration_state.best_score), \n" *
+                  "Iteration $(iteration_state.best_iteration). \n" *
+                  "Yielded $(iteration_state.best_psm_count) PSMs with \n" *
+                  "mass offset $(round(getMassOffset(iteration_state.best_mass_error_model), digits=1)) ppm and \n" *
+                  "tolerance -$left_tol/+$right_tol ppm \n"
+            
+            # Apply best attempt models
+            setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+            
+            if iteration_state.best_rt_model !== nothing
+                set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
+                                    iteration_state.best_rt_model)
+            else
+                # If no RT model, use identity
+                setRtIrtMap!(search_context, IdentityModel(), ms_file_idx)
+                results.rt_to_irt_model[] = IdentityModel()
+            end
+            
+            # Store best ppm errors for plotting
+            if iteration_state.best_ppm_errs !== nothing
+                resize!(results.ppm_errs, 0)
+                append!(results.ppm_errs, iteration_state.best_ppm_errs)
+            end
+            
+            # Test 1.5x tolerance expansion on best iteration (only if we have filtered_spectra)
+            if filtered_spectra !== nothing
+                @debug_l1 "Testing 1.5x tolerance expansion on best iteration parameters..."
+                expanded_model = MassErrorModel(
+                    getMassOffset(iteration_state.best_mass_error_model),
+                    (getLeftTol(iteration_state.best_mass_error_model) * 1.5f0,
+                     getRightTol(iteration_state.best_mass_error_model) * 1.5f0)
+                )
+                
+                # Apply expanded model and collect PSMs
+                setMassErrorModel!(search_context, ms_file_idx, expanded_model)
+                expanded_psms, expanded_ppm_errs = collect_psms_with_model(
+                    filtered_spectra, search_context, params, ms_file_idx, spectra
+                )
+                
+                if size(expanded_psms, 1) > iteration_state.best_psm_count
+                    # Refit model with expanded PSMs
+                    if length(expanded_ppm_errs) > 0
+                        # Calculate mass error from expanded PSMs
+                        expanded_fragments = get_matched_fragments(
+                            spectra, expanded_psms, search_context, params, ms_file_idx
+                        )
+                        if length(expanded_fragments) > 0
+                            refitted_model, refitted_ppm_errs = fit_mass_err_model(params, expanded_fragments)
+                            if refitted_model !== nothing
+                                # Use expanded results
+                                psm_increase = size(expanded_psms, 1) - iteration_state.best_psm_count
+                                percent_increase = round(100 * psm_increase / iteration_state.best_psm_count, digits=1)
+                                
+                                @user_info "Tolerance expansion yielded $(size(expanded_psms, 1)) PSMs " *
+                                          "(+$psm_increase, $percent_increase% increase)"
+                                
+                                iteration_state.best_mass_error_model = refitted_model
+                                iteration_state.best_psm_count = size(expanded_psms, 1)
+                                iteration_state.best_ppm_errs = refitted_ppm_errs
+                                
+                                # Update results with expanded data
+                                results.mass_err_model[] = refitted_model
+                                resize!(results.ppm_errs, 0)
+                                append!(results.ppm_errs, refitted_ppm_errs)
+                                setMassErrorModel!(search_context, ms_file_idx, refitted_model)
+                                
+                                @user_info "EXPANDED_BEST_ATTEMPT: Tolerance expansion increased PSMs by $percent_increase%"
+                            else
+                                # Revert to best iteration model if refitting failed
+                                setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+                                results.mass_err_model[] = iteration_state.best_mass_error_model
+                            end
+                        else
+                            # No fragments, revert to best iteration model
+                            setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+                            results.mass_err_model[] = iteration_state.best_mass_error_model
+                        end
+                    else
+                        # No PPM errors, revert to best iteration model
+                        setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+                        results.mass_err_model[] = iteration_state.best_mass_error_model
+                    end
+                else
+                    # Expansion didn't help, revert to best iteration model
+                    setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
+                    results.mass_err_model[] = iteration_state.best_mass_error_model
+                    @debug_l1 "Tolerance expansion did not significantly improve PSM count"
+                end
+            else
+                # Could not test tolerance expansion - no filtered spectra available
+                @user_warn "Cannot test tolerance expansion - filtered spectra not available"
+            end
+            
+            # Build detailed warning message
+            phase_bias = getPhaseShift(iteration_state.best_phase, params)
+            mass_offset = round(getMassOffset(iteration_state.best_mass_error_model), digits=1)
+            left_tol = round(getLeftTol(iteration_state.best_mass_error_model), digits = 1)
+            right_tol = round(getRightTol(iteration_state.best_mass_error_model), digits = 1)
+            warning_msg = "⚠️ Parameter tuning did not converge after $(iteration_state.scan_attempt) attempt(s).\n" *
+                         "Using best iteration: Phase $(iteration_state.best_phase) (bias=$phase_bias ppm), " *
+                         "Score threshold $(iteration_state.best_score), Iteration $(iteration_state.best_iteration)\n" *
+                         "Best iteration yielded $(iteration_state.best_psm_count) PSMs with mass offset $mass_offset ppm " *
+                         "and tolerance -$left_tol ppm and + $right_tol ppm"
+            
+            final_psm_count = iteration_state.best_psm_count
+            
+        else
+            # No valid attempts found any PSMs - use conservative defaults or borrow
+            @user_warn "Failed to converge for file $ms_file_idx after $(iteration_state.scan_attempt) attempts. " *
+                      "No attempts found sufficient PSMs (best was $(iteration_state.best_psm_count)), using fallback strategy"
+            
+            fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
+                search_context, ms_file_idx
+            )
+            
+            setMassErrorModel!(search_context, ms_file_idx, fallback_mass_err)
+            setRtIrtMap!(search_context, fallback_rt_model, ms_file_idx)
+            
+            # Update results with fallback
+            results.mass_err_model[] = fallback_mass_err
+            results.rt_to_irt_model[] = fallback_rt_model
+            
+            if borrowed_from === nothing
+                @user_info "CONSERVATIVE_FALLBACK: No valid attempts, used defaults"
+            end
+        end
+    end
+    
+    # Record tuning status
+    store_final_results!(
+        results, search_context, params, ms_file_idx,
+        converged, iteration_state.scan_attempt, final_psm_count, iteration_state
+    )
+    
+    # Add to diagnostics
+    record_file_status!(
+        results.diagnostics, ms_file_idx, parsed_fname,
+        converged, !converged, iteration_state
+    )
+
+    # Store iteration_state in results for use in process_search_results!
+    results.current_iteration_state[] = iteration_state
+
     return results
 end
 
@@ -323,73 +929,139 @@ function process_search_results!(
     ::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
     try
+        rt_alignment_folder = getRtAlignPlotFolder(search_context)
+        mass_error_folder = getMassErrPlotFolder(search_context)
         parsed_fname = getParsedFileName(search_context, ms_file_idx)
         
-        # Generate RT alignment plot
-        push!(results.rt_plots, generate_rt_plot(results, parsed_fname))
-
-        # Generate mass error plot
-        push!(results.mass_plots, generate_mass_error_plot(results, parsed_fname))
+        # Get iteration_state from results
+        iteration_state = results.current_iteration_state[]
+        
+        # Always generate plots, even with limited or no data
+        # This ensures we have diagnostic output for all files
+        
+        # Generate RT alignment plot (only store in memory, no individual files)
+        if length(results.rt) > 0
+            # If we have RT data, generate regular plot
+            rt_plot = generate_rt_plot(results, parsed_fname)
+            push!(results.rt_plots, rt_plot)  # Store for combined PDF
+        elseif iteration_state !== nothing && iteration_state.best_rt_model !== nothing
+            # Use best iteration data if available
+            rt_plot = generate_best_iteration_rt_plot_in_memory(results, parsed_fname, iteration_state)
+            push!(results.rt_plots, rt_plot)
+        else
+            # Create a diagnostic plot showing fallback/borrowed status
+            fallback_plot = generate_fallback_rt_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
+            if fallback_plot !== nothing
+                push!(results.rt_plots, fallback_plot)  # Store for combined PDF
+            end
+        end
+        
+        # Generate mass error plot (only store in memory, no individual files)
+        if length(results.ppm_errs) > 0
+            # If we have mass error data, generate regular plot
+            mass_plot = generate_mass_error_plot(results, parsed_fname)
+            push!(results.mass_plots, mass_plot)  # Store for combined PDF
+        elseif iteration_state !== nothing && iteration_state.best_ppm_errs !== nothing
+            # Use best iteration data if available
+            mass_plot = generate_best_iteration_mass_error_plot_in_memory(results, parsed_fname, iteration_state)
+            push!(results.mass_plots, mass_plot)
+        else
+            # Create a diagnostic plot showing fallback/borrowed status
+            fallback_plot = generate_fallback_mass_error_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
+            if fallback_plot !== nothing
+                push!(results.mass_plots, fallback_plot)  # Store for combined PDF
+            end
+        end
         
         # Update models in search context
         setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
-        
         setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
-    catch
+        
+        # Clear plotting data to save memory
+        resize!(results.rt, 0)
+        resize!(results.irt, 0)
+        resize!(results.ppm_errs, 0)
+        results.current_iteration_state[] = nothing  # Clear iteration state after use
+    catch e
+        throw(e)
+        @user_warn "Failed to generate plots for file $ms_file_idx" exception=(e, catch_backtrace())
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
-        nothing
     end
 end
-
-function reset_results!(ptsr::ParameterTuningSearchResults)
-    resize!(ptsr.irt, 0)
-    resize!(ptsr.rt, 0)
-    resize!(ptsr.ppm_errs, 0)
-end
-
 
 """
-Summarize results across all files and merge QC plots.
+Reset results state between files.
 """
-function summarize_results!(
-    results::ParameterTuningSearchResults,
-    params::P,
-    search_context::SearchContext
-) where {P<:ParameterTuningSearchParameters}
+function reset_results!(results::ParameterTuningSearchResults)
+    # Clear data vectors
+    resize!(results.irt, 0)
+    resize!(results.rt, 0)
+    resize!(results.ppm_errs, 0)
     
-    @info "Writing QC plots..."
-    
-    # Merge RT alignment plots
-    rt_alignment_folder = getRtAlignPlotFolder(search_context)
-    output_path = joinpath(rt_alignment_folder, "rt_alignment_plots.pdf")
-    try
-        if isfile(output_path)
-            safeRm(output_path, nothing)
-        end
-    catch e
-        @warn "Could not clear existing file: $e"
-    end
-    if !isempty(results.rt_plots)
-        save_multipage_pdf(results.rt_plots, output_path)
-        empty!(results.rt_plots)
-    end
-    
-    # Merge mass error plots
-    mass_error_folder = getMassErrPlotFolder(search_context)
-    output_path = joinpath(mass_error_folder, "mass_error_plots.pdf")
-    try
-        if isfile(output_path)
-            rm(output_path)
-        end
-    catch e
-        @warn "Could not clear existing file: $e"
-    end
-    if !isempty(results.mass_plots)
-        save_multipage_pdf(results.mass_plots, output_path)
-        empty!(results.mass_plots)
-    end
-
-    @info "QC plot writing complete"
+    # Models are per-file, so they get reset at the start of each file
+    # No need to reset them here
 end
 
-
+"""
+Summarize results across all MS files.
+"""
+function summarize_results!(results::ParameterTuningSearchResults, params::P, search_context::SearchContext) where {P<:ParameterTuningSearchParameters}
+    # Combine individual plots into merged PDFs using save_multipage_pdf
+    
+    try
+        rt_plots_folder = getRtAlignPlotFolder(search_context)
+        mass_error_plots_folder = getMassErrPlotFolder(search_context)
+        
+        # Create combined RT alignment PDF from collected plots
+        if !isempty(results.rt_plots)
+            rt_combined_path = joinpath(rt_plots_folder, "rt_alignment_plots.pdf")
+            try
+                if isfile(rt_combined_path)
+                    safeRm(rt_combined_path, nothing)
+                end
+            catch e
+                throw(e)
+                @user_warn "Could not clear existing RT plots file: $e"
+            end
+            save_multipage_pdf(results.rt_plots, rt_combined_path)
+            empty!(results.rt_plots)  # Clear to free memory
+        end
+        
+        # Create combined mass error PDF from collected plots
+        if !isempty(results.mass_plots)
+            mass_combined_path = joinpath(mass_error_plots_folder, "mass_error_plots.pdf")
+            try
+                if isfile(mass_combined_path)
+                    safeRm(mass_combined_path, nothing)
+                end
+            catch e
+                throw(e)
+                @user_warn "Could not clear existing mass error plots file: $e"
+            end
+            save_multipage_pdf(results.mass_plots, mass_combined_path)
+            empty!(results.mass_plots)  # Clear to free memory
+        end
+        
+        # Generate summary report
+        # TODO: Implement generate_summary_report if detailed report needed
+        # For now, the diagnostic summary below provides the key information
+        
+    catch e
+        throw(e)
+        @user_warn "Failed to merge QC plots" exception=(e, catch_backtrace())
+    end
+    
+    # Log diagnostic summary
+    diagnostics = getDiagnostics(results)
+    # Fixed: use values() to iterate over dictionary values
+    file_statuses = values(diagnostics.file_statuses)
+    converged_count = sum(s.converged for s in file_statuses)
+    fallback_count = sum(s.used_fallback for s in file_statuses)
+    total_files = length(file_statuses)
+    
+    @user_info "Parameter Tuning Summary:" * "\n" *
+               "  - Total files processed: $total_files" * "\n" *
+               "  - Converged: $converged_count" * "\n" *
+               "  - Used fallback: $fallback_count"
+    
+end

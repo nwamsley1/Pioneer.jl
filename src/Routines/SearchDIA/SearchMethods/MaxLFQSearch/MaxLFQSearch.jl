@@ -151,7 +151,6 @@ function summarize_results!(
         qc_plot_folder = joinpath(getDataOutDir(search_context), "qc_plots")
         precursors_long_path = joinpath(getDataOutDir(search_context), "precursors_long.arrow")
         protein_long_path = joinpath(getDataOutDir(search_context), "protein_groups_long.arrow")
-        @info "Performing intensity normalization..."
         # Normalize quantitative values
         normalizeQuant(
             passing_psms_folder,
@@ -160,14 +159,12 @@ function summarize_results!(
             spline_n_knots = params.spline_n_knots
         )
 
-        @info "Merging quantification tables..."
         # Get PSM paths from MSData and create references
         passing_psm_paths = getPassingPsms(getMSData(search_context))
         psm_refs = [PSMFileReference(path) for path in passing_psm_paths]
         
         # Ensure all PSM files are sorted correctly for MaxLFQ
         sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
-        @info "Sorting PSM files by keys: $(sort_keys)..."
         #for (i, psm_ref) in ProgressBar(enumerate(psm_refs))
         #    if !is_sorted_by(psm_ref, sort_keys...)
         #        sort_file_by_keys!(psm_ref, sort_keys...)
@@ -177,17 +174,13 @@ function summarize_results!(
                            reverse=[true, true, true, true], parallel=true )
         
         # Use reference-based merge with 4 sort keys (all descending)
-        @info "Merging $(length(psm_refs)) PSM files using reference-based approach..."
         @time merged_psm_ref = stream_sorted_merge(psm_refs, precursors_long_path, sort_keys...;
                                            batch_size=1000000, reverse=true)
 
         # Verify the merged file is sorted (reference-based merge guarantees this)
-        @info "Merged PSM file created at: $(file_path(merged_psm_ref))"
-        @info "File contains $(row_count(merged_psm_ref)) rows and is sorted by: $(sorted_by(merged_psm_ref))"
-        
+
         # Add FileReference validation for MaxLFQ input
-        @info "Validating input for MaxLFQ processing..."
-        @time validate_maxlfq_input(merged_psm_ref)
+        validate_maxlfq_input(merged_psm_ref)
         
         # Validate MaxLFQ parameters
         validate_maxlfq_parameters(Dict(
@@ -195,7 +188,6 @@ function summarize_results!(
             :batch_size => params.batch_size,
             :min_peptides => params.min_peptides
         ))
-        @info "Writing precursor results..."
         # Create wide format precursor table
         precursors_wide_path = writePrecursorCSV(
             precursors_long_path,
@@ -205,7 +197,7 @@ function summarize_results!(
             write_csv = params.write_csv
         )
 
-        @info "Performing MaxLFQ..."
+        @user_info "Performing MaxLFQ..."
         # Perform MaxLFQ protein quantification
         precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
 
@@ -221,9 +213,9 @@ function summarize_results!(
         
         # Create FileReference for output metadata tracking
         protein_ref = ProteinQuantFileReference(protein_long_path)
-        @info "MaxLFQ completed" output_file=protein_long_path n_protein_groups=n_protein_groups(protein_ref) n_experiments=n_experiments(protein_ref)
+        @user_info "MaxLFQ completed - output_file: $protein_long_path, n_protein_groups: $(n_protein_groups(protein_ref)), n_experiments: $(n_experiments(protein_ref))"
 
-        @info "Writing protein group results..."
+        @user_info "Writing protein group results..."
         # Create wide format protein table
         precursors = getPrecursors(getSpecLib(search_context))
         proteins_wide_path = writeProteinGroupsCSV(
@@ -237,7 +229,7 @@ function summarize_results!(
             write_csv = params.write_csv
         )
 
-        @info "Creating QC plots..."
+        @user_info "Creating QC plots..."
         # Create QC plots
         qc_plot_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
         isfile(qc_plot_path) && rm(qc_plot_path)
@@ -252,7 +244,7 @@ function summarize_results!(
 
 
         if params.delete_temp
-            @info "Removing temporary data..."
+            @user_info "Removing temporary data..."
             temp_path = joinpath(getDataOutDir(search_context), "temp_data")
             GC.gc()
             isdir(temp_path) && rm(temp_path; recursive=true, force=true)

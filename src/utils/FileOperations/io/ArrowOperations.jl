@@ -53,7 +53,8 @@ sort_file_by_keys!(ref, :score, :target; reverse=[true, true])
 ```
 """
 function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; 
-                           reverse::Union{Bool, Vector{Bool}}=false)
+                           reverse::Union{Bool, Vector{Bool}}=false,
+                           show_progress::Bool=true)
     validate_exists(ref)
     
     # Validate that all sort keys exist in schema
@@ -111,23 +112,40 @@ sort_file_by_keys!(refs, :score, :target; reverse=[true, true])
 ```
 """
 function sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...; 
-                           reverse::Union{Bool, Vector{Bool}}=false, parallel::Bool=true)
+                           reverse::Union{Bool, Vector{Bool}}=false, parallel::Bool=true,
+                           show_progress::Bool=true)
     # Validate reverse vector length if it's a vector
     if reverse isa Vector{Bool} && length(reverse) != length(keys)
         error("Length of reverse vector ($(length(reverse))) must match number of sort keys ($(length(keys)))")
     end
     
     if parallel && length(refs) > 1
-        Threads.@threads for ref in ProgressBar(refs)
-            if exists(ref)
-                sort_file_by_keys!(ref, keys...; reverse=reverse)
+        if show_progress
+            Threads.@threads for ref in ProgressBar(refs)
+                if exists(ref)
+                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false)
+                end
+            end
+        else
+            Threads.@threads for ref in refs  # No ProgressBar
+                if exists(ref)
+                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false)
+                end
             end
         end
     else
-        # Sequential with traditional progress bar
-        for ref in ProgressBar(refs)
-            if exists(ref)
-                sort_file_by_keys!(ref, keys...; reverse=reverse)
+        # Sequential processing
+        if show_progress
+            for ref in ProgressBar(refs)
+                if exists(ref)
+                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false)
+                end
+            end
+        else
+            for ref in refs  # No ProgressBar
+                if exists(ref)
+                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false)
+                end
             end
         end
     end

@@ -22,8 +22,16 @@ using JSON
 #    params::Dict{String, Any}
 #end
 
+# ParamDefaults module is loaded in importScripts.jl
+using .ParamDefaults
+
 function checkParams(json_path::String)
-    params = JSON.parsefile(json_path)
+    # Read user params
+    user_params = JSON.parsefile(json_path)
+    
+    # Apply defaults before validation
+    defaults = get_default_parameters()
+    params = merge_with_defaults(user_params, defaults)
     # Helper function to check if a key exists and has the correct type
     function check_param(dict, key, expected_type)
         if !haskey(dict, key)
@@ -66,13 +74,34 @@ function checkParams(json_path::String)
     frag_settings = tuning_params["fragment_settings"]
     check_param(frag_settings, "min_count", Integer)
     check_param(frag_settings, "max_rank", Integer)
-    check_param(frag_settings, "tol_ppm", Real)
-    check_param(frag_settings, "min_score", Integer)
+    # tol_ppm moved to iteration_settings as init_mass_tol_ppm
+    # min_score can be either Integer or Vector of Integers
+    if !haskey(frag_settings, "min_score")
+        throw(InvalidParametersError("Missing parameter: min_score", frag_settings))
+    elseif !(frag_settings["min_score"] isa Integer || frag_settings["min_score"] isa Vector)
+        throw(InvalidParametersError("Invalid type for parameter min_score: expected Integer or Vector, got $(typeof(frag_settings["min_score"]))", frag_settings))
+    elseif frag_settings["min_score"] isa Vector
+        # If it's a vector, make sure all elements are integers
+        for (i, val) in enumerate(frag_settings["min_score"])
+            if !(val isa Integer)
+                throw(InvalidParametersError("Invalid type for min_score[$i]: expected Integer, got $(typeof(val))", frag_settings))
+            end
+        end
+    end
     check_param(frag_settings, "min_spectral_contrast", Real)
     check_param(frag_settings, "relative_improvement_threshold", Real)
     check_param(frag_settings, "min_log2_ratio", Real)
     check_param(frag_settings, "min_top_n", Vector)
     check_param(frag_settings, "n_isotopes", Integer)
+    
+    # Check optional intensity filter quantile
+    if haskey(frag_settings, "intensity_filter_quantile")
+        check_param(frag_settings, "intensity_filter_quantile", Real)
+        # Validate it's between 0 and 1
+        if frag_settings["intensity_filter_quantile"] < 0 || frag_settings["intensity_filter_quantile"] >= 1
+            error("parameter_tuning.fragment_settings.intensity_filter_quantile must be between 0 and 1 (got $(frag_settings["intensity_filter_quantile"]))")
+        end
+    end
 
     check_param(tuning_params, "search_settings", Dict)
     search_settings = tuning_params["search_settings"]
@@ -80,6 +109,58 @@ function checkParams(json_path::String)
     check_param(search_settings, "min_samples", Integer)
     check_param(search_settings, "max_presearch_iters", Integer)
     check_param(search_settings, "frag_err_quantile", Real)
+    
+    # Check optional parameters if present
+    if haskey(search_settings, "topn_peaks")
+        check_param(search_settings, "topn_peaks", Integer)
+    end
+    # max_tolerance_ppm removed - calculated dynamically from iteration_settings
+    
+    # Check iteration_settings (all fields are now required)
+    if haskey(tuning_params, "iteration_settings")
+        iter_settings = tuning_params["iteration_settings"]
+        
+        # All iteration_settings fields are required
+        check_param(iter_settings, "init_mass_tol_ppm", Real)
+        check_param(iter_settings, "mass_tolerance_scale_factor", Real)
+        check_param(iter_settings, "iterations_per_phase", Integer)
+        check_param(iter_settings, "scan_scale_factor", Real)
+        
+        # Validate ranges
+        if iter_settings["mass_tolerance_scale_factor"] <= 1.0
+            error("iteration_settings.mass_tolerance_scale_factor must be greater than 1.0")
+        end
+        if iter_settings["scan_scale_factor"] < 1.0
+            error("iteration_settings.scan_scale_factor must be greater than or equal to 1.0")
+        end
+        if iter_settings["init_mass_tol_ppm"] <= 0.0
+            error("iteration_settings.init_mass_tol_ppm must be positive")
+        end
+        if iter_settings["iterations_per_phase"] <= 0
+            error("iteration_settings.iterations_per_phase must be positive")
+        end
+    else
+        error("parameter_tuning.iteration_settings is required")
+    end
+    if haskey(search_settings, "initial_scan_count")
+        check_param(search_settings, "initial_scan_count", Integer)
+    end
+    # Check for both old and new parameter names for backward compatibility
+    if haskey(search_settings, "max_parameter_tuning_scans")
+        check_param(search_settings, "max_parameter_tuning_scans", Integer)
+    elseif haskey(search_settings, "expanded_scan_count")
+        check_param(search_settings, "expanded_scan_count", Integer)
+    end
+    if haskey(search_settings, "max_frags_for_mass_err_estimation")
+        check_param(search_settings, "max_frags_for_mass_err_estimation", Integer)
+    end
+    if haskey(search_settings, "max_q_value")
+        check_param(search_settings, "max_q_value", Real)
+        # Validate it's between 0 and 1
+        if search_settings["max_q_value"] <= 0 || search_settings["max_q_value"] > 1
+            error("parameter_tuning.search_settings.max_q_value must be between 0 and 1 (got $(search_settings["max_q_value"]))")
+        end
+    end
 
     # Validate first search parameters
     first_search = params["first_search"]

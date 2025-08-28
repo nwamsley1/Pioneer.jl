@@ -109,7 +109,15 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         new{typeof(prec_estimation)}(
             # Core parameters
             (UInt8(0), UInt8(0)),  # Fixed isotope bounds for NCE tuning
-            UInt8(frag_params.min_score),
+            # Handle min_score as either single value or array (use first value if array)
+            begin
+                min_score_raw = frag_params.min_score
+                if min_score_raw isa Vector
+                    UInt8(first(min_score_raw))
+                else
+                    UInt8(min_score_raw)
+                end
+            end,
             Int64(frag_params.min_count),
             Float32(frag_params.min_spectral_contrast),
             Float32(frag_params.min_log2_ratio),
@@ -186,7 +194,7 @@ function process_file!(
             end
             if i == 10
                 n = size(processed_psms, 1)
-                @warn "Could not get collect enough psms for nce alignment. In 10 iterations collected $n samples"
+                @user_warn "Could not get collect enough psms for nce alignment. In 10 iterations collected $n samples"
             end
         end
 
@@ -239,7 +247,7 @@ function process_file!(
         append!(results.nce_psms, processed_psms)
 
     catch e
-        @warn "NCE tuning failed" ms_file_idx exception=e
+        @user_warn "NCE tuning failed" ms_file_idx exception=e
         rethrow(e)
     end
 
@@ -278,7 +286,7 @@ function summarize_results!(
                 rm(output_path)
             end
         catch e
-            @warn "Could not clear existing file: $e"
+            @user_warn "Could not clear existing file: $e"
         end
         if !isempty(results.nce_plots)
             save_multipage_pdf(results.nce_plots, output_path)

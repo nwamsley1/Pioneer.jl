@@ -46,7 +46,22 @@ julia --project=. make.jl
 using Pioneer
 
 # Build spectral library
+# Option 1: Single directory (backward compatible)
 params = GetBuildLibParams(output_dir, lib_name, fasta_dir)
+BuildSpecLib(params)
+
+# Option 2: Flexible input - files and/or directories
+params = GetBuildLibParams(output_dir, lib_name, 
+    ["/path/to/dir1", "/path/to/file.fasta", "/path/to/dir2"])
+BuildSpecLib(params)
+
+# Option 3: With custom regex codes for each input
+params = GetBuildLibParams(output_dir, lib_name,
+    ["/path/to/uniprot", "/path/to/custom.fasta"],
+    regex_codes = [
+        Dict("accessions" => "^\\w+\\|(\\w+)\\|", "genes" => " GN=(\\S+)"),
+        Dict("accessions" => "^>(\\S+)", "genes" => "gene=(\\S+)")
+    ])
 BuildSpecLib(params)
 
 # Search DIA data
@@ -233,9 +248,30 @@ results_dir/
 
 ### Parameter Files
 All major functions use JSON parameter files. Examples in `data/example_config/`:
-- `defaultBuildLibParams.json` - Library building parameters
-- `defaultSearchParams.json` - DIA search parameters
-- Key parameters control tolerances, scoring, and output formats
+
+#### BuildSpecLib Parameters
+- **`defaultBuildLibParamsSimplified.json`** - Simplified library building (recommended for most users)
+  - Contains only essential parameters users typically modify
+  - File paths placed at top for easy editing
+  - Reasonable defaults provided for advanced parameters
+- **`defaultBuildLibParams.json`** - Full library building configuration
+  - Complete control over all parameters
+  - Advanced options for digestion, fragmentation, and prediction
+
+To generate parameter templates:
+```julia
+# Generate simplified template (default)
+params = GetBuildLibParams(output_dir, lib_name, fasta_dir; simplified=true)
+
+# Generate full template with all parameters
+params = GetBuildLibParams(output_dir, lib_name, fasta_dir; simplified=false)
+```
+
+#### SearchDIA Parameters
+- **`defaultSearchParamsSimplified.json`** - Simplified search parameters (recommended)
+- **`defaultSearchParams.json`** - Full search configuration with all advanced options
+
+Key parameters control tolerances, scoring, FDR thresholds, and output formats.
 
 ### Testing Strategy
 - Unit tests in `test/UnitTests/` cover individual components
@@ -259,12 +295,83 @@ All major functions use JSON parameter files. Examples in `data/example_config/`
 - **prosit_2020_hcd** - Instrument-agnostic HCD fragmentation model
 - **AlphaPeptDeep** - Supports QE, LUMOS, TIMSTOF, SCIEXTOF instruments
 
+### Logging System
+
+Pioneer.jl implements a comprehensive four-tier logging system that matches Julia's native formatting exactly:
+
+#### Log Files
+SearchDIA creates four log files in the results directory:
+
+1. **`pioneer_search_report.txt`** - Essential messages only (clean overview)
+   - High-level status messages and performance reports
+   - Replicates original dual_println behavior
+   - For management overview and essential tracking
+
+2. **`pioneer_search_log.log`** - Complete console mirror  
+   - Everything visible on console with timestamps
+   - Two-line format for warnings/errors with source location
+   - Perfect for debugging user-visible issues
+
+3. **`pioneer_search_debug.log`** - Everything including debug messages
+   - All console output PLUS debug statements
+   - Single-line format with millisecond timestamps
+   - Source location included for all messages
+   - Debug messages never appear on console
+
+4. **`pioneer_warnings.log`** - All warnings for review
+   - Every warning message with source location
+   - Easy to scan for issues across the entire run
+   - Automatic counting and reporting at completion
+
+#### Logging Macros
+- `@user_info` - Information messages (`[ Info:` format, matches Julia)
+- `@user_warn` - Warning messages (with `└ @ Module file:line` source location) 
+- `@user_error` - Error messages (with `└ @ Module file:line` source location)
+- `@user_print` - Direct output (for performance reports, goes to essential file)
+- `@debug_l1/l2/l3` - Debug levels 1-3 (blue color, with source location)
+- `@trace` - Trace messages (level 4+)
+
+#### Configuration
+JSON parameters control debug verbosity:
+```json
+"logging": {
+    "debug_console_level": 0  // 0-3, controls which debug levels show on console
+}
+```
+
+- `0` (default): No debug messages on console (only in debug file)
+- `1`: Show DEBUG1 messages on console  
+- `2`: Show DEBUG1 and DEBUG2 messages on console
+- `3`: Show all debug messages on console
+
+#### Features
+- **Source Location Tracking**: All warnings, errors, and debug messages include `@ Module file:line`
+- **Julia-Style Formatting**: Exact match to `@info`, `@warn`, `@debug` formatting
+- **Automatic Warning Counting**: Reports total warnings at search completion with full path
+- **File-Specific Formatting**: Each log file optimized for its intended use case
+
+#### Usage Examples
+```julia
+# Basic logging
+@user_info "Loading Parameters..."           # [ Info: Loading Parameters...
+@user_warn "Low PSM count detected"          # ┌ Warning: Low PSM count detected
+                                             # └ @ Module file:line
+@user_error "Failed to load file"            # ┌ Error: Failed to load file  
+                                             # └ @ Module file:line
+
+# Debug logging (controlled by debug_console_level)
+@debug_l1 "Processing batch 1"               # Only in debug file (level 0)
+@debug_l2 "Detailed fragment matching"       # Only in debug file (level 0-1)
+@debug_l3 "Low-level algorithm details"      # Only in debug file (level 0-2)
+
+# Performance reporting (always goes to essential file)
+@user_print "Total Runtime: 2.5 minutes"    # Direct output, no formatting
+```
+
 ### Current Development Focus
 - Refactoring ScoringSearch and MaxLFQSearch for better encapsulation
-- See src/Routines/SearchDIA/SearchMethods/REFACTORING_PLAN_V2.md for detailed plan
 - Adding FileReference abstraction layer for type-safe file operations
 - Protein group ML scoring integration using EvoTrees/XGBoost gradient boosting
-- See PROTEIN_ML_SCORING_INTEGRATION.md for implementation details
 - Features top-N precursor scores with cross-validation consistency
 
 ### Protein Group ML Scoring
@@ -348,12 +455,75 @@ See `test/entrapment_analyses/PROTEIN_ANALYSIS_WORKFLOW.md` for detailed documen
 - Transition Selection: See `src/Routines/SearchDIA/CommonSearchUtils/selectTransitions/CLAUDE.md` for transition selection
 - EntrapmentAnalysis: See `test/entrapment_analyses/PROTEIN_ANALYSIS_WORKFLOW.md` for empirical FDR analysis with entrapment sequences
 
+## Recent Improvements (2025-01)
+
+### BuildSpecLib Parameter Simplification
+- **Simplified Templates**: New simplified parameter file with only essential fields
+  - File paths moved to top for easier access
+  - Automatic defaults for advanced parameters (NCE, library params)
+  - Reduces initial configuration from ~90 to ~60 lines
+- **Flexible Parameter Handling**:
+  - Optional `nce_params` with sensible defaults (NCE=25.0, charge=2, dynamic=true)
+  - Missing library parameters filled with reasonable defaults
+  - Backward compatible with full parameter files
+- **Cleavage Pattern**: Default regex `[KR][^_|$]` allows cleavage after proline
+  - More flexible than standard trypsin `[KR][^P]`
+  - Intentional design choice for broader digestion patterns
+
+### FASTA Input Enhancement
+- **Flexible Input**: GetBuildLibParams now accepts:
+  - Single directory (backward compatible)
+  - Single FASTA file
+  - Array of directories and/or FASTA files
+- **Smart Regex Mapping**:
+  - Single regex set applies to all files
+  - Multiple sets with positional mapping
+  - Automatic validation and expansion
+- **Example Usage**:
+  ```julia
+  # Mixed inputs with corresponding regex patterns
+  GetBuildLibParams(out_dir, lib_name, 
+      ["/path/to/uniprot/", "/custom/proteins.fasta"],
+      regex_codes = [uniprot_regex, custom_regex])
+  ```
+
+### Koina API Warning Reduction
+- **Converted retry warnings to debug messages** (@debug_l2)
+- **Users only see errors for complete failures**, not retries
+- **Improved error messages** with troubleshooting suggestions
+- Set `debug_console_level: 2` in params to see retry attempts during debugging
+
 ## Memories
 - remember me as memory update
 
-## Current Development: SearchMethods Refactoring (2025-01)
+## Current Development: ParameterTuningSearch Improvements (2025-01)
 
-### Overview
+### Major ParameterTuningSearch Enhancements
+Successfully merged 358 commits from main branch while preserving 81 commits of improvements to ParameterTuningSearch:
+
+#### Key Improvements
+1. **3-Phase Convergence Algorithm**: Robust parameter tuning that tests zero bias, positive shift, and negative shift phases
+2. **Scan Scaling**: Dynamic scan count adjustment when insufficient PSMs are found
+3. **Cross-Run Learning**: Parameters learned from successful files applied to challenging ones
+4. **Comprehensive Diagnostics**: Detailed tracking of convergence status and fallback reasons
+5. **PDF Generation**: Matches main branch behavior - plots stored in memory, combined PDFs only
+
+#### Fixed Critical Bugs
+- **Protein Scoring Issue**: Fixed logodds function receiving log-sum scores instead of probabilities
+  - When probit regression is skipped, now converts: `p = 1 - exp(-pg_score)`
+  - Proper clamping to avoid numerical issues
+- **RT Bin Indexing**: Ensured 1-based indexing throughout
+- **ArrowTableReference Length**: Fixed method call compatibility
+
+#### Implementation Details
+- `ParameterTuningSearchResults` struct now includes `rt_plots` and `mass_plots` arrays
+- No individual PDF files created - only combined PDFs at end
+- Fallback plot functions generate in-memory Plot objects
+- Uses `save_multipage_pdf` from `pdfUtils.jl` for combined PDF generation
+
+### SearchMethods Refactoring (2025-01)
+
+#### Overview
 Refactoring ScoringSearch and MaxLFQSearch to improve encapsulation using file references instead of direct file access. See REFACTORING_PLAN_V2.md for detailed plan.
 
 ### Completed Work

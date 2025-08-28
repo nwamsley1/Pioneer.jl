@@ -127,9 +127,11 @@ function BuildSpecLib(params_path::String)
         # Get fragment bounds
         dual_println("\nDetecting fragment bounds...")
         bounds_timing = @timed begin
+            # calibration_raw_file is optional - use empty string if not provided
+            calibration_file = get(_params.library_params, "calibration_raw_file", "")
             frag_bounds, prec_mz_min, prec_mz_max = get_fragment_bounds(
                 _params.library_params["auto_detect_frag_bounds"],
-                _params.library_params["calibration_raw_file"],
+                calibration_file,
                 (Float32(_params.library_params["frag_mz_min"]), Float32(_params.library_params["frag_mz_max"])),
                 (Float32(_params.library_params["prec_mz_min"]), Float32(_params.library_params["prec_mz_max"]))
             )
@@ -174,7 +176,7 @@ function BuildSpecLib(params_path::String)
                         )
                         dual_println("Successfully created collision energy interpolator")
                     catch
-                        @warn "Could not estimate mz to ev conversion. Using default NCE."
+                        @user_warn "Could not estimate mz to ev conversion. Using default NCE."
                         dual_println("Warning: Using default NCE (collision energy interpolation failed)")
                     end
                 end
@@ -216,7 +218,7 @@ function BuildSpecLib(params_path::String)
                     params["isotope_mod_groups"],
                     Float32(_params.library_params["rt_bin_tol"])
                 )
-                println("precursors_arrow_path $precursors_arrow_path")
+                #println("precursors_arrow_path $precursors_arrow_path")
                 # Cleanup temporary files
                 GC.gc()
                 rm(chronologer_in_path, force=true)
@@ -272,7 +274,7 @@ function BuildSpecLib(params_path::String)
                     )
 
                 catch
-                    println("No spline knots. static library")
+                    #println("No spline knots. static library")
 
                     # Process ion annotations
                     ion_annotation_set = get_ion_annotation_set(fragments_table[:annotation])

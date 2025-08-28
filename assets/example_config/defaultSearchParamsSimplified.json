@@ -1,0 +1,32 @@
+{
+    "paths": {
+        "ms_data": "/path/to/ms/data/folder",
+        "library": "/path/to/ms/data/library.pion",
+        "results": "/path/to/results"
+    },
+    "logging": {
+        "debug_console_level": 0
+    },
+    "global": {
+        "scoring": {
+            "q_value_threshold": 0.01
+        },
+        "match_between_runs": true,
+        "ms1_quant": false
+    },
+    "acquisition": {
+        "nce": 25,
+        "quad_transmission": {
+            "fit_from_data": false
+        }
+    },
+    "maxLFQ": {
+        "run_to_run_normalization": false
+    },
+    "output": {
+        "write_csv": true,
+        "write_decoys": false,
+        "delete_temp": true,
+        "plots_per_page": 12
+    }
+}

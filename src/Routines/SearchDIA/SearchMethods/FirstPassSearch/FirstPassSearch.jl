@@ -136,7 +136,15 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             0.0f0,  # No transmission threshold for first pass
             0.0f0,  # No fragment tolerance for first pass
             Float32(params.parameter_tuning.search_settings.frag_err_quantile),
-            UInt8(frag_params.min_score),
+            # Handle min_score as either single value or array (use first value if array)
+            begin
+                min_score_raw = frag_params.min_score
+                if min_score_raw isa Vector
+                    UInt8(first(min_score_raw))
+                else
+                    UInt8(min_score_raw)
+                end
+            end,
             Int64(frag_params.min_count),
             Float32(frag_params.min_spectral_contrast),
             Float32(frag_params.min_log2_ratio),
@@ -401,7 +409,7 @@ function process_file!(
             select!(results.psms[] , Not(:log2_summed_intensity))
         end
     catch e
-        @warn "First pass search failed" ms_file_idx exception=e
+        @user_warn "First pass search failed" ms_file_idx exception=e
         rethrow(e)
     end
 
@@ -426,7 +434,7 @@ function process_search_results!(
             median_fwhm = median(fwhms),
             mad_fwhm = mad(fwhms, normalize=true)))
     else
-        @warn "Insuficient fwhm_points to estimate for $ms_file_idx"
+        @user_warn "Insuficient fwhm_points to estimate for $ms_file_idx"
         insert!(results.fwhms, ms_file_idx, (
             median_fwhm = 0.2f0,
             mad_fwhm = 0.2f0))
@@ -477,8 +485,7 @@ function summarize_results!(
         results::FirstPassSearchResults,
         params::FirstPassSearchParameters
     )
-        @info "Finding best precursors across runs..."
-        
+
         # Get best precursors
         return get_best_precursors_accross_runs(
             getFirstPassPsms(getMSData(search_context)),
@@ -487,8 +494,6 @@ function summarize_results!(
             max_q_val=params.max_q_val_for_irt
         )
     end
-    #isempty(results.psms_paths) && return nothing
-    @info "Summarizing first pass search results..."
     # Map retention times
     map_retention_times!(search_context, results, params)
     # Process precursors
@@ -532,8 +537,6 @@ function summarize_results!(
     # Calculate RT indices
     create_rt_indices!(search_context, results, precursor_dict, params)
     
-    @info "Search results summarization complete"
-
     # Merge mass error plots
     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
     output_path = joinpath(ms1_mass_error_folder, "ms1_mass_error_plots.pdf")
@@ -542,7 +545,7 @@ function summarize_results!(
             rm(output_path)
         end
     catch e
-        @warn "Could not clear existing file: $e"
+        @user_warn "Could not clear existing file: $e"
     end
 
     if !isempty(results.ms1_mass_plots)

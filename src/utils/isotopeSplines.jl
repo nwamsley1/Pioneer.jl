@@ -547,7 +547,7 @@ function correctPrecursorAbundance(
         #println(isotope_splines(min(Int64(sulfur_count), 5), Int64(i), precursor_mass))
         probability += isotope_splines(min(Int64(sulfur_count), 5), Int64(i), precursor_mass)*precursor_transmission[i + 1]
     end
-    println("probability $probability sum(precursor_transmission) ", sum(precursor_transmission)/5)
+    #println("probability $probability sum(precursor_transmission) ", sum(precursor_transmission)/5)
     return abundance/probability
 end
 
@@ -588,7 +588,7 @@ function correctPrecursorAbundances!(
             sulfur_count
         )
 
-        println("prec_isotopes $prec_isotopes precursor_transmission $precursor_transmission prec_mz $prec_mz window_mz $window_mz")
+        #println("prec_isotopes $prec_isotopes precursor_transmission $precursor_transmission prec_mz $prec_mz window_mz $window_mz")
     end
 end
 =#

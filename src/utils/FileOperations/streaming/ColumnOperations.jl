@@ -75,7 +75,7 @@ function safe_replace_file(temp_path::String, target_path::String, file_handle)
                             backup_path = target_path * ".backup_" * string(time_ns())
                             try
                                 mv(target_path, backup_path, force=true)
-                                @warn "Could not delete $target_path, renamed to $backup_path"
+                                @user_warn "Could not delete $target_path, renamed to $backup_path"
                             catch
                                 error("Unable to remove or rename existing file: $target_path")
                             end
@@ -126,7 +126,7 @@ function add_column_to_file!(ref::FileReference,
     
     # Check if column already exists
     if has_column(schema(ref), col_name)
-        @warn "Column $col_name already exists, will be overwritten"
+        @user_warn "Column $col_name already exists, will be overwritten"
     end
     
     # Create temporary output file

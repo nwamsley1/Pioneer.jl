@@ -112,10 +112,13 @@ Filters PSMs based on score and selects best matches per precursor.
 4. Selects best PSM per precursor based on probability score
 
 # Returns
-- Number of passing PSMs if above minimum threshold
-- -1 if insufficient PSMs pass threshold
+- Number of PSMs after all filtering (q-value and targets only)
 
-Modifies psms DataFrame in place by filtering to best matches.
+Modifies psms DataFrame in place by:
+1. Scoring PSMs
+2. Calculating q-values  
+3. Filtering by q-value threshold
+4. Removing decoy PSMs (keeping targets only)
 """
 function filter_and_score_psms!(
     psms::DataFrame,
@@ -129,26 +132,28 @@ function filter_and_score_psms!(
     get_qvalues!(psms[!,:prob], psms[!,:target], psms[!,:q_value]; fdr_scale_factor = fdr_scale_factor)
     
     max_q_val, min_psms = getMaxQVal(params), getMinPsms(params)
+    
     n_passing_psms = sum(psms[!,:q_value] .<= max_q_val)
-    
-    if n_passing_psms >= min_psms
-        filter!(row -> row.q_value::Float16 <= max_q_val, psms)
-        psms[!,:best_psms] = zeros(Bool, size(psms, 1))
-        
-        # Select best PSM per precursor
-        for sub_psms in groupby(psms, :precursor_idx)
-            best_idx = argmax(sub_psms.prob::AbstractVector{Float32})
-            sub_psms[best_idx,:best_psms] = true
-        end
-        
-        filter!(x -> x.best_psms::Bool, psms)
-        filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys. 
-        return n_passing_psms
-    end
-    
-    return -1
-end
+    filter!(row -> row.q_value::Float16 <= max_q_val, psms)
 
+    #psms[!,:best_psms] = zeros(Bool, size(psms, 1))
+    #= 
+    Select best PSM per precursor
+    #for sub_psms in groupby(psms, [:precursor_idx, :scan_idx])
+    for sub_psms in groupby(psms, [:precursor_idx,:scan_idx])
+        best_idx = argmax(sub_psms.prob::AbstractVector{Float32})
+        sub_psms[best_idx,:best_psms] = true
+    end
+    filter!(x -> x.best_psms::Bool, psms)
+    =#
+    filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys. 
+
+    n_passing_psms = size(psms, 1)
+    
+    # Always return the actual PSM count, regardless of min_psms
+    # min_psms should only be used for convergence checking, not for filtering PSMs
+    return n_passing_psms
+end
 
 """
     score_presearch!(psms::DataFrame)
@@ -221,30 +226,75 @@ function fit_irt_model(
     psms::DataFrame
 ) where {P<:ParameterTuningSearchParameters}
     
-    # Initial spline fit
-    rt_to_irt_map = UniformSpline(
-        psms[!,:irt_predicted],
-        psms[!,:rt],
-        getSplineDegree(params),
-        getSplineNKnots(params)
-    )
+    n_psms = nrow(psms)
     
-    # Calculate residuals
-    psms[!,:irt_observed] = rt_to_irt_map.(psms.rt::Vector{Float32})
-    residuals = psms[!,:irt_observed] .- psms[!,:irt_predicted]
-    irt_mad = mad(residuals, normalize=false)::Float32
+    # Calculate maximum knots based on 5 PSMs per knot rule
+    max_knots_from_psms = max(2, floor(Int, n_psms / 5))  # Minimum 2 knots for spline
+    configured_knots = getSplineNKnots(params)
+    n_knots = min(configured_knots, max_knots_from_psms)
     
-    # Remove outliers and refit
-    valid_psms = psms[abs.(residuals) .< (irt_mad * getOutlierThreshold(params)), :]
+    # If we can't even support 2 knots, fall back to identity
+    if n_psms < 10  # Less than 2 knots * 5 PSMs per knot
+        @debug_l2 "Too few PSMs ($n_psms) for RT spline alignment (need ≥10), using identity model"
+        return (IdentityModel(), Float32[], Float32[], 0.0f0)
+    end
     
-    final_model = SplineRtConversionModel(UniformSpline(
-        valid_psms[!,:irt_predicted],
-        valid_psms[!,:rt],
-        getSplineDegree(params),
-        getSplineNKnots(params)
-    ))
+    # Log if we're using fewer knots than configured
+    if n_knots < configured_knots
+        @debug_l1 "Reducing RT spline knots from $configured_knots to $n_knots due to limited PSMs ($n_psms)"
+    end
     
-    return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
+    try
+        # Initial spline fit with adaptive knots
+        rt_to_irt_map = UniformSpline(
+            psms[!,:irt_predicted],
+            psms[!,:rt],
+            getSplineDegree(params),
+            n_knots
+        )
+        
+        # Calculate residuals
+        psms[!,:irt_observed] = rt_to_irt_map.(psms.rt::Vector{Float32})
+        residuals = psms[!,:irt_observed] .- psms[!,:irt_predicted]
+        irt_mad = mad(residuals, normalize=false)::Float32
+        
+        # Remove outliers and refit
+        valid_psms = psms[abs.(residuals) .< (irt_mad * getOutlierThreshold(params)), :]
+        
+        # Check if we still have enough PSMs after outlier removal
+        n_valid_psms = nrow(valid_psms)
+        if n_valid_psms < 10
+            @debug_l2 "Too few PSMs after outlier removal ($n_valid_psms), using identity model"
+            return (IdentityModel(), Float32[], Float32[], 0.0f0)
+        end
+        
+        # Recalculate knots for final fit if needed
+        max_knots_final = max(2, floor(Int, n_valid_psms / 5))
+        n_knots_final = min(n_knots, max_knots_final)
+        
+        final_model = SplineRtConversionModel(UniformSpline(
+            valid_psms[!,:irt_predicted],
+            valid_psms[!,:rt],
+            getSplineDegree(params),
+            n_knots_final
+        ))
+        
+        return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
+        
+    catch e
+        @debug_l1 "RT spline fitting failed, using identity model exception=$e"
+        return (IdentityModel(), Float32[], Float32[], 0.0f0)
+    end
+end
+
+"""
+    calculate_ppm_errors(fragments::Vector{FragmentMatch{T}}) where T
+
+Calculate PPM errors from fragment matches.
+Returns a vector of PPM errors calculated as (observed - theoretical) / (theoretical / 1e6).
+"""
+function calculate_ppm_errors(fragments::Vector{FragmentMatch{T}}) where T
+    return [(f.match_mz - f.theoretical_mz)/(f.theoretical_mz/1e6) for f in fragments]
 end
 
 """
@@ -270,6 +320,67 @@ Tuple containing:
 #==========================================================
 Mass Error Modeling
 ==========================================================#
+
+"""
+    adjustMatchMz(match::FragmentMatch{T}, ppm_offset::Float32) where T<:AbstractFloat
+
+Adjusts the match_mz field of a FragmentMatch by a given PPM offset.
+
+# Arguments
+- `match`: FragmentMatch to adjust
+- `ppm_offset`: Parts-per-million offset to apply
+
+# Returns
+- New FragmentMatch with adjusted match_mz field
+- Formula: adjusted_mz = match_mz * (1 + ppm_offset/1e6)
+"""
+function adjustMatchMz(match::FragmentMatch{T}, ppm_offset::Float32) where T<:AbstractFloat
+    adjusted_mz = getMatchMZ(match) * (1.0f0 + ppm_offset/(Float32(1.0e6)))
+    return FragmentMatch(
+        getPredictedIntensity(match),
+        getIntensity(match),
+        getMZ(match),  # theoretical_mz stays the same
+        adjusted_mz,   # adjusted match_mz
+        getPeakInd(match),
+        getFragInd(match),
+        getCharge(match),
+        getIsotope(match),
+        getIonType(match),
+        isIsotope(match),
+        getPrecID(match),
+        getCount(match),
+        getScanID(match),
+        getMSFileID(match),
+        getRank(match)
+    )
+end
+
+"""
+    adjustMatchMz(match::PrecursorMatch{T}, ppm_offset::Float32) where T<:AbstractFloat
+
+Adjusts the observed_mz field of a PrecursorMatch by a given PPM offset.
+
+# Arguments
+- `match`: PrecursorMatch to adjust
+- `ppm_offset`: Parts-per-million offset to apply
+
+# Returns
+- New PrecursorMatch with adjusted observed_mz field
+- Formula: adjusted_mz = observed_mz * (1 + ppm_offset/1e6)
+"""
+function adjustMatchMz(match::PrecursorMatch{T}, ppm_offset::Float32) where T<:AbstractFloat
+    adjusted_mz = getMatchMz(match) * (1.0f0 + ppm_offset/1.0e6f0)
+    return PrecursorMatch(
+        getPredictedIntensity(match),
+        getIntensity(match),
+        getMZ(match),  # theoretical_mz stays the same
+        adjusted_mz,   # adjusted observed_mz
+        getIsoIdx(match),
+        getPeakInd(match),
+        getPrecID(match)
+    )
+end
+
 function getScanToPrecIdx(scan_idxs::Vector{UInt32}, n_scans::Int64)
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, n_scans)
     start_idx = stop_idx = 1
@@ -286,11 +397,39 @@ function getScanToPrecIdx(scan_idxs::Vector{UInt32}, n_scans::Int64)
     scan_to_prec_idx
 end
 
-function collectFragErrs(fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int) where {M<:MatchIon{Float32}}
+"""
+    collectFragErrs(fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int; 
+                   ppm_offset::Float32 = 0.0f0) where {M<:MatchIon{Float32}}
+
+Collects fragment matches from new_fmatches into fmatches, optionally adjusting match_mz by a PPM offset.
+
+# Arguments
+- `fmatches`: Vector to store accumulated fragment matches
+- `new_fmatches`: Vector of new fragment matches to add
+- `nmatches`: Number of matches to copy from new_fmatches
+- `n`: Current index in fmatches
+- `ppm_offset`: Optional PPM offset to apply to match_mz (default: 0.0)
+
+# Returns
+- Updated index n after adding matches
+
+# Notes
+- When ppm_offset is 0, performs direct copy (original behavior)
+- When ppm_offset is non-zero, adjusts match_mz before copying
+- Grows fmatches vector as needed
+"""
+function collectFragErrs(fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int, 
+                        ppm_offset::Float32) where {M<:MatchIon{Float32}}
     for match in range(1, nmatches)
         if n < length(fmatches)
             n += 1
-            fmatches[n] = new_fmatches[match]
+            if iszero(ppm_offset)# == 0.0f0
+                # Direct copy when no adjustment needed (original behavior)
+                fmatches[n] = new_fmatches[match]
+            else
+                # Apply PPM adjustment to match_mz
+                fmatches[n] = adjustMatchMz(new_fmatches[match],ppm_offset)
+            end
         else
             fmatches = append!(fmatches, [M() for x in range(1, length(fmatches))])
         end
@@ -324,6 +463,25 @@ Performs mass error-focused fragment matching.
 
 Returns matched fragments for mass error analysis.
 """
+# Default method without chromatogram type - calls MS2CHROM version
+function mass_error_search(
+    spectra::MassSpecData,
+    scan_idxs::Vector{UInt32},
+    precursor_idxs::Vector{UInt32},
+    ms_file_idx::UInt32,
+    spec_lib::SpectralLibrary,
+    search_data::AbstractVector{S},
+    mem::M,
+    params::P
+) where {
+        M<:MassErrorModel, 
+        S<:SearchDataStructures, 
+        P<:SearchParameters
+        }
+    return mass_error_search(spectra, scan_idxs, precursor_idxs, ms_file_idx, 
+                            spec_lib, search_data, mem, params, MS2CHROM())
+end
+
 function mass_error_search(
     spectra::MassSpecData,
     scan_idxs::Vector{UInt32},
@@ -359,6 +517,7 @@ function mass_error_search(
                 ismissing(scan_to_prec_idx[scan_idx]) && continue
 
                 # Select transitions for mass error estimation
+                # Uses top N fragments per precursor for mass tolerance calibration
                 ion_idx, _ = selectTransitions!(
                     getIonTemplates(search_data[thread_id]),
                     MassErrEstimationStrategy(),
@@ -366,7 +525,7 @@ function mass_error_search(
                     getFragmentLookupTable(spec_lib),
                     scan_to_prec_idx[scan_idx],
                     precursor_idxs,
-                    max_rank = 5#getMaxBestRank(params)
+                    max_rank = Int64(getMaxFragsForMassErrEstimation(params))  # Convert UInt8 to Int64 for compatibility
                 )
 
                 # Match peaks and collect errors
@@ -387,7 +546,8 @@ function mass_error_search(
                     getMassErrMatches(search_data[thread_id]),
                     getIonMatches(search_data[thread_id]),
                     nmatches,
-                    frag_err_idx
+                    frag_err_idx,
+                    getMassOffset(mem)
                 )
             end
             
@@ -567,29 +727,55 @@ function fit_mass_err_model(
     params::P,
     fragments::Vector{FragmentMatch{Float32}}
 ) where {P<:FragmentIndexSearchParameters}
-    """
-        calc_ppm_error(theoretical::T, observed::T) where T<:AbstractFloat
-
-    Calculates parts-per-million (PPM) mass error.
-
-    # Arguments
-    - `theoretical`: Theoretical mass
-    - `observed`: Observed mass
-
-    Returns PPM error between theoretical and observed masses.
-    """
-    function calc_ppm_error(theoretical::T, observed::T) where T<:AbstractFloat
-        return Float32((observed - theoretical)/(theoretical/1e6))
+    
+    # Filter fragments by intensity to remove low-quality matches
+    if length(fragments) > 0
+        intensity_threshold = getIntensityFilterQuantile(params)
+        if intensity_threshold > 0.0
+            intensities = [fragment.intensity for fragment in fragments]
+            min_intensity = quantile(intensities, intensity_threshold)
+            fragments = filter(f -> f.intensity > min_intensity, fragments)
+            # @info "Filtered to $(length(fragments)) fragments above $(round(intensity_threshold*100, digits=1))th percentile intensity"
+        end
     end
+    
+    # Check if we have enough fragments after filtering
+    if length(fragments) == 0
+        return MassErrorModel(
+            zero(Float32),
+            (zero(Float32), zero(Float32))
+        ), Float32[]
+    end
+    
     # Calculate PPM errors
-    ppm_errs = [calc_ppm_error(match.theoretical_mz, match.match_mz) for match in fragments]
+    ppm_errs = calculate_ppm_errors(fragments)
     mass_err = median(ppm_errs)
     ppm_errs .-= mass_err
     
-    # Calculate error bounds
+    # Calculate error bounds using configured quantile
     frag_err_quantile = getFragErrQuantile(params)
-    l_bound = quantile(ppm_errs, frag_err_quantile)
-    r_bound = quantile(ppm_errs, 1 - frag_err_quantile)
+
+    r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
+    l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
+    r_bound, l_bound = nothing, nothing
+    try
+    r_bound = quantile(Exponential(
+        (1/
+        (length(r_errs)/sum(r_errs))
+        ))
+        , 1 - frag_err_quantile)
+    l_bound = quantile(Exponential(
+        (1/
+        (length(l_errs)/sum(l_errs))
+        ))
+        , 1 - frag_err_quantile)
+    catch e 
+        @debug_l1 "length(r_errs) $(length(r_errs)) length(l_errs) $(length(l_errs)) sum(r_errs) $(sum(r_errs)) sum(l_errs) $(sum(l_errs))"
+        return MassErrorModel(
+            zero(Float32),
+            (zero(Float32), zero(Float32))
+        ), ppm_errs
+    end
     
     return MassErrorModel(
         Float32(mass_err),
@@ -632,7 +818,6 @@ Returns vector of fragment matches using mass error search strategy.
 function get_matched_fragments(
     spectra::MassSpecData,
     psms::DataFrame,
-    results::ParameterTuningSearchResults,
     search_context::SearchContext,
     params::P,
     ms_file_idx::Int64
@@ -645,7 +830,7 @@ function get_matched_fragments(
         UInt32(ms_file_idx),
         getSpecLib(search_context),
         getSearchData(search_context),
-        getMassErrorModel(results),
+        getMassErrorModel(search_context, ms_file_idx),#getMassErrorModel(results),
         params,
         MS2CHROM()
     )...)
@@ -766,6 +951,280 @@ function generate_mass_error_plot(
 
 end
 
+"""
+    generate_best_iteration_rt_plot_in_memory(results, fname, iteration_state)
+
+Generates RT plot using best iteration data or fallback information.
+Returns the plot object without saving to disk.
+"""
+function generate_best_iteration_rt_plot_in_memory(
+    results::ParameterTuningSearchResults,
+    fname::String,
+    iteration_state::IterationState
+)
+    # Check if we have RT data from best iteration
+    # First check results.rt/irt, then fall back to iteration_state.best_rt_model data
+    rt_data, irt_data = if length(results.rt) > 0 && length(results.irt) > 0
+        (results.rt, results.irt)
+    elseif iteration_state.best_rt_model !== nothing
+        # Extract RT and iRT from the tuple stored in best_rt_model
+        # The tuple is (model, rt_data, irt_data, threshold)
+        model_tuple = iteration_state.best_rt_model
+        if length(model_tuple) >= 3
+            (model_tuple[2], model_tuple[3])
+        else
+            (nothing, nothing)
+        end
+    else
+        (nothing, nothing)
+    end
+    
+    if rt_data !== nothing && irt_data !== nothing && length(rt_data) > 0
+        # We have data, generate normal plot with annotation
+        n = length(rt_data)
+        p = plot(
+            rt_data,
+            irt_data,
+            seriestype=:scatter,
+            title = fname * "\n(Best Iteration: Phase $(iteration_state.best_phase), Score $(iteration_state.best_score))\nn = $n",
+            xlabel = "Retention Time RT (min)",
+            ylabel = "Indexed Retention Time iRT (min)",
+            label = nothing,
+            alpha = 0.1,
+            size = 100*[13.3, 7.5]
+        )
+        
+        # Add fitted model if available
+        rt_model = getRtToIrtModel(results)
+        if !isa(rt_model, IdentityModel)
+            rt_sorted = sort(rt_data)
+            irt_predicted = rt_model.(rt_sorted)
+            Plots.plot!(rt_sorted, irt_predicted, lw=2, color=:red, 
+                       label="Fitted Spline ($(iteration_state.best_psm_count) PSMs)")
+        end
+        
+        # Add annotation with best iteration details
+        annotation_text = "Best Iteration: Phase $(iteration_state.best_phase), " *
+                         "Score $(iteration_state.best_score), " *
+                         "Iteration $(iteration_state.best_iteration)\n" *
+                         "$(iteration_state.best_psm_count) PSMs found"
+        
+        Plots.annotate!(mean(results.rt), minimum(results.irt) + 5, 
+                       text(annotation_text, :center, 8))
+    else
+        # No RT data, generate informative fallback plot
+        p = generate_fallback_rt_plot_with_iteration_info(
+            results, fname, iteration_state
+        )
+    end
+    
+    return p
+end
+
+
+"""
+    generate_fallback_rt_plot_with_iteration_info(results, fname, iteration_state)
+
+Generates fallback RT plot with best iteration information.
+"""
+function generate_fallback_rt_plot_with_iteration_info(
+    results::ParameterTuningSearchResults,
+    fname::String,
+    iteration_state::IterationState
+)
+    p = Plots.plot(
+        title = fname * "\n⚠️ Using Best Iteration Parameters (No RT Data)",
+        xlabel = "Retention Time RT (min)",
+        ylabel = "Indexed Retention Time iRT (min)",
+        size = 100*[13.3, 7.5],
+        grid = true
+    )
+    
+    # Add identity line or model curve
+    rt_model = getRtToIrtModel(results)
+    if isa(rt_model, IdentityModel)
+        rt_range = [0, 120]
+        Plots.plot!(rt_range, rt_range, 
+                   lw=2, ls=:dash, color=:red,
+                   label="Identity Model (Insufficient Data)")
+    else
+        rt_range = LinRange(0, 120, 100)
+        Plots.plot!(rt_range, rt_model.(rt_range),
+                   lw=2, color=:blue,
+                   label="RT Model from Best Iteration")
+    end
+    
+    # Add annotation with best iteration details
+    annotation_text = "Best Iteration Results:\n" *
+                     "Phase $(iteration_state.best_phase), " *
+                     "Score $(iteration_state.best_score), " *
+                     "Iteration $(iteration_state.best_iteration)\n" *
+                     "$(iteration_state.best_psm_count) PSMs found\n" *
+                     "(Insufficient data for RT calibration)"
+    
+    Plots.annotate!(60, 40, text(annotation_text, :center, 10))
+    
+    return p
+end
+
+"""
+    generate_fallback_mass_plot_with_iteration_info(results, fname, iteration_state)
+
+Generates fallback mass error plot with best iteration information.
+"""
+function generate_fallback_mass_plot_with_iteration_info(
+    results::ParameterTuningSearchResults,
+    fname::String,
+    iteration_state::IterationState
+)
+    mem = getMassErrorModel(results)
+    mass_offset = getMassOffset(mem)
+    left_tol = getLeftTol(mem)
+    right_tol = getRightTol(mem)
+    
+    p = Plots.plot(
+        title = fname * "\n⚠️ Using Best Iteration Parameters",
+        xlabel = "Count",
+        ylabel = "Mass Error (ppm)",
+        size = 100*[13.3, 7.5],
+        ylim = (-max(left_tol, right_tol) - 10, max(left_tol, right_tol) + 10),
+        grid = true,
+        yflip = true,
+        orientation = :h
+    )
+    
+    # Draw tolerance boundaries
+    Plots.hline!([mass_offset], color=:black, lw=2, 
+               label="Mass Offset: $(round(mass_offset, digits=2)) ppm")
+    Plots.hline!([mass_offset - left_tol], color=:red, lw=1, ls=:dash, 
+               label="Lower Bound: -$(round(left_tol, digits=1)) ppm")
+    Plots.hline!([mass_offset + right_tol], color=:red, lw=1, ls=:dash, 
+               label="Upper Bound: +$(round(right_tol, digits=1)) ppm")
+    
+    # Add annotation with best iteration details
+    annotation_text = "Best Iteration: Phase $(iteration_state.best_phase), " *
+                     "Score $(iteration_state.best_score)\n" *
+                     "$(iteration_state.best_psm_count) PSMs\n" *
+                     "Tolerance: ±$(round((left_tol+right_tol)/2, digits=1)) ppm"
+    
+    Plots.annotate!(0, 0, text(annotation_text, :center, 10))
+    
+    return p
+end
+
+"""
+    generate_fallback_rt_plot_in_memory(results, fname, search_context, ms_file_idx)
+
+Generates a diagnostic RT plot when no data is available (fallback/borrowed parameters).
+Returns the plot object without saving to disk.
+"""
+function generate_fallback_rt_plot_in_memory(
+    results::ParameterTuningSearchResults,
+    fname::String,
+    search_context::SearchContext,
+    ms_file_idx::Int64
+)
+    # Create an informative plot showing the fallback/borrowed status
+    p = Plots.plot(
+        title = fname * "\n⚠️ Using Fallback/Borrowed Parameters",
+        xlabel = "Retention Time RT (min)",
+        ylabel = "Indexed Retention Time iRT (min)",
+        size = 100*[13.3, 7.5],
+        grid = true
+    )
+    
+    # Add identity line if using identity model
+    rt_model = getRtToIrtModel(results)
+    if isa(rt_model, IdentityModel)
+        rt_range = [0, 120]  # Default RT range for visualization
+        Plots.plot!(rt_range, rt_range, 
+                   lw=2, ls=:dash, color=:red,
+                   label="Identity Model (Fallback)")
+    else
+        # If borrowed, show the borrowed model
+        rt_range = LinRange(0, 120, 100)
+        Plots.plot!(rt_range, rt_model.(rt_range),
+                   lw=2, color=:blue,
+                   label="Borrowed RT Model")
+    end
+    
+    # Add text annotation explaining the situation
+    Plots.annotate!(60, 20, 
+                   text("Insufficient PSMs for RT calibration\n" *
+                        "Using conservative parameters", 
+                        :center, 10))
+    
+    return p  # Return plot for collection
+end
+
+"""
+    generate_fallback_mass_error_plot_in_memory(results, fname, search_context, ms_file_idx)
+
+Generates a diagnostic mass error plot when no data is available (fallback/borrowed parameters).
+Returns the plot object without saving to disk.
+"""
+function generate_fallback_mass_error_plot_in_memory(
+    results::ParameterTuningSearchResults,
+    fname::String,
+    search_context::SearchContext,
+    ms_file_idx::Int64
+)
+    mem = getMassErrorModel(results)
+    mass_offset = getMassOffset(mem)
+    left_tol = getLeftTol(mem)
+    right_tol = getRightTol(mem)
+    
+    # Create an informative plot showing the tolerances being used
+    p = Plots.plot(
+        title = fname * "\n⚠️ Using Fallback/Borrowed Parameters",
+        xlabel = "Count",
+        ylabel = "Mass Error (ppm)",
+        size = 100*[13.3, 7.5],
+        ylim = (-max(left_tol, right_tol) - 10, max(left_tol, right_tol) + 10),
+        grid = true,
+        yflip = true,
+        orientation = :h
+    )
+    
+    # Draw tolerance boundaries
+    Plots.hline!([mass_offset], color=:black, lw=2, label="Mass Offset: $(round(mass_offset, digits=2)) ppm")
+    Plots.hline!([mass_offset - left_tol], color=:red, lw=1, ls=:dash, label="Lower Bound: -$(round(left_tol, digits=1)) ppm")
+    Plots.hline!([mass_offset + right_tol], color=:red, lw=1, ls=:dash, label="Upper Bound: +$(round(right_tol, digits=1)) ppm")
+    
+    # Add text annotation
+    Plots.annotate!(0, 0,
+                   text("Insufficient fragment matches\n" *
+                        "Tolerance: ±$(round((left_tol+right_tol)/2, digits=1)) ppm",
+                        :center, 10))
+    
+    return p  # Return plot for collection
+end
+
+# Legacy functions that save to disk (kept for backward compatibility)
+function generate_fallback_rt_plot(
+    results::ParameterTuningSearchResults,
+    plot_path::String,
+    fname::String,
+    search_context::SearchContext,
+    ms_file_idx::Int64
+)
+    p = generate_fallback_rt_plot_in_memory(results, fname, search_context, ms_file_idx)
+    savefig(p, plot_path)
+    return p
+end
+
+function generate_fallback_mass_error_plot(
+    results::ParameterTuningSearchResults,
+    plot_path::String,
+    fname::String,
+    search_context::SearchContext,
+    ms_file_idx::Int64
+)
+    p = generate_fallback_mass_error_plot_in_memory(results, fname, search_context, ms_file_idx)
+    savefig(p, plot_path)
+    return p
+end
+
 function generate_ms1_mass_error_plot(
     results::R,
     fname::String
@@ -811,5 +1270,436 @@ end
 Utility Functions
 ==========================================================#
 
+"""
+    cap_mass_tolerance(tol::Float32, max_tol::Float32 = 50.0f0)
+
+Caps a mass tolerance value to a maximum limit.
+
+# Arguments
+- `tol`: Tolerance value to cap
+- `max_tol`: Maximum allowed tolerance (default: 50.0 ppm)
+
+# Returns
+- Capped tolerance value
+"""
+function cap_mass_tolerance(tol::Float32, max_tol::Float32 = 50.0f0)
+    return min(tol, max_tol)
+end
+
+"""
+    create_capped_mass_model(offset, left_tol, right_tol, max_tol)
+
+Creates a MassErrorModel with tolerance values capped to a maximum.
+
+# Arguments
+- `offset`: Mass offset in ppm
+- `left_tol`: Left tolerance value
+- `right_tol`: Right tolerance value  
+- `max_tol`: Maximum allowed tolerance (default: 50.0 ppm)
+
+# Returns
+- MassErrorModel with capped tolerances
+"""
+function create_capped_mass_model(
+    offset::Float32, 
+    left_tol::Float32, 
+    right_tol::Float32, 
+    max_tol::Float32 = 50.0f0
+)
+    return MassErrorModel(
+        offset,
+        (cap_mass_tolerance(left_tol, max_tol), 
+         cap_mass_tolerance(right_tol, max_tol))
+    )
+end
+
+function check_convergence(
+    psms,
+    new_mass_err_model::MassErrorModel,
+    old_mass_err_model::MassErrorModel,
+    ppms,
+    min_psms::Int64
+)
+    if size(psms, 1) < min_psms
+        return false 
+    end
+    return true
+end
+
+"""
+    test_tolerance_expansion!(search_context, params, ms_file_idx,
+                             current_psms, current_model, current_ppm_errs,
+                             collection_tolerance, filtered_spectra, spectra)
+
+After convergence, test if expanding the collection tolerance yields more PSMs.
+If successful, returns the expanded PSM set and refitted model.
+
+# Returns
+- `(final_psms, final_model, final_ppm_errs, was_expanded::Bool)`
+"""
+function test_tolerance_expansion!(
+    search_context::SearchContext,
+    params::ParameterTuningSearchParameters,
+    ms_file_idx::Int64,
+    current_psms::DataFrame,
+    current_model::MassErrorModel,
+    current_ppm_errs::Vector{<:AbstractFloat},
+    collection_tolerance::Float32,
+    filtered_spectra::FilteredMassSpecData,
+    spectra::MassSpecData
+)
+    # Hardcoded expansion factor
+    expansion_factor = 1.5f0
+    
+    current_psm_count = size(current_psms, 1)
+    
+    # Calculate expanded tolerance
+    expanded_tolerance = collection_tolerance * expansion_factor
+    
+    # Create expanded model for collection
+    # Keep the same bias, just expand the window
+    expanded_model = MassErrorModel(
+        getMassOffset(current_model),
+        (expanded_tolerance, expanded_tolerance)
+    )
+    
+           # Store original model
+    original_model = getMassErrorModel(search_context, ms_file_idx)
+    
+    # Set expanded model for collection
+    setMassErrorModel!(search_context, ms_file_idx, expanded_model)
+    
+    # Collect PSMs with expanded tolerance
+    expanded_psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
+    expanded_psm_count = size(expanded_psms, 1)
+    
+    # Calculate improvement
+    psm_increase = expanded_psm_count - current_psm_count
+    improvement_ratio = current_psm_count > 0 ? psm_increase / current_psm_count : 0.0
+    
+    # @info "Expansion results:" *
+    #       "\n  Expanded PSM count: $expanded_psm_count" *
+    #       "\n  PSM increase: $psm_increase ($(round(100*improvement_ratio, digits=1))%)"
+    
+    # Check if expansion was beneficial (any improvement)
+    if expanded_psm_count <= current_psm_count
+        # No improvement, restore original and return
+        setMassErrorModel!(search_context, ms_file_idx, original_model)
+        # @info "No improvement found, keeping original results"
+        return current_psms, current_model, current_ppm_errs, false
+    end
+    
+    # Significant improvement found - refit model with expanded PSM set
+    # @info "Improvement found, refitting model with expanded PSM set"
+    
+    # Get matched fragments for the expanded PSM set
+    fragments = get_matched_fragments(spectra, expanded_psms, search_context, params, ms_file_idx)
+    
+    if length(fragments) == 0
+        # Failed to get fragments, restore original
+        setMassErrorModel!(search_context, ms_file_idx, original_model)
+        @user_warn "Failed to extract fragments from expanded PSM set, keeping original"
+        return current_psms, current_model, current_ppm_errs, false
+    end
+    
+    # Fit new mass error model from expanded PSM set
+    refitted_model, refitted_ppm_errs = fit_mass_err_model(params, fragments)
+    
+    if refitted_model === nothing
+        # Failed to fit model, restore original
+        setMassErrorModel!(search_context, ms_file_idx, original_model)
+        @user_warn "Failed to fit mass error model from expanded PSM set, keeping original"
+        return current_psms, current_model, current_ppm_errs, false
+    end
+    
+    # Success! Use the expanded results
+    # @info "Successfully expanded tolerance:" *
+    #       "\n  Original fitted: ±$(round((getLeftTol(current_model) + getRightTol(current_model))/2, digits=1)) ppm" *
+    #       "\n  Expanded fitted: ±$(round((getLeftTol(refitted_model) + getRightTol(refitted_model))/2, digits=1)) ppm" *
+    #       "\n  PSM improvement: $psm_increase PSMs ($(round(100*improvement_ratio, digits=1))%)"
+    
+    # Update the model in search context
+    setMassErrorModel!(search_context, ms_file_idx, refitted_model)
+    
+    return expanded_psms, refitted_model, refitted_ppm_errs, true
+end
+
+"""
+    getPhaseShift(phase::Int, params::ParameterTuningSearchParameters)
+
+Get the bias shift (in ppm) for a given phase.
+Phase 1: 0 ppm (no bias)
+Phase 2: +max_tolerance ppm (positive bias)
+Phase 3: -max_tolerance ppm (negative bias)
+"""
+function getPhaseShift(phase::Int, params::ParameterTuningSearchParameters)
+    if phase == 1
+        return 0.0
+    elseif phase == 2
+        # Positive shift - use maximum expected tolerance
+        return Float64(getInitialMassTol(params))
+    elseif phase == 3
+        # Negative shift - use negative maximum expected tolerance
+        return -Float64(getInitialMassTol(params))
+    else
+        return 0.0
+    end
+end
+
+"""
+    collect_psms_with_model(filtered_spectra, search_context, params, ms_file_idx, spectra)
+
+Helper function to collect PSMs with the current mass error model.
+Returns (psms, ppm_errs) tuple.
+"""
+function collect_psms_with_model(
+    filtered_spectra::FilteredMassSpecData,
+    search_context::SearchContext,
+    params::ParameterTuningSearchParameters,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+)
+    # Perform library search with current model
+    psms = library_search(
+        filtered_spectra,
+        search_context,
+        params,
+        ms_file_idx
+    )
+    
+    if isempty(psms)
+        return psms, Float32[]
+    end
+    
+    # Get precursors from spectral library
+    precursors = getPrecursors(getSpecLib(search_context))
+    
+    # Add necessary columns for scoring
+    add_tuning_search_columns!(
+        psms,
+        spectra,
+        getIsDecoy(precursors),
+        getIrt(precursors),
+        getCharge(precursors),
+        getRetentionTimes(spectra),
+        getTICs(spectra)
+    )
+    
+    # Score and filter PSMs
+    filter_and_score_psms!(psms, params, search_context)
+    
+    # Get matched fragments for error calculation
+    ppm_errs = Float32[]
+    if size(psms, 1) > 0
+        matched_frags = get_matched_fragments(
+            spectra,
+            psms,
+            search_context,
+            params,
+            ms_file_idx
+        )
+        if length(matched_frags) > 0
+            # Calculate PPM errors from fragments
+            ppm_errs = Float32.(calculate_ppm_errors(matched_frags))
+        end
+    end
+    
+    return psms, ppm_errs
+end
+
+"""
+    get_fallback_parameters(search_context, ms_file_idx)
+
+Get fallback parameters from another file or use defaults.
+Returns (mass_err_model, rt_model, borrowed_from_idx)
+"""
+function get_fallback_parameters(
+    search_context::SearchContext,
+    ms_file_idx::Int64
+)
+    # Try to borrow from another successful file
+    n_files = length(getMSData(search_context).file_paths)
+    borrowed_from = nothing
+    
+    for other_idx in 1:n_files
+        if other_idx != ms_file_idx && 
+           haskey(search_context.mass_error_model, other_idx) &&
+           haskey(search_context.rt_conversion_model, other_idx)
+            mass_err = getMassErrorModel(search_context, other_idx)
+            rt_model = getRtConversionModel(search_context, other_idx)
+            @user_info "Borrowed parameters from file $other_idx"
+            return mass_err, rt_model, other_idx
+        end
+    end
+    
+    # Use default fallback
+    @user_warn "No successful files to borrow from, using default parameters"
+    
+    # Default mass error model
+    mass_err = MassErrorModel(0.0f0, (20.0f0, 20.0f0))
+    
+    # Default RT model (identity)
+    rt_model = LinearRtConversionModel(1.0f0, 0.0f0)
+    
+    return mass_err, rt_model, nothing
+end
+
+"""
+    record_file_status!(diagnostics, ms_file_idx, file_name, converged, used_fallback, iteration_state)
+
+Record the parameter tuning status for a file.
+"""
+function record_file_status!(
+    diagnostics::ParameterTuningDiagnostics,
+    ms_file_idx::Int64,
+    file_name::String,
+    converged::Bool,
+    used_fallback::Bool,
+    iteration_state::IterationState
+)
+    status = ParameterTuningStatus(
+        ms_file_idx,
+        file_name,
+        converged,
+        used_fallback,
+        used_fallback ? "Failed convergence" : "",
+        iteration_state.total_iterations,
+        0,  # PSM count - could be tracked if needed
+        0.0f0,  # Mass offset - could be extracted if needed
+        (0.0f0, 0.0f0)  # Tolerances - could be extracted if needed
+    )
+    
+    diagnostics.file_statuses[ms_file_idx] = status
+    
+    if converged && !used_fallback
+        diagnostics.n_successful += 1
+    elseif used_fallback
+        diagnostics.n_fallback += 1
+    else
+        diagnostics.n_failed += 1
+    end
+end
+
+"""
+    generate_best_iteration_mass_error_plot_in_memory(results, fname, iteration_state)
+
+Generate mass error plot using best iteration data when convergence failed.
+Returns the plot object without saving to disk.
+"""
+function generate_best_iteration_mass_error_plot_in_memory(
+    results::ParameterTuningSearchResults,
+    fname::String,
+    iteration_state::IterationState
+)
+    # Check if we have mass error data from best iteration
+    ppm_errs = if length(results.ppm_errs) > 0
+        results.ppm_errs
+    elseif iteration_state.best_ppm_errs !== nothing
+        iteration_state.best_ppm_errs
+    else
+        nothing
+    end
+    
+    if ppm_errs === nothing || length(ppm_errs) == 0
+        # Generate fallback plot with iteration info
+        return generate_fallback_mass_error_plot_with_iteration_info(
+            results, fname, iteration_state
+        )
+    end
+    
+    # Calculate statistics for the plot
+    median_error = median(ppm_errs)
+    mad_error = mad(ppm_errs, normalize=true)
+    
+    # Create histogram of mass errors
+    p = Plots.histogram(
+        ppm_errs,
+        bins=50,
+        xlabel="Mass Error (ppm)",
+        ylabel="Count",
+        title="$fname - Mass Error Distribution (Best Iteration)",
+        label="PPM Errors",
+        alpha=0.7,
+        color=:blue
+    )
+    
+    # Add vertical lines for median and bounds
+    vline!([median_error], label="Median: $(round(median_error, digits=2)) ppm", 
+           color=:red, linewidth=2)
+    vline!([median_error - mad_error, median_error + mad_error], 
+           label="±MAD: $(round(mad_error, digits=2)) ppm", 
+           color=:green, linestyle=:dash, linewidth=1.5)
+    
+    # Add annotation with iteration info
+    annotation_text = """
+    Best Iteration Info:
+    Phase $(iteration_state.best_phase), Score $(iteration_state.best_score)
+    Iteration $(iteration_state.best_iteration)
+    $(iteration_state.best_psm_count) PSMs
+    """
+    
+    # Position annotation in top right
+    xlims = Plots.xlims(p)
+    ylims = Plots.ylims(p)
+    x_pos = xlims[1] + 0.7 * (xlims[2] - xlims[1])
+    y_pos = ylims[1] + 0.85 * (ylims[2] - ylims[1])
+    
+    Plots.annotate!(x_pos, y_pos, text(annotation_text, :left, 8))
+    
+    return p
+end
+
+"""
+    generate_fallback_mass_error_plot_with_iteration_info(results, fname, iteration_state)
+
+Generate fallback mass error plot with best iteration information when no PPM error data is available.
+"""
+function generate_fallback_mass_error_plot_with_iteration_info(
+    results::ParameterTuningSearchResults,
+    fname::String,
+    iteration_state::IterationState
+)
+    # Create empty plot with diagnostic information
+    p = Plots.plot(
+        [],
+        [],
+        xlabel="Mass Error (ppm)",
+        ylabel="Count",
+        title="$fname - Mass Error (Best Iteration Fallback)",
+        legend=:topright,
+        grid=true
+    )
+    
+    # Add diagnostic text
+    info_text = if iteration_state.best_mass_error_model !== nothing
+        model = iteration_state.best_mass_error_model
+        """
+        Best Iteration Results:
+        Phase $(iteration_state.best_phase), Score $(iteration_state.best_score)
+        $(iteration_state.best_psm_count) PSMs found
+        Iteration $(iteration_state.best_iteration)
+        
+        Mass Error Model:
+        Offset: $(round(getMassOffset(model), digits=2)) ppm
+        Left Tol: $(round(getLeftTol(model), digits=2)) ppm
+        Right Tol: $(round(getRightTol(model), digits=2)) ppm
+        """
+    else
+        """
+        No convergence achieved
+        No best iteration data available
+        Using fallback parameters
+        """
+    end
+    
+    # Add text in center of plot
+    Plots.annotate!(0, 0, text(info_text, :center, 10))
+    
+    # Set axis limits for better text visibility
+    xlims!(-10, 10)
+    ylims!(-1, 1)
+    
+    return p
+end
 
 

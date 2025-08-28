@@ -46,7 +46,7 @@ function importScripts()
         
         # Check if file exists
         if !isfile(file_path)
-            @warn "File not found: $file_path"
+            @user_warn "File not found: $file_path"
             return false
         end
         
@@ -57,7 +57,7 @@ function importScripts()
             successful_includes += 1
             return true
         catch e
-            @warn "Failed to include $file_path: $e"
+            @user_warn "Failed to include $file_path: $e"
             return false
         end
     end
@@ -98,13 +98,17 @@ function importScripts()
         ]
     )
 
+    safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "paramDefaults.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
+    
+    # Logging is now handled directly in Pioneer.jl
     
     include_files!(
         joinpath(package_root, "src","structs"),
         [
             "MassSpecData.jl",
+            "FilteredMassSpecData.jl",
             "ChromObject.jl",
             "ArrayDict.jl",
             "Counter.jl",
@@ -183,8 +187,46 @@ function importScripts()
     # SearchMethods (excluding the old FileReferences.jl and FileOperations.jl files)
     search_methods_dir = joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")
     
+    # Load ParameterTuningSearch files in dependency order
+    include_files!(
+        joinpath(search_methods_dir, "ParameterTuningSearch"),
+        [
+            "types.jl",                    # All type definitions to avoid circular dependencies
+            "diagnostics.jl",              # Diagnostic functions (types moved to types.jl)
+            "cross_run_learning.jl",       # Cross-run learning functions (types moved to types.jl)
+            "ParameterTuningSearch.jl",    # Main implementation (types moved to types.jl)
+            "bias_detection.jl",           # Uses ParameterTuningSearchParameters from types.jl
+            "boundary_sampling.jl",        # Uses MassErrorModel
+            "utils.jl"                     # Uses all types - NOTE: MS2CHROM dependency temporarily commented out
+        ]
+    )
+    
+    # Load ScoringSearch files in dependency order
+    include_files!(
+        joinpath(search_methods_dir, "ScoringSearch"),
+        [
+            "utils.jl",                        # Contains get_qvalue_spline and other utility functions
+            "model_config.jl",                 # Model configuration
+            "score_psms.jl",                   # PSM scoring functions
+            "scoring_interface.jl",            # Interface functions
+            "protein_inference_pipeline.jl",   # Protein inference pipeline
+            "ScoringSearch.jl"                 # Main implementation - depends on utils.jl
+        ]
+    )
+    
     # Include remaining SearchMethods files (excluding old FileReferences and FileOperations)
-    safe_include_directory!(search_methods_dir)
+    # Skip ParameterTuningSearch and ScoringSearch since we loaded them above
+    for (root, dirs, files) in walkdir(search_methods_dir)
+        # Skip ParameterTuningSearch and ScoringSearch directories
+        if occursin("ParameterTuningSearch", root) || occursin("ScoringSearch", root)
+            continue
+        end
+        for file in files
+            if endswith(file, ".jl")
+                safe_include!(joinpath(root, file))
+            end
+        end
+    end
     
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))
 
@@ -245,6 +287,13 @@ function importScripts()
     # Profiling
     safe_include!(joinpath(package_root, "src", "utils", "profile.jl"))
     safe_include!(joinpath(package_root, "src", "utils", "pdfUtils.jl"))
+
+    # Main routines that use logging macros - load at the end
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "BuildSpecLib.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "ParseSpecLib.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "GenerateParams.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "mzmlConverter", "convertMzML.jl"))
 
     #importSpecLibScripts()
 

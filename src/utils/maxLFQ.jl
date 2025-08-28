@@ -376,6 +376,11 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     # Always use lazy DataFrame loading (memory efficient)
     prot = DataFrame(Arrow.Table(file_path(prot_ref)))
     
+    # Check for missing values in key columns
+    n_missing_pg_qval = sum(ismissing.(prot.pg_qval))
+    n_missing_global_qval = sum(ismissing.(prot.qlobal_pg_qval))
+    n_not_for_quant = sum(.!prot.use_for_protein_quant)
+ 
     # Create pipeline operations for batch-wise application
     preprocessing_pipeline = TransformPipeline() |>
         filter_by_multiple_thresholds([
@@ -388,7 +393,6 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
     n_writes = 0
     is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
-    @info "Is prot sorted? $is_prot_sorted"
 
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx, :inferred_protein_group]
@@ -403,8 +407,17 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         batch_end_idx = min(batch_start_idx + batch_size, size(prot, 1))
         
         # Apply pipeline operations to this batch
-        for (_, op) in preprocessing_pipeline.operations
+        initial_rows = nrow(subdf)
+        for (desc, op) in preprocessing_pipeline.operations
             subdf = op(subdf)
+            @debug "Pipeline operation" operation=desc rows_before=initial_rows rows_after=nrow(subdf)
+            initial_rows = nrow(subdf)
+        end
+        
+        # Log batch status after filtering
+        if nrow(subdf) == 0
+            @user_warn "Batch filtered to 0 rows" batch_start=batch_start_idx batch_end=batch_end_idx
+            continue  # Skip empty batches
         end
         
         # Continue with original LFQ logic
@@ -521,8 +534,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     
     # Check if we processed all rows
     if batch_start_idx <= size(prot, 1)
-        @warn "Not all rows processed!" last_processed_idx=batch_end_idx total_rows=size(prot, 1) unprocessed_rows=size(prot, 1)-batch_end_idx
-        throw("Not all rows processed!  last_processed_idx=",batch_end_idx, "total_rows=",size(prot, 1), "unprocessed_rows=",size(prot, 1)-batch_end_idx)
+        @user_warn "Not all rows processed!" last_processed_idx=batch_end_idx total_rows=size(prot, 1) unprocessed_rows=size(prot, 1)-batch_end_idx
+        throw(ErrorException("Not all rows processed! last_processed_idx=$batch_end_idx, total_rows=$(size(prot, 1)), unprocessed_rows=$(size(prot, 1)-batch_end_idx)"))
     end
     
     return nothing

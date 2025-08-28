@@ -487,7 +487,7 @@ function fitRazoQuadModel(
             end
         end
     end
-    @warn "exceeded iters"
+    @user_warn "exceeded iters"
     return rqm
 end
 
@@ -544,6 +544,7 @@ function fitRazoQuadModel(
 end
 
 function simmulateQuad(
+    iso_splines,
     rqm::RazoQuadParams{T},
     mz_offset_range::Tuple{U, U},
     center_mz_range::Tuple{U,U},

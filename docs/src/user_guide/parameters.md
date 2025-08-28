@@ -168,6 +168,45 @@ Most parameters should not be changed, but the following may need adjustement.
 
 ## BuildSpecLib Configuration
 
+### FASTA Input and Regex Mapping
+
+Pioneer.jl now supports flexible FASTA input through `GetBuildLibParams`:
+
+#### Input Options
+1. **Single directory**: Scans for all `.fasta` and `.fasta.gz` files
+2. **Single file**: Directly uses the specified FASTA file
+3. **Mixed array**: Any combination of directories and files
+
+#### Regex Code Mapping
+The regex patterns for parsing FASTA headers can be configured in three ways:
+
+1. **Single regex set for all files** (default):
+   ```julia
+   GetBuildLibParams(out_dir, lib_name, [dir1, dir2, file1])
+   # All FASTA files use the same default regex patterns
+   ```
+
+2. **Custom single regex set**:
+   ```julia
+   GetBuildLibParams(out_dir, lib_name, [dir1, file1],
+       regex_codes = Dict(
+           "accessions" => "^>(\\S+)",
+           "genes" => "GN=(\\S+)",
+           "proteins" => "\\s+(.+?)\\s+OS=",
+           "organisms" => "OS=(.+?)\\s+GN="
+       ))
+   # All files use these custom patterns
+   ```
+
+3. **Positional mapping** (one regex set per input):
+   ```julia
+   GetBuildLibParams(out_dir, lib_name, [uniprot_dir, custom_file],
+       regex_codes = [
+           Dict("accessions" => "^\\w+\\|(\\w+)\\|", ...),  # For uniprot_dir files
+           Dict("accessions" => "^>(\\S+)", ...)             # For custom_file
+       ])
+   ```
+
 ### FASTA Digest Parameters
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -236,6 +275,9 @@ Most parameters should not be changed, but the following may need adjustement.
 | `max_koina_requests` | Int | Maximum concurrent Prosit API requests (default: 24) |
 | `max_koina_batch` | Int | Maximum batch size for API requests (default: 1000) |
 | `match_lib_build_batch` | Int | Batch size for library building (default: 100000) |
+
+!!! note "Koina API Retry Behavior"
+    As of version 0.1.13, Koina API retry warnings are now logged at debug level 2 instead of being shown to users by default. To see retry attempts during debugging, set `debug_console_level: 2` in your SearchDIA parameters. The library build will only fail if all retry attempts are exhausted.
 
 ### Path Parameters
 | Parameter | Type | Description |

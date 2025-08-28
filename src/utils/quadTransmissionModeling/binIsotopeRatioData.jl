@@ -158,6 +158,20 @@ function estimateKdeBins(
     return getBinIdx(x, x_bin_boundaries), length(x_bin_boundaries) - 2 + 1
 end
 
+# Method overload to handle vectors with missing values
+function estimateKdeBins(x::AbstractVector{Union{Missing, T}}) where T<:AbstractFloat
+    # Filter out missing values
+    x_clean = collect(skipmissing(x))
+    
+    # Check if we have enough data for meaningful KDE
+    if length(x_clean) < 10
+        throw(ArgumentError("Insufficient non-missing data for KDE estimation: $(length(x_clean)) points"))
+    end
+    
+    # Call the original method with clean data
+    return estimateKdeBins(x_clean)
+end
+
 function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Real}; min_bin_size=300, min_bin_width=0.1, max_iterations=100)
     
     isotopes_ratio_data = copy(isotopes_ratio_data)
@@ -172,7 +186,7 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
     bin_idxs, n_bins = estimateKdeBins(isotopes_ratio_data[!,:x0])
     isotopes_ratio_data[!,:kde_bin_idx] = bin_idxs
     if n_bins < 4
-        println("<4")
+        #println("<4")
         #plot(isotopes_ratio_data[!,:x0], isotopes_ratio_data[!,:yt], seriestype=:scatter, alpha = 0.1, show = true)
     end
     #Use KDE bins or uniform bins? Base this decision on the median intra-bin standard deviation 
@@ -182,7 +196,7 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
         push!(uniform_x_bounds, typemax(Float32))
         pushfirst!(uniform_x_bounds, typemin(Float32))
         isotopes_ratio_data[!,:bin_idx] = getBinIdx(isotopes_ratio_data[!,:x0], uniform_x_bounds)
-        @warn "KDE bin estimation failed... Default to uniform binning $n_bins $min_bin_count"
+        @user_warn "KDE bin estimation failed... Default to uniform binning $n_bins $min_bin_count"
     else
         #Estimate uniform bins 
         uniform_x_bounds = collect(LinRange{Float32, Int64}(x0_min, x0_max, n_bins+2))
@@ -197,7 +211,7 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
         mean_kde_std = median(skipmissing(kde_bin_stds))
         if mean_uniform_std > mean_kde_std*0.9
             isotopes_ratio_data[!,:bin_idx] = isotopes_ratio_data[!,:uniform_bin_idx]
-            @warn "KDE bin estimation failed... Default to uniform binning"
+            @user_warn "KDE bin estimation failed... Default to uniform binning"
         else
             isotopes_ratio_data[!,:bin_idx] = isotopes_ratio_data[!,:kde_bin_idx]
         end
@@ -229,7 +243,7 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
         end
         
         if iter == max_iterations
-            @warn "Reached maximum iterations without convergence"
+            @user_warn "Reached maximum iterations without convergence"
         end
         
         last_n_bins = current_n_bins

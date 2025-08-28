@@ -436,8 +436,11 @@ function perform_protein_inference_pipeline(
             add_protein_features(protein_catalog)
         
         # Apply post-processing
+        initial_rows = nrow(protein_groups_df)
         for (desc, op) in post_inference_pipeline.operations
             protein_groups_df = op(protein_groups_df)
+            #@debug_l1 "Pipeline operation on protein groups" operation=desc rows_before=initial_rows rows_after=nrow(protein_groups_df)
+            initial_rows = nrow(protein_groups_df)
         end
         
         # Write protein groups
@@ -449,6 +452,8 @@ function perform_protein_inference_pipeline(
             pg_ref = ProteinGroupFileReference(pg_path)
             push!(pg_refs, pg_ref)
             psm_to_pg_mapping[file_path(psm_ref)] = pg_path
+        else
+            @user_warn "No protein groups to write after filtering" file_idx=idx pg_path=pg_path
         end
     end
     
