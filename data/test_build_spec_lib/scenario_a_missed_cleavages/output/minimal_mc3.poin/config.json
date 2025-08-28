@@ -25,7 +25,7 @@
     ],
     "comment_digestion": "=== Protein digestion parameters ===",
     "fasta_digest_params": {
-        "min_length": 7,
+        "min_length": 1,
         "max_length": 15,
         "min_charge": 2,
         "max_charge": 2,

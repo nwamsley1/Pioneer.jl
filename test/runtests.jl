@@ -112,22 +112,22 @@ if isdir(results_dir)
 end
 @testset "Pioneer.jl" begin
     println("dir ", @__DIR__)
-    #=
-    @testset "process_test_speclib" begin 
-        @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
-    end
-    include("./UnitTests/empiricalLibTests.jl")
-    =#
-    #@testset "process_test" begin 
-    #    @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
+    
+    #@testset "process_test_speclib" begin 
+    #    @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     #end
+    #include("./UnitTests/empiricalLibTests.jl")
+    
+    @testset "process_test" begin 
+        @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
+    end
     # Test FASTA parameter enhancement
     include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
     
     # Test BuildSpecLib functionality
     include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
     
-    #=
+    
     include("./UnitTests/buildDesignMatrix.jl")
     include("./UnitTests/isotopeSplines.jl")
     include("./UnitTests/matchPeaks.jl")
@@ -140,5 +140,4 @@ end
     include("./UnitTests/BuildPionLibTest.jl")
     include("./utils/FileOperations/test_file_operations_suite.jl")
     include("./UnitTests/RazoQuadModel.jl")
-    =#
 end

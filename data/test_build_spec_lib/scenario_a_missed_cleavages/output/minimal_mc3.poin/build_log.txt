@@ -3,7 +3,7 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-08-27T16:40:42.989
+Starting library build at: 2025-08-27T21:15:00.957
 Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc3.poin
 
 Detecting fragment bounds...
@@ -28,7 +28,7 @@ Detailed Step Analysis:
 ------------------------------------------------------------------------------------------
 # Precursors # Fragments  # Targets    # Decoys     
 ------------------------------------------------------------------------------------------
-        7.00       372.00         7.00         0.00 
+        8.00       408.00         8.00         0.00 
 
 Detailed Step Analysis:
 ------------------------------------------------------------------------------------------
@@ -40,26 +40,26 @@ File Verification                        0.00         0.00         0.00         
 Model Validation                         0.00         0.00         0.00         0.0         
 Parameter Loading                        0.00         0.00         0.00         0.0         
 Fragment Bound Detection                 0.00         0.00         0.00         0.0         
-Chronologer Preparation                  0.52         0.01         0.00         0.0         
-Chronologer Output Processing            0.55         0.01         0.05         8.5         
-Retention Time Prediction                0.77         0.01         0.00         0.0         
-Index Building                           0.78         0.01         0.05         5.9         
-Prediction Processing                    1.05         0.02         0.05         4.5         
-Fragment Prediction                      3.51         0.01         0.00         0.0         
+Chronologer Preparation                  0.53         0.01         0.00         0.0         
+Chronologer Output Processing            0.55         0.01         0.05         8.7         
+Index Building                           0.78         0.01         0.05         6.0         
+Retention Time Prediction                0.79         0.01         0.00         0.0         
+Prediction Processing                    1.06         0.02         0.05         4.3         
+Fragment Prediction                      3.39         0.01         0.00         0.0         
 ------------------------------------------------------------------------------------------
-TOTAL                                    7.19         0.07         0.14         1.9         
+TOTAL                                    7.09         0.07         0.14         2.0         
 
 Performance Summary:
 ------------------------------------------------------------------------------------------
 Total Runtime: 0.12 minutes
 Total Garbage Collection Time: 0.14 seconds
 Number of Steps: 12
-Average Step Runtime: 0.6 seconds
+Average Step Runtime: 0.59 seconds
 
 Memory Usage Summary:
 ------------------------------------------------------------------------------------------
 Total Memory Allocated: 0.07 GB
-Peak  Memory Usage: 1.64 GB
+Peak  Memory Usage: 1.63 GB
 Total Available System Memory: 48.0 GB
 
 Process Information:
@@ -70,6 +70,6 @@ System: arm64-apple-darwin24.0.0
 
 ==========================================================================================
 
-Library building completed at: 2025-08-27T16:40:50.181
+Library building completed at: 2025-08-27T21:15:08.054
 
 Library location: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc3.poin
