@@ -24,7 +24,7 @@ SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unis
  
 test_rqm = RazoQuadParams(1.0, 2.0, 2.0, 10.0)
 Random.seed!(42)
-test_data = simmulateQuad(test_rqm, (-3.0, 3.0), (400.0, 1000.0), 1000)
+test_data = simmulateQuad(iso_splines, test_rqm, (-3.0, 3.0), (400.0, 1000.0), 1000)
 #plot(plot_bins, test_rqm.(plot_bins), lw = 2.0, alpha = 0.5, xlabel = "m/z offset", ylabel = "probability", label = nothing)#"True model")
 #plot(test_data[!,:x0], test_data[!,:yt], seriestype=:scatter, ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset", label = nothing, alpha = 0.3)
 

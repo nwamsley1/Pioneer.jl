@@ -42,7 +42,7 @@ using Pioneer: PeptideMod, matchVarMods, add_pair_indices!  # For FastaDigestTes
 using Pioneer: digest_sequence, getFixedMods!, countVarModCombinations  # For FastaDigestTests.jl
 using Pioneer: FastaEntry, parse_fasta, PeptideSequenceSet  # For FastaDigestTests.jl
 using Pioneer: buildFragmentIndex!, FragBoundModel, cleanUpLibrary  # For BuildPionLibTest.jl
-using Pioneer: RazoQuadParams, simmulateQuad  # For RazoQuadModel.jl
+using Pioneer: RazoQuadParams, simmulateQuad, fitRazoQuadModel, MergeBins  # For RazoQuadModel.jl
 using Pioneer: buildPionLib  # For BuildPionLibTest.jl
 using Pioneer: digest_fasta, combine_shared_peptides  # For FastaDigestTests.jl  
 using Pioneer: add_decoy_sequences, add_entrapment_sequences  # For FastaDigestTests.jl
@@ -132,7 +132,6 @@ end
     #    @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     #end
     #include("./UnitTests/empiricalLibTests.jl")
-    #=
     @testset "process_test" begin 
         @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
     end
@@ -143,7 +142,7 @@ end
     
     # Test BuildSpecLib functionality
     include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
-    =#
+
     
     include("./UnitTests/buildDesignMatrix.jl")
     include("./UnitTests/isotopeSplines.jl")
