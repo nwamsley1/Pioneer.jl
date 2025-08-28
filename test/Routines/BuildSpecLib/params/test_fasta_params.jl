@@ -86,7 +86,7 @@ using CodecZlib
     
     @testset "Single Directory Input (backward compatibility)" begin
         params_file = joinpath(test_data_dir, "single_dir_params.json")
-        result = Pioneer.GetBuildLibParams(output_dir, lib_name, dir1; params_path=params_file)
+        result = GetBuildLibParams(output_dir, lib_name, dir1; params_path=params_file)
         
         @test result == params_file
         @test isfile(params_file)
@@ -110,7 +110,7 @@ using CodecZlib
     
     @testset "Single File Input" begin
         params_file = joinpath(test_data_dir, "single_file_params.json")
-        result = Pioneer.GetBuildLibParams(output_dir, lib_name, single_file; params_path=params_file)
+        result = GetBuildLibParams(output_dir, lib_name, single_file; params_path=params_file)
         
         @test result == params_file
         @test isfile(params_file)
@@ -127,7 +127,7 @@ using CodecZlib
     
     @testset "Multiple Directory Input" begin
         params_file = joinpath(test_data_dir, "multi_dir_params.json")
-        result = Pioneer.GetBuildLibParams(output_dir, lib_name, [dir1, dir2]; params_path=params_file)
+        result = GetBuildLibParams(output_dir, lib_name, [dir1, dir2]; params_path=params_file)
         
         @test result == params_file
         @test isfile(params_file)
@@ -145,7 +145,7 @@ using CodecZlib
     
     @testset "Mixed Directory and File Input" begin
         params_file = joinpath(test_data_dir, "mixed_input_params.json")
-        result = Pioneer.GetBuildLibParams(output_dir, lib_name, [dir1, single_file]; params_path=params_file)
+        result = GetBuildLibParams(output_dir, lib_name, [dir1, single_file]; params_path=params_file)
         
         @test result == params_file
         @test isfile(params_file)
@@ -165,7 +165,7 @@ using CodecZlib
         )
         
         params_file = joinpath(test_data_dir, "custom_regex_single_params.json")
-        result = Pioneer.GetBuildLibParams(output_dir, lib_name, [dir1, dir2];
+        result = GetBuildLibParams(output_dir, lib_name, [dir1, dir2];
                                           params_path=params_file,
                                           regex_codes=custom_regex)
         
@@ -197,7 +197,7 @@ using CodecZlib
         )
         
         params_file = joinpath(test_data_dir, "custom_regex_positional_params.json")
-        result = Pioneer.GetBuildLibParams(output_dir, lib_name, [dir1, single_file];
+        result = GetBuildLibParams(output_dir, lib_name, [dir1, single_file];
                                           params_path=params_file,
                                           regex_codes=[regex_set1, regex_set2])
         
@@ -218,7 +218,7 @@ using CodecZlib
     
     @testset "Error Cases" begin
         # Non-existent path
-        @test_throws ErrorException Pioneer.GetBuildLibParams(output_dir, lib_name, "/nonexistent/path")
+        @test_throws ErrorException GetBuildLibParams(output_dir, lib_name, "/nonexistent/path")
         
         # Non-FASTA file
         non_fasta = joinpath(fasta_test_dir, "not_fasta.txt")
@@ -227,16 +227,16 @@ using CodecZlib
                 write(f, "This is not a FASTA file")
             end
         end
-        @test_throws ErrorException Pioneer.GetBuildLibParams(output_dir, lib_name, non_fasta)
+        @test_throws ErrorException GetBuildLibParams(output_dir, lib_name, non_fasta)
         
         # Mismatched regex codes (more regex sets than inputs)
-        @test_throws ErrorException Pioneer.GetBuildLibParams(
+        @test_throws ErrorException GetBuildLibParams(
             output_dir, lib_name, [dir1, dir2];
             regex_codes = [Dict(), Dict(), Dict()]
         )
         
         # Mismatched regex codes (more than 1 but not matching inputs)
-        @test_throws ErrorException Pioneer.GetBuildLibParams(
+        @test_throws ErrorException GetBuildLibParams(
             output_dir, lib_name, [dir1, dir2, single_file];
             regex_codes = [Dict(), Dict()]
         )
@@ -252,7 +252,7 @@ using CodecZlib
         params_file = joinpath(test_data_dir, "empty_dir_params.json")
         
         # This should throw an error because no FASTA files are found
-        @test_throws ErrorException Pioneer.GetBuildLibParams(
+        @test_throws ErrorException GetBuildLibParams(
             output_dir, lib_name, empty_dir;
             params_path=params_file
         )
