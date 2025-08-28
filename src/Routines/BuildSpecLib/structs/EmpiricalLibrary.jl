@@ -14,7 +14,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
-
+#=
 abstract type EmpiricalLibrary end
 """
     convert_to_n_term(sequence::String)
@@ -477,3 +477,4 @@ function getInternalInd(sl::EmpiricalLibrary, frag_idx::Integer)
     =#
     return (zero(UInt8), zero(UInt8))
 end
+=#
