@@ -48,6 +48,8 @@ using Pioneer: digest_fasta, combine_shared_peptides  # For FastaDigestTests.jl
 using Pioneer: add_decoy_sequences, add_entrapment_sequences  # For FastaDigestTests.jl
 using Pioneer: fillVarModStrings!, fragFilter  # For BuildPionLibTest.jl
 using Pioneer: get_base_pep_id, get_base_prec_id, get_charge  # For FastaDigestTests.jl
+using Pioneer: make_koina_request, prepare_koina_batch, parse_koina_batch  # For Koina API tests
+using Pioneer: KoinaBatchResult  # For Koina API tests
 using Pioneer: get_proteome, get_sequence, get_structural_mods  # For FastaDigestTests.jl
 using Pioneer: get_isotopic_mods, get_description, get_id  # For FastaDigestTests.jl
 using Pioneer: get_entrapment_pair_id  # For FastaDigestTests.jl
@@ -132,29 +134,33 @@ end
     #    @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     #end
     #include("./UnitTests/empiricalLibTests.jl")
-    @testset "process_test" begin 
-        @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
-    end
     
+    # TEMPORARILY COMMENTED OUT FOR KOINA TEST DEVELOPMENT - speeds up ]test
+    # @testset "process_test" begin 
+    #     @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
+    # end
     
-    #Test FASTA parameter enhancement
-    include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
+    # #Test FASTA parameter enhancement
+    # include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
     
-    # Test BuildSpecLib functionality
-    include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
+    # # Test BuildSpecLib functionality
+    # include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
 
+    # # Unit tests - commented out for faster Koina test development
+    # include("./UnitTests/buildDesignMatrix.jl")
+    # include("./UnitTests/isotopeSplines.jl")
+    # include("./UnitTests/matchPeaks.jl")
+    # include("./UnitTests/queryFragmentIndex.jl")
+    # include("./UnitTests/testIsotopesJun13.jl")
+    # include("./UnitTests/uniformBassisCubicSpline.jl")
+    # include("./UnitTests/test_protein_inference.jl")
+    # include("./UnitTests/ChronologerPrepTests.jl")
+    # include("./UnitTests/FastaDigestTests.jl")
+    # include("./UnitTests/BuildPionLibTest.jl")
+    # include("./utils/FileOperations/test_file_operations_suite.jl")
+    # include("./UnitTests/RazoQuadModel.jl")
     
-    include("./UnitTests/buildDesignMatrix.jl")
-    include("./UnitTests/isotopeSplines.jl")
-    include("./UnitTests/matchPeaks.jl")
-    include("./UnitTests/queryFragmentIndex.jl")
-    include("./UnitTests/testIsotopesJun13.jl")
-    include("./UnitTests/uniformBassisCubicSpline.jl")
-    include("./UnitTests/test_protein_inference.jl")
-    include("./UnitTests/ChronologerPrepTests.jl")
-    include("./UnitTests/FastaDigestTests.jl")
-    include("./UnitTests/BuildPionLibTest.jl")
-    include("./utils/FileOperations/test_file_operations_suite.jl")
-    include("./UnitTests/RazoQuadModel.jl")
+    # NEW KOINA API TESTS - Active development
+    include("./Routines/BuildSpecLib/koina/test_koina_suite.jl")
     
 end

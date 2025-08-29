@@ -273,8 +273,9 @@ function importScripts()
     safe_include!(joinpath(root_path, "utils", "check_params.jl"))
     
     # Structs 
-    safe_include!(joinpath(root_path, "structs", "EmpiricalLibrary.jl"))
-    safe_include!(joinpath(root_path, "utils", "parse_mods.jl"))
+    # COMMENTED OUT: EmpiricalLibrary only used by ParseSpecLib which has loading issues
+    # safe_include!(joinpath(root_path, "structs", "EmpiricalLibrary.jl"))
+    # safe_include!(joinpath(root_path, "utils", "parse_mods.jl"))
     
     # Library building
     safe_include!(joinpath(root_path, "build", "build_poin_lib.jl"))
@@ -291,7 +292,8 @@ function importScripts()
     # Main routines that use logging macros - load at the end
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "BuildSpecLib.jl"))
-    safe_include!(joinpath(package_root, "src", "Routines", "ParseSpecLib.jl"))
+    # COMMENTED OUT: ParseSpecLib has loading issues due to EmpiricalLibrary dependencies
+    # safe_include!(joinpath(package_root, "src", "Routines", "ParseSpecLib.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "GenerateParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "mzmlConverter", "convertMzML.jl"))
 
