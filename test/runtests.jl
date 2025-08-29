@@ -143,8 +143,8 @@ end
     # #Test FASTA parameter enhancement
     # include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
     
-    # # Test BuildSpecLib functionality
-    # include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
+    # Test BuildSpecLib functionality
+    include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
 
     # # Unit tests - commented out for faster Koina test development
     # include("./UnitTests/buildDesignMatrix.jl")

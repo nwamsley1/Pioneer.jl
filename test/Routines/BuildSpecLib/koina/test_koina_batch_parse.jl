@@ -150,7 +150,7 @@
     @testset "Multiple Peptide Parsing" begin
         model = InstrumentAgnosticModel("prosit_2020_hcd")
         test_data = DataFrame(
-            koina_sequence = ["PEPTIDE", "SEQUENCER"],
+            koina_sequence = ["PEPTIDER", "ALANINEK"],
             precursor_charge = Int32[2, 3],
             collision_energy = Float32[25.0, 30.0]
         )

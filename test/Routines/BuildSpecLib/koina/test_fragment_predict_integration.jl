@@ -8,7 +8,7 @@
         # This specifically tests the prosit model as requested
         
         test_peptides = DataFrame(
-            koina_sequence = ["PEPTIDER", "SEQUENCER", "FRAGMENTK"],
+            koina_sequence = ["PEPTIDER", "ALANINEK", "GLYCINER"],
             precursor_charge = Int32[2, 3, 2],
             collision_energy = Float32[25.0, 30.0, 25.0]
         )
@@ -106,8 +106,10 @@
     
     @testset "Batch Processing Integration" begin
         # Test processing multiple batches with realistic data sizes
+        # Use valid amino acid sequences that work well with Prosit
+        base_sequences = ["PEPTIDER", "ALANINEK", "GLYCINER", "VALINEKR", "LEMCINEK"]
         large_dataset = DataFrame(
-            koina_sequence = ["PEPTIDE$(i)" for i in 1:25],  # 25 peptides
+            koina_sequence = repeat(base_sequences, 5),  # 25 peptides (5 sequences × 5 repeats)
             precursor_charge = repeat(Int32[2, 3], 13)[1:25],   # Mixed charges
             collision_energy = repeat(Float32[25.0, 30.0], 13)[1:25]  # Mixed NCE
         )
