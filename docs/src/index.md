@@ -65,11 +65,5 @@ BuildSpecLib
 GetBuildLibParams
 ```
 ```@docs
-ParseSpecLib
-```
-```@docs
-GetParseSpecLibParams
-```
-```@docs
 Pioneer.convertMzML
 ```
