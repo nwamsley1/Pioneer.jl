@@ -72,6 +72,10 @@ docker build -t pioneer .
 ```
 
 
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on our Git Flow workflow and development process.
+
 <h1>Goldfarb Lab </h1>
  Pioneer is developed in the Goldfarb Lab: https://goldfarblab.wustl.edu   <img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/goldfarb.png" align="left" width="125px"/> 
 <br><br><br><br><br>
