@@ -818,6 +818,78 @@ end
         end
     end
     
+    @testset "Prosit Model Integration Test" begin
+        scenario_dir = joinpath(test_data_dir, "scenario_prosit")
+        output_dir = joinpath(scenario_dir, "output")
+        minimal_fasta = joinpath(fasta_dir, "minimal_protein.fasta")
+        
+        # Verify FASTA file exists
+        @test isfile(minimal_fasta)
+        
+        lib_name = "prosit_test"
+        lib_dir = joinpath(output_dir, lib_name * ".poin")
+        
+        # Generate parameters using Prosit model instead of altimeter
+        params = generate_build_params(
+            minimal_fasta,
+            output_dir,
+            lib_name;
+            missed_cleavages = 1,
+            min_length = 7,
+            max_length = 15,
+            min_charge = 2,
+            max_charge = 3,
+            add_decoys = true,
+            predict_fragments = true,
+            max_koina_batch = 50,
+            prec_mz_min = 390.0,
+            prec_mz_max = 1010.0
+        )
+        
+        # Override to use Prosit instead of altimeter
+        params["library_params"]["prediction_model"] = "prosit_2020_hcd"
+        
+        # Save parameters
+        params_file = joinpath(scenario_dir, "params_prosit.json")
+        mkpath(dirname(params_file))
+        open(params_file, "w") do io
+            JSON.print(io, params, 4)
+        end
+        
+        # Run BuildSpecLib with Prosit
+        @test Pioneer.BuildSpecLib(params_file) === nothing
+        
+        # Verify outputs
+        @test verify_library_structure(lib_dir)
+        
+        # Check precursors table
+        precursors_file = joinpath(lib_dir, "precursors_table.arrow")
+        if isfile(precursors_file)
+            precursors = Arrow.Table(precursors_file)
+            sequences = unique(precursors[:sequence])
+            println("Prosit Integration: Found $(length(sequences)) unique peptide sequences")
+            
+            # Should have peptides from minimal protein
+            @test length(sequences) > 0
+            
+            # Verify charge states
+            charges = unique(precursors[:prec_charge])
+            @test minimum(charges) >= 2
+            @test maximum(charges) <= 3
+            
+            # Should have both targets and decoys
+            n_targets = sum(.!precursors[:is_decoy])  # Targets are non-decoys
+            n_decoys = sum(precursors[:is_decoy])     # Decoys are marked as is_decoy=true
+            @test n_targets > 0
+            @test n_decoys > 0
+        else
+            @warn "Precursors file not created: $precursors_file"
+            @test false
+        end
+        
+        println("✓ Prosit integration test completed successfully")
+    end
+    
 end
 
 println("✓ BuildSpecLib integration tests completed")

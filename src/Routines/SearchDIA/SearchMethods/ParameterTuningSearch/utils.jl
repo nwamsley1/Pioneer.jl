@@ -1425,28 +1425,6 @@ function test_tolerance_expansion!(
 end
 
 """
-    getPhaseShift(phase::Int, params::ParameterTuningSearchParameters)
-
-Get the bias shift (in ppm) for a given phase.
-Phase 1: 0 ppm (no bias)
-Phase 2: +max_tolerance ppm (positive bias)
-Phase 3: -max_tolerance ppm (negative bias)
-"""
-function getPhaseShift(phase::Int, params::ParameterTuningSearchParameters)
-    if phase == 1
-        return 0.0
-    elseif phase == 2
-        # Positive shift - use maximum expected tolerance
-        return Float64(getInitialMassTol(params))
-    elseif phase == 3
-        # Negative shift - use negative maximum expected tolerance
-        return -Float64(getInitialMassTol(params))
-    else
-        return 0.0
-    end
-end
-
-"""
     collect_psms_with_model(filtered_spectra, search_context, params, ms_file_idx, spectra)
 
 Helper function to collect PSMs with the current mass error model.
@@ -1702,4 +1680,58 @@ function generate_fallback_mass_error_plot_with_iteration_info(
     return p
 end
 
+"""
+    record_tuning_status!(diagnostics, status)
 
+Record the parameter tuning status for a file.
+"""
+function record_tuning_status!(diagnostics::ParameterTuningDiagnostics, status::ParameterTuningStatus)
+    diagnostics.file_statuses[status.file_idx] = status
+    
+    if status.converged && !status.used_fallback
+        diagnostics.n_successful += 1
+    elseif status.used_fallback
+        diagnostics.n_fallback += 1
+    else
+        diagnostics.n_failed += 1
+    end
+end
+
+"""
+    store_tuning_results!(history::ParameterHistory, file_idx::Int64, results::TuningResults)
+
+Store the parameter tuning results for a file.
+"""
+function store_tuning_results!(history::ParameterHistory, file_idx::Int64, results::TuningResults)
+    history.file_parameters[file_idx] = results
+    
+    # Update global statistics if this was successful
+    if results.converged
+        update_global_statistics!(history)
+    end
+end
+
+"""
+    update_global_statistics!(history::ParameterHistory)
+
+Recompute global statistics from all successful files.
+"""
+function update_global_statistics!(history::ParameterHistory)
+    successful_results = [r for r in values(history.file_parameters) if r.converged]
+    
+    if isempty(successful_results)
+        return
+    end
+    
+    # Extract values
+    mass_offsets = [r.mass_offset for r in successful_results]
+    tolerances = [mean(r.mass_tolerance) for r in successful_results]
+    
+    # Compute statistics
+    stats = history.global_stats
+    stats.median_mass_offset = median(mass_offsets)
+    stats.mass_offset_mad = mad(mass_offsets, normalize=false)
+    stats.median_tolerance = median(tolerances)
+    stats.tolerance_mad = mad(tolerances, normalize=false)
+    stats.n_successful_files = length(successful_results)
+end

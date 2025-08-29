@@ -843,6 +843,10 @@ function reverseSequence(sequence::AbstractString, structural_mods::String)
     return rev_seq, join(last.(final_mods))
 end
 
+# COMMENTED OUT: Functions below depend on BasicEmpiricalLibrary which is disabled
+# Uncomment when BasicEmpiricalLibrary is re-enabled
+
+#=
 """
     getRevDecoys!(speclibdf::BasicEmpiricalLibrary)
 
@@ -1131,3 +1135,5 @@ function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment
     # Filter out failed shuffles and append
     append!(speclibdf.libdf, shuffle_libdf[keep_rows, :])
 end
+
+=#
