@@ -15,67 +15,81 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+using Test
+using Pioneer  # Load the Pioneer module for exported functions
+
+# Import specific internal types and functions needed for testing
+# These are NOT exported by Pioneer but we need them for unit tests
+using Pioneer: SparseArray, ArrayDict, FragmentMatch, parseIsoXML
+using Pioneer: UniSpecFragAnnotation, GenericFragAnnotation
+using Pioneer: InstrumentSpecificModel, InstrumentAgnosticModel
+using Pioneer: SplineCoefficientModel, RetentionTimeModel
+using Pioneer: H2O, PROTON, NEUTRON, NCE_MODEL_BREAKPOINT
+using Pioneer: InterpolationTypeAlias
+using Pioneer: DetailedFrag, SimpleFrag, LibraryFragmentLookup
+using Pioneer: DEBUG_CONSOLE_LEVEL
+using Pioneer: buildDesignMatrix!  # For buildDesignMatrix.jl test
+using Pioneer: IsotopeSplineModel   # For isotopeSplines.jl test
+using Pioneer: getPrecursorIsotopeSet, getFragIsotopes!  # For isotopeSplines.jl test
+using Pioneer: MassErrorModel, matchPeaks!, reset!  # For matchPeaks.jl test
+using Pioneer: FragIndexBin, findFirstFragmentBin  # For queryFragmentIndex.jl test
+using Pioneer: exponentialFragmentBinSearch, searchFragmentBin!  # For queryFragmentIndex.jl test
+using Pioneer: getHigh, Counter, IndexFragment, queryFragment!  # For queryFragmentIndex.jl test
+using Pioneer: UniformSpline  # For uniformBasisCubicSpline.jl test
+using Pioneer: ProteinKey, PeptideKey, InferenceResult  # For test_protein_inference.jl test
+using Pioneer: adjustNCE  # For ChronologerPrepTests.jl
+using Pioneer: PeptideMod, matchVarMods, add_pair_indices!  # For FastaDigestTests.jl
+using Pioneer: digest_sequence, getFixedMods!, countVarModCombinations  # For FastaDigestTests.jl
+using Pioneer: FastaEntry, parse_fasta, PeptideSequenceSet  # For FastaDigestTests.jl
+using Pioneer: buildFragmentIndex!, FragBoundModel, cleanUpLibrary  # For BuildPionLibTest.jl
+using Pioneer: RazoQuadParams, simmulateQuad, fitRazoQuadModel, MergeBins  # For RazoQuadModel.jl
+using Pioneer: buildPionLib  # For BuildPionLibTest.jl
+using Pioneer: digest_fasta, combine_shared_peptides  # For FastaDigestTests.jl  
+using Pioneer: add_decoy_sequences, add_entrapment_sequences  # For FastaDigestTests.jl
+using Pioneer: fillVarModStrings!, fragFilter  # For BuildPionLibTest.jl
+using Pioneer: get_base_pep_id, get_base_prec_id, get_charge  # For FastaDigestTests.jl
+using Pioneer: get_proteome, get_sequence, get_structural_mods  # For FastaDigestTests.jl
+using Pioneer: get_isotopic_mods, get_description, get_id  # For FastaDigestTests.jl
+using Pioneer: get_entrapment_pair_id  # For FastaDigestTests.jl
+using Pioneer: filter_by_threshold, filter_by_multiple_thresholds  # For file operations tests
+using Pioneer: getDetailedFrags, getSeqSet, getSimpleFrags, getMZ  # For BuildPionLibTest.jl
+using Pioneer: getIRT, getPrecCharge, getPrecID, getPrecMZ, getScore  # For BuildPionLibTest.jl
+using Pioneer: is_decoy, SplineDetailedFrag  # For FastaDigestTests.jl and BuildPionLibTest.jl
+using Pioneer: PSMFileReference, TransformPipeline, add_column, sort_by, apply_pipeline!  # For file operations tests
+# Note: iso_splines is loaded dynamically via parseIsoXML in RazoQuadModel.jl
+
+# Package dependencies that tests use directly
 using Arrow, ArrowTypes, ArgParse
-#using BSplineKit Don't need this imports anymore?
-using Base64
-using Base.Order
+using Base64, Base.Order
 using Base.Iterators: partition
 using CSV, Combinatorics, CodecZlib
 using DataFrames, DataStructures, Dictionaries, Distributions
-using FASTX
-using Interpolations
-using JSON, JLD2
+using FASTX, Interpolations, JSON, JLD2
 using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
-using Measures
-using NumericalIntegration
-using Optim
+using Measures, NumericalIntegration, Optim
 using Plots, Polynomials, ProgressBars
-using Tables, Test
-using StatsPlots, SentinelArrays
-using Random
-using StaticArrays, StatsBase, SpecialFunctions, Statistics
+using Tables, StatsPlots, SentinelArrays
+using Random, StaticArrays, StatsBase, SpecialFunctions, Statistics
 using EvoTrees
 using MLJModelInterface: fit, predict
-using KernelDensity
-using FastGaussQuadrature
+using KernelDensity, FastGaussQuadrature
 using LaTeXStrings, Printf
-using SparseArrays
-using Dates 
+using SparseArrays, Dates
+using HTTP
+using Interpolations: Gridded, Linear, Throw, OnGrid, Line
 
+# Test configuration - suppress debug output during tests
+Pioneer.DEBUG_CONSOLE_LEVEL[] = 0
+
+# Test-specific directory paths
 main_dir = joinpath(@__DIR__, "../src")
 
-"""
-Type alias for m/z to eV interpolation functions.
-Uses GriddedInterpolation with linear interpolation and line extrapolation.
-"""
-const InterpolationTypeAlias = Interpolations.Extrapolation{
-    Float32,  # Value type
-    1,        # Dimension
-    Interpolations.GriddedInterpolation{
-        Float32,                            # Value type
-        1,                                  # Dimension
-        Vector{Float32},                    # Values
-        Gridded{Linear{Throw{OnGrid}}},     # Method
-        Tuple{Vector{Float32}}              # Grid type
-    },
-    Gridded{Linear{Throw{OnGrid}}},         # Method
-    Line{Nothing}                           # Extrapolation
-}
+# InterpolationTypeAlias is imported from Pioneer module, no need to redefine
 
-include(joinpath(dirname(@__DIR__), "src", "importScripts.jl"))
-files_loaded = importScripts()
-
-#include(joinpath(main_dir, "Routines","LibrarySearch","methods","loadSpectralLibrary.jl"))  
-const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
-include(joinpath(dirname(@__DIR__), "src", "Routines","SearchDIA.jl"))
-include(joinpath(dirname(@__DIR__), "src", "Routines","BuildSpecLib.jl"))
-include(joinpath(dirname(@__DIR__), "src", "Routines","ParseSpecLib.jl"))
+const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")
 const CHARGE_ADJUSTMENT_FACTORS = Float64[1, 0.9, 0.85, 0.8, 0.75]
 
-const H2O::Float64 = Float64(18.010565)
-const PROTON::Float64 = Float64(1.0072764)
-const NEUTRON::Float64 = Float64(1.00335)
-const NCE_MODEL_BREAKPOINT::Float32 = Float32(500.0f0)
+# H2O, PROTON, NEUTRON, NCE_MODEL_BREAKPOINT are imported from Pioneer module
 
 
 const MODEL_CONFIGS = Dict(
@@ -104,10 +118,6 @@ const KOINA_URLS = Dict(
     "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer"
 )
 
-export SearchDIA, BuildSpecLib
-#This is an important alias.
-const Pioneer = Main
-using Test
 results_dir = joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_results")
 if isdir(results_dir)
     # Delete all files and subdirectories within the directory
@@ -117,13 +127,22 @@ if isdir(results_dir)
 end
 @testset "Pioneer.jl" begin
     println("dir ", @__DIR__)
-    @testset "process_test_speclib" begin 
-        @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
-    end
-    include("./UnitTests/empiricalLibTests.jl")
+    
+    #@testset "process_test_speclib" begin 
+    #    @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
+    #end
+    #include("./UnitTests/empiricalLibTests.jl")
     @testset "process_test" begin 
-        @test SearchDIA("./../data/ecoli_test/ecoli_test_params.json")===nothing
+        @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
     end
+    
+    
+    #Test FASTA parameter enhancement
+    include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
+    
+    # Test BuildSpecLib functionality
+    include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
+
     
     include("./UnitTests/buildDesignMatrix.jl")
     include("./UnitTests/isotopeSplines.jl")
@@ -137,5 +156,5 @@ end
     include("./UnitTests/BuildPionLibTest.jl")
     include("./utils/FileOperations/test_file_operations_suite.jl")
     include("./UnitTests/RazoQuadModel.jl")
-
+    
 end

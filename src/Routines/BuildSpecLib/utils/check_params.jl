@@ -32,10 +32,19 @@ function check_params_bsp(json_string::String)
         end
     end
 
-    # Check top-level parameters
-    top_level_params = ["fasta_digest_params", "nce_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "max_koina_requests", "max_koina_batch", "match_lib_build_batch", "fasta_paths", "fasta_names", "out_dir", "lib_name", "new_lib_name", "out_name", "predict_fragments", "include_contaminants"]
-    for param in top_level_params
+    # Check required top-level parameters
+    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "max_koina_requests", "max_koina_batch", "match_lib_build_batch", "fasta_paths", "fasta_names", "out_dir", "lib_name", "new_lib_name", "out_name", "predict_fragments", "include_contaminants"]
+    for param in required_params
         check_param(params, param, param in ["predict_fragments", "include_contaminants"] ? Bool : Any)
+    end
+    
+    # Add default nce_params if missing (optional parameter)
+    if !haskey(params, "nce_params")
+        params["nce_params"] = Dict(
+            "nce" => 25.0,
+            "default_charge" => 2,
+            "dynamic_nce" => true
+        )
     end
 
     # Check fasta_digest_params
@@ -56,8 +65,38 @@ function check_params_bsp(json_string::String)
     check_param(nce_params, "default_charge", Integer)
     check_param(nce_params, "dynamic_nce", Bool)
 
-    # Check library_params
+    # Check library_params and add defaults for missing fields
     library_params = params["library_params"]
+    
+    # Add defaults for commonly missing parameters
+    library_defaults = Dict(
+        "rt_bin_tol" => 1.0,
+        "frag_bin_tol_ppm" => 10.0,
+        "rank_to_score" => [8, 4, 4, 2, 2, 1, 1],
+        "y_start_index" => 4,
+        "b_start_index" => 3,
+        "y_start" => 3,
+        "b_start" => 2,
+        "include_p_index" => false,
+        "include_p" => false,
+        "auto_detect_frag_bounds" => true,
+        "max_frag_rank" => 255,
+        "length_to_frag_count_multiple" => 2,
+        "min_frag_intensity" => 0.0,
+        "include_isotope" => false,
+        "include_internal" => false,
+        "include_immonium" => false,
+        "include_neutral_diff" => true
+    )
+    
+    # Merge defaults with user-provided values
+    for (key, default_value) in library_defaults
+        if !haskey(library_params, key)
+            library_params[key] = default_value
+        end
+    end
+    
+    # Now check required fields
     check_param(library_params, "rt_bin_tol", Real)
     check_param(library_params, "frag_bin_tol_ppm", Real)
     check_param(library_params, "rank_to_score", Vector)
@@ -68,7 +107,8 @@ function check_params_bsp(json_string::String)
     check_param(library_params, "include_p_index", Bool)
     check_param(library_params, "include_p", Bool)
     check_param(library_params, "auto_detect_frag_bounds", Bool)
-    check_param(library_params, "calibration_raw_file", String)
+    # calibration_raw_file is optional - only check if it exists
+    # check_param(library_params, "calibration_raw_file", String)  # Commented out - optional parameter
     check_param(library_params, "frag_mz_min", Real)
     check_param(library_params, "frag_mz_max", Real)
     check_param(library_params, "prec_mz_min", Real)
@@ -106,7 +146,10 @@ function check_params_bsp(json_string::String)
 
     # expand any home directories "~"
     params["out_dir"] = expanduser(params["out_dir"])
-    params["library_params"]["calibration_raw_file"] = expanduser( params["library_params"]["calibration_raw_file"])
+    # Only expand calibration_raw_file if it exists (optional parameter)
+    if haskey(params["library_params"], "calibration_raw_file")
+        params["library_params"]["calibration_raw_file"] = expanduser(params["library_params"]["calibration_raw_file"])
+    end
     for i in range(1,length(params["fasta_paths"]))
         params["fasta_paths"][i] = expanduser(params["fasta_paths"][i])
     end

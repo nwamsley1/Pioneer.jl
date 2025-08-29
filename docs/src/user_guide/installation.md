@@ -13,7 +13,6 @@
 1. Download the installer for your operating system from the [releases page](https://github.com/nwamsley1/Pioneer.jl/releases).
 2. Run the installer. It places a `pioneer` executable on your `PATH`.
 3. On first launch:
-   * **Windows/Linux** – `pioneer` downloads IntelOpenMP and MKL the first time it runs.
    * **macOS** – Gatekeeper verifies the binary and the first run can take about a minute. Zipped binaries require manual Gatekeeper approval and are not recommended.
 4. Verify the installation:
    ```bash
@@ -58,7 +57,13 @@ To work on Pioneer itself, set up a local development environment.
 5. Install [PioneerConverter](https://github.com/nwamsley1/PioneerConverter) to convert Thermo RAW files to Arrow format.
 6. Call the main functions directly, e.g.
    ```julia
+   # Option 1: Single FASTA directory (backward compatible)
    params = GetBuildLibParams(out_dir, lib_name, fasta_dir)
+   BuildSpecLib(params)
+   
+   # Option 2: Flexible input - files and/or directories
+   params = GetBuildLibParams(out_dir, lib_name, 
+       ["/path/to/dir1", "/path/to/file.fasta", "/path/to/dir2"])
    BuildSpecLib(params)
    params = GetSearchParams("library.poin", "ms_data", "results")
    SearchDIA(params)

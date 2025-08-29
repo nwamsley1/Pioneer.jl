@@ -1,0 +1,89 @@
+{
+    "comment_paths": "=== File paths - Edit these first ===",
+    "fasta_paths": [
+        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins1.fasta",
+        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins2.fasta.gz",
+        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir2/proteins3.fasta"
+    ],
+    "fasta_names": [
+        "PROTEINS1",
+        "PROTEINS2",
+        "PROTEINS3"
+    ],
+    "fasta_header_regex_accessions": [
+        "^\\w+\\|(\\w+(?:-\\d+)?)\\|",
+        "^\\w+\\|(\\w+(?:-\\d+)?)\\|",
+        "^\\w+\\|(\\w+(?:-\\d+)?)\\|"
+    ],
+    "fasta_header_regex_genes": [
+        " GN=(\\S+)",
+        " GN=(\\S+)",
+        " GN=(\\S+)"
+    ],
+    "fasta_header_regex_proteins": [
+        "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+=",
+        "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+=",
+        "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="
+    ],
+    "fasta_header_regex_organisms": [
+        " OS=([^ ]+.*?) [^ ]+=",
+        " OS=([^ ]+.*?) [^ ]+=",
+        " OS=([^ ]+.*?) [^ ]+="
+    ],
+    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output",
+    "lib_name": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "new_lib_name": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "out_name": "test_lib.tsv",
+    "comment_digestion": "=== Protein digestion settings ===",
+    "fasta_digest_params": {
+        "min_length": 7,
+        "max_length": 40,
+        "min_charge": 2,
+        "max_charge": 3,
+        "cleavage_regex": "[KR][^_|$]",
+        "missed_cleavages": 1,
+        "max_var_mods": 1,
+        "add_decoys": true,
+        "entrapment_r": 0
+    },
+    "comment_modifications": "=== Protein modifications ===",
+    "variable_mods": {
+        "pattern": [
+            "M"
+        ],
+        "mass": [
+            15.99491
+        ],
+        "name": [
+            "Unimod:35"
+        ]
+    },
+    "fixed_mods": {
+        "pattern": [
+            "C"
+        ],
+        "mass": [
+            57.021464
+        ],
+        "name": [
+            "Unimod:4"
+        ]
+    },
+    "comment_library": "=== Library settings ===",
+    "library_params": {
+        "auto_detect_frag_bounds": true,
+        "frag_mz_min": 150.0,
+        "frag_mz_max": 2020.0,
+        "prec_mz_min": 390.0,
+        "prec_mz_max": 1010.0,
+        "instrument_type": "NONE",
+        "prediction_model": "altimeter"
+    },
+    "comment_processing": "=== Processing settings (usually no need to modify) ===",
+    "isotope_mod_groups": [],
+    "max_koina_requests": 24,
+    "max_koina_batch": 1000,
+    "match_lib_build_batch": 100000,
+    "include_contaminants": true,
+    "predict_fragments": true
+}

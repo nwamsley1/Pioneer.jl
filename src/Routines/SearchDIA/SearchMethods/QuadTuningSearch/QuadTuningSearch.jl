@@ -131,12 +131,28 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
         # Always use partial capture for quad tuning
         prec_estimation = PartialPrecCapture()
         
+        # Get initial tolerance from iteration_settings if available, otherwise use default
+        init_tol = if hasproperty(tuning_params, :iteration_settings) && 
+                     hasproperty(tuning_params.iteration_settings, :init_mass_tol_ppm)
+            Float32(tuning_params.iteration_settings.init_mass_tol_ppm)
+        else
+            20.0f0  # Default value
+        end
+        
         new{typeof(prec_estimation)}(
             # Search parameters
             params.acquisition.quad_transmission.fit_from_data,
             (UInt8(0), UInt8(0)),  # Fixed isotope bounds for quad tuning
-            Float32(frag_params.tol_ppm),
-            UInt8(frag_params.min_score),
+            init_tol,
+            # Handle min_score as either single value or array (use first value if array)
+            begin
+                min_score_raw = frag_params.min_score
+                if min_score_raw isa Vector
+                    UInt8(first(min_score_raw))
+                else
+                    UInt8(min_score_raw)
+                end
+            end,
             typemin(Float32),  # Minimum possible value for min_log2_matched_ratio
             Int64(frag_params.min_count),
             Float32(frag_params.min_spectral_contrast),
@@ -247,7 +263,7 @@ function process_file!(
         # Check window widths
         window_widths = check_window_widths(spectra)
         if length(window_widths) != 1
-            @warn "Multiple window sizes detected: $(join(collect(window_widths), ';'))"
+            @user_warn "Multiple window sizes detected: $(join(collect(window_widths), ';'))"
             setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
             return results
         end
@@ -256,7 +272,7 @@ function process_file!(
         total_psms = collect_psms(spectra, search_context, results, params, ms_file_idx)
         
         if nrow(total_psms) < 1000
-            @warn "Too few psms found for quad modeling. Using default model."
+            @user_warn "Too few psms found for quad modeling. Using default model."
             setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
             return results
         end
@@ -275,7 +291,7 @@ function process_file!(
         
     catch e
         throw(e)
-        @warn "Quad transmission function fit failed" exception=e
+        @user_warn "Quad transmission function fit failed" exception=e
         setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
     end
     
@@ -312,7 +328,7 @@ function summarize_results!(
             safeRm(data_path, nothing)
         end
     catch e
-        @warn "Could not clear existing file: $e"
+        @user_warn "Could not clear existing file: $e"
     end
 
     if !isempty(results.quad_model_plots)

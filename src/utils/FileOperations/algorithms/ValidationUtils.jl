@@ -83,7 +83,7 @@ function validate_maxlfq_parameters(params::Dict)
             error("batch_size must be positive, got: $batch_size")
         end
         if batch_size < 1000
-            @warn "Very small batch_size ($batch_size) may cause performance issues"
+            @user_warn "Very small batch_size ($batch_size) may cause performance issues"
         end
     end
     
@@ -126,10 +126,10 @@ function check_maxlfq_memory_requirements(ref::PSMFileReference, params::Dict)
     
     # Issue warnings for potential memory issues
     if total_memory_mb > 8000  # 8GB threshold
-        @warn "MaxLFQ processing may require significant memory" estimated_memory_mb=total_memory_mb n_protein_groups=estimated_protein_groups n_experiments=estimated_experiments
+        @user_warn "MaxLFQ processing may require significant memory" estimated_memory_mb=total_memory_mb n_protein_groups=estimated_protein_groups n_experiments=estimated_experiments
         
         if total_memory_mb > 32000  # 32GB threshold
-            @warn "Very high memory usage expected - consider reducing batch_size or using streaming approach"
+            @user_warn "Very high memory usage expected - consider reducing batch_size or using streaming approach"
         end
     end
     

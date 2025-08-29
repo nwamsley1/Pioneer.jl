@@ -21,8 +21,6 @@ function load_detailed_frags(filename::String)
     jldopen(filename, "r") do file
         data = read(file, "data")
         spline_type_name = eltype(Vector{SplineDetailedFrag{4, Float32}}(undef, 0)).name
-        println("a ", eltype(data).name)
-        println("b ", spline_type_name)
         if eltype(data).name != spline_type_name
             return map(x -> DetailedFrag{Float32}(
                 x.prec_id,
@@ -73,7 +71,9 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     presearch_f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragment_bins.arrow"))
 
 
-    println("Loading spectral library from $SPEC_LIB_DIR into main memory...")
+    # Note: Can't use @user_info here as LoggingSystem is loaded after ParseInputs
+    # This message will be captured by the logging system when SearchDIA runs
+    # println("Loading spectral library from $SPEC_LIB_DIR into main memory...")
     spec_lib = Dict{String, Any}()
     detailed_frags = load_detailed_frags(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))
     prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["pid_to_fid"]
@@ -92,7 +92,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
                 3
             )
         catch e
-            @warn "Could not load `spline_knots.jld2`"
+            @user_warn "Could not load `spline_knots.jld2`"
             throw(e)
         end
 

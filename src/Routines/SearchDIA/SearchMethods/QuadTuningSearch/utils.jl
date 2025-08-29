@@ -209,7 +209,18 @@ function collect_psms(
         return mask
     end
 
-    total_psms = DataFrame()
+    # Initialize with proper schema to handle missing values from summarize_precursor
+    total_psms = DataFrame(
+        scan_idx = Int64[],
+        precursor_idx = UInt32[],
+        center_mz = Union{Float32, Missing}[],
+        δ = Union{Float32, Missing}[],
+        yt = Union{Float32, Missing}[],
+        x0 = Union{Float32, Missing}[],
+        x1 = Union{Float32, Missing}[],
+        prec_charge = Union{UInt8, Missing}[],
+        half_width_mz = Float32[]
+    )
     n = 0
     unique_precursors = Set{UInt32}()
     function getCharges(prec_charges::AbstractVector{UInt8}, precursor_idx::AbstractVector{UInt32})
@@ -383,6 +394,17 @@ function summarize_precursor(
     prec_charge::AbstractVector{UInt8},
     weight::AbstractVector{Float32},
     δ::AbstractVector{Float32})
+    
+    # Handle empty groups gracefully
+    if isempty(iso_idx)
+        return (center_mz = missing, 
+                δ = missing, 
+                yt = missing, 
+                x0 = missing, 
+                x1 = missing, 
+                prec_charge = missing)
+    end
+    
     if (length(iso_idx) == 2)
         if ((iso_idx[1] == 1) & (iso_idx[2] == 2))
             m0_idx, m1_idx = 0, 0
@@ -397,12 +419,7 @@ function summarize_precursor(
                     x0 = iso_mz[m0_idx]-center_mz[m0_idx], 
                     x1 = iso_mz[m1_idx]-center_mz[m1_idx], 
                     prec_charge = prec_charge[m0_idx])
-        else
-            println("iso_idx $iso_idx")
         end
-    end
-    if length(iso_idx) == 3
-        println("bro... $iso_idx")
     end
     
     #If we only got the M0
@@ -487,6 +504,11 @@ function process_quad_results(
             group[!, :δ]
         )
     end
+    
+    # Filter out rows where summarize_precursor returned all missing values
+    # Since summarize_precursor returns either all values or all missing,
+    # we only need to check one column
+    filter!(row -> !ismissing(row.center_mz), combined)
     
     postprocess_combined_results!(combined)
     return combined

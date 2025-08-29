@@ -38,15 +38,15 @@ function make_koina_request(json_data::String,
                 rethrow(e)
             end
             if e isa KoinaRequestError
-                @warn "Request failed (attempt $attempt): $(e.message)"
+                @debug_l2 "Request failed (attempt $attempt): $(e.message)"
             else
-                @warn "Request failed (attempt $attempt): $(sprint(showerror, e))"
+                @debug_l2 "Request failed (attempt $attempt): $(sprint(showerror, e))"
             end
         end
         sleep(retry_delay)
         attempt += 1
     end
-    error("Failed after $max_attempts attempts")
+    error("Koina API request failed after $max_attempts attempts. This may indicate network issues, API rate limiting, or service unavailability. Check your internet connection and try again later.")
 end
 
 

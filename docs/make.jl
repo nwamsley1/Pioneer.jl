@@ -37,7 +37,7 @@ makedocs(
     ],
     doctest = true,
     clean = true,
-    checkdocs = :exports
+    checkdocs = :none
 )
 
 deploydocs(

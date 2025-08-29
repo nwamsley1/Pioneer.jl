@@ -43,7 +43,7 @@ function predict_retention_times(chronologer_in_path::String, chronologer_out_pa
         Arrow.write(chronologer_out_path, chronologer_table)
         return
     catch e
-        @warn "Chronologer failed through Koina. Falling back to local installation..." exception=e
+        @user_warn "Chronologer failed through Koina. Falling back to local installation..." exception=e
         rethrow(e)
     end
     # Fall back to local Chronologer

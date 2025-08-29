@@ -16,20 +16,20 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 module Pioneer
-#__precompile__(false)
-using Arrow, ArrowTypes, ArgParse
+
+using Arrow, ArrowTypes, ArgParse, Dates
 #using Profile
 #using PProf
 using Base64
 using Base.Order
 using Base.Iterators: partition
 using CSV, Combinatorics, CodecZlib
-using DataFrames, DataStructures, Dictionaries
+using DataFrames, DataStructures, Dictionaries, Distributions
 using EzXML
 using FASTX
 using Interpolations
 using JSON, JLD2
-using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, Logging, LoggingExtras
+using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, Logging
 using Measures
 using NumericalIntegration
 using Optim
@@ -48,15 +48,8 @@ using InlineStrings
 using HTTP
 
 
-"""
-Configure loggers
-    @info and @debug goes to stdout
-    @warn and @error goes to stderr
-"""
-stdout_logger = ConsoleLogger(stdout)
-stderr_logger = MinLevelLogger(ConsoleLogger(stderr), Logging.Warn)
-split_logger = TeeLogger(stdout_logger, stderr_logger)
-global_logger(split_logger)
+# Simple console logger - detailed logging handled by custom logging system
+global_logger(ConsoleLogger())
 
 
 """
@@ -77,6 +70,365 @@ const InterpolationTypeAlias = Interpolations.Extrapolation{
     Line{Nothing}                           # Extrapolation
 }
 
+# ============================================================================
+# LOGGING SYSTEM - Global state and functions
+# ============================================================================
+
+# Global logging state - four file handles
+const ESSENTIAL_FILE = Ref{Union{Nothing, IOStream}}(nothing)  # Clean log (dual_println style)
+const CONSOLE_FILE = Ref{Union{Nothing, IOStream}}(nothing)    # Mirror of console
+const DEBUG_FILE = Ref{Union{Nothing, IOStream}}(nothing)      # Everything including debug
+const WARNINGS_FILE = Ref{Union{Nothing, IOStream}}(nothing)   # All warnings
+
+# Global debug level setting (0 = no debug on console, 1-3 = show debug levels 1-3)
+const DEBUG_CONSOLE_LEVEL = Ref{Int}(0)
+
+# List of message patterns that are "essential" (like dual_println)
+# These match the messages that would have been output by dual_println
+const ESSENTIAL_PATTERNS = [
+    r"^Starting search at:",
+    r"^Output directory:",
+    r"^Loading Parameters",
+    r"^Loading Spectral Library",
+    r"^Initializing Search Context",
+    r"^Executing .+\.\.\.",  # Matches all "Executing [Method]..." messages
+    # Note: Performance report and decorative outputs handled by @user_print
+]
+
+function is_essential_message(msg::String)
+    for pattern in ESSENTIAL_PATTERNS
+        if occursin(pattern, msg)
+            return true
+        end
+    end
+    return false
+end
+
+# Core logging functions - these do the actual work
+function user_info(msg::String)
+    # Console output - match Julia's [ Info: format
+    printstyled("[ ", bold=true, color=:cyan)
+    printstyled("Info:", bold=true, color=:cyan)
+    println(" ", msg)
+    
+    timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS")
+    
+    # Essential file - only for key messages
+    if is_essential_message(msg) && ESSENTIAL_FILE[] !== nothing
+        println(ESSENTIAL_FILE[], "[$timestamp] $msg")
+        flush(ESSENTIAL_FILE[])
+    end
+    
+    # Console file - all info messages
+    if CONSOLE_FILE[] !== nothing
+        println(CONSOLE_FILE[], "[$timestamp] [INFO] $msg")
+        flush(CONSOLE_FILE[])
+    end
+    
+    # Debug file - everything
+    if DEBUG_FILE[] !== nothing
+        debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+        println(DEBUG_FILE[], "[$debug_timestamp] [info] $msg")
+        flush(DEBUG_FILE[])
+    end
+end
+
+function user_warn(msg::String, file::String="", line::String="", mod::String="")
+    # Console output
+    printstyled("┌ ", bold=true, color=:yellow)
+    printstyled("Warning:", bold=true, color=:yellow)
+    println(" ", msg)
+    
+    # Add source location line if available and debug level > 0
+    if !isempty(file) && !isempty(line) && DEBUG_CONSOLE_LEVEL[] > 0
+        printstyled("└ ", color=:yellow)
+        println("@ $mod $file:$line")
+    end
+    
+    timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS")
+    
+    # Build source location string for files
+    source_loc = ""
+    if !isempty(file) && !isempty(line)
+        source_loc = " @ $mod $file:$line"
+    end
+    
+    # Essential file - only critical warnings
+    if is_essential_message(msg) && ESSENTIAL_FILE[] !== nothing
+        println(ESSENTIAL_FILE[], "[$timestamp] WARNING: $msg$source_loc")
+        flush(ESSENTIAL_FILE[])
+    end
+    
+    # Console file - mirror console format exactly
+    if CONSOLE_FILE[] !== nothing
+        println(CONSOLE_FILE[], "[$timestamp] [WARN] $msg")
+        if !isempty(source_loc)
+            println(CONSOLE_FILE[], "                        └$source_loc")  # Indented continuation
+        end
+        flush(CONSOLE_FILE[])
+    end
+    
+    # Debug file - everything with full details
+    if DEBUG_FILE[] !== nothing
+        debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+        println(DEBUG_FILE[], "[$debug_timestamp] [warn] $msg$source_loc")
+        flush(DEBUG_FILE[])
+    end
+    
+    # Warnings file - all warnings with source for easy debugging
+    if WARNINGS_FILE[] !== nothing
+        println(WARNINGS_FILE[], "[$timestamp] $msg$source_loc")
+        flush(WARNINGS_FILE[])
+    end
+end
+
+function user_error(msg::String, file::String="", line::String="", mod::String="")
+    # Console output
+    printstyled("┌ ", color=:red)
+    printstyled("Error:", bold=true, color=:red)
+    println(" ", msg)
+    
+    # Add source location line if available and debug level > 0
+    if !isempty(file) && !isempty(line) && DEBUG_CONSOLE_LEVEL[] > 0
+        printstyled("└ ", color=:red)
+        println("@ $mod $file:$line")
+    end
+    
+    timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS")
+    
+    # Build source location string for files
+    source_loc = ""
+    if !isempty(file) && !isempty(line)
+        source_loc = " @ $mod $file:$line"
+    end
+    
+    # Essential file - errors are always essential
+    if ESSENTIAL_FILE[] !== nothing
+        println(ESSENTIAL_FILE[], "[$timestamp] ERROR: $msg$source_loc")
+        flush(ESSENTIAL_FILE[])
+    end
+    
+    # Console file - mirror console format exactly
+    if CONSOLE_FILE[] !== nothing
+        println(CONSOLE_FILE[], "[$timestamp] [ERROR] $msg")
+        if !isempty(source_loc)
+            println(CONSOLE_FILE[], "                         └$source_loc")  # Indented continuation
+        end
+        flush(CONSOLE_FILE[])
+    end
+    
+    # Debug file - everything with full details
+    if DEBUG_FILE[] !== nothing
+        debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+        println(DEBUG_FILE[], "[$debug_timestamp] [error] $msg$source_loc")
+        flush(DEBUG_FILE[])
+    end
+end
+
+function user_print(msg::String)
+    # Direct output without formatting
+    println(msg)
+    
+    # Essential file - ALWAYS gets @user_print messages (like dual_println)
+    if ESSENTIAL_FILE[] !== nothing
+        println(ESSENTIAL_FILE[], msg)
+        flush(ESSENTIAL_FILE[])
+    end
+    
+    # Console file - mirror console exactly
+    if CONSOLE_FILE[] !== nothing
+        println(CONSOLE_FILE[], msg)
+        flush(CONSOLE_FILE[])
+    end
+    
+    # Debug file - everything
+    if DEBUG_FILE[] !== nothing
+        println(DEBUG_FILE[], msg)
+        flush(DEBUG_FILE[])
+    end
+end
+
+# Debug logging functions - console output based on DEBUG_CONSOLE_LEVEL
+function debug_l1(msg::String, file::String="", line::String="", mod::String="")
+    # Only process if debug level allows
+    if DEBUG_CONSOLE_LEVEL[] >= 1
+        # Console output WITHOUT line numbers
+        printstyled("┌ ", bold=true, color=:blue)
+        printstyled("Debug:", bold=true, color=:blue)
+        println(" ", msg)
+        # NO LINE NUMBER OUTPUT for debug_l1
+        
+        # File output WITHOUT line numbers (only when debug level allows)
+        if DEBUG_FILE[] !== nothing
+            debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG1] $msg")
+            flush(DEBUG_FILE[])
+        end
+    end
+    # If debug level < 1, no output at all
+end
+
+function debug_l2(msg::String, file::String="", line::String="", mod::String="")
+    # Only process if debug level allows
+    if DEBUG_CONSOLE_LEVEL[] >= 2
+        # Console output WITH line numbers
+        printstyled("┌ ", bold=true, color=:blue)
+        printstyled("Debug:", bold=true, color=:blue)
+        println(" ", msg)
+        
+        if !isempty(file) && !isempty(line)
+            printstyled("└ ", color=:blue)
+            println("@ $mod $file:$line")
+        end
+        
+        # File output WITH line numbers (only when debug level allows)
+        if DEBUG_FILE[] !== nothing
+            debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+            source_loc = ""
+            if !isempty(file) && !isempty(line)
+                source_loc = " @ $mod $file:$line"
+            end
+            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG2] $msg$source_loc")
+            flush(DEBUG_FILE[])
+        end
+    end
+    # If debug level < 2, no output at all
+end
+
+function debug_l3(msg::String, file::String="", line::String="", mod::String="")
+    # Only process if debug level allows
+    if DEBUG_CONSOLE_LEVEL[] >= 3
+        # Console output WITH line numbers
+        printstyled("┌ ", bold=true, color=:blue)
+        printstyled("Debug:", bold=true, color=:blue)
+        println(" ", msg)
+        
+        if !isempty(file) && !isempty(line)
+            printstyled("└ ", color=:blue)
+            println("@ $mod $file:$line")
+        end
+        
+        # File output WITH line numbers (only when debug level allows)
+        if DEBUG_FILE[] !== nothing
+            debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+            source_loc = ""
+            if !isempty(file) && !isempty(line)
+                source_loc = " @ $mod $file:$line"
+            end
+            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG3] $msg$source_loc")
+            flush(DEBUG_FILE[])
+        end
+    end
+    # If debug level < 3, no output at all
+end
+
+function trace_msg(msg::String, file::String="", line::String="", mod::String="")
+    # Only process if debug level allows (4+)
+    if DEBUG_CONSOLE_LEVEL[] >= 4
+        # Console output WITH line numbers
+        printstyled("┌ ", bold=true, color=:blue)
+        printstyled("Debug:", bold=true, color=:blue)
+        println(" ", msg)
+        
+        if !isempty(file) && !isempty(line)
+            printstyled("└ ", color=:blue)
+            println("@ $mod $file:$line")
+        end
+        
+        # File output WITH line numbers (only when debug level allows)
+        if DEBUG_FILE[] !== nothing
+            debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+            source_loc = ""
+            if !isempty(file) && !isempty(line)
+                source_loc = " @ $mod $file:$line"
+            end
+            println(DEBUG_FILE[], "[$debug_timestamp] [TRACE] $msg$source_loc")
+            flush(DEBUG_FILE[])
+        end
+    end
+    # If debug level < 4, no output at all
+end
+
+# MACROS - defined once, used everywhere
+# These expand at parse time to function calls
+macro user_info(msg)
+    :(Pioneer.user_info(string($(esc(msg)))))
+end
+
+macro user_warn(msg, kwargs...)
+    # For now, just ignore extra arguments (like exception=e)
+    return quote
+        Pioneer.user_warn(
+            string($(esc(msg))),
+            $(string(__source__.file)),
+            $(string(__source__.line)),
+            $(string(__module__))
+        )
+    end
+end
+
+macro user_error(msg)
+    return quote
+        Pioneer.user_error(
+            string($(esc(msg))),
+            $(string(__source__.file)),
+            $(string(__source__.line)),
+            $(string(__module__))
+        )
+    end
+end
+
+macro user_print(msg)
+    :(Pioneer.user_print(string($(esc(msg)))))
+end
+
+macro debug_l1(msg)
+    return quote
+        Pioneer.debug_l1(
+            string($(esc(msg))),
+            $(string(__source__.file)),
+            $(string(__source__.line)),
+            $(string(__module__))
+        )
+    end
+end
+
+macro debug_l2(msg)
+    return quote
+        Pioneer.debug_l2(
+            string($(esc(msg))),
+            $(string(__source__.file)),
+            $(string(__source__.line)),
+            $(string(__module__))
+        )
+    end
+end
+
+macro debug_l3(msg)
+    return quote
+        Pioneer.debug_l3(
+            string($(esc(msg))),
+            $(string(__source__.file)),
+            $(string(__source__.line)),
+            $(string(__module__))
+        )
+    end
+end
+
+macro trace(msg)
+    return quote
+        Pioneer.trace_msg(
+            string($(esc(msg))),
+            $(string(__source__.file)),
+            $(string(__source__.line)),
+            $(string(__module__))
+        )
+    end
+end
+
+# Export the macros for use throughout the codebase
+export @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
+
 #Set Seed 
 Random.seed!(1776);
 
@@ -86,12 +438,7 @@ files_loaded = importScripts()
 
 #importScriptsSpecLib(files_loaded)
 #include(joinpath(@__DIR__, "Routines","LibrarySearch","method"s,"loadSpectralLibrary.jl"))
-const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
-include(joinpath(@__DIR__, "Routines","SearchDIA.jl"))
-include(joinpath(@__DIR__, "Routines","BuildSpecLib.jl"))
-include(joinpath(@__DIR__, "Routines","ParseSpecLib.jl"))
-include(joinpath(@__DIR__, "Routines","GenerateParams.jl"))
-include(joinpath(@__DIR__, "Routines","mzmlConverter","convertMzML.jl"))
+const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")
 const CHARGE_ADJUSTMENT_FACTORS = Float64[1, 0.9, 0.85, 0.8, 0.75]
 
 # H2O, PROTON, NEUTRON constants are defined in get_mz.jl and available via importScripts()
@@ -138,5 +485,6 @@ function __init__()
     ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
 end
 
-export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, GetParseSpecLibParams, convertMzML
+export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, GetParseSpecLibParams, convertMzML,
+       @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
 end

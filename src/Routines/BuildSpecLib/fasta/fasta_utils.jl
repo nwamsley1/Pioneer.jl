@@ -195,7 +195,7 @@ function add_entrapment_sequences(
             end
             
             if n_shuffle_attempts >= max_shuffle_attempts
-                @warn "Max shuffle attempts exceeded for $(get_sequence(target_entry))"
+                @user_warn "Max shuffle attempts exceeded for $(get_sequence(target_entry))"
             end
         end
     end
@@ -281,6 +281,98 @@ function shuffle_sequence!(
     permuteNewPositions!(shuffle_sequence)
     
     return String(shuffle_sequence.new_sequence[1:shuffle_sequence.sequence_length])
+end
+
+"""
+Enhanced version of shuffle_fast_with_positions that keeps specified characters fixed.
+Pre-allocated vectors are passed in to avoid allocations.
+"""
+function shuffle_fast_with_positions_and_fixed_chars!(
+    s::String, 
+    positions::Vector{UInt8}, 
+    fixed_chars::Set{Char},
+    fixed_positions::Vector{Int},  # Pre-allocated
+    movable_positions::Vector{Int},  # Pre-allocated
+    temp_positions::Vector{UInt8}  # Pre-allocated for temporary storage
+)
+    ss = sizeof(s)
+    l = length(s)
+    
+    # Count fixed and movable positions
+    n_fixed = 0
+    n_movable = 0
+    
+    # Create indices vector for byte positions
+    v = Vector{Int}(undef, l)
+    i = 1
+    for j in 1:l
+        v[j] = i
+        i = nextind(s, i)
+    end
+    
+    # Identify fixed and movable positions
+    p = pointer(s)
+    for j in 1:l
+        c = Char(unsafe_load(p, v[j]))
+        if j == l || c in fixed_chars  # Last position or fixed character
+            n_fixed += 1
+            fixed_positions[n_fixed] = j
+        else
+            n_movable += 1
+            movable_positions[n_movable] = j
+        end
+    end
+    
+    # Generate permutation only for movable positions
+    if n_movable > 0
+        perm = randperm(n_movable)
+        
+        # Copy positions for movable characters to temp storage
+        for idx in 1:n_movable
+            temp_positions[idx] = positions[movable_positions[idx]]
+        end
+        
+        # Apply permutation to positions
+        for (new_idx, old_idx) in enumerate(perm)
+            positions[movable_positions[new_idx]] = temp_positions[old_idx]
+        end
+        
+        # Build the output string
+        u = Vector{UInt8}(undef, ss)
+        
+        # Fill in the shuffled string
+        for j in 1:l
+            # Check if j is in fixed_positions (up to n_fixed)
+            is_fixed = false
+            for k in 1:n_fixed
+                if fixed_positions[k] == j
+                    is_fixed = true
+                    break
+                end
+            end
+            
+            if is_fixed
+                # Keep fixed characters in place
+                u[v[j]] = unsafe_load(p, v[j])
+            else
+                # Find position in movable_positions
+                idx = 0
+                for k in 1:n_movable
+                    if movable_positions[k] == j
+                        idx = k
+                        break
+                    end
+                end
+                source_pos = movable_positions[perm[idx]]
+                u[v[j]] = unsafe_load(p, v[source_pos])
+            end
+        end
+        
+        return String(u)
+    else
+        # All positions are fixed, return original string
+        return s
+    end
 end
 
 function adjust_mod_positions(
@@ -419,7 +511,7 @@ function add_decoy_sequences(
         end
         
         if n_shuffle_attempts >= max_shuffle_attempts
-            @warn "Exceeded max shuffle attempts for $(get_sequence(target_entry))"
+            @user_warn "Exceeded max shuffle attempts for $(get_sequence(target_entry))"
         else
             # Adjust modification positions based on sequence manipulation
             adjusted_structural_mods = adjust_mod_positions(

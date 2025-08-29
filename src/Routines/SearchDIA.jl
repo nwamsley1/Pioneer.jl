@@ -130,34 +130,100 @@ function SearchDIA(params_path::String)
     params_string = read(params_path, String)
 
     params = parse_pioneer_parameters(params_path)
-    log_path = joinpath(params.paths[:results], "pioneer_search_log.txt")
-    mkpath(dirname(log_path))  # Ensure directory exists
-
-
-    open(log_path, "w") do log_file
-        # Utility functions for dual console/file output
-        function dual_println(args...)
-            println(stdout, args...)  # Write to console
-            println(log_file, args...)  # Write to file
+    mkpath(params.paths[:results])  # Ensure directory exists
+    
+    # Set debug console level from parameters (default to 0)
+    if haskey(params.logging, :debug_console_level)
+        DEBUG_CONSOLE_LEVEL[] = params.logging.debug_console_level
+    else
+        DEBUG_CONSOLE_LEVEL[] = 0  # Default: no debug on console
+    end
+    
+    # Open FOUR log files
+    essential_path = joinpath(params.paths[:results], "pioneer_search_report.txt")
+    console_path = joinpath(params.paths[:results], "pioneer_search_log.log")
+    debug_path = joinpath(params.paths[:results], "pioneer_search_debug.log")
+    warnings_path = joinpath(params.paths[:results], "pioneer_warnings.log")
+    
+    Pioneer.ESSENTIAL_FILE[] = open(essential_path, "w")
+    Pioneer.CONSOLE_FILE[] = open(console_path, "w")
+    Pioneer.DEBUG_FILE[] = open(debug_path, "w")
+    Pioneer.WARNINGS_FILE[] = open(warnings_path, "w")
+    
+    # Get Pioneer version from Project.toml
+    project_toml = joinpath(pkgdir(Pioneer), "Project.toml")
+    pioneer_version = "unknown"
+    if isfile(project_toml)
+        content = read(project_toml, String)
+        version_match = match(r"version\s*=\s*\"([^\"]+)\"", content)
+        if version_match !== nothing
+            pioneer_version = version_match[1]
         end
-        
-        function dual_print(args...)
-            print(stdout, args...)  # Write to console
-            print(log_file, args...)  # Write to file
-        end
-
-        dual_println("\n", repeat("=", 90))
-        dual_println("Sarting SearchDIA")
-        dual_println(repeat("=", 90))
-        dual_println("\nStarting search at: ", Dates.now())
-        dual_println("Output directory: ", params.paths[:results])
+    end
+    
+    # Essential file - clean header (like dual_println)
+    essential_header = [
+        "=" ^ 90,
+        "Pioneer Search Log",
+        "Version: $pioneer_version",
+        "Started: $(Dates.now())",
+        "Output Directory: $(params.paths[:results])",
+        "=" ^ 90,
+        ""
+    ]
+    for line in essential_header
+        println(Pioneer.ESSENTIAL_FILE[], line)
+    end
+    
+    # Console file - same header
+    for line in essential_header
+        println(Pioneer.CONSOLE_FILE[], line)
+    end
+    
+    # Debug file - detailed header
+    debug_header = [
+        "=" ^ 90,
+        "Pioneer Debug Log (Full Trace)",
+        "Version: $pioneer_version",
+        "Started: $(Dates.now())",
+        "Output Directory: $(params.paths[:results])",
+        "Julia Version: $(VERSION)",
+        "Threads: $(Threads.nthreads())",
+        "=" ^ 90,
+        ""
+    ]
+    for line in debug_header
+        println(Pioneer.DEBUG_FILE[], line)
+    end
+    
+    # Warnings file - simple header
+    warnings_header = [
+        "=" ^ 90,
+        "Pioneer Warnings Log",
+        "Started: $(Dates.now())",
+        "=" ^ 90,
+        ""
+    ]
+    for line in warnings_header
+        println(Pioneer.WARNINGS_FILE[], line)
+    end
+    
+    # Log initialization message
+    @user_info "Pioneer logging system initialized"
+    
+    try
+        @user_print "\n" * repeat("=", 90)
+        @user_print "Starting SearchDIA"
+        @user_print repeat("=", 90)
+        @user_info "\nStarting search at: $(Dates.now())"
+        @user_info "Output directory: $(params.paths[:results])"
         
 
         # === Initialize performance tracking ===
         timings = Dict{String, Any}()
         
         # === Load and validate data paths ===
-        @info "Loading Parameters..."
+        @user_info "Loading Parameters..."
         params_timing = @timed begin
             # Setup MS data directory
             MS_DATA_DIR = params.paths[:ms_data]
@@ -172,7 +238,7 @@ function SearchDIA(params_path::String)
             end
 
             if !isdir(MS_DATA_DIR)
-                @error "ms_data directory does not exist: " * MS_DATA_DIR
+                @user_error "ms_data directory does not exist: " * MS_DATA_DIR
                 return
             end
 
@@ -183,13 +249,13 @@ function SearchDIA(params_path::String)
                                match(r"\.arrow$", file) != nothing]
 
             if length(MS_TABLE_PATHS) <= 0
-                @error "No .arrow files found in ms_data directory: " * MS_DATA_DIR
+                @user_error "No .arrow files found in ms_data directory: " * MS_DATA_DIR
                 return
             end
 
             # Disable match-between-runs if only a single run is provided
             if length(MS_TABLE_PATHS) == 1 && params.global_settings.match_between_runs
-                @warn "Only one run detected; disabling match_between_runs (MBR)."
+                @user_warn "Only one run detected; disabling match_between_runs (MBR)."
 
                 params_dict = JSON.parse(params_string)
                 params_dict["global"]["match_between_runs"] = false
@@ -207,6 +273,7 @@ function SearchDIA(params_path::String)
                     params.protein_inference,
                     params.maxLFQ,
                     params.output,
+                    params.logging,
                     params.paths,
                 )
             end
@@ -216,7 +283,7 @@ function SearchDIA(params_path::String)
         timings["Parameter Loading"] = params_timing
 
         # === Initialize spectral library and search context ===
-        @info "Loading Spectral Library..."
+        @user_info "Loading Spectral Library..."
         lib_timing = @timed begin
             SPEC_LIB = loadSpectralLibrary(SPEC_LIB_DIR, params)
             nothing
@@ -225,7 +292,7 @@ function SearchDIA(params_path::String)
         timings["Spectral Library Loading"] = lib_timing
 
         # Initialize Search Context
-        @info "Initializing Search Context..."
+        @user_info "Initializing Search Context..."
         context_timing = @timed begin
             # Load isotope splines and initialize search context
             SEARCH_CONTEXT = initSearchContext(
@@ -263,14 +330,78 @@ function SearchDIA(params_path::String)
 
         # Execute each search phase and record timing
         for (name, search) in searches
-            @info "Executing $name..."
+            @user_info "Executing $name..."
             search_timing = @timed execute_search(search, SEARCH_CONTEXT, params)
             timings[name] = search_timing
         end
 
         # === Generate performance report ===
-        print_performance_report(timings, MS_TABLE_PATHS, SEARCH_CONTEXT, dual_println)
+        print_performance_report(timings, MS_TABLE_PATHS, SEARCH_CONTEXT)
+        
+    catch e
+        @user_error "Search failed with error: $(e)"
+        @user_error "Stacktrace: $(stacktrace(catch_backtrace()))"
+        rethrow(e)
+    finally
+        # Count warnings if any exist
+        warning_count = 0
+        warnings_full_path = ""  # Store full path for display
+        if Pioneer.WARNINGS_FILE[] !== nothing
+            # Close and get full path
+            close(Pioneer.WARNINGS_FILE[])
+            warnings_full_path = abspath(warnings_path)  # Get absolute path
+            if isfile(warnings_path)
+                warning_count = max(0, countlines(warnings_path) - 5)  # Subtract header lines
+            end
+            Pioneer.WARNINGS_FILE[] = nothing
+        end
+        
+        # Close all four files with appropriate footers
+        if Pioneer.ESSENTIAL_FILE[] !== nothing
+            footer = ["", "=" ^ 90]
+            if warning_count > 0
+                push!(footer, "⚠️  $warning_count warnings were generated during search")
+            end
+            push!(footer, "Search completed at: $(Dates.now())")
+            push!(footer, "=" ^ 90)
+            for line in footer
+                println(Pioneer.ESSENTIAL_FILE[], line)
+            end
+            close(Pioneer.ESSENTIAL_FILE[])
+            Pioneer.ESSENTIAL_FILE[] = nothing
+        end
+        
+        if Pioneer.CONSOLE_FILE[] !== nothing
+            footer = ["", "=" ^ 90]
+            if warning_count > 0
+                push!(footer, "⚠️  $warning_count warnings were generated during search")
+            end
+            push!(footer, "Search completed at: $(Dates.now())")
+            push!(footer, "=" ^ 90)
+            for line in footer
+                println(Pioneer.CONSOLE_FILE[], line)
+            end
+            close(Pioneer.CONSOLE_FILE[])
+            Pioneer.CONSOLE_FILE[] = nothing
+        end
+        
+        if Pioneer.DEBUG_FILE[] !== nothing
+            footer = ["", "=" ^ 90, "Search completed at: $(Dates.now())", "=" ^ 90]
+            for line in footer
+                println(Pioneer.DEBUG_FILE[], line)
+            end
+            close(Pioneer.DEBUG_FILE[])
+            Pioneer.DEBUG_FILE[] = nothing
+        end
+        
+        # Print warning count to console if there were any
+        if warning_count > 0
+            printstyled("┌ ", color=:yellow)
+            printstyled("Warning:", bold=true, color=:yellow)
+            println(" $warning_count warnings were generated during search - see $warnings_full_path")
+        end
     end
+    
     return nothing
 end
 
@@ -278,21 +409,21 @@ end
 """
 Helper function to print formatted performance metrics
 """
-function print_performance_report(timings, ms_table_paths, search_context, println_func)
+function print_performance_report(timings, ms_table_paths, search_context)
     # Header
-    println_func("\n" * repeat("=", 90))
-    println_func("DIA Search Performance Report")
-    println_func(repeat("=", 90))
+    @user_print "\n" * repeat("=", 90)
+    @user_print "DIA Search Performance Report"
+    @user_print repeat("=", 90)
 
     # Detailed analysis
-    println_func("\nDetailed Step Analysis:")
-    println_func(repeat("-", 90))
-    println_func(rpad("Step", 30), " ", 
-            rpad("Time (s)", 12), " ",
-            rpad("Memory (GB)", 12), " ", 
-            rpad("GC Time (s)", 12), " ",
-            rpad("GC %", 12))
-    println_func(repeat("-", 90))
+    @user_print "\nDetailed Step Analysis:"
+    @user_print repeat("-", 90)
+    @user_print rpad("Step", 30) * " " * 
+            rpad("Time (s)", 12) * " " *
+            rpad("Memory (GB)", 12) * " " * 
+            rpad("GC Time (s)", 12) * " " *
+            rpad("GC %", 12)
+    @user_print repeat("-", 90)
 
     # Calculate totals
     peak_memory = peak_rss()
@@ -313,18 +444,18 @@ function print_performance_report(timings, ms_table_paths, search_context, print
         total_memory += timing.bytes
         total_gc += gc_s
 
-        println_func(rpad(step, 30), " ",
-            rpad(@sprintf("%.2f", time_s), 12), " ",
-            rpad(@sprintf("%.2f", mem_gb), 12), " ",
-            rpad(@sprintf("%.2f", gc_s), 12), " ",
-            rpad(@sprintf("%.1f", gc_pct), 12))
+        @user_print rpad(step, 30) * " " *
+            rpad(@sprintf("%.2f", time_s), 12) * " " *
+            rpad(@sprintf("%.2f", mem_gb), 12) * " " *
+            rpad(@sprintf("%.2f", gc_s), 12) * " " *
+            rpad(@sprintf("%.1f", gc_pct), 12)
     end
 
     # Print summary statistics
     print_summary_statistics(
         total_time, total_memory, peak_memory, total_gc,
         length(timings), length(ms_table_paths),
-        println_func, search_context
+        search_context
     )
 end
 
@@ -332,29 +463,29 @@ end
 Helper function to print summary statistics
 """
 function print_summary_statistics(total_time, total_memory, peak_memory, total_gc, 
-                                n_steps, n_files, println_func, search_context)
+                                n_steps, n_files, search_context)
     # Print totals
-    println_func(repeat("-", 90))
-    println_func(rpad("TOTAL", 30), " ",
-            rpad(@sprintf("%.2f", total_time), 12), " ",
-            rpad(@sprintf("%.2f", total_memory/(1024^3)), 12), " ",
-            rpad(@sprintf("%.2f", total_gc), 12), " ",
-            rpad(@sprintf("%.1f",(total_gc/total_time)*100), 12))
+    @user_print repeat("-", 90)
+    @user_print rpad("TOTAL", 30) * " " *
+            rpad(@sprintf("%.2f", total_time), 12) * " " *
+            rpad(@sprintf("%.2f", total_memory/(1024^3)), 12) * " " *
+            rpad(@sprintf("%.2f", total_gc), 12) * " " *
+            rpad(@sprintf("%.1f",(total_gc/total_time)*100), 12)
 
     # Memory summary
-    println_func("\nMemory Usage Summary:")
-    println_func(repeat("-", 90))
+    @user_print "\nMemory Usage Summary:"
+    @user_print repeat("-", 90)
     current_mem = Sys.total_memory() / 1024^3
-    println_func("Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB")
-    println_func("Peak  Memory Allocated: $(round(peak_memory/1024^3, digits=2)) GB")
-    println_func("Total Available Memory: $(round(current_mem, digits=2)) GB")
+    @user_print "Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB"
+    @user_print "Peak  Memory Allocated: $(round(peak_memory/1024^3, digits=2)) GB"
+    @user_print "Total Available Memory: $(round(current_mem, digits=2)) GB"
     
     # Runtime summary
-    println_func("\nRuntime Summary:")
-    println_func(repeat("-", 90))
-    println_func("Total Runtime: $(round(total_time/60, digits=2)) minutes")
-    println_func("Average Runtime per Step: $(round(total_time/n_steps, digits=2)) seconds")
-    println_func("Average Runtime per Raw File: $(round(total_time/n_files, digits=2)) seconds")
-    println_func("\n" * repeat("=", 90))
-    println_func("Huber δ: ", getHuberDelta(search_context))
+    @user_print "\nRuntime Summary:"
+    @user_print repeat("-", 90)
+    @user_print "Total Runtime: $(round(total_time/60, digits=2)) minutes"
+    @user_print "Average Runtime per Step: $(round(total_time/n_steps, digits=2)) seconds"
+    @user_print "Average Runtime per Raw File: $(round(total_time/n_files, digits=2)) seconds"
+    @user_print "\n" * repeat("=", 90)
+    @user_print "Huber δ: " * string(getHuberDelta(search_context))
 end

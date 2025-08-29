@@ -146,9 +146,6 @@ end
 #==========================================================
 Chromatogram Building Functions
 ==========================================================#
-abstract type CHROMATOGRAM end
-struct MS2CHROM <: CHROMATOGRAM end
-struct MS1CHROM <: CHROMATOGRAM end
 """
     extract_chromatograms(spectra::MassSpecData, passing_psms::DataFrame,
                          rt_index::retentionTimeIndex, search_context::SearchContext,

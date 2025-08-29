@@ -133,6 +133,15 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
+      - name: Pre-download artifacts
+        shell: bash
+        run: |
+          pioneer_root="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
+          dummy="$pioneer_root/dummy"
+          mkdir -p "$dummy"
+          "$pioneer_root/pioneer" params-predict "$dummy" dummy "$dummy" --params-path "$dummy/params.json"
+          rm -rf "$dummy"
+
       - name: Package Linux .deb
         run: |
           mkdir -p deb/usr/local/Pioneer
