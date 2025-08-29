@@ -48,8 +48,8 @@
         model = InstrumentAgnosticModel("prosit_2020_hcd")
         test_data = DataFrame(
             koina_sequence = ["PEPTIDE"],
-            koina_charge = Int32[2],
-            koina_nce = Float32[25.0]
+            precursor_charge = Int32[2],
+            collision_energy = Float32[25.0]
         )
         
         # Make real API call to get response
