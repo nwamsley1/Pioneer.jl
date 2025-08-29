@@ -129,6 +129,15 @@ jobs:
         run: |
           Copy-Item src\build\CLI\pioneer.bat build\Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
 
+      - name: Pre-download artifacts
+        shell: pwsh
+        run: |
+          $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
+          $dummy = "$pioneerRoot\dummy"
+          New-Item -ItemType Directory -Force -Path $dummy | Out-Null
+          & "$pioneerRoot\pioneer.bat" params-predict $dummy dummy $dummy --params-path "$dummy\params.json"
+          Remove-Item -Recurse -Force $dummy
+
       - name: Normalize version for MSI
         id: semver
         shell: pwsh
