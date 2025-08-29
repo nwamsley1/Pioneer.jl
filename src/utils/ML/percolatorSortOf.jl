@@ -85,7 +85,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                
             fold_models[itr] = bst
 
-            #predict_fold!(bst, psms_train, test_fold_psms, train_feats)
+            #predict_fold!(bst, psms_train, psms_test, train_feats)
             # **temporary predictions for training only**
             prob_train[train_idx] = predict(bst, psms_train)
             psms_train[!,:prob] = prob_train[train_idx]
@@ -96,8 +96,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             psms_test[!,:prob] = prob_test[test_idx]
 
             if match_between_runs
-                update_mbr_features!(psms_train, test_fold_psms, prob_estimates,
-                                     test_fold_idxs, itr, mbr_start_iter,
+                update_mbr_features!(psms_train, psms_test, prob_test,
+                                     test_idx, itr, mbr_start_iter,
                                      max_q_value_xgboost_rescore)
             end
 
@@ -109,9 +109,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         end
         # Make predictions on hold out data.
         if match_between_runs
-            MBR_estimates[test_fold_idxs] = psms_test.prob
+            MBR_estimates[test_idx] = psms_test.prob
         else
-            prob_estimates[test_fold_idxs] = psms_test.prob
+            prob_test[test_idx] = psms_test.prob
         end
         # Store models for this fold
         models[test_fold_idx] = fold_models
@@ -119,19 +119,19 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
     if match_between_runs
         # Determine which precursors failed the q-value cutoff prior to MBR
-        qvals_prev = Vector{Float32}(undef, length(prob_estimates))
-        get_qvalues!(prob_estimates, psms.target, qvals_prev)
+        qvals_prev = Vector{Float32}(undef, length(prob_test))
+        get_qvalues!(prob_test, psms.target, qvals_prev)
         pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore)
-        prob_thresh = any(pass_mask) ? minimum(prob_estimates[pass_mask]) : typemax(Float32)
+        prob_thresh = any(pass_mask) ? minimum(prob_test[pass_mask]) : typemax(Float32)
         # Label as transfer candidates only those failing the q-value cutoff but
         # whose best matched pair surpassed the passing probability threshold.
-        psms[!, :MBR_transfer_candidate] .= (prob_estimates .< prob_thresh) .&
+        psms[!, :MBR_transfer_candidate] .= (prob_test .< prob_thresh) .&
                                             (psms.MBR_max_pair_prob .>= prob_thresh)
 
         # Use the final MBR probabilities for all precursors
         psms[!, :prob] = MBR_estimates
     else
-        psms[!, :prob] = prob_estimates
+        psms[!, :prob] = prob_test
     end
     
     return models
@@ -462,26 +462,26 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
 end
 
 function predict_fold!(bst, psms_train::AbstractDataFrame,
-                       test_fold_psms::AbstractDataFrame, features)
-    test_fold_psms[!, :prob] = predict(bst, test_fold_psms)
+                       psms_test::AbstractDataFrame, features)
+    psms_test[!, :prob] = predict(bst, psms_test)
     psms_train[!, :prob] = predict(bst, psms_train)
     get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
 end
 
 function update_mbr_features!(psms_train::AbstractDataFrame,
-                              test_fold_psms::AbstractDataFrame,
-                              prob_estimates::Vector{Float32},
+                              psms_test::AbstractDataFrame,
+                              prob_test::Vector{Float32},
                               test_fold_idxs,
                               itr::Int,
                               mbr_start_iter::Int,
                               max_q_value_xgboost_rescore::Float32)
     if itr >= mbr_start_iter - 1
-        get_qvalues!(test_fold_psms.prob, test_fold_psms.target, test_fold_psms.q_value)
-        summarize_precursors!(test_fold_psms, q_cutoff = max_q_value_xgboost_rescore)
+        get_qvalues!(psms_test.prob, psms_test.target, psms_test.q_value)
+        summarize_precursors!(psms_test, q_cutoff = max_q_value_xgboost_rescore)
         summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
     end
     if itr == mbr_start_iter - 1
-        prob_estimates[test_fold_idxs] = test_fold_psms.prob
+        prob_test[test_fold_idxs] = psms_test.prob
     end
 end
 
