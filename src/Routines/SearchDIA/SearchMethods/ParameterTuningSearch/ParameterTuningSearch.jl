@@ -771,7 +771,7 @@ function process_file!(
             right_tol = round(getRightTol(iteration_state.best_mass_error_model), digits = 1)
             @user_warn "Failed to converge for file $ms_file_idx after $(iteration_state.scan_attempt) attempts. \n" *
                   "Using best iteration: Phase $(iteration_state.best_phase) \n" *
-                  "(bias=$(round(getPhaseShift(iteration_state.best_phase, params), digits=1)) ppm), \n" *
+                  "(bias=$(round(calculate_phase_bias_shift(iteration_state.best_phase, params), digits=1)) ppm), \n" *
                   "Score threshold $(iteration_state.best_score), \n" *
                   "Iteration $(iteration_state.best_iteration). \n" *
                   "Yielded $(iteration_state.best_psm_count) PSMs with \n" *
@@ -866,16 +866,8 @@ function process_file!(
             end
             
             # Build detailed warning message
-            phase_bias = getPhaseShift(iteration_state.best_phase, params)
-            mass_offset = round(getMassOffset(iteration_state.best_mass_error_model), digits=1)
             left_tol = round(getLeftTol(iteration_state.best_mass_error_model), digits = 1)
             right_tol = round(getRightTol(iteration_state.best_mass_error_model), digits = 1)
-            warning_msg = "⚠️ Parameter tuning did not converge after $(iteration_state.scan_attempt) attempt(s).\n" *
-                         "Using best iteration: Phase $(iteration_state.best_phase) (bias=$phase_bias ppm), " *
-                         "Score threshold $(iteration_state.best_score), Iteration $(iteration_state.best_iteration)\n" *
-                         "Best iteration yielded $(iteration_state.best_psm_count) PSMs with mass offset $mass_offset ppm " *
-                         "and tolerance -$left_tol ppm and + $right_tol ppm"
-            
             final_psm_count = iteration_state.best_psm_count
             
         else

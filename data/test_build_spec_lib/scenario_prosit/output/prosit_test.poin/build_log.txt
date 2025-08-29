@@ -3,14 +3,14 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-08-29T12:40:38.240
-Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_d_comprehensive/output/comprehensive_test.poin
+Starting library build at: 2025-08-29T12:40:38.726
+Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_prosit/output/prosit_test.poin
 
 Detecting fragment bounds...
-Fragment m/z range: FragBoundModel(ImmutablePolynomial(150.0f0), ImmutablePolynomial(2020.0f0))
+Fragment m/z range: FragBoundModel(ImmutablePolynomial(150.0f0), ImmutablePolynomial(2000.0f0))
 Precursor m/z range: (390.0f0, 1010.0f0)
 
 Starting fragment prediction workflow...
-Using prediction model: altimeter
+Using prediction model: prosit_2020_hcd
 
 Preparing chronologer workflow...

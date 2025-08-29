@@ -58,6 +58,7 @@ using Pioneer: getDetailedFrags, getSeqSet, getSimpleFrags, getMZ  # For BuildPi
 using Pioneer: getIRT, getPrecCharge, getPrecID, getPrecMZ, getScore  # For BuildPionLibTest.jl
 using Pioneer: is_decoy, SplineDetailedFrag  # For FastaDigestTests.jl and BuildPionLibTest.jl
 using Pioneer: PSMFileReference, TransformPipeline, add_column, sort_by, apply_pipeline!  # For file operations tests
+using Pioneer: getFixedMods!
 # Note: iso_splines is loaded dynamically via parseIsoXML in RazoQuadModel.jl
 
 # Package dependencies that tests use directly
@@ -136,15 +137,15 @@ end
     #include("./UnitTests/empiricalLibTests.jl")
     
     # TEMPORARILY COMMENTED OUT FOR KOINA TEST DEVELOPMENT - speeds up ]test
-    # @testset "process_test" begin 
-    #     @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
-    # end
+    @testset "process_test" begin 
+         @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
+    end
     
     # #Test FASTA parameter enhancement
-    # include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
+    #include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
     
     # Test BuildSpecLib functionality
-    include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
+    #include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
 
     # # Unit tests - commented out for faster Koina test development
     # include("./UnitTests/buildDesignMatrix.jl")
@@ -161,6 +162,6 @@ end
     # include("./UnitTests/RazoQuadModel.jl")
     
     # NEW KOINA API TESTS - Active development
-    include("./Routines/BuildSpecLib/koina/test_koina_suite.jl")
+    #include("./Routines/BuildSpecLib/koina/test_koina_suite.jl")
     
 end

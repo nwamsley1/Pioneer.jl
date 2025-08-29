@@ -1,4 +1,29 @@
 {
+    "comment_paths": "=== File paths and output configuration - Edit these first ===",
+    "fasta_paths": [
+        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
+    ],
+    "fasta_names": [
+        "MINIMAL_PROTEIN"
+    ],
+    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output",
+    "lib_name": "minimal_mc1",
+    "new_lib_name": "minimal_mc1",
+    "out_name": "minimal_mc1.tsv",
+    "comment_fasta_regex": "=== FASTA header parsing regex patterns ===",
+    "fasta_header_regex_accessions": [
+        "^>(\\S+)"
+    ],
+    "fasta_header_regex_genes": [
+        "GN=(\\S+)"
+    ],
+    "fasta_header_regex_proteins": [
+        "\\s+(.+?)\\s+OS="
+    ],
+    "fasta_header_regex_organisms": [
+        "OS=(.+?)(?:\\s+GN=|$)"
+    ],
+    "comment_digestion": "=== Protein digestion parameters ===",
     "fasta_digest_params": {
         "min_length": 1,
         "max_length": 15,
@@ -10,11 +35,31 @@
         "add_decoys": false,
         "entrapment_r": 0.0
     },
+    "comment_modifications": "=== Protein modifications ===",
+    "variable_mods": {
+        "name": [],
+        "pattern": [],
+        "mass": []
+    },
+    "fixed_mods": {
+        "pattern": [
+            "C"
+        ],
+        "mass": [
+            57.021464
+        ],
+        "name": [
+            "Unimod:4"
+        ]
+    },
+    "isotope_mod_groups": [],
+    "comment_collision_energy": "=== Collision energy settings ===",
     "nce_params": {
         "nce": 25.0,
         "default_charge": 2,
         "dynamic_nce": true
     },
+    "comment_library": "=== Library generation parameters ===",
     "library_params": {
         "rt_bin_tol": 1.0,
         "frag_bin_tol_ppm": 10.0,
@@ -49,48 +94,11 @@
         "instrument_type": "NONE",
         "prediction_model": "altimeter"
     },
-    "variable_mods": {
-        "name": [],
-        "pattern": [],
-        "mass": []
-    },
-    "fixed_mods": {
-        "pattern": [
-            "C"
-        ],
-        "mass": [
-            57.021464
-        ],
-        "name": [
-            "Unimod:4"
-        ]
-    },
-    "isotope_mod_groups": [],
+    "comment_koina": "=== Koina API settings ===",
     "max_koina_requests": 12,
     "max_koina_batch": 10,
+    "comment_processing": "=== Processing settings ===",
     "match_lib_build_batch": 100000,
     "include_contaminants": false,
-    "fasta_paths": [
-        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
-    ],
-    "fasta_names": [
-        "MINIMAL_PROTEIN"
-    ],
-    "fasta_header_regex_accessions": [
-        "^>(\\S+)"
-    ],
-    "fasta_header_regex_genes": [
-        "GN=(\\S+)"
-    ],
-    "fasta_header_regex_proteins": [
-        "\\s+(.+?)\\s+OS="
-    ],
-    "fasta_header_regex_organisms": [
-        "OS=(.+?)(?:\\s+GN=|$)"
-    ],
-    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output",
-    "lib_name": "minimal_mc1",
-    "new_lib_name": "minimal_mc1",
-    "out_name": "minimal_mc1.tsv",
     "predict_fragments": true
 }

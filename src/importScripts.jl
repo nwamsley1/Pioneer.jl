@@ -192,11 +192,7 @@ function importScripts()
         joinpath(search_methods_dir, "ParameterTuningSearch"),
         [
             "types.jl",                    # All type definitions to avoid circular dependencies
-            "diagnostics.jl",              # Diagnostic functions (types moved to types.jl)
-            "cross_run_learning.jl",       # Cross-run learning functions (types moved to types.jl)
             "ParameterTuningSearch.jl",    # Main implementation (types moved to types.jl)
-            "bias_detection.jl",           # Uses ParameterTuningSearchParameters from types.jl
-            "boundary_sampling.jl",        # Uses MassErrorModel
             "utils.jl"                     # Uses all types - NOTE: MS2CHROM dependency temporarily commented out
         ]
     )

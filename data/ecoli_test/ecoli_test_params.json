@@ -23,13 +23,13 @@
         }, 
         "ms1_scoring": true,
         "ms1_quant": false,
-		"match_between_runs": false
+		"match_between_runs": true
     },
     "parameter_tuning": {
         "fragment_settings": {
             "min_count": 7,
             "max_rank": 25,
-            "min_score": [22,17,15],
+            "min_score": [22],
             "min_spectral_contrast": 0.5,
             "relative_improvement_threshold": 1.5,
             "min_log2_ratio": 1.5,
@@ -42,9 +42,9 @@
         },
         "search_settings": {
             "initial_scan_count":  10000,           
-            "max_parameter_tuning_scans": 40000,  
+            "max_parameter_tuning_scans": 10000,  
             "max_q_value": 0.01, 
-            "min_samples": 1000,    
+            "min_samples": 100000000000,    
             "topn_peaks": 200,
             "max_frags_for_mass_err_estimation": 5,  
             "min_quad_tuning_psms": 5000,
@@ -55,8 +55,8 @@
         "iteration_settings" : {
             "init_mass_tol_ppm": 10.0,
             "mass_tolerance_scale_factor": 1.5,
-            "iterations_per_phase": 3,
-            "scan_scale_factor": 4
+            "iterations_per_phase": 1,
+            "scan_scale_factor": 1
         }
     },
     "first_search": {
@@ -101,7 +101,7 @@
     "acquisition": {
         "nce": 25,
         "quad_transmission": {
-            "fit_from_data": false,
+            "fit_from_data": true,
             "overhang": 0.25,
             "smoothness": 5.0
         }

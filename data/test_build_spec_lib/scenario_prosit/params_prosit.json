@@ -6,10 +6,10 @@
     "fasta_names": [
         "MINIMAL_PROTEIN"
     ],
-    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_4/output",
-    "lib_name": "frag_mult_4",
-    "new_lib_name": "frag_mult_4",
-    "out_name": "frag_mult_4.tsv",
+    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_prosit/output",
+    "lib_name": "prosit_test",
+    "new_lib_name": "prosit_test",
+    "out_name": "prosit_test.tsv",
     "comment_fasta_regex": "=== FASTA header parsing regex patterns ===",
     "fasta_header_regex_accessions": [
         "^>(\\S+)"
@@ -26,13 +26,13 @@
     "comment_digestion": "=== Protein digestion parameters ===",
     "fasta_digest_params": {
         "min_length": 7,
-        "max_length": 20,
+        "max_length": 15,
         "min_charge": 2,
-        "max_charge": 4,
+        "max_charge": 3,
         "cleavage_regex": "[KR][^_|$]",
         "missed_cleavages": 1,
-        "max_var_mods": 0,
-        "add_decoys": false,
+        "max_var_mods": 1,
+        "add_decoys": true,
         "entrapment_r": 0.0
     },
     "comment_modifications": "=== Protein modifications ===",
@@ -81,18 +81,18 @@
         "auto_detect_frag_bounds": false,
         "frag_mz_min": 150.0,
         "frag_mz_max": 2000.0,
-        "prec_mz_min": 0.0,
-        "prec_mz_max": 5000.0,
+        "prec_mz_min": 390.0,
+        "prec_mz_max": 1010.0,
         "max_frag_charge": 3,
-        "max_frag_rank": 100,
-        "length_to_frag_count_multiple": 4.0,
+        "max_frag_rank": 50,
+        "length_to_frag_count_multiple": 2,
         "min_frag_intensity": 0.0,
         "include_isotope": false,
         "include_internal": false,
         "include_immonium": false,
         "include_neutral_diff": true,
         "instrument_type": "NONE",
-        "prediction_model": "altimeter"
+        "prediction_model": "prosit_2020_hcd"
     },
     "comment_koina": "=== Koina API settings ===",
     "max_koina_requests": 12,
