@@ -271,7 +271,7 @@ function importScripts()
     # Structs 
     # COMMENTED OUT: EmpiricalLibrary only used by ParseSpecLib which has loading issues
     # safe_include!(joinpath(root_path, "structs", "EmpiricalLibrary.jl"))
-    # safe_include!(joinpath(root_path, "utils", "parse_mods.jl"))
+    safe_include!(joinpath(root_path, "utils", "parse_mods.jl"))
     
     # Library building
     safe_include!(joinpath(root_path, "build", "build_poin_lib.jl"))

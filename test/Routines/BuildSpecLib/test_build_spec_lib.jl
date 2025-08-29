@@ -878,8 +878,8 @@ end
             @test maximum(charges) <= 3
             
             # Should have both targets and decoys
-            n_targets = sum(precursors[:target])
-            n_decoys = sum(.!precursors[:target])
+            n_targets = sum(.!precursors[:is_decoy])  # Targets are non-decoys
+            n_decoys = sum(precursors[:is_decoy])     # Decoys are marked as is_decoy=true
             @test n_targets > 0
             @test n_decoys > 0
         else
