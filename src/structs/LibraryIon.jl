@@ -681,21 +681,40 @@ struct StandardLibraryPrecursors <: LibraryPrecursors
             );
 
             #precursor idxs to cross-validation folds
-            #all precursors corresponding to a given protein-group end up in the same cross validation fold
-            pg_to_cv_fold = Dictionary{String, UInt8}()
+            #all precursors corresponding to a given target-decoy pair end up in the same cross validation fold
+            pair_ids = precursor_table[:pair_id]
+            unique_pairs = unique(pair_ids)
+            pair_to_cv_fold = Dictionary{UInt32, UInt8}()
             cv_folds = UInt8[0, 1]
             Random.seed!(1776)
-            for pg in unique_proteins
-                insert!(pg_to_cv_fold, pg, rand(cv_folds))
+            
+            # Assign each target-decoy pair to a CV fold
+            for pair_id in unique_pairs
+                insert!(pair_to_cv_fold, pair_id, rand(cv_folds))
             end
+            
+            # Map each precursor to its pair's CV fold
             pid_to_cv_fold = Vector{UInt8}(undef, n)
             for pid in range(1, n)
-                pid_to_cv_fold[pid] = pg_to_cv_fold[accession_numbers[pid]]
+                pid_to_cv_fold[pid] = pair_to_cv_fold[pair_ids[pid]]
             end
-            if length(keys(accession_number_to_pgid)) <= 1
-                @user_warn "Library did not include protein accession numbers. Seeting cross-validation folds based on precursor_idx"
+            
+            # Log CV fold assignment statistics
+            n_fold_0 = sum(pid_to_cv_fold .== 0)
+            n_fold_1 = sum(pid_to_cv_fold .== 1)
+            n_pairs_fold_0 = sum([pair_to_cv_fold[pair_id] for pair_id in unique_pairs] .== 0)
+            n_pairs_fold_1 = sum([pair_to_cv_fold[pair_id] for pair_id in unique_pairs] .== 1)
+            @user_info "CV Fold Assignment: Fold 0 has $n_fold_0 precursors ($n_pairs_fold_0 pairs), Fold 1 has $n_fold_1 precursors ($n_pairs_fold_1 pairs)"
+            
+            # Fallback for libraries without proper pair information (maintain backward compatibility)
+            if length(unique_pairs) <= 1
+                @user_warn "Library did not include pair_id information. Falling back to protein-based CV fold assignment"
+                pg_to_cv_fold = Dictionary{String, UInt8}()
+                for pg in unique_proteins
+                    insert!(pg_to_cv_fold, pg, rand(cv_folds))
+                end
                 for pid in range(1, n)
-                    pid_to_cv_fold[pid] = rand(cv_folds)
+                    pid_to_cv_fold[pid] = pg_to_cv_fold[accession_numbers[pid]]
                 end
             end
             new(
@@ -726,21 +745,40 @@ struct PlexedLibraryPrecursors <: LibraryPrecursors
             );
 
             #precursor idxs to cross-validation folds
-            #all precursors corresponding to a given protein-group end up in the same cross validation fold
-            pg_to_cv_fold = Dictionary{String, UInt8}()
+            #all precursors corresponding to a given target-decoy pair end up in the same cross validation fold
+            pair_ids = precursor_table[:pair_id]
+            unique_pairs = unique(pair_ids)
+            pair_to_cv_fold = Dictionary{UInt32, UInt8}()
             cv_folds = UInt8[0, 1]
             Random.seed!(1776)
-            for pg in unique_proteins
-                insert!(pg_to_cv_fold, pg, rand(cv_folds))
+            
+            # Assign each target-decoy pair to a CV fold
+            for pair_id in unique_pairs
+                insert!(pair_to_cv_fold, pair_id, rand(cv_folds))
             end
+            
+            # Map each precursor to its pair's CV fold
             pid_to_cv_fold = Vector{UInt8}(undef, n)
             for pid in range(1, n)
-                pid_to_cv_fold[pid] = pg_to_cv_fold[accession_numbers[pid]]
+                pid_to_cv_fold[pid] = pair_to_cv_fold[pair_ids[pid]]
             end
-            if length(keys(accession_number_to_pgid)) <= 1
-                @user_warn "Library did not include protein accession numbers. Seeting cross-validation folds based on precursor_idx"
+            
+            # Log CV fold assignment statistics
+            n_fold_0 = sum(pid_to_cv_fold .== 0)
+            n_fold_1 = sum(pid_to_cv_fold .== 1)
+            n_pairs_fold_0 = sum([pair_to_cv_fold[pair_id] for pair_id in unique_pairs] .== 0)
+            n_pairs_fold_1 = sum([pair_to_cv_fold[pair_id] for pair_id in unique_pairs] .== 1)
+            @user_info "CV Fold Assignment: Fold 0 has $n_fold_0 precursors ($n_pairs_fold_0 pairs), Fold 1 has $n_fold_1 precursors ($n_pairs_fold_1 pairs)"
+            
+            # Fallback for libraries without proper pair information (maintain backward compatibility)
+            if length(unique_pairs) <= 1
+                @user_warn "Library did not include pair_id information. Falling back to protein-based CV fold assignment"
+                pg_to_cv_fold = Dictionary{String, UInt8}()
+                for pg in unique_proteins
+                    insert!(pg_to_cv_fold, pg, rand(cv_folds))
+                end
                 for pid in range(1, n)
-                    pid_to_cv_fold[pid] = rand(cv_folds)
+                    pid_to_cv_fold[pid] = pg_to_cv_fold[accession_numbers[pid]]
                 end
             end
             new(
