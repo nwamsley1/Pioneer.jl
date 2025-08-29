@@ -35,6 +35,12 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     #Faster if sorted first
     sort!(psms, [:pair_id, :isotopes_captured])
 
+    # Display target/decoy counts for training dataset
+    n_targets = sum(psms.target)
+    n_decoys = sum(.!psms.target)
+    n_total = nrow(psms)
+    @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $n_total PSMs)"
+
     prob_test   = zeros(Float32, nrow(psms))  # final CV predictions
     prob_train  = zeros(Float32, nrow(psms))  # temporary, used during training
     MBR_estimates = zeros(Float32, nrow(psms)) # optional MBR layer
