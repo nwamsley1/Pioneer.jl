@@ -1553,19 +1553,15 @@ Build a mapping from protein names to their CV fold assignments based on highest
 
 # Arguments
 - `psm_paths`: Vector of paths to PSM files
-- `precursors`: Library precursors containing cv_fold information (now assigned by target-decoy pairs)
+- `precursors`: Library precursors containing cv_fold information
 
 # Returns
 - Dictionary mapping protein_name to named tuple with best_score and cv_fold
 
 # Process
 1. Scans PSM files to find peptides for each protein
-2. Determines cv_fold of highest-scoring peptide per protein (CV folds now based on target-decoy pairs)
+2. Determines cv_fold of highest-scoring peptide per protein
 3. Returns the protein_to_cv_fold mapping
-
-# Note
-With pair-based CV assignment, proteins may have precursors in different folds if they contain 
-multiple target-decoy pairs. The protein's fold is determined by its highest-scoring precursor.
 """
 function build_protein_cv_fold_mapping(
     psm_paths::Vector{String},
