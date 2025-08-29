@@ -35,8 +35,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     #Faster if sorted first
     sort!(psms, [:pair_id, :isotopes_captured])
 
-    prob_estimates = zeros(Float32, nrow(psms))
-    MBR_estimates  = zeros(Float32, nrow(psms))
+    prob_test   = zeros(Float32, nrow(psms))  # final CV predictions
+    prob_train  = zeros(Float32, nrow(psms))  # temporary, used during training
+    MBR_estimates = zeros(Float32, nrow(psms)) # optional MBR layer
 
     unique_cv_folds = unique(psms[!, :cv_fold])
     models = Dict{UInt8, Vector{EvoTrees.EvoTree}}()
@@ -50,11 +51,17 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
 
     pbar = show_progress ? ProgressBar(total=length(unique_cv_folds) * length(iter_scheme)) : nothing
+
     for test_fold_idx in unique_cv_folds
+
         initialize_prob_group_features!(psms, match_between_runs)
-        psms_train = @view psms[train_indices[test_fold_idx], :]
-        test_fold_idxs = fold_indices[test_fold_idx]
-        test_fold_psms = @view psms[test_fold_idxs, :]
+
+        train_idx = train_indices[test_fold_idx]
+        test_idx  = fold_indices[test_fold_idx]
+        
+        psms_train = @view psms[train_idx, :]
+        psms_test  = @view psms[test_idx, :]
+
         fold_models = Vector{EvoTrees.EvoTree}(undef, length(iter_scheme))
 
         for (itr, num_round) in enumerate(iter_scheme)
@@ -75,9 +82,18 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                subsample=subsample,
                                gamma=gamma,
                                max_depth=max_depth)
+                               
             fold_models[itr] = bst
 
-            predict_fold!(bst, psms_train, test_fold_psms, train_feats)
+            #predict_fold!(bst, psms_train, test_fold_psms, train_feats)
+            # **temporary predictions for training only**
+            prob_train[train_idx] = predict(bst, psms_train)
+            psms_train[!,:prob] = prob_train[train_idx]
+            get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
+
+            # **predict held-out fold**
+            prob_test[test_idx] = predict(bst, psms_test)
+            psms_test[!,:prob] = prob_test[test_idx]
 
             if match_between_runs
                 update_mbr_features!(psms_train, test_fold_psms, prob_estimates,
@@ -93,9 +109,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         end
         # Make predictions on hold out data.
         if match_between_runs
-            MBR_estimates[test_fold_idxs] = psms[test_fold_idxs, :prob]
+            MBR_estimates[test_fold_idxs] = psms_test.prob
         else
-            prob_estimates[test_fold_idxs] = psms[test_fold_idxs, :prob]
+            prob_estimates[test_fold_idxs] = psms_test.prob
         end
         # Store models for this fold
         models[test_fold_idx] = fold_models
