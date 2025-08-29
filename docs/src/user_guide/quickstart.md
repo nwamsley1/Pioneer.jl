@@ -30,7 +30,7 @@ After installation, Pioneer is accessed from the command line. Running `pioneer 
 pioneer [options] <subcommand> [subcommand-args...]
 ```
 
-Subcommands include `search`, `predict`, `params-search`, `params-predict`, `convert-raw`, and `convert-mzml`. The first launch may download dependencies on Windows or Linux, while macOS performs a one-time Gatekeeper check.
+Subcommands include `search`, `predict`, `params-search`, `params-predict`, `convert-raw`, and `convert-mzml`. On the first launch macOS performs a one-time Gatekeeper check.
 
 A minimal end-to-end workflow is:
 
