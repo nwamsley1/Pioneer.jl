@@ -318,7 +318,7 @@ function BuildSpecLib(params_path::String)
                 precursors_table[!, :start_idx] = UInt32.(precursors_table[!, :start_idx])
 
                 # Save processed precursor table
-                add_pair_indices!(precursors_table)
+                # add_pair_indices!(precursors_table)  # Removed: partner_precursor_idx now added by add_charge_specific_partner_columns!
                 Arrow.write(
                     joinpath(lib_dir, "precursors_table.arrow"),
                     precursors_table

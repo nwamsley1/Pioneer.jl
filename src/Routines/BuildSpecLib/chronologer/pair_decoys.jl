@@ -190,3 +190,86 @@ pair_id_counts = unique(value_counts(ptable, :pair_id)[!,:nrow])
 @test length(pair_id_counts)==1
 @test pair_id_counts[1]==2
 =#
+
+function add_charge_specific_partner_columns!(df::DataFrame)
+    """
+    Creates charge-specific target-decoy pairs using (base_pep_id, charge) matching.
+    Each target finds its decoy partner with same base_pep_id and charge.
+    Assigns unique pair_id to each charge-specific pair.
+    """
+    result_df = copy(df)
+    n = nrow(df)
+    
+    # Create lookup dictionary: (base_pep_id, charge, is_target) -> row_index
+    lookup = Dict{Tuple{UInt32, UInt8, Bool}, Int}()
+    for (idx, row) in enumerate(eachrow(df))
+        key = (row.base_pep_id, row.precursor_charge, !row.decoy)  # !decoy = is_target
+        lookup[key] = idx
+    end
+    
+    # Initialize output vectors
+    partner_indices = Vector{Union{UInt32, Missing}}(missing, n)
+    new_pair_ids = Vector{UInt32}(undef, n)
+    
+    # Process each target to find its decoy partner
+    pair_id_counter = UInt32(0)
+    processed_pairs = Set{Tuple{Int, Int}}()
+    
+    for idx in 1:n
+        row = df[idx, :]
+        
+        # Skip if already processed or if it's a decoy (process targets first)
+        if row.decoy
+            continue
+        end
+        
+        # Look for decoy partner with same base_pep_id and charge
+        target_key = (row.base_pep_id, row.precursor_charge, true)   # is_target = true
+        decoy_key = (row.base_pep_id, row.precursor_charge, false)   # is_target = false
+        
+        if haskey(lookup, decoy_key)
+            decoy_idx = lookup[decoy_key]
+            
+            # Avoid double processing
+            pair_tuple = (min(idx, decoy_idx), max(idx, decoy_idx))
+            if pair_tuple ∉ processed_pairs
+                pair_id_counter += 1
+                
+                # Assign same pair_id to both
+                new_pair_ids[idx] = pair_id_counter
+                new_pair_ids[decoy_idx] = pair_id_counter
+                
+                # Set partner references
+                partner_indices[idx] = UInt32(decoy_idx)
+                partner_indices[decoy_idx] = UInt32(idx)
+                
+                push!(processed_pairs, pair_tuple)
+            end
+        else
+            # No decoy partner found - assign unique pair_id
+            pair_id_counter += 1
+            new_pair_ids[idx] = pair_id_counter
+        end
+    end
+    
+    # Handle any remaining decoys without targets
+    unpaired_decoys = 0
+    for idx in 1:n
+        if df[idx, :].decoy && ismissing(partner_indices[idx])
+            pair_id_counter += 1
+            new_pair_ids[idx] = pair_id_counter
+            unpaired_decoys += 1
+        end
+    end
+    
+    # Warn if decoys found without targets
+    if unpaired_decoys > 0
+        @user_warn "Found $unpaired_decoys decoy precursors without matching target partners"
+    end
+    
+    # Update the DataFrame
+    result_df.pair_id = new_pair_ids
+    result_df.partner_precursor_idx = partner_indices
+    
+    return result_df
+end

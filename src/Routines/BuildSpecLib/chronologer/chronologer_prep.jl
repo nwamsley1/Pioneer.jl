@@ -551,7 +551,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         _decoy[n] = decoy
         _entrapment_group_id[n] = entrapment_group_id
         _base_pep_id[n] = get_base_pep_id(peptide)
-        _pair_id[n] = get_base_prec_id(peptide)
+        _pair_id[n] = get_base_pep_id(peptide)  # Use base_pep_id for shared pairing across charge states
     end
     n = length(fasta_peptides)
     
@@ -575,6 +575,9 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
                                                     seq_df[!,:mods],
                                                     mod_to_mass_dict
                                                     )
+    
+    # Apply charge-specific target-decoy pairing
+    seq_df = add_charge_specific_partner_columns!(seq_df)
     
     return seq_df
 end
