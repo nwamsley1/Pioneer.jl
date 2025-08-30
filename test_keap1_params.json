@@ -1,0 +1,38 @@
+{
+    "output_dir": "/tmp/keap1_test_library",
+    "lib_name": "keap1_test",
+    "fasta_dir": "data/fasta/keap1.fasta",
+    "prediction_model": "altimeter",
+    "nce_params": {
+        "NCE": 25.0,
+        "charge": 2,
+        "dynamic": true
+    },
+    "fasta_digest_params": {
+        "max_length": 40,
+        "min_length": 7,
+        "max_missed_cleavages": 1,
+        "entrapment_r": 1
+    },
+    "charges": [2, 3],
+    "mods": {
+        "fixed": {
+            "C": [
+                {
+                    "mod_name": "Carbamidomethyl",
+                    "mod_mass": 57.021464,
+                    "aa": "C",
+                    "mod_type": "fixed"
+                }
+            ]
+        },
+        "variable": {}
+    },
+    "library_params": {
+        "min_frag_count": 3,
+        "n_frag_isotopes": 1,
+        "n_train_rounds": 2,
+        "max_iter": 50,
+        "min_probability": 0.5
+    }
+}
