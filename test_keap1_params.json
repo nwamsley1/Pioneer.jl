@@ -1,38 +1,88 @@
 {
-    "output_dir": "/tmp/keap1_test_library",
+    "comment_paths": "=== File paths and output configuration - Edit these first ===",
+    "fasta_paths": [
+        "data/fasta/keap1.fasta"
+    ],
+    "fasta_names": ["KEAP1"],
+    "out_dir": "/tmp/keap1_test_library",
     "lib_name": "keap1_test",
-    "fasta_dir": "data/fasta/keap1.fasta",
-    "prediction_model": "altimeter",
-    "nce_params": {
-        "NCE": 25.0,
-        "charge": 2,
-        "dynamic": true
-    },
+    "new_lib_name": "/path/to/output/library_name",
+    "out_name": "library_name.tsv",
+    
+    "comment_fasta_regex": "=== FASTA header parsing regex patterns ===",
+    "fasta_header_regex_accessions": ["^\\w+\\|(\\w+(?:-\\d+)?)\\|"],
+    "fasta_header_regex_genes": [" GN=(\\S+)"],
+    "fasta_header_regex_proteins": ["^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="],
+    "fasta_header_regex_organisms": [" OS=([^ ]+.*?) [^ ]+="],
+    
+    "comment_digestion": "=== Protein digestion parameters ===",
     "fasta_digest_params": {
-        "max_length": 40,
         "min_length": 7,
-        "max_missed_cleavages": 1,
+        "max_length": 30,
+        "min_charge": 2,
+        "max_charge": 3,
+        "cleavage_regex": "[KR][^_|$]",
+        "missed_cleavages": 1,
+        "max_var_mods": 1,
+        "add_decoys": true,
         "entrapment_r": 1
     },
-    "charges": [2, 3],
-    "mods": {
-        "fixed": {
-            "C": [
-                {
-                    "mod_name": "Carbamidomethyl",
-                    "mod_mass": 57.021464,
-                    "aa": "C",
-                    "mod_type": "fixed"
-                }
-            ]
-        },
-        "variable": {}
+    
+    "comment_modifications": "=== Protein modifications ===",
+    "variable_mods": {
+        "pattern": ["M"],
+        "mass": [15.99491],
+        "name": ["Unimod:35"]
     },
+    "fixed_mods": {
+        "pattern": ["C"],
+        "mass": [57.021464],
+        "name": ["Unimod:4"]
+    },
+    "isotope_mod_groups": [],
+    
+    "comment_collision_energy": "=== Collision energy settings ===",
+    "nce_params": {
+        "nce": 25.0,
+        "default_charge": 2,
+        "dynamic_nce": true
+    },
+    
+    "comment_library": "=== Library generation parameters ===",
     "library_params": {
-        "min_frag_count": 3,
-        "n_frag_isotopes": 1,
-        "n_train_rounds": 2,
-        "max_iter": 50,
-        "min_probability": 0.5
-    }
-}
+        "rt_bin_tol": 1.0,
+        "frag_bin_tol_ppm": 10.0,
+        "rank_to_score": [8, 4, 4, 2, 2, 1, 1],
+        "y_start_index": 4,
+        "b_start_index": 3,
+        "y_start": 3,
+        "b_start": 2,
+        "include_p_index": false,
+        "include_p": false,
+        "auto_detect_frag_bounds": true,
+        "calibration_raw_file": "/path/to/calibration/file.arrow",
+        "frag_mz_min": 150.0,
+        "frag_mz_max": 2020.0,
+        "prec_mz_min": 390.0,
+        "prec_mz_max": 1010.0,
+        "max_frag_charge": 3,
+        "max_frag_rank": 255,
+        "length_to_frag_count_multiple": 2,
+        "min_frag_intensity": 0.00,
+        "include_isotope": false,
+        "include_internal": false,
+        "include_immonium": false,
+        "include_neutral_diff": true,
+        "instrument_type": "NONE",
+        "prediction_model": "altimeter"
+    },
+    
+    "comment_koina": "=== Koina API settings ===",
+    "max_koina_requests": 24,
+    "max_koina_batch": 1000,
+    
+    "comment_processing": "=== Processing settings ===",
+    "match_lib_build_batch": 100000,
+    "include_contaminants": true,
+    "predict_fragments": true
+}   
