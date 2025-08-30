@@ -277,6 +277,8 @@ function add_mods(
 
 
     fasta_mods = Vector{FastaEntry}()
+    # Track base_pep_id to make each modification variant unique
+    current_base_pep_id = UInt32(0)
     for fasta_peptide in fasta_peptides
         sequence = get_sequence(fasta_peptide)
 
@@ -304,6 +306,7 @@ function add_mods(
                             )
 
         for var_mod in var_mods
+            current_base_pep_id += 1  # Unique ID for each modification variant
             push!(fasta_mods,
                 FastaEntry(
                     get_id(fasta_peptide),
@@ -317,7 +320,7 @@ function add_mods(
                     var_mod,
                     get_isotopic_mods(fasta_peptide),
                     get_charge(fasta_peptide),
-                    get_base_pep_id(fasta_peptide),
+                    current_base_pep_id,  # Use unique ID instead of original
                     zero(UInt32),
                     get_entrapment_pair_id(fasta_peptide),
                     is_decoy(fasta_peptide),

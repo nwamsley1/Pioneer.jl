@@ -200,12 +200,19 @@ function add_charge_specific_partner_columns!(df::DataFrame)
     result_df = copy(df)
     n = nrow(df)
     
+    # Diagnostic: count targets and decoys
+    targets = sum(.!df.decoy)
+    decoys = sum(df.decoy)
+    @user_info "Starting pairing: $targets targets, $decoys decoys"
+    
     # Create lookup dictionary: (base_pep_id, charge, is_target) -> row_index
     lookup = Dict{Tuple{UInt32, UInt8, Bool}, Int}()
     for (idx, row) in enumerate(eachrow(df))
         key = (row.base_pep_id, row.precursor_charge, !row.decoy)  # !decoy = is_target
         lookup[key] = idx
     end
+    
+    @user_info "Created lookup with $(length(lookup)) entries"
     
     # Initialize output vectors
     partner_indices = Vector{Union{UInt32, Missing}}(missing, n)
@@ -249,6 +256,7 @@ function add_charge_specific_partner_columns!(df::DataFrame)
             # No decoy partner found - assign unique pair_id
             pair_id_counter += 1
             new_pair_ids[idx] = pair_id_counter
+            @debug_l2 "No decoy found for target: base_pep_id=$(row.base_pep_id), charge=$(row.precursor_charge)"
         end
     end
     
@@ -266,6 +274,11 @@ function add_charge_specific_partner_columns!(df::DataFrame)
     if unpaired_decoys > 0
         @user_warn "Found $unpaired_decoys decoy precursors without matching target partners"
     end
+    
+    # Final diagnostics
+    paired_count = sum(x -> !ismissing(x), partner_indices)
+    successful_pairs = pair_id_counter - unpaired_decoys
+    @user_info "Pairing complete: $successful_pairs pairs created, $paired_count precursors have partners"
     
     # Update the DataFrame
     result_df.pair_id = new_pair_ids
