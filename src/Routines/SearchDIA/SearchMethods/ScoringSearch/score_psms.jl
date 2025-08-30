@@ -323,7 +323,8 @@ function train_xgboost_model_in_memory(
     if match_between_runs
         append!(features, [
             :MBR_num_runs, :MBR_max_pair_prob, 
-            :MBR_log2_weight_ratio, :MBR_log2_explained_ratio
+            :MBR_log2_weight_ratio, :MBR_log2_explained_ratio,
+            :MBR_is_best_decoy, :MBR_rv_coefficient, :MBR_best_irt_diff
         ])
     end
     
@@ -338,7 +339,7 @@ function train_xgboost_model_in_memory(
         subsample = get(hp, :subsample, 0.25),
         max_depth = get(hp, :max_depth, 10),
         eta = get(hp, :eta, 0.05),
-        iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
+        iter_scheme = get(hp, :iter_scheme, [200, 200, 200]),
         show_progress = show_progress
     )
 end

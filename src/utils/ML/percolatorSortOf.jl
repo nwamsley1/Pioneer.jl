@@ -35,11 +35,17 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     #Faster if sorted first
     sort!(psms, [:pair_id, :isotopes_captured])
 
-    # Display target/decoy counts for training dataset
+    # Display target/decoy/entrapment counts for training dataset
     n_targets = sum(psms.target)
     n_decoys = sum(.!psms.target)
+    n_entrapments = hasproperty(psms, :entrapment) ? sum(psms.entrapment) : 0
     n_total = nrow(psms)
-    @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $n_total PSMs)"
+
+    if n_entrapments > 0
+        @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys, $n_entrapments entrapments (total: $n_total PSMs)"
+    else
+        @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $n_total PSMs)"
+    end
 
     prob_test   = zeros(Float32, nrow(psms))  # final CV predictions
     prob_train  = zeros(Float32, nrow(psms))  # temporary, used during training
@@ -68,6 +74,20 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         psms_train = @view psms[train_idx, :]
         psms_test  = @view psms[test_idx, :]
 
+        # Display counts for this CV fold
+        n_train_targets = sum(psms_train.target)
+        n_train_decoys = sum(.!psms_train.target)
+        n_test_targets = sum(psms_test.target)
+        n_test_decoys = sum(.!psms_test.target)
+
+        if hasproperty(psms, :entrapment)
+            n_train_entrapments = sum(psms_train.entrapment)
+            n_test_entrapments = sum(psms_test.entrapment)
+            @user_info "Fold $test_fold_idx - Train: $n_train_targets targets, $n_train_decoys decoys, $n_train_entrapments entrapments | Test: $n_test_targets targets, $n_test_decoys decoys, $n_test_entrapments entrapments"
+        else
+            @user_info "Fold $test_fold_idx - Train: $n_train_targets targets, $n_train_decoys decoys | Test: $n_test_targets targets, $n_test_decoys decoys"
+        end
+
         fold_models = Vector{EvoTrees.EvoTree}(undef, length(iter_scheme))
 
         for (itr, num_round) in enumerate(iter_scheme)
@@ -90,6 +110,17 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                max_depth=max_depth)
                                
             fold_models[itr] = bst
+
+            # Print feature importances for each iteration and fold
+            if print_importance
+                importances = EvoTrees.importance(bst)
+                @user_info "Feature Importances - Fold $(test_fold_idx), Iteration $(itr) ($(length(importances)) features):"
+                for i in 1:10:length(importances)
+                    chunk = importances[i:min(i+9, end)]
+                    feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
+                    @user_info "  " * join(feat_strs, " | ")
+                end
+            end
 
             #predict_fold!(bst, psms_train, psms_test, train_feats)
             # **temporary predictions for training only**
@@ -380,8 +411,16 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             else
                 push!(models[test_fold_idx], bst)
             end
-            #print_importance = true
-            print_importance ? println(collect(zip(feature_importance(bst)))[1:30]) : nothing
+            # Print feature importances
+            if print_importance
+                importances = EvoTrees.importance(bst)
+                @user_info "Feature Importances ($(length(importances)) features):"
+                for i in 1:10:length(importances)
+                    chunk = importances[i:min(i+9, end)]
+                    feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
+                    @user_info "  " * join(feat_strs, " | ")
+                end
+            end
 
             # Get probabilities for training sample so we can get q-values
             psms_train[!,:prob] = EvoTrees.predict(bst, psms_train)
