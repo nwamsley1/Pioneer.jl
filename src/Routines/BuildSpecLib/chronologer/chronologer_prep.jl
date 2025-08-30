@@ -221,6 +221,11 @@ function prepare_chronologer_input(
 
     # Filter by mass range
     filter!(x -> (x.mz >= prec_mz_min) & (x.mz <= prec_mz_max), fasta_df)
+    
+    # Apply charge-specific target-decoy pairing AFTER all filtering is complete
+    # This ensures partner_precursor_idx values are valid row indices
+    fasta_df = add_charge_specific_partner_columns!(fasta_df)
+    
     # Handle collision energy
     if !ismissing(mz_to_ev_interp)
         fasta_df[!, :collision_energy] = mz_to_ev_interp.(fasta_df[!, :mz])
@@ -579,8 +584,8 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
                                                     mod_to_mass_dict
                                                     )
     
-    # Apply charge-specific target-decoy pairing
-    seq_df = add_charge_specific_partner_columns!(seq_df)
+    # NOTE: Pairing moved to after filtering to ensure valid partner_precursor_idx values
+    # seq_df = add_charge_specific_partner_columns!(seq_df)
     
     return seq_df
 end
