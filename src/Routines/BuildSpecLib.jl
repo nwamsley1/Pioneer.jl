@@ -318,7 +318,12 @@ function BuildSpecLib(params_path::String)
                 precursors_table[!, :start_idx] = UInt32.(precursors_table[!, :start_idx])
 
                 # Save processed precursor table
-                # add_pair_indices!(precursors_table)  # Removed: partner_precursor_idx now added by add_charge_specific_partner_columns!
+                println("   Before add_pair_indices!: $(nrow(precursors_table)) precursors")
+                println("   Unique pair_ids available: $(length(unique(precursors_table.pair_id)))")
+                add_pair_indices!(precursors_table)  # Add partner indices AFTER all sorting is complete
+                max_partner = ismissing(maximum(skipmissing(precursors_table.partner_precursor_idx))) ? 0 : Int64(maximum(skipmissing(precursors_table.partner_precursor_idx)))
+                println("   After add_pair_indices!: max partner_idx = $max_partner (table size: $(nrow(precursors_table)))")
+                println("   Valid indices: $(max_partner <= nrow(precursors_table) ? "✅ YES" : "❌ NO")")
                 Arrow.write(
                     joinpath(lib_dir, "precursors_table.arrow"),
                     precursors_table

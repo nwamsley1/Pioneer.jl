@@ -220,7 +220,13 @@ function prepare_chronologer_input(
     end
 
     # Filter by mass range
+    println("🔍 PARTNER INDEX DEBUG:")
+    nrow_before = nrow(fasta_df)
+    println("   Before m/z filtering: $nrow_before precursors")
     filter!(x -> (x.mz >= prec_mz_min) & (x.mz <= prec_mz_max), fasta_df)
+    nrow_after = nrow(fasta_df)
+    percent_removed = round((1 - nrow_after/nrow_before) * 100, digits=1)
+    println("   After m/z filtering: $nrow_after precursors ($percent_removed% removed)")
     
     # Apply charge-specific target-decoy pairing AFTER all filtering is complete
     # This ensures partner_precursor_idx values are valid row indices
@@ -282,8 +288,7 @@ function add_mods(
 
 
     fasta_mods = Vector{FastaEntry}()
-    # Track base_pep_id to make each modification variant unique
-    current_base_pep_id = UInt32(0)
+    # NOTE: base_pep_id will be preserved from original peptides (not made unique per modification)
     for fasta_peptide in fasta_peptides
         sequence = get_sequence(fasta_peptide)
 
@@ -311,7 +316,7 @@ function add_mods(
                             )
 
         for var_mod in var_mods
-            current_base_pep_id += 1  # Unique ID for each modification variant
+            # NOTE: Preserve original base_pep_id to maintain link with entrapment sequences
             push!(fasta_mods,
                 FastaEntry(
                     get_id(fasta_peptide),
@@ -325,7 +330,7 @@ function add_mods(
                     var_mod,
                     get_isotopic_mods(fasta_peptide),
                     get_charge(fasta_peptide),
-                    current_base_pep_id,  # Use unique ID instead of original
+                    get_base_pep_id(fasta_peptide),  # Preserve original base_pep_id
                     zero(UInt32),
                     get_entrapment_pair_id(fasta_peptide),
                     is_decoy(fasta_peptide),

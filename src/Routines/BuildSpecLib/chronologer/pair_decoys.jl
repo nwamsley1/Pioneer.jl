@@ -214,8 +214,8 @@ function add_charge_specific_partner_columns!(df::DataFrame)
     
     @user_info "Created lookup with $(length(lookup)) entries"
     
-    # Initialize output vectors
-    partner_indices = Vector{Union{UInt32, Missing}}(missing, n)
+    # Initialize output vectors  
+    # NOTE: partner_indices removed - will be created later by add_pair_indices!
     new_pair_ids = Vector{UInt32}(undef, n)
     
     # Process each target to find its decoy partner
@@ -246,9 +246,7 @@ function add_charge_specific_partner_columns!(df::DataFrame)
                 new_pair_ids[idx] = pair_id_counter
                 new_pair_ids[decoy_idx] = pair_id_counter
                 
-                # Set partner references
-                partner_indices[idx] = UInt32(decoy_idx)
-                partner_indices[decoy_idx] = UInt32(idx)
+                # NOTE: partner_indices removed - will be created later by add_pair_indices!
                 
                 push!(processed_pairs, pair_tuple)
             end
@@ -263,10 +261,16 @@ function add_charge_specific_partner_columns!(df::DataFrame)
     # Handle any remaining decoys without targets
     unpaired_decoys = 0
     for idx in 1:n
-        if df[idx, :].decoy && ismissing(partner_indices[idx])
-            pair_id_counter += 1
-            new_pair_ids[idx] = pair_id_counter
-            unpaired_decoys += 1
+        row = df[idx, :]
+        if row.decoy
+            # Check if this decoy was paired (by checking if it was processed)
+            target_key = (row.base_pep_id, row.precursor_charge, true)   # corresponding target
+            if !haskey(lookup, target_key)
+                # No target partner exists - assign unique pair_id
+                pair_id_counter += 1
+                new_pair_ids[idx] = pair_id_counter
+                unpaired_decoys += 1
+            end
         end
     end
     
@@ -275,14 +279,12 @@ function add_charge_specific_partner_columns!(df::DataFrame)
         @user_warn "Found $unpaired_decoys decoy precursors without matching target partners"
     end
     
-    # Final diagnostics
-    paired_count = sum(x -> !ismissing(x), partner_indices)
+    # Final diagnostics  
     successful_pairs = pair_id_counter - unpaired_decoys
-    @user_info "Pairing complete: $successful_pairs pairs created, $paired_count precursors have partners"
+    @user_info "Pairing complete: $successful_pairs pairs created (partner indices will be added later)"
     
-    # Update the DataFrame
+    # Update the DataFrame - only pair_id, partner_precursor_idx created later
     result_df.pair_id = new_pair_ids
-    result_df.partner_precursor_idx = partner_indices
     
     return result_df
 end

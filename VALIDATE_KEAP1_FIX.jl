@@ -6,9 +6,9 @@ using Pioneer, DataFrames, Arrow, Tables
 println("=== KEAP1 Library Fix Validation ===\n")
 
 # 1. Rebuild library with fix
-println("1. Building library with fix...")
-BuildSpecLib("test_keap1_params.json")
-println("✓ Library build completed\n")
+#println("1. Building library with fix...")
+#BuildSpecLib("test_keap1_params.json")
+#println("✓ Library build completed\n")
 
 # 2. Load and analyze results
 println("2. Loading library for analysis...")
