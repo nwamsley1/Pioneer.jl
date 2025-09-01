@@ -371,7 +371,7 @@ function add_charge(
 )
     min_charge, max_charge = UInt8(min_charge), UInt8(max_charge)
     fasta_peptides_wcharge = Vector{FastaEntry}()
-    base_prec_id = one(UInt32)
+    # NOTE: Preserve base_prec_id from modification variants (don't increment per charge)
     for fasta_peptide in fasta_peptides
         for charge in range(UInt8(min_charge), UInt8(max_charge))
             push!(fasta_peptides_wcharge,
@@ -388,11 +388,11 @@ function add_charge(
                     get_isotopic_mods(fasta_peptide),
                     charge,
                     get_base_pep_id(fasta_peptide),
-                    base_prec_id,
+                    get_base_prec_id(fasta_peptide),  # Preserve from modification variant
                     get_entrapment_pair_id(fasta_peptide),
                     is_decoy(fasta_peptide)
                 ))
-            base_prec_id += one(UInt32)
+            # NOTE: No increment - all charge states share same base_prec_id
         end
     end
     return fasta_peptides_wcharge

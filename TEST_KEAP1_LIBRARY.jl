@@ -105,9 +105,16 @@ end
             partner_partner_idx = df.partner_precursor_idx[partner_idx]
             if !ismissing(partner_partner_idx) 
                 # Find the original row index in the full dataframe
-                original_idx = findfirst(==(partnered_rows[row_idx, :]), eachrow(df))
-                if partner_partner_idx == original_idx
-                    symmetric_count += 1
+                # Skip missing values in comparison
+                row_data = partnered_rows[row_idx, :]
+                for (j, df_row) in enumerate(eachrow(df))
+                    if all(ismissing(row_data[col]) == ismissing(df_row[col]) for col in propertynames(row_data)) && 
+                       all(ismissing(row_data[col]) ? true : row_data[col] == df_row[col] for col in propertynames(row_data))
+                        if partner_partner_idx == j
+                            symmetric_count += 1
+                        end
+                        break
+                    end
                 end
             end
         end
