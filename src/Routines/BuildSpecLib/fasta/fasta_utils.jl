@@ -722,18 +722,31 @@ end
 
 function assign_base_prec_ids!(fasta_entries::Vector{FastaEntry})
     """
-    Assign sequential base_prec_id values starting from 1.
+    Assign base_prec_id values based on (base_pep_id, charge) combinations.
     Called after add_charge to identify unique precursors (peptide + charge).
-    Each precursor gets a unique base_prec_id for target-decoy pairing.
+    Entries with same base_pep_id and charge get the same base_prec_id for proper target-decoy pairing.
     
     Returns:
     - Int: Number of entries processed
     """
     
+    # Create mapping from (base_pep_id, charge) to base_prec_id
+    precursor_groups = Dict{Tuple{UInt32, UInt8}, UInt32}()
+    next_base_prec_id = UInt32(1)
+    
     for i in 1:length(fasta_entries)
         entry = fasta_entries[i]
+        key = (get_base_pep_id(entry), get_charge(entry))
         
-        # Create new FastaEntry with sequential base_prec_id
+        # Get or create base_prec_id for this (base_pep_id, charge) combination
+        if !haskey(precursor_groups, key)
+            precursor_groups[key] = next_base_prec_id
+            next_base_prec_id += 1
+        end
+        
+        assigned_base_prec_id = precursor_groups[key]
+        
+        # Create new FastaEntry with grouped base_prec_id
         fasta_entries[i] = FastaEntry(
             get_id(entry),
             get_description(entry),
@@ -746,9 +759,9 @@ function assign_base_prec_ids!(fasta_entries::Vector{FastaEntry})
             get_structural_mods(entry),
             get_isotopic_mods(entry),
             get_charge(entry),
-            get_base_seq_id(entry),  # preserve base_seq_id
-            get_base_pep_id(entry),  # preserve base_pep_id
-            UInt32(i),               # base_prec_id - sequential assignment
+            get_base_seq_id(entry),   # preserve base_seq_id
+            get_base_pep_id(entry),   # preserve base_pep_id
+            assigned_base_prec_id,    # base_prec_id - grouped by (base_pep_id, charge)
             get_entrapment_pair_id(entry),
             is_decoy(entry)
         )
