@@ -172,6 +172,15 @@ function prepare_chronologer_input(
 
     # Combine shared peptides
     fasta_entries = combine_shared_peptides(fasta_entries)
+    
+    # FIX: Reassign sequential base_pep_id values to fix duplication bug
+    before_count = length(unique([get_base_pep_id(e) for e in fasta_entries]))
+    entries_processed = reassign_base_pep_ids!(fasta_entries)
+    after_count = length(unique([get_base_pep_id(e) for e in fasta_entries]))
+    @user_info "Base Pep ID Reassignment: $entries_processed entries processed"
+    @user_info "  Before: $before_count unique base_pep_ids → After: $after_count unique base_pep_ids"
+    @user_info "  Status: $(after_count == entries_processed ? "✅ FIXED" : "❌ ISSUE DETECTED")"
+    
     # Add entrapment sequences if specified
     fasta_entries = add_entrapment_sequences(
         fasta_entries,

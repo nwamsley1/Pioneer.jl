@@ -643,3 +643,40 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
 
     return fasta_entries
 end
+
+function reassign_base_pep_ids!(fasta_entries::Vector{FastaEntry})
+    """
+    Reassign sequential base_pep_id values starting from 1.
+    This fixes any duplication issues from combine_shared_peptides.
+    Should be called immediately after combine_shared_peptides.
+    
+    Returns:
+    - Int: Number of entries processed
+    """
+    
+    # Simply assign sequential base_pep_id starting from 1
+    for i in 1:length(fasta_entries)
+        entry = fasta_entries[i]
+        
+        # Create new FastaEntry with sequential base_pep_id
+        fasta_entries[i] = FastaEntry(
+            get_id(entry),
+            get_description(entry),
+            get_gene(entry),
+            get_protein(entry),
+            get_organism(entry),
+            get_proteome(entry),
+            get_sequence(entry),
+            get_start_idx(entry),
+            get_structural_mods(entry),
+            get_isotopic_mods(entry),
+            get_charge(entry),
+            UInt32(i),  # ← Sequential base_pep_id starting from 1
+            get_base_prec_id(entry),
+            get_entrapment_pair_id(entry),
+            is_decoy(entry)
+        )
+    end
+    
+    return length(fasta_entries)
+end
