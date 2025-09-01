@@ -193,9 +193,9 @@ pair_id_counts = unique(value_counts(ptable, :pair_id)[!,:nrow])
 
 function add_charge_specific_partner_columns!(df::DataFrame)
     """
-    Creates charge-specific target-decoy pairs using (base_pep_id, charge) matching.
-    Each target finds its decoy partner with same base_pep_id and charge.
-    PRESERVES existing base_prec_id-based pair_id values instead of overwriting them.
+    Creates target-decoy pairs using (base_pep_id, base_prec_id) combination.
+    This ensures proper pairing at both peptide and precursor levels.
+    Uses combination of base_pep_id and base_prec_id to assign unique pair_ids.
     """
     result_df = copy(df)
     n = nrow(df)
@@ -203,19 +203,20 @@ function add_charge_specific_partner_columns!(df::DataFrame)
     # Diagnostic: count targets and decoys
     targets = sum(.!df.decoy)
     decoys = sum(df.decoy)
-    @user_info "Starting pairing: $targets targets, $decoys decoys"
+    @user_info "Starting three-tier pairing: $targets targets, $decoys decoys"
     
-    # Create lookup dictionary: (base_pep_id, charge, is_target) -> row_index
-    lookup = Dict{Tuple{UInt32, UInt8, Bool}, Int}()
+    # Create lookup dictionary: (base_pep_id, base_prec_id, is_target) -> row_index
+    lookup = Dict{Tuple{UInt32, UInt32, Bool}, Int}()
     for (idx, row) in enumerate(eachrow(df))
-        key = (row.base_pep_id, row.precursor_charge, !row.decoy)  # !decoy = is_target
+        key = (row.base_pep_id, row.base_prec_id, !row.decoy)  # !decoy = is_target
         lookup[key] = idx
     end
     
     @user_info "Created lookup with $(length(lookup)) entries"
     
-    # Initialize output with EXISTING pair_id values (don't overwrite!)
-    new_pair_ids = copy(df.pair_id)
+    # Initialize pair_id vector (will be completely reassigned)
+    new_pair_ids = Vector{Union{UInt32, Missing}}(missing, n)
+    next_pair_id = UInt32(1)
     
     # Track processed pairs to avoid duplicates
     processed_pairs = Set{Tuple{Int, Int}}()
@@ -229,9 +230,8 @@ function add_charge_specific_partner_columns!(df::DataFrame)
             continue
         end
         
-        # Look for decoy partner with same base_pep_id and charge
-        target_key = (row.base_pep_id, row.precursor_charge, true)   # is_target = true
-        decoy_key = (row.base_pep_id, row.precursor_charge, false)   # is_target = false
+        # Look for decoy partner with same base_pep_id and base_prec_id
+        decoy_key = (row.base_pep_id, row.base_prec_id, false)   # is_target = false
         
         if haskey(lookup, decoy_key)
             decoy_idx = lookup[decoy_key]
@@ -239,32 +239,40 @@ function add_charge_specific_partner_columns!(df::DataFrame)
             # Avoid double processing
             pair_tuple = (min(idx, decoy_idx), max(idx, decoy_idx))
             if pair_tuple ∉ processed_pairs
-                # Use existing target's pair_id for both (preserve base_prec_id-based values)
-                target_pair_id = df[idx, :pair_id]  # This is correct base_prec_id value
-                new_pair_ids[idx] = target_pair_id
-                new_pair_ids[decoy_idx] = target_pair_id
+                # Assign same pair_id to both
+                new_pair_ids[idx] = next_pair_id
+                new_pair_ids[decoy_idx] = next_pair_id
+                next_pair_id += 1
                 
                 push!(processed_pairs, pair_tuple)
                 push!(paired_decoys, decoy_idx)
             end
         else
-            @debug_l2 "No decoy found for target: base_pep_id=$(row.base_pep_id), charge=$(row.precursor_charge)"
-            # Target keeps its existing pair_id (already preserved in new_pair_ids)
+            @debug_l2 "No decoy found for target: base_pep_id=$(row.base_pep_id), base_prec_id=$(row.base_prec_id)"
+            # Unpaired target gets unique pair_id
+            new_pair_ids[idx] = next_pair_id
+            next_pair_id += 1
         end
     end
     
-    # Find unpaired decoys and assign them high counter values starting from a safe range
+    # Find unpaired decoys and assign them unique pair_ids
     unpaired_decoys = 0
-    max_existing_pair_id = maximum(df.pair_id)
-    unpaired_counter = max_existing_pair_id + 1
     
     for idx in 1:n
         row = df[idx, :]
         if row.decoy && idx ∉ paired_decoys
-            # This decoy has no target partner - assign sequential ID from safe range
-            new_pair_ids[idx] = unpaired_counter
-            unpaired_counter += 1
+            # This decoy has no target partner - assign unique pair_id
+            new_pair_ids[idx] = next_pair_id
+            next_pair_id += 1
             unpaired_decoys += 1
+        end
+    end
+    
+    # Handle any remaining missing entries
+    for idx in 1:n
+        if ismissing(new_pair_ids[idx])
+            new_pair_ids[idx] = next_pair_id
+            next_pair_id += 1
         end
     end
     
@@ -274,9 +282,9 @@ function add_charge_specific_partner_columns!(df::DataFrame)
     end
     
     successful_pairs = length(processed_pairs)
-    @user_info "Pairing complete: $successful_pairs target-decoy pairs matched (preserving base_prec_id-based pair_ids)"
+    @user_info "Three-tier pairing complete: $successful_pairs target-decoy pairs matched using (base_pep_id, base_prec_id)"
     
-    # Update the DataFrame - only pair_id, partner_precursor_idx created later
+    # Update the DataFrame with new pair_ids
     result_df.pair_id = new_pair_ids
     
     return result_df

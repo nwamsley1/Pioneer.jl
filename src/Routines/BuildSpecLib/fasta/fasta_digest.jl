@@ -191,10 +191,11 @@ function digest_fasta(fasta::Vector{FastaEntry},
                 missing, #structural_mods 
                 missing, #isotopic_mods 
                 zero(UInt8),
+                zero(UInt32),  # base_seq_id (will be assigned later)
                 base_pep_id,
                 base_prec_id,
-                zero(UInt8),
-                false
+                zero(UInt8),   # entrapment_pair_id
+                false          # is_decoy
             ))
             base_prec_id += one(UInt32)
             base_pep_id += one(UInt32)

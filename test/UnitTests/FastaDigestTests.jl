@@ -85,10 +85,11 @@
                 missing,
                 missing,
                 UInt8(0),
-                UInt32(0),
-                UInt32(0),
-                UInt8(0),
-                false,
+                UInt32(0),  # base_seq_id
+                UInt32(0),  # base_pep_id
+                UInt32(0),  # base_prec_id
+                UInt8(0),   # entrapment_pair_id
+                false,      # is_decoy
             ),
             FastaEntry(
                 "P67890",
@@ -102,10 +103,11 @@
                 missing,
                 missing,
                 UInt8(0),
-                UInt32(0),
-                UInt32(0),
-                UInt8(0),
-                false,
+                UInt32(0),  # base_seq_id
+                UInt32(0),  # base_pep_id
+                UInt32(0),  # base_prec_id
+                UInt8(0),   # entrapment_pair_id
+                false,      # is_decoy
             )
         ]
         
@@ -247,9 +249,9 @@
         
         # Test constructor from FastaEntry vector
         entries = [
-            FastaEntry("P1", "", "", "", "human", "test", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
-            FastaEntry("P2", "", "", "", "human", "test", "ANOTHER", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
-            FastaEntry("P3", "", "", "", "human", "test", "PEPTLDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false)
+            FastaEntry("P1", "", "", "", "human", "test", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt32(0), UInt8(0), false),
+            FastaEntry("P2", "", "", "", "human", "test", "ANOTHER", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt32(0), UInt8(0), false),
+            FastaEntry("P3", "", "", "", "human", "test", "PEPTLDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt32(0), UInt8(0), false)
         ]
         
         pss_from_entries = PeptideSequenceSet(entries)
