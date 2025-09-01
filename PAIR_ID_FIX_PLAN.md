@@ -34,17 +34,31 @@ _pair_id[n] = get_base_pep_id(peptide)  # PROBLEM: Now multiple variants share s
 
 **Concept:** `base_prec_id` already behaves like the old `base_pep_id` - it's unique per precursor variant.
 
-**Evidence from code analysis:**
-- **fasta_digest.jl:199:** `base_prec_id += one(UInt32)` - incremented for each peptide
-- **add_charge.jl:372:** `base_prec_id = one(UInt32)` then incremented per charge state
-- **add_mods() (OLD):** Each modification got unique base_prec_id  
+**CONFIRMED from commit history analysis:**
+
+**Before our base_pep_id changes (commit 49ce1223):**
+```julia
+_pair_id[n] = get_base_prec_id(peptide)  # ORIGINAL: Used base_prec_id for pairing
+```
+
+**After our base_pep_id changes (commit 22bef33d):**
+```julia
+_pair_id[n] = get_base_pep_id(peptide)   # BROKEN: Changed to base_pep_id
+```
+
+**Evidence from commit history:**
+- **Original add_mods():** Used `get_base_pep_id(fasta_peptide)` (preserved original ID)
+- **Original add_charge():** `base_prec_id += one(UInt32)` - incremented for each charge state
+- **Original pair_id assignment:** Used `get_base_prec_id(peptide)` - not base_pep_id!
+- **Our modification introduced the bug:** When we added `current_base_pep_id` increment logic, we mistakenly changed pair_id to use base_pep_id instead of base_prec_id
 
 **Implementation:**
 ```julia
-# Line 567: Change from:
-_pair_id[n] = get_base_pep_id(peptide)
-# To:
-_pair_id[n] = get_base_prec_id(peptide)  # Use base_prec_id instead
+# Line 567: REVERT to original behavior:
+# Change from:
+_pair_id[n] = get_base_pep_id(peptide)   # CURRENT (broken)
+# Back to:
+_pair_id[n] = get_base_prec_id(peptide)  # ORIGINAL (correct)
 ```
 
 **Advantages:**

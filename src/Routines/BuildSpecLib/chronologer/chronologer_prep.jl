@@ -564,7 +564,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         _decoy[n] = decoy
         _entrapment_group_id[n] = entrapment_group_id
         _base_pep_id[n] = get_base_pep_id(peptide)
-        _pair_id[n] = get_base_pep_id(peptide)  # Use base_pep_id for shared pairing across charge states
+        _pair_id[n] = get_base_prec_id(peptide)  # Use base_prec_id for unique pairing per precursor variant
     end
     n = length(fasta_peptides)
     
