@@ -292,23 +292,23 @@ end
 
 function add_entrapment_partner_columns!(df::DataFrame)
     """
-    Creates entrapment pairing system with two new columns:
+    Creates entrapment pairing system - Stage 1: entrapment_pair_id only.
     - entrapment_pair_id: Groups original target with all its entrapment variants
-    - entrapment_target_idx: Points back to the original target row (for entrapment sequences)
     
     Uses (base_pep_id, precursor_charge) as the key for entrapment pairing.
-    Decoys get 'missing' for both columns.
+    Decoys get 'missing' for entrapment_pair_id.
+    
+    Note: entrapment_target_idx is created later in Stage 2 by add_entrapment_indices!
+    This mirrors the two-stage process used for pair_id -> partner_precursor_idx.
     
     Logic:
-    - Original targets (entrapment_group_id == 0): entrapment_target_idx points to self
-    - Entrapment sequences (entrapment_group_id > 0): entrapment_target_idx points to target
     - All entrapment variants of same target get same entrapment_pair_id
+    - entrapment_target_idx will be added later with correct row indices
     """
     n = nrow(df)
     
-    # Initialize new columns
+    # Initialize entrapment_pair_id column only
     entrapment_pair_ids = Vector{Union{UInt32, Missing}}(missing, n)
-    entrapment_target_idxs = Vector{Union{UInt32, Missing}}(missing, n)
     
     # Create lookup for targets only (exclude decoys)
     target_lookup = Dict{Tuple{UInt32, UInt8}, UInt32}()
@@ -328,7 +328,7 @@ function add_entrapment_partner_columns!(df::DataFrame)
     next_pair_id = UInt32(1)
     pair_id_map = Dict{UInt32, UInt32}()  # target_idx -> pair_id
     
-    # Second pass: assign pair IDs and target indices
+    # Second pass: assign pair IDs only
     for idx in 1:n
         row = df[idx, :]
         
@@ -346,7 +346,6 @@ function add_entrapment_partner_columns!(df::DataFrame)
                 next_pair_id += 1
             end
             entrapment_pair_ids[idx] = pair_id_map[idx]
-            entrapment_target_idxs[idx] = UInt32(idx)  # Points to self
         else
             # Entrapment sequence
             if haskey(target_lookup, key)
@@ -359,16 +358,14 @@ function add_entrapment_partner_columns!(df::DataFrame)
                 end
                 
                 entrapment_pair_ids[idx] = pair_id_map[target_idx]
-                entrapment_target_idxs[idx] = target_idx
             else
                 @debug_l2 "No target found for entrapment: base_pep_id=$(row.base_pep_id), charge=$(row.precursor_charge)"
             end
         end
     end
     
-    # Add columns to DataFrame
+    # Add entrapment_pair_id column to DataFrame (entrapment_target_idx added later)
     df.entrapment_pair_id = entrapment_pair_ids
-    df.entrapment_target_idx = entrapment_target_idxs
     
     # Log statistics
     n_targets = sum(df.entrapment_group_id .== 0 .&& .!df.decoy)
@@ -376,11 +373,75 @@ function add_entrapment_partner_columns!(df::DataFrame)
     n_paired_entrapments = sum(.!ismissing.(entrapment_pair_ids[df.entrapment_group_id .> 0]))
     n_decoys = sum(df.decoy)
     
-    @user_info "Entrapment pairing complete:"
+    @user_info "Entrapment pairing Stage 1 complete (entrapment_pair_id created):"
     @user_info "  Original targets: $n_targets"
     @user_info "  Entrapment sequences: $n_entrapments" 
     @user_info "  Successfully paired entrapments: $n_paired_entrapments"
     @user_info "  Decoys (set to missing): $n_decoys"
     
     return df
+end
+
+function add_entrapment_indices!(df)
+    """
+    Add entrapment_target_idx column based on entrapment_pair_id values - Stage 2.
+    Called AFTER loading from Arrow to ensure correct row indices.
+    Mirrors the approach used by add_pair_indices! for partner_precursor_idx.
+    
+    Logic:
+    - Find all original targets (entrapment_group_id == 0, not decoy)
+    - Map entrapment_pair_id to target row index
+    - Apply mapping to all rows with same entrapment_pair_id
+    - Decoys remain as missing
+    
+    Example:
+    Row | entrapment_pair_id | entrapment_group_id | decoy | -> entrapment_target_idx
+    ----|-------------------|-------------------|-------|---------------------
+    1   | 1                 | 0                 | false | 1 (target, points to self)
+    2   | 1                 | 1                 | false | 1 (entrap -> target)  
+    3   | 1                 | 2                 | false | 1 (entrap -> target)
+    4   | missing           | 0                 | true  | missing (decoy)
+    """
+    n = nrow(df)
+    
+    # Create mapping: entrapment_pair_id -> target row index
+    pair_to_target = Dict{UInt32, UInt32}()
+    
+    # First pass: find all original targets
+    for i in 1:n
+        if !ismissing(df.entrapment_pair_id[i]) && 
+           !df.decoy[i] && 
+           df.entrapment_group_id[i] == 0
+            # This is an original target - map its pair_id to its row
+            pair_to_target[df.entrapment_pair_id[i]] = UInt32(i)
+        end
+    end
+    
+    @user_info "Found $(length(pair_to_target)) entrapment targets for index mapping"
+    
+    # Create the entrapment_target_idx column
+    entrapment_target_idx = Vector{Union{UInt32, Missing}}(missing, n)
+    
+    # Second pass: assign target indices based on pair_id
+    n_mapped = 0
+    for i in 1:n
+        if !ismissing(df.entrapment_pair_id[i]) && !df.decoy[i]
+            # Look up the target row for this entrapment_pair_id
+            if haskey(pair_to_target, df.entrapment_pair_id[i])
+                entrapment_target_idx[i] = pair_to_target[df.entrapment_pair_id[i]]
+                n_mapped += 1
+            end
+        end
+        # Decoys remain as missing
+    end
+    
+    # Add the column to the DataFrame
+    df[!, :entrapment_target_idx] = entrapment_target_idx
+    
+    @user_info "Entrapment pairing Stage 2 complete (entrapment_target_idx created):"
+    @user_info "  Mapped $n_mapped entries to target indices"
+    @user_info "  Max target index: $(isempty(pair_to_target) ? 0 : maximum(values(pair_to_target)))"
+    @user_info "  Table size: $n rows"
+    
+    return nothing
 end

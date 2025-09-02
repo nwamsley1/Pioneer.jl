@@ -324,6 +324,15 @@ function BuildSpecLib(params_path::String)
                 max_partner = ismissing(maximum(skipmissing(precursors_table.partner_precursor_idx))) ? 0 : Int64(maximum(skipmissing(precursors_table.partner_precursor_idx)))
                 println("   After add_pair_indices!: max partner_idx = $max_partner (table size: $(nrow(precursors_table)))")
                 println("   Valid indices: $(max_partner <= nrow(precursors_table) ? "✅ YES" : "❌ NO")")
+                
+                # Add entrapment target indices if entrapment_pair_id column exists
+                if hasproperty(precursors_table, :entrapment_pair_id)
+                    println("   Adding entrapment target indices...")
+                    add_entrapment_indices!(precursors_table)
+                    max_entrap_target = ismissing(maximum(skipmissing(precursors_table.entrapment_target_idx))) ? 0 : Int64(maximum(skipmissing(precursors_table.entrapment_target_idx)))
+                    println("   After add_entrapment_indices!: max entrapment_target_idx = $max_entrap_target")
+                    println("   Entrapment indices valid: $(max_entrap_target <= nrow(precursors_table) ? "✅ YES" : "❌ NO")")
+                end
                 Arrow.write(
                     joinpath(lib_dir, "precursors_table.arrow"),
                     precursors_table
