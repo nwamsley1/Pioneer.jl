@@ -312,8 +312,6 @@ function add_mods(
 
     fasta_mods = Vector{FastaEntry}()
     # NOTE: base_pep_id will be preserved from original peptides (not made unique per modification)
-    # base_prec_id will be incremented to make each modification variant unique for pairing
-    current_base_prec_id = UInt32(0)
     for fasta_peptide in fasta_peptides
         sequence = get_sequence(fasta_peptide)
 
@@ -341,7 +339,6 @@ function add_mods(
                             )
 
         for var_mod in var_mods
-            current_base_prec_id += 1  # Unique base_prec_id for each modification variant
             # NOTE: Preserve original base_pep_id to maintain link with entrapment sequences
             push!(fasta_mods,
                 FastaEntry(
@@ -356,10 +353,8 @@ function add_mods(
                     var_mod,
                     get_isotopic_mods(fasta_peptide),
                     get_charge(fasta_peptide),
-                    get_base_seq_id(fasta_peptide),   # preserve base_seq_id
                     get_base_target_id(fasta_peptide), # preserve base_target_id
                     get_base_pep_id(fasta_peptide),  # Preserve original base_pep_id
-                    current_base_prec_id,  # Unique base_prec_id for pairing
                     get_entrapment_pair_id(fasta_peptide),
                     is_decoy(fasta_peptide),
                 ))
@@ -396,7 +391,6 @@ function add_charge(
 )
     min_charge, max_charge = UInt8(min_charge), UInt8(max_charge)
     fasta_peptides_wcharge = Vector{FastaEntry}()
-    # NOTE: Preserve base_prec_id from modification variants (don't increment per charge)
     for fasta_peptide in fasta_peptides
         for charge in range(UInt8(min_charge), UInt8(max_charge))
             push!(fasta_peptides_wcharge,
@@ -412,14 +406,11 @@ function add_charge(
                     get_structural_mods(fasta_peptide),
                     get_isotopic_mods(fasta_peptide),
                     charge,
-                    get_base_seq_id(fasta_peptide),   # preserve base_seq_id
                     get_base_target_id(fasta_peptide), # preserve base_target_id
                     get_base_pep_id(fasta_peptide),   # preserve base_pep_id
-                    get_base_prec_id(fasta_peptide),  # Preserve from modification variant
                     get_entrapment_pair_id(fasta_peptide),
                     is_decoy(fasta_peptide)
                 ))
-            # NOTE: No increment - all charge states share same base_prec_id
         end
     end
     return fasta_peptides_wcharge
@@ -570,10 +561,8 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
     _collision_energy = Vector{Float32}(undef, prec_alloc_size )
     _decoy = Vector{Bool}(undef, prec_alloc_size)  
     _entrapment_group_id = Vector{UInt8}(undef, prec_alloc_size)
-    _base_seq_id = Vector{UInt32}(undef, prec_alloc_size)
     _base_target_id = Vector{UInt32}(undef, prec_alloc_size)
     _base_pep_id = Vector{UInt32}(undef, prec_alloc_size)
-    _base_prec_id = Vector{UInt32}(undef, prec_alloc_size)
     _pair_id = Vector{UInt32}(undef, prec_alloc_size)
     for (n, peptide) in enumerate(fasta_peptides)
         sequence = get_sequence(peptide)
@@ -595,11 +584,9 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         _collision_energy[n] = NCE
         _decoy[n] = decoy
         _entrapment_group_id[n] = entrapment_group_id
-        _base_seq_id[n] = get_base_seq_id(peptide)
         _base_target_id[n] = get_base_target_id(peptide)
         _base_pep_id[n] = get_base_pep_id(peptide)
-        _base_prec_id[n] = get_base_prec_id(peptide)
-        _pair_id[n] = get_base_prec_id(peptide)  # Use base_prec_id for unique pairing per precursor variant
+        _pair_id[n] = get_base_target_id(peptide)  # Use base_target_id for unique pairing per precursor variant
     end
     n = length(fasta_peptides)
     
@@ -614,10 +601,8 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
          collision_energy = _collision_energy[1:n],
          decoy = _decoy[1:n],
          entrapment_group_id = _entrapment_group_id[1:n],
-         base_seq_id = _base_seq_id[1:n],
          base_target_id = _base_target_id[1:n],
          base_pep_id = _base_pep_id[1:n],
-         base_prec_id = _base_prec_id[1:n],
          pair_id = _pair_id[1:n])
     )
 
