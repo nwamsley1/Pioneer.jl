@@ -389,10 +389,10 @@ function add_entrapment_indices!(df)
     Mirrors the approach used by add_pair_indices! for partner_precursor_idx.
     
     Logic:
-    - Find all original targets (entrapment_group_id == 0, not decoy)
+    - Find all original targets (entrapment_group_id == 0, not decoy if column exists)
     - Map entrapment_pair_id to target row index
     - Apply mapping to all rows with same entrapment_pair_id
-    - Decoys remain as missing
+    - Decoys remain as missing (if decoy column exists)
     
     Example:
     Row | entrapment_pair_id | entrapment_group_id | decoy | -> entrapment_target_idx
@@ -404,14 +404,28 @@ function add_entrapment_indices!(df)
     """
     n = nrow(df)
     
+    # Check if decoy column exists (be robust about column names)
+    has_decoy_col = hasproperty(df, :decoy)
+    if !has_decoy_col
+        @user_warn "Decoy column not found - proceeding without decoy filtering"
+        @user_warn "Available columns: $(names(df))"
+    end
+    
     # Create mapping: entrapment_pair_id -> target row index
     pair_to_target = Dict{UInt32, UInt32}()
     
     # First pass: find all original targets
     for i in 1:n
-        if !ismissing(df.entrapment_pair_id[i]) && 
-           !df.decoy[i] && 
-           df.entrapment_group_id[i] == 0
+        # Check if this is a valid original target
+        is_target = !ismissing(df.entrapment_pair_id[i]) && 
+                   df.entrapment_group_id[i] == 0
+        
+        # Additional decoy filtering if column exists
+        if has_decoy_col && is_target
+            is_target = is_target && !df.decoy[i]
+        end
+        
+        if is_target
             # This is an original target - map its pair_id to its row
             pair_to_target[df.entrapment_pair_id[i]] = UInt32(i)
         end
@@ -425,14 +439,22 @@ function add_entrapment_indices!(df)
     # Second pass: assign target indices based on pair_id
     n_mapped = 0
     for i in 1:n
-        if !ismissing(df.entrapment_pair_id[i]) && !df.decoy[i]
+        # Check if this row should get an entrapment_target_idx
+        should_map = !ismissing(df.entrapment_pair_id[i])
+        
+        # Additional decoy filtering if column exists
+        if has_decoy_col && should_map
+            should_map = should_map && !df.decoy[i]
+        end
+        
+        if should_map
             # Look up the target row for this entrapment_pair_id
             if haskey(pair_to_target, df.entrapment_pair_id[i])
                 entrapment_target_idx[i] = pair_to_target[df.entrapment_pair_id[i]]
                 n_mapped += 1
             end
         end
-        # Decoys remain as missing
+        # Decoys and missing entrapment_pair_id remain as missing
     end
     
     # Add the column to the DataFrame
@@ -442,6 +464,7 @@ function add_entrapment_indices!(df)
     @user_info "  Mapped $n_mapped entries to target indices"
     @user_info "  Max target index: $(isempty(pair_to_target) ? 0 : maximum(values(pair_to_target)))"
     @user_info "  Table size: $n rows"
+    @user_info "  Decoy column used: $(has_decoy_col ? "✅ YES" : "❌ NO")"
     
     return nothing
 end
