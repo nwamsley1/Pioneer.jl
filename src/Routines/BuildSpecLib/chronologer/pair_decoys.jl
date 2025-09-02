@@ -193,9 +193,9 @@ pair_id_counts = unique(value_counts(ptable, :pair_id)[!,:nrow])
 
 function add_charge_specific_partner_columns!(df::DataFrame)
     """
-    Creates target-decoy pairs using (base_entrap_id, precursor_charge) combination.
-    Each base_entrap_id/precursor_charge combo should have exactly one target and exactly one decoy.
-    Uses combination of base_entrap_id and precursor_charge to assign unique pair_ids.
+    Creates target-decoy pairs using (base_target_id, precursor_charge) combination.
+    Each base_target_id/precursor_charge combo should have exactly one target and exactly one decoy.
+    Uses combination of base_target_id and precursor_charge to assign unique pair_ids.
     """
     result_df = copy(df)
     n = nrow(df)
@@ -203,12 +203,12 @@ function add_charge_specific_partner_columns!(df::DataFrame)
     # Diagnostic: count targets and decoys
     targets = sum(.!df.decoy)
     decoys = sum(df.decoy)
-    @user_info "Starting pairing by (base_entrap_id, precursor_charge): $targets targets, $decoys decoys"
+    @user_info "Starting pairing by (base_target_id, precursor_charge): $targets targets, $decoys decoys"
     
-    # Create lookup dictionary: (base_entrap_id, precursor_charge, is_target) -> row_index
+    # Create lookup dictionary: (base_target_id, precursor_charge, is_target) -> row_index
     lookup = Dict{Tuple{UInt32, UInt8, Bool}, Int}()
     for (idx, row) in enumerate(eachrow(df))
-        key = (row.base_entrap_id, row.precursor_charge, !row.decoy)  # !decoy = is_target
+        key = (row.base_target_id, row.precursor_charge, !row.decoy)  # !decoy = is_target
         lookup[key] = idx
     end
     
@@ -230,8 +230,8 @@ function add_charge_specific_partner_columns!(df::DataFrame)
             continue
         end
         
-        # Look for decoy partner with same base_entrap_id and precursor_charge
-        decoy_key = (row.base_entrap_id, row.precursor_charge, false)   # is_target = false
+        # Look for decoy partner with same base_target_id and precursor_charge
+        decoy_key = (row.base_target_id, row.precursor_charge, false)   # is_target = false
         
         if haskey(lookup, decoy_key)
             decoy_idx = lookup[decoy_key]
@@ -248,7 +248,7 @@ function add_charge_specific_partner_columns!(df::DataFrame)
                 push!(paired_decoys, decoy_idx)
             end
         else
-            @debug_l2 "No decoy found for target: base_entrap_id=$(row.base_entrap_id), precursor_charge=$(row.precursor_charge)"
+            @debug_l2 "No decoy found for target: base_target_id=$(row.base_target_id), precursor_charge=$(row.precursor_charge)"
             # Unpaired target gets unique pair_id
             new_pair_ids[idx] = next_pair_id
             next_pair_id += 1
