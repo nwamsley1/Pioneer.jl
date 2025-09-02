@@ -105,7 +105,7 @@ For each target peptide:
 3. Preserves C-terminal amino acid to maintain enzymatic cleavage properties  
 4. Ensures each shuffled sequence is unique (I/L equivalence considered)
 5. Sets entrapment_group_id to indicate the entrapment group
-6. Maintains original metadata (base_seq_id, base_pep_id, etc.) for tracking
+6. Maintains original metadata (base_target_id, base_pep_id, etc.) for tracking
 7. Properly handles both structural and isotopic modifications
 
 # Examples
@@ -144,13 +144,6 @@ function add_entrapment_sequences(
     #union!(sequences_set, target_sequences)
     
     n = 1
-    maximum_prec_id = zero(UInt32)
-    for tfe = target_fasta_entries
-        if get_base_prec_id(tfe) > maximum_prec_id
-            maximum_prec_id = get_base_prec_id(tfe)
-        end
-    end
-    base_prec_id = maximum_prec_id + one(UInt32)
 
     shuffle_seq = ShuffleSeq(
         "",
@@ -198,14 +191,11 @@ function add_entrapment_sequences(
                         adjusted_structural_mods, #structural_mods - now properly adjusted
                         adjusted_isotopic_mods,   #isotopic_mods - now properly adjusted
                         get_charge(target_entry),
-                        get_base_seq_id(target_entry),  # inherit base_seq_id for tracking
                         get_base_target_id(target_entry), # inherit base_target_id for tracking
                         get_base_pep_id(target_entry),
-                        base_prec_id,
                         entrapment_group_id,
                         false
                     )
-                    base_prec_id += one(UInt32)
                     n += 1
                     push!(sequences_set, new_sequence, get_charge(target_entry))
                     break
@@ -559,10 +549,8 @@ function add_decoy_sequences(
                 adjusted_structural_mods,
                 adjusted_isotopic_mods,
                 get_charge(target_entry),
-                get_base_seq_id(target_entry),  # inherit base_seq_id for tracking
                 get_base_target_id(target_entry), # inherit base_target_id for tracking
                 get_base_pep_id(target_entry),  # inherit base_pep_id for pairing
-                get_base_prec_id(target_entry),
                 get_entrapment_pair_id(target_entry),
                 true  # This is a decoy sequence
             )
@@ -644,10 +632,8 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
                                                         get_structural_mods(fasta_entry),
                                                         get_isotopic_mods(fasta_entry),
                                                         get_charge(fasta_entry),
-                                                        get_base_seq_id(fasta_entry),  # preserve base_seq_id
                                                         get_base_target_id(fasta_entry), # preserve base_target_id
                                                         base_pep_id,
-                                                        get_base_prec_id(fasta_entry),
                                                         get_entrapment_pair_id(fasta_entry), 
                                                         is_decoy(fasta_entry)
                                                         )
