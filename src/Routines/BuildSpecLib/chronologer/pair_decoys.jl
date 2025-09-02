@@ -289,3 +289,98 @@ function add_charge_specific_partner_columns!(df::DataFrame)
     
     return result_df
 end
+
+function add_entrapment_partner_columns!(df::DataFrame)
+    """
+    Creates entrapment pairing system with two new columns:
+    - entrapment_pair_id: Groups original target with all its entrapment variants
+    - entrapment_target_idx: Points back to the original target row (for entrapment sequences)
+    
+    Uses (base_pep_id, precursor_charge) as the key for entrapment pairing.
+    Decoys get 'missing' for both columns.
+    
+    Logic:
+    - Original targets (entrapment_group_id == 0): entrapment_target_idx points to self
+    - Entrapment sequences (entrapment_group_id > 0): entrapment_target_idx points to target
+    - All entrapment variants of same target get same entrapment_pair_id
+    """
+    n = nrow(df)
+    
+    # Initialize new columns
+    entrapment_pair_ids = Vector{Union{UInt32, Missing}}(missing, n)
+    entrapment_target_idxs = Vector{Union{UInt32, Missing}}(missing, n)
+    
+    # Create lookup for targets only (exclude decoys)
+    target_lookup = Dict{Tuple{UInt32, UInt8}, UInt32}()
+    
+    # First pass: identify all original targets (entrapment_group_id == 0, not decoy)
+    for idx in 1:n
+        row = df[idx, :]
+        if !row.decoy && row.entrapment_group_id == 0
+            key = (row.base_pep_id, row.precursor_charge)
+            target_lookup[key] = UInt32(idx)
+        end
+    end
+    
+    @user_info "Found $(length(target_lookup)) original targets for entrapment pairing"
+    
+    # Track next pair ID
+    next_pair_id = UInt32(1)
+    pair_id_map = Dict{UInt32, UInt32}()  # target_idx -> pair_id
+    
+    # Second pass: assign pair IDs and target indices
+    for idx in 1:n
+        row = df[idx, :]
+        
+        # Skip decoys - leave as missing
+        if row.decoy
+            continue
+        end
+        
+        key = (row.base_pep_id, row.precursor_charge)
+        
+        if row.entrapment_group_id == 0
+            # Original target
+            if !haskey(pair_id_map, idx)
+                pair_id_map[idx] = next_pair_id
+                next_pair_id += 1
+            end
+            entrapment_pair_ids[idx] = pair_id_map[idx]
+            entrapment_target_idxs[idx] = UInt32(idx)  # Points to self
+        else
+            # Entrapment sequence
+            if haskey(target_lookup, key)
+                target_idx = target_lookup[key]
+                
+                # Get or assign pair_id for this target
+                if !haskey(pair_id_map, target_idx)
+                    pair_id_map[target_idx] = next_pair_id
+                    next_pair_id += 1
+                end
+                
+                entrapment_pair_ids[idx] = pair_id_map[target_idx]
+                entrapment_target_idxs[idx] = target_idx
+            else
+                @debug_l2 "No target found for entrapment: base_pep_id=$(row.base_pep_id), charge=$(row.precursor_charge)"
+            end
+        end
+    end
+    
+    # Add columns to DataFrame
+    df.entrapment_pair_id = entrapment_pair_ids
+    df.entrapment_target_idx = entrapment_target_idxs
+    
+    # Log statistics
+    n_targets = sum(df.entrapment_group_id .== 0 .&& .!df.decoy)
+    n_entrapments = sum(df.entrapment_group_id .> 0)
+    n_paired_entrapments = sum(.!ismissing.(entrapment_pair_ids[df.entrapment_group_id .> 0]))
+    n_decoys = sum(df.decoy)
+    
+    @user_info "Entrapment pairing complete:"
+    @user_info "  Original targets: $n_targets"
+    @user_info "  Entrapment sequences: $n_entrapments" 
+    @user_info "  Successfully paired entrapments: $n_paired_entrapments"
+    @user_info "  Decoys (set to missing): $n_decoys"
+    
+    return df
+end

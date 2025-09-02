@@ -264,6 +264,10 @@ function prepare_chronologer_input(
     # This ensures partner_precursor_idx values are valid row indices
     fasta_df = add_charge_specific_partner_columns!(fasta_df)
     
+    # Apply entrapment pairing system
+    # Creates entrapment_pair_id and entrapment_target_idx columns
+    fasta_df = add_entrapment_partner_columns!(fasta_df)
+    
     # Handle collision energy
     if !ismissing(mz_to_ev_interp)
         fasta_df[!, :collision_energy] = mz_to_ev_interp.(fasta_df[!, :mz])
