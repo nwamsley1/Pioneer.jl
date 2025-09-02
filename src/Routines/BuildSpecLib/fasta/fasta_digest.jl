@@ -192,6 +192,7 @@ function digest_fasta(fasta::Vector{FastaEntry},
                 missing, #isotopic_mods 
                 zero(UInt8),
                 zero(UInt32),  # base_seq_id (will be assigned later)
+                zero(UInt32),  # base_entrap_id (will be assigned later)
                 base_pep_id,
                 base_prec_id,
                 zero(UInt8),   # entrapment_pair_id

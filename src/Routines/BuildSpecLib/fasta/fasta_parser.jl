@@ -138,6 +138,7 @@ function parse_fasta(
             missing,
             zero(UInt8),
             zero(UInt32),  # base_seq_id (will be assigned later)
+            zero(UInt32),  # base_entrap_id (will be assigned later)
             zero(UInt32),  # base_pep_id (will be assigned later)
             zero(UInt32),  # base_prec_id (will be assigned later)
             zero(UInt8),   # entrapment_pair_id

@@ -31,6 +31,7 @@ struct FastaEntry
     isotopic_mods::Union{Missing,Vector{PeptideMod}}
     charge::UInt8
     base_seq_id::UInt32
+    base_entrap_id::UInt32
     base_pep_id::UInt32
     base_prec_id::UInt32
     entrapment_pair_id::UInt32
@@ -47,6 +48,7 @@ get_proteome(entry::FastaEntry) = entry.proteome
 get_sequence(entry::FastaEntry) = entry.sequence
 get_start_idx(entry::FastaEntry) = entry.start_idx
 get_base_seq_id(entry::FastaEntry) = entry.base_seq_id
+get_base_entrap_id(entry::FastaEntry) = entry.base_entrap_id
 get_base_pep_id(entry::FastaEntry) = entry.base_pep_id
 get_base_prec_id(entry::FastaEntry) = entry.base_prec_id
 get_entrapment_pair_id(entry::FastaEntry) = entry.entrapment_pair_id
