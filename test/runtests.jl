@@ -156,6 +156,7 @@ end
     include("./UnitTests/test_protein_inference.jl")
     include("./UnitTests/ChronologerPrepTests.jl")
     include("./UnitTests/FastaDigestTests.jl")
+    include("./UnitTests/FastaEntryConstructorsTests.jl")
     include("./UnitTests/BuildPionLibTest.jl")
     include("./utils/FileOperations/test_file_operations_suite.jl")
     include("./UnitTests/RazoQuadModel.jl")
