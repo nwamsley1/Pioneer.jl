@@ -402,6 +402,27 @@ function convert_to_detailed(frag::DetailedFrag{T}, ::ConstantType) where {T <: 
     )
 end
 
+# Specialized version for SplineDetailedFrag that handles intensity calculation
+function convert_to_detailed(
+    frag::SplineDetailedFrag{N,T}, 
+    spline_data::SplineType{M, T},
+) where {N,M,T}
+    DetailedFrag(
+        getPID(frag),
+        getMz(frag),
+        Float16(getIntensity(frag, spline_data)),
+        getIonType(frag),
+        isY(frag),
+        isB(frag),
+        isP(frag),
+        isIso(frag),
+        getFragCharge(frag),
+        getIonPosition(frag),
+        getPrecCharge(frag),
+        getRank(frag),
+        getSulfurCount(frag)
+    )
+end
 abstract type LibraryFragmentLookup end
 
 """
