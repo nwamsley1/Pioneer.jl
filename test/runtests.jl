@@ -167,6 +167,8 @@ end
 
     # Active: only run mass-spec data tests for quick iteration
     include("./UnitTests/MassSpecAndFilteredDataTests.jl")
-    # Add focused FileOperations tests (Arrow IO)
+    # Add focused FileOperations tests (Arrow IO, core, streaming)
     include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
+    include("./utils/FileOperations/core/test_core_references_basic.jl")
+    include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
 end

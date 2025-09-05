@@ -49,3 +49,4 @@ using Pioneer: PSMFileReference,
     new_ref = transform_and_write!(d->d, ref, f2)
     @test load_dataframe(new_ref) == df_only_id
 end
+    @test ref.sorted_by == (:score, :target)
