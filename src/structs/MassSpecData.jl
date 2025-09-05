@@ -171,21 +171,21 @@ function getIsolationWidthMz(ms_data::BasicNonIonMobilityMassSpecData{T}, scan_i
 end
 
 # Collision energy field getters
-function getCollisionEnergyFields(ms_data::BasicNonIonMobilityMassSpecData{T}) where T
-    return ms_data.data[:collisionEnergyField]::Arrow.Primitive{Union{Missing, T}, Vector{T}}
-end
-function getCollisionEnergyField(ms_data::BasicNonIonMobilityMassSpecData{T}, scan_idx::Integer)::Union{Missing, T} where T
-    getCollisionEnergyFields(ms_data)[scan_idx]
-end
-
-
-# Collision energy eV field getters
-function getCollisionEnergyEvFields(ms_data::BasicNonIonMobilityMassSpecData{T}) where T
-    return ms_data.data[:collisionEnergyEvField]::Arrow.Primitive{Union{Missing, T}, Vector{T}}
-end
-function getCollisionEnergyEvField(ms_data::BasicNonIonMobilityMassSpecData{T}, scan_idx::Integer)::Union{Missing, T} where T
-    getCollisionEnergyEvFields(ms_data)[scan_idx]
-end
+## Unused getters (commented out to reduce surface area; can be restored if needed)
+# function getCollisionEnergyFields(ms_data::BasicNonIonMobilityMassSpecData{T}) where T
+#     return ms_data.data[:collisionEnergyField]::Arrow.Primitive{Union{Missing, T}, Vector{T}}
+# end
+# function getCollisionEnergyField(ms_data::BasicNonIonMobilityMassSpecData{T}, scan_idx::Integer)::Union{Missing, T} where T
+#     getCollisionEnergyFields(ms_data)[scan_idx]
+# end
+#
+# # Collision energy eV field getters
+# function getCollisionEnergyEvFields(ms_data::BasicNonIonMobilityMassSpecData{T}) where T
+#     return ms_data.data[:collisionEnergyEvField]::Arrow.Primitive{Union{Missing, T}, Vector{T}}
+# end
+# function getCollisionEnergyEvField(ms_data::BasicNonIonMobilityMassSpecData{T}, scan_idx::Integer)::Union{Missing, T} where T
+#     getCollisionEnergyEvFields(ms_data)[scan_idx]
+# end
 
 # MS order getters remain UInt8
 getMsOrders(ms_data::BasicNonIonMobilityMassSpecData)::Arrow.Primitive{UInt8, Vector{UInt8}} = ms_data.data[:msOrder]
@@ -313,21 +313,21 @@ function getIsolationWidthMz(ms_data::BatchNonIonMobilityMassSpecData{T}, scan_i
 end
 
 # Collision energy field getters
-function getCollisionEnergyFields(ms_data::BatchNonIonMobilityMassSpecData{T}) where T
-    return ms_data.data[:collisionEnergyField]::SentinelArrays.ChainedVector{Union{Missing, T}, Arrow.Primitive{Union{Missing, T}, Vector{T}}}
-end
-function getCollisionEnergyField(ms_data::BatchNonIonMobilityMassSpecData{T}, scan_idx::Integer)::Union{Missing, T} where T
-    getCollisionEnergyFields(ms_data)[scan_idx]
-end
-
-
-# Collision energy eV field getters
-function getCollisionEnergyEvFields(ms_data::BatchNonIonMobilityMassSpecData{T}) where T
-    return ms_data.data[:collisionEnergyEvField]::SentinelArrays.ChainedVector{Union{Missing, T}, Arrow.Primitive{Union{Missing, T}, Vector{T}}}
-end
-function getCollisionEnergyEvField(ms_data::BatchNonIonMobilityMassSpecData{T}, scan_idx::Integer)::Union{Missing, T} where T
-    getCollisionEnergyEvFields(ms_data)[scan_idx]
-end
+## Unused getters (commented out to reduce surface area; can be restored if needed)
+# function getCollisionEnergyFields(ms_data::BatchNonIonMobilityMassSpecData{T}) where T
+#     return ms_data.data[:collisionEnergyField]::SentinelArrays.ChainedVector{Union{Missing, T}, Arrow.Primitive{Union{Missing, T}, Vector{T}}}
+# end
+# function getCollisionEnergyField(ms_data::BatchNonIonMobilityMassSpecData{T}, scan_idx::Integer)::Union{Missing, T} where T
+#     getCollisionEnergyFields(ms_data)[scan_idx]
+# end
+#
+# # Collision energy eV field getters
+# function getCollisionEnergyEvFields(ms_data::BatchNonIonMobilityMassSpecData{T}) where T
+#     return ms_data.data[:collisionEnergyEvField]::SentinelArrays.ChainedVector{Union{Missing, T}, Arrow.Primitive{Union{Missing, T}, Vector{T}}}
+# end
+# function getCollisionEnergyEvField(ms_data::BatchNonIonMobilityMassSpecData{T}, scan_idx::Integer)::Union{Missing, T} where T
+#     getCollisionEnergyEvFields(ms_data)[scan_idx]
+# end
 
 # MS order getters remain UInt8
 getMsOrders(ms_data::BatchNonIonMobilityMassSpecData)::SentinelArrays.ChainedVector{UInt8, Arrow.Primitive{UInt8, Vector{UInt8}}} = ms_data.data[:msOrder]

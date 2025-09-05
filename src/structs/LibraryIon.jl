@@ -19,47 +19,19 @@ abstract type LibraryIon{T<:AbstractFloat} <: Ion{T} end
 
 getPrecCharge(f::LibraryIon)::UInt8 = f.prec_charge
 
-struct LibraryPrecursorIon{T<:AbstractFloat} <: LibraryIon{T}
-    irt::T
-    mz::T
-
-    is_decoy::Bool
-
-    proteome_identifiers::String
-    accession_numbers::String
-    sequence::String
-    structural_mods::Union{Missing, String}
-    isotopic_mods::Union{Missing, String}
-    start_idx::UInt32
-    prec_charge::UInt8
-    missed_cleavages::UInt8
-    length::UInt8
-    sulfur_count::UInt8
-end
-
-getIRT(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.irt
-isDecoy(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.is_decoy
-getAccessionNumbers(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.accession_numbers
-getSequence(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.sequence
-getMissedCleavages(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.missed_cleavages
-getVariableMods(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.variable_mods
-getLength(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.length
-getSulfurCount(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.sulfur_count
-getStartIdx(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.start_idx
-getCharge(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.prec_charge
-
 abstract type LibraryFragmentIon{T<:AbstractFloat} <: LibraryIon{T} end
 
 getPrecID(f::LibraryFragmentIon{T}) where {T<:AbstractFloat} = f.prec_id
 getPrecMZ(f::LibraryFragmentIon{T}) where {T<:AbstractFloat} = f.prec_mz
-getIntensity(f::LibraryFragmentIon{T}) where {T<:AbstractFloat} = f.intensity
+#getIntensity(f::LibraryFragmentIon{T}) where {T<:AbstractFloat} = f.intensity
 
+#=
 function reset!(lf::Vector{L}, last_non_empty::Int64) where {L<:LibraryFragmentIon{Float32}}
     for i in range(1, last_non_empty)
         lf[i] = L()
     end
 end
-
+=#
 struct SimpleFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     mz::T
     prec_id::UInt32
@@ -207,6 +179,8 @@ function getIntensity(
     return pf.intensity
 end
 
+getIntensity(f::DetailedFrag{T}) where {T<:AbstractFloat} = f.intensity
+
 # Example usage
 function save_detailed_frags(filename::String, data::Vector{<:DetailedFrag})
     jldsave(filename; data)
@@ -331,6 +305,7 @@ function load_detailed_frags(filename::String)
     end
 
     # Define SplineDetailedFrag type if it doesn't exist in workspace
+    #=
     if !isdefined(Main, :SplineDetailedFrag)
         #@eval Main struct Pioneer.SplineDetailedFrag{N,T<:AbstractFloat} <: AltimeterFragment{T}
         @eval Main struct SplineDetailedFrag{N,T<:AbstractFloat} <: AltimeterFragment{T}
@@ -349,11 +324,12 @@ function load_detailed_frags(filename::String)
             sulfur_count::UInt8
         end
     end
-    
+    =#
     jldopen(filename, "r") do file
         data = read(file, "data")
-        if eltype(data) == DetailedFrag{Float32}
+        #if eltype(data) == DetailedFrag{Float32}
             return data
+        #=    
         else
             # Convert the loaded data to Pioneer.SplineDetailedFrag
             map(x -> Pioneer.SplineDetailedFrag{4,Float32}(
@@ -372,6 +348,7 @@ function load_detailed_frags(filename::String)
                 x.sulfur_count
             ), data)
         end
+        =#
     end
 end
 
@@ -424,29 +401,6 @@ function convert_to_detailed(frag::DetailedFrag{T}, ::ConstantType) where {T <: 
         getSulfurCount(frag)
     )
 end
-
-# Specialized version for SplineDetailedFrag that handles intensity calculation
-function convert_to_detailed(
-    frag::SplineDetailedFrag{N,T}, 
-    spline_data::SplineType{M, T},
-) where {N,M,T}
-    DetailedFrag(
-        getPID(frag),
-        getMz(frag),
-        Float16(getIntensity(frag, spline_data)),
-        getIonType(frag),
-        isY(frag),
-        isB(frag),
-        isP(frag),
-        isIso(frag),
-        getFragCharge(frag),
-        getIonPosition(frag),
-        getPrecCharge(frag),
-        getRank(frag),
-        getSulfurCount(frag)
-    )
-end
-
 
 abstract type LibraryFragmentLookup end
 
@@ -708,6 +662,7 @@ struct StandardLibraryPrecursors <: LibraryPrecursors
     end
 end
 
+#=
 struct PlexedLibraryPrecursors <: LibraryPrecursors
     data::Arrow.Table
     n::Int64
@@ -752,13 +707,13 @@ struct PlexedLibraryPrecursors <: LibraryPrecursors
         end
     end
 end
-
+=#
 function SetPrecursors(precursor_table::Arrow.Table)
-    if "plex" in names(DataFrame(precursor_table))
-        return PlexedLibraryPrecursors(precursor_table)
-    else
+    #if "plex" in names(DataFrame(precursor_table))
+    #    return PlexedLibraryPrecursors(precursor_table)
+    #else
         return StandardLibraryPrecursors(precursor_table)
-    end
+    #end
 end
 # Define length method
 import Base.length
@@ -807,6 +762,6 @@ function extract_pair_idx(pair_idx_column, idx)
     end
 end
 getPairIdx(lp::LibraryPrecursors) = lp.data[:pair_id]
-getPlex(lp::PlexedLibraryPrecursors)::Arrow.Primitive{I, Vector{I}} where {I<:Integer} = lp.data[:plex]
+#getPlex(lp::PlexedLibraryPrecursors)::Arrow.Primitive{I, Vector{I}} where {I<:Integer} = lp.data[:plex]
 
 

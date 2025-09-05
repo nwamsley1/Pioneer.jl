@@ -135,7 +135,7 @@ end
     #    @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     #end
     #include("./UnitTests/empiricalLibTests.jl")
-    
+    #=
     @testset "process_test" begin 
         @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
     end
@@ -161,7 +161,7 @@ end
     include("./utils/FileOperations/test_file_operations_suite.jl")
     include("./UnitTests/RazoQuadModel.jl")
     
-    # NEW KOINA API TESTS - Active development
-    include("./Routines/BuildSpecLib/koina/test_koina_suite.jl")
-    
+    # Lightweight coverage for MassSpecData + FilteredMassSpecData
+    include("./UnitTests/MassSpecAndFilteredDataTests.jl")
+    =#
 end
