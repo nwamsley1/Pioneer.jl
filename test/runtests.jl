@@ -162,6 +162,9 @@ end
     include("./UnitTests/RazoQuadModel.jl")
     
     # Lightweight coverage for MassSpecData + FilteredMassSpecData
-    include("./UnitTests/MassSpecAndFilteredDataTests.jl")
+    # include("./UnitTests/MassSpecAndFilteredDataTests.jl")
     =#
+
+    # Active: only run mass-spec data tests for quick iteration
+    include("./UnitTests/MassSpecAndFilteredDataTests.jl")
 end
