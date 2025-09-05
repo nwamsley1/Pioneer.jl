@@ -28,15 +28,30 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   gamma::Float64 = 0.0,
                   max_depth::Int = 10,
                   iter_scheme::Vector{Int} = [100, 200, 200],
-                  print_importance::Bool = true,
-                  show_progress::Bool = true)
+                  print_importance::Bool = false,
+                  show_progress::Bool = true,
+                  verbose_logging::Bool = false)
 
     
     #Faster if sorted first
     sort!(psms, [:pair_id, :isotopes_captured])
+    # Display target/decoy/entrapment counts for training dataset
+    if verbose_logging
+        n_targets = sum(psms.target)
+        n_decoys = sum(.!psms.target)
+        n_entrapments = hasproperty(psms, :entrapment) ? sum(psms.entrapment) : 0
+        n_total = nrow(psms)
 
-    prob_estimates = zeros(Float32, nrow(psms))
-    MBR_estimates  = zeros(Float32, nrow(psms))
+        if n_entrapments > 0
+            @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys, $n_entrapments entrapments (total: $n_total PSMs)"
+        else
+            @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $n_total PSMs)"
+        end
+    end
+
+    prob_test   = zeros(Float32, nrow(psms))  # final CV predictions
+    prob_train  = zeros(Float32, nrow(psms))  # temporary, used during training
+    MBR_estimates = zeros(Float32, nrow(psms)) # optional MBR layer
 
     unique_cv_folds = unique(psms[!, :cv_fold])
     models = Dict{UInt8, Vector{EvoTrees.EvoTree}}()
@@ -50,11 +65,33 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
 
     pbar = show_progress ? ProgressBar(total=length(unique_cv_folds) * length(iter_scheme)) : nothing
+
     for test_fold_idx in unique_cv_folds
+
         initialize_prob_group_features!(psms, match_between_runs)
-        psms_train = @view psms[train_indices[test_fold_idx], :]
-        test_fold_idxs = fold_indices[test_fold_idx]
-        test_fold_psms = @view psms[test_fold_idxs, :]
+
+        train_idx = train_indices[test_fold_idx]
+        test_idx  = fold_indices[test_fold_idx]
+        
+        psms_train = @view psms[train_idx, :]
+        psms_test  = @view psms[test_idx, :]
+
+        # Display counts for this CV fold
+        if verbose_logging
+            n_train_targets = sum(psms_train.target)
+            n_train_decoys = sum(.!psms_train.target)
+            n_test_targets = sum(psms_test.target)
+            n_test_decoys = sum(.!psms_test.target)
+
+            if hasproperty(psms, :entrapment)
+                n_train_entrapments = sum(psms_train.entrapment)
+                n_test_entrapments = sum(psms_test.entrapment)
+                @user_info "Fold $test_fold_idx - Train: $n_train_targets targets, $n_train_decoys decoys, $n_train_entrapments entrapments | Test: $n_test_targets targets, $n_test_decoys decoys, $n_test_entrapments entrapments"
+            else
+                @user_info "Fold $test_fold_idx - Train: $n_train_targets targets, $n_train_decoys decoys | Test: $n_test_targets targets, $n_test_decoys decoys"
+            end
+        end
+
         fold_models = Vector{EvoTrees.EvoTree}(undef, length(iter_scheme))
 
         for (itr, num_round) in enumerate(iter_scheme)
@@ -75,13 +112,33 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                subsample=subsample,
                                gamma=gamma,
                                max_depth=max_depth)
+                               
             fold_models[itr] = bst
 
-            predict_fold!(bst, psms_train, test_fold_psms, train_feats)
+            # Print feature importances for each iteration and fold
+            if print_importance
+                importances = EvoTrees.importance(bst)
+                @user_info "Feature Importances - Fold $(test_fold_idx), Iteration $(itr) ($(length(importances)) features):"
+                for i in 1:10:length(importances)
+                    chunk = importances[i:min(i+9, end)]
+                    feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
+                    @user_info "  " * join(feat_strs, " | ")
+                end
+            end
+
+            #predict_fold!(bst, psms_train, psms_test, train_feats)
+            # **temporary predictions for training only**
+            prob_train[train_idx] = predict(bst, psms_train)
+            psms_train[!,:prob] = prob_train[train_idx]
+            get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
+
+            # **predict held-out fold**
+            prob_test[test_idx] = predict(bst, psms_test)
+            psms_test[!,:prob] = prob_test[test_idx]
 
             if match_between_runs
-                update_mbr_features!(psms_train, test_fold_psms, prob_estimates,
-                                     test_fold_idxs, itr, mbr_start_iter,
+                update_mbr_features!(psms_train, psms_test, prob_test,
+                                     test_idx, itr, mbr_start_iter,
                                      max_q_value_xgboost_rescore)
             end
 
@@ -93,9 +150,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         end
         # Make predictions on hold out data.
         if match_between_runs
-            MBR_estimates[test_fold_idxs] = psms[test_fold_idxs, :prob]
+            MBR_estimates[test_idx] = psms_test.prob
         else
-            prob_estimates[test_fold_idxs] = psms[test_fold_idxs, :prob]
+            prob_test[test_idx] = psms_test.prob
         end
         # Store models for this fold
         models[test_fold_idx] = fold_models
@@ -103,19 +160,19 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
     if match_between_runs
         # Determine which precursors failed the q-value cutoff prior to MBR
-        qvals_prev = Vector{Float32}(undef, length(prob_estimates))
-        get_qvalues!(prob_estimates, psms.target, qvals_prev)
+        qvals_prev = Vector{Float32}(undef, length(prob_test))
+        get_qvalues!(prob_test, psms.target, qvals_prev)
         pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore)
-        prob_thresh = any(pass_mask) ? minimum(prob_estimates[pass_mask]) : typemax(Float32)
+        prob_thresh = any(pass_mask) ? minimum(prob_test[pass_mask]) : typemax(Float32)
         # Label as transfer candidates only those failing the q-value cutoff but
         # whose best matched pair surpassed the passing probability threshold.
-        psms[!, :MBR_transfer_candidate] .= (prob_estimates .< prob_thresh) .&
+        psms[!, :MBR_transfer_candidate] .= (prob_test .< prob_thresh) .&
                                             (psms.MBR_max_pair_prob .>= prob_thresh)
 
         # Use the final MBR probabilities for all precursors
         psms[!, :prob] = MBR_estimates
     else
-        psms[!, :prob] = prob_estimates
+        psms[!, :prob] = prob_test
     end
     
     return models
@@ -135,10 +192,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     eta::Float64 = 0.15, 
                     min_child_weight::Int = 1, 
                     subsample::Float64 = 0.5, 
-                    gamma::Int = 0, 
+                    gamma::Float64 = 0.0, 
                     max_depth::Int = 10,
                     iter_scheme::Vector{Int} = [100, 200, 200],
-                    print_importance::Bool = true)
+                    print_importance::Bool = false)
 
     function getBestScorePerPrec!(
         prec_to_best_score_new::Dictionary,
@@ -358,8 +415,16 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             else
                 push!(models[test_fold_idx], bst)
             end
-            #print_importance = true
-            print_importance ? println(collect(zip(feature_importance(bst)))[1:30]) : nothing
+            # Print feature importances
+            if print_importance
+                importances = EvoTrees.importance(bst)
+                @user_info "Feature Importances ($(length(importances)) features):"
+                for i in 1:10:length(importances)
+                    chunk = importances[i:min(i+9, end)]
+                    feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
+                    @user_info "  " * join(feat_strs, " | ")
+                end
+            end
 
             # Get probabilities for training sample so we can get q-values
             psms_train[!,:prob] = EvoTrees.predict(bst, psms_train)
@@ -439,33 +504,34 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
         rowsample = subsample,
         colsample = colsample,
         eta = eta,
-        gamma = gamma
+        gamma = gamma#,
+        #lambda = 0.000001
     )
     model = fit(config, psms; target_name = :target, feature_names = features, verbosity = 0)
     return model
 end
 
 function predict_fold!(bst, psms_train::AbstractDataFrame,
-                       test_fold_psms::AbstractDataFrame, features)
-    test_fold_psms[!, :prob] = predict(bst, test_fold_psms)
+                       psms_test::AbstractDataFrame, features)
+    psms_test[!, :prob] = predict(bst, psms_test)
     psms_train[!, :prob] = predict(bst, psms_train)
     get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
 end
 
 function update_mbr_features!(psms_train::AbstractDataFrame,
-                              test_fold_psms::AbstractDataFrame,
-                              prob_estimates::Vector{Float32},
+                              psms_test::AbstractDataFrame,
+                              prob_test::Vector{Float32},
                               test_fold_idxs,
                               itr::Int,
                               mbr_start_iter::Int,
                               max_q_value_xgboost_rescore::Float32)
     if itr >= mbr_start_iter - 1
-        get_qvalues!(test_fold_psms.prob, test_fold_psms.target, test_fold_psms.q_value)
-        summarize_precursors!(test_fold_psms, q_cutoff = max_q_value_xgboost_rescore)
+        get_qvalues!(psms_test.prob, psms_test.target, psms_test.q_value)
+        summarize_precursors!(psms_test, q_cutoff = max_q_value_xgboost_rescore)
         summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
     end
     if itr == mbr_start_iter - 1
-        prob_estimates[test_fold_idxs] = test_fold_psms.prob
+        prob_test[test_fold_idxs] = psms_test.prob
     end
 end
 
@@ -587,7 +653,7 @@ function get_training_data_for_iteration!(
    
     if itr == 1
         # Train on all precursors during first iteration. 
-        return psms_train
+        return copy(psms_train)
     else
         # Do a shallow copy to avoid overwriting target/decoy labels
         psms_train_itr = copy(psms_train)

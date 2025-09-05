@@ -47,7 +47,7 @@ using Pioneer: buildPionLib  # For BuildPionLibTest.jl
 using Pioneer: digest_fasta, combine_shared_peptides  # For FastaDigestTests.jl  
 using Pioneer: add_decoy_sequences, add_entrapment_sequences  # For FastaDigestTests.jl
 using Pioneer: fillVarModStrings!, fragFilter  # For BuildPionLibTest.jl
-using Pioneer: get_base_pep_id, get_base_prec_id, get_charge  # For FastaDigestTests.jl
+using Pioneer: get_base_pep_id, get_charge  # For FastaDigestTests.jl
 using Pioneer: make_koina_request, prepare_koina_batch, parse_koina_batch  # For Koina API tests
 using Pioneer: KoinaBatchResult  # For Koina API tests
 using Pioneer: get_proteome, get_sequence, get_structural_mods  # For FastaDigestTests.jl

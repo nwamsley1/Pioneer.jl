@@ -267,6 +267,7 @@ function importScripts()
     safe_include!(joinpath(root_path, "utils", "get_mz.jl"))
     safe_include!(joinpath(root_path, "utils", "parse_isotope_mods.jl"))
     safe_include!(joinpath(root_path, "utils", "check_params.jl"))
+    safe_include!(joinpath(root_path, "utils", "essential_mods.jl"))
     
     # Structs 
     # COMMENTED OUT: EmpiricalLibrary only used by ParseSpecLib which has loading issues
@@ -277,6 +278,7 @@ function importScripts()
     safe_include!(joinpath(root_path, "build", "build_poin_lib.jl"))
     
     # Chronologer Methods
+    safe_include!(joinpath(root_path, "chronologer", "pair_decoys.jl"))
     safe_include!(joinpath(root_path, "chronologer", "chronologer_prep.jl"))
     safe_include!(joinpath(root_path, "chronologer", "chronologer_predict.jl"))
     safe_include!(joinpath(root_path, "chronologer", "chronologer_parse.jl"))

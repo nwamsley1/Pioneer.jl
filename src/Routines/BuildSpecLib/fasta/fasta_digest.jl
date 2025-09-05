@@ -123,7 +123,7 @@ For each protein in the input FASTA entries:
 1. Digests the sequence using the specified enzyme pattern
 2. Filters out peptides containing unusual amino acids ([H, U, O, X, Z, B])
 3. Creates a new FastaEntry for each valid peptide
-4. Assigns sequential base_pep_id and base_prec_id values
+4. Assigns sequential base_pep_id values
 
 The resulting FastaEntry objects contain:
 - Original entry ID
@@ -132,7 +132,7 @@ The resulting FastaEntry objects contain:
 - Digested peptide sequence
 - No structural or isotopic modifications (missing)
 - Zero charge state
-- Sequential base_pep_id and base_prec_id
+- Sequential base_pep_id
 - Zero entrapment_group_id
 - is_decoy set to false
 
@@ -164,7 +164,6 @@ function digest_fasta(fasta::Vector{FastaEntry},
 
     peptides_fasta = Vector{FastaEntry}()
     base_pep_id = one(UInt32)
-    base_prec_id = one(UInt32)
     for entry in fasta
         peptides, starts = digest_sequence(
             get_sequence(entry),
@@ -191,12 +190,11 @@ function digest_fasta(fasta::Vector{FastaEntry},
                 missing, #structural_mods 
                 missing, #isotopic_mods 
                 zero(UInt8),
+                zero(UInt32),  # base_target_id (will be assigned later)
                 base_pep_id,
-                base_prec_id,
-                zero(UInt8),
-                false
+                zero(UInt8),   # entrapment_pair_id
+                false          # is_decoy
             ))
-            base_prec_id += one(UInt32)
             base_pep_id += one(UInt32)
         end
     end

@@ -87,11 +87,11 @@ end
         max_shuffle_attempts::Int64 = 20
     )::Vector{FastaEntry}
 
-Add entrapment sequences to a set of target peptides.
-Creates shuffled decoy sequences while preserving terminal amino acids.
+Add entrapment sequences to a set of target peptides with modification handling.
+Creates shuffled sequences while properly adjusting modification positions.
 
 # Parameters
-- `target_fasta_entries::Vector{FastaEntry}`: Vector of target peptide entries to generate entrapment sequences for
+- `target_fasta_entries::Vector{FastaEntry}`: Vector of target peptide entries (with modifications) to generate entrapment sequences for
 - `entrapment_r::UInt8`: Number of entrapment sequences to generate per target
 - `max_shuffle_attempts::Int64`: Maximum attempts to generate unique shuffled sequence (default: 20)
 
@@ -100,11 +100,13 @@ Creates shuffled decoy sequences while preserving terminal amino acids.
 
 # Details
 For each target peptide:
-1. Creates `entrapment_r` shuffled versions using `shuffle_fast()`
-2. Preserves C-terminal amino acid to maintain enzymatic cleavage properties
-3. Ensures each shuffled sequence is unique
-4. Sets entrapment_group_id to indicate the entrapment group
-5. Maintains original metadata (base_pep_id, etc.) for tracking
+1. Creates `entrapment_r` shuffled versions using `shuffle_sequence!()`
+2. Adjusts modification positions to match shuffled sequence using `adjust_mod_positions`
+3. Preserves C-terminal amino acid to maintain enzymatic cleavage properties  
+4. Ensures each shuffled sequence is unique (I/L equivalence considered)
+5. Sets entrapment_group_id to indicate the entrapment group
+6. Maintains original metadata (base_target_id, base_pep_id, etc.) for tracking
+7. Properly handles both structural and isotopic modifications
 
 # Examples
 ```julia
@@ -142,13 +144,6 @@ function add_entrapment_sequences(
     #union!(sequences_set, target_sequences)
     
     n = 1
-    maximum_prec_id = zero(UInt32)
-    for tfe = target_fasta_entries
-        if get_base_prec_id(tfe) > maximum_prec_id
-            maximum_prec_id = get_base_prec_id(tfe)
-        end
-    end
-    base_prec_id = maximum_prec_id + one(UInt32)
 
     shuffle_seq = ShuffleSeq(
         "",
@@ -168,6 +163,22 @@ function add_entrapment_sequences(
 
                 #Make sure the entrapment sequence is unique (I and L are equivalent)
                 if (new_sequence, get_charge(target_entry)) ∉ sequences_set
+                    # Get sequence length for modification adjustment
+                    seq_length = UInt8(length(get_sequence(target_entry)))
+                    
+                    # Adjust modification positions based on sequence shuffling
+                    adjusted_structural_mods = adjust_mod_positions(
+                        get_structural_mods(target_entry),
+                        shuffle_seq.new_positions,
+                        seq_length
+                    )
+                    
+                    adjusted_isotopic_mods = adjust_mod_positions(
+                        get_isotopic_mods(target_entry),
+                        shuffle_seq.new_positions,
+                        seq_length
+                    )
+                    
                     entrapment_fasta_entries[n] = FastaEntry(
                         get_id(target_entry),
                         get_description(target_entry),
@@ -177,15 +188,14 @@ function add_entrapment_sequences(
                         get_proteome(target_entry),
                         new_sequence,
                         get_start_idx(target_entry),
-                        missing, #structural_mods 
-                        missing, #isotopic_mods 
+                        adjusted_structural_mods, #structural_mods - now properly adjusted
+                        adjusted_isotopic_mods,   #isotopic_mods - now properly adjusted
                         get_charge(target_entry),
+                        get_base_target_id(target_entry), # inherit base_target_id for tracking
                         get_base_pep_id(target_entry),
-                        base_prec_id,
                         entrapment_group_id,
                         false
                     )
-                    base_prec_id += one(UInt32)
                     n += 1
                     push!(sequences_set, new_sequence, get_charge(target_entry))
                     break
@@ -539,8 +549,8 @@ function add_decoy_sequences(
                 adjusted_structural_mods,
                 adjusted_isotopic_mods,
                 get_charge(target_entry),
-                get_base_pep_id(target_entry),
-                get_base_prec_id(target_entry),
+                get_base_target_id(target_entry), # inherit base_target_id for tracking
+                get_base_pep_id(target_entry),  # inherit base_pep_id for pairing
                 get_entrapment_pair_id(target_entry),
                 true  # This is a decoy sequence
             )
@@ -576,16 +586,16 @@ This function:
 ```julia
 # Original entries with shared sequence
 entries = [
-    FastaEntry("P1", "desc1", "geneA", "protA", "human", "human", "PEPTIDE", 1, missing, missing, 0, 0, 0, 0, false),
-    FastaEntry("P2", "desc2", "geneB", "protB", "human", "human", "PEPTIDE", 2, missing, missing, 0, 0, 0, 0, false),
-    FastaEntry("P3", "desc3", "geneC", "protC", "human", "human", "UNIQUE", 3, missing, missing, 0, 0, 0, 0, false)
+    FastaEntry("P1", "desc1", "geneA", "protA", "human", "human", "PEPTIDE", 1, missing, missing, 0, 0, 0, 0, 0, 0, false),
+    FastaEntry("P2", "desc2", "geneB", "protB", "human", "human", "PEPTIDE", 2, missing, missing, 0, 0, 0, 0, 0, 0, false),
+    FastaEntry("P3", "desc3", "geneC", "protC", "human", "human", "UNIQUE", 3, missing, missing, 0, 0, 0, 0, 0, 0, false)
 ]
 
 # Combine shared peptides
 combined = combine_shared_peptides(entries)
 # Results in 2 entries:
-# 1. FastaEntry("P1;P2", "desc1;desc2", "geneA;geneB", "protA;protB", "human;human", "human;human", "PEPTIDE", 1, missing, missing, 0, 0, 0, 0, false)
-# 2. FastaEntry("P3", "desc3", "geneC", "protC", "human", "human", "UNIQUE", 3, missing, missing, 0, 0, 0, 0, false)
+# 1. FastaEntry("P1;P2", "desc1;desc2", "geneA;geneB", "protA;protB", "human;human", "human;human", "PEPTIDE", 1, missing, missing, 0, 0, 0, 0, 0, 0, false)
+# 2. FastaEntry("P3", "desc3", "geneC", "protC", "human", "human", "UNIQUE", 3, missing, missing, 0, 0, 0, 0, 0, 0, false)
 ```
 
 # Notes
@@ -622,9 +632,8 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
                                                         get_structural_mods(fasta_entry),
                                                         get_isotopic_mods(fasta_entry),
                                                         get_charge(fasta_entry),
-                                                        #get_base_pep_id(fasta_entry),
+                                                        get_base_target_id(fasta_entry), # preserve base_target_id
                                                         base_pep_id,
-                                                        get_base_prec_id(fasta_entry),
                                                         get_entrapment_pair_id(fasta_entry), 
                                                         is_decoy(fasta_entry)
                                                         )
@@ -643,3 +652,67 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
 
     return fasta_entries
 end
+
+function assign_base_pep_ids!(fasta_entries::Vector{FastaEntry})
+    """
+    Assign sequential base_pep_id values starting from 1.
+    Called after add_mods to identify unique peptides (sequence + modifications).
+    Each peptide variant gets a unique base_pep_id for tracking through charge variants.
+    
+    Returns:
+    - Int: Number of entries processed
+    """
+    
+    for i in 1:length(fasta_entries)
+        entry = fasta_entries[i]
+        
+        # Create new FastaEntry with sequential base_pep_id
+        fasta_entries[i] = FastaEntry(
+            get_id(entry),
+            get_description(entry),
+            get_gene(entry),
+            get_protein(entry),
+            get_organism(entry),
+            get_proteome(entry),
+            get_sequence(entry),
+            get_start_idx(entry),
+            get_structural_mods(entry),
+            get_isotopic_mods(entry),
+            get_charge(entry),
+            get_base_target_id(entry), # preserve base_target_id
+            UInt32(i),               # base_pep_id - sequential assignment
+            get_entrapment_pair_id(entry),
+            is_decoy(entry)
+        )
+    end
+    
+    return length(fasta_entries)
+end
+
+
+function assign_base_target_ids!(fasta_entries::Vector{FastaEntry})
+    for i in 1:length(fasta_entries)
+        entry = fasta_entries[i]
+        # Create new FastaEntry with assigned base_target_id
+        fasta_entries[i] = FastaEntry(
+            get_id(entry),
+            get_description(entry),
+            get_gene(entry),
+            get_protein(entry),
+            get_organism(entry),
+            get_proteome(entry),
+            get_sequence(entry),
+            get_start_idx(entry),
+            get_structural_mods(entry),
+            get_isotopic_mods(entry),
+            get_charge(entry),
+            UInt32(i),   # assign grouped base_target_id
+            get_base_pep_id(entry),    # preserve existing base_pep_id
+            get_entrapment_pair_id(entry),
+            is_decoy(entry)
+        )
+    end
+    
+    return length(fasta_entries)
+end
+

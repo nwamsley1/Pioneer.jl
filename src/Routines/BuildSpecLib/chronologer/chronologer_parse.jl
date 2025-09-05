@@ -78,6 +78,8 @@ function parse_chronologer_output(
     end
     # Read chronologer output
     precursors_df = DataFrame(Tables.columntable(Arrow.Table(path_to_precursors)))
+    println("   After chronologer parsing: $(nrow(precursors_df)) precursors")
+    println("   Unique pair_ids before sorting: $(length(unique(precursors_df.pair_id)))")
     # Rename columns to match Pioneer format
     rename!(precursors_df, Dict(
         :rt => :irt,
@@ -137,6 +139,9 @@ function parse_chronologer_output(
         end
     end
     sort!(@view(precursors_df[start_idx:end,:]),:mz)
+    
+    println("   After RT/mz sorting: $(nrow(precursors_df)) precursors") 
+    println("   Unique pair_ids after sorting: $(length(unique(precursors_df.pair_id)))")
 
     # Write processed precursors to Arrow file
     precursors_arrow_path = joinpath(pion_lib_dir, "precursors.arrow")

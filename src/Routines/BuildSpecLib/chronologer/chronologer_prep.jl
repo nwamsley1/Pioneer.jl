@@ -170,30 +170,49 @@ function prepare_chronologer_input(
     protein_df = build_protein_df(protein_entries)
     Arrow.write(proteins_out_path, protein_df)
 
-    # Combine shared peptides
+    # Step 1: Combine shared peptides (I/L equivalence)
     fasta_entries = combine_shared_peptides(fasta_entries)
-    # Add entrapment sequences if specified
-    fasta_entries = add_entrapment_sequences(
-        fasta_entries,
-        UInt8(_params.fasta_digest_params["entrapment_r"])
-    )
-    #Fasta entries with the fixed and variable mods added 
+    
+    # Step 2: Add modifications (creates peptide variants before entrapment)
     fasta_entries = add_mods(
         fasta_entries, 
         fixed_mods, 
         var_mods,
         _params.fasta_digest_params["max_var_mods"])
+    @user_info "Step 2 - Modifications added (creates peptide variants for entrapment shuffling)"
 
-    # Add decoy sequences if requested
+    # Step 3: Assign base_pep_id for peptide tracking (after modifications)
+    pep_entries_processed = assign_base_pep_ids!(fasta_entries)
+    pep_count = length(unique([get_base_pep_id(e) for e in fasta_entries]))
+    @user_info "Step 3 - Base Pep ID Assignment: $pep_entries_processed entries processed"
+    @user_info "  Unique base_pep_ids: $pep_count"
+    @user_info "  Purpose: Track peptides (sequence + modifications) through entrapment variants"
+    
+    # Step 4: Add entrapment sequences (now handles modifications properly)
+    fasta_entries = add_entrapment_sequences(
+        fasta_entries,
+        UInt8(_params.fasta_digest_params["entrapment_r"])
+    )
+    @user_info "Step 4 - Entrapment sequences added with shuffled modifications"
+    
+    # Step 5: Assign base_target_id values for entrapment grouping
+    assign_base_target_ids!(fasta_entries)
+    @user_info "Step 5 - base_target_id assigned for entrapment tracking"
+
+    # Step 6: Add decoys (inherit base_target_id and base_pep_id for pairing)
     if _params.fasta_digest_params["add_decoys"]
         fasta_entries = add_decoy_sequences(fasta_entries)
+        @user_info "Step 6 - Decoy sequences added (inherit base_target_id and base_pep_id)"
     end
         
+    # Step 7: Add charges (creates precursor variants)
     fasta_entries = add_charge(
         fasta_entries,
         _params.fasta_digest_params["min_charge"],
         _params.fasta_digest_params["max_charge"]
     )
+    @user_info "Step 7 - Charge states added (creates precursor variants)"
+
     # Build UniSpec input dataframe
     fasta_df = build_fasta_df(
         fasta_entries,
@@ -220,7 +239,22 @@ function prepare_chronologer_input(
     end
 
     # Filter by mass range
+    println("🔍 PARTNER INDEX DEBUG:")
+    nrow_before = nrow(fasta_df)
+    println("   Before m/z filtering: $nrow_before precursors")
     filter!(x -> (x.mz >= prec_mz_min) & (x.mz <= prec_mz_max), fasta_df)
+    nrow_after = nrow(fasta_df)
+    percent_removed = round((1 - nrow_after/nrow_before) * 100, digits=1)
+    println("   After m/z filtering: $nrow_after precursors ($percent_removed% removed)")
+    
+    # Apply charge-specific target-decoy pairing AFTER all filtering is complete
+    # This ensures partner_precursor_idx values are valid row indices
+    fasta_df = add_charge_specific_partner_columns!(fasta_df)
+    
+    # Apply entrapment pairing system
+    # Creates entrapment_pair_id and entrapment_target_idx columns
+    fasta_df = add_entrapment_partner_columns!(fasta_df)
+    
     # Handle collision energy
     if !ismissing(mz_to_ev_interp)
         fasta_df[!, :collision_energy] = mz_to_ev_interp.(fasta_df[!, :mz])
@@ -277,6 +311,7 @@ function add_mods(
 
 
     fasta_mods = Vector{FastaEntry}()
+    # NOTE: base_pep_id will be preserved from original peptides (not made unique per modification)
     for fasta_peptide in fasta_peptides
         sequence = get_sequence(fasta_peptide)
 
@@ -304,6 +339,7 @@ function add_mods(
                             )
 
         for var_mod in var_mods
+            # NOTE: Preserve original base_pep_id to maintain link with entrapment sequences
             push!(fasta_mods,
                 FastaEntry(
                     get_id(fasta_peptide),
@@ -317,8 +353,8 @@ function add_mods(
                     var_mod,
                     get_isotopic_mods(fasta_peptide),
                     get_charge(fasta_peptide),
-                    get_base_pep_id(fasta_peptide),
-                    zero(UInt32),
+                    get_base_target_id(fasta_peptide), # preserve base_target_id
+                    get_base_pep_id(fasta_peptide),  # Preserve original base_pep_id
                     get_entrapment_pair_id(fasta_peptide),
                     is_decoy(fasta_peptide),
                 ))
@@ -355,7 +391,6 @@ function add_charge(
 )
     min_charge, max_charge = UInt8(min_charge), UInt8(max_charge)
     fasta_peptides_wcharge = Vector{FastaEntry}()
-    base_prec_id = one(UInt32)
     for fasta_peptide in fasta_peptides
         for charge in range(UInt8(min_charge), UInt8(max_charge))
             push!(fasta_peptides_wcharge,
@@ -371,12 +406,11 @@ function add_charge(
                     get_structural_mods(fasta_peptide),
                     get_isotopic_mods(fasta_peptide),
                     charge,
-                    get_base_pep_id(fasta_peptide),
-                    base_prec_id,
+                    get_base_target_id(fasta_peptide), # preserve base_target_id
+                    get_base_pep_id(fasta_peptide),   # preserve base_pep_id
                     get_entrapment_pair_id(fasta_peptide),
                     is_decoy(fasta_peptide)
                 ))
-            base_prec_id += one(UInt32)
         end
     end
     return fasta_peptides_wcharge
@@ -527,8 +561,8 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
     _collision_energy = Vector{Float32}(undef, prec_alloc_size )
     _decoy = Vector{Bool}(undef, prec_alloc_size)  
     _entrapment_group_id = Vector{UInt8}(undef, prec_alloc_size)
+    _base_target_id = Vector{UInt32}(undef, prec_alloc_size)
     _base_pep_id = Vector{UInt32}(undef, prec_alloc_size)
-    _base_prec_id = Vector{UInt32}(undef, prec_alloc_size)
     _pair_id = Vector{UInt32}(undef, prec_alloc_size)
     for (n, peptide) in enumerate(fasta_peptides)
         sequence = get_sequence(peptide)
@@ -550,8 +584,9 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         _collision_energy[n] = NCE
         _decoy[n] = decoy
         _entrapment_group_id[n] = entrapment_group_id
+        _base_target_id[n] = get_base_target_id(peptide)
         _base_pep_id[n] = get_base_pep_id(peptide)
-        _pair_id[n] = get_base_prec_id(peptide)
+        _pair_id[n] = get_base_target_id(peptide)  # Use base_target_id for unique pairing per precursor variant
     end
     n = length(fasta_peptides)
     
@@ -566,6 +601,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
          collision_energy = _collision_energy[1:n],
          decoy = _decoy[1:n],
          entrapment_group_id = _entrapment_group_id[1:n],
+         base_target_id = _base_target_id[1:n],
          base_pep_id = _base_pep_id[1:n],
          pair_id = _pair_id[1:n])
     )
@@ -575,6 +611,9 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
                                                     seq_df[!,:mods],
                                                     mod_to_mass_dict
                                                     )
+    
+    # NOTE: Pairing moved to after filtering to ensure valid partner_precursor_idx values
+    # seq_df = add_charge_specific_partner_columns!(seq_df)
     
     return seq_df
 end
