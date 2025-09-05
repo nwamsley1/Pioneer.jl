@@ -321,7 +321,8 @@ function BuildSpecLib(params_path::String)
                 println("   Before add_pair_indices!: $(nrow(precursors_table)) precursors")
                 println("   Unique pair_ids available: $(length(unique(precursors_table.pair_id)))")
                 add_pair_indices!(precursors_table)  # Add partner indices AFTER all sorting is complete
-                max_partner = ismissing(maximum(skipmissing(precursors_table.partner_precursor_idx))) ? 0 : Int64(maximum(skipmissing(precursors_table.partner_precursor_idx)))
+                partner_col = precursors_table.partner_precursor_idx
+                max_partner = all(ismissing, partner_col) ? 0 : Int64(maximum(skipmissing(partner_col)))
                 println("   After add_pair_indices!: max partner_idx = $max_partner (table size: $(nrow(precursors_table)))")
                 println("   Valid indices: $(max_partner <= nrow(precursors_table) ? "✅ YES" : "❌ NO")")
                 
@@ -329,7 +330,8 @@ function BuildSpecLib(params_path::String)
                 if hasproperty(precursors_table, :entrapment_pair_id)
                     println("   Adding entrapment target indices...")
                     add_entrapment_indices!(precursors_table)
-                    max_entrap_target = ismissing(maximum(skipmissing(precursors_table.entrapment_target_idx))) ? 0 : Int64(maximum(skipmissing(precursors_table.entrapment_target_idx)))
+                    ent_col = precursors_table.entrapment_target_idx
+                    max_entrap_target = all(ismissing, ent_col) ? 0 : Int64(maximum(skipmissing(ent_col)))
                     println("   After add_entrapment_indices!: max entrapment_target_idx = $max_entrap_target")
                     println("   Entrapment indices valid: $(max_entrap_target <= nrow(precursors_table) ? "✅ YES" : "❌ NO")")
                 end
@@ -498,4 +500,3 @@ function print_performance_report(timings, println_func; kwargs...)
     
     println_func("\n", repeat("=", 90))
 end
-

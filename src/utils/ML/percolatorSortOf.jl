@@ -28,23 +28,25 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   gamma::Float64 = 0.0,
                   max_depth::Int = 10,
                   iter_scheme::Vector{Int} = [100, 200, 200],
-                  print_importance::Bool = true,
-                  show_progress::Bool = true)
+                  print_importance::Bool = false,
+                  show_progress::Bool = true,
+                  verbose_logging::Bool = false)
 
     
     #Faster if sorted first
     sort!(psms, [:pair_id, :isotopes_captured])
-
     # Display target/decoy/entrapment counts for training dataset
-    n_targets = sum(psms.target)
-    n_decoys = sum(.!psms.target)
-    n_entrapments = hasproperty(psms, :entrapment) ? sum(psms.entrapment) : 0
-    n_total = nrow(psms)
+    if verbose_logging
+        n_targets = sum(psms.target)
+        n_decoys = sum(.!psms.target)
+        n_entrapments = hasproperty(psms, :entrapment) ? sum(psms.entrapment) : 0
+        n_total = nrow(psms)
 
-    if n_entrapments > 0
-        @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys, $n_entrapments entrapments (total: $n_total PSMs)"
-    else
-        @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $n_total PSMs)"
+        if n_entrapments > 0
+            @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys, $n_entrapments entrapments (total: $n_total PSMs)"
+        else
+            @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $n_total PSMs)"
+        end
     end
 
     prob_test   = zeros(Float32, nrow(psms))  # final CV predictions
@@ -75,17 +77,19 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         psms_test  = @view psms[test_idx, :]
 
         # Display counts for this CV fold
-        n_train_targets = sum(psms_train.target)
-        n_train_decoys = sum(.!psms_train.target)
-        n_test_targets = sum(psms_test.target)
-        n_test_decoys = sum(.!psms_test.target)
+        if verbose_logging
+            n_train_targets = sum(psms_train.target)
+            n_train_decoys = sum(.!psms_train.target)
+            n_test_targets = sum(psms_test.target)
+            n_test_decoys = sum(.!psms_test.target)
 
-        if hasproperty(psms, :entrapment)
-            n_train_entrapments = sum(psms_train.entrapment)
-            n_test_entrapments = sum(psms_test.entrapment)
-            @user_info "Fold $test_fold_idx - Train: $n_train_targets targets, $n_train_decoys decoys, $n_train_entrapments entrapments | Test: $n_test_targets targets, $n_test_decoys decoys, $n_test_entrapments entrapments"
-        else
-            @user_info "Fold $test_fold_idx - Train: $n_train_targets targets, $n_train_decoys decoys | Test: $n_test_targets targets, $n_test_decoys decoys"
+            if hasproperty(psms, :entrapment)
+                n_train_entrapments = sum(psms_train.entrapment)
+                n_test_entrapments = sum(psms_test.entrapment)
+                @user_info "Fold $test_fold_idx - Train: $n_train_targets targets, $n_train_decoys decoys, $n_train_entrapments entrapments | Test: $n_test_targets targets, $n_test_decoys decoys, $n_test_entrapments entrapments"
+            else
+                @user_info "Fold $test_fold_idx - Train: $n_train_targets targets, $n_train_decoys decoys | Test: $n_test_targets targets, $n_test_decoys decoys"
+            end
         end
 
         fold_models = Vector{EvoTrees.EvoTree}(undef, length(iter_scheme))
@@ -188,10 +192,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     eta::Float64 = 0.15, 
                     min_child_weight::Int = 1, 
                     subsample::Float64 = 0.5, 
-                    gamma::Int = 0, 
+                    gamma::Float64 = 0.0, 
                     max_depth::Int = 10,
                     iter_scheme::Vector{Int} = [100, 200, 200],
-                    print_importance::Bool = true)
+                    print_importance::Bool = false)
 
     function getBestScorePerPrec!(
         prec_to_best_score_new::Dictionary,
@@ -500,7 +504,8 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
         rowsample = subsample,
         colsample = colsample,
         eta = eta,
-        gamma = gamma
+        gamma = gamma#,
+        #lambda = 0.000001
     )
     model = fit(config, psms; target_name = :target, feature_names = features, verbosity = 0)
     return model
@@ -648,7 +653,7 @@ function get_training_data_for_iteration!(
    
     if itr == 1
         # Train on all precursors during first iteration. 
-        return psms_train
+        return copy(psms_train)
     else
         # Do a shallow copy to avoid overwriting target/decoy labels
         psms_train_itr = copy(psms_train)

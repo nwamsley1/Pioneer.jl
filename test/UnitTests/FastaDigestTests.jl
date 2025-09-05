@@ -87,7 +87,6 @@
                 UInt8(0),
                 UInt32(0),  # base_seq_id
                 UInt32(0),  # base_pep_id
-                UInt32(0),  # base_prec_id
                 UInt8(0),   # entrapment_pair_id
                 false,      # is_decoy
             ),
@@ -105,7 +104,6 @@
                 UInt8(0),
                 UInt32(0),  # base_seq_id
                 UInt32(0),  # base_pep_id
-                UInt32(0),  # base_prec_id
                 UInt8(0),   # entrapment_pair_id
                 false,      # is_decoy
             )
@@ -130,13 +128,11 @@
         @test ismissing(get_isotopic_mods(first_peptide))
         @test get_charge(first_peptide) == 0
         @test get_base_pep_id(first_peptide) == 1
-        @test get_base_prec_id(first_peptide) == 1
         @test get_entrapment_pair_id(first_peptide) == 0
         @test is_decoy(first_peptide) == false
         
-        # Test base_pep_id and base_prec_id increment
+        # Test base_pep_id increments
         @test get_base_pep_id(peptides[2]) == 2
-        @test get_base_prec_id(peptides[2]) == 2
         
         # Test with missed cleavages
         peptides = digest_fasta(fasta_entries, "human", regex=r"[KR]", max_length=10, min_length=2, missed_cleavages=1)
@@ -201,7 +197,6 @@
         @test all(e -> ismissing(get_isotopic_mods(e)), entries)
         @test all(e -> get_charge(e) == 0, entries)
         @test all(e -> get_base_pep_id(e) == 0, entries)
-        @test all(e -> get_base_prec_id(e) == 0, entries)
         @test all(e -> get_entrapment_pair_id(e) == 0, entries)
         @test all(e -> !is_decoy(e), entries)
         
@@ -249,9 +244,9 @@
         
         # Test constructor from FastaEntry vector
         entries = [
-            FastaEntry("P1", "", "", "", "human", "test", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt32(0), UInt8(0), false),
-            FastaEntry("P2", "", "", "", "human", "test", "ANOTHER", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt32(0), UInt8(0), false),
-            FastaEntry("P3", "", "", "", "human", "test", "PEPTLDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt32(0), UInt8(0), false)
+            FastaEntry("P1", "", "", "", "human", "test", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
+            FastaEntry("P2", "", "", "", "human", "test", "ANOTHER", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
+            FastaEntry("P3", "", "", "", "human", "test", "PEPTLDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false)
         ]
         
         pss_from_entries = PeptideSequenceSet(entries)
@@ -310,8 +305,8 @@
         @test length(decoys) == 2
         
         # Check decoy sequences are reversed except last AA
-        sort!(decoys, by = x-> x.base_prec_id)
-        sort!(entries, by = x->  x.base_prec_id)
+        sort!(decoys, by = x -> get_base_pep_id(x))
+        sort!(entries, by = x -> get_base_pep_id(x))
         for i in 1:2
             
             target_seq = get_sequence(entries[i])
@@ -323,7 +318,7 @@
             
             # Check metadata preserved
             @test get_base_pep_id(decoy) == get_base_pep_id(entries[i])
-            @test get_base_prec_id(decoy) == get_base_prec_id(entries[i])
+            @test get_base_pep_id(decoy) == get_base_pep_id(entries[i])
             @test get_entrapment_pair_id(decoy) == get_entrapment_pair_id(entries[i])
         end
     end

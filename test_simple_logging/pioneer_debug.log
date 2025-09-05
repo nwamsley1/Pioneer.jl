@@ -1,7 +1,0 @@
-==========================================================================================
-Pioneer Search Log
-Started: 2025-08-21T14:37:47.957
-Output Directory: ./test_simple_logging
-==========================================================================================
-
-[2025-08-21 14:37:47.999] [info] Pioneer logging system initialized [output_dir=./test_simple_logging, timestamp=2025-08-21T14:37:47.959]

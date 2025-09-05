@@ -21,6 +21,8 @@ PSM sampling and scoring
 
 # Constant for model selection threshold
 const MAX_FOR_MODEL_SELECTION = 100_000
+# Backward-compatible alias used in discussions/documentation
+const MAX_FOR_MODEL_SELECTION_PSMS = MAX_FOR_MODEL_SELECTION
 
 """
     score_precursor_isotope_traces(second_pass_folder::String, 
@@ -70,10 +72,13 @@ function score_precursor_isotope_traces(
         # Case 1: Out-of-memory processing with default XGBoost
         @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
         best_psms = sample_psms_for_xgboost(second_pass_folder, psms_count, max_psms_in_memory)
+        # Use a ModelConfig (AdvancedXGBoost by default) for OOM path
+        model_config = create_default_advanced_xgboost_config()
         models = score_precursor_isotope_traces_out_of_memory!(
             best_psms,
             file_paths,
             precursors,
+            model_config,
             match_between_runs,
             max_q_value_xgboost_rescore,
             max_q_value_xgboost_mbr_rescore,
@@ -322,9 +327,12 @@ function train_xgboost_model_in_memory(
     features = [f for f in model_config.features if hasproperty(best_psms, f)]
     if match_between_runs
         append!(features, [
-            :MBR_num_runs, :MBR_max_pair_prob, 
-            :MBR_log2_weight_ratio, :MBR_log2_explained_ratio,
-            :MBR_is_best_decoy, :MBR_rv_coefficient, :MBR_best_irt_diff
+            :MBR_num_runs, 
+            :MBR_max_pair_prob,
+            :MBR_log2_weight_ratio, 
+            :MBR_log2_explained_ratio,
+            :MBR_rv_coefficient, 
+            :MBR_best_irt_diff
         ])
     end
     
@@ -339,7 +347,7 @@ function train_xgboost_model_in_memory(
         subsample = get(hp, :subsample, 0.25),
         max_depth = get(hp, :max_depth, 10),
         eta = get(hp, :eta, 0.05),
-        iter_scheme = get(hp, :iter_scheme, [200, 200, 200]),
+        iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
         show_progress = show_progress
     )
 end
@@ -646,66 +654,15 @@ function score_precursor_isotope_traces_out_of_memory!(
     best_psms::DataFrame,
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
+    model_config::ModelConfig,
     match_between_runs::Bool,
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32
 )
     file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
-    features = [ 
-        :missed_cleavage,
-        :Mox,
-        :prec_mz,
-        :sequence_length,
-        :charge,
-        :irt_pred,
-        :irt_error,
-        :irt_diff,
-        :max_y_ions,
-        :y_ions_sum,
-        :longest_y,
-        :y_count,
-        :b_count,
-        :isotope_count,
-        :total_ions,
-        :best_rank,
-        :best_rank_iso,
-        :topn,
-        :topn_iso,
-        :gof,
-        :max_fitted_manhattan_distance,
-        :max_fitted_spectral_contrast,
-        :max_matched_residual,
-        :max_unmatched_residual,
-        :max_gof,
-        :fitted_spectral_contrast,
-        :spectral_contrast,
-        :max_matched_ratio,
-        :err_norm,
-        :poisson,
-        :weight,
-        :log2_intensity_explained,
-        :tic,
-        :num_scans,
-        :smoothness,
-        :rt_diff,
-        :ms1_irt_diff,
-        :weight_ms1,
-        :gof_ms1,
-        :max_matched_residual_ms1,
-        :max_unmatched_residual_ms1,
-        :fitted_spectral_contrast_ms1,
-        :error_ms1,
-        :m0_error_ms1,
-        :n_iso_ms1,
-        :big_iso_ms1,
-        :ms1_features_missing,
-        :percent_theoretical_ignored,
-        :scribe,
-        :max_scribe,
-        :target
-    ];
-    features = [f for f in features if hasproperty(best_psms, f)];
+    # Features from model_config; do not include :target
+    features = [f for f in model_config.features if hasproperty(best_psms, f)];
     if match_between_runs
         append!(features, [
             :MBR_rv_coefficient,
@@ -722,6 +679,8 @@ function score_precursor_isotope_traces_out_of_memory!(
     best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
     best_psms[!,:decoy] = best_psms[!,:target].==false;
 
+    # Hyperparameters from model_config
+    hp = model_config.hyperparams
     models = sort_of_percolator_out_of_memory!(
                             best_psms, 
                             file_paths,
@@ -730,14 +689,13 @@ function score_precursor_isotope_traces_out_of_memory!(
                             max_q_value_xgboost_rescore,
                             max_q_value_xgboost_mbr_rescore,
                             min_PEP_neg_threshold_xgboost_rescore,
-                            colsample_bytree = 0.5, 
-                            colsample_bynode = 0.5,
-                            min_child_weight = 5, 
-                            gamma = 1,
-                            subsample = 0.25, 
-                            max_depth = 10,
-                            eta = 0.05, 
-                            iter_scheme = [100, 200, 200],
+                            colsample_bytree = get(hp, :colsample_bytree, 0.5), 
+                            min_child_weight = get(hp, :min_child_weight, 5), 
+                            gamma = get(hp, :gamma, 1.0),
+                            subsample = get(hp, :subsample, 0.25), 
+                            max_depth = get(hp, :max_depth, 10),
+                            eta = get(hp, :eta, 0.05), 
+                            iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
                             print_importance = false);
     return models;#best_psms
 end
