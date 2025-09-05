@@ -23,6 +23,7 @@ using Pioneer: PSMFileReference,
 
     # sort_file_by_keys! single file
     sort_file_by_keys!(ref, :score, :target; reverse=[true, true])
+    @test ref.sorted_by == (:score, :target)
     df_sorted = load_dataframe(ref)
     @test issorted(df_sorted.score; rev=true)
     # ties on score should be sorted by target desc
@@ -49,4 +50,3 @@ using Pioneer: PSMFileReference,
     new_ref = transform_and_write!(d->d, ref, f2)
     @test load_dataframe(new_ref) == df_only_id
 end
-    @test ref.sorted_by == (:score, :target)

@@ -1,7 +1,7 @@
 using Test
 using DataFrames, Arrow
 
-using Pioneer: PSMFileReference, stream_sorted_merge, load_dataframe
+using Pioneer: PSMFileReference, stream_sorted_merge, load_dataframe, sort_file_by_keys!
 
 @testset "stream_sorted_merge basic" begin
     tmp = mktempdir()
@@ -17,6 +17,9 @@ using Pioneer: PSMFileReference, stream_sorted_merge, load_dataframe
 
     ref1 = PSMFileReference(f1)
     ref2 = PSMFileReference(f2)
+    # Ensure sorted_by metadata is set; sort if needed
+    sort_file_by_keys!(ref1, :id)
+    sort_file_by_keys!(ref2, :id)
 
     merged_ref = stream_sorted_merge([ref1, ref2], out, :id)
     dfm = load_dataframe(merged_ref)
@@ -24,4 +27,3 @@ using Pioneer: PSMFileReference, stream_sorted_merge, load_dataframe
     @test dfm.id == collect(1:6)
     @test length(dfm.score) == 6
 end
-
