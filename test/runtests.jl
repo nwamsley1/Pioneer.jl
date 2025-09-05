@@ -172,4 +172,8 @@ end
     include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
     include("./utils/FileOperations/core/test_core_references_basic.jl")
     include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
+    # LibrarySearch tests
+    include("./Routines/LibrarySearch/counter.jl")
+    include("./Routines/LibrarySearch/NMF.jl")
+    include("./Routines/LibrarySearch/integrateChrom_basic.jl")
 end
