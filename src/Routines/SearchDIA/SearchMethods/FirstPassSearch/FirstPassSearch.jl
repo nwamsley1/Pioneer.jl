@@ -499,7 +499,7 @@ function summarize_results!(
     # Process precursors
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
 
-    if false==true#params.match_between_runs==true
+    if params.match_between_runs==true
         #######
         #Each target has a corresponding decoy and vice versa
         #Add the complement targets/decoys to the precursor dict 
@@ -534,7 +534,7 @@ function summarize_results!(
     end
 
      # Empirical test: Check MBR partner addition and CV fold assignment
-    if false==true#params.match_between_runs == true
+    if params.match_between_runs == true
         @user_info "Analyzing MBR partner addition and CV fold assignment..."
         
         precursors = getPrecursors(getSpecLib(search_context))
