@@ -43,10 +43,9 @@ using Pioneer: PSMFileReference,
         select(d, :id)
     end
     df_only_id = load_dataframe(ref)
-    @test names(df_only_id) == [:id]
+    @test Symbol.(names(df_only_id)) == [:id]
 
     # transform_and_write! to new path (no change to original)
     new_ref = transform_and_write!(d->d, ref, f2)
     @test load_dataframe(new_ref) == df_only_id
 end
-
