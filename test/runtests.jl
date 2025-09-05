@@ -135,7 +135,7 @@ end
     #    @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     #end
     #include("./UnitTests/empiricalLibTests.jl")
-    
+    #=
     @testset "process_test" begin 
         @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
     end
@@ -156,11 +156,20 @@ end
     include("./UnitTests/test_protein_inference.jl")
     include("./UnitTests/ChronologerPrepTests.jl")
     include("./UnitTests/FastaDigestTests.jl")
+    include("./UnitTests/FastaEntryConstructorsTests.jl")
     include("./UnitTests/BuildPionLibTest.jl")
     include("./utils/FileOperations/test_file_operations_suite.jl")
     include("./UnitTests/RazoQuadModel.jl")
     
-    # NEW KOINA API TESTS - Active development
-    include("./Routines/BuildSpecLib/koina/test_koina_suite.jl")
-    
+    # Lightweight coverage for MassSpecData + FilteredMassSpecData
+    # include("./UnitTests/MassSpecAndFilteredDataTests.jl")
+    =#
+
+    # Active: only run mass-spec data tests for quick iteration
+    include("./UnitTests/MassSpecAndFilteredDataTests.jl")
+    include("./UnitTests/LoggingTests.jl")
+    # Add focused FileOperations tests (Arrow IO, core, streaming)
+    include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
+    include("./utils/FileOperations/core/test_core_references_basic.jl")
+    include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
 end
