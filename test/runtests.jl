@@ -53,6 +53,7 @@ using Pioneer: KoinaBatchResult  # For Koina API tests
 using Pioneer: get_proteome, get_sequence, get_structural_mods  # For FastaDigestTests.jl
 using Pioneer: get_isotopic_mods, get_description, get_id  # For FastaDigestTests.jl
 using Pioneer: get_entrapment_pair_id  # For FastaDigestTests.jl
+using Pioneer: get_gene, get_protein, get_organism  # For FastaEntryConstructorsTests.jl
 using Pioneer: filter_by_threshold, filter_by_multiple_thresholds  # For file operations tests
 using Pioneer: getDetailedFrags, getSeqSet, getSimpleFrags, getMZ  # For BuildPionLibTest.jl
 using Pioneer: getIRT, getPrecCharge, getPrecID, getPrecMZ, getScore  # For BuildPionLibTest.jl
@@ -135,7 +136,6 @@ end
     #    @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     #end
     #include("./UnitTests/empiricalLibTests.jl")
-    #=
     @testset "process_test" begin 
         @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
     end
@@ -158,12 +158,11 @@ end
     include("./UnitTests/FastaDigestTests.jl")
     include("./UnitTests/FastaEntryConstructorsTests.jl")
     include("./UnitTests/BuildPionLibTest.jl")
-    include("./utils/FileOperations/test_file_operations_suite.jl")
+    # include("./utils/FileOperations/test_file_operations_suite.jl")  # File doesn't exist
     include("./UnitTests/RazoQuadModel.jl")
     
     # Lightweight coverage for MassSpecData + FilteredMassSpecData
     # include("./UnitTests/MassSpecAndFilteredDataTests.jl")
-    =#
 
     # Active: only run mass-spec data tests for quick iteration
     include("./UnitTests/MassSpecAndFilteredDataTests.jl")
