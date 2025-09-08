@@ -15,13 +15,28 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+using ..BuildParamDefaults
+
 struct InvalidParametersError <: Exception
     message::String
     params::Dict{String, Any}
 end
 
 function check_params_bsp(json_string::String)
-    params = JSON.parse(json_string)
+    # Parse user parameters
+    user_params = JSON.parse(json_string)
+    
+    # Determine if simplified based on presence of detailed parameters
+    # Simplified version typically omits library_params details and nce_params
+    is_simplified = !haskey(user_params, "nce_params") && 
+                   (!haskey(user_params, "library_params") || 
+                    length(user_params["library_params"]) < 5)
+    
+    # Get appropriate defaults
+    defaults = get_build_default_parameters(is_simplified)
+    
+    # Merge user params over defaults
+    params = merge_with_build_defaults(user_params, defaults)
     
     # Helper function to check if a key exists and has the correct type
     function check_param(dict, key, expected_type)
@@ -38,14 +53,7 @@ function check_params_bsp(json_string::String)
         check_param(params, param, param in ["predict_fragments", "include_contaminants"] ? Bool : Any)
     end
     
-    # Add default nce_params if missing (optional parameter)
-    if !haskey(params, "nce_params")
-        params["nce_params"] = Dict(
-            "nce" => 25.0,
-            "default_charge" => 2,
-            "dynamic_nce" => true
-        )
-    end
+    # nce_params defaults now come from JSON file
 
     # Check fasta_digest_params
     fasta_digest_params = params["fasta_digest_params"]
@@ -65,38 +73,8 @@ function check_params_bsp(json_string::String)
     check_param(nce_params, "default_charge", Integer)
     check_param(nce_params, "dynamic_nce", Bool)
 
-    # Check library_params and add defaults for missing fields
+    # Check library_params (defaults now come from JSON file)
     library_params = params["library_params"]
-    
-    # Add defaults for commonly missing parameters
-    library_defaults = Dict(
-        "rt_bin_tol" => 1.0,
-        "frag_bin_tol_ppm" => 10.0,
-        "rank_to_score" => [8, 4, 4, 2, 2, 1, 1],
-        "y_start_index" => 4,
-        "b_start_index" => 3,
-        "y_start" => 3,
-        "b_start" => 2,
-        "include_p_index" => false,
-        "include_p" => false,
-        "auto_detect_frag_bounds" => true,
-        "max_frag_rank" => 255,
-        "length_to_frag_count_multiple" => 2,
-        "min_frag_intensity" => 0.0,
-        "include_isotope" => false,
-        "include_internal" => false,
-        "include_immonium" => false,
-        "include_neutral_diff" => true
-    )
-    
-    # Merge defaults with user-provided values
-    for (key, default_value) in library_defaults
-        if !haskey(library_params, key)
-            library_params[key] = default_value
-        end
-    end
-    
-    # Now check required fields
     check_param(library_params, "rt_bin_tol", Real)
     check_param(library_params, "frag_bin_tol_ppm", Real)
     check_param(library_params, "rank_to_score", Vector)

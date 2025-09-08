@@ -98,7 +98,11 @@ function importScripts()
         ]
     )
 
+    # Load SearchDIA early to make asset_path available to other modules
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA.jl"))
+    
     safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "paramDefaults.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "utils", "buildParamDefaults.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
     
@@ -288,7 +292,7 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "utils", "pdfUtils.jl"))
 
     # Main routines that use logging macros - load at the end
-    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA.jl"))
+    # SearchDIA.jl already loaded early to provide asset_path function
     safe_include!(joinpath(package_root, "src", "Routines", "BuildSpecLib.jl"))
     # COMMENTED OUT: ParseSpecLib has loading issues due to EmpiricalLibrary dependencies
     # safe_include!(joinpath(package_root, "src", "Routines", "ParseSpecLib.jl"))
