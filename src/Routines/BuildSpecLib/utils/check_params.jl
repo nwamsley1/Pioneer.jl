@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-using ..BuildParamDefaults
+# Build parameter default functions are loaded from buildParamDefaults.jl
 
 struct InvalidParametersError <: Exception
     message::String

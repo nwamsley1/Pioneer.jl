@@ -1,9 +1,5 @@
-module ParamDefaults
-
-using JSON
-using ...SearchDIA: asset_path
-
-export get_default_parameters, merge_with_defaults
+# No module wrapper - these functions become part of the Pioneer module
+# JSON is already imported in Pioneer.jl, no need to import again
 
 """
     get_default_parameters(simplified::Bool = false)
@@ -61,5 +57,3 @@ function merge_with_defaults(user_params::Dict, defaults::Dict)
     recursive_merge!(result, user_params)
     return result
 end
-
-end # module

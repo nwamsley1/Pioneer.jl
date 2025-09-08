@@ -22,8 +22,7 @@ using JSON
 #    params::Dict{String, Any}
 #end
 
-# ParamDefaults module is loaded in importScripts.jl
-using .ParamDefaults
+# Parameter default functions are loaded from paramDefaults.jl
 
 function checkParams(json_path::String)
     # Read user params

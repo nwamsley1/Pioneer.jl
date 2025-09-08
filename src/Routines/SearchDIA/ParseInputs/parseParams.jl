@@ -15,8 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# ParamDefaults module is loaded in importScripts.jl
-using .ParamDefaults
+# Parameter default functions are loaded from paramDefaults.jl
 
 struct PioneerParameters
     global_settings::NamedTuple
