@@ -178,9 +178,6 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     return models
 end
 
-
-
-
 function sort_of_percolator_out_of_memory!(psms::DataFrame, 
                     file_paths::Vector{String},
                     features::Vector{Symbol},
@@ -475,19 +472,6 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
     return models
 end
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 function train_booster(psms::AbstractDataFrame, features, num_round;
                        colsample::Float64,
                        eta::Float64,
@@ -504,8 +488,7 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
         rowsample = subsample,
         colsample = colsample,
         eta = eta,
-        gamma = gamma#,
-        #lambda = 0.000001
+        gamma = gamma
     )
     model = fit(config, psms; target_name = :target, feature_names = features, verbosity = 0)
     return model
@@ -615,9 +598,6 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
 
 end
 
-
-
-
 function initialize_prob_group_features!(
     psms::AbstractDataFrame,
     match_between_runs::Bool
@@ -714,8 +694,6 @@ function get_training_data_for_iteration!(
         return psms_train_itr
     end
 end
-
-
 
 function dropVectorColumns!(df)
     to_drop = String[]
@@ -824,8 +802,6 @@ function write_subset(
         writeArrow(file_path, convert_subarrays(df))
     end
 end
-
-
 
 function MBR_rv_coefficient(weights_A::AbstractVector{<:Real},
     times_A::AbstractVector{<:Real},

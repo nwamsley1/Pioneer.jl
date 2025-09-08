@@ -17,7 +17,7 @@
     "acquisition": {
         "nce": 25,
         "quad_transmission": {
-            "fit_from_data": false
+            "fit_from_data": true
         }
     },
     "maxLFQ": {

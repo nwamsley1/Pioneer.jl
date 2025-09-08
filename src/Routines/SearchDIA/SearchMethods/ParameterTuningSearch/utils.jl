@@ -787,11 +787,35 @@ function mass_err_ms1(ppm_errs::Vector{Float32},
     params::P) where {P<:FragmentIndexSearchParameters}
     mass_err = median(ppm_errs)
     ppm_errs .-= mass_err
-    # Calculate error bounds
+    
+    # Calculate error bounds using exponential distribution fitting (matching MS2 approach)
     frag_err_quantile = getFragErrQuantile(params)
-    l_bound = quantile(ppm_errs, frag_err_quantile)
-    r_bound = quantile(ppm_errs, 1 - frag_err_quantile)
-
+    
+    # Separate positive and negative errors for asymmetric modeling
+    r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
+    l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
+    
+    r_bound, l_bound = nothing, nothing
+    try
+        # Fit exponential distribution to right tail (positive errors)
+        r_bound = quantile(Exponential(
+            (1/(length(r_errs)/sum(r_errs)))
+        ), 1 - frag_err_quantile)
+        
+        # Fit exponential distribution to left tail (negative errors)  
+        l_bound = quantile(Exponential(
+            (1/(length(l_errs)/sum(l_errs)))
+        ), 1 - frag_err_quantile)
+    catch e 
+        @debug "MS1 exponential fitting failed: length(r_errs)=$(length(r_errs)) length(l_errs)=$(length(l_errs)) sum(r_errs)=$(sum(r_errs)) sum(l_errs)=$(sum(l_errs))"
+        # Fallback to simple empirical quantiles if exponential fitting fails
+        return MassErrorModel(
+            Float32(mass_err),
+            (Float32(abs(quantile(ppm_errs, frag_err_quantile))), 
+             Float32(abs(quantile(ppm_errs, 1 - frag_err_quantile))))
+        ), ppm_errs
+    end
+    
     return MassErrorModel(
         Float32(mass_err),
         (Float32(abs(l_bound)), Float32(abs(r_bound)))
