@@ -151,7 +151,6 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             UInt8(1), # max_best_rank
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
-            1.0f0,  # Full sampling for first pass
             Set{Int64}([2]),
             global_params.match_between_runs,
             Float32(frag_params.relative_improvement_threshold),
