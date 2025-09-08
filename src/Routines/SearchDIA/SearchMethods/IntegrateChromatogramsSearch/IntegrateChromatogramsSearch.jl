@@ -108,7 +108,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             Float32(min_fraction_transmitted),
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
-            1.0f0,  # Full sampling
             Set{Int64}([2]),
             global_params.ms1_quant,
             

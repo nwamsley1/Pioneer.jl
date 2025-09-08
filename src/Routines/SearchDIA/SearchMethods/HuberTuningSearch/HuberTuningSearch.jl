@@ -125,7 +125,6 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Int64(frag_params.n_isotopes),  # Fixed n_frag_isotopes
             UInt8(frag_params.max_rank),  # Using max possible rank
-            1.0f0,  # Full sampling
             Set{Int64}([2]),
             
             Float32(deconv_params.lambda),
