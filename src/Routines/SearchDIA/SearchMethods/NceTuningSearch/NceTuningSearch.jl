@@ -41,7 +41,6 @@ params = Dict(
         "max_best_rank" => 3,
         "n_frag_isotopes" => 2,
         "max_frag_rank" => 10,
-        "sample_rate" => 0.1,
         "abreviate_precursor_calc" => false
     )
 )
@@ -82,7 +81,6 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     max_best_rank::UInt8
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
-    sample_rate::Float32
     spec_order::Set{Int64}
     relative_improvement_threshold::Float32
     
@@ -125,7 +123,6 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             UInt8(1),  # Fixed max_best_rank
             Int64(1),  # Fixed n_frag_isotopes for NCE tuning
             UInt8(frag_params.max_rank),
-            Float32(search_params.sample_rate),
             Set{Int64}([2]),
             Float32(frag_params.relative_improvement_threshold),
             

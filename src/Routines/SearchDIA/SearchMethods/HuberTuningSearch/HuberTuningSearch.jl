@@ -73,7 +73,6 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
     isotope_err_bounds::Tuple{UInt8, UInt8}
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
-    sample_rate::Float32
     spec_order::Set{Int64}
     
     # Deconvolution parameters

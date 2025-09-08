@@ -105,7 +105,6 @@ function checkParams(json_path::String)
 
     check_param(tuning_params, "search_settings", Dict)
     search_settings = tuning_params["search_settings"]
-    check_param(search_settings, "sample_rate", Real)
     check_param(search_settings, "min_samples", Integer)
     check_param(search_settings, "max_presearch_iters", Integer)
     check_param(search_settings, "frag_err_quantile", Real)

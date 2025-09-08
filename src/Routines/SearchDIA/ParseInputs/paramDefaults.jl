@@ -50,7 +50,6 @@ function get_default_parameters()
                 "intensity_filter_quantile" => 0.50
             ),
             "search_settings" => Dict(
-                "sample_rate" => 0.02,
                 "initial_scan_count" => 10000,
                 "max_parameter_tuning_scans" => 40000,
                 "max_q_value" => 0.01,

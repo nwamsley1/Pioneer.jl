@@ -45,7 +45,6 @@ params = Dict(
         "max_best_rank" => 3,
         "n_frag_isotopes" => 2,
         "max_frag_rank" => 10,
-        "sample_rate" => 0.1,
         "abreviate_precursor_calc" => false
     ),
     :irt_mapping_params => Dict(

@@ -27,7 +27,6 @@
             "n_isotopes": 1
         },
         "search_settings": {
-            "sample_rate": 0.02,
             "min_samples": 3500,
             "min_quad_tuning_psms": 5000,
             "min_quad_tuning_fragments": 3,
