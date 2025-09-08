@@ -787,11 +787,35 @@ function mass_err_ms1(ppm_errs::Vector{Float32},
     params::P) where {P<:FragmentIndexSearchParameters}
     mass_err = median(ppm_errs)
     ppm_errs .-= mass_err
-    # Calculate error bounds
+    
+    # Calculate error bounds using exponential distribution fitting (matching MS2 approach)
     frag_err_quantile = getFragErrQuantile(params)
-    l_bound = quantile(ppm_errs, frag_err_quantile)
-    r_bound = quantile(ppm_errs, 1 - frag_err_quantile)
-
+    
+    # Separate positive and negative errors for asymmetric modeling
+    r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
+    l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
+    
+    r_bound, l_bound = nothing, nothing
+    try
+        # Fit exponential distribution to right tail (positive errors)
+        r_bound = quantile(Exponential(
+            (1/(length(r_errs)/sum(r_errs)))
+        ), 1 - frag_err_quantile)
+        
+        # Fit exponential distribution to left tail (negative errors)  
+        l_bound = quantile(Exponential(
+            (1/(length(l_errs)/sum(l_errs)))
+        ), 1 - frag_err_quantile)
+    catch e 
+        @debug "MS1 exponential fitting failed: length(r_errs)=$(length(r_errs)) length(l_errs)=$(length(l_errs)) sum(r_errs)=$(sum(r_errs)) sum(l_errs)=$(sum(l_errs))"
+        # Fallback to simple empirical quantiles if exponential fitting fails
+        return MassErrorModel(
+            Float32(mass_err),
+            (Float32(abs(quantile(ppm_errs, frag_err_quantile))), 
+             Float32(abs(quantile(ppm_errs, 1 - frag_err_quantile))))
+        ), ppm_errs
+    end
+    
     return MassErrorModel(
         Float32(mass_err),
         (Float32(abs(l_bound)), Float32(abs(r_bound)))
@@ -1425,28 +1449,6 @@ function test_tolerance_expansion!(
 end
 
 """
-    getPhaseShift(phase::Int, params::ParameterTuningSearchParameters)
-
-Get the bias shift (in ppm) for a given phase.
-Phase 1: 0 ppm (no bias)
-Phase 2: +max_tolerance ppm (positive bias)
-Phase 3: -max_tolerance ppm (negative bias)
-"""
-function getPhaseShift(phase::Int, params::ParameterTuningSearchParameters)
-    if phase == 1
-        return 0.0
-    elseif phase == 2
-        # Positive shift - use maximum expected tolerance
-        return Float64(getInitialMassTol(params))
-    elseif phase == 3
-        # Negative shift - use negative maximum expected tolerance
-        return -Float64(getInitialMassTol(params))
-    else
-        return 0.0
-    end
-end
-
-"""
     collect_psms_with_model(filtered_spectra, search_context, params, ms_file_idx, spectra)
 
 Helper function to collect PSMs with the current mass error model.
@@ -1702,4 +1704,58 @@ function generate_fallback_mass_error_plot_with_iteration_info(
     return p
 end
 
+"""
+    record_tuning_status!(diagnostics, status)
 
+Record the parameter tuning status for a file.
+"""
+function record_tuning_status!(diagnostics::ParameterTuningDiagnostics, status::ParameterTuningStatus)
+    diagnostics.file_statuses[status.file_idx] = status
+    
+    if status.converged && !status.used_fallback
+        diagnostics.n_successful += 1
+    elseif status.used_fallback
+        diagnostics.n_fallback += 1
+    else
+        diagnostics.n_failed += 1
+    end
+end
+
+"""
+    store_tuning_results!(history::ParameterHistory, file_idx::Int64, results::TuningResults)
+
+Store the parameter tuning results for a file.
+"""
+function store_tuning_results!(history::ParameterHistory, file_idx::Int64, results::TuningResults)
+    history.file_parameters[file_idx] = results
+    
+    # Update global statistics if this was successful
+    if results.converged
+        update_global_statistics!(history)
+    end
+end
+
+"""
+    update_global_statistics!(history::ParameterHistory)
+
+Recompute global statistics from all successful files.
+"""
+function update_global_statistics!(history::ParameterHistory)
+    successful_results = [r for r in values(history.file_parameters) if r.converged]
+    
+    if isempty(successful_results)
+        return
+    end
+    
+    # Extract values
+    mass_offsets = [r.mass_offset for r in successful_results]
+    tolerances = [mean(r.mass_tolerance) for r in successful_results]
+    
+    # Compute statistics
+    stats = history.global_stats
+    stats.median_mass_offset = median(mass_offsets)
+    stats.mass_offset_mad = mad(mass_offsets, normalize=false)
+    stats.median_tolerance = median(tolerances)
+    stats.tolerance_mad = mad(tolerances, normalize=false)
+    stats.n_successful_files = length(successful_results)
+end

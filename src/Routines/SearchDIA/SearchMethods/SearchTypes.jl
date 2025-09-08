@@ -334,7 +334,6 @@ getMinTopNofM(fsp::SearchParameters)            = fsp.min_topn_of_m
 getNFragIsotopes(fsp::SearchParameters)         = fsp.n_frag_isotopes
 getOutlierThreshold(fsp::SearchParameters)     = fsp.spline_fit_outlier_sd
 getPrecEstimation(fsp::SearchParameters)       = fsp.prec_estimation
-getSampleRate(fsp::SearchParameters)           = fsp.sample_rate
 getSpecOrder(fsp::SearchParameters)            = fsp.spec_order
 getSplineDegree(fsp::SearchParameters)         = fsp.spline_degree
 getSplineNKnots(fsp::SearchParameters)         = fsp.spline_n_knots

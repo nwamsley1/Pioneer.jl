@@ -97,7 +97,6 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     max_best_rank::UInt8
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
-    sample_rate::Float32
     spec_order::Set{Int64}
     match_between_runs::Bool
     relative_improvement_threshold::Float32
@@ -152,7 +151,6 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             UInt8(1), # max_best_rank
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
-            1.0f0,  # Full sampling for first pass
             Set{Int64}([2]),
             global_params.match_between_runs,
             Float32(frag_params.relative_improvement_threshold),

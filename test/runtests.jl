@@ -47,15 +47,19 @@ using Pioneer: buildPionLib  # For BuildPionLibTest.jl
 using Pioneer: digest_fasta, combine_shared_peptides  # For FastaDigestTests.jl  
 using Pioneer: add_decoy_sequences, add_entrapment_sequences  # For FastaDigestTests.jl
 using Pioneer: fillVarModStrings!, fragFilter  # For BuildPionLibTest.jl
-using Pioneer: get_base_pep_id, get_base_prec_id, get_charge  # For FastaDigestTests.jl
+using Pioneer: get_base_pep_id, get_charge  # For FastaDigestTests.jl
+using Pioneer: make_koina_request, prepare_koina_batch, parse_koina_batch  # For Koina API tests
+using Pioneer: KoinaBatchResult  # For Koina API tests
 using Pioneer: get_proteome, get_sequence, get_structural_mods  # For FastaDigestTests.jl
 using Pioneer: get_isotopic_mods, get_description, get_id  # For FastaDigestTests.jl
 using Pioneer: get_entrapment_pair_id  # For FastaDigestTests.jl
+using Pioneer: get_gene, get_protein, get_organism  # For FastaEntryConstructorsTests.jl
 using Pioneer: filter_by_threshold, filter_by_multiple_thresholds  # For file operations tests
 using Pioneer: getDetailedFrags, getSeqSet, getSimpleFrags, getMZ  # For BuildPionLibTest.jl
 using Pioneer: getIRT, getPrecCharge, getPrecID, getPrecMZ, getScore  # For BuildPionLibTest.jl
 using Pioneer: is_decoy, SplineDetailedFrag  # For FastaDigestTests.jl and BuildPionLibTest.jl
 using Pioneer: PSMFileReference, TransformPipeline, add_column, sort_by, apply_pipeline!  # For file operations tests
+using Pioneer: getFixedMods!
 # Note: iso_splines is loaded dynamically via parseIsoXML in RazoQuadModel.jl
 
 # Package dependencies that tests use directly
@@ -136,14 +140,13 @@ end
         @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
     end
     
-    
-    #Test FASTA parameter enhancement
+    # #Test FASTA parameter enhancement
     include("./Routines/BuildSpecLib/params/test_fasta_params.jl")
     
     # Test BuildSpecLib functionality
     include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
 
-    
+    # # Unit tests - commented out for faster Koina test development
     include("./UnitTests/buildDesignMatrix.jl")
     include("./UnitTests/isotopeSplines.jl")
     include("./UnitTests/matchPeaks.jl")
@@ -153,8 +156,20 @@ end
     include("./UnitTests/test_protein_inference.jl")
     include("./UnitTests/ChronologerPrepTests.jl")
     include("./UnitTests/FastaDigestTests.jl")
+    include("./UnitTests/FastaEntryConstructorsTests.jl")
     include("./UnitTests/BuildPionLibTest.jl")
-    include("./utils/FileOperations/test_file_operations_suite.jl")
+    # include("./utils/FileOperations/test_file_operations_suite.jl")  # File doesn't exist
     include("./UnitTests/RazoQuadModel.jl")
+    
+    # Lightweight coverage for MassSpecData + FilteredMassSpecData
+    # include("./UnitTests/MassSpecAndFilteredDataTests.jl")
+
+    # Active: only run mass-spec data tests for quick iteration
+    include("./UnitTests/MassSpecAndFilteredDataTests.jl")
+    include("./UnitTests/LoggingTests.jl")
+    # Add focused FileOperations tests (Arrow IO, core, streaming)
+    include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
+    include("./utils/FileOperations/core/test_core_references_basic.jl")
+    include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
     
 end

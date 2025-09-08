@@ -103,7 +103,6 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     max_best_rank::UInt8
     max_frag_rank::UInt8
     n_frag_isotopes::Int64
-    sample_rate::Float32
     irt_tol::Float32
     spec_order::Set{Int64}
     relative_improvement_threshold::Float32
@@ -160,7 +159,6 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             UInt8(1),  # Fixed max_best_rank
             UInt8(frag_params.max_rank),
             Int64(1),  # Fixed n_frag_isotopes for quad tuning
-            Float32(search_params.sample_rate),
             typemax(Float32),  # Maximum possible value for irt_tol
             Set{Int64}([2]),
             Float32(frag_params.relative_improvement_threshold),

@@ -98,7 +98,11 @@ function importScripts()
         ]
     )
 
+    # Load SearchDIA early to make asset_path available to other modules
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA.jl"))
+    
     safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "paramDefaults.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "utils", "buildParamDefaults.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
     
@@ -192,11 +196,7 @@ function importScripts()
         joinpath(search_methods_dir, "ParameterTuningSearch"),
         [
             "types.jl",                    # All type definitions to avoid circular dependencies
-            "diagnostics.jl",              # Diagnostic functions (types moved to types.jl)
-            "cross_run_learning.jl",       # Cross-run learning functions (types moved to types.jl)
             "ParameterTuningSearch.jl",    # Main implementation (types moved to types.jl)
-            "bias_detection.jl",           # Uses ParameterTuningSearchParameters from types.jl
-            "boundary_sampling.jl",        # Uses MassErrorModel
             "utils.jl"                     # Uses all types - NOTE: MS2CHROM dependency temporarily commented out
         ]
     )
@@ -271,15 +271,18 @@ function importScripts()
     safe_include!(joinpath(root_path, "utils", "get_mz.jl"))
     safe_include!(joinpath(root_path, "utils", "parse_isotope_mods.jl"))
     safe_include!(joinpath(root_path, "utils", "check_params.jl"))
+    safe_include!(joinpath(root_path, "utils", "essential_mods.jl"))
     
     # Structs 
-    safe_include!(joinpath(root_path, "structs", "EmpiricalLibrary.jl"))
+    # COMMENTED OUT: EmpiricalLibrary only used by ParseSpecLib which has loading issues
+    # safe_include!(joinpath(root_path, "structs", "EmpiricalLibrary.jl"))
     safe_include!(joinpath(root_path, "utils", "parse_mods.jl"))
     
     # Library building
     safe_include!(joinpath(root_path, "build", "build_poin_lib.jl"))
     
     # Chronologer Methods
+    safe_include!(joinpath(root_path, "chronologer", "pair_decoys.jl"))
     safe_include!(joinpath(root_path, "chronologer", "chronologer_prep.jl"))
     safe_include!(joinpath(root_path, "chronologer", "chronologer_predict.jl"))
     safe_include!(joinpath(root_path, "chronologer", "chronologer_parse.jl"))
@@ -289,9 +292,10 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "utils", "pdfUtils.jl"))
 
     # Main routines that use logging macros - load at the end
-    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA.jl"))
+    # SearchDIA.jl already loaded early to provide asset_path function
     safe_include!(joinpath(package_root, "src", "Routines", "BuildSpecLib.jl"))
-    safe_include!(joinpath(package_root, "src", "Routines", "ParseSpecLib.jl"))
+    # COMMENTED OUT: ParseSpecLib has loading issues due to EmpiricalLibrary dependencies
+    # safe_include!(joinpath(package_root, "src", "Routines", "ParseSpecLib.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "GenerateParams.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "mzmlConverter", "convertMzML.jl"))
 

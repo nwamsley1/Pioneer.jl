@@ -13,7 +13,6 @@
 1. Download the installer for your operating system from the [releases page](https://github.com/nwamsley1/Pioneer.jl/releases).
 2. Run the installer. It places a `pioneer` executable on your `PATH`.
 3. On first launch:
-   * **Windows/Linux** – `pioneer` downloads IntelOpenMP and MKL the first time it runs.
    * **macOS** – Gatekeeper verifies the binary and the first run can take about a minute. Zipped binaries require manual Gatekeeper approval and are not recommended.
 4. Verify the installation:
    ```bash

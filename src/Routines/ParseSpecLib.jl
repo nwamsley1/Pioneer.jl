@@ -474,7 +474,7 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
             pair_id = pair_id
         )
     )
-    add_pair_indices!(precursors_df)
+    # add_pair_indices!(precursors_df)  # Removed: partner_precursor_idx now added by add_charge_specific_partner_columns!
     Arrow.write(
         joinpath(speclib_dir, "precursors_table.arrow"),
         precursors_df

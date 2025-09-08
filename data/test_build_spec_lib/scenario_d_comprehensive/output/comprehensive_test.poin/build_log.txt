@@ -3,11 +3,11 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-08-28T12:21:39.621
+Starting library build at: 2025-09-08T18:06:25.825
 Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_d_comprehensive/output/comprehensive_test.poin
 
 Detecting fragment bounds...
-Fragment m/z range: Pioneer.FragBoundModel(ImmutablePolynomial(150.0f0), ImmutablePolynomial(2020.0f0))
+Fragment m/z range: FragBoundModel(ImmutablePolynomial(150.0f0), ImmutablePolynomial(2020.0f0))
 Precursor m/z range: (390.0f0, 1010.0f0)
 
 Starting fragment prediction workflow...
@@ -35,31 +35,31 @@ Detailed Step Analysis:
 Step                                     Time (s)     Memory (GB)  GC Time (s)  GC %        
 ------------------------------------------------------------------------------------------
 Collision Energy Setup                   0.00         0.00         0.00         0.0         
-Directory Setup                          0.00         0.00         0.00         0.0         
 File Verification                        0.00         0.00         0.00         0.0         
+Directory Setup                          0.00         0.00         0.00         0.0         
 Model Validation                         0.00         0.00         0.00         0.0         
 Parameter Loading                        0.00         0.00         0.00         0.0         
 Fragment Bound Detection                 0.00         0.00         0.00         0.0         
-Chronologer Preparation                  0.52         0.01         0.00         0.0         
-Chronologer Output Processing            0.56         0.01         0.05         8.2         
-Index Building                           0.80         0.05         0.04         5.6         
-Retention Time Prediction                0.82         0.01         0.00         0.0         
-Prediction Processing                    1.08         0.03         0.05         4.3         
-Fragment Prediction                      1.77         0.08         0.00         0.0         
+Chronologer Preparation                  0.64         0.01         0.00         0.0         
+Chronologer Output Processing            0.69         0.01         0.07         10.6        
+Index Building                           0.91         0.05         0.07         7.6         
+Retention Time Prediction                1.03         0.01         0.00         0.0         
+Prediction Processing                    1.29         0.03         0.07         5.5         
+Fragment Prediction                      1.94         0.08         0.00         0.0         
 ------------------------------------------------------------------------------------------
-TOTAL                                    5.54         0.19         0.14         2.5         
+TOTAL                                    6.50         0.20         0.21         3.3         
 
 Performance Summary:
 ------------------------------------------------------------------------------------------
-Total Runtime: 0.09 minutes
-Total Garbage Collection Time: 0.14 seconds
+Total Runtime: 0.11 minutes
+Total Garbage Collection Time: 0.21 seconds
 Number of Steps: 12
-Average Step Runtime: 0.46 seconds
+Average Step Runtime: 0.54 seconds
 
 Memory Usage Summary:
 ------------------------------------------------------------------------------------------
-Total Memory Allocated: 0.19 GB
-Peak  Memory Usage: 1.68 GB
+Total Memory Allocated: 0.2 GB
+Peak  Memory Usage: 4.49 GB
 Total Available System Memory: 48.0 GB
 
 Process Information:
@@ -70,6 +70,6 @@ System: arm64-apple-darwin24.0.0
 
 ==========================================================================================
 
-Library building completed at: 2025-08-28T12:21:45.164
+Library building completed at: 2025-09-08T18:06:32.330
 
 Library location: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_d_comprehensive/output/comprehensive_test.poin

@@ -33,7 +33,7 @@ pioneer --help
 ```
 Lists subcommands such as `predict`, `params-predict`, `search`, `params-search`, `convert-raw`, and `convert-mzml`.
 
-On the first run, Windows and Linux download IntelOpenMP and MKL; macOS performs a Gatekeeper security check.
+On the first run macOS performs a Gatekeeper security check.
 
 ## Quick Start
 A minimal end-to-end workflow is:
@@ -71,6 +71,10 @@ Replace `/path/on/host` with the directory containing your data and `pioneer --h
 docker build -t pioneer .
 ```
 
+
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on our Git Flow workflow and development process.
 
 <h1>Goldfarb Lab </h1>
  Pioneer is developed in the Goldfarb Lab: https://goldfarblab.wustl.edu   <img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/goldfarb.png" align="left" width="125px"/> 

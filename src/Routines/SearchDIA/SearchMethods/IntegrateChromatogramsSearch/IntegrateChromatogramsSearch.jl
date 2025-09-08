@@ -48,7 +48,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     min_fraction_transmitted::Float32
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
-    sample_rate::Float32
     spec_order::Set{Int64}
     ms1_quant::Bool
 
@@ -109,7 +108,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             Float32(min_fraction_transmitted),
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
-            1.0f0,  # Full sampling
             Set{Int64}([2]),
             global_params.ms1_quant,
             

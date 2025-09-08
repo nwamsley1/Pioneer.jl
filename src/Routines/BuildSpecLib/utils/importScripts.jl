@@ -57,6 +57,7 @@ function importSpecLibScripts()
 
 
     include("chronologer/chronologer_types.jl")
+    include("chronologer/pair_decoys.jl")
     include("chronologer/chronologer_prep.jl")
     include("chronologer/chronologer_predict.jl")
     include("chronologer/chronologer_parse.jl")

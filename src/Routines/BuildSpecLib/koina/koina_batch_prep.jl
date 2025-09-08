@@ -71,6 +71,17 @@ function prepare_koina_batch(model::InstrumentSpecificModel,
 end
 
 """
+Prepare batch request for instrument-agnostic models (with ignored instrument parameter).
+"""
+function prepare_koina_batch(model::InstrumentAgnosticModel,
+                           data::DataFrame,
+                           instrument_type::String;  # ignored for agnostic models
+                           batch_size::Int = 1000)::Vector{String}
+    # Call the generic method that doesn't need instrument_type
+    return prepare_koina_batch(model, data; batch_size=batch_size)
+end
+
+"""
 Prepare batch request for instrument-agnostic models.
 """
 function prepare_koina_batch(model::KoinaModelType,
@@ -149,6 +160,17 @@ function prepare_koina_batch(model::SplineCoefficientModel,
     end
     
     return json_batches
+end
+
+"""
+Prepare batch request for retention time predictions (with ignored instrument parameter).
+"""
+function prepare_koina_batch(model::RetentionTimeModel,
+                           data::DataFrame,
+                           instrument_type::String;  # ignored for RT models
+                           batch_size::Int = 1000)::Vector{String}
+    # Call the generic method that doesn't need instrument_type
+    return prepare_koina_batch(model, data; batch_size=batch_size)
 end
 
 """
