@@ -15,8 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# ParamDefaults module is loaded in importScripts.jl
-using .ParamDefaults
+# Parameter default functions are loaded from paramDefaults.jl
 
 struct PioneerParameters
     global_settings::NamedTuple
@@ -52,8 +51,14 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     
     # Apply defaults if requested
     if apply_defaults
-        # Get defaults
-        defaults = get_default_parameters()
+        # Determine if we should use simplified defaults based on parameter presence
+        is_simplified = !haskey(user_params, "parameter_tuning") && 
+                       !haskey(user_params, "first_search") &&
+                       !haskey(user_params, "quant_search")
+        
+        # Get appropriate defaults
+        defaults = get_default_parameters(is_simplified)
+        
         # Merge user params over defaults
         params = merge_with_defaults(user_params, defaults)
     else

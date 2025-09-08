@@ -130,28 +130,48 @@ end
 
 
 """
-    getSearchParams(template_path::String, lib_path::String, ms_data_path::String, results_path::String)
+    GetSearchParams(lib_path::String, ms_data_path::String, results_path::String; 
+                   params_path::Union{String, Missing} = missing,
+                   simplified::Bool = true)
 
-Creates a new search parameter file based on a template, with updated file paths.
+Creates a search parameter configuration file with user-specified paths.
 
-The function reads a template JSON configuration file and creates a new 'search_parameters.json' 
-in the current working directory with updated paths while preserving all other settings.
+The function loads default parameters from either the simplified or full JSON template
+(from assets/example_config/) and creates a customized parameter file with the user's
+file paths. All other parameters retain their default values and can be modified later.
 
 Arguments:
-- lib_path: Path to the library file (.poin)
-- ms_data_path: Path to the MS data directory
-- results_path: Path where results will be stored
-- params_path: Path to folder or .json file in which to write the template parameters file. Defaults to joinpath(pwd(), "./search_parameters.json")
+- lib_path: Path to the spectral library file (.poin)
+- ms_data_path: Path to the MS data directory  
+- results_path: Path where search results will be stored
+- params_path: Output path for the parameter file. Can be a directory (creates search_parameters.json) 
+  or full file path. Defaults to "search_parameters.json" in current directory.
+- simplified: If true (default), uses simplified template with essential parameters only. 
+  If false, uses full template with all advanced options.
 
 Returns:
 - String: Path to the newly created search parameters file
 
+Templates used:
+- Simplified: `defaultSearchParamsSimplified.json` (basic parameters)
+- Full: `defaultSearchParams.json` (all advanced parameters)
+
 Example:
 ```julia
-output_path = getSearchParams(
+# Create simplified parameter file
+output_path = GetSearchParams(
+    "/path/to/speclib.poin",
+    "/path/to/ms/data/dir", 
+    "/path/to/results/dir"
+)
+
+# Create full parameter file with custom output location
+output_path = GetSearchParams(
     "/path/to/speclib.poin",
     "/path/to/ms/data/dir",
-    "/path/to/output/dir"
+    "/path/to/results/dir";
+    params_path = "/custom/path/my_params.json",
+    simplified = false
 )
 ```
 """
@@ -203,27 +223,66 @@ function GetSearchParams(lib_path::String, ms_data_path::String, results_path::S
 end
 
 """
-    GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs)
+    GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs; 
+                     params_path::Union{String, Missing} = missing,
+                     regex_codes::Union{Missing, Dict, Vector} = missing,
+                     simplified::Bool = true)
 
-Creates a new library build parameter file with updated paths and automatically discovered FASTA files.
-Uses a default template from assets/example_config/.
+Creates a library building parameter configuration file with user-specified paths and FASTA files.
+
+The function loads default parameters from either the simplified or full JSON template 
+(from assets/example_config/) and creates a customized parameter file with the user's
+paths and automatically discovered FASTA files. All other parameters retain their
+default values and can be modified later.
 
 Arguments:
-- out_dir: Output directory path
-- lib_name: Library name path
-- fasta_inputs: Can be:
-  - A single directory path (String) to search for FASTA files
-  - A single FASTA file path (String)
+- out_dir: Output directory path where the library will be built
+- lib_name: Name for the spectral library (used for directory and file naming)
+- fasta_inputs: FASTA file specification. Can be:
+  - A single directory path (String) - searches for .fasta/.fasta.gz files
+  - A single FASTA file path (String) 
   - An array of directories and/or FASTA file paths
-- params_path: Path to folder or .json file in which to write the template parameters file. Defaults to joinpath(pwd(), "./buildspeclib_params.json")
-- regex_codes: Optional. Can be:
-  - A single set of regex codes (applied to all FASTA files)
-  - Multiple sets matching the number of fasta_inputs for positional mapping
-  Default: uses the regex patterns from the template
-- simplified: If true, use the simplified template (default: true)
+- params_path: Output path for the parameter file. Can be a directory (creates buildspeclib_params.json)
+  or full file path. Defaults to "buildspeclib_params.json" in current directory.
+- regex_codes: Optional FASTA header regex patterns for protein annotation extraction. Can be:
+  - A single Dict with keys: "accessions", "genes", "proteins", "organisms" (applied to all FASTA files)
+  - A Vector of Dicts for positional mapping to fasta_inputs
+  - If missing, uses default patterns from the template
+- simplified: If true (default), uses simplified template with essential parameters only.
+  If false, uses full template with all advanced library building options.
 
 Returns:
-- String: Path to the newly created parameters file
+- String: Path to the newly created library building parameters file
+
+Templates used:
+- Simplified: `defaultBuildLibParamsSimplified.json` (basic parameters)
+- Full: `defaultBuildLibParams.json` (all advanced parameters)
+
+The function automatically:
+- Discovers FASTA files in specified directories
+- Generates appropriate library names from FASTA filenames
+- Expands regex patterns to match the number of FASTA files found
+- Validates that all specified paths exist and are accessible
+
+Example:
+```julia
+# Create simplified parameter file with directory of FASTA files
+output_path = GetBuildLibParams(
+    "/path/to/output", 
+    "my_library",
+    "/path/to/fasta/directory"
+)
+
+# Create full parameter file with specific FASTA files and custom regex
+output_path = GetBuildLibParams(
+    "/path/to/output",
+    "my_library", 
+    ["/path/to/human.fasta", "/path/to/yeast.fasta"];
+    params_path = "/custom/path/build_params.json",
+    regex_codes = Dict("accessions" => "^sp\\|(\\w+)\\|", "genes" => " GN=(\\S+)"),
+    simplified = false
+)
+```
 """
 function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs; 
                          params_path::Union{String, Missing} = missing,

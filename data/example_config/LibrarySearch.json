@@ -27,7 +27,6 @@
             "n_isotopes": 1
         },
         "search_settings": {
-            "sample_rate": 0.02,
             "min_samples": 3500,
             "max_presearch_iters": 10,
             "frag_err_quantile": 0.01

@@ -281,10 +281,11 @@ function summarize_results!(
             end
             transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                        prob_col => (p -> begin
-                           prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))
+                           prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
                            prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
                            Float32(prob)
                        end) => :prec_prob)
+                       
             transform!(groupby(merged_df, :precursor_idx),
                        :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
                        

@@ -58,7 +58,6 @@ Most parameters should not be changed, but the following may need adjustement.
 | `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of matched library fragment intensities to unmatched library fragment intensities (default: 1.5) |
 | `fragment_settings.min_top_n` | [Int, Int] | Minimum number of top N matches - [requirement, denominator]. Default: `[3, 3]` |
 | `fragment_settings.n_isotopes` | Int | Number of fragment isotopes to consider in matching (default: 1, mono only) |
-| `search_settings.sample_rate` | Float | Fraction of spectra to sample during parameter tuning (default: 0.02) |
 | `search_settings.min_samples` | Int | Minimum number of samples required for tuning (default: 3500) |
 | `search_settings.min_quad_tuning_psms` | Int | Minimum number of psms required for estimating quad transmission (default: 5000) |
 | `search_settings.min_quad_tuning_fragments` | Int | Must match at least n fragments to each quad tuning psm (default: 3) |

@@ -206,7 +206,6 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
     n_frag_isotopes::Int64
     intensity_filter_quantile::Float32  # Quantile for filtering fragments by intensity in mass error model
     max_frag_rank::UInt8
-    sample_rate::Float32  # Deprecated - kept for compatibility
     topn_peaks::Union{Nothing, Int64}
     initial_scan_count::Int64
     max_parameter_tuning_scans::Int64
@@ -309,7 +308,6 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
             Int64(frag_params.n_isotopes),
             intensity_filter_quantile,  # Fragment intensity filtering threshold
             UInt8(frag_params.max_rank),
-            Float32(search_params.sample_rate),  # Deprecated
             topn_peaks,
             initial_scan_count,
             max_parameter_tuning_scans,
