@@ -344,7 +344,7 @@ function process_file!(
         
     catch e
         #throw(e)
-        @user_warn "Quad transmission function fit failed" exception=e
+        @user_warn "Quad transmission function fit failed $e" exception=e
         setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
     end
     
