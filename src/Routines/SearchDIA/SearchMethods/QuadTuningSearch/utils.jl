@@ -157,7 +157,7 @@ end
                 results::QuadTuningSearchResults, params::QuadTuningSearchParameters,
                 ms_file_idx::Int64) -> DataFrame
 
-Iteratively collect and process PSMs for quadrupole tuning analysis.
+Collect and process PSMs for quadrupole tuning analysis.
 
 # Arguments
 - `spectra`: MS/MS spectral data
@@ -167,14 +167,19 @@ Iteratively collect and process PSMs for quadrupole tuning analysis.
 - `ms_file_idx`: Index of MS file being processed
 
 # Process
-1. Performs library search to get initial PSMs
-2. Processes initial PSMs with basic filters
-3. Performs quad transmission search
-4. Filters results for M0/M1 isotopes and quality criteria
-5. Repeats until sufficient high-quality PSMs collected
+1. Performs single library search on all MS2 scans to get initial PSMs
+2. Processes initial PSMs with quality filters (q-value ≤ 0.01, target only)
+3. Performs quadrupole transmission search with deconvolution
+4. Applies strict filters: M0/M1 isotopes only, 2+ charge, minimum fragment matches
+5. Warns if insufficient PSMs are collected for reliable quad modeling
 
 # Returns
 DataFrame containing processed PSMs suitable for quad model fitting.
+
+# Notes
+- Processes ALL scans in a single pass (no scan sampling)
+- Uses comprehensive logging to track PSM counts at each step
+- Warns if final PSM count is below min_quad_tuning_psms threshold
 """
 function collect_psms(
     spectra::MassSpecData,
@@ -209,20 +214,6 @@ function collect_psms(
         return mask
     end
 
-    # Initialize with proper schema to handle missing values from summarize_precursor
-    total_psms = DataFrame(
-        scan_idx = Int64[],
-        precursor_idx = UInt32[],
-        center_mz = Union{Float32, Missing}[],
-        δ = Union{Float32, Missing}[],
-        yt = Union{Float32, Missing}[],
-        x0 = Union{Float32, Missing}[],
-        x1 = Union{Float32, Missing}[],
-        prec_charge = Union{UInt8, Missing}[],
-        half_width_mz = Float32[]
-    )
-    n = 0
-    unique_precursors = Set{UInt32}()
     function getCharges(prec_charges::AbstractVector{UInt8}, precursor_idx::AbstractVector{UInt32})
         charges = zeros(UInt8, length(precursor_idx))
         for i in range(1, length(precursor_idx))
@@ -230,76 +221,114 @@ function collect_psms(
         end
         return charges
     end
-    for i in range(1, 10)
-        # Get initial PSMs
-        psms = library_search(spectra, search_context, params, ms_file_idx)
-        isempty(psms) && return total_psms
-        psms = psms[[pid∉unique_precursors for pid in psms[!,:precursor_idx]],:]
-        unique_precursors = union(unique_precursors, Set(psms[!,:precursor_idx]))
+    
+    # Get initial PSMs - single library search processes all scans
+    @info "QuadTuningSearch: Running library search on all scans..."
+    psms = library_search(spectra, search_context, params, ms_file_idx)
+    
+    if isempty(psms)
+        @user_warn "QuadTuningSearch: No PSMs found from library search"
+        return DataFrame(
+            scan_idx = Int64[],
+            precursor_idx = UInt32[],
+            center_mz = Union{Float32, Missing}[],
+            δ = Union{Float32, Missing}[],
+            yt = Union{Float32, Missing}[],
+            x0 = Union{Float32, Missing}[],
+            x1 = Union{Float32, Missing}[],
+            prec_charge = Union{UInt8, Missing}[],
+            half_width_mz = Float32[]
+        )
+    end
+    
+    @info "QuadTuningSearch: Found $(nrow(psms)) initial PSMs from library search"
 
-        # Process PSMs
-        processed_psms = process_initial_psms(psms, spectra, search_context)
-        
-        # Get scan mapping and perform quad search
-        scan_idx_to_prec_idx = get_scan_to_prec_idx(
-            processed_psms[!, :scan_idx],
-            processed_psms[!, :precursor_idx],
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
+    # Process PSMs
+    @info "QuadTuningSearch: Processing initial PSMs..."
+    processed_psms = process_initial_psms(psms, spectra, search_context)
+    @info "QuadTuningSearch: $(nrow(processed_psms)) PSMs passed initial processing"
+    
+    # Get scan mapping and perform quad search
+    @info "QuadTuningSearch: Performing quadrupole transmission search..."
+    scan_idx_to_prec_idx = get_scan_to_prec_idx(
+        processed_psms[!, :scan_idx],
+        processed_psms[!, :precursor_idx],
+        getCenterMzs(spectra),
+        getIsolationWidthMzs(spectra)
+    )
+    
+    quad_psms = perform_quad_transmission_search(
+        spectra,
+        results,
+        scan_idx_to_prec_idx,
+        search_context,
+        params,
+        ms_file_idx
+    )
+    
+    if isempty(quad_psms)
+        @user_warn "QuadTuningSearch: No PSMs found from quadrupole transmission search"
+        return DataFrame(
+            scan_idx = Int64[],
+            precursor_idx = UInt32[],
+            center_mz = Union{Float32, Missing}[],
+            δ = Union{Float32, Missing}[],
+            yt = Union{Float32, Missing}[],
+            x0 = Union{Float32, Missing}[],
+            x1 = Union{Float32, Missing}[],
+            prec_charge = Union{UInt8, Missing}[],
+            half_width_mz = Float32[]
         )
-        
-        quad_psms = perform_quad_transmission_search(
-            spectra,
-            results,
-            scan_idx_to_prec_idx,
-            search_context,
-            params,
-            ms_file_idx
-        )
-
-        
-        # Filter and process results
-        quad_psms[!,:charge] = getCharges(getCharge(getPrecursors(getSpecLib(search_context))), quad_psms[!,:precursor_idx])
-        quad_psms = quad_psms[
-            filter_quad_psms(
-                quad_psms[!,:iso_idx],
-                quad_psms[!,:n_matches],
-                quad_psms[!,:weight],
-                quad_psms[!,:charge],
-                params
-            ),:]
-        
-        processed_psms = process_quad_results(
-            quad_psms,
-            getPrecursors(getSpecLib(search_context)),
-            getIsoSplines(first(getSearchData(search_context)))
-        )
-        processed_psms[!,:half_width_mz] = zeros(Float32, size(processed_psms, 1))
-        for (i, scan_idx) in enumerate(processed_psms[!,:scan_idx])
-            processed_psms[i,:half_width_mz] = getIsolationWidthMz(spectra, scan_idx)/2
-        end
-        keep_data = zeros(Bool, size(processed_psms, 1))
-        for i in range(1, size(processed_psms, 1))
-            x0 = processed_psms[i,:x0]::Float32
-            hw = processed_psms[i,:half_width_mz]::Float32
-            if x0 > zero(Float32)
-                if (x0 - hw) < (NEUTRON/4 + 0.1)
-                    keep_data[i] = true
-                end
-            else
-                if (abs(x0) - hw) < (NEUTRON/2 + 0.1)
-                    keep_data[i] = true
-                end
+    end
+    
+    @info "QuadTuningSearch: Found $(nrow(quad_psms)) PSMs from quad transmission search"
+    
+    # Filter and process results
+    quad_psms[!,:charge] = getCharges(getCharge(getPrecursors(getSpecLib(search_context))), quad_psms[!,:precursor_idx])
+    quad_psms = quad_psms[
+        filter_quad_psms(
+            quad_psms[!,:iso_idx],
+            quad_psms[!,:n_matches],
+            quad_psms[!,:weight],
+            quad_psms[!,:charge],
+            params
+        ),:]
+    
+    @info "QuadTuningSearch: $(nrow(quad_psms)) PSMs passed quality filters"
+    
+    processed_psms = process_quad_results(
+        quad_psms,
+        getPrecursors(getSpecLib(search_context)),
+        getIsoSplines(first(getSearchData(search_context)))
+    )
+    processed_psms[!,:half_width_mz] = zeros(Float32, size(processed_psms, 1))
+    for (i, scan_idx) in enumerate(processed_psms[!,:scan_idx])
+        processed_psms[i,:half_width_mz] = getIsolationWidthMz(spectra, scan_idx)/2
+    end
+    keep_data = zeros(Bool, size(processed_psms, 1))
+    for i in range(1, size(processed_psms, 1))
+        x0 = processed_psms[i,:x0]::Float32
+        hw = processed_psms[i,:half_width_mz]::Float32
+        if x0 > zero(Float32)
+            if (x0 - hw) < (NEUTRON/4 + 0.1)
+                keep_data[i] = true
+            end
+        else
+            if (abs(x0) - hw) < (NEUTRON/2 + 0.1)
+                keep_data[i] = true
             end
         end
-        processed_psms = processed_psms[keep_data,:]
-
-        append!(total_psms, processed_psms)
-        if size(total_psms, 1) > params.min_quad_tuning_psms
-            break
-        end
     end
-    return total_psms
+    processed_psms = processed_psms[keep_data,:]
+    
+    @info "QuadTuningSearch: Final dataset contains $(nrow(processed_psms)) PSMs"
+    
+    # Check if we have sufficient PSMs for quad modeling
+    if nrow(processed_psms) < params.min_quad_tuning_psms
+        @user_warn "QuadTuningSearch: Insufficient PSMs for quad modeling ($(nrow(processed_psms)) < $(params.min_quad_tuning_psms)). Consider lowering thresholds or using more data."
+    end
+
+    return processed_psms
 end
 
 
