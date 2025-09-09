@@ -269,8 +269,8 @@ function process_file!(
         # Collect and process PSMs
         total_psms = collect_psms(spectra, search_context, results, params, ms_file_idx)
         
-        if nrow(total_psms) < 1000
-            @user_warn "Too few psms found for quad modeling. Using default model."
+        if nrow(total_psms) < params.min_quad_tuning_psms
+            @user_warn "Too few PSMs found for quad modeling ($(nrow(total_psms)) < $(params.min_quad_tuning_psms)). Using default model."
             setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
             return results
         end
