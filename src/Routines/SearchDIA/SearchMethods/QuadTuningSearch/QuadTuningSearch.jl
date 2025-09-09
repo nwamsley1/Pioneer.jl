@@ -260,8 +260,8 @@ function process_file!(
     fitted_model = getMassErrorModel(search_context, ms_file_idx)
     @info "QuadTuningSearch: Using fitted MassErrorModel from ParameterTuningSearch:" *
           "\n  - Mass offset: $(getMassOffset(fitted_model)) ppm" *
-          "\n  - Left tolerance: $(getLeftTolerance(fitted_model)) ppm" *
-          "\n  - Right tolerance: $(getRightTolerance(fitted_model)) ppm"
+          "\n  - Left tolerance: $(getLeftTol(fitted_model)) ppm" *
+          "\n  - Right tolerance: $(getRightTol(fitted_model)) ppm"
     
     try
         setNceModel!(
