@@ -359,10 +359,6 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs;
         input_to_files_map[input] = input_files
     end
     
-    if isempty(fasta_files)
-        error("No FASTA files found in the provided inputs")
-    end
-    
     # Handle regex codes expansion/mapping
     if !ismissing(regex_codes)
         # Get default regex fields from template
@@ -429,10 +425,10 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs;
                 config["fasta_header_regex_organisms"] = expanded_organisms
                 
             else
-                error("Number of regex code sets ($num_regex_sets) must be either 1 or match the number of inputs ($num_inputs)")
+                @user_warn "Number of regex code sets ($num_regex_sets) must be either 1 or match the number of inputs ($num_inputs)"
             end
         else
-            error("regex_codes must be either a Dict or Vector of Dicts")
+            @user_warn "regex_codes must be either a Dict or Vector of Dicts"
         end
     else
         # Use default regex from template, expanded to match number of files
