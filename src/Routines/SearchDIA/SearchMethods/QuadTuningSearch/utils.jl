@@ -41,20 +41,18 @@ end
 PSM scoring and processing
 ==========================================================#
 function get_nearest_adjacent_scans(scan_idx::UInt32,
-                            centerMz::AbstractArray,
-                            isolationWidthMz::AbstractArray;
+                            centerMz::AbstractArray{Union{Missing, T}},
+                            isolationWidthMz::AbstractArray{Union{Missing, T}};
                             scans_to_search::Int64 = 500
-        )
+        ) where {T<:AbstractFloat}
     
-    upperBoundMz = centerMz[scan_idx] + isolationWidthMz[scan_idx]/2.0
+    upperBoundMz = centerMz[scan_idx] + isolationWidthMz[scan_idx]/T(2.0)
     min_diff, min_diff_idx = typemax(Float32), -1
     for near_scan_idx in range(scan_idx, min(scan_idx + scans_to_search, length(centerMz)))
-        # Handle both missing and non-missing types
-        center_val = centerMz[near_scan_idx]
-        if center_val isa Missing || (center_val isa Union && ismissing(center_val))
+        if ismissing(centerMz[near_scan_idx])
             continue
         end
-        lowerBoundMz = centerMz[near_scan_idx] - isolationWidthMz[near_scan_idx]/2.0
+        lowerBoundMz = centerMz[near_scan_idx] - isolationWidthMz[near_scan_idx]/T(2.0)
         if max(abs(upperBoundMz - lowerBoundMz), 0.1) < min_diff
             min_diff_idx = near_scan_idx
             min_diff = abs(upperBoundMz - lowerBoundMz) 
@@ -63,14 +61,12 @@ function get_nearest_adjacent_scans(scan_idx::UInt32,
     next_scan_idx = sign(min_diff_idx)==-1 ? scan_idx : min_diff_idx
 
     min_diff, min_diff_idx = typemax(Float32), -1
-    lowerBoundMz = centerMz[scan_idx] - isolationWidthMz[scan_idx]/2.0
+    lowerBoundMz = centerMz[scan_idx] - isolationWidthMz[scan_idx]/T(2.0)
     for near_scan_idx in (scan_idx):-1:max(scan_idx - scans_to_search, 1)
-        # Handle both missing and non-missing types
-        center_val = centerMz[near_scan_idx]
-        if center_val isa Missing || (center_val isa Union && ismissing(center_val))
+        if ismissing(centerMz[near_scan_idx])
             continue
         end
-        upperBoundMz = centerMz[near_scan_idx] + isolationWidthMz[near_scan_idx]/2.0
+        upperBoundMz = centerMz[near_scan_idx] + isolationWidthMz[near_scan_idx]/T(2.0)
         if max(abs(upperBoundMz - lowerBoundMz), 0.1) < min_diff
             min_diff_idx = near_scan_idx
             min_diff = abs(upperBoundMz - lowerBoundMz) 
@@ -86,8 +82,8 @@ end
 function get_scan_to_prec_idx(
     scan_idxs::AbstractVector{UInt32},
     prec_idxs::AbstractVector{UInt32},
-    centerMz::AbstractVector,
-    isolationWidthMz::AbstractVector
+    centerMz::AbstractVector{Union{Missing, Float32}},
+    isolationWidthMz::AbstractVector{Union{Missing, Float32}}
     )
     N = length(scan_idxs)
     #Maps scans to the list of precursors in the scan 
@@ -181,7 +177,7 @@ Iteratively collect and process PSMs for quadrupole tuning analysis.
 DataFrame containing processed PSMs suitable for quad model fitting.
 """
 function collect_psms(
-    spectra::Union{MassSpecData,FilteredMassSpecData},
+    spectra::MassSpecData,
     search_context::SearchContext,
     results::QuadTuningSearchResults,
     params::QuadTuningSearchParameters,
