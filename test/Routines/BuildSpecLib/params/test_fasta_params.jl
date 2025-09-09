@@ -1,5 +1,6 @@
 # Test for FASTA input enhancement in GetBuildLibParams
 using Test
+using Pioneer
 using JSON
 using DataStructures: OrderedDict
 using CodecZlib
@@ -230,16 +231,20 @@ using CodecZlib
         @test_throws ErrorException GetBuildLibParams(output_dir, lib_name, non_fasta)
         
         # Mismatched regex codes (more regex sets than inputs)
-        @test_throws ErrorException GetBuildLibParams(
+        # Now issues a warning instead of error
+        result = GetBuildLibParams(
             output_dir, lib_name, [dir1, dir2];
             regex_codes = [Dict(), Dict(), Dict()]
         )
+        @test isfile(result)  # Should still create params file despite warning
         
         # Mismatched regex codes (more than 1 but not matching inputs)
-        @test_throws ErrorException GetBuildLibParams(
+        # Now issues a warning instead of error
+        result2 = GetBuildLibParams(
             output_dir, lib_name, [dir1, dir2, single_file];
             regex_codes = [Dict(), Dict()]
         )
+        @test isfile(result2)  # Should still create params file despite warning
     end
     
     @testset "Empty Directory Warning" begin
@@ -251,11 +256,17 @@ using CodecZlib
         # Should not error but should warn and produce empty arrays
         params_file = joinpath(test_data_dir, "empty_dir_params.json")
         
-        # This should throw an error because no FASTA files are found
-        @test_throws ErrorException GetBuildLibParams(
+        # This now issues a warning instead of error for empty directory
+        result = GetBuildLibParams(
             output_dir, lib_name, empty_dir;
             params_path=params_file
         )
+        @test isfile(params_file)  # Should still create params file
+        
+        # Verify the params file has empty fasta arrays
+        config = JSON.parsefile(params_file)
+        @test isempty(config["fasta_paths"])
+        @test isempty(config["fasta_names"])
     end
     
     # Don't cleanup - leave test files for inspection
