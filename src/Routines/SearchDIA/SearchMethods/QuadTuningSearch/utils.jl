@@ -177,7 +177,7 @@ Iteratively collect and process PSMs for quadrupole tuning analysis.
 DataFrame containing processed PSMs suitable for quad model fitting.
 """
 function collect_psms(
-    spectra::MassSpecData,
+    spectra::Union{MassSpecData,FilteredMassSpecData},
     search_context::SearchContext,
     results::QuadTuningSearchResults,
     params::QuadTuningSearchParameters,
