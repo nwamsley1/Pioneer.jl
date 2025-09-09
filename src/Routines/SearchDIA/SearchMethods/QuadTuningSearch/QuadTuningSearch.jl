@@ -21,10 +21,14 @@
 Search method for optimizing quadrupole transmission models.
 
 This search:
-1. Collects PSMs with extended precursor isotope patterns
-2. Performs deconvolution to estimate relative isotope abundances
-3. Fits transmission model based on isotope ratio deviations
-4. Stores optimized models in SearchContext for other methods
+1. Uses fitted MassErrorModel from ParameterTuningSearch for accurate fragment matching
+2. Collects PSMs with extended precursor isotope patterns
+3. Performs deconvolution to estimate relative isotope abundances
+4. Fits transmission model based on isotope ratio deviations
+5. Stores optimized models in SearchContext for other methods
+
+Note: Mass tolerances are determined by the fitted MassErrorModel from ParameterTuningSearch,
+not by parameter settings. This ensures data-driven, instrument-specific tolerances.
 
 # Example Implementation
 ```julia
@@ -32,7 +36,6 @@ This search:
 params = Dict(
     :isotope_err_bounds => (0, 0),  # Fixed for quad tuning
     :presearch_params => Dict(
-        "frag_tol_ppm" => 30.0,
         "min_index_search_score" => 3,
         "min_frag_count" => 3,
         "min_spectral_contrast" => 0.1,
@@ -94,7 +97,6 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
 
     # Search parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
-    frag_tol_ppm::Float32
     min_index_search_score::UInt8
     min_log2_matched_ratio::Float32
     min_frag_count::Int64
@@ -130,19 +132,10 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
         # Always use partial capture for quad tuning
         prec_estimation = PartialPrecCapture()
         
-        # Get initial tolerance from iteration_settings if available, otherwise use default
-        init_tol = if hasproperty(tuning_params, :iteration_settings) && 
-                     hasproperty(tuning_params.iteration_settings, :init_mass_tol_ppm)
-            Float32(tuning_params.iteration_settings.init_mass_tol_ppm)
-        else
-            20.0f0  # Default value
-        end
-        
         new{typeof(prec_estimation)}(
             # Search parameters
             params.acquisition.quad_transmission.fit_from_data,
             (UInt8(0), UInt8(0)),  # Fixed isotope bounds for quad tuning
-            init_tol,
             # Handle min_score as either single value or array (use first value if array)
             begin
                 min_score_raw = frag_params.min_score
@@ -258,11 +251,17 @@ function process_file!(
           "\n  - min_frag_count: $(params.min_frag_count)" *
           "\n  - min_spectral_contrast: $(params.min_spectral_contrast)" *
           "\n  - min_log2_matched_ratio: $(params.min_log2_matched_ratio)" *
-          "\n  - frag_tol_ppm: $(params.frag_tol_ppm)" *
           "\n  - min_quad_tuning_fragments: $(params.min_quad_tuning_fragments)" *
           "\n  - min_quad_tuning_psms: $(params.min_quad_tuning_psms)" *
           "\n  - n_frag_isotopes: $(params.n_frag_isotopes)" *
           "\n  - max_frag_rank: $(params.max_frag_rank)"
+          
+    # Log fitted mass error model from ParameterTuningSearch
+    fitted_model = getMassErrorModel(search_context, ms_file_idx)
+    @info "QuadTuningSearch: Using fitted MassErrorModel from ParameterTuningSearch:" *
+          "\n  - Mass offset: $(getMassOffset(fitted_model)) ppm" *
+          "\n  - Left tolerance: $(getLeftTolerance(fitted_model)) ppm" *
+          "\n  - Right tolerance: $(getRightTolerance(fitted_model)) ppm"
     
     try
         setNceModel!(
