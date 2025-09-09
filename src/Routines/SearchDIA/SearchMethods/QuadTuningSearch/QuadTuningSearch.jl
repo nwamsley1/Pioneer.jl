@@ -118,6 +118,12 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     # Quad tuning specific parameters
     min_quad_tuning_fragments::Int64
     min_quad_tuning_psms::Int64
+    
+    # Scan sampling parameters (reuse from ParameterTuningSearch)
+    initial_scan_count::Int64
+    max_parameter_tuning_scans::Int64
+    scan_scale_factor::Float64
+    
     prec_estimation::P
 
     function QuadTuningSearchParameters(params::PioneerParameters)
@@ -174,6 +180,12 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             # Quad tuning specific parameters
             Int64(get(search_params, :min_quad_tuning_fragments, 3)),  # Default if not specified
             Int64(get(search_params, :min_quad_tuning_psms, 5000)),   # Default if not specified
+            
+            # Scan sampling parameters (reuse from ParameterTuningSearch config)
+            Int64(get(search_params, :initial_scan_count, 500)),
+            Int64(get(search_params, :max_parameter_tuning_scans, 80000)),
+            Float64(get(tuning_params.iteration_settings, :scan_scale_factor, 10.0)),
+            
             prec_estimation
         )
     end
@@ -266,13 +278,56 @@ function process_file!(
             return results
         end
         
-        # Collect and process PSMs
-        total_psms = collect_psms(spectra, search_context, results, params, ms_file_idx)
+        # Implement scan scaling loop like ParameterTuningSearch
+        scan_count = params.initial_scan_count
+        max_scans = params.max_parameter_tuning_scans
+        scan_scale_factor = params.scan_scale_factor
         
-        if nrow(total_psms) < params.min_quad_tuning_psms
-            @user_warn "Too few PSMs found for quad modeling ($(nrow(total_psms)) < $(params.min_quad_tuning_psms)). Using default model."
-            setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
-            return results
+        # Create FilteredMassSpecData ONCE with initial scan count
+        # For QuadTuningSearch: keep ALL peaks (topn=nothing) but use same scan sampling
+        filtered_spectra = FilteredMassSpecData(
+            spectra,
+            max_scans = scan_count,
+            topn = nothing,  # Keep all peaks for quad tuning
+            target_ms_order = UInt8(2)
+        )
+        
+        current_scan_count = scan_count
+        attempt_count = 0
+        total_psms = nothing
+        
+        # Scan scaling loop
+        while true
+            attempt_count += 1
+            
+            # Collect PSMs with current scan count
+            total_psms = collect_psms(filtered_spectra, search_context, results, params, ms_file_idx)
+            
+            # Check if we have enough PSMs
+            if nrow(total_psms) >= params.min_quad_tuning_psms
+                break
+            end
+            
+            # Check if we've reached max scans
+            if current_scan_count >= max_scans
+                @user_warn "Reached maximum scan count ($(max_scans)) but still have insufficient PSMs ($(nrow(total_psms)) < $(params.min_quad_tuning_psms)). Using default model."
+                setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
+                return results
+            end
+            
+            # Calculate next scan count
+            next_scan_count = Int64(ceil(current_scan_count * scan_scale_factor))
+            
+            # Scale up scans
+            if next_scan_count > max_scans
+                additional_scans = max_scans - current_scan_count
+                append!(filtered_spectra; max_additional_scans = additional_scans)
+                current_scan_count = max_scans
+            else
+                additional_scans = next_scan_count - current_scan_count
+                append!(filtered_spectra; max_additional_scans = additional_scans)
+                current_scan_count = next_scan_count
+            end
         end
 
         # Plot charge states
