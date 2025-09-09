@@ -248,8 +248,22 @@ function process_file!(
 
     setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(1.0f0))
     if params.fit_from_data == false
+        @info "QuadTuningSearch: Skipping quad model fitting (fit_from_data = false)"
         return nothing
     end
+    
+    # Log parameter values being used
+    @info "QuadTuningSearch: Starting with parameters:" *
+          "\n  - min_index_search_score: $(params.min_index_search_score)" *
+          "\n  - min_frag_count: $(params.min_frag_count)" *
+          "\n  - min_spectral_contrast: $(params.min_spectral_contrast)" *
+          "\n  - min_log2_matched_ratio: $(params.min_log2_matched_ratio)" *
+          "\n  - frag_tol_ppm: $(params.frag_tol_ppm)" *
+          "\n  - min_quad_tuning_fragments: $(params.min_quad_tuning_fragments)" *
+          "\n  - min_quad_tuning_psms: $(params.min_quad_tuning_psms)" *
+          "\n  - n_frag_isotopes: $(params.n_frag_isotopes)" *
+          "\n  - max_frag_rank: $(params.max_frag_rank)"
+    
     try
         setNceModel!(
             getFragmentLookupTable(getSpecLib(search_context)), 
@@ -260,6 +274,7 @@ function process_file!(
         
         # Check window widths
         window_widths = check_window_widths(spectra)
+        @info "QuadTuningSearch: Found $(length(window_widths)) unique isolation window width(s): $(join(collect(window_widths), ", "))"
         if length(window_widths) != 1
             @user_warn "Multiple window sizes detected: $(join(collect(window_widths), ';'))"
             setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
@@ -267,32 +282,41 @@ function process_file!(
         end
         
         # Collect and process PSMs
+        @info "QuadTuningSearch: Starting PSM collection..."
         total_psms = collect_psms(spectra, search_context, results, params, ms_file_idx)
+        @info "QuadTuningSearch: Collected $(nrow(total_psms)) PSMs"
         
-        if nrow(total_psms) < params.min_quad_tuning_psms
-            @user_warn "Too few PSMs found for quad modeling ($(nrow(total_psms)) < $(params.min_quad_tuning_psms)). Using default model."
+        if nrow(total_psms) < 1000#params.min_quad_tuning_psms
+            @user_warn "Too few PSMs found for quad modeling ($(nrow(total_psms)) < $(params.min_quad_tuning_psms)). Using default model. \n"
+            @info "QuadTuningSearch: Using default GeneralGaussModel(5.0, 0.0) due to insufficient PSMs"
             setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
             return results
         end
 
         # Plot charge states
+        @info "QuadTuningSearch: Generating charge distribution plots..."
         push!(results.quad_data_plots, plot_charge_distributions(total_psms, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
         
         # Fit quad model
         window_width = parse(Float64, first(window_widths))
-        @user_warn "size(total_psms) = $(size(total_psms))"
+        @info "QuadTuningSearch: Fitting quad model with window width = $(window_width) Da"
+        @info "QuadTuningSearch: PSM DataFrame dimensions: $(size(total_psms))"
         fitted_model = RazoQuadModel(fit_quad_model(total_psms, window_width))
         setQuadModel(results, fitted_model)
+        @info "QuadTuningSearch: Successfully fitted RazoQuadModel"
 
         # Plot quad model
+        @info "QuadTuningSearch: Generating quad model plots..."
         push!(results.quad_model_plots, plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
         
     catch e
         #throw(e)
         @user_warn "Quad transmission function fit failed $e" exception=e
+        @info "QuadTuningSearch: Error occurred during fitting, using default GeneralGaussModel(5.0, 0.0)"
         setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
     end
     
+    @info "QuadTuningSearch: Completed processing for file $(ms_file_idx)"
     return results
 end
 
