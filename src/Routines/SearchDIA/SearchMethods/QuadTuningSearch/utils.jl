@@ -214,6 +214,8 @@ function collect_psms(
         return mask
     end
 
+    @user_warn "QuadTuningSearch: Starting PSM collection for quadrupole transmission modeling"
+    
     function getCharges(prec_charges::AbstractVector{UInt8}, precursor_idx::AbstractVector{UInt32})
         charges = zeros(UInt8, length(precursor_idx))
         for i in range(1, length(precursor_idx))
