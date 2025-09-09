@@ -280,7 +280,7 @@ function process_file!(
         
         # Fit quad model
         window_width = parse(Float64, first(window_widths))
-
+        @user_warn "size(total_psms) = $(size(total_psms))"
         fitted_model = RazoQuadModel(fit_quad_model(total_psms, window_width))
         setQuadModel(results, fitted_model)
 
@@ -288,7 +288,7 @@ function process_file!(
         push!(results.quad_model_plots, plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
         
     catch e
-        throw(e)
+        #throw(e)
         @user_warn "Quad transmission function fit failed" exception=e
         setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
     end
