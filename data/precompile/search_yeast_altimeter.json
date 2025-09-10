@@ -70,7 +70,7 @@
         "chromatogram": {"smoothing_strength": 1e-6, "padding": 0, "max_apex_offset": 2}
     },
     "acquisition": {
-        "nce": 25,
+        "nce": 26,
         "quad_transmission": {"fit_from_data": true, "overhang": 0.25, "smoothness": 5.0}
     },
     "rt_alignment": {"n_bins": 200, "bandwidth": 0.25, "sigma_tolerance": 4, "min_probability": 0.95},

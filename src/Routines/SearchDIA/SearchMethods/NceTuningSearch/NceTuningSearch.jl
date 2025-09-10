@@ -88,7 +88,6 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     nce_grid::LinRange{Float32, Int64}
     nce_breakpoint::Float32
     max_q_val::Float32
-    min_samples::Int64
     prec_estimation::P
 
     function NceTuningSearchParameters(params::PioneerParameters)
@@ -130,7 +129,6 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             nce_grid,
             NCE_MODEL_BREAKPOINT,  # Assuming this is defined as a constant
             Float32(0.01),  # Fixed max_q_val for NCE tuning
-            Int64(search_params.min_samples),
             prec_estimation
         )
     end
@@ -180,21 +178,28 @@ function process_file!(
             #No NCE tuning for basic FramgentIndexLibrary
             return nothing
         end
-        processed_psms = DataFrame()
-        for i in range(1, 10)
-            # Perform grid search
-            psms = library_search(spectra, search_context, params, ms_file_idx)   
-            # Process and filter PSMs
-            append!(processed_psms, process_psms!(psms, spectra, search_context, params))
-            if size(processed_psms, 1)>params.min_samples
-                break
-            end
-            if i == 10
-                n = size(processed_psms, 1)
-                @user_warn "Could not get collect enough psms for nce alignment. In 10 iterations collected $n samples"
-            end
+        @info "NceTuningSearch: Starting PSM collection for file $(ms_file_idx) (processing all MS2 scans)"
+        
+        # Perform library search on all MS2 scans
+        psms = library_search(spectra, search_context, params, ms_file_idx)   
+        # Process and filter PSMs
+        processed_psms = process_psms!(psms, spectra, search_context, params)
+        
+        @info "NceTuningSearch: Collected $(nrow(processed_psms)) PSMs from all MS2 scans"
+        
+        # Warn if insufficient PSMs for reliable NCE modeling
+        if nrow(processed_psms) < 100
+            @user_warn "Low PSM count ($(nrow(processed_psms))) may result in unreliable NCE calibration. Consider lowering filtering thresholds."
         end
 
+        # Log data statistics
+        @info "NceTuningSearch: Data summary:" *
+              "\n  - Total PSMs: $(nrow(processed_psms))" *
+              "\n  - Precursor m/z range: $(minimum(processed_psms[!, :prec_mz]))-$(maximum(processed_psms[!, :prec_mz]))" *
+              "\n  - NCE range: $(minimum(processed_psms[!, :nce]))-$(maximum(processed_psms[!, :nce]))" *
+              "\n  - Charge states: $(sort(unique(processed_psms[!, :charge])))" *
+              "\n  - PSMs per charge: $([sum(processed_psms[!, :charge] .== c) for c in sort(unique(processed_psms[!, :charge]))])"
+              
         # Fit and store NCE model
         nce_model = fit_nce_model(
             PiecewiseNceModel(0.0f0),
@@ -204,36 +209,62 @@ function process_file!(
             params.nce_breakpoint
         )
         
+        # Log fitted model parameters
+        @info "NceTuningSearch: Fitted NCE model parameters:" *
+              "\n  - Breakpoint: $(nce_model.breakpoint) m/z" *
+              "\n  - Left slope: $(nce_model.left_slope)" *
+              "\n  - Left intercept: $(nce_model.left_intercept)" *
+              "\n  - Right value: $(nce_model.right_value)" *
+              "\n  - Charge slope: $(nce_model.charge_slope)"
+        
         fname = getFileIdToName(getMSData(search_context), ms_file_idx)
-        # Create the main plot
         # Create the main plot with adjusted right margin
         p = plot(
             title = "NCE calibration for $fname",
-            right_margin = 50Plots.px  # Add extra margin on the right
+            right_margin = 50Plots.px,
+            xlabel = "Precursor m/z",
+            ylabel = "NCE",
+            legend = :topright
         )
 
-        # Calculate bin range
+        # Calculate bin range for fitted lines
         pbins = LinRange(minimum(processed_psms[!,:prec_mz]), maximum(processed_psms[!,:prec_mz]), 100)
 
         # Extend x-axis range to accommodate annotations
         x_range = maximum(pbins) - minimum(pbins)
-        #plot_xlims = (minimum(pbins), maximum(pbins) + x_range * 0.15)  # Add 15% to x-axis
 
-        # Plot each charge state with annotations
+        # Plot actual data points first (behind fitted lines)
         for charge in sort(unique(processed_psms[!,:charge]))
-            # Calculate the curve
+            charge_data = processed_psms[processed_psms[!, :charge] .== charge, :]
+            
+            # Scatter plot of actual data points with transparency
+            scatter!(p, charge_data[!, :prec_mz], charge_data[!, :nce],
+                    alpha = 0.4,
+                    markersize = 2,
+                    color = :auto,
+                    label = "",  # No label for scatter points
+                    markerstrokewidth = 0)
+        end
+        
+        # Plot fitted lines and annotations
+        for charge in sort(unique(processed_psms[!,:charge]))
+            charge_data = processed_psms[processed_psms[!, :charge] .== charge, :]
+            psm_count = nrow(charge_data)
+            
+            # Calculate the fitted curve
             curve_values = nce_model.(pbins, charge)
             
-            # Plot the line
+            # Plot the fitted line
             plot!(p, pbins, curve_values, 
-                label = "+"*string(charge))
+                linewidth = 2,
+                label = "+$charge (n=$psm_count)")
             
             # Add annotation at the rightmost point
             last_x = pbins[end]
             last_y = curve_values[end]
             
             # Add text annotation
-            annotate!(p, [(last_x + x_range*0.02,  # Slight offset from end
+            annotate!(p, [(last_x + x_range*0.02,
                         last_y,
                         text("$(round(last_y, digits=1))", 
                                 :left, 
@@ -244,8 +275,8 @@ function process_file!(
         append!(results.nce_psms, processed_psms)
 
     catch e
-        @user_warn "NCE tuning failed" ms_file_idx exception=e
-        rethrow(e)
+        @user_warn "NCE tuning failed for file $(ms_file_idx): $e" 
+        #rethrow(e)
     end
 
     return results
