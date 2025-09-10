@@ -72,7 +72,7 @@
         }
     },
     "acquisition": {
-        "nce": 25,
+        "nce": 26,
         "quad_transmission": {
             "fit_from_data": false,
             "overhang": 0.25,

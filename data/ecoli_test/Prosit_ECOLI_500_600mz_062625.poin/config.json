@@ -72,7 +72,7 @@
     "match_lib_build_batch": 100000,
     "new_lib_name": "Prosit_ECOLI_500_600mz_062625",
     "nce_params": {
-        "nce": 25.0,
+        "nce": 26.0,
         "dynamic_nce": true,
         "default_charge": 2
     },

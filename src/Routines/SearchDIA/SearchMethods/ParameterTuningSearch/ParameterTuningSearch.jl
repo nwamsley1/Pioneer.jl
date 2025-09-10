@@ -951,10 +951,11 @@ function process_search_results!(
         
         # Generate mass error plot (only store in memory, no individual files)
         m = getMassErrorModel(search_context, ms_file_idx)
-        buffered_model = MassErrorModel(
-            getMassOffset(m),
-            (getLeftTol(m) + 1.0f0, getRightTol(m) + 1.0f0)
-        )
+        #buffered_model = MassErrorModel(
+        #    getMassOffset(m),
+        #    (getLeftTol(m) + 1.0f0, getRightTol(m) + 1.0f0)
+        #)
+        buffered_model = m  # No additional buffer applied
         setMassErrorModel!(
             search_context,
             ms_file_idx,

@@ -26,7 +26,7 @@
         }
     },
     "acquisition": {
-        "nce": 25,
+        "nce": 26,
         "quad_transmission": {
             "fit_from_data": true
         }
