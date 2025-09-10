@@ -116,6 +116,27 @@ const REDUCED_FEATURE_SET = [
     # MBR features added automatically if match_between_runs=true
 ]
 
+#=
+const PROBIT_FEATURE_SET = [
+    # Core peptide properties
+    :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
+    # RT features
+    :irt_error,
+    # Spectral features
+    :y_count, :b_count, :isotope_count,
+    :total_ions, :best_rank, :topn, :gof,
+    # Quality metrics
+    :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
+    :max_matched_residual, :max_unmatched_residual, :max_gof,
+    :err_norm, :poisson, :weight, :log2_intensity_explained, :tic, :num_scans,
+    :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
+    # MS1 features
+    :weight_ms1, :gof_ms1, :error_ms1, :ms1_features_missing
+    # MBR features added automatically if match_between_runs=true
+]
+=#
+
+
 const MINIMAL_FEATURE_SET = [
     :fitted_spectral_contrast,
     :max_matched_residual,
@@ -130,7 +151,8 @@ const MINIMAL_FEATURE_SET = [
 Creates the model configurations for comparison.
 
 # Returns
-- Vector of ModelConfig objects for SimpleXGBoost, AdvancedXGBoost, ProbitRegression, and SuperSimplified models
+- Vector of ModelConfig objects for SimpleXGBoost, AdvancedXGBoost, ProbitRegression,
+- ProbitRegressionSimple, and SuperSimplified models
 """
 function create_model_configurations()
     return [
@@ -170,13 +192,32 @@ function create_model_configurations()
         ModelConfig(
             "ProbitRegression",
             :probit,
-            REDUCED_FEATURE_SET,
+            vcat(REDUCED_FEATURE_SET, [:intercept]),
             Dict(
                 :max_iter => 30
             )
         ),
         
-        # Model 4: Super Simplified Model
+        # Model 4: Probit Regression (Simplified feature set)
+        ModelConfig(
+            "ProbitRegressionSimple",
+            :probit,
+            vcat([
+                # Keep core, broadly available features
+                :spectral_contrast,
+                :entropy_score,
+                :scribe,
+                :irt_error,
+                :err_norm,
+                :y_count,
+                :tic
+            ], [:intercept]),
+            Dict(
+                :max_iter => 30
+            )
+        ),
+
+        # Model 5: Super Simplified Model
         ModelConfig(
             "SuperSimplified",
             :xgboost,
