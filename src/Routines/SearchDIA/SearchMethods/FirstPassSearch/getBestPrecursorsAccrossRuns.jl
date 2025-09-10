@@ -68,7 +68,7 @@ function get_best_precursors_accross_runs(
         rts::AbstractVector{Float32},
         scan_idxs::AbstractVector{UInt32},
         ms_file_idxs::AbstractVector{UInt32},
-        rt_irt::SplineRtConversionModel,
+        rt_irt::RtConversionModel,
         max_q_val::Float32)
 
         for row in eachindex(precursor_idxs)
@@ -139,7 +139,7 @@ function get_best_precursors_accross_runs(
         precursor_idxs::AbstractVector{UInt32},
         q_values::AbstractVector{Float16},
         rts::AbstractVector{Float32},
-        rt_irt::SplineRtConversionModel,
+        rt_irt::RtConversionModel,
         max_q_val::Float32)
         for row in eachindex(precursor_idxs)
             # Skip PSMs that don't pass q-value threshold

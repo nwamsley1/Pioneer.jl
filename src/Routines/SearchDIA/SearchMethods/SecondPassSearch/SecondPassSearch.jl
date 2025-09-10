@@ -193,6 +193,11 @@ function process_file!(
     spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}
 
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "SecondPassSearch")
+        return results  # Return early with unchanged results
+    end
+    
     try
         setNceModel!(
             getFragmentLookupTable(getSpecLib(search_context)), 
@@ -279,11 +284,42 @@ function process_file!(
         results.ms1_psms[] = ms1_psms
 
     catch e
-        @user_warn "Second pass search failed" ms_file_idx exception=e
-        rethrow(e)
+        # Handle failures gracefully using helper function
+        handle_search_error!(search_context, ms_file_idx, "SecondPassSearch", e, createFallbackResults!, results)
     end
 
     return results
+end
+
+"""
+Create empty PSM results for a failed file in SecondPassSearch.
+"""
+function createFallbackResults!(results::SecondPassSearchResults, ms_file_idx::Int64)
+    # Create empty PSM DataFrame with proper schema for regular PSMs
+    empty_psms = DataFrame(
+        ms_file_idx = UInt32[],
+        scan_idx = UInt32[], 
+        precursor_idx = UInt32[],
+        rt = Float32[],
+        q_value = Float32[],
+        score = Float32[], 
+        prob = Float32[]
+    )
+    
+    # Create empty MS1 PSM DataFrame with proper schema
+    empty_ms1_psms = DataFrame(
+        ms_file_idx = UInt32[],
+        scan_idx = UInt32[], 
+        precursor_idx = UInt32[],
+        rt = Float32[],
+        q_value = Float32[],
+        score = Float32[], 
+        prob = Float32[]
+    )
+    
+    # Set empty results (don't append since this file failed)
+    results.psms[] = empty_psms
+    results.ms1_psms[] = empty_ms1_psms
 end
 
 function process_search_results!(
@@ -293,6 +329,11 @@ function process_search_results!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}
+
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "SecondPassSearch results processing")
+        return nothing  # Return early 
+    end
 
     try
         # Get PSMs from results container

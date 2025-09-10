@@ -144,6 +144,7 @@ mutable struct IterationState
     scan_attempt::Int64              # Which attempt (1, 2, 3, ...)
     current_scan_count::Int64        # Scan count for current attempt
     max_scan_count_reached::Bool     # Flag when we hit the maximum
+    failed_with_exception::Bool      # Flag when processing failed with exception
     
     # Best attempt tracking (for fallback when convergence fails)
     best_psm_count::Int64
@@ -156,7 +157,7 @@ mutable struct IterationState
     best_scan_count::Int64
     
     function IterationState()
-        new(1, 0, 0, Float32[], false, 0.0f0, 1, 0, false,
+        new(1, 0, 0, Float32[], false, 0.0f0, 1, 0, false, false,
             # Initialize best attempt tracking with defaults
             0, nothing, nothing, nothing, 0, UInt8(0), 0, 0)
     end

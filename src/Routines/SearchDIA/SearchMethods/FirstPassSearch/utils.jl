@@ -348,10 +348,15 @@ function map_retention_times!(
     params::FirstPassSearchParameters
 )
 
-    for (ms_file_idx, psms_path) in enumerate(getFirstPassPsms(getMSData(search_context)))
+    # Only process valid (non-failed) files
+    valid_files = getValidFileIndices(search_context)
+    all_psms_paths = getFirstPassPsms(getMSData(search_context))
+    
+    for ms_file_idx in valid_files
         #if getFailedIndicator(getMSData(search_context), ms_file_idx)==true
         #    continue
         #end
+        psms_path = all_psms_paths[ms_file_idx]
         psms = Arrow.Table(psms_path)
         best_hits = psms[:prob].>params.min_prob_for_irt_mapping#Map rts using only the best psms
         try#if sum(best_hits) > 100
@@ -372,12 +377,42 @@ function map_retention_times!(
             #Build rt=>irt and irt=> rt mappings for the file and add to the dictionaries 
             setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
             setIrtRtMap!(search_context, SplineRtConversionModel(irt_to_rt_spline), ms_file_idx)
-        catch
-            throw("add a default option here...")
-            #sensible default here?
-            continue
+        catch e
+            # Get file name for debugging
+            file_name = try
+                getFileIdToName(getMSData(search_context), ms_file_idx)
+            catch
+                "file_$ms_file_idx"
+            end
+            
+            # Safely compute PSM count to avoid excessive output
+            n_good_psms = try
+                sum(best_hits)
+            catch
+                0  # Default to 0 if calculation fails
+            end
+            
+            @user_warn "RT mapping failed for MS data file: $file_name ($n_good_psms good PSMs found, need >100 for spline). Using identity RT model."
+            
+            # Use identity mapping as fallback - no RT to iRT conversion
+            identity_model = IdentityModel()
+            setRtIrtMap!(search_context, identity_model, ms_file_idx)
+            setIrtRtMap!(search_context, identity_model, ms_file_idx)
         end
     end
+    
+    # Set identity models for failed files
+    for failed_idx in getFailedFiles(search_context)
+        file_name = try
+            getFileIdToName(getMSData(search_context), failed_idx)
+        catch
+            "file_$failed_idx"
+        end
+        @user_warn "Setting identity RT models for failed file: $file_name"
+        setRtIrtMap!(search_context, IdentityModel(), failed_idx)
+        setIrtRtMap!(search_context, IdentityModel(), failed_idx)
+    end
+    
     return nothing
 end
 

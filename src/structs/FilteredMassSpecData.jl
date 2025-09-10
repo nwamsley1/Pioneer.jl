@@ -82,6 +82,12 @@ Returns bin assignments, RT range, and bin width.
 """
 function compute_rt_bins(spectra::MassSpecData, n_bins::Int = 15)
     rt_values = getRetentionTimes(spectra)
+    
+    # Handle empty case
+    if isempty(rt_values)
+        return Int8[], 0.0, 0.0, 0.0
+    end
+    
     rt_min, rt_max = extrema(rt_values)
     
     # Handle edge case of single RT value
@@ -272,7 +278,10 @@ function FilteredMassSpecData(
     
     # Step 4: Sample initial scans following priority order
     n_to_sample = min(max_scans, total_ms2_scans)
-    if n_to_sample == total_ms2_scans
+    if n_to_sample == 0
+        # Handle empty case - no scans to sample
+        scan_indices_to_sample = UInt32[]
+    elseif n_to_sample == total_ms2_scans
         scan_indices_to_sample = convert(Vector{UInt32}, scan_priority_order)
     else
         # Take first n_to_sample from priority order
