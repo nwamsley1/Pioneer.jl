@@ -38,12 +38,27 @@ Base.length(ms_data::MassSpecData) = ms_data.n
 function BasicMassSpecData(file_path::String)
     table = Arrow.Table(file_path)
     
-    # Extract the type inside the Union{Missing, Float32/Float64}
-    union_type = eltype(eltype(table[:mz_array]))
-    float_type = first(filter(t -> t <: AbstractFloat, Base.uniontypes(union_type)))
-    
     # Determine the length (number of rows)
     n = length(table[:mz_array])
+    
+    # Handle empty files gracefully
+    if n == 0
+        @user_warn "Empty MS data file detected: $(basename(file_path)). File contains 0 scans and will be skipped in analysis."
+        # Use Float32 as default type for empty files
+        float_type = Float32
+    else
+        # Extract the type inside the Union{Missing, Float32/Float64}
+        union_type = eltype(eltype(table[:mz_array]))
+        abstract_float_types = filter(t -> t <: AbstractFloat, Base.uniontypes(union_type))
+        
+        if isempty(abstract_float_types)
+            @user_warn "No AbstractFloat type found in mz_array for file: $(basename(file_path)). Defaulting to Float32."
+            float_type = Float32
+        else
+            float_type = first(abstract_float_types)
+        end
+    end
+    
     if typeof(table[:msOrder]) == Arrow.Primitive{UInt8, Vector{UInt8}}
         return BasicNonIonMobilityMassSpecData{float_type}(table, n)
     else

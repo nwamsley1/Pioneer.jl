@@ -173,6 +173,11 @@ function process_file!(
     spectra::MassSpecData
 ) where {P<:HuberTuningSearchParameters}
 
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "HuberTuningSearch")
+        return results  # Return early with unchanged results
+    end
+
     if params.huber_override_bool==true
         return 
     end
@@ -207,10 +212,29 @@ function process_file!(
         push!(results.tuning_psms, tuning_results)
         
     catch e
-        @user_warn "Huber tuning failed for file $ms_file_idx" exception=e
+        # Handle failures gracefully using helper function
+        handle_search_error!(search_context, ms_file_idx, "HuberTuningSearch", e, createFallbackResults!, results)
     end
     
     return results
+end
+
+"""
+Create fallback results for a failed file in HuberTuningSearch.
+Uses default Huber delta value for robust quantification.
+"""
+function createFallbackResults!(results::HuberTuningSearchResults, ms_file_idx::Int64)
+    # Use default conservative Huber delta value
+    results.huber_delta[] = 1.0f0  # Conservative default
+    
+    # Create empty tuning PSMs DataFrame
+    empty_psms = DataFrame(
+        ms_file_idx = UInt32[],
+        scan_idx = UInt32[], 
+        precursor_idx = UInt32[],
+        delta = Float32[]
+    )
+    push!(results.tuning_psms, empty_psms)
 end
 
 function process_search_results!(

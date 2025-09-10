@@ -133,6 +133,11 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 )
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "ScoringSearch")
+        return results  # Return early with unchanged results
+    end
+    
     # No per-file processing needed
     return results
 end

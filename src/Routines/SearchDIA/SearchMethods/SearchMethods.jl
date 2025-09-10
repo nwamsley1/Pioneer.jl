@@ -83,6 +83,50 @@ end
 Helper Functions
 ==========================================================#
 
+#==========================================================
+Error Handling Helpers
+==========================================================#
+
+"""
+    check_and_skip_failed_file(search_context, ms_file_idx, method_name)
+
+Check if a file should be skipped due to previous failure and log appropriate warning.
+Returns true if file should be skipped, false otherwise.
+"""
+function check_and_skip_failed_file(search_context::SearchContext, ms_file_idx::Int64, method_name::String)
+    if shouldSkipFile(search_context, ms_file_idx)
+        file_name = try
+            getFileIdToName(getMSData(search_context), ms_file_idx)
+        catch
+            "file_$ms_file_idx"
+        end
+        @user_warn "Skipping $method_name for previously failed file: $file_name"
+        return true
+    end
+    return false
+end
+
+"""
+    handle_search_error!(search_context, ms_file_idx, method_name, error, fallback_function, results)
+
+Handle search method errors gracefully by marking the file as failed and creating fallback results.
+"""
+function handle_search_error!(search_context::SearchContext, ms_file_idx::Int64, method_name::String, 
+                             error::Exception, fallback_function::Function, results)
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        "file_$ms_file_idx"
+    end
+    
+    reason = "$method_name failed: $(typeof(error))"
+    markFileFailed!(search_context, ms_file_idx, reason)
+    @user_warn "$method_name failed for MS data file: $file_name. Error type: $(typeof(error)). File marked as failed."
+    
+    # Create fallback results
+    fallback_function(results, ms_file_idx)
+end
+
 """
     partition_scans(ms_table, n_threads)
 

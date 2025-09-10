@@ -244,11 +244,45 @@ function process_file!(
         @debug_l1 "QuadTuningSearch: Skipping quad model fitting (fit_from_data = false)"
         return nothing
     end
+
+    # Get file name for debugging
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        "file_$ms_file_idx"
+    end
+    
+    @info "Quad tuning processing file: $file_name"
           
     # Log fitted mass error model from ParameterTuningSearch
     fitted_model = getMassErrorModel(search_context, ms_file_idx)
     
     try
+        # Check if file has any scans
+        if length(spectra) == 0
+            @user_warn "Skipping quad tuning for $file_name - file contains no scans"
+            setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
+            return results
+        end
+        
+        # Check for inconsistent array types (data quality issue)
+        try
+            # Test array access - this will fail if there are type mismatches
+            test_scan_idx = findfirst(i -> getMsOrder(spectra, i) == 2, 1:length(spectra))
+            if test_scan_idx !== nothing
+                _ = getMzArray(spectra, test_scan_idx)
+                _ = getIntensityArray(spectra, test_scan_idx)
+            end
+        catch type_error
+            if isa(type_error, MethodError) || contains(string(type_error), "SubArray")
+                @user_warn "Data type inconsistency detected in $file_name. Array types don't match expected schema. This may be due to dummy/test data with inconsistent typing. Skipping quad tuning."
+                setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
+                return results
+            else
+                rethrow(type_error)
+            end
+        end
+        
         setNceModel!(
             getFragmentLookupTable(getSpecLib(search_context)), 
             getNceModelModel(search_context, ms_file_idx)
@@ -285,8 +319,7 @@ function process_file!(
         push!(results.quad_model_plots, plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
         
     catch e
-        throw(e)
-        @user_warn "Quad transmission function fit failed, using fallback model: GeneralGaussModel(5.0, 0.0) $e" exception=e
+        @user_warn "Quad transmission function fit failed for MS data file: $file_name. Error type: $(typeof(e)). Using fallback model: GeneralGaussModel(5.0, 0.0)"
         setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
     end
     

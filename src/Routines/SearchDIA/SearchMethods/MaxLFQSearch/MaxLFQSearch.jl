@@ -109,14 +109,19 @@ end
 Process a single file for MaxLFQ analysis.
 """
 function process_file!(
-    ::MaxLFQSearchResults,
-    ::MaxLFQSearchParameters,
-    ::SearchContext,
-    ::Int64,
-    ::MassSpecData
+    results::MaxLFQSearchResults,
+    params::MaxLFQSearchParameters,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
 ) 
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "MaxLFQSearch")
+        return results  # Return early with unchanged results
+    end
+    
     # No per-file processing needed
-    return nothing
+    return results
 end
 
 """

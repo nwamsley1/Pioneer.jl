@@ -1529,9 +1529,9 @@ function get_fallback_parameters(
     for other_idx in 1:n_files
         if other_idx != ms_file_idx && 
            haskey(search_context.mass_error_model, other_idx) &&
-           haskey(search_context.rt_conversion_model, other_idx)
+           haskey(search_context.rt_irt_map, other_idx)
             mass_err = getMassErrorModel(search_context, other_idx)
-            rt_model = getRtConversionModel(search_context, other_idx)
+            rt_model = getRtIrtModel(search_context, other_idx)
             @user_info "Borrowed parameters from file $other_idx"
             return mass_err, rt_model, other_idx
         end
@@ -1544,7 +1544,7 @@ function get_fallback_parameters(
     mass_err = MassErrorModel(0.0f0, (20.0f0, 20.0f0))
     
     # Default RT model (identity)
-    rt_model = LinearRtConversionModel(1.0f0, 0.0f0)
+    rt_model = IdentityModel()
     
     return mass_err, rt_model, nothing
 end

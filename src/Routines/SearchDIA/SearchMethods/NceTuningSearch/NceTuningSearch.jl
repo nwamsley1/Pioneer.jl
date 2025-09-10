@@ -173,11 +173,37 @@ function process_file!(
     spectra::MassSpecData
 ) where {P<:NceTuningSearchParameters}
 
+    # Get file name for debugging
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        "file_$ms_file_idx"
+    end
+    
+    @info "NCE tuning processing file: $file_name"
+
     try
         if typeof(getSpecLib(search_context))==FragmentIndexLibrary
             #No NCE tuning for basic FramgentIndexLibrary
+            @info "Skipping NCE tuning for $file_name (basic FragmentIndexLibrary)"
             return nothing
         end
+        
+        # Check if file has any scans
+        if length(spectra) == 0
+            @user_warn "Skipping NCE tuning for $file_name - file contains no scans"
+            return nothing
+        end
+        
+        # Check if file has any MS2 scans
+        ms_orders = getMsOrders(spectra)
+        ms2_count = count(x -> x == 2, ms_orders)
+        if ms2_count == 0
+            @user_warn "Skipping NCE tuning for $file_name - file contains no MS2 scans"
+            return nothing
+        end
+        
+        @info "Processing $file_name with $(length(spectra)) total scans, $ms2_count MS2 scans"
         
         # Perform library search on all MS2 scans
         psms = library_search(spectra, search_context, params, ms_file_idx)   
@@ -236,8 +262,8 @@ function process_file!(
         append!(results.nce_psms, processed_psms)
 
     catch e
-        @user_warn "NCE tuning failed for file $(ms_file_idx): $e" 
-        #rethrow(e)
+        @user_warn "NCE tuning failed for MS data file: $file_name. Error type: $(typeof(e)). Skipping NCE calibration for this file."
+        # Don't rethrow - allow pipeline to continue without NCE model for this file
     end
 
     return results
