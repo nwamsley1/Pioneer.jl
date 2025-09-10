@@ -58,6 +58,7 @@ results = execute_search(ParameterTuningSearch(), search_context, params)
 """
 # Type definitions moved to types.jl
 
+
 #==========================================================
 Iteration State Management Functions
 ==========================================================#
@@ -926,6 +927,7 @@ function process_search_results!(
         
         # Get iteration_state from results
         iteration_state = results.current_iteration_state[]
+        # Note: No mass-error buffer is applied. Plots reflect the fitted model.
         
         # Always generate plots, even with limited or no data
         # This ensures we have diagnostic output for all files
@@ -948,6 +950,18 @@ function process_search_results!(
         end
         
         # Generate mass error plot (only store in memory, no individual files)
+        m = getMassErrorModel(search_context, ms_file_idx)
+        buffered_model = MassErrorModel(
+            getMassOffset(m),
+            (getLeftTol(m) + 1.0f0, getRightTol(m) + 1.0f0)
+        )
+        setMassErrorModel!(
+            search_context,
+            ms_file_idx,
+            buffered_model)
+
+        results.mass_err_model[] = buffered_model  # Update results with buffered model
+
         if length(results.ppm_errs) > 0
             # If we have mass error data, generate regular plot
             mass_plot = generate_mass_error_plot(results, parsed_fname)
@@ -992,6 +1006,8 @@ function reset_results!(results::ParameterTuningSearchResults)
     # Models are per-file, so they get reset at the start of each file
     # No need to reset them here
 end
+
+# Deprecated: apply_final_mass_error_buffer! removed – buffer is applied per-file before plotting
 
 """
 Summarize results across all MS files.
@@ -1041,6 +1057,10 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
         throw(e)
         @user_warn "Failed to merge QC plots" exception=(e, catch_backtrace())
     end
+    
+    # Apply buffer to all mass error models AFTER plots are generated
+    # This ensures plots show the actual fitted values, not buffered ones
+    # Do not apply an additional buffer here; models were buffered once per file
     
     # Log diagnostic summary
     diagnostics = getDiagnostics(results)

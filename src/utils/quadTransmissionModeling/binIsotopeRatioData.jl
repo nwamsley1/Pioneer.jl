@@ -196,7 +196,7 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
         push!(uniform_x_bounds, typemax(Float32))
         pushfirst!(uniform_x_bounds, typemin(Float32))
         isotopes_ratio_data[!,:bin_idx] = getBinIdx(isotopes_ratio_data[!,:x0], uniform_x_bounds)
-        @user_warn "KDE bin estimation failed... Default to uniform binning $n_bins $min_bin_count"
+        @debug_l1 "KDE bin estimation failed... Default to uniform binning $n_bins $min_bin_count"
     else
         #Estimate uniform bins 
         uniform_x_bounds = collect(LinRange{Float32, Int64}(x0_min, x0_max, n_bins+2))
@@ -211,7 +211,7 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
         mean_kde_std = median(skipmissing(kde_bin_stds))
         if mean_uniform_std > mean_kde_std*0.9
             isotopes_ratio_data[!,:bin_idx] = isotopes_ratio_data[!,:uniform_bin_idx]
-            @user_warn "KDE bin estimation failed... Default to uniform binning"
+            @debug_l1 "KDE bin estimation failed... Default to uniform binning"
         else
             isotopes_ratio_data[!,:bin_idx] = isotopes_ratio_data[!,:kde_bin_idx]
         end

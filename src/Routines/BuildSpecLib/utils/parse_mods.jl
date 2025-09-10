@@ -16,38 +16,6 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    getFixedMods!(
-        fixed_mods::Vector{PeptideMod},
-        mod_matches::Base.RegexMatchIterator,
-        mod_name::String)
-
-Add fixed modifications to the provided vector based on regex matches.
-
-# Parameters
-- `fixed_mods::Vector{PeptideMod}`: Vector to store fixed modifications
-- `mod_matches::Base.RegexMatchIterator`: Iterator of regex matches for modification sites
-- `mod_name::String`: Name of the modification to apply
-
-# Effects
-Adds `PeptideMod` objects to the `fixed_mods` vector for each regex match
-
-# Returns
-`nothing` - Modifies `fixed_mods` in place
-"""
-function getFixedMods!(
-                        fixed_mods::Vector{PeptideMod},
-                        mod_matches::Base.RegexMatchIterator,
-                        mod_name::String)
-    for mod_match in mod_matches
-        index = UInt8(mod_match.offset)
-        aa = mod_match.match
-        push!(fixed_mods, PeptideMod(index, first(aa), mod_name))
-    end
-    return nothing
-end
-
-
-"""
     matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
 
 Find all potential variable modification sites in a peptide sequence based on regex patterns.

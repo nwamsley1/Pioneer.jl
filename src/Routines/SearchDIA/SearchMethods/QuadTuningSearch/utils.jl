@@ -179,14 +179,15 @@ DataFrame containing processed PSMs suitable for quad model fitting.
 # Notes
 - Processes ALL scans in a single pass (no scan sampling)
 - Uses comprehensive logging to track PSM counts at each step
-- Warns if final PSM count is below min_quad_tuning_psms threshold
+- Warns if final PSM count is below min_quad_tuning_psms_per_thompson * window_width threshold
 """
 function collect_psms(
     spectra::MassSpecData,
     search_context::SearchContext,
     results::QuadTuningSearchResults,
     params::QuadTuningSearchParameters,
-    ms_file_idx::Int64
+    ms_file_idx::Int64,
+    window_width::Float64
 )
     """
     Filter quad PSMs based on criteria:
@@ -213,8 +214,6 @@ function collect_psms(
         end
         return mask
     end
-
-    @user_warn "QuadTuningSearch: Starting PSM collection for quadrupole transmission modeling"
     
     function getCharges(prec_charges::AbstractVector{UInt8}, precursor_idx::AbstractVector{UInt32})
         charges = zeros(UInt8, length(precursor_idx))
@@ -225,7 +224,6 @@ function collect_psms(
     end
     
     # Get initial PSMs - single library search processes all scans
-    @info "QuadTuningSearch: Running library search on all scans..."
     psms = library_search(spectra, search_context, params, ms_file_idx)
     
     if isempty(psms)
@@ -242,16 +240,11 @@ function collect_psms(
             half_width_mz = Float32[]
         )
     end
-    
-    @info "QuadTuningSearch: Found $(nrow(psms)) initial PSMs from library search"
 
     # Process PSMs
-    @info "QuadTuningSearch: Processing initial PSMs..."
     processed_psms = process_initial_psms(psms, spectra, search_context)
-    @info "QuadTuningSearch: $(nrow(processed_psms)) PSMs passed initial processing"
     
     # Get scan mapping and perform quad search
-    @info "QuadTuningSearch: Performing quadrupole transmission search..."
     scan_idx_to_prec_idx = get_scan_to_prec_idx(
         processed_psms[!, :scan_idx],
         processed_psms[!, :precursor_idx],
@@ -269,7 +262,6 @@ function collect_psms(
     )
     
     if isempty(quad_psms)
-        @user_warn "QuadTuningSearch: No PSMs found from quadrupole transmission search"
         return DataFrame(
             scan_idx = Int64[],
             precursor_idx = UInt32[],
@@ -283,8 +275,6 @@ function collect_psms(
         )
     end
     
-    @info "QuadTuningSearch: Found $(nrow(quad_psms)) PSMs from quad transmission search"
-    
     # Filter and process results
     quad_psms[!,:charge] = getCharges(getCharge(getPrecursors(getSpecLib(search_context))), quad_psms[!,:precursor_idx])
     quad_psms = quad_psms[
@@ -295,8 +285,6 @@ function collect_psms(
             quad_psms[!,:charge],
             params
         ),:]
-    
-    @info "QuadTuningSearch: $(nrow(quad_psms)) PSMs passed quality filters"
     
     processed_psms = process_quad_results(
         quad_psms,
@@ -323,11 +311,10 @@ function collect_psms(
     end
     processed_psms = processed_psms[keep_data,:]
     
-    @info "QuadTuningSearch: Final dataset contains $(nrow(processed_psms)) PSMs"
-    
     # Check if we have sufficient PSMs for quad modeling
-    if nrow(processed_psms) < params.min_quad_tuning_psms
-        @user_warn "QuadTuningSearch: Insufficient PSMs for quad modeling ($(nrow(processed_psms)) < $(params.min_quad_tuning_psms)). Consider lowering thresholds or using more data."
+    required_psms = params.min_quad_tuning_psms_per_thompson * window_width
+    if nrow(processed_psms) < required_psms
+        @user_warn "QuadTuningSearch: Insufficient PSMs for quad modeling ($(nrow(processed_psms)) < $(Int(required_psms)) required for $(window_width) Da window). Consider lowering thresholds or using more data."
     end
 
     return processed_psms

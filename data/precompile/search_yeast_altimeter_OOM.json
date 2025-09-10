@@ -28,7 +28,7 @@
         },
         "search_settings": {
             "min_samples": 3500,
-            "min_quad_tuning_psms": 5000,
+            "min_quad_tuning_psms_per_thompson": 250,
             "min_quad_tuning_fragments": 3,
             "max_presearch_iters": 10,
             "frag_err_quantile": 0.01
