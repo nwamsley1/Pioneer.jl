@@ -783,6 +783,9 @@ function fit_mass_err_model(
     ), ppm_errs
 end
 
+# Deprecated: apply_mass_error_buffer removed – buffer applied inline per-file before plotting
+
+
 function mass_err_ms1(ppm_errs::Vector{Float32},
     params::P) where {P<:FragmentIndexSearchParameters}
     mass_err = median(ppm_errs)
