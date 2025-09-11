@@ -193,7 +193,8 @@ function qcPlots(
 
     # Create multiple plots with chunking
     function create_precursor_id_plots(
-        precursors_long::DataFrame;
+        precursors_long::DataFrame,
+        parsed_fnames::Vector{String};
         n_files_per_plot::Int = 20,
         file_column::Symbol = :ms_file_idx,
         q_value_column::Symbol = :qval,
@@ -207,7 +208,8 @@ function qcPlots(
             q_value_column = q_value_column,
             q_value_threshold = q_value_threshold
         )
-        fnames = collect(keys(fname_to_id))
+        # Use ordered parsed_fnames instead of unordered dict keys
+        fnames = parsed_fnames
         # Calculate number of plots needed
         n_qc_plots = ceil(Int, length(fnames) / n_files_per_plot)
         plots = Plots.Plot[]
@@ -229,7 +231,7 @@ function qcPlots(
 
     # Example usage:
     precursors_long_df = DataFrame(Tables.columntable(Arrow.Table(precursors_long_path)))
-    id_plots = create_precursor_id_plots(precursors_long_df,
+    id_plots = create_precursor_id_plots(precursors_long_df, parsed_fnames,
                                 n_files_per_plot=n_files_per_plot,
                                 file_column = :file_name,
                                 q_value_column = :qval,
@@ -370,8 +372,7 @@ function qcPlots(
         p = Plots.plot(title = title,
         legend=:outertopright, layout = (1, 1))
 
-        for (id, ms_table_path) in enumerate(ms_table_paths)
-            short_fname = short_fnames[id]
+        for (ms_table_path, short_fname) in zip(ms_table_paths, short_fnames)
             ms_table = BasicMassSpecData(ms_table_path)
             ms1_scans = getMsOrders(ms_table).==1
 
@@ -393,8 +394,8 @@ function qcPlots(
         stop = min(n*n_files_per_plot, length(parsed_fnames))
         p = plotTIC(
             MS_TABLE_PATHS[start:stop],
-            parsed_fnames,
-            short_fnames,
+            parsed_fnames[start:stop],
+            short_fnames[start:stop],
             title = "TIC plot",
             f_out = joinpath(qc_plot_folder, "tic_plot_"*string(n)*".pdf")
         )

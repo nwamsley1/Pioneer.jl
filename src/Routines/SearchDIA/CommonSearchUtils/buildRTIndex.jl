@@ -73,7 +73,22 @@ function makeRTIndices(temp_folder::String,
     #Fill retention time index for each file. 
     for (key, psms_path) in enumerate(psms_paths)
         psms = Arrow.Table(psms_path)
-        rt_to_irt = rt_to_irt_splines[key]
+        # Extract the actual ms_file_idx from PSM data for rt_to_irt_splines lookup
+        if haskey(psms, :ms_file_idx) && !isempty(psms[:ms_file_idx])
+            file_idx = Int64(first(psms[:ms_file_idx]))
+            # Use actual file index if available in rt_to_irt_splines
+            if haskey(rt_to_irt_splines, file_idx)
+                rt_to_irt = rt_to_irt_splines[file_idx]
+            elseif haskey(rt_to_irt_splines, key)
+                rt_to_irt = rt_to_irt_splines[key]  # Fallback to enumerate key
+            else
+                @warn "No RT spline found for file index $file_idx or enumerate key $key, skipping RT index for $psms_path"
+                continue
+            end
+        else
+            # Fallback to enumerate key when ms_file_idx not available
+            rt_to_irt = rt_to_irt_splines[key]
+        end
         #Impute empirical irt value for psms with probability lower than the threshold
         irts = zeros(Float32, length(prec_to_irt))
         mzs = zeros(Float32, length(prec_to_irt))

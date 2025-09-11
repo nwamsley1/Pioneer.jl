@@ -47,7 +47,13 @@ function execute_search(
     search_parameters = get_parameters(search_type, params)
     Random.seed!(1844)
     search_results = init_search_results(search_parameters, search_context)
-    for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
+    
+    # Create mapping from enumeration index to original file index  
+    original_file_indices = collect(1:length(msdr))
+    
+    for (enum_idx, spectra) in ProgressBar(enumerate(msdr))
+        # Use original file index instead of enumeration index
+        ms_file_idx = original_file_indices[enum_idx]
         process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         reset_results!(search_results)
@@ -174,6 +180,53 @@ function get_valid_file_names_by_indices(search_context::SearchContext)
     
     # Return names in index order
     return [all_names[idx] for idx in sort(valid_indices)]
+end
+
+"""
+    extract_ms_file_idx(file_path::String) -> Union{Int64, Nothing}
+
+Extract the ms_file_idx from an Arrow table file. Returns nothing if file doesn't exist 
+or doesn't contain ms_file_idx column.
+"""
+function extract_ms_file_idx(file_path::String)
+    if !isfile(file_path)
+        return nothing
+    end
+    
+    try
+        table = Arrow.Table(file_path)
+        if !haskey(table, :ms_file_idx) || isempty(table[:ms_file_idx])
+            return nothing
+        end
+        
+        # Return the first ms_file_idx (all should be the same within a file)
+        return Int64(first(table[:ms_file_idx]))
+    catch
+        return nothing
+    end
+end
+
+"""
+    create_file_index_mapping(file_paths::Vector{String}) -> Dict{Int64, String}
+
+Create a mapping from ms_file_idx to file path by reading the actual indices from files.
+Skips files that don't exist or don't contain ms_file_idx.
+"""
+function create_file_index_mapping(file_paths::Vector{String})
+    index_to_path = Dict{Int64, String}()
+    
+    for file_path in file_paths
+        if !isfile(file_path)
+            continue
+        end
+        
+        ms_file_idx = extract_ms_file_idx(file_path)
+        if ms_file_idx !== nothing
+            index_to_path[ms_file_idx] = file_path
+        end
+    end
+    
+    return index_to_path
 end
 
 """

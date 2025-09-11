@@ -324,9 +324,12 @@ function summarize_results!(
                        
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
             # Write updated data back to individual files
-            for (idx, ref) in enumerate(second_pass_refs)
-                sub_df = merged_df[merged_df.ms_file_idx .== idx, :]
-                write_arrow_file(ref, sub_df)
+            for ref in second_pass_refs
+                ms_file_idx = extract_ms_file_idx(file_path(ref))
+                if ms_file_idx !== nothing
+                    sub_df = merged_df[merged_df.ms_file_idx .== ms_file_idx, :]
+                    write_arrow_file(ref, sub_df)
+                end
             end
         end
         #@debug_l1 "Step 2 completed in $(round(step2_time, digits=2)) seconds"
@@ -462,8 +465,11 @@ function summarize_results!(
         #@debug_l1 "Step 10 completed in $(round(step10_time, digits=2)) seconds"
 
         # Update search context with passing PSM paths
-        for (idx, ref) in enumerate(passing_refs)
-            setPassingPsms!(getMSData(search_context), idx, file_path(ref))
+        for ref in passing_refs
+            ms_file_idx = extract_ms_file_idx(file_path(ref))
+            if ms_file_idx !== nothing
+                setPassingPsms!(getMSData(search_context), ms_file_idx, file_path(ref))
+            end
         end
 
         # Step 11: Count protein peptides

@@ -44,7 +44,7 @@ function get_best_traces(
     total_rows_processed = 0
     files_processed = 0
     
-    for (file_idx, file_path) in enumerate(second_pass_psms_paths)
+    for file_path in second_pass_psms_paths
 
         if splitext(file_path)[end] != ".arrow"
             continue
