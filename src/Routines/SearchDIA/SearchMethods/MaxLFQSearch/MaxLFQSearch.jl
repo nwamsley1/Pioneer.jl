@@ -164,29 +164,22 @@ function summarize_results!(
             spline_n_knots = params.spline_n_knots
         )
 
-        # Get PSM paths from MSData and filter out non-existent files
+        # Get PSM paths using index-based approach to maintain file mapping
         all_passing_psm_paths = getPassingPsms(getMSData(search_context))
         
-        # Filter out undefined references and non-existent files
-        existing_passing_psm_paths = String[]
-        for i in 1:length(all_passing_psm_paths)
-            if isdefined(all_passing_psm_paths, i)
-                path = all_passing_psm_paths[i]
-                if isfile(path)
-                    push!(existing_passing_psm_paths, path)
-                end
-            end
-        end
+        # Use utility function to get valid indexed paths (maintains index → path mapping)
+        valid_indexed_paths = get_valid_indexed_paths(all_passing_psm_paths, search_context)
+        existing_passing_psm_paths = [path for (_, path) in valid_indexed_paths]
         
-        if length(existing_passing_psm_paths) < length(all_passing_psm_paths)
-            undefined_count = count(i -> !isdefined(all_passing_psm_paths, i), 1:length(all_passing_psm_paths))
-            missing_count = length(all_passing_psm_paths) - undefined_count - length(existing_passing_psm_paths)
-            if undefined_count > 0
-                @user_warn "Found $undefined_count files that never generated PSM paths (failed early in pipeline)"
-            end
-            if missing_count > 0
-                @user_warn "Found $missing_count PSM files that exist in paths but are missing from disk"
-            end
+        # Get file names using the same valid indices
+        successful_file_names = get_valid_file_names_by_indices(search_context)
+        
+        @user_info "MaxLFQ will process $(length(successful_file_names)) successful files: $(join(successful_file_names, ", "))"
+        @user_info "PSM file paths found: $(length(existing_passing_psm_paths))"
+        for (i, path) in enumerate(existing_passing_psm_paths)
+            file_exists = isfile(path)
+            file_size = file_exists ? filesize(path) : 0
+            @user_info "  $i: $(basename(path)) - exists: $file_exists, size: $file_size bytes"
         end
         
         if isempty(existing_passing_psm_paths)
@@ -195,18 +188,7 @@ function summarize_results!(
         end
         
         psm_refs = [PSMFileReference(path) for path in existing_passing_psm_paths]
-        
-        # Extract successful file names from the filtered PSM paths
-        # Parse file names from paths like "/path/to/temp_data/passing_psms/filename.arrow"
-        successful_file_names = String[]
-        for path in existing_passing_psm_paths
-            # Extract just the filename without extension and path
-            filename = basename(path)
-            filename_no_ext = replace(filename, ".arrow" => "")
-            push!(successful_file_names, filename_no_ext)
-        end
-        
-        @user_info "MaxLFQ will process $(length(successful_file_names)) successful files: $(join(successful_file_names, ", "))"
+        @user_info "Created $(length(psm_refs)) PSM file references"
         
         # Ensure all PSM files are sorted correctly for MaxLFQ
         sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
@@ -215,6 +197,7 @@ function summarize_results!(
         #        sort_file_by_keys!(psm_ref, sort_keys...)
         #    end
         #end
+        @user_info "Sorting $(length(psm_refs)) PSM files..."
         sort_file_by_keys!(psm_refs, :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx;
                            reverse=[true, true, true, true], parallel=true )
         

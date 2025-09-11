@@ -125,12 +125,12 @@ struct ArrowTableReference{N} <: MassSpecDataReference
         new{n}(
             NTuple{n, String}(file_paths), 
             NTuple{n, String}(file_id_to_name),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{Bool}(undef, n)
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill(false, n)
         )
     end
 
@@ -143,13 +143,13 @@ struct ArrowTableReference{N} <: MassSpecDataReference
         n = length(file_paths)
         new{n}(
             NTuple{n, String}(file_paths...), 
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{Bool}(undef, n)
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill(false, n)
         )
     end
 
