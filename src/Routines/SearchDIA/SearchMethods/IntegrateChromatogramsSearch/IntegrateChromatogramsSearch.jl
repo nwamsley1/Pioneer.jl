@@ -324,6 +324,12 @@ function process_search_results!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:IntegrateChromatogramSearchParameters}
+
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "IntegrateChromatogramSearch results processing")
+        return nothing  # Return early 
+    end
+
     try
         passing_psms = results.psms[]
         parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)

@@ -223,6 +223,25 @@ function get_protein_pep_interpolation(merged_path::String, params::ScoringSearc
 end
 
 """
+Get file paths for valid (non-failed) files only.
+Filters out paths corresponding to files that failed in previous search methods.
+"""
+function get_valid_file_paths(all_paths::Vector{String}, search_context::SearchContext)
+    valid_indices = getValidFileIndices(search_context)
+    valid_paths = [all_paths[i] for i in valid_indices if i <= length(all_paths)]
+    
+    # Additionally filter to only include files that actually exist
+    existing_paths = filter(isfile, valid_paths)
+    
+    if length(existing_paths) < length(valid_paths)
+        missing_count = length(valid_paths) - length(existing_paths)
+        @user_warn "Found $missing_count missing Arrow files from valid files - this may indicate incomplete previous searches"
+    end
+    
+    return existing_paths
+end
+
+"""
 Process all results to get final protein scores.
 """
 function summarize_results!(
@@ -244,10 +263,19 @@ function summarize_results!(
     try
         # Step 1: Train EvoTrees/XGBoost Models
         ##@debug_l1 "Step 1: Training EvoTrees/XGBoost models..."
+        # Filter to only include valid (non-failed) files
+        valid_second_pass_psms = get_valid_file_paths(getSecondPassPsms(getMSData(search_context)), search_context)
+        
+        # Check if any valid files remain
+        if isempty(valid_second_pass_psms)
+            @user_warn "No valid files for ScoringSearch - all files failed in previous search methods"
+            return nothing
+        end
+        
         step1_time = @elapsed begin
             score_precursor_isotope_traces(
                 second_pass_folder,
-                getSecondPassPsms(getMSData(search_context)),
+                valid_second_pass_psms,
                 getPrecursors(getSpecLib(search_context)),
                 params.match_between_runs,
                 params.max_q_value_xgboost_rescore,
@@ -259,8 +287,8 @@ function summarize_results!(
         end
         #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
 
-        # Create references for second pass PSMs
-        second_pass_paths = getSecondPassPsms(getMSData(search_context))
+        # Create references for second pass PSMs (only valid files)
+        second_pass_paths = valid_second_pass_psms
         second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
         # Step 2: Compute precursor probabilities and FTR filtering
@@ -307,7 +335,7 @@ function summarize_results!(
         #@debug_l1 "Step 3: Finding best isotope traces..."
         step3_time = @elapsed begin
             best_traces = get_best_traces(
-                getSecondPassPsms(getMSData(search_context)),
+                valid_second_pass_psms,
                 params.min_best_trace_prob
             )
         end
