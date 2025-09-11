@@ -310,13 +310,21 @@ function add_entrapment_sequences_grouped(
         push!(groups[base_seq], idx)
     end
 
+    # High-level diagnostics
+    n_entries = length(target_fasta_entries)
+    n_groups = length(groups)
+    avg_variants = n_groups == 0 ? 0.0 : round(n_entries / n_groups, digits=2)
+    @user_info "Entrapment (GROUPED): entries=$n_entries, base_sequences=$n_groups, r=$(Int(entrapment_r)), method=$(uppercase(entrapment_method)), avg_variants_per_base=$avg_variants"
+
     entrapments_out = Vector{FastaEntry}()
     fallback_to_shuffle_count = 0
     total_attempted = length(groups) * Int(entrapment_r)
 
+    exhausted_groups = 0
+    sample_logged = 0
     for (base_seq, idxs) in groups
         # Collect unique charges observed among variants (usually 0 at this stage)
-        charges = unique(get_charge(target_fasta_entries[i]) for i in idxs)
+        charges = unique([get_charge(target_fasta_entries[i]) for i in idxs])
 
         # Generate unique entrapment sequences for this base sequence
         entrap_seqs = Vector{String}()
@@ -341,7 +349,8 @@ function add_entrapment_sequences_grouped(
             end
 
             if needs_retry
-                @user_warn "Max shuffle attempts exceeded for $base_seq"
+                @user_warn "Max shuffle attempts exceeded while generating GROUPED entrapment for base sequence"
+                exhausted_groups += 1
                 continue
             end
 
@@ -354,6 +363,13 @@ function add_entrapment_sequences_grouped(
             for c in charges
                 push!(sequences_set, new_sequence, c)
             end
+        end
+
+        # Optional per-group diagnostics (debug level)
+        if sample_logged < 5
+            trunc_seq = length(base_seq) > 18 ? (base_seq[1:18] * "…") : base_seq
+            @debug_l2 "Entrapment group" base_seq=trunc_seq n_variants=length(idxs) charges=collect(charges) n_generated=length(entrap_seqs)
+            sample_logged += 1
         end
 
         # Create entrapment entries for all variants using the same entrapment specs
@@ -404,6 +420,9 @@ function add_entrapment_sequences_grouped(
             @user_info "Successfully reversed all $total_attempted grouped entrapment sequences without duplicates"
         end
     end
+
+    # General summary
+    @user_info "Entrapment (GROUPED): created=$(length(entrapments_out)) entries across $n_groups base sequences; exhausted=$exhausted_groups"
 
     return vcat(target_fasta_entries, entrapments_out)
 end
@@ -875,13 +894,21 @@ function add_decoy_sequences_grouped(
         push!(groups[base_seq], idx)
     end
 
+    # High-level diagnostics
+    n_entries = length(target_fasta_entries)
+    n_groups = length(groups)
+    avg_variants = n_groups == 0 ? 0.0 : round(n_entries / n_groups, digits=2)
+    @user_info "Decoy (GROUPED): entries=$n_entries, base_sequences=$n_groups, method=$(uppercase(decoy_method)), avg_variants_per_base=$avg_variants"
+
     decoy_entries = Vector{FastaEntry}()
     fallback_to_shuffle_count = 0
     total_groups = length(groups)
 
+    sample_logged = 0
+    exhausted_groups = 0
     for (base_seq, idxs) in groups
         # Unique charges across variants in this group
-        charges = unique(get_charge(target_fasta_entries[i]) for i in idxs)
+        charges = unique([get_charge(target_fasta_entries[i]) for i in idxs])
 
         # Generate a single decoy sequence for this base_seq
         n_shuffle_attempts = 0
@@ -900,7 +927,8 @@ function add_decoy_sequences_grouped(
         end
 
         if needs_retry
-            @user_warn "Exceeded max shuffle attempts for $base_seq"
+            @user_warn "Max shuffle attempts exceeded while generating GROUPED decoy for base sequence"
+            exhausted_groups += 1
             continue
         end
 
@@ -911,6 +939,14 @@ function add_decoy_sequences_grouped(
         # Reserve the decoy sequence across all charges
         for c in charges
             push!(sequences_set, decoy_sequence, c)
+        end
+
+        # Optional per-group diagnostics (debug level)
+        if sample_logged < 5
+            trunc_seq = length(base_seq) > 18 ? (base_seq[1:18] * "…") : base_seq
+            trunc_decoy = length(decoy_sequence) > 18 ? (decoy_sequence[1:18] * "…") : decoy_sequence
+            @debug_l2 "Decoy group" base_seq=trunc_seq decoy=trunc_decoy n_variants=length(idxs) charges=collect(charges)
+            sample_logged += 1
         end
 
         # Build decoys for each variant in this group using the same mapping
@@ -959,6 +995,9 @@ function add_decoy_sequences_grouped(
             @user_info "Successfully reversed all $total_groups base sequences without duplicates"
         end
     end
+
+    # General summary
+    @user_info "Decoy (GROUPED): created=$(length(decoy_entries)) entries across $n_groups base sequences; exhausted=$exhausted_groups"
 
     return sort(vcat(target_fasta_entries, decoy_entries), by = x -> get_sequence(x))
 end
