@@ -24,7 +24,8 @@ function create_qc_plots(
     proteins_path::String,
     search_context::SearchContext,
     precursors::LibraryPrecursors,
-    params::Any
+    params::Any,
+    successful_file_names::Vector{String}
 )
     # Create plots showing:
     # - Normalization factors
@@ -33,15 +34,20 @@ function create_qc_plots(
     # - Dynamic range
     # Implementation depends on plotting library
     @user_info "Generating final QC plots"
+    # Get file paths for successful files only
+    all_file_paths = collect(getFilePaths(getMSData(search_context)))
+    valid_file_indices = getValidFileIndices(search_context)
+    successful_file_paths = [all_file_paths[i] for i in valid_file_indices if i <= length(all_file_paths)]
+    
     qcPlots(
         precursors_path,
         precursors_long_path,
         proteins_path,
         params.params,
         precursors,
-        getFileIdToName(getMSData(search_context)),
+        successful_file_names,
         joinpath(getDataOutDir(search_context), "qc_plots"),
-        collect(getFilePaths(getMSData(search_context))),
+        successful_file_paths,
         getIrtRtMap(search_context),
         search_context.mass_error_model
     )
