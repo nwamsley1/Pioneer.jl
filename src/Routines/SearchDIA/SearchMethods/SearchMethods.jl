@@ -139,25 +139,17 @@ Returns: Vector of (index, path) tuples for files that passed pipeline stages.
 """
 function get_valid_indexed_paths(path_array::Vector{String}, search_context::SearchContext)
     valid_indices = getValidFileIndices(search_context)
-    @user_info "get_valid_indexed_paths: valid_indices = $valid_indices, path_array length = $(length(path_array))"
     indexed_paths = Tuple{Int64, String}[]
     
     for idx in valid_indices
-        @user_info "  Checking index $idx"
-        if idx <= length(path_array) && isdefined(path_array, idx) 
+        if idx <= length(path_array)
             path = path_array[idx]
-            file_exists = !isempty(path) && isfile(path)
-            @user_info "    Path: '$path', exists: $file_exists"
-            if file_exists
+            if !isempty(path) && isfile(path)
                 push!(indexed_paths, (idx, path))
-                @user_info "    Added to indexed_paths"
             end
-        else
-            @user_info "    Index $idx out of bounds or undefined"
         end
     end
     
-    @user_info "get_valid_indexed_paths: returning $(length(indexed_paths)) paths"
     return indexed_paths
 end
 

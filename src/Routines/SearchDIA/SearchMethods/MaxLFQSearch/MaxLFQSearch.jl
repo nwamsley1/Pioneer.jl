@@ -175,12 +175,6 @@ function summarize_results!(
         successful_file_names = get_valid_file_names_by_indices(search_context)
         
         @user_info "MaxLFQ will process $(length(successful_file_names)) successful files: $(join(successful_file_names, ", "))"
-        @user_info "PSM file paths found: $(length(existing_passing_psm_paths))"
-        for (i, path) in enumerate(existing_passing_psm_paths)
-            file_exists = isfile(path)
-            file_size = file_exists ? filesize(path) : 0
-            @user_info "  $i: $(basename(path)) - exists: $file_exists, size: $file_size bytes"
-        end
         
         if isempty(existing_passing_psm_paths)
             @user_warn "No valid PSM files found for MaxLFQ analysis - all files may have failed in previous searches"
@@ -188,16 +182,9 @@ function summarize_results!(
         end
         
         psm_refs = [PSMFileReference(path) for path in existing_passing_psm_paths]
-        @user_info "Created $(length(psm_refs)) PSM file references"
         
         # Ensure all PSM files are sorted correctly for MaxLFQ
         sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
-        #for (i, psm_ref) in ProgressBar(enumerate(psm_refs))
-        #    if !is_sorted_by(psm_ref, sort_keys...)
-        #        sort_file_by_keys!(psm_ref, sort_keys...)
-        #    end
-        #end
-        @user_info "Sorting $(length(psm_refs)) PSM files..."
         sort_file_by_keys!(psm_refs, :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx;
                            reverse=[true, true, true, true], parallel=true )
         
