@@ -338,7 +338,7 @@ function add_entrapment_sequences_grouped(
             # If duplicate: reverse may fall back to shuffle; shuffle keeps trying
             needs_retry = any(((new_sequence, c) ∈ sequences_set) for c in charges)
             if needs_retry && entrapment_method == "reverse"
-                @debug_l2 "Reverse duplicate for entrapment of $base_seq; fallback to shuffle"
+                @user_warn "Reverse duplicate for entrapment of $base_seq; fallback to shuffle"
                 fallback_to_shuffle_count += 1
             end
 
@@ -368,7 +368,7 @@ function add_entrapment_sequences_grouped(
         # Optional per-group diagnostics (debug level)
         if sample_logged < 5
             trunc_seq = length(base_seq) > 18 ? (base_seq[1:18] * "…") : base_seq
-            @debug_l2 "Entrapment group" base_seq=trunc_seq n_variants=length(idxs) charges=collect(charges) n_generated=length(entrap_seqs)
+            @user_info "Entrapment group: base_seq=$(trunc_seq), n_variants=$(length(idxs)), charges=$(collect(charges)), n_generated=$(length(entrap_seqs))"
             sample_logged += 1
         end
 
@@ -917,7 +917,7 @@ function add_decoy_sequences_grouped(
         # Handle duplicates: reverse may fall back to shuffle; shuffle keeps trying
         needs_retry = any(((decoy_sequence, c) ∈ sequences_set) for c in charges)
         if needs_retry && decoy_method == "reverse"
-            @debug_l2 "Reverse duplicate for decoy of $base_seq; fallback to shuffle"
+            @user_warn "Reverse duplicate for decoy of $base_seq; fallback to shuffle"
             fallback_to_shuffle_count += 1
         end
         while needs_retry && n_shuffle_attempts < max_shuffle_attempts
@@ -945,7 +945,7 @@ function add_decoy_sequences_grouped(
         if sample_logged < 5
             trunc_seq = length(base_seq) > 18 ? (base_seq[1:18] * "…") : base_seq
             trunc_decoy = length(decoy_sequence) > 18 ? (decoy_sequence[1:18] * "…") : decoy_sequence
-            @debug_l2 "Decoy group" base_seq=trunc_seq decoy=trunc_decoy n_variants=length(idxs) charges=collect(charges)
+            @user_info "Decoy group: base_seq=$(trunc_seq), decoy=$(trunc_decoy), n_variants=$(length(idxs)), charges=$(collect(charges))"
             sample_logged += 1
         end
 
