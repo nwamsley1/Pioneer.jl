@@ -170,6 +170,15 @@ function prepare_chronologer_input(
     protein_df = build_protein_df(protein_entries)
     Arrow.write(proteins_out_path, protein_df)
 
+    # Display decoy generation configuration
+    decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
+    entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
+    @user_info "════════════════════════════════════════════════════════"
+    @user_info "DECOY GENERATION CONFIGURATION:"
+    @user_info "  Decoy method: $(uppercase(decoy_method))"
+    @user_info "  Entrapment method: $(uppercase(entrapment_method))"
+    @user_info "════════════════════════════════════════════════════════"
+
     # Step 1: Combine shared peptides (I/L equivalence)
     fasta_entries = combine_shared_peptides(fasta_entries)
     
@@ -189,11 +198,13 @@ function prepare_chronologer_input(
     @user_info "  Purpose: Track peptides (sequence + modifications) through entrapment variants"
     
     # Step 4: Add entrapment sequences (now handles modifications properly)
+    entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
     fasta_entries = add_entrapment_sequences(
         fasta_entries,
-        UInt8(_params.fasta_digest_params["entrapment_r"])
+        UInt8(_params.fasta_digest_params["entrapment_r"]);
+        entrapment_method = entrapment_method
     )
-    @user_info "Step 4 - Entrapment sequences added with shuffled modifications"
+    @user_info "Step 4 - Entrapment sequences added using $(uppercase(entrapment_method)) method"
     
     # Step 5: Assign base_target_id values for entrapment grouping
     assign_base_target_ids!(fasta_entries)
@@ -201,8 +212,9 @@ function prepare_chronologer_input(
 
     # Step 6: Add decoys (inherit base_target_id and base_pep_id for pairing)
     if _params.fasta_digest_params["add_decoys"]
-        fasta_entries = add_decoy_sequences(fasta_entries)
-        @user_info "Step 6 - Decoy sequences added (inherit base_target_id and base_pep_id)"
+        decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
+        fasta_entries = add_decoy_sequences(fasta_entries; decoy_method=decoy_method)
+        @user_info "Step 6 - Decoy sequences added using $(uppercase(decoy_method)) method (inherit base_target_id and base_pep_id)"
     end
         
     # Step 7: Add charges (creates precursor variants)

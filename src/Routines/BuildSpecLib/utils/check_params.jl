@@ -66,6 +66,33 @@ function check_params_bsp(json_string::String)
     check_param(fasta_digest_params, "max_var_mods", Integer)
     check_param(fasta_digest_params, "add_decoys", Bool)
     check_param(fasta_digest_params, "entrapment_r", Real)
+    
+    # Check decoy_method with default value
+    if !haskey(fasta_digest_params, "decoy_method")
+        fasta_digest_params["decoy_method"] = "shuffle"
+    else
+        decoy_method = fasta_digest_params["decoy_method"]
+        if !(decoy_method in ["shuffle", "reverse"])
+            error("decoy_method must be either 'shuffle' or 'reverse', got: $decoy_method")
+        end
+    end
+    
+    # Check entrapment_method with default value and validation rules
+    if !haskey(fasta_digest_params, "entrapment_method")
+        fasta_digest_params["entrapment_method"] = "shuffle"
+    else
+        entrapment_method = fasta_digest_params["entrapment_method"]
+        decoy_method = fasta_digest_params["decoy_method"]
+        
+        if !(entrapment_method in ["shuffle", "reverse"])
+            error("entrapment_method must be either 'shuffle' or 'reverse', got: $entrapment_method")
+        end
+        
+        # Validate the combination rules
+        if decoy_method == "reverse" && entrapment_method == "reverse"
+            error("When decoy_method is 'reverse', entrapment_method must be 'shuffle'")
+        end
+    end
 
     # Check nce_params
     nce_params = params["nce_params"]

@@ -129,7 +129,8 @@ function add_entrapment_sequences(
     target_fasta_entries::Vector{FastaEntry}, 
     entrapment_r::UInt8;
     max_shuffle_attempts::Int64 = 20,
-    fixed_chars::Vector{Char} = Vector{Char}()
+    fixed_chars::Vector{Char} = Vector{Char}(),
+    entrapment_method::String = "shuffle"
 )::Vector{FastaEntry}
     
     # Pre-allocate output vector
@@ -137,6 +138,10 @@ function add_entrapment_sequences(
         undef, 
         length(target_fasta_entries) * entrapment_r
     )
+    
+    # Counters for tracking fallback to shuffle
+    total_sequences = length(target_fasta_entries) * entrapment_r
+    fallback_to_shuffle_count = 0
     
     # Track unique sequences
     sequences_set = PeptideSequenceSet(target_fasta_entries)#Set{String}()
@@ -157,12 +162,36 @@ function add_entrapment_sequences(
     for target_entry in target_fasta_entries
         for entrapment_group_id in 1:entrapment_r
             n_shuffle_attempts = 0
-            #new_sequence = reverse(get_sequence(target_entry)[1:(end-1)]) * get_sequence(target_entry)[end]
-            while n_shuffle_attempts < max_shuffle_attempts
-                new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry))
-
-                #Make sure the entrapment sequence is unique (I and L are equivalent)
-                if (new_sequence, get_charge(target_entry)) ∉ sequences_set
+            # Try the specified method first
+            new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry); method=entrapment_method)
+            
+            # If it creates a duplicate and we're using reverse, fall back to shuffle
+            if (new_sequence, get_charge(target_entry)) ∈ sequences_set && entrapment_method == "reverse"
+                @debug_l2 "Reverse created duplicate for entrapment of $(get_sequence(target_entry)), falling back to shuffle"
+                fallback_to_shuffle_count += 1
+                # Fall back to shuffle since reverse is deterministic
+                while n_shuffle_attempts < max_shuffle_attempts
+                    new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry); method="shuffle")
+                    
+                    if (new_sequence, get_charge(target_entry)) ∉ sequences_set
+                        break
+                    end
+                    n_shuffle_attempts += 1
+                end
+            elseif (new_sequence, get_charge(target_entry)) ∈ sequences_set
+                # For shuffle method, keep trying with shuffle
+                while n_shuffle_attempts < max_shuffle_attempts
+                    new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry); method="shuffle")
+                    
+                    if (new_sequence, get_charge(target_entry)) ∉ sequences_set
+                        break
+                    end
+                    n_shuffle_attempts += 1
+                end
+            end
+            
+            #Make sure the entrapment sequence is unique (I and L are equivalent)
+            if (new_sequence, get_charge(target_entry)) ∉ sequences_set
                     # Get sequence length for modification adjustment
                     seq_length = UInt8(length(get_sequence(target_entry)))
                     
@@ -198,15 +227,22 @@ function add_entrapment_sequences(
                     )
                     n += 1
                     push!(sequences_set, new_sequence, get_charge(target_entry))
-                    break
-                end
-                new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry))
-                n_shuffle_attempts += 1
-            end
-            
-            if n_shuffle_attempts >= max_shuffle_attempts
+            elseif n_shuffle_attempts >= max_shuffle_attempts
                 @user_warn "Max shuffle attempts exceeded for $(get_sequence(target_entry))"
             end
+        end
+    end
+    
+    # Report statistics if using reverse method for entrapment
+    if entrapment_method == "reverse" && total_sequences > 0
+        if fallback_to_shuffle_count > 0
+            @user_warn "Entrapment generation statistics for REVERSE method:"
+            @user_warn "  Total entrapment sequences attempted: $total_sequences"
+            @user_warn "  Sequences where reverse created duplicates: $fallback_to_shuffle_count"
+            @user_warn "  Sequences successfully reversed: $(total_sequences - fallback_to_shuffle_count)"
+            @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_sequences, digits=1))%"
+        else
+            @user_info "Successfully reversed all $total_sequences entrapment sequences without duplicates"
         end
     end
     
@@ -277,9 +313,29 @@ function permuteNewPositions!(shuffle_sequence::ShuffleSeq)
     return nothing
 end
 
+function reverseMovablePositions!(shuffle_sequence::ShuffleSeq)
+    # Reverse the movable positions (all but the last amino acid)
+    n = shuffle_sequence.n_movable
+    
+    # Create reversed mapping
+    for i in 1:n
+        old_pos = shuffle_sequence.movable_positions[i]
+        new_pos = shuffle_sequence.movable_positions[n - i + 1]
+        
+        # Update sequence - place character from position i at position (n-i+1)
+        shuffle_sequence.new_sequence[old_pos] = 
+            shuffle_sequence.old_sequence[new_pos]
+        
+        # Update position mapping
+        shuffle_sequence.new_positions[old_pos] = new_pos
+    end
+    return nothing
+end
+
 function shuffle_sequence!(
     shuffle_sequence::ShuffleSeq,
-    sequence::String,
+    sequence::String;
+    method::String = "shuffle"
 )
     # Reset the sequence and positions
     resetSequence!(shuffle_sequence, sequence)
@@ -287,8 +343,14 @@ function shuffle_sequence!(
     # Fill movable positions
     fillMovablePositions!(shuffle_sequence)
     
-    # Permute new positions
-    permuteNewPositions!(shuffle_sequence)
+    # Apply the selected decoy generation method
+    if method == "shuffle"
+        permuteNewPositions!(shuffle_sequence)
+    elseif method == "reverse"
+        reverseMovablePositions!(shuffle_sequence)
+    else
+        error("Unknown decoy method: $method. Must be 'shuffle' or 'reverse'")
+    end
     
     return String(shuffle_sequence.new_sequence[1:shuffle_sequence.sequence_length])
 end
@@ -475,13 +537,18 @@ all_entries = add_decoy_sequences(target_entries, max_shuffle_attempts=50)
 function add_decoy_sequences(
     target_fasta_entries::Vector{FastaEntry}; 
     max_shuffle_attempts::Int64 = 20,
-    fixed_chars::Vector{Char} = Vector{Char}()
+    fixed_chars::Vector{Char} = Vector{Char}(),
+    decoy_method::String = "shuffle"
     )
     # Pre-allocate space for decoy entries
     decoy_fasta_entries = Vector{FastaEntry}(undef, length(target_fasta_entries))
     
     # Set to track unique sequences
     sequences_set = PeptideSequenceSet(target_fasta_entries)
+    
+    # Counters for tracking fallback to shuffle
+    total_sequences = length(target_fasta_entries)
+    fallback_to_shuffle_count = 0
     
     # Initialize position tracking vector (max peptide length of 255 should be sufficient)
     #positions = Vector{UInt8}(undef, 255)
@@ -501,22 +568,36 @@ function add_decoy_sequences(
         charge = get_charge(target_entry)
         seq_length = UInt8(length(target_sequence))
 
-        # Create reversed sequence (keeping last amino acid)
-        #decoy_sequence = reverse(target_sequence[1:(end-1)]) * target_sequence[end]
-        decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence)
+        # Create decoy sequence using the specified method
+        decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence; method=decoy_method)
                 
         n_shuffle_attempts = 0
         
-        # If reversal creates a duplicate, try shuffling
-        if (decoy_sequence, charge) ∈ sequences_set         
-            while n_shuffle_attempts < max_shuffle_attempts
-                # Use enhanced shuffle function that updates positions vector
-                 decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence)
-                
-                if (decoy_sequence, charge) ∉ sequences_set
-                    break
+        # If the decoy creates a duplicate, need to handle differently based on method
+        if (decoy_sequence, charge) ∈ sequences_set
+            if decoy_method == "reverse"
+                # If reverse creates a duplicate, fall back to shuffle
+                # (reverse is deterministic, so retrying won't help)
+                @debug_l2 "Reverse created duplicate for $target_sequence, falling back to shuffle"
+                fallback_to_shuffle_count += 1
+                while n_shuffle_attempts < max_shuffle_attempts
+                    decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence; method="shuffle")
+                    
+                    if (decoy_sequence, charge) ∉ sequences_set
+                        break
+                    end
+                    n_shuffle_attempts += 1
                 end
-                n_shuffle_attempts += 1
+            else
+                # For shuffle, keep trying with shuffle
+                while n_shuffle_attempts < max_shuffle_attempts
+                    decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence; method="shuffle")
+                    
+                    if (decoy_sequence, charge) ∉ sequences_set
+                        break
+                    end
+                    n_shuffle_attempts += 1
+                end
             end
         end
         
@@ -559,6 +640,20 @@ function add_decoy_sequences(
             push!(sequences_set, decoy_sequence, get_charge(target_entry))
         end
     end
+    
+    # Report statistics if using reverse method
+    if decoy_method == "reverse"
+        if fallback_to_shuffle_count > 0
+            @user_warn "Decoy generation statistics for REVERSE method:"
+            @user_warn "  Total sequences attempted: $total_sequences"
+            @user_warn "  Sequences where reverse created duplicates: $fallback_to_shuffle_count"
+            @user_warn "  Sequences successfully reversed: $(total_sequences - fallback_to_shuffle_count)"
+            @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_sequences, digits=1))%"
+        else
+            @user_info "Successfully reversed all $total_sequences sequences without duplicates"
+        end
+    end
+    
     # Sort the peptides by sequence
     return sort(vcat(target_fasta_entries, decoy_fasta_entries[1:n-1]), by = x -> get_sequence(x))
 end
