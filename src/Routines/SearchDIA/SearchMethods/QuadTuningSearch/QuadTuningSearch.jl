@@ -333,6 +333,12 @@ function process_search_results!(
     ms_file_idx::Int64,
     ::MassSpecData
 ) where {P<:QuadTuningSearchParameters}
+    
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "QuadTuningSearch results processing")
+        return nothing  # Return early 
+    end
+    
     if params.fit_from_data==true
         setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
     else

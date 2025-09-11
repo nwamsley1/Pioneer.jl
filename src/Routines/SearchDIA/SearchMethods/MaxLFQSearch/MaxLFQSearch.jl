@@ -164,9 +164,49 @@ function summarize_results!(
             spline_n_knots = params.spline_n_knots
         )
 
-        # Get PSM paths from MSData and create references
-        passing_psm_paths = getPassingPsms(getMSData(search_context))
-        psm_refs = [PSMFileReference(path) for path in passing_psm_paths]
+        # Get PSM paths from MSData and filter out non-existent files
+        all_passing_psm_paths = getPassingPsms(getMSData(search_context))
+        
+        # Filter out undefined references and non-existent files
+        existing_passing_psm_paths = String[]
+        for i in 1:length(all_passing_psm_paths)
+            if isdefined(all_passing_psm_paths, i)
+                path = all_passing_psm_paths[i]
+                if isfile(path)
+                    push!(existing_passing_psm_paths, path)
+                end
+            end
+        end
+        
+        if length(existing_passing_psm_paths) < length(all_passing_psm_paths)
+            undefined_count = count(i -> !isdefined(all_passing_psm_paths, i), 1:length(all_passing_psm_paths))
+            missing_count = length(all_passing_psm_paths) - undefined_count - length(existing_passing_psm_paths)
+            if undefined_count > 0
+                @user_warn "Found $undefined_count files that never generated PSM paths (failed early in pipeline)"
+            end
+            if missing_count > 0
+                @user_warn "Found $missing_count PSM files that exist in paths but are missing from disk"
+            end
+        end
+        
+        if isempty(existing_passing_psm_paths)
+            @user_warn "No valid PSM files found for MaxLFQ analysis - all files may have failed in previous searches"
+            return nothing
+        end
+        
+        psm_refs = [PSMFileReference(path) for path in existing_passing_psm_paths]
+        
+        # Extract successful file names from the filtered PSM paths
+        # Parse file names from paths like "/path/to/temp_data/passing_psms/filename.arrow"
+        successful_file_names = String[]
+        for path in existing_passing_psm_paths
+            # Extract just the filename without extension and path
+            filename = basename(path)
+            filename_no_ext = replace(filename, ".arrow" => "")
+            push!(successful_file_names, filename_no_ext)
+        end
+        
+        @user_info "MaxLFQ will process $(length(successful_file_names)) successful files: $(join(successful_file_names, ", "))"
         
         # Ensure all PSM files are sorted correctly for MaxLFQ
         sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
@@ -193,10 +233,10 @@ function summarize_results!(
             :batch_size => params.batch_size,
             :min_peptides => params.min_peptides
         ))
-        # Create wide format precursor table
+        # Create wide format precursor table using only successful files
         precursors_wide_path = writePrecursorCSV(
             precursors_long_path,
-            sort(collect(getParsedFileNames(getMSData(search_context)))),
+            sort(successful_file_names),
             params.run_to_run_normalization,
             getProteins(getSpecLib(search_context)),
             write_csv = params.write_csv
@@ -206,12 +246,12 @@ function summarize_results!(
         # Perform MaxLFQ protein quantification
         precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
 
-        # Use FileReference-based LFQ with TransformPipeline preprocessing
+        # Use FileReference-based LFQ with TransformPipeline preprocessing (only successful files)
         LFQ(
             merged_psm_ref,  # Use FileReference instead of DataFrame
             protein_long_path,
             precursor_quant_col,
-            collect(getFileIdToName(getMSData(search_context))),
+            successful_file_names,
             params.q_value_threshold,
             batch_size = params.batch_size
         )
@@ -229,7 +269,7 @@ function summarize_results!(
             getIsotopicMods(precursors),
             getStructuralMods(precursors),
             getCharge(precursors),
-            sort(collect(values(getFileIdToName(getMSData(search_context))))),
+            sort(successful_file_names),
             getProteins(getSpecLib(search_context)),
             write_csv = params.write_csv
         )
