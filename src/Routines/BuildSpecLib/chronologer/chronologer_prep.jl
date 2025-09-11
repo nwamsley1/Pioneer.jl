@@ -197,14 +197,14 @@ function prepare_chronologer_input(
     @user_info "  Unique base_pep_ids: $pep_count"
     @user_info "  Purpose: Track peptides (sequence + modifications) through entrapment variants"
     
-    # Step 4: Add entrapment sequences (now handles modifications properly)
+    # Step 4: Add entrapment sequences (grouped by base sequence so all mods share the same entrapments)
     entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
-    fasta_entries = add_entrapment_sequences(
+    fasta_entries = add_entrapment_sequences_grouped(
         fasta_entries,
         UInt8(_params.fasta_digest_params["entrapment_r"]);
         entrapment_method = entrapment_method
     )
-    @user_info "Step 4 - Entrapment sequences added using $(uppercase(entrapment_method)) method"
+    @user_info "Step 4 - Entrapment sequences added (GROUPED) using $(uppercase(entrapment_method)) method"
     
     # Step 5: Assign base_target_id values for entrapment grouping
     assign_base_target_ids!(fasta_entries)
@@ -629,4 +629,3 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
     
     return seq_df
 end
-
