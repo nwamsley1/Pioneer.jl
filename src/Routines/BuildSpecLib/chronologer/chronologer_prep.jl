@@ -210,11 +210,11 @@ function prepare_chronologer_input(
     assign_base_target_ids!(fasta_entries)
     @user_info "Step 5 - base_target_id assigned for entrapment tracking"
 
-    # Step 6: Add decoys (inherit base_target_id and base_pep_id for pairing)
+    # Step 6: Add decoys (GROUPED by base sequence; all mods share same decoy)
     if _params.fasta_digest_params["add_decoys"]
         decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
-        fasta_entries = add_decoy_sequences(fasta_entries; decoy_method=decoy_method)
-        @user_info "Step 6 - Decoy sequences added using $(uppercase(decoy_method)) method (inherit base_target_id and base_pep_id)"
+        fasta_entries = add_decoy_sequences_grouped(fasta_entries; decoy_method=decoy_method)
+        @user_info "Step 6 - Decoy sequences added (GROUPED) using $(uppercase(decoy_method)) method (inherit base_target_id and base_pep_id)"
     end
         
     # Step 7: Add charges (creates precursor variants)

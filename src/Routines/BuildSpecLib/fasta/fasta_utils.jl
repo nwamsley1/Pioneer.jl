@@ -818,6 +818,152 @@ function add_decoy_sequences(
 end
 
 """
+    add_decoy_sequences_grouped(
+        target_fasta_entries::Vector{FastaEntry};
+        max_shuffle_attempts::Int64 = 20,
+        fixed_chars::Vector{Char} = Vector{Char}(),
+        decoy_method::String = "shuffle"
+    )::Vector{FastaEntry}
+
+Group-aware decoy generation that ensures all modification variants of the same
+base peptide sequence share a single decoy sequence and mod position mapping.
+
+# Parameters
+- `target_fasta_entries::Vector{FastaEntry}`: Peptide entries to generate decoys for (typically includes targets and entrapments)
+- `max_shuffle_attempts::Int64`: Max attempts to find a unique shuffled sequence
+- `fixed_chars::Vector{Char}`: Optional set of characters kept fixed when shuffling
+- `decoy_method::String`: "shuffle" or "reverse" (reverse may fall back to shuffle)
+
+# Returns
+- `Vector{FastaEntry}`: Sorted vector with both original entries and their decoys
+
+# Details
+Algorithm:
+1. Group by base sequence (ignoring modifications)
+2. For each base sequence, generate one decoy sequence once (respect I/L equivalence and charges)
+3. Apply the same position mapping to all modification variants in the group
+4. Preserve metadata and set `is_decoy = true`
+"""
+function add_decoy_sequences_grouped(
+    target_fasta_entries::Vector{FastaEntry};
+    max_shuffle_attempts::Int64 = 20,
+    fixed_chars::Vector{Char} = Vector{Char}(),
+    decoy_method::String = "shuffle"
+)::Vector{FastaEntry}
+
+    # Track sequences (I/L equivalence) with charge awareness
+    sequences_set = PeptideSequenceSet(target_fasta_entries)
+
+    # Prepare shuffler/reverser
+    shuffle_seq = ShuffleSeq(
+        "",
+        Vector{Char}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        zero(UInt8),
+        zero(UInt8),
+        fixed_chars
+    )
+
+    # Group entries by base sequence (sequence only, ignore mods)
+    groups = Dict{String, Vector{Int}}()
+    for (idx, entry) in enumerate(target_fasta_entries)
+        base_seq = get_sequence(entry)
+        if !haskey(groups, base_seq)
+            groups[base_seq] = Vector{Int}()
+        end
+        push!(groups[base_seq], idx)
+    end
+
+    decoy_entries = Vector{FastaEntry}()
+    fallback_to_shuffle_count = 0
+    total_groups = length(groups)
+
+    for (base_seq, idxs) in groups
+        # Unique charges across variants in this group
+        charges = unique(get_charge(target_fasta_entries[i]) for i in idxs)
+
+        # Generate a single decoy sequence for this base_seq
+        n_shuffle_attempts = 0
+        decoy_sequence = shuffle_sequence!(shuffle_seq, base_seq; method=decoy_method)
+
+        # Handle duplicates: reverse may fall back to shuffle; shuffle keeps trying
+        needs_retry = any(((decoy_sequence, c) ∈ sequences_set) for c in charges)
+        if needs_retry && decoy_method == "reverse"
+            @debug_l2 "Reverse duplicate for decoy of $base_seq; fallback to shuffle"
+            fallback_to_shuffle_count += 1
+        end
+        while needs_retry && n_shuffle_attempts < max_shuffle_attempts
+            decoy_sequence = shuffle_sequence!(shuffle_seq, base_seq; method="shuffle")
+            needs_retry = any(((decoy_sequence, c) ∈ sequences_set) for c in charges)
+            n_shuffle_attempts += 1
+        end
+
+        if needs_retry
+            @user_warn "Exceeded max shuffle attempts for $base_seq"
+            continue
+        end
+
+        # Snapshot positions for consistent mod adjustment across all variants
+        positions_copy = Vector{UInt8}(shuffle_seq.new_positions)
+        seq_length = UInt8(length(base_seq))
+
+        # Reserve the decoy sequence across all charges
+        for c in charges
+            push!(sequences_set, decoy_sequence, c)
+        end
+
+        # Build decoys for each variant in this group using the same mapping
+        for idx in idxs
+            target_entry = target_fasta_entries[idx]
+
+            adjusted_structural_mods = adjust_mod_positions(
+                get_structural_mods(target_entry),
+                positions_copy,
+                seq_length
+            )
+            adjusted_isotopic_mods = adjust_mod_positions(
+                get_isotopic_mods(target_entry),
+                positions_copy,
+                seq_length
+            )
+
+            push!(decoy_entries, FastaEntry(
+                get_id(target_entry),
+                get_description(target_entry),
+                get_gene(target_entry),
+                get_protein(target_entry),
+                get_organism(target_entry),
+                get_proteome(target_entry),
+                decoy_sequence,
+                get_start_idx(target_entry),
+                adjusted_structural_mods,
+                adjusted_isotopic_mods,
+                get_charge(target_entry),
+                get_base_target_id(target_entry),
+                get_base_pep_id(target_entry),
+                get_entrapment_pair_id(target_entry),
+                true
+            ))
+        end
+    end
+
+    # Report statistics if using reverse method
+    if decoy_method == "reverse" && total_groups > 0
+        if fallback_to_shuffle_count > 0
+            @user_warn "Decoy generation (GROUPED) stats for REVERSE:"
+            @user_warn "  Total base sequences attempted: $total_groups"
+            @user_warn "  Reverse duplicates: $fallback_to_shuffle_count"
+            @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_groups, digits=1))%"
+        else
+            @user_info "Successfully reversed all $total_groups base sequences without duplicates"
+        end
+    end
+
+    return sort(vcat(target_fasta_entries, decoy_entries), by = x -> get_sequence(x))
+end
+
+"""
     combine_shared_peptides(peptides::Vector{FastaEntry})::Vector{FastaEntry}
 
 Combines entries that share identical peptide sequences by concatenating their protein accessions.
