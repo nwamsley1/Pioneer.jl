@@ -766,12 +766,30 @@ This function is separated from scoring to allow model comparison without file I
 
 # Arguments
 - `psms`: DataFrame containing scored PSMs with ms_file_idx column
-- `file_paths`: Vector of file paths indexed by ms_file_idx
+- `file_paths`: Vector of file paths for valid files only
 """
 function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})
     dropVectorColumns!(psms) # avoids writing issues
+    
+    # Create mapping from unique ms_file_idx values to file paths
+    unique_file_indices = unique(psms[:, :ms_file_idx])
+    sort!(unique_file_indices)
+    
+    # Check that we have enough file paths for all file indices
+    if length(file_paths) != length(unique_file_indices)
+        error("Mismatch: $(length(file_paths)) file paths provided but $(length(unique_file_indices)) unique file indices found in PSM data")
+    end
+    
+    # Create mapping: original file index → output file path
+    index_to_path = Dict(zip(unique_file_indices, file_paths))
+    
     for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
-        fpath = file_paths[ms_file_idx[:ms_file_idx]]
-        writeArrow(fpath, gpsms)
+        file_idx = ms_file_idx[:ms_file_idx]
+        if haskey(index_to_path, file_idx)
+            fpath = index_to_path[file_idx]
+            writeArrow(fpath, gpsms)
+        else
+            @warn "No output path found for file index $file_idx, skipping"
+        end
     end
 end
