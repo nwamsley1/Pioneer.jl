@@ -254,7 +254,8 @@ function summarize_results!(
             proteins_wide_path,
             search_context,
             precursors,
-            params
+            params,
+            successful_file_names
         )
 
 
