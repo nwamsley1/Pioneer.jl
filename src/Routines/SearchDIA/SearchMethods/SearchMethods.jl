@@ -127,6 +127,63 @@ function handle_search_error!(search_context::SearchContext, ms_file_idx::Int64,
     fallback_function(results, ms_file_idx)
 end
 
+#==========================================================
+Index-Based Failed File Handling Utilities
+==========================================================#
+
+"""
+    get_valid_indexed_paths(path_array::Vector{String}, search_context::SearchContext)
+
+Get paths for valid files, maintaining index association.
+Returns: Vector of (index, path) tuples for files that passed pipeline stages.
+"""
+function get_valid_indexed_paths(path_array::Vector{String}, search_context::SearchContext)
+    valid_indices = getValidFileIndices(search_context)
+    @user_info "get_valid_indexed_paths: valid_indices = $valid_indices, path_array length = $(length(path_array))"
+    indexed_paths = Tuple{Int64, String}[]
+    
+    for idx in valid_indices
+        @user_info "  Checking index $idx"
+        if idx <= length(path_array) && isdefined(path_array, idx) 
+            path = path_array[idx]
+            file_exists = !isempty(path) && isfile(path)
+            @user_info "    Path: '$path', exists: $file_exists"
+            if file_exists
+                push!(indexed_paths, (idx, path))
+                @user_info "    Added to indexed_paths"
+            end
+        else
+            @user_info "    Index $idx out of bounds or undefined"
+        end
+    end
+    
+    @user_info "get_valid_indexed_paths: returning $(length(indexed_paths)) paths"
+    return indexed_paths
+end
+
+"""
+    get_valid_paths_only(path_array::Vector{String}, search_context::SearchContext)
+
+Get paths for valid files as a simple vector (without index information).
+"""
+function get_valid_paths_only(path_array::Vector{String}, search_context::SearchContext)
+    return [path for (_, path) in get_valid_indexed_paths(path_array, search_context)]
+end
+
+"""
+    get_valid_file_names_by_indices(search_context::SearchContext)
+
+Get file names for valid files, preserving index order.
+Uses the failed file tracking in SearchContext to determine which files are valid.
+"""
+function get_valid_file_names_by_indices(search_context::SearchContext)
+    valid_indices = getValidFileIndices(search_context)
+    all_names = getFileIdToName(getMSData(search_context))
+    
+    # Return names in index order
+    return [all_names[idx] for idx in sort(valid_indices)]
+end
+
 """
     partition_scans(ms_table, n_threads)
 
