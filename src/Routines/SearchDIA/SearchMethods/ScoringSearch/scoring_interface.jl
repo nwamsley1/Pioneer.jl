@@ -190,8 +190,19 @@ function apply_mbr_filter!(
     )
     ##########################################
 
-    # 2) Add pair_id column from spectral library
-    merged_df[!, :pair_id] = [getPairId(spec_lib, precursor_idx) for precursor_idx in merged_df.precursor_idx]
+    # 2) Ensure pair_id column exists
+    if :pair_id ∉ propertynames(merged_df)
+        # Prefer direct mapping from precursors if available
+        try
+            precs = getPrecursors(spec_lib)
+            pair_ids = getPairIdx(precs)
+            merged_df[!, :pair_id] = UInt32[pair_ids[pid] for pid in merged_df.precursor_idx]
+        catch
+            # As a last resort, set a neutral value to avoid crashing; downstream logic will no-op
+            @user_warn "pair_id not present in PSMs and could not be derived; disabling within-run target/decoy pair checks"
+            merged_df[!, :pair_id] = zeros(UInt32, nrow(merged_df))
+        end
+    end
     
     # 3) identify bad transfers
     is_bad_transfer = candidate_mask .& (
@@ -254,7 +265,6 @@ function apply_mbr_filter!(
         params.max_MBR_false_transfer_rate;
         mask = candidate_mask,
     )
-
     # 6) one fused pass to clamp probs
     merged_df._filtered_prob = ifelse.(
         candidate_mask .& (merged_df.prob .< τ),

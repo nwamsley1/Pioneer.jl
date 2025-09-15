@@ -94,6 +94,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         end
 
         fold_models = Vector{EvoTrees.EvoTree}(undef, length(iter_scheme))
+
         for (itr, num_round) in enumerate(iter_scheme)
             psms_train_itr = get_training_data_for_iteration!(psms_train,
                                                               itr,
@@ -141,7 +142,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             end
 
             if match_between_runs
-                update_mbr_features!(psms_train, psms_test, #prob_test, #probs_for_mbr,
+                update_mbr_features!(psms_train, psms_test, prob_test,
                                      test_idx, itr, mbr_start_iter,
                                      max_q_value_xgboost_rescore)
             end
@@ -507,38 +508,27 @@ end
 
 function update_mbr_features!(psms_train::AbstractDataFrame,
                               psms_test::AbstractDataFrame,
-                              #prob_test::Vector{Float32},
-                              #probs_for_mbr::Vector{Float32},
+                              prob_test::Vector{Float32},
                               test_fold_idxs,
                               itr::Int,
                               mbr_start_iter::Int,
                               max_q_value_xgboost_rescore::Float32)
-
     if itr >= mbr_start_iter - 1
-        # Use the pre-MBR snapshot if available; otherwise fall back to current prob
-        probs_view = (:mbr_prob in propertynames(psms_test)) ? psms_test.mbr_prob : psms_test.prob
-        # Ensure a concrete Float32 vector with no missings for get_qvalues!
-        probs_vec = eltype(probs_view) <: AbstractFloat ? Float32.(probs_view) : Float32.(coalesce.(probs_view, 0.0f0))
-        labels_vec = Vector{Bool}(psms_test.target)
-        get_qvalues!(probs_vec, labels_vec, psms_test.q_value)
+        get_qvalues!(psms_test.prob, psms_test.target, psms_test.q_value)
         summarize_precursors!(psms_test, q_cutoff = max_q_value_xgboost_rescore)
         summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
     end
-    
-    # On the boundary iteration, snapshot the pre-MBR probabilities FIRST
     if itr == mbr_start_iter - 1
-        psms_test[!, :mbr_prob] = copy(psms_test.prob)
-        psms_train[!, :mbr_prob] = copy(psms_train.prob)
+        prob_test[test_fold_idxs] = psms_test.prob
     end
 end
+
 
 function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01f0)
     # Compute pair specific features that rely on decoys and chromatograms
     pair_groups = collect(pairs(groupby(psms, [:pair_id, :isotopes_captured])))
     Threads.@threads for idx in eachindex(pair_groups)
         _, sub_psms = pair_groups[idx]
-        # Prefer pre-MBR snapshot if available; otherwise use current prob
-        prob_vec = (:mbr_prob in propertynames(sub_psms)) ? sub_psms.mbr_prob : sub_psms.prob
         
         # Efficient way to find the top 2 precursors so we can do MBR on the 
         # best precursor match that isn't itself. It's always one of the top 2.
@@ -550,7 +540,7 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
         best_p = fill(-Inf, range_len)
         for (i, run) in enumerate(sub_psms.ms_file_idx)
             idx = Int(run) - offset + 1
-            p = prob_vec[i]
+            p = sub_psms.prob[i]
             if p > best_p[idx]
                 best_p[idx] = p
                 best_i[idx] = i
@@ -604,7 +594,7 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_iRTs, sub_psms.irts[i])
             
             best_irt_at_apex = sub_psms.irts[best_idx][argmax(best_log2_weights)]
-            sub_psms.MBR_max_pair_prob[i] = prob_vec[best_idx]
+            sub_psms.MBR_max_pair_prob[i] = sub_psms.prob[best_idx]
             sub_psms.MBR_best_irt_diff[i] = abs(best_irt_at_apex - sub_psms.irts[i][argmax(sub_psms.weights[i])])
             sub_psms.MBR_rv_coefficient[i] = MBR_rv_coefficient(best_log2_weights_padded, best_iRTs_padded, weights_padded, iRTs_padded)
             sub_psms.MBR_log2_weight_ratio[i] = log2(sub_psms.weight[i] / sub_psms.weight[best_idx])
@@ -612,7 +602,6 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             sub_psms.MBR_is_best_decoy[i] = sub_psms.decoy[best_idx]
         end
     end
-
 end
 
 function initialize_prob_group_features!(
