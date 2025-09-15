@@ -308,7 +308,8 @@ function summarize_results!(
                 prob_col = apply_mbr_filter!(
                     merged_df,
                     params,
-                    getLibraryFdrScaleFactor(search_context))
+                    getLibraryFdrScaleFactor(search_context),
+                    getSpecLib(search_context))
             else
                 prob_col = :prob
             end
