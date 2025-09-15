@@ -81,7 +81,7 @@ function get_ftr!(scores::AbstractVector{U},
     target_cum = 0
     transfer_cum = 0
     for idx in order
-        target_cum += is_target[idx] ? 1 : 0
+        target_cum += 1  # Count ALL candidates at this threshold level
         transfer_cum += is_transfer_decoy[idx] ? 1 : 0
         ftrs[idx] = target_cum > 0 ? (transfer_cum / target_cum) : Inf
     end

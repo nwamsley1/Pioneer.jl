@@ -196,6 +196,14 @@ function apply_mbr_filter!(
         merged_df.decoy # D->D or T->D
     )
 
+    #=
+    bad_mask = candidate_mask .& (
+        coalesce.(merged_df.MBR_is_best_decoy, false) .| # Donor is decoy 
+        merged_df.decoy # Candidate is decoy 
+    merged_df[!,:pair_id] = []
+    )
+    =#
+
     # 3) compute threshold using the local bad_mask
     τ = get_ftr_threshold(
         merged_df.prob,

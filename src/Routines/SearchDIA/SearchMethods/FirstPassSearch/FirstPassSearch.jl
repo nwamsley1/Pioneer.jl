@@ -534,7 +534,7 @@ function summarize_results!(
     # Process precursors
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
 
-    if params.match_between_runs==true
+    if false==true#params.match_between_runs==true
         #######
         #Each target has a corresponding decoy and vice versa
         #Add the complement targets/decoys to the precursor dict 
