@@ -332,7 +332,8 @@ function train_xgboost_model_in_memory(
             :MBR_log2_weight_ratio, 
             :MBR_log2_explained_ratio,
             :MBR_rv_coefficient, 
-            :MBR_best_irt_diff
+            :MBR_best_irt_diff,
+            :MBR_is_missing
         ])
     end
     

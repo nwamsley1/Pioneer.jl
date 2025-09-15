@@ -52,6 +52,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     prob_test   = zeros(Float32, nrow(psms))  # final CV predictions
     prob_train  = zeros(Float32, nrow(psms))  # temporary, used during training
     MBR_estimates = zeros(Float32, nrow(psms)) # optional MBR layer
+    nonMBR_estimates  = zeros(Float32, nrow(psms)) # keep track of last nonMBR test scores
 
     unique_cv_folds = unique(psms[!, :cv_fold])
     models = Dict{UInt8, Vector{EvoTrees.EvoTree}}()
@@ -136,6 +137,10 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             prob_test[test_idx] = predict(bst, psms_test)
             psms_test[!,:prob] = prob_test[test_idx]
 
+            if itr == (mbr_start_iter - 1)
+			    nonMBR_estimates[test_idx] = prob_test[test_idx]
+            end
+
             if match_between_runs
                 update_mbr_features!(psms_train, psms_test, prob_test,
                                      test_idx, itr, mbr_start_iter,
@@ -160,13 +165,13 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
     if match_between_runs
         # Determine which precursors failed the q-value cutoff prior to MBR
-        qvals_prev = Vector{Float32}(undef, length(prob_test))
-        get_qvalues!(prob_test, psms.target, qvals_prev)
-        pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore)
-        prob_thresh = any(pass_mask) ? minimum(prob_test[pass_mask]) : typemax(Float32)
+        qvals_prev = Vector{Float32}(undef, length(nonMBR_estimates))
+        get_qvalues!(nonMBR_estimates, psms.target, qvals_prev)
+        pass_mask = (nonMBR_estimates .<= max_q_value_xgboost_rescore)
+        prob_thresh = any(pass_mask) ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
         # Label as transfer candidates only those failing the q-value cutoff but
         # whose best matched pair surpassed the passing probability threshold.
-        psms[!, :MBR_transfer_candidate] .= (prob_test .< prob_thresh) .&
+        psms[!, :MBR_transfer_candidate] .= .!pass_mask .&
                                             (psms.MBR_max_pair_prob .>= prob_thresh)
 
         # Use the final MBR probabilities for all precursors
@@ -565,12 +570,13 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
         end
 
         # Compute MBR features
+        num_runs_passing = length(sub_psms.ms_file_idx[sub_psms.q_value .<= q_cutoff])
         for i in 1:nrow(sub_psms)
-            sub_psms.MBR_num_runs[i] = length(unique(sub_psms.ms_file_idx[sub_psms.q_value .<= q_cutoff]))
+            sub_psms.MBR_num_runs[i] = num_runs_passing - (sub_psms.q_value[i] .<= q_cutoff)
 
             idx = Int(sub_psms.ms_file_idx[i]) - offset + 1
             best_idx = run_best_indices[idx]
-            if best_idx == 0
+            if best_idx == 0 || sub_psms.MBR_num_runs[i] == 0
                 sub_psms.MBR_best_irt_diff[i]           = -1.0f0
                 sub_psms.MBR_rv_coefficient[i]          = -1.0f0
                 sub_psms.MBR_is_best_decoy[i]           = true
