@@ -23,10 +23,10 @@ length and correspond element-wise to candidate precursor–run pairs.
 """
 function get_ftr_threshold(scores::AbstractVector{U},
                            is_target::AbstractVector{Bool},
-                           is_transfer_decoy::AbstractVector{Bool},
+                           is_bad_transfer::AbstractVector{Bool},
                            alpha::Real; doSort::Bool = true,
                            mask::Union{Nothing,AbstractVector{Bool}} = nothing) where {U<:Real}
-    @assert length(scores) == length(is_target) == length(is_transfer_decoy)
+    @assert length(scores) == length(is_target) == length(is_bad_transfer)
 
     if mask === nothing
         order = doSort ? sortperm(scores, rev=true, alg=QuickSort) : collect(eachindex(scores))
@@ -35,21 +35,21 @@ function get_ftr_threshold(scores::AbstractVector{U},
         order = doSort ? selected[sortperm(view(scores, selected), rev=true, alg=QuickSort)] : selected
     end
 
-    target_cum = 0
-    transfer_cum = 0
+    num_transfers = 0
+    num_bad_transfers = 0
     τ = maximum(scores)
     best_count = 0
     for idx in order
-        target_cum += 1
-        transfer_cum += is_transfer_decoy[idx] ? 1 : 0
+        num_transfers += 1
+        num_bad_transfers += is_bad_transfer[idx] ? 1 : 0
         
-        if target_cum > 0 && (transfer_cum / target_cum) <= alpha
+        if (num_transfers > 0) && ((num_bad_transfers / num_transfers) <= alpha)
             τ = scores[idx]
-            best_count = target_cum
+            best_count = num_transfers
         end
     end
 
-    #println(best_count, " ", τ, " ",  transfer_cum, " ",  target_cum, " ", transfer_cum / target_cum, " ", alpha, "\n\n")
+    println("FTR probability threshold: ", τ, " Num passing candidate transfers: ", best_count, " out of ", num_transfers, "\n\n")
 
     return τ
 end
