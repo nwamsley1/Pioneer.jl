@@ -376,11 +376,18 @@ function prepare_mbr_features(df::DataFrame)
         end
     end
     
-    # Add intercept column AFTER processing (so it doesn't get overwritten)
-    processed_df[!, :intercept] = ones(Float64, nrow(processed_df))
+    # Create result DataFrame with intercept FIRST (to match feature names order)
+    result_df = DataFrame()
+    result_df[!, :intercept] = ones(Float64, nrow(processed_df))
+    
+    # Add processed features in original order
+    feature_names = Symbol[:intercept]
+    for col in names(df)
+        result_df[!, col] = processed_df[!, col]
+        push!(feature_names, Symbol(col))
+    end
     
     # Remove zero-variance features (except intercept)
-    feature_names = Symbol[:intercept; Symbol.(names(df))]
     valid_features = Symbol[]
     valid_columns = String[]
     
@@ -390,8 +397,8 @@ function prepare_mbr_features(df::DataFrame)
             push!(valid_columns, "intercept")
         else
             col_name = string(feat)
-            if col_name in names(processed_df)
-                col_std = std(processed_df[!, col_name])
+            if col_name in names(result_df)
+                col_std = std(result_df[!, col_name])
                 if col_std > 1e-10  # Has variance
                     push!(valid_features, feat)
                     push!(valid_columns, col_name)
@@ -403,7 +410,7 @@ function prepare_mbr_features(df::DataFrame)
     end
     
     # Convert to Matrix for ML training (only valid columns)
-    return Matrix{Float64}(processed_df[:, valid_columns]), valid_features
+    return Matrix{Float64}(result_df[:, valid_columns]), valid_features
 end
 
 function train_mbr_filter_model(X::Matrix, y::AbstractVector{Bool}, feature_names::Vector{Symbol}, params)
