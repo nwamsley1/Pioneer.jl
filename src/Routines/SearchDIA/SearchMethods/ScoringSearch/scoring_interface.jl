@@ -247,6 +247,23 @@ function apply_ml_mbr_filter!(
     
     @user_info "ML MBR Training: $(nrow(training_data)) candidates, $(sum(y_train)) bad transfers ($(round(mean(y_train)*100, digits=1))%)"
     
+    # First compute threshold-based for comparison
+    τ_threshold = get_ftr_threshold(
+        training_data.prob,
+        training_data.target,
+        y_train,
+        params.max_MBR_false_transfer_rate;
+        mask = trues(length(y_train))
+    )
+    @user_info "Threshold-based method: τ = $(round(τ_threshold, digits=4))"
+    @user_info "  Would filter $(sum(training_data.prob .< τ_threshold))/$(nrow(training_data)) candidates"
+
+    # Show distribution of raw prob scores
+    @user_info "Raw prob scores of candidates:"
+    @user_info "  Range: [$(minimum(training_data.prob)), $(maximum(training_data.prob))]"
+    @user_info "  Bad transfers: mean prob = $(round(mean(training_data.prob[y_train]), digits=3))"
+    @user_info "  Good transfers: mean prob = $(round(mean(training_data.prob[.!y_train]), digits=3))"
+    
     # Feature selection and preprocessing
     feature_cols = select_mbr_features(training_data)
     X_train, all_feature_names = prepare_mbr_features(training_data[:, feature_cols])
@@ -397,6 +414,20 @@ function calibrate_ml_threshold(scores::AbstractVector, y_true::AbstractVector{B
     # Find threshold that achieves target false transfer rate
     # FTR = bad_transfers_flagged / total_flagged
     
+    @user_info "ML threshold calibration:"
+    @user_info "  Score distribution: [$(round(minimum(scores), digits=3)), $(round(maximum(scores), digits=3))]"
+    @user_info "  Unique scores: $(length(unique(scores)))"
+    @user_info "  Scores == 1.0: $(sum(scores .== 1.0))/$(length(scores))"
+
+    # Show FTR at different thresholds
+    test_thresholds = [0.5, 0.9, 0.99, 0.999, 1.0]
+    for test_τ in test_thresholds
+        n_flagged = sum(scores .>= test_τ)
+        n_bad = sum(scores[y_true] .>= test_τ)
+        ftr = n_flagged > 0 ? n_bad / n_flagged : 0.0
+        @user_info "  At τ=$test_τ: $(n_flagged) flagged, FTR=$(round(ftr, digits=3))"
+    end
+    
     if isempty(scores) || all(y_true .== false)
         @user_warn "No bad transfers in training data - using maximum score as threshold"
         return isempty(scores) ? 1.0 : maximum(scores)
@@ -438,6 +469,20 @@ function train_probit_mbr_model(X::Matrix, y::AbstractVector{Bool}, feature_name
     @user_info "Feature names: $feature_names"
     @user_info "Class balance: $(sum(y))/$(length(y)) positive ($(round(mean(y)*100, digits=1))%)"
     
+    # Describe features to check for problematic values
+    @user_info "Feature statistics for MBR ML training:"
+    for (i, feat) in enumerate(feature_names)
+        feat_data = X[:, i]
+        @user_info "  $feat: mean=$(round(mean(feat_data), digits=3)), std=$(round(std(feat_data), digits=3)), min=$(round(minimum(feat_data), digits=3)), max=$(round(maximum(feat_data), digits=3))"
+    end
+
+    # Check correlation with target
+    @user_info "Feature correlations with bad_transfer label:"
+    for (i, feat) in enumerate(feature_names)
+        correlation = cor(X[:, i], Float64.(y))
+        @user_info "  $feat: correlation = $(round(correlation, digits=3))"
+    end
+    
     # Initialize coefficients
     β = zeros(Float64, size(X, 2))
     
@@ -447,10 +492,20 @@ function train_probit_mbr_model(X::Matrix, y::AbstractVector{Bool}, feature_name
     chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
     data_chunks = Iterators.partition(1:M, chunk_size)
     
+    # Convert BitVector to Vector{Bool} for ProbitRegression compatibility
+    y_bool = convert(Vector{Bool}, y)
+    
     # Fit probit model using existing implementation (max_iter=30 as in FirstPassSearch)
-    β_fitted = ProbitRegression(β, X_df, y, data_chunks, max_iter=30)
+    β_fitted = ProbitRegression(β, X_df, y_bool, data_chunks, max_iter=30)
     
     @user_info "Probit coefficients fitted: $(round.(β_fitted, digits=4))"
+    
+    # Show which features have extreme coefficients
+    @user_info "Feature contributions (coef * mean):"
+    for (i, feat) in enumerate(feature_names)
+        contribution = β_fitted[i] * mean(X[:, i])
+        @user_info "  $feat: β=$(round(β_fitted[i], digits=3)), contribution=$(round(contribution, digits=3))"
+    end
     
     return β_fitted
 end
@@ -481,6 +536,16 @@ function predict_probit_mbr(β::Vector{Float64}, X::Matrix, feature_names::Vecto
         end
     end
     fetch.(tasks)
+    
+    # Check z-score distribution
+    @user_info "  Prediction diagnostics:"
+    @user_info "    Z-scores: min=$(round(minimum(scores), digits=3)), max=$(round(maximum(scores), digits=3)), mean=$(round(mean(scores), digits=3))"
+
+    # Check probability distribution  
+    @user_info "    Probabilities: min=$(round(minimum(probabilities), digits=3)), max=$(round(maximum(probabilities), digits=3))"
+    @user_info "    Probabilities == 0.0: $(sum(probabilities .== 0.0))/$(length(probabilities))"
+    @user_info "    Probabilities == 1.0: $(sum(probabilities .== 1.0))/$(length(probabilities))"
+    @user_info "    Probabilities > 0.99: $(sum(probabilities .> 0.99))/$(length(probabilities))"
     
     return probabilities
 end
