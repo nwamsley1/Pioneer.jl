@@ -171,7 +171,6 @@ function apply_mbr_filter!(
     merged_df::DataFrame,
     params,
     fdr_scale_factor::Float32,
-    spec_lib
 )
     n = nrow(merged_df)
     
@@ -190,73 +189,14 @@ function apply_mbr_filter!(
     )
     ##########################################
 
-    # 2) Ensure pair_id column exists
-    if :pair_id ∉ propertynames(merged_df)
-        # Prefer direct mapping from precursors if available
-        try
-            precs = getPrecursors(spec_lib)
-            pair_ids = getPairIdx(precs)
-            merged_df[!, :pair_id] = UInt32[pair_ids[pid] for pid in merged_df.precursor_idx]
-        catch
-            # As a last resort, set a neutral value to avoid crashing; downstream logic will no-op
-            @user_warn "pair_id not present in PSMs and could not be derived; disabling within-run target/decoy pair checks"
-            merged_df[!, :pair_id] = zeros(UInt32, nrow(merged_df))
-        end
-    end
-    # 3) identify bad transfers
+    # 2) identify bad transfers
     is_bad_transfer = candidate_mask .& (
         (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .| # T->D
+        # (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, false)) # D->T
         merged_df.decoy # D->D or T->D
     )
-    
-    # 4) Additional bad transfer detection: target-decoy pairs within runs
-    # If both target and decoy of same pair are transfer candidates in same run,
-    # and decoy has higher probability than target, mark target as bad
-    additional_bad_mask = falses(nrow(merged_df))
-    
-    # Group by run and pair_id to find target-decoy pairs within each run
-    candidates_df = merged_df[candidate_mask, :]
-    for group in groupby(candidates_df, [:ms_file_idx, :pair_id])
-        if nrow(group) >= 2  # Must have at least 2 candidates (target and decoy)
-            # Check if we have both target and decoy in this run for this pair
-            target_indices = findall(group.target .== true)
-            decoy_indices = findall(group.target .== false)
-            
-            if length(target_indices) >= 1 && length(decoy_indices) >= 1
-                # Find best target and best decoy within this group
-                best_target_idx = target_indices[argmax(group.prob[target_indices])]
-                best_decoy_idx = decoy_indices[argmax(group.prob[decoy_indices])]
-                
-                best_target_prob = group.prob[best_target_idx]
-                best_decoy_prob = group.prob[best_decoy_idx]
-                
-                # If decoy probability > target probability, mark target as bad
-                if best_decoy_prob > best_target_prob
-                    # Find the original index in merged_df for this target
-                    target_original_indices = findall(
-                        (merged_df.ms_file_idx .== group.ms_file_idx[best_target_idx]) .&
-                        (merged_df.pair_id .== group.pair_id[best_target_idx]) .&
-                        (merged_df.target .== true) .&
-                        (merged_df.precursor_idx .== group.precursor_idx[best_target_idx]) .&
-                        (merged_df.prob .== best_target_prob)
-                    )
-                    
-                    for idx in target_original_indices
-                        additional_bad_mask[idx] = true
-                    end
-                end
-            end
-        end
-    end
-    
-    # Combine with existing is_bad_transfer mask
-    is_bad_transfer = is_bad_transfer .| additional_bad_mask
-    n_additional_bad = sum(additional_bad_mask)
-    if n_additional_bad > 0
-        @user_info "Found $(n_additional_bad) additional bad transfers (targets with better decoy pairs in same run)"
-    end
 
-    # 5) compute threshold using the enhanced bad transfer mask
+    # 3) compute threshold using the local bad_mask
     τ = get_ftr_threshold(
         merged_df.prob,
         merged_df.target,
@@ -264,7 +204,9 @@ function apply_mbr_filter!(
         params.max_MBR_false_transfer_rate;
         mask = candidate_mask,
     )
-    # 6) one fused pass to clamp probs
+
+    @user_warn "τ is $τ at α = $(params.max_MBR_false_transfer_rate)"
+    # 4) one fused pass to clamp probs
     merged_df._filtered_prob = ifelse.(
         candidate_mask .& (merged_df.prob .< τ),
         0.0f0,
@@ -274,6 +216,7 @@ function apply_mbr_filter!(
     # if downstream code expects a Symbol for the prob-column
     return :_filtered_prob
 end
+
 
 """
     add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::Set)

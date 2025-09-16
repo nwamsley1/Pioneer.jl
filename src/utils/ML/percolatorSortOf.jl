@@ -523,7 +523,6 @@ function update_mbr_features!(psms_train::AbstractDataFrame,
     end
 end
 
-
 function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01f0)
     # Compute pair specific features that rely on decoys and chromatograms
     pair_groups = collect(pairs(groupby(psms, [:pair_id, :isotopes_captured])))
