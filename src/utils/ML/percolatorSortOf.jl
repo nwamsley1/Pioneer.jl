@@ -72,6 +72,24 @@ function assign_random_target_decoy_pairs!(psms::DataFrame)
     # 5. Report pairing statistics
     report_pairing_statistics(psms)
     
+    # 6. Assign unique pair_id values to unpaired PSMs to prevent downstream errors
+    unpaired_mask = psms.pair_id .== 0
+    n_unpaired = sum(unpaired_mask)
+    
+    if n_unpaired > 0
+        @info "Assigning unique pair_id values to $n_unpaired unpaired PSMs"
+        max_pair_id = length(pairings) > 0 ? maximum(psms.pair_id[psms.pair_id .> 0]) : UInt32(0)
+        
+        # Group unpaired PSMs by precursor_idx and assign unique pair_ids
+        unpaired_precursors = unique(psms.precursor_idx[unpaired_mask])
+        for (i, precursor_idx) in enumerate(unpaired_precursors)
+            precursor_mask = (psms.precursor_idx .== precursor_idx) .& unpaired_mask
+            psms.pair_id[precursor_mask] .= max_pair_id + UInt32(i)
+        end
+        
+        @info "Assigned unique pair_ids $(max_pair_id + 1) to $(max_pair_id + length(unpaired_precursors)) for unpaired precursors"
+    end
+    
     return psms
 end
 
@@ -312,9 +330,8 @@ function handle_cross_bin_overflow(unpaired_targets_by_bin::Vector{Vector{UInt32
 end
 
 function assign_pair_indices!(psms::DataFrame, pairings::Vector{Tuple{UInt32, UInt32}})
-    # Initialize pair_id column with missing values (proper type handling)
-    psms[!, :pair_id] = Vector{Union{Missing, UInt32}}(undef, nrow(psms))
-    fill!(psms.pair_id, missing)
+    # Initialize pair_id column with zeros (will be updated later for unpaired)
+    psms[!, :pair_id] = zeros(UInt32, nrow(psms))
     
     # Assign pair_id for each target-decoy pair
     for (pair_id, (target_precursor, decoy_precursor)) in enumerate(pairings)
@@ -329,12 +346,12 @@ function assign_pair_indices!(psms::DataFrame, pairings::Vector{Tuple{UInt32, UI
 end
 
 function report_pairing_statistics(psms::DataFrame)
-    # Count paired vs unpaired rows
-    paired_mask = .!ismissing.(psms.pair_id)
+    # Count paired vs unpaired rows (before final assignment)
+    paired_mask = psms.pair_id .> 0
     n_paired = sum(paired_mask)
     n_unpaired = sum(.!paired_mask)
     
-    @info "Pairing complete: $n_paired PSMs paired, $n_unpaired PSMs unpaired"
+    @info "Initial pairing: $n_paired PSMs paired, $n_unpaired PSMs unpaired"
     
     # Count by target/decoy
     paired_targets = sum(paired_mask .& psms.target)
@@ -345,12 +362,12 @@ function report_pairing_statistics(psms::DataFrame)
     @info "Targets: $paired_targets paired, $unpaired_targets unpaired"
     @info "Decoys: $paired_decoys paired, $unpaired_decoys unpaired"
     
-    # Validate pairing balance
+    # Validate pairing balance (only for paired PSMs)
     validate_pairing_balance(psms)
 end
 
 function validate_pairing_balance(psms::DataFrame)
-    paired_psms = psms[.!ismissing.(psms.pair_id), :]
+    paired_psms = psms[psms.pair_id .> 0, :]
     
     if nrow(paired_psms) == 0
         @warn "No paired PSMs found"
