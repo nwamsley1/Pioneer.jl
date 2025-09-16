@@ -15,6 +15,347 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+#############################################################################
+# Target-Decoy Pairing Implementation
+#############################################################################
+
+const PAIRING_RANDOM_SEED = 1844  # Fixed seed for reproducible pairing
+const TARGET_PRECURSORS_PER_BIN = 1000  # Target number of precursors per iRT bin
+
+function assign_random_target_decoy_pairs!(psms::DataFrame)
+    @info "Starting iRT-stratified target-decoy pairing..."
+    
+    # Set random seed for reproducibility
+    Random.seed!(PAIRING_RANDOM_SEED)
+    
+    # 1. Create iRT bins
+    irt_bins = create_irt_bins(psms)
+    @info "Created $(length(irt_bins)) iRT bins"
+    
+    # 2. Extract unique precursors with their iRT values
+    target_precursors = get_unique_precursors_with_irt(psms, true)
+    decoy_precursors = get_unique_precursors_with_irt(psms, false)
+    
+    @info "Found $(length(target_precursors)) unique targets, $(length(decoy_precursors)) unique decoys"
+    
+    # 3. Create stratified random pairings within iRT bins
+    pairings = create_stratified_pairings(target_precursors, decoy_precursors, irt_bins)
+    
+    @info "Created $(length(pairings)) target-decoy pairs across iRT bins"
+    
+    # 4. Add pair_idx column and assign values
+    assign_pair_indices!(psms, pairings)
+    
+    # 5. Report pairing statistics
+    report_pairing_statistics(psms)
+    
+    return psms
+end
+
+function get_unique_precursors_with_irt(psms::DataFrame, is_target::Bool)
+    mask = psms.target .== is_target
+    precursor_irt_pairs = unique([(row.precursor_idx, row.irt) for row in eachrow(psms[mask, [:precursor_idx, :irt]])])
+    return precursor_irt_pairs
+end
+
+function create_irt_bins(psms::DataFrame)
+    # Get all target precursors with their iRT values
+    target_precursors = get_unique_precursors_with_irt(psms, true)
+    n_targets = length(target_precursors)
+    
+    if n_targets < TARGET_PRECURSORS_PER_BIN
+        @info "Only $n_targets targets available, using single iRT bin"
+        return [(-Inf, Inf)]  # Single bin containing all
+    end
+    
+    # Calculate number of bins needed
+    n_bins = max(1, div(n_targets, TARGET_PRECURSORS_PER_BIN))
+    
+    # Sort targets by iRT and determine bin boundaries
+    sorted_irts = sort([irt for (_, irt) in target_precursors])
+    
+    # Create bin boundaries at quantiles
+    bin_edges = Vector{Float64}(undef, n_bins + 1)
+    bin_edges[1] = -Inf
+    bin_edges[end] = Inf
+    
+    for i in 2:n_bins
+        quantile_pos = (i - 1) / n_bins
+        idx = max(1, min(length(sorted_irts), round(Int, quantile_pos * length(sorted_irts))))
+        bin_edges[i] = sorted_irts[idx]
+    end
+    
+    # Convert to (min, max) tuples
+    bins = [(bin_edges[i], bin_edges[i+1]) for i in 1:n_bins]
+    
+    @info "Created $n_bins iRT bins with ~$(div(n_targets, n_bins)) targets per bin"
+    return bins
+end
+
+function create_stratified_pairings(target_precursors::Vector{Tuple{UInt32, Float64}}, 
+                                   decoy_precursors::Vector{Tuple{UInt32, Float64}}, 
+                                   irt_bins::Vector{Tuple{Float64, Float64}})
+    n_targets = length(target_precursors)
+    n_decoys = length(decoy_precursors)
+    
+    if n_targets == 0 || n_decoys == 0
+        @warn "No target-decoy pairs possible (one set is empty)"
+        return Tuple{UInt32, UInt32}[]
+    end
+    
+    # Pre-allocate result array
+    all_pairings = Vector{Tuple{UInt32, UInt32}}()
+    sizehint!(all_pairings, min(n_targets, n_decoys))
+    
+    # Assign precursors to bins
+    target_bins = assign_precursors_to_bins(target_precursors, irt_bins)
+    decoy_bins = assign_precursors_to_bins(decoy_precursors, irt_bins)
+    
+    # Determine global pairing strategy
+    minority_is_target = n_targets <= n_decoys
+    @info "Pairing strategy: Each $(minority_is_target ? "target" : "decoy") paired with random $(minority_is_target ? "decoy" : "target") within iRT bins"
+    
+    # Track unpaired precursors per bin for smart overflow handling
+    unpaired_targets_by_bin = Vector{Vector{UInt32}}(undef, length(irt_bins))
+    unpaired_decoys_by_bin = Vector{Vector{UInt32}}(undef, length(irt_bins))
+    
+    # Diagnostic counters
+    bins_with_excess_targets = 0
+    bins_with_excess_decoys = 0
+    
+    # Pair within each bin
+    for (bin_idx, (min_irt, max_irt)) in enumerate(irt_bins)
+        bin_targets = get(target_bins, bin_idx, UInt32[])
+        bin_decoys = get(decoy_bins, bin_idx, UInt32[])
+        
+        @info "Bin $bin_idx analysis: $(length(bin_targets)) targets, $(length(bin_decoys)) decoys (iRT: $(round(min_irt, digits=2)) - $(round(max_irt, digits=2)))"
+        
+        # Diagnose bin imbalance
+        if length(bin_targets) > length(bin_decoys)
+            bins_with_excess_targets += 1
+            @info "  → Excess targets in bin $bin_idx: $(length(bin_targets) - length(bin_decoys)) targets will remain unpaired"
+        elseif length(bin_decoys) > length(bin_targets)
+            bins_with_excess_decoys += 1
+            @info "  → Excess decoys in bin $bin_idx: $(length(bin_decoys) - length(bin_targets)) decoys need pairing with targets from other bins"
+        end
+        
+        bin_pairings, unpaired_t, unpaired_d = pair_within_bin(bin_targets, bin_decoys)
+        append!(all_pairings, bin_pairings)
+        
+        unpaired_targets_by_bin[bin_idx] = unpaired_t
+        unpaired_decoys_by_bin[bin_idx] = unpaired_d
+        
+        @info "  → Bin $bin_idx result: $(length(bin_pairings)) pairs, $(length(unpaired_t)) unpaired targets, $(length(unpaired_d)) unpaired decoys"
+    end
+    
+    @info "Bin summary: $bins_with_excess_targets bins with excess targets, $bins_with_excess_decoys bins with excess decoys"
+    
+    # Handle overflow pairing: prioritize pairing excess decoys with nearby unpaired targets
+    overflow_pairings = handle_cross_bin_overflow(unpaired_targets_by_bin, unpaired_decoys_by_bin, irt_bins)
+    append!(all_pairings, overflow_pairings)
+    
+    if length(overflow_pairings) > 0
+        @info "Overflow pairing across bins: $(length(overflow_pairings)) additional pairs"
+    end
+    
+    total_unpaired = (minority_is_target ? length(unpaired_decoys_by_bin) : length(unpaired_targets_by_bin)) - length(overflow_pairings)
+    @info "Final result: $(length(all_pairings)) total pairs, $total_unpaired unpaired precursors"
+    
+    return all_pairings
+end
+
+function assign_precursors_to_bins(precursors::Vector{Tuple{UInt32, Float64}}, 
+                                 irt_bins::Vector{Tuple{Float64, Float64}})
+    bin_assignments = Dict{Int, Vector{UInt32}}()
+    
+    # Pre-allocate bin vectors
+    for i in 1:length(irt_bins)
+        bin_assignments[i] = Vector{UInt32}()
+    end
+    
+    for (precursor_idx, irt_val) in precursors
+        # Find which bin this precursor belongs to
+        bin_idx = findfirst(((min_irt, max_irt),) -> min_irt <= irt_val < max_irt, irt_bins)
+        
+        if bin_idx === nothing
+            # Handle edge case - assign to last bin if >= max value
+            bin_idx = length(irt_bins)
+        end
+        
+        push!(bin_assignments[bin_idx], precursor_idx)
+    end
+    
+    return bin_assignments
+end
+
+function pair_within_bin(targets::Vector{UInt32}, decoys::Vector{UInt32})
+    n_targets = length(targets)
+    n_decoys = length(decoys)
+    
+    if n_targets == 0 || n_decoys == 0
+        return Tuple{UInt32, UInt32}[], targets, decoys
+    end
+    
+    # Always try to pair as many as possible within bin
+    n_pairs = min(n_targets, n_decoys)
+    
+    # Use randperm for efficient random selection without copying full arrays
+    target_indices = randperm(n_targets)
+    decoy_indices = randperm(n_decoys)
+    
+    # Create pairings
+    pairings = [(targets[target_indices[i]], decoys[decoy_indices[i]]) for i in 1:n_pairs]
+    
+    # Determine unpaired precursors
+    unpaired_targets = targets[target_indices[(n_pairs+1):end]]
+    unpaired_decoys = decoys[decoy_indices[(n_pairs+1):end]]
+    
+    return pairings, unpaired_targets, unpaired_decoys
+end
+
+function handle_cross_bin_overflow(unpaired_targets_by_bin::Vector{Vector{UInt32}}, 
+                                  unpaired_decoys_by_bin::Vector{Vector{UInt32}},
+                                  irt_bins::Vector{Tuple{Float64, Float64}})
+    cross_bin_pairings = Vector{Tuple{UInt32, UInt32}}()
+    n_bins = length(irt_bins)
+    
+    # Priority: pair excess decoys with unpaired targets in nearby bins
+    for bin_idx in 1:n_bins
+        excess_decoys = unpaired_decoys_by_bin[bin_idx]
+        
+        if isempty(excess_decoys)
+            continue
+        end
+        
+        @info "Processing $(length(excess_decoys)) excess decoys from bin $bin_idx"
+        
+        # Find unpaired targets in nearby bins (search outward from current bin)
+        for distance in 0:(n_bins-1)
+            if isempty(excess_decoys)
+                break
+            end
+            
+            # Check bins at this distance
+            nearby_bins = Int[]
+            if distance == 0
+                push!(nearby_bins, bin_idx)
+            else
+                # Add bins at +/- distance
+                if bin_idx - distance >= 1
+                    push!(nearby_bins, bin_idx - distance)
+                end
+                if bin_idx + distance <= n_bins
+                    push!(nearby_bins, bin_idx + distance)
+                end
+            end
+            
+            for target_bin_idx in nearby_bins
+                if isempty(excess_decoys)
+                    break
+                end
+                
+                available_targets = unpaired_targets_by_bin[target_bin_idx]
+                if isempty(available_targets)
+                    continue
+                end
+                
+                # Pair as many as possible
+                n_pairs = min(length(excess_decoys), length(available_targets))
+                
+                if n_pairs > 0
+                    @info "  → Cross-bin pairing: $(n_pairs) decoys from bin $bin_idx with targets from bin $target_bin_idx (distance: $distance)"
+                    
+                    # Use randperm for random selection
+                    decoy_indices = randperm(length(excess_decoys))[1:n_pairs]
+                    target_indices = randperm(length(available_targets))[1:n_pairs]
+                    
+                    for i in 1:n_pairs
+                        push!(cross_bin_pairings, (available_targets[target_indices[i]], excess_decoys[decoy_indices[i]]))
+                    end
+                    
+                    # Remove paired precursors
+                    excess_decoys = excess_decoys[setdiff(1:length(excess_decoys), decoy_indices)]
+                    unpaired_targets_by_bin[target_bin_idx] = available_targets[setdiff(1:length(available_targets), target_indices)]
+                end
+            end
+        end
+        
+        if !isempty(excess_decoys)
+            @info "  → Warning: $(length(excess_decoys)) decoys from bin $bin_idx could not be paired (no available targets)"
+        end
+    end
+    
+    return cross_bin_pairings
+end
+
+function assign_pair_indices!(psms::DataFrame, pairings::Vector{Tuple{UInt32, UInt32}})
+    # Initialize pair_id column with missing values (proper type handling)
+    psms[!, :pair_id] = Vector{Union{Missing, UInt32}}(undef, nrow(psms))
+    fill!(psms.pair_id, missing)
+    
+    # Assign pair_id for each target-decoy pair
+    for (pair_id, (target_precursor, decoy_precursor)) in enumerate(pairings)
+        # All instances of this target precursor get this pair_id
+        target_mask = (psms.precursor_idx .== target_precursor) .& (psms.target .== true)
+        psms.pair_id[target_mask] .= UInt32(pair_id)
+        
+        # All instances of this decoy precursor get this pair_id  
+        decoy_mask = (psms.precursor_idx .== decoy_precursor) .& (psms.target .== false)
+        psms.pair_id[decoy_mask] .= UInt32(pair_id)
+    end
+end
+
+function report_pairing_statistics(psms::DataFrame)
+    # Count paired vs unpaired rows
+    paired_mask = .!ismissing.(psms.pair_id)
+    n_paired = sum(paired_mask)
+    n_unpaired = sum(.!paired_mask)
+    
+    @info "Pairing complete: $n_paired PSMs paired, $n_unpaired PSMs unpaired"
+    
+    # Count by target/decoy
+    paired_targets = sum(paired_mask .& psms.target)
+    paired_decoys = sum(paired_mask .& .!psms.target)
+    unpaired_targets = sum(.!paired_mask .& psms.target)
+    unpaired_decoys = sum(.!paired_mask .& .!psms.target)
+    
+    @info "Targets: $paired_targets paired, $unpaired_targets unpaired"
+    @info "Decoys: $paired_decoys paired, $unpaired_decoys unpaired"
+    
+    # Validate pairing balance
+    validate_pairing_balance(psms)
+end
+
+function validate_pairing_balance(psms::DataFrame)
+    paired_psms = psms[.!ismissing.(psms.pair_id), :]
+    
+    if nrow(paired_psms) == 0
+        @warn "No paired PSMs found"
+        return
+    end
+    
+    # Count targets and decoys for each pair_id
+    pair_counts = combine(groupby(paired_psms, :pair_id)) do group
+        (
+            n_targets = sum(group.target),
+            n_decoys = sum(.!group.target),
+            target_precursors = length(unique(group.precursor_idx[group.target])),
+            decoy_precursors = length(unique(group.precursor_idx[.!group.target]))
+        )
+    end
+    
+    @info "Validation: $(nrow(pair_counts)) pairs created"
+    
+    # Check for 1:1 precursor pairing
+    invalid_pairs = pair_counts[(pair_counts.target_precursors .!= 1) .| (pair_counts.decoy_precursors .!= 1), :]
+    if nrow(invalid_pairs) > 0
+        @error "Invalid pairing detected: some pairs don't have exactly 1 target and 1 decoy precursor"
+        println(invalid_pairs)
+    else
+        @info "✓ All pairs have exactly 1 target and 1 decoy precursor"
+    end
+end
+
 function sort_of_percolator_in_memory!(psms::DataFrame, 
                   features::Vector{Symbol},
                   match_between_runs::Bool = true;
@@ -32,9 +373,11 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   show_progress::Bool = true,
                   verbose_logging::Bool = false)
 
+    # Apply random target-decoy pairing before ML training
+    assign_random_target_decoy_pairs!(psms)
     
-    #Faster if sorted first
-    sort!(psms, [:pair_id, :isotopes_captured])
+    #Faster if sorted first (handle missing pair_id values)
+    sort!(psms, [:pair_id, :isotopes_captured], lt=isless)
     # Display target/decoy/entrapment counts for training dataset
     if verbose_logging
         n_targets = sum(psms.target)
@@ -167,7 +510,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         # Determine which precursors failed the q-value cutoff prior to MBR
         qvals_prev = Vector{Float32}(undef, length(nonMBR_estimates))
         get_qvalues!(nonMBR_estimates, psms.target, qvals_prev)
-        pass_mask = (nonMBR_estimates .<= max_q_value_xgboost_rescore)
+        pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore)
         prob_thresh = any(pass_mask) ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
         # Label as transfer candidates only those failing the q-value cutoff but
         # whose best matched pair surpassed the passing probability threshold.
