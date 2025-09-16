@@ -348,7 +348,7 @@ function select_mbr_features(df::DataFrame)
 end
 
 function prepare_mbr_features(df::DataFrame)
-    # Handle missing values first, then add intercept
+    # Handle missing values in DataFrame copy
     processed_df = copy(df)
     
     # Validate probability values
@@ -376,41 +376,37 @@ function prepare_mbr_features(df::DataFrame)
         end
     end
     
-    # Create result DataFrame with intercept FIRST (to match feature names order)
-    result_df = DataFrame()
-    result_df[!, :intercept] = ones(Float64, nrow(processed_df))
+    # Build feature matrix with explicit column control
+    n_rows = nrow(processed_df)
+    feature_cols = Vector{Float64}[]
+    feature_names = Symbol[]
     
-    # Add processed features in original order
-    feature_names = Symbol[:intercept]
-    for col in names(df)
-        result_df[!, col] = processed_df[!, col]
-        push!(feature_names, Symbol(col))
-    end
+    # Add intercept first (always)
+    push!(feature_cols, ones(Float64, n_rows))
+    push!(feature_names, :intercept)
     
-    # Remove zero-variance features (except intercept)
-    valid_features = Symbol[]
-    valid_columns = String[]
-    
-    for feat in feature_names
-        if feat == :intercept
-            push!(valid_features, feat)
-            push!(valid_columns, "intercept")
+    # Add other features in DataFrame column order, filtering zero-variance
+    for col in names(processed_df)
+        col_vec = Vector{Float64}(processed_df[!, col])
+        col_std = std(col_vec)
+        if col_std > 1e-10  # Has variance
+            push!(feature_cols, col_vec)
+            push!(feature_names, Symbol(col))
         else
-            col_name = string(feat)
-            if col_name in names(result_df)
-                col_std = std(result_df[!, col_name])
-                if col_std > 1e-10  # Has variance
-                    push!(valid_features, feat)
-                    push!(valid_columns, col_name)
-                else
-                    @user_warn "Removing zero-variance feature: $feat (std=$col_std)"
-                end
-            end
+            @user_warn "Removing zero-variance feature: $col (std=$col_std)"
         end
     end
     
-    # Convert to Matrix for ML training (only valid columns)
-    return Matrix{Float64}(result_df[:, valid_columns]), valid_features
+    # Build matrix by concatenating columns (guarantees order)
+    X = hcat(feature_cols...)
+    
+    # Diagnostic output
+    @user_info "Feature matrix construction:"
+    @user_info "  Original DataFrame columns: $(names(df))"
+    @user_info "  Final feature names: $feature_names"
+    @user_info "  Matrix size: $(size(X))"
+    
+    return X, feature_names
 end
 
 function train_mbr_filter_model(X::Matrix, y::AbstractVector{Bool}, feature_names::Vector{Symbol}, params)
