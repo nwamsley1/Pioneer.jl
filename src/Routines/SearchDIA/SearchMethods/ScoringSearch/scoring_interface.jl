@@ -348,12 +348,18 @@ function select_mbr_features(df::DataFrame)
 end
 
 function prepare_mbr_features(df::DataFrame)
-    # Handle missing values and add intercept
+    # Handle missing values first, then add intercept
     processed_df = copy(df)
     
-    # Add intercept column (constant 1.0 for all rows)
-    processed_df[!, :intercept] = ones(Float64, nrow(processed_df))
+    # Validate probability values
+    if :prob in names(processed_df)
+        invalid_probs = sum(processed_df.prob .> 1.0)
+        if invalid_probs > 0
+            @user_warn "Found $invalid_probs prob values exceeding 1.0 (max: $(maximum(processed_df.prob)))"
+        end
+    end
     
+    # Process original columns (handle missing values)
     for col in names(processed_df)
         col_data = processed_df[!, col]
         
@@ -370,8 +376,34 @@ function prepare_mbr_features(df::DataFrame)
         end
     end
     
-    # Convert to Matrix for ML training
-    return Matrix{Float64}(processed_df), Symbol[:intercept; Symbol.(names(df))]
+    # Add intercept column AFTER processing (so it doesn't get overwritten)
+    processed_df[!, :intercept] = ones(Float64, nrow(processed_df))
+    
+    # Remove zero-variance features (except intercept)
+    feature_names = Symbol[:intercept; Symbol.(names(df))]
+    valid_features = Symbol[]
+    valid_columns = String[]
+    
+    for feat in feature_names
+        if feat == :intercept
+            push!(valid_features, feat)
+            push!(valid_columns, "intercept")
+        else
+            col_name = string(feat)
+            if col_name in names(processed_df)
+                col_std = std(processed_df[!, col_name])
+                if col_std > 1e-10  # Has variance
+                    push!(valid_features, feat)
+                    push!(valid_columns, col_name)
+                else
+                    @user_warn "Removing zero-variance feature: $feat (std=$col_std)"
+                end
+            end
+        end
+    end
+    
+    # Convert to Matrix for ML training (only valid columns)
+    return Matrix{Float64}(processed_df[:, valid_columns]), valid_features
 end
 
 function train_mbr_filter_model(X::Matrix, y::AbstractVector{Bool}, feature_names::Vector{Symbol}, params)
