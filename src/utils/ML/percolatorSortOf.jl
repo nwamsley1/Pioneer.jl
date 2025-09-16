@@ -32,7 +32,7 @@ set (targets or decoys) are randomly paired with precursors from the larger set 
 Excess decoys are paired with unpaired targets from nearby bins using cross-bin overflow handling.
 
 # Arguments
-- `psms::DataFrame`: PSM data with columns: precursor_idx, target, irt, isotopes_captured, pair_id
+- `psms::DataFrame`: PSM data with columns: precursor_idx, target, irts, isotopes_captured, pair_id
 
 # Algorithm
 1. Creates iRT bins with ~1000 targets per bin for stratified pairing
@@ -95,8 +95,18 @@ end
 
 function get_unique_precursors_with_irt(psms::DataFrame, is_target::Bool)
     mask = psms.target .== is_target
-    precursor_irt_pairs = unique([(row.precursor_idx, row.irt) for row in eachrow(psms[mask, [:precursor_idx, :irt]])])
-    return precursor_irt_pairs
+    
+    # Group by precursor_idx and take first iRT value (they should all be the same for a given precursor)
+    precursor_groups = groupby(psms[mask, [:precursor_idx, :irts]], :precursor_idx)
+    
+    precursor_irt_map = Tuple{UInt32, Float64}[]
+    for group in precursor_groups
+        precursor_idx = group.precursor_idx[1]
+        irt_value = group.irts[1]  # Take first iRT value for this precursor
+        push!(precursor_irt_map, (precursor_idx, irt_value))
+    end
+    
+    return precursor_irt_map
 end
 
 function create_irt_bins(psms::DataFrame)
