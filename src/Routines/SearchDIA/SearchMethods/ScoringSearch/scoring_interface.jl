@@ -203,7 +203,6 @@ function apply_mbr_filter!(
             merged_df[!, :pair_id] = zeros(UInt32, nrow(merged_df))
         end
     end
-    
     # 3) identify bad transfers
     is_bad_transfer = candidate_mask .& (
         (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .| # T->D
