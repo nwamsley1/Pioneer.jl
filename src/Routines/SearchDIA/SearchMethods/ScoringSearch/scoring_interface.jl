@@ -172,28 +172,14 @@ function apply_mbr_filter!(
     params,
     fdr_scale_factor::Float32,
 )
-    n = nrow(merged_df)
-    
-    # 1) compute q-values only for non-transfer candidates
+    # 1) identify transfer candidates
     candidate_mask = merged_df.MBR_transfer_candidate
-
-    ##########################################
-    # TODO This section might not be needed anymore
-    non_mbr_mask = .!candidate_mask
-    trace_qval = Vector{Float32}(undef, n)
-    get_qvalues!(
-        merged_df.prob[non_mbr_mask],
-        merged_df.target[non_mbr_mask],
-        trace_qval[non_mbr_mask];
-        fdr_scale_factor = fdr_scale_factor,
-    )
-    ##########################################
 
     # 2) identify bad transfers
     is_bad_transfer = candidate_mask .& (
-        (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .| # T->D
-        # (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, false)) # D->T
-        merged_df.decoy # D->D or T->D
+         (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .| # T->D
+         (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, false)) # D->T
+        #merged_df.decoy # D->D or T->D
     )
 
     # 3) compute threshold using the local bad_mask
