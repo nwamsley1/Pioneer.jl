@@ -189,7 +189,7 @@ function apply_mbr_filter!(
     end
     
     # NEW: ML-based filtering
-    MIN_MBR_CANDIDATES_FOR_ML = 20000  # Hardcoded threshold
+    MIN_MBR_CANDIDATES_FOR_ML = 0#20000  # Hardcoded threshold
     n_candidates = sum(candidate_mask)
     
     if n_candidates >= MIN_MBR_CANDIDATES_FOR_ML
@@ -354,7 +354,7 @@ function prepare_mbr_features(df::DataFrame)
     end
     
     # Convert to Matrix for ML training
-    return Matrix{Float64}(processed_df), [:intercept; names(df)]
+    return Matrix{Float64}(processed_df), Symbol[:intercept; Symbol.(names(df))]
 end
 
 function train_mbr_filter_model(X::Matrix, y::AbstractVector{Bool}, feature_names::Vector{Symbol}, params)
@@ -476,7 +476,7 @@ function predict_probit_mbr(β::Vector{Float64}, X::Matrix, feature_names::Vecto
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin
             for i in chunk
-                probabilities[i] = (1 + SpecialFunctions.erf(scores[i]/sqrt(2)))/2
+                probabilities[i] = (1 + Pioneer.SpecialFunctions.erf(scores[i]/sqrt(2)))/2
             end
         end
     end
