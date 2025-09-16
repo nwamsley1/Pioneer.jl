@@ -180,6 +180,7 @@ function select_psm_scoring_model(
                     best_model_config = config
                 end
             catch e
+                throw(e)
                 @user_warn "Failed to train $(config.name):"
                 # Show error type and message without data
                 if isa(e, MethodError)
