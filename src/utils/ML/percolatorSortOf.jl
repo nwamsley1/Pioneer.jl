@@ -22,6 +22,29 @@
 const PAIRING_RANDOM_SEED = 1844  # Fixed seed for reproducible pairing
 const TARGET_PRECURSORS_PER_BIN = 1000  # Target number of precursors per iRT bin
 
+"""
+    assign_random_target_decoy_pairs!(psms::DataFrame)
+
+Assigns random target-decoy pairings within iRT bins to PSMs, overriding library-based pair_id values.
+
+This function implements a minority-to-majority pairing strategy where precursors from the smaller 
+set (targets or decoys) are randomly paired with precursors from the larger set within iRT bins.
+Excess decoys are paired with unpaired targets from nearby bins using cross-bin overflow handling.
+
+# Arguments
+- `psms::DataFrame`: PSM data with columns: precursor_idx, target, irt, isotopes_captured, pair_id
+
+# Algorithm
+1. Creates iRT bins with ~1000 targets per bin for stratified pairing
+2. Randomly pairs targets/decoys within bins (minority gets 100% pairing)
+3. Handles overflow by pairing excess decoys with nearby unpaired targets
+4. Updates pair_id column with new assignments (missing for unpaired)
+5. Validates 1:1 precursor relationships with comprehensive diagnostics
+
+# Returns
+- Modifies psms DataFrame in-place by updating the pair_id column
+- Uses fixed random seed (1844) for reproducible results
+"""
 function assign_random_target_decoy_pairs!(psms::DataFrame)
     @info "Starting iRT-stratified target-decoy pairing..."
     
@@ -377,7 +400,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     assign_random_target_decoy_pairs!(psms)
     
     #Faster if sorted first (handle missing pair_id values)
-    sort!(psms, [:pair_id, :isotopes_captured], lt=isless)
+    sort!(psms, [:pair_id, :isotopes_captured])
     # Display target/decoy/entrapment counts for training dataset
     if verbose_logging
         n_targets = sum(psms.target)
