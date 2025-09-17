@@ -25,7 +25,6 @@ using Pioneer: MBRFilterMethod, ThresholdFilter, ProbitFilter, XGBoostFilter
 using Pioneer: FilterResult, train_and_evaluate, apply_filtering
 using Pioneer: select_mbr_features, prepare_mbr_features, logodds
 using Pioneer: ProbitRegression, ModelPredict!
-using EvoTrees
 
 
 @testset "Scoring Interface Tests" begin

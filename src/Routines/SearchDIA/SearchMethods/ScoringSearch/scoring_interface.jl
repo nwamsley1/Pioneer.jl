@@ -58,8 +58,7 @@ function apply_mbr_filter!(
     
     n_candidates = length(candidate_labels)
     n_bad = sum(candidate_labels)
-    @user_info "MBR Filtering: $n_candidates candidates, $n_bad bad transfers ($(round(100*n_bad/n_candidates, digits=1))%)"
-    
+
     # Test all methods and store results
     methods = [ThresholdFilter(), ProbitFilter(), XGBoostFilter()]
     results = FilterResult[]
@@ -323,20 +322,7 @@ function train_xgboost_model_df(feature_data::DataFrame, y::AbstractVector{Bool}
     )
 
     # Train model directly with DataFrame (no Matrix conversion)
-    model = EvoTrees.fit_evotree(config, training_df; target_name=:target)
-
-    # Print feature importances for MBR XGBoost model
-    try
-        importances = EvoTrees.importance(model)
-        @user_info "MBR XGBoost Feature Importances ($(length(importances)) features):"
-        for i in 1:10:length(importances)
-            chunk = importances[i:min(i+9, end)]
-            feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
-            @user_info "  " * join(feat_strs, " | ")
-        end
-    catch e
-        @user_warn "Could not extract feature importances: $e"
-    end
+    model = EvoTrees.fit(config, training_df; target_name=:target)
 
     return model
 end
