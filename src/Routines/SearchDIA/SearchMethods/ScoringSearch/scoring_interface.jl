@@ -235,48 +235,21 @@ function apply_threshold_mbr_filter!(
     return filtered_probs
 end
 
-function apply_ml_mbr_filter!(
-    merged_df::DataFrame,
-    candidate_mask::AbstractVector{Bool},
-    is_bad_transfer::AbstractVector{Bool},
-    params
-)
-    # Extract training data (only candidates)
-    training_data = merged_df[candidate_mask, :]
-    y_train = is_bad_transfer[candidate_mask]
-    
-    @user_info "ML MBR Training: $(nrow(training_data)) candidates, $(sum(y_train)) bad transfers ($(round(mean(y_train)*100, digits=1))%)"
-    
-    # First compute threshold-based for comparison
-    τ_threshold = get_ftr_threshold(
-        training_data.prob,
-        training_data.target,
-        y_train,
-        params.max_MBR_false_transfer_rate;
-        mask = trues(length(y_train))
-    )
-    @user_info "Threshold-based method: τ = $(round(τ_threshold, digits=4))"
-    @user_info "  Would filter $(sum(training_data.prob .< τ_threshold))/$(nrow(training_data)) candidates"
-
-    # Show distribution of raw prob scores
-    @user_info "Raw prob scores of candidates:"
-    @user_info "  Range: [$(minimum(training_data.prob)), $(maximum(training_data.prob))]"
-    @user_info "  Bad transfers: mean prob = $(round(mean(training_data.prob[y_train]), digits=3))"
-    @user_info "  Good transfers: mean prob = $(round(mean(training_data.prob[.!y_train]), digits=3))"
-    
+function run_probit_cv_training(training_data::DataFrame, y_train::AbstractVector{Bool}, params)
+    """Run probit cross-validation training and return out-of-fold scores."""
     # Feature selection and preprocessing
     feature_cols = select_mbr_features(training_data)
     X_train, all_feature_names = prepare_mbr_features(training_data[:, feature_cols])
     
     # Check if cv_fold column exists
     if !hasproperty(training_data, :cv_fold)
-        @user_warn "No cv_fold column found - falling back to threshold method"
-        return apply_threshold_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
+        @user_warn "No cv_fold column found for probit CV - cannot run probit method"
+        return nothing
     end
     
     # Cross-validation using existing cv_fold assignments
     unique_folds = unique(training_data.cv_fold)
-    @user_info "Using $(length(unique_folds)) CV folds for MBR ML training: $unique_folds"
+    @user_info "Probit CV: Using $(length(unique_folds)) folds: $unique_folds"
     
     bad_transfer_scores = zeros(Float64, nrow(training_data))
     
@@ -289,7 +262,7 @@ function apply_ml_mbr_filter!(
         y_train_fold = y_train[train_mask]
         X_test_fold = X_train[test_mask, :]
         
-        @user_info "  Fold $test_fold: $(sum(train_mask)) train, $(sum(test_mask)) test, $(sum(y_train_fold)) train bad transfers"
+        @user_info "  Probit fold $test_fold: $(sum(train_mask)) train, $(sum(test_mask)) test, $(sum(y_train_fold)) train bad transfers"
         
         # Train probit regression model on this fold
         model = train_probit_mbr_model(X_train_fold, y_train_fold, all_feature_names)
@@ -299,21 +272,164 @@ function apply_ml_mbr_filter!(
         bad_transfer_scores[test_mask] = test_predictions
     end
     
-    # Determine threshold based on desired FTR using out-of-fold predictions
-    τ = calibrate_ml_threshold(
-        bad_transfer_scores, y_train, Float64(params.max_MBR_false_transfer_rate)
+    return bad_transfer_scores
+end
+
+function run_xgboost_cv_training(training_data::DataFrame, y_train::AbstractVector{Bool}, params)
+    """Run XGBoost cross-validation training and return out-of-fold scores."""
+    # Feature selection and preprocessing (same as probit)
+    feature_cols = select_mbr_features(training_data)
+    X_train, all_feature_names = prepare_mbr_features(training_data[:, feature_cols])
+    
+    # Check if cv_fold column exists
+    if !hasproperty(training_data, :cv_fold)
+        @user_warn "No cv_fold column found for XGBoost CV - cannot run XGBoost method"
+        return nothing
+    end
+    
+    # Cross-validation using existing cv_fold assignments
+    unique_folds = unique(training_data.cv_fold)
+    @user_info "XGBoost CV: Using $(length(unique_folds)) folds: $unique_folds"
+    
+    bad_transfer_scores = zeros(Float64, nrow(training_data))
+    
+    for test_fold in unique_folds
+        # Split data by fold
+        test_mask = training_data.cv_fold .== test_fold
+        train_mask = .!test_mask
+        
+        X_train_fold = X_train[train_mask, :]
+        y_train_fold = y_train[train_mask]
+        X_test_fold = X_train[test_mask, :]
+        
+        @user_info "  XGBoost fold $test_fold: $(sum(train_mask)) train, $(sum(test_mask)) test, $(sum(y_train_fold)) train bad transfers"
+        
+        # Train XGBoost model on this fold
+        model = train_mbr_filter_model(X_train_fold, y_train_fold, all_feature_names, params)
+        
+        # Predict on test fold (out-of-fold predictions)
+        test_predictions = EvoTrees.predict(model, X_test_fold)
+        bad_transfer_scores[test_mask] = test_predictions[:, 2]  # Probability of positive class
+    end
+    
+    return bad_transfer_scores
+end
+
+function test_threshold_method(training_data::DataFrame, y_train::AbstractVector{Bool}, params)
+    """Test threshold-based filtering method."""
+    τ = get_ftr_threshold(
+        training_data.prob,
+        training_data.target,
+        y_train,
+        params.max_MBR_false_transfer_rate;
+        mask = trues(length(y_train))
     )
+    n_passing = sum(training_data.prob .>= τ)
+    @user_info "Threshold method: τ = $(round(τ, digits=4)), $n_passing/$(nrow(training_data)) pass"
+    return τ, n_passing
+end
+
+function test_probit_ml_method(training_data::DataFrame, y_train::AbstractVector{Bool}, params)
+    """Test probit ML filtering method."""
+    bad_transfer_scores = run_probit_cv_training(training_data, y_train, params)
+    if bad_transfer_scores === nothing
+        return nothing, 0
+    end
     
-    n_filtered = sum(bad_transfer_scores .>= τ)
-    @user_info "ML MBR Filter: τ = $(round(τ, digits=4)), $n_filtered/$(length(bad_transfer_scores)) candidates filtered ($(round(n_filtered/length(bad_transfer_scores)*100, digits=1))%)"
+    τ = calibrate_ml_threshold(bad_transfer_scores, y_train, Float64(params.max_MBR_false_transfer_rate))
+    n_passing = sum(bad_transfer_scores .< τ)  # Lower score = better candidate
+    @user_info "Probit ML method: τ = $(round(τ, digits=4)), $n_passing/$(nrow(training_data)) pass"
+    return τ, n_passing
+end
+
+function test_xgboost_ml_method(training_data::DataFrame, y_train::AbstractVector{Bool}, params)
+    """Test XGBoost ML filtering method."""
+    bad_transfer_scores = run_xgboost_cv_training(training_data, y_train, params)
+    if bad_transfer_scores === nothing
+        return nothing, 0
+    end
     
-    # Apply filtering to all rows
-    filtered_probs = copy(merged_df.prob)
-    candidate_indices = findall(candidate_mask)
+    τ = calibrate_ml_threshold(bad_transfer_scores, y_train, Float64(params.max_MBR_false_transfer_rate))
+    n_passing = sum(bad_transfer_scores .< τ)  # Lower score = better candidate
+    @user_info "XGBoost ML method: τ = $(round(τ, digits=4)), $n_passing/$(nrow(training_data)) pass"
+    return τ, n_passing
+end
+
+function apply_ml_mbr_filter!(
+    merged_df::DataFrame,
+    candidate_mask::AbstractVector{Bool},
+    is_bad_transfer::AbstractVector{Bool},
+    params
+)
+    # Extract training data (only candidates)
+    training_data = merged_df[candidate_mask, :]
+    y_train = is_bad_transfer[candidate_mask]
     
-    for (i, idx) in enumerate(candidate_indices)
-        if bad_transfer_scores[i] >= τ
-            filtered_probs[idx] = 0.0f0
+    @user_info "MBR Filtering: $(nrow(training_data)) candidates, $(sum(y_train)) bad transfers ($(round(mean(y_train)*100, digits=1))%)"
+    
+    # Test all three methods and compare results
+    @user_info "=== MBR Filtering Method Comparison ==="
+    
+    # Method 1: Threshold-based (baseline)
+    τ_threshold, n_threshold = test_threshold_method(training_data, y_train, params)
+    
+    # Method 2: Probit ML  
+    τ_probit, n_probit = test_probit_ml_method(training_data, y_train, params)
+    
+    # Method 3: XGBoost ML
+    τ_xgboost, n_xgboost = test_xgboost_ml_method(training_data, y_train, params)
+    
+    # Compare results and select best method
+    methods = [
+        ("Threshold", τ_threshold, n_threshold),
+        ("Probit", τ_probit, n_probit),
+        ("XGBoost", τ_xgboost, n_xgboost)
+    ]
+    
+    # Filter out failed methods (τ = nothing)
+    valid_methods = filter(m -> m[2] !== nothing, methods)
+    
+    if isempty(valid_methods)
+        @user_warn "All ML methods failed - falling back to threshold method"
+        return apply_threshold_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
+    end
+    
+    # Select method that passes the most candidates
+    best_method_name, best_τ, _ = valid_methods[argmax([m[3] for m in valid_methods])]
+    
+    @user_info "=== Method Comparison Results ==="
+    for (name, τ, n) in methods
+        status = τ === nothing ? "FAILED" : "$(n)/$(nrow(training_data)) pass ($(round(100*n/nrow(training_data), digits=1))%)"
+        marker = name == best_method_name ? " ✓ SELECTED" : ""
+        @user_info "  $name: $status$marker"
+    end
+    
+    # Apply the winning method
+    @user_info "Applying $best_method_name filtering: τ = $(round(best_τ, digits=4))"
+    
+    if best_method_name == "Threshold"
+        # Apply threshold filtering
+        filtered_probs = ifelse.(
+            candidate_mask .& (merged_df.prob .< best_τ),
+            0.0f0,
+            merged_df.prob,
+        )
+    else
+        # Apply ML filtering - need to get the scores for the winning method
+        if best_method_name == "Probit"
+            scores = run_probit_cv_training(training_data, y_train, params)
+        else # XGBoost
+            scores = run_xgboost_cv_training(training_data, y_train, params)
+        end
+        
+        # Apply filtering to all rows
+        filtered_probs = copy(merged_df.prob)
+        candidate_indices = findall(candidate_mask)
+        
+        for (i, idx) in enumerate(candidate_indices)
+            if scores[i] >= best_τ
+                filtered_probs[idx] = 0.0f0
+            end
         end
     end
     
@@ -362,8 +478,9 @@ function prepare_mbr_features(df::DataFrame)
     # Process original columns (handle missing values)
     for col in names(processed_df)
         col_data = processed_df[!, col]
-        
+
         if eltype(col_data) <: Union{Missing, <:Number}
+            @user_warn "Processing numeric column $col with missing values. Has type $(eltype(col_data))"
             # Replace missing with median for numeric
             non_missing = collect(skipmissing(col_data))
             if !isempty(non_missing)
@@ -373,6 +490,8 @@ function prepare_mbr_features(df::DataFrame)
                 # All missing - replace with zero
                 processed_df[!, col] = zeros(eltype(non_missing), nrow(processed_df))
             end
+        else
+            @user_warn "$col with type $(eltype(col_data))"
         end
     end
     
@@ -412,7 +531,7 @@ end
 function train_mbr_filter_model(X::Matrix, y::AbstractVector{Bool}, feature_names::Vector{Symbol}, params)
     # Create DataFrame with proper feature names for EvoTrees API
     training_df = DataFrame(X, feature_names)
-    training_df[!, :target] = y
+    training_df[!, :target] = y.==false
     
     # Simple XGBoost configuration for fast training
     config = EvoTreeClassifier(
@@ -528,7 +647,7 @@ function train_probit_mbr_model(X::Matrix, y::AbstractVector{Bool}, feature_name
     data_chunks = Iterators.partition(1:M, chunk_size)
     
     # Convert BitVector to Vector{Bool} for ProbitRegression compatibility
-    y_bool = convert(Vector{Bool}, y)
+    y_bool = convert(Vector{Bool}, y.==false)
     
     # Fit probit model using existing implementation (max_iter=30 as in FirstPassSearch)
     β_fitted = ProbitRegression(β, X_df, y_bool, data_chunks, max_iter=30)
