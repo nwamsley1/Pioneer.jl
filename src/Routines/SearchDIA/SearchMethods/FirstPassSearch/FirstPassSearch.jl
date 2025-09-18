@@ -30,7 +30,7 @@ This search:
 ```julia
 # Define search parameters
 params = Dict(
-    :isotope_err_bounds => (0, 2),
+    :isotope_err_bounds => (1, 0),
     :first_search_params => Dict(
         "n_train_rounds_probit" => 10,
         "max_iter_probit" => 100,
@@ -88,6 +88,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     isotope_err_bounds::Tuple{UInt8, UInt8}
     min_fraction_transmitted::Float32
     frag_tol_ppm::Float32
+    ms1_tol_ppm::Float32
     frag_err_quantile::Float32
     min_index_search_score::UInt8
     min_frag_count::Int64
@@ -134,6 +135,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             0.0f0,  # No transmission threshold for first pass
             0.0f0,  # No fragment tolerance for first pass
+            Float32(params.parameter_tuning.iteration_settings.ms1_tol_ppm),  # MS1 tolerance from config
             Float32(params.parameter_tuning.search_settings.frag_err_quantile),
             # Handle min_score as either single value or array (use first value if array)
             begin
@@ -178,6 +180,7 @@ Interface Implementation
 
 get_parameters(::FirstPassSearch, params::Any) = FirstPassSearchParameters(params)
 getMs1MassErrorModel(ptsr::FirstPassSearchResults) = ptsr.ms1_mass_err_model[]
+getMs1TolPpm(params::FirstPassSearchParameters) = params.ms1_tol_ppm
 
 function init_search_results(
     ::FirstPassSearchParameters,
@@ -371,16 +374,15 @@ function process_file!(
         most_intense = sortperm(temp_psms[!,:log2_summed_intensity], rev = true)
         ms1_errs = vcat(
             mass_error_search(
-                spectra, 
+                spectra,
                 temp_psms[most_intense[1:(min(3000, length(most_intense)))],:scan_idx],
                 temp_psms[most_intense[1:(min(3000, length(most_intense)))],:precursor_idx],
                 UInt32(ms_file_idx),
                 getSpecLib(search_context),
                 getSearchData(search_context),
                 MassErrorModel(
-                0.0f0, 
-                #(getFragTolPpm(params), getFragTolPpm(params))
-                (20.0f0, 20.0f0)
+                0.0f0,
+                (getMs1TolPpm(params), getMs1TolPpm(params))  # Use MS1 tolerance from JSON config
                 ),
                 params,
                 MS1CHROM()

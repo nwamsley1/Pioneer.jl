@@ -185,8 +185,8 @@ function train_and_evaluate(method::ProbitFilter, candidate_data::DataFrame, can
         
         return FilterResult("Probit", scores, τ, n_passing)
     catch e
-        throw(e)
-        #@user_warn "Probit method failed with error: $(typeof(e)): $e"
+        # Handle probit training errors gracefully in main search/tests
+        @user_warn "Probit method failed: $(typeof(e)) — $(e)"
         return nothing
     end
 end
@@ -223,8 +223,7 @@ function train_and_evaluate(method::LightGBMFilter, candidate_data::DataFrame, c
 
         return FilterResult("LightGBM", scores, τ, n_passing)
     catch e
-        throw(e)
-        #@user_warn "LightGBM method failed with error: $(typeof(e)): $e"
+        @user_warn "LightGBM method failed with error: $(typeof(e)): $e"
         return nothing
     end
 end
@@ -628,4 +627,3 @@ function add_prec_prob(prob_col::Symbol)
     end
     return "add_prec_prob" => op
 end
-

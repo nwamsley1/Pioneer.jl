@@ -120,6 +120,7 @@ function checkParams(json_path::String)
         
         # All iteration_settings fields are required
         check_param(iter_settings, "init_mass_tol_ppm", Real)
+        check_param(iter_settings, "ms1_tol_ppm", Real)
         check_param(iter_settings, "mass_tolerance_scale_factor", Real)
         check_param(iter_settings, "iterations_per_phase", Integer)
         check_param(iter_settings, "scan_scale_factor", Real)
@@ -133,6 +134,9 @@ function checkParams(json_path::String)
         end
         if iter_settings["init_mass_tol_ppm"] <= 0.0
             error("iteration_settings.init_mass_tol_ppm must be positive")
+        end
+        if iter_settings["ms1_tol_ppm"] <= 0.0
+            error("iteration_settings.ms1_tol_ppm must be positive")
         end
         if iter_settings["iterations_per_phase"] <= 0
             error("iteration_settings.iterations_per_phase must be positive")

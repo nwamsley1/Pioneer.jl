@@ -488,7 +488,7 @@ function process_scans!(
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 params.max_diff,
-                NoNorm()
+                L2Norm()
             )
             # Update precursor weights
             for i in 1:getIdToCol(search_data).size

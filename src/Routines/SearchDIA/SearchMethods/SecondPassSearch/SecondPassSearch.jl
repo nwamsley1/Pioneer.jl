@@ -394,9 +394,37 @@ function process_search_results!(
         #Need to remove inf gof_ms1?
         #Join MS1 PSMs to MS2 PSMs
         if size(ms1_psms, 1) > 0
+            @user_warn "size ms1 psms = $(size(ms1_psms, 1)) \n"
+            # Add RT column to MS1 PSMs if not present
+            if !in(:rt, names(ms1_psms))
+                ms1_psms[!, :rt] = [getRetentionTime(spectra, scan_idx) for scan_idx in ms1_psms.scan_idx]
+            end
+
+            # Group MS1 PSMs by precursor and select closest RT to MS2 apex
+            ms1_psms_best = combine(groupby(ms1_psms, :precursor_idx)) do group_df
+                best_ms1_idx = 1
+                min_rt_diff = typemax(Float32)
+
+                for i in 1:nrow(group_df)
+                    ms1_rt = group_df.rt[i]
+                    # Find corresponding MS2 PSM RT for this precursor
+                    ms2_rows = psms[psms.precursor_idx .== group_df.precursor_idx[1], :]
+                    if nrow(ms2_rows) > 0
+                        ms2_rt = ms2_rows.rt[1]  # Should be apex RT
+                        rt_diff = abs(ms1_rt - ms2_rt)
+                        if rt_diff < min_rt_diff
+                            min_rt_diff = rt_diff
+                            best_ms1_idx = i
+                        end
+                    end
+                end
+                return group_df[best_ms1_idx:best_ms1_idx, :]
+            end
+
+            # Now join with the proximity-selected MS1 PSMs
             psms = leftjoin(
                 psms,
-                ms1_psms,
+                ms1_psms_best,
                 on = :precursor_idx,
                 makeunique = true,
                 renamecols = "" => "_ms1",
