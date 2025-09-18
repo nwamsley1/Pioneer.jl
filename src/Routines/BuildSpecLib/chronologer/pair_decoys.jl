@@ -373,12 +373,6 @@ function add_entrapment_partner_columns!(df::DataFrame)
     n_paired_entrapments = sum(.!ismissing.(entrapment_pair_ids[df.entrapment_group_id .> 0]))
     n_decoys = sum(df.decoy)
     
-    @user_info "Entrapment pairing Stage 1 complete (entrapment_pair_id created):"
-    @user_info "  Original targets: $n_targets"
-    @user_info "  Entrapment sequences: $n_entrapments" 
-    @user_info "  Successfully paired entrapments: $n_paired_entrapments"
-    @user_info "  Decoys (set to missing): $n_decoys"
-    
     return df
 end
 
