@@ -41,6 +41,35 @@ Main MBR Filtering Interface
 ==========================================================#
 
 """
+    apply_mbr_filter!(merged_df, params, fdr_scale_factor)
+
+Wrapper function for ScoringSearch compatibility.
+Generates candidate mask and bad transfer labels automatically, then applies MBR filtering.
+Returns column name for filtered probabilities.
+"""
+function apply_mbr_filter!(
+    merged_df::DataFrame,
+    params,
+    fdr_scale_factor::Float32,
+)
+    # 1) identify transfer candidates
+    candidate_mask = merged_df.MBR_transfer_candidate
+
+    # 2) identify bad transfers
+    is_bad_transfer = candidate_mask .& (
+         (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .| # T->D
+         (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, false)) # D->T
+    )
+
+    # 3) Apply the main filtering function
+    filtered_probs = apply_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
+
+    # 4) Add filtered probabilities as a new column and return column name
+    merged_df[!, :MBR_filtered_prob] = filtered_probs
+    return :MBR_filtered_prob
+end
+
+"""
     apply_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
 
 Apply MBR filtering using automatic method selection.
