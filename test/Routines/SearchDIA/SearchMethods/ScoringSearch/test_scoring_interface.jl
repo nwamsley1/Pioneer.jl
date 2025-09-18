@@ -102,9 +102,6 @@ using Pioneer: ProbitRegression, ModelPredict!
             prob = [0.9, 0.8, 0.7, 0.6],
             irt_error = [0.1, -0.2, 0.3, -0.1],
             MBR_max_pair_prob = [0.8, 0.9, 0.7, 0.6],
-            MBR_mean_pair_prob = [0.7, 0.8, 0.6, 0.5],
-            MBR_min_pair_prob = [0.6, 0.7, 0.5, 0.4],
-            MBR_num_pairs = [3, 4, 2, 2],
             MBR_best_irt_diff = [0.5, 0.2, 0.8, 0.3],
             some_other_feature = [1, 2, 3, 4],
             missing_feature = [missing, missing, missing, missing]
@@ -116,9 +113,6 @@ using Pioneer: ProbitRegression, ModelPredict!
         @test :prob in features
         @test :irt_error in features
         @test :MBR_max_pair_prob in features
-        @test :MBR_mean_pair_prob in features
-        @test :MBR_min_pair_prob in features
-        @test :MBR_num_pairs in features
         @test :MBR_best_irt_diff in features
 
         # Should not include features not in candidate list

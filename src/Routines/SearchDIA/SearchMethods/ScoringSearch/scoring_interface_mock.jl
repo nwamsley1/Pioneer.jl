@@ -41,35 +41,6 @@ Main MBR Filtering Interface
 ==========================================================#
 
 """
-    apply_mbr_filter!(merged_df, params, fdr_scale_factor)
-
-Wrapper function for ScoringSearch compatibility.
-Generates candidate mask and bad transfer labels automatically, then applies MBR filtering.
-Returns column name for filtered probabilities.
-"""
-function apply_mbr_filter!(
-    merged_df::DataFrame,
-    params,
-    fdr_scale_factor::Float32,
-)
-    # 1) identify transfer candidates
-    candidate_mask = merged_df.MBR_transfer_candidate
-
-    # 2) identify bad transfers
-    is_bad_transfer = candidate_mask .& (
-         (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .| # T->D
-         (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, false)) # D->T
-    )
-
-    # 3) Apply the main filtering function
-    filtered_probs = apply_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
-
-    # 4) Add filtered probabilities as a new column and return column name
-    merged_df[!, :MBR_filtered_prob] = filtered_probs
-    return :MBR_filtered_prob
-end
-
-"""
     apply_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
 
 Apply MBR filtering using automatic method selection.
@@ -87,7 +58,8 @@ function apply_mbr_filter!(
     
     n_candidates = length(candidate_labels)
     n_bad = sum(candidate_labels)
-
+    @user_info "MBR Filtering: $n_candidates candidates, $n_bad bad transfers ($(round(100*n_bad/n_candidates, digits=1))%)"
+    
     # Test all methods and store results
     methods = [ThresholdFilter(), ProbitFilter(), XGBoostFilter()]
     results = FilterResult[]
@@ -126,15 +98,19 @@ Method-Specific Training and Evaluation
 Train a filtering method and evaluate performance. Returns FilterResult with scores and threshold.
 """
 function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
-    τ = get_ftr_threshold(
-        candidate_data.prob,
-        candidate_data.target,
-        candidate_labels,
-        params.max_MBR_false_transfer_rate
-    )
-    n_passing = sum(candidate_data.prob .>= τ)
-
-    return FilterResult("Threshold", candidate_data.prob, τ, n_passing)
+    try
+        τ = get_ftr_threshold(
+            candidate_data.prob,
+            candidate_labels,
+            params.max_MBR_false_transfer_rate
+        )
+        n_passing = sum(candidate_data.prob .>= τ)
+        
+        return FilterResult("Threshold", candidate_data.prob, τ, n_passing)
+    catch e
+        @user_warn "Threshold method failed: $e"
+        return nothing
+    end
 end
 
 function train_and_evaluate(method::ProbitFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
@@ -147,25 +123,21 @@ function train_and_evaluate(method::ProbitFilter, candidate_data::DataFrame, can
         
         # Feature preparation
         feature_cols = select_mbr_features(candidate_data)
-        @debug "ProbitFilter: Selected features: $feature_cols"
-        @debug "ProbitFilter: Candidate data size: $(size(candidate_data))"
-        @debug "ProbitFilter: Labels length: $(length(candidate_labels))"
+        X, feature_names = prepare_mbr_features(candidate_data[:, feature_cols])
         
-        # Work directly with DataFrame like FirstPassSearch
-        feature_data = candidate_data[:, feature_cols]
-        @debug "ProbitFilter: Feature data size: $(size(feature_data))"
-        
-        # Cross-validation training using DataFrame
-        scores = run_cv_training(method, feature_data, candidate_labels, candidate_data.cv_fold, params)
+        # Cross-validation training
+        scores = run_cv_training(method, X, candidate_labels, candidate_data.cv_fold, feature_names, params)
         
         # Calibrate threshold
         τ = calibrate_ml_threshold(scores, candidate_labels, Float64(params.max_MBR_false_transfer_rate))
-        n_passing = sum(scores .>= τ)  # Higher score = better for probit
+        n_passing = sum(scores .< τ)  # Lower score = better for probit
         
+        # Optional: Save to Arrow
+        save_to_arrow(method, candidate_data, X, feature_names, candidate_labels, scores)
         
         return FilterResult("Probit", scores, τ, n_passing)
     catch e
-        @user_warn "Probit method failed with error: $(typeof(e)): $e"
+        @user_warn "Probit method failed: $e"
         return nothing
     end
 end
@@ -180,25 +152,21 @@ function train_and_evaluate(method::XGBoostFilter, candidate_data::DataFrame, ca
         
         # Feature preparation
         feature_cols = select_mbr_features(candidate_data)
-        @debug "XGBoostFilter: Selected features: $feature_cols"
-        @debug "XGBoostFilter: Candidate data size: $(size(candidate_data))"
-        @debug "XGBoostFilter: Labels length: $(length(candidate_labels))"
-
-        # Work directly with DataFrame like FirstPassSearch
-        feature_data = candidate_data[:, feature_cols]
-        @debug "XGBoostFilter: Feature data size: $(size(feature_data))"
-
-        # Cross-validation training using DataFrame
-        scores = run_cv_training(method, feature_data, candidate_labels, candidate_data.cv_fold, params)
+        X, feature_names = prepare_mbr_features(candidate_data[:, feature_cols])
+        
+        # Cross-validation training
+        scores = run_cv_training(method, X, candidate_labels, candidate_data.cv_fold, feature_names, params)
         
         # Calibrate threshold
         τ = calibrate_ml_threshold(scores, candidate_labels, Float64(params.max_MBR_false_transfer_rate))
-        n_passing = sum(scores .>= τ)  # Higher score = better for XGBoost
+        n_passing = sum(scores .< τ)  # Lower score = better for XGBoost
         
+        # Optional: Save to Arrow
+        save_to_arrow(method, candidate_data, X, feature_names, candidate_labels, scores)
         
         return FilterResult("XGBoost", scores, τ, n_passing)
     catch e
-        @user_warn "XGBoost method failed with error: $(typeof(e)): $e"
+        @user_warn "XGBoost method failed: $e"
         return nothing
     end
 end
@@ -212,55 +180,39 @@ Cross-Validation Training
 
 Perform cross-validation training and return out-of-fold scores.
 """
-function run_cv_training(method::ProbitFilter, feature_data::DataFrame, labels::AbstractVector{Bool}, cv_folds::AbstractVector, params)
+function run_cv_training(method::ProbitFilter, X::Matrix, labels::AbstractVector{Bool}, cv_folds::AbstractVector, feature_names::Vector{Symbol}, params)
     out_of_fold_scores = zeros(Float64, length(labels))
     
     for fold in unique(cv_folds)
         test_mask = cv_folds .== fold
         train_mask = .!test_mask
         
-        # Train model on fold using DataFrame slices (like FirstPassSearch)
-        train_data = feature_data[train_mask, :]
-        train_labels = labels[train_mask]
-        test_data = feature_data[test_mask, :]
+        # Train model on fold
+        model = train_probit_model(X[train_mask, :], labels[train_mask], feature_names)
         
-        # Train and predict using DataFrames directly
-        model, valid_cols = train_probit_model_df(train_data, train_labels, params)
-        test_scores = predict_probit_model_df(model, test_data, valid_cols)
+        # Predict on test fold
+        test_scores = predict_probit_model(model, X[test_mask, :], feature_names)
         out_of_fold_scores[test_mask] = test_scores
     end
     
     return out_of_fold_scores
 end
 
-function run_cv_training(method::XGBoostFilter, feature_data::DataFrame, labels::AbstractVector{Bool}, cv_folds::AbstractVector, params)
+function run_cv_training(method::XGBoostFilter, X::Matrix, labels::AbstractVector{Bool}, cv_folds::AbstractVector, feature_names::Vector{Symbol}, params)
     out_of_fold_scores = zeros(Float64, length(labels))
-
+    
     for fold in unique(cv_folds)
         test_mask = cv_folds .== fold
         train_mask = .!test_mask
-
-        # Train model on fold using DataFrame slices (like FirstPassSearch)
-        train_data = feature_data[train_mask, :]
-        train_labels = labels[train_mask]
-        test_data = feature_data[test_mask, :]
-
-        # Train and predict using DataFrames directly
-        model = train_xgboost_model_df(train_data, train_labels, params)
-        test_predictions = EvoTrees.predict(model, test_data)
-        @debug "XGBoost predictions shape: $(size(test_predictions)), type: $(typeof(test_predictions))"
-
-        # Handle different prediction formats
-        if isa(test_predictions, Vector)
-            out_of_fold_scores[test_mask] = test_predictions
-        elseif size(test_predictions, 2) >= 2
-            out_of_fold_scores[test_mask] = test_predictions[:, 2]  # Probability of positive class
-        else
-            @warn "Unexpected XGBoost prediction format: $(size(test_predictions))"
-            out_of_fold_scores[test_mask] = vec(test_predictions)
-        end
+        
+        # Train model on fold
+        model = train_xgboost_model(X[train_mask, :], labels[train_mask], feature_names, params)
+        
+        # Predict on test fold
+        test_predictions = EvoTrees.predict(model, X[test_mask, :])
+        out_of_fold_scores[test_mask] = test_predictions[:, 2]  # Probability of positive class
     end
-
+    
     return out_of_fold_scores
 end
 
@@ -268,87 +220,41 @@ end
 Model Training Functions
 ==========================================================#
 
-function train_probit_model_df(feature_data::DataFrame, y::AbstractVector{Bool}, params)
+function train_probit_model(X::Matrix, y::AbstractVector{Bool}, feature_names::Vector{Symbol})
     # Convert to expected format for probit regression
     y_probit = convert(Vector{Bool}, y .== false)  # Invert labels for probit
-
-    # Check for problematic columns (zero variance or containing Inf/NaN)
-    valid_cols = Symbol[]
-    for col in names(feature_data)
-        col_data = feature_data[!, col]
-
-        # Check for Inf or NaN values
-        if any(isinf, col_data) || any(isnan, col_data)
-            @user_warn "Probit MBR: Skipping column $col (contains Inf/NaN values)"
-            continue
-        end
-
-        # Check for zero variance (constant columns)
-        if length(unique(col_data)) <= 1 || var(col_data) ≈ 0.0
-            @user_warn "Probit MBR: Skipping column $col (zero variance)"
-            continue
-        end
-
-        push!(valid_cols, Symbol(col))
-    end
-
-    if isempty(valid_cols)
-        @user_warn "Probit MBR: No valid columns for training - all have zero variance or Inf/NaN"
-        throw(ArgumentError("No valid features for probit regression"))
-    end
-
-    # Use only valid columns
-    filtered_data = feature_data[:, valid_cols]
-    @user_info "Probit MBR: Using $(length(valid_cols))/$(ncol(feature_data)) valid features: $(join(valid_cols, ", "))"
-
-    # Initialize coefficients for filtered data
-    β = zeros(Float64, size(filtered_data, 2))
-
-    # Create data chunks for parallel processing
-    n_chunks = max(1, Threads.nthreads())
-    chunk_size = max(1, ceil(Int, length(y_probit) / n_chunks))
-    data_chunks = Iterators.partition(1:length(y_probit), chunk_size)
-
-    # Train probit model directly with DataFrame (like FirstPassSearch)
-    β_fitted = ProbitRegression(β, filtered_data, y_probit, data_chunks, max_iter=30)
-
-    return β_fitted, valid_cols  # Return both model and valid column names
+    
+    # Train probit model
+    β = ProbitRegression(X, y_probit)
+    
+    return β
 end
 
-function predict_probit_model_df(β::Vector{Float64}, feature_data::DataFrame, valid_cols::Vector{Symbol})
-    scores = zeros(Float64, size(feature_data, 1))
-
-    # Use only the valid columns that were used for training
-    filtered_data = feature_data[:, valid_cols]
-
-    # Create data chunks for parallel processing
-    n_chunks = max(1, Threads.nthreads())
-    chunk_size = max(1, ceil(Int, size(filtered_data, 1) / n_chunks))
-    data_chunks = Iterators.partition(1:size(filtered_data, 1), chunk_size)
-
-    # Call ModelPredict! directly with DataFrame (like FirstPassSearch)
-    ModelPredict!(scores, filtered_data, β, data_chunks)
+function predict_probit_model(β::Vector{Float64}, X::Matrix, feature_names::Vector{Symbol})
+    scores = zeros(Float64, size(X, 1))
+    ModelPredict!(β, X, scores)
     return scores
 end
 
-function train_xgboost_model_df(feature_data::DataFrame, y::AbstractVector{Bool}, params)
-    # Create training DataFrame with target column
-    training_df = copy(feature_data)
+function train_xgboost_model(X::Matrix, y::AbstractVector{Bool}, feature_names::Vector{Symbol}, params)
+    # Create training DataFrame
+    training_df = DataFrame(X, feature_names)
     training_df[!, :target] = y .== false  # Invert labels for XGBoost
-
+    
     # Configure XGBoost
     config = EvoTreeClassifier(
-        nrounds = 100,
-        max_depth = 3,
+        loss = :logloss,
+        nrounds = 50,
+        max_depth = 4,
         eta = 0.1,
         rowsample = 0.5,
         colsample = 0.8,
         gamma = 1.0
     )
-
-    # Train model directly with DataFrame (no Matrix conversion)
-    model = EvoTrees.fit(config, training_df; target_name=:target)
-
+    
+    # Train model
+    model = EvoTrees.fit_evotree(config, training_df; target_name=:target)
+    
     return model
 end
 
@@ -375,7 +281,7 @@ function apply_filtering(result::FilterResult, merged_df::DataFrame, candidate_m
     else
         # ML-based filtering using scores
         for (i, idx) in enumerate(candidate_indices)
-            if result.scores[i] < result.threshold  # Lower score = worse candidate (bad transfer)
+            if result.scores[i] >= result.threshold  # Higher score = worse candidate
                 filtered_probs[idx] = 0.0f0
             end
         end
@@ -390,7 +296,7 @@ Feature Processing (Simplified)
 
 function select_mbr_features(df::DataFrame)
     # Core features for MBR filtering
-    candidate_features = [:prob, :irt_error, :rt_diff, :MBR_max_pair_prob, :MBR_best_irt_diff,
+    candidate_features = [:prob, :irt_error, :MBR_max_pair_prob, :MBR_best_irt_diff, 
                          :MBR_rv_coefficient, :MBR_log2_weight_ratio, :MBR_log2_explained_ratio, :MBR_num_runs]
     
     # Filter to available columns
@@ -435,67 +341,55 @@ function calibrate_ml_threshold(scores::AbstractVector, y_true::AbstractVector{B
     return get_ftr_threshold(scores, y_true, target_ftr)
 end
 
+#==========================================================
+Optional Arrow Export
+==========================================================#
 
-"""
-    get_quant_necessary_columns() -> Vector{Symbol}
-
-Get the standard columns needed for quantification analysis.
-"""
-function get_quant_necessary_columns()
-    return [
-        :precursor_idx,
-        :global_prob,
-        :prec_prob,
-        :trace_prob,
-        :global_qval,
-        :run_specific_qval,
-        :prec_mz,
-        :pep,
-        :weight,
-        :target,
-        :rt,
-        :irt_obs,
-        :missed_cleavage,
-        :Mox,
-        :isotopes_captured,
-        :scan_idx,
-        :entrapment_group_id,
-        :ms_file_idx
-    ]
-end
-
-"""
-    add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::Set)
-
-Add best trace indicator based on isotope trace type.
-"""
-function add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::Set)
-    op = function(df)  # df is passed by transform_and_write!
-        if seperateTraces(isotope_type)
-            # Extract columns with type assertions for performance
-            precursor_idx_col = df.precursor_idx::AbstractVector{UInt32}
-            isotopes_captured_col = df.isotopes_captured::AbstractVector{Tuple{Int8, Int8}}   
-            
-            # Efficient vectorized operation for separate traces
-            df[!,:best_trace] = [
-                (precursor_idx=precursor_idx_col[i], 
-                 isotopes_captured=isotopes_captured_col[i]) ∈ best_traces
-                for i in eachindex(precursor_idx_col)
-            ]
-        else
-            # Group-based operation for combined traces
-            transform!(groupby(df, :precursor_idx),
-                      :prob => (p -> begin
-                          best_idx = argmax(p)
-                          result = falses(length(p))
-                          result[best_idx] = true
-                          result
-                      end) => :best_trace)
+function save_to_arrow(method::ProbitFilter, candidate_data::DataFrame, X::Matrix, feature_names::Vector{Symbol}, labels::AbstractVector{Bool}, scores::Vector{Float64})
+    try
+        export_df = copy(candidate_data)
+        
+        # Add processed features
+        for (i, name) in enumerate(feature_names)
+            export_df[!, Symbol("processed_", name)] = X[:, i]
         end
-        return df
+        
+        # Add results
+        export_df[!, :is_bad_transfer] = labels
+        export_df[!, :probit_score] = scores
+        
+        # Save
+        arrow_path = "/Users/nathanwamsley/Desktop/mbr_probit_features_scores.arrow"
+        Arrow.write(arrow_path, export_df)
+        @user_info "Saved probit data: $(nrow(export_df)) rows, $(ncol(export_df)) columns"
+    catch e
+        @user_warn "Arrow export failed: $e"
     end
-    return "" => op
 end
+
+function save_to_arrow(method::XGBoostFilter, candidate_data::DataFrame, X::Matrix, feature_names::Vector{Symbol}, labels::AbstractVector{Bool}, scores::Vector{Float64})
+    try
+        export_df = copy(candidate_data)
+        
+        # Add processed features
+        for (i, name) in enumerate(feature_names)
+            export_df[!, Symbol("processed_", name)] = X[:, i]
+        end
+        
+        # Add results
+        export_df[!, :is_bad_transfer] = labels
+        export_df[!, :xgboost_score] = scores
+        
+        # Save
+        arrow_path = "/Users/nathanwamsley/Desktop/mbr_xgboost_features_scores.arrow"
+        Arrow.write(arrow_path, export_df)
+        @user_info "Saved XGBoost data: $(nrow(export_df)) rows, $(ncol(export_df)) columns"
+    catch e
+        @user_warn "Arrow export failed: $e"
+    end
+end
+
+save_to_arrow(method::ThresholdFilter, args...) = nothing  # No export for threshold method
 
 #==========================================================
 Additional Interface Functions (Preserved from Original)
@@ -551,53 +445,36 @@ function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileRefere
     return acc_to_global_score
 end
 
-"""
-    logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
-
-Combine probabilities using a log-odds average. 
-The final value is converted back to a probability via the logistic function.
-"""
 function logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
-    isempty(probs) && return 0.0f0
-    n = min(length(probs), top_n)
-    # Sort descending and select the top n probabilities
-    sorted = sort(probs; rev=true)
-    selected = sorted[1:n]
-    eps = 1f-6
-    # Convert to log-odds, clip to avoid Inf or negative contribution
-    logodds = log.(clamp.(selected, 0.1f0, 1 - eps) ./ (1 .- clamp.(selected, 0.1f0, 1 - eps)))
-    avg = sum(logodds) / n
-    return 1.0f0 / (1 + exp(-avg))
-end
-
-"""
-    apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference}, 
-                        β_fitted::Vector{Float64}, feature_names::Vector{Symbol})
-    
-Apply probit regression scores to protein group files.
-Note: This function is called from utils.jl and needs access to calculate_probit_scores.
-"""
-function apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference},
-                             β_fitted::Vector{Float64},
-                             feature_names::Vector{Symbol})
-    for ref in pg_refs
-        transform_and_write!(ref) do df
-            # Calculate probit scores (function from utils.jl)
-            X_file = Matrix{Float64}(df[:, feature_names])
-            prob_scores = calculate_probit_scores(X_file, β_fitted)
-            
-            # Update scores
-            df[!, :old_pg_score] = copy(df.pg_score)
-            df[!, :pg_score] = Float32.(prob_scores)
-            
-            # Sort by new scores
-            sort!(df, [:pg_score, :target], rev = [true, true])
-            
-            return df
-        end
+    if length(probs) == 1
+        return first(probs)
     end
+    
+    # Use log-odds transformation for score combination
+    # This handles probabilities close to 0 and 1 more stably
+    log_odds_sum = zero(T)
+    count = 0
+    
+    # Take top N scores to avoid being dominated by many weak scores
+    sorted_probs = sort(probs, rev=true)
+    n_scores = min(top_n, length(sorted_probs))
+    
+    for i in 1:n_scores
+        p = clamp(sorted_probs[i], T(1e-7), T(1-1e-7))  # Avoid log(0)
+        log_odds_sum += log(p / (1 - p))
+        count += 1
+    end
+    
+    if count == 0
+        return T(0.5)  # Default neutral score
+    end
+    
+    # Convert back to probability
+    avg_log_odds = log_odds_sum / count
+    return T(1 / (1 + exp(-avg_log_odds)))
 end
 
+# Add other essential functions as needed...
 function add_trace_qvalues(fdr_scale_factor::Float32)
     op = function(df)
         qvals = Vector{Float32}(undef, nrow(df))
@@ -608,17 +485,14 @@ function add_trace_qvalues(fdr_scale_factor::Float32)
     return "add_trace_qvalues" => op
 end
 
-"""
-    add_prec_prob(prob_col::Symbol)
-
-Compute run-specific precursor probabilities from the given probability column.
-"""
 function add_prec_prob(prob_col::Symbol)
     op = function(df)
-        transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
-                   prob_col => (p -> 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))) => :prec_prob)
-        return df
+        gdf = groupby(df, [:precursor_idx, :filename])
+        combined = combine(gdf) do chunk
+            chunk[!, :prec_prob] .= 1.0f0 .- reduce(*, 1.0f0 .- chunk[!, prob_col])
+            return chunk
+        end
+        return combined
     end
-    return "add_prec_prob" => op
+    return "add_prec_prob" => op  
 end
-

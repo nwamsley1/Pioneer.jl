@@ -854,9 +854,6 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             best_weight                         = scores.best_weight_1
                             best_log2_ie                        = scores.best_log2_intensity_explained_1
                             psms_subset.MBR_max_pair_prob[i]    = scores.best_prob_1
-                            psms_subset.MBR_mean_pair_prob[i]   = scores.mean_prob
-                            psms_subset.MBR_min_pair_prob[i]    = scores.worst_prob_1
-                            psms_subset.MBR_num_pairs[i]        = scores.count_pairs
                             MBR_is_best_decoy                   = scores.is_best_decoy_1
                         elseif (scores.best_ms_file_idx_2 != psms_subset.ms_file_idx[i]) &&
                                (!isempty(scores.best_log2_weights_2))
@@ -865,18 +862,12 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             best_weight                         = scores.best_weight_2
                             best_log2_ie                        = scores.best_log2_intensity_explained_2
                             psms_subset.MBR_max_pair_prob[i]    = scores.best_prob_2
-                            psms_subset.MBR_mean_pair_prob[i]   = scores.mean_prob
-                            psms_subset.MBR_min_pair_prob[i]    = scores.worst_prob_1
-                            psms_subset.MBR_num_pairs[i]        = scores.count_pairs
                             MBR_is_best_decoy                   = scores.is_best_decoy_2
                         else
                             psms_subset.MBR_best_irt_diff[i]        = -1.0f0
                             psms_subset.MBR_rv_coefficient[i]       = -1.0f0
                             psms_subset.MBR_is_best_decoy[i]        = true
                             psms_subset.MBR_max_pair_prob[i]        = -1.0f0
-                            psms_subset.MBR_mean_pair_prob[i]       = -1.0f0
-                            psms_subset.MBR_min_pair_prob[i]        = -1.0f0
-                            psms_subset.MBR_num_pairs[i]            = 0
                             psms_subset.MBR_log2_weight_ratio[i]    = -1.0f0
                             psms_subset.MBR_log2_explained_ratio[i] = -1.0f0
                             psms_subset.MBR_is_missing[i]           = true
@@ -1121,9 +1112,6 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
                 sub_psms.MBR_log2_weight_ratio[i]       = -1.0f0
                 sub_psms.MBR_log2_explained_ratio[i]    = -1.0f0
                 sub_psms.MBR_max_pair_prob[i]           = -1.0f0
-                sub_psms.MBR_mean_pair_prob[i]          = -1.0f0
-                sub_psms.MBR_min_pair_prob[i]           = -1.0f0
-                sub_psms.MBR_num_pairs[i]               = 0
                 sub_psms.MBR_is_missing[i]              = true
                 continue
             end
@@ -1135,11 +1123,6 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             
             best_irt_at_apex = sub_psms.irts[best_idx][argmax(best_log2_weights)]
             sub_psms.MBR_max_pair_prob[i] = sub_psms.prob[best_idx]
-            # Note: In this algorithm path, we only have single best match per run
-            # So mean/min are the same as max, and count is 1
-            sub_psms.MBR_mean_pair_prob[i] = sub_psms.prob[best_idx]
-            sub_psms.MBR_min_pair_prob[i] = sub_psms.prob[best_idx]
-            sub_psms.MBR_num_pairs[i] = 1
             sub_psms.MBR_best_irt_diff[i] = abs(best_irt_at_apex - sub_psms.irts[i][argmax(sub_psms.weights[i])])
             sub_psms.MBR_rv_coefficient[i] = MBR_rv_coefficient(best_log2_weights_padded, best_iRTs_padded, weights_padded, iRTs_padded)
             sub_psms.MBR_log2_weight_ratio[i] = log2(sub_psms.weight[i] / sub_psms.weight[best_idx])
@@ -1159,9 +1142,6 @@ function initialize_prob_group_features!(
 
     if match_between_runs
         psms[!, :MBR_max_pair_prob]             = zeros(Float32, n)
-        psms[!, :MBR_mean_pair_prob]            = zeros(Float32, n)
-        psms[!, :MBR_min_pair_prob]             = zeros(Float32, n)
-        psms[!, :MBR_num_pairs]                 = zeros(Int32, n)
         psms[!, :MBR_best_irt_diff]             = zeros(Float32, n)
         psms[!, :MBR_log2_weight_ratio]         = zeros(Float32, n)
         psms[!, :MBR_log2_explained_ratio]      = zeros(Float32, n)
