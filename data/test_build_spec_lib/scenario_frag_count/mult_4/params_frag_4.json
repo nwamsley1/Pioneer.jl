@@ -33,7 +33,9 @@
         "missed_cleavages": 1,
         "max_var_mods": 0,
         "add_decoys": false,
-        "entrapment_r": 0.0
+        "entrapment_r": 0.0,
+        "decoy_method": "shuffle",
+        "entrapment_method": "shuffle"
     },
     "comment_modifications": "=== Protein modifications ===",
     "variable_mods": {

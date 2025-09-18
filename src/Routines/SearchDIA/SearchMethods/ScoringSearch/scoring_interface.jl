@@ -131,6 +131,11 @@ Method-Specific Training and Evaluation
 Train a filtering method and evaluate performance. Returns FilterResult with scores and threshold.
 """
 function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
+    # Handle empty candidate data
+    if isempty(candidate_data) || !hasproperty(candidate_data, :prob)
+        return nothing
+    end
+
     # candidate_labels represents bad transfer flags
     τ = get_ftr_threshold(
         candidate_data.prob,
@@ -140,7 +145,6 @@ function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, 
 
     # Handle edge case where threshold is infinite (no valid threshold found)
     if isinf(τ)
-        @user_warn "ThresholdFilter: Infinite threshold returned - rejecting all candidates"
         n_passing = 0
     else
         n_passing = sum(candidate_data.prob .>= τ)
@@ -151,9 +155,13 @@ end
 
 function train_and_evaluate(method::ProbitFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
     try
+        # Handle empty candidate data
+        if isempty(candidate_data)
+            return nothing
+        end
+
         # Check CV fold availability
         if !hasproperty(candidate_data, :cv_fold)
-            @user_warn "No cv_fold column - skipping probit method"
             return nothing
         end
         
@@ -185,9 +193,13 @@ end
 
 function train_and_evaluate(method::XGBoostFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
     try
-        # Check CV fold availability  
+        # Handle empty candidate data
+        if isempty(candidate_data)
+            return nothing
+        end
+
+        # Check CV fold availability
         if !hasproperty(candidate_data, :cv_fold)
-            @user_warn "No cv_fold column - skipping XGBoost method"
             return nothing
         end
         
