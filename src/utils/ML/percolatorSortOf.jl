@@ -15,6 +15,135 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+#############################################################################
+# Target-Decoy Pairing Implementation
+#############################################################################
+
+const PAIRING_RANDOM_SEED = 1844  # Fixed seed for reproducible pairing
+const IRT_BIN_SIZE = 1000
+
+#############################################################################
+# Running Statistics Helper Functions
+#############################################################################
+
+"""
+    update_pair_statistics(current_stats, new_prob::Float32)
+
+Updates running statistics for MBR pair probabilities in a memory-efficient manner.
+Maintains best 2, worst 2, running mean, and count without storing all values.
+"""
+function update_pair_statistics(current_stats, new_prob::Float32)
+    # Update count and running mean
+    new_count = current_stats.count_pairs + 1
+    new_mean = (current_stats.mean_prob * current_stats.count_pairs + new_prob) / new_count
+
+    # Update best probabilities (existing logic enhanced)
+    new_best_1, new_best_2 = if new_prob > current_stats.best_prob_1
+        (new_prob, current_stats.best_prob_1)
+    elseif new_prob > current_stats.best_prob_2
+        (current_stats.best_prob_1, new_prob)
+    else
+        (current_stats.best_prob_1, current_stats.best_prob_2)
+    end
+
+    # Update worst probabilities (new logic)
+    new_worst_1, new_worst_2 = if new_count == 1
+        (new_prob, zero(Float32))  # First probability
+    elseif new_count == 2
+        (min(current_stats.worst_prob_1, new_prob), max(current_stats.worst_prob_1, new_prob))
+    elseif new_prob < current_stats.worst_prob_1
+        (new_prob, current_stats.worst_prob_1)  # New minimum
+    elseif new_prob < current_stats.worst_prob_2
+        (current_stats.worst_prob_1, new_prob)  # New second minimum
+    else
+        (current_stats.worst_prob_1, current_stats.worst_prob_2)  # No change
+    end
+
+    return merge(current_stats, (
+        best_prob_1 = new_best_1,
+        best_prob_2 = new_best_2,
+        worst_prob_1 = new_worst_1,
+        worst_prob_2 = new_worst_2,
+        mean_prob = new_mean,
+        count_pairs = new_count
+    ))
+end
+
+
+
+function getIrtBins(irts::AbstractVector{R}) where {R <:Real}
+    sort_idx = sortperm(irts)
+    bin_idx, bin_count = zero(UInt32), zero(UInt32)
+    bin_idxs = similar(irts, UInt32, length(irts))
+    for idx in sort_idx
+        bin_count += one(UInt32)
+        bin_idxs[idx] = bin_idx
+        if bin_count >= IRT_BIN_SIZE
+            bin_idx += one(UInt32)
+            bin_count = zero(UInt32)
+        end
+    end
+    return bin_idxs 
+end
+
+
+function getIrtBins!(psms::AbstractDataFrame)
+    psms[!, :irt_bin_idx] = getIrtBins(psms.irt_pred)
+    return psms
+end
+
+
+function assign_random_target_decoy_pairs!(psms::DataFrame)
+    last_pair_id = zero(UInt32)
+    psms[!,:pair_id] = zeros(UInt32, nrow(psms))  # Initialize pair_id column
+    psms[!,:irt_bin_idx] = getIrtBins(psms.irt_pred)  # Ensure irt_bin_idx column exists
+    for (irt_bin_idx, sub_psms) in pairs(groupby(psms, :irt_bin_idx))
+        last_pair_id = assignPairIds!(sub_psms, last_pair_id)
+    end
+end
+
+
+function assignPairIds!(psms::AbstractDataFrame, last_pair_id::UInt32)
+    psms[!,:pair_id], last_pair_id = assign_pair_ids(
+        psms.target, psms.decoy, psms.precursor_idx, psms.irt_bin_idx, last_pair_id
+    )
+    return last_pair_id
+end
+
+function assign_pair_ids(
+    target::AbstractVector{Bool}, decoy::AbstractVector{Bool},
+    precursor_idx::AbstractVector{UInt32}, irt_bin_idx::AbstractVector{UInt32},
+    last_pair_id::UInt32
+)
+    targets = unique(precursor_idx[target])
+    decoys = unique(precursor_idx[decoy])
+    target_perm = randperm(MersenneTwister(PAIRING_RANDOM_SEED), length(targets))
+    precursor_idx_to_pair_id = Dict{UInt32,UInt32}()  # Map from precursor_idx to pair_id
+    pair_ids = similar(precursor_idx, UInt32)
+    for i in range(1, min(length(targets), length(decoys)))
+        last_pair_id += one(UInt32)
+        precursor_idx_to_pair_id[targets[target_perm[i]]] = last_pair_id
+        precursor_idx_to_pair_id[decoys[i]] = last_pair_id
+    end
+    if length(decoys) < length(targets)
+        #@user_warn "Fewer decoy precursors ($(length(decoys))) than target precursors ($(length(targets))) in iRT bin $(first(irt_bin_idx)). Some targets will remain unpaired."
+        for i in range(length(decoys)+1, length(targets))
+            last_pair_id += one(UInt32)
+            precursor_idx_to_pair_id[targets[target_perm[i]]] = last_pair_id
+        end
+    elseif length(targets) < length(decoys)
+        @user_warn "Fewer target precursors ($(length(targets))) than decoy precursors ($(length(decoys))) in iRT bin $(first(irt_bin_idx)). Some decoys will remain unpaired."
+        for i in range(length(targets)+1, length(decoys))
+            last_pair_id += one(UInt32)
+            precursor_idx_to_pair_id[decoys[i]] = last_pair_id
+        end
+    end
+    for (row_idx, precursor_idx) in enumerate(precursor_idx)
+        pair_ids[row_idx] = precursor_idx_to_pair_id[precursor_idx]
+    end
+    return pair_ids, last_pair_id
+end
+
 function sort_of_percolator_in_memory!(psms::DataFrame, 
                   features::Vector{Symbol},
                   match_between_runs::Bool = true;
@@ -32,8 +161,10 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   show_progress::Bool = true,
                   verbose_logging::Bool = false)
 
+    # Apply random target-decoy pairing before ML training
+    assign_random_target_decoy_pairs!(psms)
     
-    #Faster if sorted first
+    #Faster if sorted first (handle missing pair_id values)
     sort!(psms, [:pair_id, :isotopes_captured])
     # Display target/decoy/entrapment counts for training dataset
     if verbose_logging
@@ -167,7 +298,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         # Determine which precursors failed the q-value cutoff prior to MBR
         qvals_prev = Vector{Float32}(undef, length(nonMBR_estimates))
         get_qvalues!(nonMBR_estimates, psms.target, qvals_prev)
-        pass_mask = (nonMBR_estimates .<= max_q_value_xgboost_rescore)
+        pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore)
         prob_thresh = any(pass_mask) ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
         # Label as transfer candidates only those failing the q-value cutoff but
         # whose best matched pair surpassed the passing probability threshold.
@@ -225,11 +356,14 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
                     if haskey(prec_to_best_score_new, key)
                         scores = prec_to_best_score_new[key]
-    
+
+                        # Update running statistics with new probability
+                        updated_stats = update_pair_statistics(scores, prob)
+
                         if prob > scores.best_prob_1
-                           new_scores = merge(scores, (
+                           new_scores = merge(updated_stats, (
                                 # replace best_prob_2 with best_prob_1
-                                best_prob_2                     = scores.best_prob_1,   
+                                best_prob_2                     = scores.best_prob_1,
                                 best_log2_weights_2             = scores.best_log2_weights_1,
                                 best_irts_2                     = scores.best_irts_1,
                                 best_weight_2                   = scores.best_weight_1,
@@ -237,7 +371,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                 best_ms_file_idx_2              = scores.best_ms_file_idx_1,
                                 is_best_decoy_2                 = scores.is_best_decoy_1,
                                 # overwrite best_prob_1
-                                best_prob_1                     = prob,                
+                                best_prob_1                     = prob,
                                 best_log2_weights_1             = log2.(psms_subset.weights[i]),
                                 best_irts_1                     = psms_subset.irts[i],
                                 best_weight_1                   = psms_subset.weight[i],
@@ -249,7 +383,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
                         elseif prob > scores.best_prob_2
                             # overwrite best_prob_2
-                            new_scores = merge(scores, (
+                            new_scores = merge(updated_stats, (
                                 best_prob_2                     = prob,
                                 best_log2_weights_2             = log2.(psms_subset.weights[i]),
                                 best_irts_2                     = psms_subset.irts[i],
@@ -259,6 +393,9 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                 is_best_decoy_2                 = psms_subset.decoy[i]
                             ))
                             prec_to_best_score_new[key] = new_scores
+                        else
+                            # No change to best/second best, but update running stats
+                            prec_to_best_score_new[key] = updated_stats
                         end
 
                         if qvals[i] <= max_q_value_xgboost_rescore
@@ -269,6 +406,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                         insert!(prec_to_best_score_new, key, (
                                 best_prob_1                     = prob,
                                 best_prob_2                     = zero(Float32),
+                                worst_prob_1                    = prob,
+                                worst_prob_2                    = zero(Float32),
+                                mean_prob                       = prob,
+                                count_pairs                     = Int32(1),
                                 best_log2_weights_1             = log2.(psms_subset.weights[i]),
                                 best_log2_weights_2             = Vector{Float32}(),
                                 best_irts_1                     = psms_subset.irts[i],
@@ -444,6 +585,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                                 isotopes::Tuple{Int8,Int8}},
                                     @NamedTuple{best_prob_1::Float32,
                                                 best_prob_2::Float32,
+                                                worst_prob_1::Float32,
+                                                worst_prob_2::Float32,
+                                                mean_prob::Float32,
+                                                count_pairs::Int32,
                                                 best_log2_weights_1::Vector{Float32},
                                                 best_log2_weights_2::Vector{Float32},
                                                 best_irts_1::Vector{Float32},
@@ -601,7 +746,6 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             sub_psms.MBR_is_best_decoy[i] = sub_psms.decoy[best_idx]
         end
     end
-
 end
 
 function initialize_prob_group_features!(

@@ -234,6 +234,7 @@ function add_entrapment_sequences(
     end
     
     # Report statistics if using reverse method for entrapment
+    #=
     if entrapment_method == "reverse" && total_sequences > 0
         if fallback_to_shuffle_count > 0
             @user_warn "Entrapment generation statistics for REVERSE method:"
@@ -241,10 +242,9 @@ function add_entrapment_sequences(
             @user_warn "  Sequences where reverse created duplicates: $fallback_to_shuffle_count"
             @user_warn "  Sequences successfully reversed: $(total_sequences - fallback_to_shuffle_count)"
             @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_sequences, digits=1))%"
-        else
-            @user_info "Successfully reversed all $total_sequences entrapment sequences without duplicates"
         end
     end
+    =#
     
     return vcat(target_fasta_entries, entrapment_fasta_entries[1:n-1])
 end
@@ -314,7 +314,6 @@ function add_entrapment_sequences_grouped(
     n_entries = length(target_fasta_entries)
     n_groups = length(groups)
     avg_variants = n_groups == 0 ? 0.0 : round(n_entries / n_groups, digits=2)
-    @user_info "Entrapment (GROUPED): entries=$n_entries, base_sequences=$n_groups, r=$(Int(entrapment_r)), method=$(uppercase(entrapment_method)), avg_variants_per_base=$avg_variants"
 
     entrapments_out = Vector{FastaEntry}()
     fallback_to_shuffle_count = 0
@@ -349,7 +348,6 @@ function add_entrapment_sequences_grouped(
             end
 
             if needs_retry
-                @user_warn "Max shuffle attempts exceeded while generating GROUPED entrapment for base sequence"
                 exhausted_groups += 1
                 continue
             end
@@ -368,7 +366,6 @@ function add_entrapment_sequences_grouped(
         # Optional per-group diagnostics (debug level)
         if sample_logged < 5
             trunc_seq = length(base_seq) > 18 ? (base_seq[1:18] * "…") : base_seq
-            @user_info "Entrapment group: base_seq=$(trunc_seq), n_variants=$(length(idxs)), charges=$(collect(charges)), n_generated=$(length(entrap_seqs))"
             sample_logged += 1
         end
 
@@ -416,13 +413,10 @@ function add_entrapment_sequences_grouped(
             @user_warn "  Total entrapments attempted: $total_attempted"
             @user_warn "  Reverse duplicates: $fallback_to_shuffle_count"
             @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_attempted, digits=1))%"
-        else
-            @user_info "Successfully reversed all $total_attempted grouped entrapment sequences without duplicates"
         end
     end
 
     # General summary
-    @user_info "Entrapment (GROUPED): created=$(length(entrapments_out)) entries across $n_groups base sequences; exhausted=$exhausted_groups"
 
     return vcat(target_fasta_entries, entrapments_out)
 end
@@ -820,6 +814,7 @@ function add_decoy_sequences(
     end
     
     # Report statistics if using reverse method
+    #=
     if decoy_method == "reverse"
         if fallback_to_shuffle_count > 0
             @user_warn "Decoy generation statistics for REVERSE method:"
@@ -831,7 +826,7 @@ function add_decoy_sequences(
             @user_info "Successfully reversed all $total_sequences sequences without duplicates"
         end
     end
-    
+    =#
     # Sort the peptides by sequence
     return sort(vcat(target_fasta_entries, decoy_fasta_entries[1:n-1]), by = x -> get_sequence(x))
 end
@@ -898,8 +893,6 @@ function add_decoy_sequences_grouped(
     n_entries = length(target_fasta_entries)
     n_groups = length(groups)
     avg_variants = n_groups == 0 ? 0.0 : round(n_entries / n_groups, digits=2)
-    @user_info "Decoy (GROUPED): entries=$n_entries, base_sequences=$n_groups, method=$(uppercase(decoy_method)), avg_variants_per_base=$avg_variants"
-
     decoy_entries = Vector{FastaEntry}()
     fallback_to_shuffle_count = 0
     total_groups = length(groups)
@@ -927,7 +920,6 @@ function add_decoy_sequences_grouped(
         end
 
         if needs_retry
-            @user_warn "Max shuffle attempts exceeded while generating GROUPED decoy for base sequence"
             exhausted_groups += 1
             continue
         end
@@ -985,6 +977,7 @@ function add_decoy_sequences_grouped(
     end
 
     # Report statistics if using reverse method
+    #=
     if decoy_method == "reverse" && total_groups > 0
         if fallback_to_shuffle_count > 0
             @user_warn "Decoy generation (GROUPED) stats for REVERSE:"
@@ -995,10 +988,8 @@ function add_decoy_sequences_grouped(
             @user_info "Successfully reversed all $total_groups base sequences without duplicates"
         end
     end
-
+    =#
     # General summary
-    @user_info "Decoy (GROUPED): created=$(length(decoy_entries)) entries across $n_groups base sequences; exhausted=$exhausted_groups"
-
     return sort(vcat(target_fasta_entries, decoy_entries), by = x -> get_sequence(x))
 end
 

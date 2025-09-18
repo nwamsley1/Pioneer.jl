@@ -22,17 +22,21 @@ is less than or equal to `alpha`.  The input vectors must be of equal
 length and correspond element-wise to candidate precursor–run pairs.
 """
 function get_ftr_threshold(scores::AbstractVector{U},
-                           is_target::AbstractVector{Bool},
                            is_bad_transfer::AbstractVector{Bool},
                            alpha::Real; doSort::Bool = true,
                            mask::Union{Nothing,AbstractVector{Bool}} = nothing) where {U<:Real}
-    @assert length(scores) == length(is_target) == length(is_bad_transfer)
+    @assert length(scores) == length(is_bad_transfer)
 
     if mask === nothing
         order = doSort ? sortperm(scores, rev=true, alg=QuickSort) : collect(eachindex(scores))
     else
         selected = findall(mask)
         order = doSort ? selected[sortperm(view(scores, selected), rev=true, alg=QuickSort)] : selected
+    end
+
+    # Handle empty input case
+    if isempty(scores)
+        return U(Inf)  # Return threshold that rejects all candidates
     end
 
     num_transfers = 0
@@ -48,8 +52,6 @@ function get_ftr_threshold(scores::AbstractVector{U},
             best_count = num_transfers
         end
     end
-
-    println("FTR probability threshold: ", τ, " Num passing candidate transfers: ", best_count, " out of ", num_transfers, "\n\n")
 
     return τ
 end
@@ -81,7 +83,7 @@ function get_ftr!(scores::AbstractVector{U},
     target_cum = 0
     transfer_cum = 0
     for idx in order
-        target_cum += is_target[idx] ? 1 : 0
+        target_cum += 1  # Count ALL candidates at this threshold level
         transfer_cum += is_transfer_decoy[idx] ? 1 : 0
         ftrs[idx] = target_cum > 0 ? (transfer_cum / target_cum) : Inf
     end

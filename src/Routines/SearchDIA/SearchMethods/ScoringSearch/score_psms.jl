@@ -20,7 +20,7 @@ PSM sampling and scoring
 ==========================================================#
 
 # Constant for model selection threshold
-const MAX_FOR_MODEL_SELECTION = 100_000
+const MAX_FOR_MODEL_SELECTION = 200_000
 # Backward-compatible alias used in discussions/documentation
 const MAX_FOR_MODEL_SELECTION_PSMS = MAX_FOR_MODEL_SELECTION
 
@@ -180,6 +180,7 @@ function select_psm_scoring_model(
                     best_model_config = config
                 end
             catch e
+                throw(e)
                 @user_warn "Failed to train $(config.name):"
                 # Show error type and message without data
                 if isa(e, MethodError)
@@ -295,7 +296,8 @@ function score_precursor_isotope_traces_in_memory(
         )
     elseif model_config.model_type == :probit
         return train_probit_model_in_memory(
-            best_psms, file_paths, precursors, model_config, match_between_runs
+            best_psms, file_paths, precursors, model_config, match_between_runs,
+            min_PEP_neg_threshold_xgboost_rescore
         )
     else
         error("Unsupported model type: $(model_config.model_type)")
@@ -363,7 +365,8 @@ function train_probit_model_in_memory(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
-    match_between_runs::Bool
+    match_between_runs::Bool,
+    min_PEP_neg_threshold_xgboost_rescore::Float32
 )
     # Add required columns
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
@@ -377,7 +380,8 @@ function train_probit_model_in_memory(
         best_psms,
         file_paths,
         features,
-        match_between_runs
+        match_between_runs;
+        neg_mining_pep_threshold = min_PEP_neg_threshold_xgboost_rescore
     )
     
     # File writing removed - will be done at higher level
@@ -484,7 +488,8 @@ Trained EvoTrees/XGBoost models or simplified model if insufficient PSMs.
                                   file_paths::Vector{String},
                                   features::Vector{Symbol},
                                   match_between_runs::Bool;
-                                  n_folds::Int64 = 3)
+                                  n_folds::Int64 = 3,
+                                  neg_mining_pep_threshold::Float32 = 0.90f0)
 
 Alternative PSM scoring using probit regression with cross-validation.
 
@@ -506,7 +511,8 @@ function probit_regression_scoring_cv!(
     psms::DataFrame,
     file_paths::Vector{String},
     features::Vector{Symbol},
-    match_between_runs::Bool
+    match_between_runs::Bool;
+    neg_mining_pep_threshold::Float32 = 0.90f0
 )
     # Step 1: Validate CV fold column exists (from library assignments)
     if !(:cv_fold in propertynames(psms))
@@ -534,9 +540,11 @@ function probit_regression_scoring_cv!(
     
     # Filter features to those that exist in the DataFrame
     available_features = filter(col -> col in propertynames(psms), features)
-    push!(available_features, :intercept)
+    if :intercept ∉ available_features
+        push!(available_features, :intercept)
+    end
     
-    # Step 4: Train probit model per CV fold
+    # Step 4: Train probit model per CV fold (two-pass with 1% q-value and optional negative mining)
     tasks_per_thread = 10
     chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
     data_chunks = Iterators.partition(1:size(psms, 1), chunk_size)
@@ -570,7 +578,7 @@ function probit_regression_scoring_cv!(
         # Initialize coefficients
         β = zeros(Float64, length(available_features))
         
-        # Fit probit model using existing ProbitRegression
+        # Pass 1: Fit probit model using existing ProbitRegression on full training set
         β = Pioneer.ProbitRegression(
             β, 
             train_data[!, available_features], 
@@ -578,6 +586,11 @@ function probit_regression_scoring_cv!(
             train_chunks, 
             max_iter = 30
         )
+        # Coefficient diagnostics removed per request
+        
+        # Predict probabilities on train and test sets (needed for selection and scoring)
+        train_probs = zeros(Float32, size(train_data, 1))
+        Pioneer.ModelPredictProbs!(train_probs, train_data[!, available_features], β, train_chunks)
         
         # Predict probabilities on test set
         test_data = psms[test_mask, :]
@@ -593,8 +606,53 @@ function probit_regression_scoring_cv!(
             β,
             test_chunks
         )
-        
         prob_estimates[test_mask] = test_probs
+
+        # Compute train q-values and PEPs for selection
+        qvals_train = Vector{Float32}(undef, size(train_data, 1))
+        get_qvalues!(train_probs, train_targets_bool, qvals_train)
+        pep_train = Vector{Float32}(undef, size(train_data, 1))
+        get_PEP!(train_probs, train_targets_bool, pep_train)
+
+        # Build second-pass training set
+        # Hard-coded 1% q-value threshold for selecting positive targets
+        q_thresh = 0.01f0
+        confident_pos = (train_targets_bool .== true) .& (qvals_train .<= q_thresh)
+        decoys_train = (train_targets_bool .== false)
+        # Negative mining: re-label worst targets as negatives using provided PEP threshold
+        mined_negs = (train_targets_bool .== true) .& (pep_train .>= neg_mining_pep_threshold)
+
+        second_mask_rel = decoys_train .| confident_pos .| mined_negs
+        if any(second_mask_rel)
+            second_train_data = train_data[second_mask_rel, :]
+            second_labels = copy(train_targets_bool[second_mask_rel])
+            # Relabel mined negatives to false
+            relabel_idx = findall(mined_negs[second_mask_rel])
+            for i in relabel_idx
+                second_labels[i] = false
+            end
+
+            # Fit pass 2 model
+            second_chunk_size = max(1, size(second_train_data, 1) ÷ (tasks_per_thread * Threads.nthreads()))
+            second_chunks = Iterators.partition(1:size(second_train_data, 1), second_chunk_size)
+            β2 = zeros(Float64, length(available_features))
+            β2 = Pioneer.ProbitRegression(
+                β2,
+                second_train_data[!, available_features],
+                second_labels,
+                second_chunks,
+                max_iter = 30
+            )
+            # Coefficient diagnostics removed per request
+            # Re-predict on test set with pass 2 model
+            Pioneer.ModelPredictProbs!(
+                test_probs,
+                test_data[!, available_features],
+                β2,
+                test_chunks
+            )
+            prob_estimates[test_mask] = test_probs
+        end
     end
     
     # Step 5: Assign probabilities to DataFrame (like XGBoost does at line 105 of percolatorSortOf.jl)
@@ -709,12 +767,30 @@ This function is separated from scoring to allow model comparison without file I
 
 # Arguments
 - `psms`: DataFrame containing scored PSMs with ms_file_idx column
-- `file_paths`: Vector of file paths indexed by ms_file_idx
+- `file_paths`: Vector of file paths for valid files only
 """
 function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})
     dropVectorColumns!(psms) # avoids writing issues
+    
+    # Create mapping from unique ms_file_idx values to file paths
+    unique_file_indices = unique(psms[:, :ms_file_idx])
+    sort!(unique_file_indices)
+    
+    # Check that we have enough file paths for all file indices
+    if length(file_paths) != length(unique_file_indices)
+        error("Mismatch: $(length(file_paths)) file paths provided but $(length(unique_file_indices)) unique file indices found in PSM data")
+    end
+    
+    # Create mapping: original file index → output file path
+    index_to_path = Dict(zip(unique_file_indices, file_paths))
+    
     for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
-        fpath = file_paths[ms_file_idx[:ms_file_idx]]
-        writeArrow(fpath, gpsms)
+        file_idx = ms_file_idx[:ms_file_idx]
+        if haskey(index_to_path, file_idx)
+            fpath = index_to_path[file_idx]
+            writeArrow(fpath, gpsms)
+        else
+            @warn "No output path found for file index $file_idx, skipping"
+        end
     end
 end

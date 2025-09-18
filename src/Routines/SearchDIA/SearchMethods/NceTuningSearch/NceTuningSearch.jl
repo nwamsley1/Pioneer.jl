@@ -88,7 +88,6 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     nce_grid::LinRange{Float32, Int64}
     nce_breakpoint::Float32
     max_q_val::Float32
-    min_samples::Int64
     prec_estimation::P
 
     function NceTuningSearchParameters(params::PioneerParameters)
@@ -102,7 +101,7 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
         # Create NCE grid
-        nce_grid = LinRange{Float32}(21.0f0, 40.0f0, 30)
+        nce_grid = LinRange{Float32}(21.0f0, 40.0f0, 20)
 
         new{typeof(prec_estimation)}(
             # Core parameters
@@ -130,7 +129,6 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             nce_grid,
             NCE_MODEL_BREAKPOINT,  # Assuming this is defined as a constant
             Float32(0.01),  # Fixed max_q_val for NCE tuning
-            Int64(search_params.min_samples),
             prec_estimation
         )
     end
@@ -175,24 +173,44 @@ function process_file!(
     spectra::MassSpecData
 ) where {P<:NceTuningSearchParameters}
 
+    # Get file name for debugging
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        "file_$ms_file_idx"
+    end
+
     try
         if typeof(getSpecLib(search_context))==FragmentIndexLibrary
             #No NCE tuning for basic FramgentIndexLibrary
+            # Skipping NCE tuning for basic FragmentIndexLibrary
             return nothing
         end
-        processed_psms = DataFrame()
-        for i in range(1, 10)
-            # Perform grid search
-            psms = library_search(spectra, search_context, params, ms_file_idx)   
-            # Process and filter PSMs
-            append!(processed_psms, process_psms!(psms, spectra, search_context, params))
-            if size(processed_psms, 1)>params.min_samples
-                break
-            end
-            if i == 10
-                n = size(processed_psms, 1)
-                @user_warn "Could not get collect enough psms for nce alignment. In 10 iterations collected $n samples"
-            end
+        
+        # Check if file has any scans
+        if length(spectra) == 0
+            @user_warn "Skipping NCE tuning for $file_name - file contains no scans"
+            return nothing
+        end
+        
+        # Check if file has any MS2 scans
+        ms_orders = getMsOrders(spectra)
+        ms2_count = count(x -> x == 2, ms_orders)
+        if ms2_count == 0
+            @user_warn "Skipping NCE tuning for $file_name - file contains no MS2 scans"
+            return nothing
+        end
+        
+        # Processing file with scans for NCE tuning
+        
+        # Perform library search on all MS2 scans
+        psms = library_search(spectra, search_context, params, ms_file_idx)   
+        # Process and filter PSMs
+        processed_psms = process_psms!(psms, spectra, search_context, params)
+        
+        # Warn if insufficient PSMs for reliable NCE modeling
+        if nrow(processed_psms) < 100
+            @user_warn "Low PSM count ($(nrow(processed_psms))) may result in unreliable NCE calibration. Consider lowering filtering thresholds."
         end
 
         # Fit and store NCE model
@@ -206,10 +224,9 @@ function process_file!(
         
         fname = getFileIdToName(getMSData(search_context), ms_file_idx)
         # Create the main plot
-        # Create the main plot with adjusted right margin
         p = plot(
             title = "NCE calibration for $fname",
-            right_margin = 50Plots.px  # Add extra margin on the right
+            right_margin = 50Plots.px
         )
 
         # Calculate bin range
@@ -217,7 +234,6 @@ function process_file!(
 
         # Extend x-axis range to accommodate annotations
         x_range = maximum(pbins) - minimum(pbins)
-        #plot_xlims = (minimum(pbins), maximum(pbins) + x_range * 0.15)  # Add 15% to x-axis
 
         # Plot each charge state with annotations
         for charge in sort(unique(processed_psms[!,:charge]))
@@ -244,8 +260,8 @@ function process_file!(
         append!(results.nce_psms, processed_psms)
 
     catch e
-        @user_warn "NCE tuning failed" ms_file_idx exception=e
-        rethrow(e)
+        @user_warn "NCE tuning failed for MS data file: $file_name. Error type: $(typeof(e)). Skipping NCE calibration for this file."
+        # Don't rethrow - allow pipeline to continue without NCE model for this file
     end
 
     return results

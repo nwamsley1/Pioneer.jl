@@ -154,6 +154,11 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData) where {P<:IntegrateChromatogramSearchParameters}
 
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "IntegrateChromatogramSearch")
+        return results  # Return early with unchanged results
+    end
+
     try
         # Set the NCE model from the search context for fragment matching
         setNceModel!(
@@ -283,12 +288,33 @@ function process_file!(
         # Store processed PSMs in results
         results.psms[] = passing_psms
     catch e
-        # Log error and re-throw for debugging
-        @user_warn "Chromatogram integration failed" ms_file_idx exception=e
-        rethrow(e)
+        # Handle failures gracefully using helper function
+        handle_search_error!(search_context, ms_file_idx, "IntegrateChromatogramSearch", e, createFallbackResults!, results)
     end
 
     return results
+end
+
+"""
+Create empty chromatogram results for a failed file in IntegrateChromatogramSearch.
+"""
+function createFallbackResults!(results::IntegrateChromatogramSearchResults, ms_file_idx::Int64)
+    # Create empty PSM DataFrame with proper schema
+    empty_psms = DataFrame(
+        ms_file_idx = UInt32[],
+        scan_idx = UInt32[], 
+        precursor_idx = UInt32[],
+        rt = Float32[],
+        q_value = Float32[],
+        score = Float32[], 
+        prob = Float32[],
+        peak_area = Float32[],
+        peak_height = Float32[],
+        fwhm = Float32[]
+    )
+    
+    # Set empty results (don't append since this file failed)
+    results.psms[] = empty_psms
 end
 
 function process_search_results!(
@@ -298,6 +324,12 @@ function process_search_results!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:IntegrateChromatogramSearchParameters}
+
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "IntegrateChromatogramSearch results processing")
+        return nothing  # Return early 
+    end
+
     try
         passing_psms = results.psms[]
         parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)

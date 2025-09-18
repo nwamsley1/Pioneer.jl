@@ -783,6 +783,9 @@ function fit_mass_err_model(
     ), ppm_errs
 end
 
+# Deprecated: apply_mass_error_buffer removed – buffer applied inline per-file before plotting
+
+
 function mass_err_ms1(ppm_errs::Vector{Float32},
     params::P) where {P<:FragmentIndexSearchParameters}
     mass_err = median(ppm_errs)
@@ -1519,29 +1522,12 @@ function get_fallback_parameters(
     search_context::SearchContext,
     ms_file_idx::Int64
 )
-    # Try to borrow from another successful file
-    n_files = length(getMSData(search_context).file_paths)
-    borrowed_from = nothing
-    
-    for other_idx in 1:n_files
-        if other_idx != ms_file_idx && 
-           haskey(search_context.mass_error_model, other_idx) &&
-           haskey(search_context.rt_conversion_model, other_idx)
-            mass_err = getMassErrorModel(search_context, other_idx)
-            rt_model = getRtConversionModel(search_context, other_idx)
-            @user_info "Borrowed parameters from file $other_idx"
-            return mass_err, rt_model, other_idx
-        end
-    end
-    
-    # Use default fallback
-    @user_warn "No successful files to borrow from, using default parameters"
-    
+
     # Default mass error model
     mass_err = MassErrorModel(0.0f0, (20.0f0, 20.0f0))
     
     # Default RT model (identity)
-    rt_model = LinearRtConversionModel(1.0f0, 0.0f0)
+    rt_model = IdentityModel()
     
     return mass_err, rt_model, nothing
 end

@@ -221,8 +221,7 @@ function process_file!(
         spectra::MassSpecData,
         search_context::SearchContext,
         params::FirstPassSearchParameters,
-        ms_file_idx::Int64
-    )
+        ms_file_idx::Int64)
         setNceModel!(
             getFragmentLookupTable(getSpecLib(search_context)), 
             getNceModelModel(search_context, ms_file_idx)
@@ -239,8 +238,7 @@ function process_file!(
         spectra::MassSpecData,
         search_context::SearchContext,
         params::FirstPassSearchParameters,
-        ms_file_idx::Int64
-    )
+        ms_file_idx::Int64)
 
         """
         Select best PSMs based on criteria.
@@ -284,8 +282,7 @@ function process_file!(
         spectra::MassSpecData,
         search_context::SearchContext,
         rt_model::RtConversionModel,
-        ms_file_idx::Int64
-    )
+        ms_file_idx::Int64)
         add_main_search_columns!(
             psms,
             getModel(rt_model),
@@ -311,8 +308,7 @@ function process_file!(
     function score_psms!(
         psms::DataFrame,
         params::FirstPassSearchParameters,
-        search_context::SearchContext
-    )
+        search_context::SearchContext)
         column_names = [
             :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
             :charge2, :poisson, :irt_error, 
@@ -407,8 +403,35 @@ function process_file!(
             select!(results.psms[] , Not(:log2_summed_intensity))
         end
     catch e
-        @user_warn "First pass search failed" ms_file_idx exception=e
-        rethrow(e)
+        # Get file name for debugging
+        file_name = try
+            getFileIdToName(getMSData(search_context), ms_file_idx)
+        catch
+            "file_$ms_file_idx"
+        end
+        
+        reason = "FirstPassSearch failed: $(typeof(e))"
+        markFileFailed!(search_context, ms_file_idx, reason)
+        @user_warn "First pass search failed for MS data file: $file_name. Error type: $(typeof(e)). Creating empty results to continue pipeline."
+        
+        # Create an empty but properly structured DataFrame to avoid downstream errors
+        empty_psms = DataFrame(
+            ms_file_idx = UInt32[],
+            scan_idx = UInt32[], 
+            precursor_idx = UInt32[],
+            rt = Float32[],
+            irt_predicted = Float32[],
+            q_value = Float32[],
+            score = Float32[], 
+            prob = Float32[],
+            scan_count = UInt32[],
+            fwhm = Float32[]  # Add this to prevent missing column error
+        )
+        results.psms[] = empty_psms
+        
+        # Set default mass error model
+        results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
+        #rethrow(e)
     end
 
     return results
@@ -484,11 +507,25 @@ function summarize_results!(
         params::FirstPassSearchParameters
     )
 
-        # Get best precursors
+        # Filter out failed files
+        valid_indices = get_valid_file_indices(search_context)
+        all_psms_paths = getFirstPassPsms(getMSData(search_context))
+        valid_psms_paths = [all_psms_paths[i] for i in valid_indices]
+        
+        # Create RT-IRT map for valid files only
+        all_rt_irt = getRtIrtModel(search_context)
+        valid_rt_irt = Dict{Int64, RtConversionModel}(i => all_rt_irt[i] for i in valid_indices if haskey(all_rt_irt, i))
+        
+        if isempty(valid_psms_paths)
+            @user_warn "No valid files for cross-run precursor analysis"
+            return Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}()
+        end
+        
+        # Get best precursors from valid files only
         return get_best_precursors_accross_runs(
-            getFirstPassPsms(getMSData(search_context)),
+            valid_psms_paths,
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-            getRtIrtModel(search_context),
+            valid_rt_irt,
             max_q_val=params.max_q_val_for_irt
         )
     end
@@ -497,7 +534,7 @@ function summarize_results!(
     # Process precursors
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
 
-    if params.match_between_runs==true
+    if false==true#params.match_between_runs==true
         #######
         #Each target has a corresponding decoy and vice versa
         #Add the complement targets/decoys to the precursor dict 

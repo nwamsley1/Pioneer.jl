@@ -133,6 +133,11 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 )
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "ScoringSearch")
+        return results  # Return early with unchanged results
+    end
+    
     # No per-file processing needed
     return results
 end
@@ -239,10 +244,21 @@ function summarize_results!(
     try
         # Step 1: Train EvoTrees/XGBoost Models
         ##@debug_l1 "Step 1: Training EvoTrees/XGBoost models..."
+        # Filter to only include valid (non-failed) files
+        valid_file_data = get_valid_file_paths(search_context, getSecondPassPsms)
+        valid_file_indices = [idx for (idx, _) in valid_file_data]
+        valid_second_pass_psms = [path for (_, path) in valid_file_data]
+        
+        # Check if any valid files remain
+        if isempty(valid_second_pass_psms)
+            @user_warn "No valid files for ScoringSearch - all files failed in previous search methods"
+            return nothing
+        end
+        
         step1_time = @elapsed begin
             score_precursor_isotope_traces(
                 second_pass_folder,
-                getSecondPassPsms(getMSData(search_context)),
+                valid_second_pass_psms,
                 getPrecursors(getSpecLib(search_context)),
                 params.match_between_runs,
                 params.max_q_value_xgboost_rescore,
@@ -254,8 +270,8 @@ function summarize_results!(
         end
         #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
 
-        # Create references for second pass PSMs
-        second_pass_paths = getSecondPassPsms(getMSData(search_context))
+        # Create references for second pass PSMs (only valid files)
+        second_pass_paths = valid_second_pass_psms
         second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
         # Step 2: Compute precursor probabilities and FTR filtering
@@ -274,8 +290,8 @@ function summarize_results!(
             if params.match_between_runs
                 prob_col = apply_mbr_filter!(
                     merged_df,
-                    params,
-                    getLibraryFdrScaleFactor(search_context))
+                    params
+                    )
             else
                 prob_col = :prob
             end
@@ -291,8 +307,8 @@ function summarize_results!(
                        
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
             # Write updated data back to individual files
-            for (idx, ref) in enumerate(second_pass_refs)
-                sub_df = merged_df[merged_df.ms_file_idx .== idx, :]
+            for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
+                sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
                 write_arrow_file(ref, sub_df)
             end
         end
@@ -302,7 +318,7 @@ function summarize_results!(
         #@debug_l1 "Step 3: Finding best isotope traces..."
         step3_time = @elapsed begin
             best_traces = get_best_traces(
-                getSecondPassPsms(getMSData(search_context)),
+                valid_second_pass_psms,
                 params.min_best_trace_prob
             )
         end
@@ -429,8 +445,8 @@ function summarize_results!(
         #@debug_l1 "Step 10 completed in $(round(step10_time, digits=2)) seconds"
 
         # Update search context with passing PSM paths
-        for (idx, ref) in enumerate(passing_refs)
-            setPassingPsms!(getMSData(search_context), idx, file_path(ref))
+        for (file_idx, ref) in zip(valid_file_indices, passing_refs)
+            setPassingPsms!(getMSData(search_context), file_idx, file_path(ref))
         end
 
         # Step 11: Count protein peptides
@@ -463,8 +479,8 @@ function summarize_results!(
                 min_peptides = params.min_peptides
             )
             
-            paired_files = [PairedSearchFiles(psm_path, pg_path, idx) 
-                           for (idx, (psm_path, pg_path)) in enumerate(psm_to_pg_mapping)]
+            paired_files = [PairedSearchFiles(psm_path, pg_path, file_idx)
+                           for (file_idx, (psm_path, pg_path)) in zip(valid_file_indices, psm_to_pg_mapping)]
             
             isempty(paired_files) && error("No protein groups created during protein inference")
         end

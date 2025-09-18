@@ -33,7 +33,9 @@
         "missed_cleavages": 1,
         "max_var_mods": 1,
         "add_decoys": true,
-        "entrapment_r": 0.0
+        "entrapment_r": 0.0,
+        "decoy_method": "shuffle",
+        "entrapment_method": "shuffle"
     },
     "comment_modifications": "=== Protein modifications ===",
     "variable_mods": {
@@ -55,7 +57,7 @@
     "isotope_mod_groups": [],
     "comment_collision_energy": "=== Collision energy settings ===",
     "nce_params": {
-        "nce": 25.0,
+        "nce": 26.0,
         "default_charge": 2,
         "dynamic_nce": true
     },
