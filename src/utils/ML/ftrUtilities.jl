@@ -22,11 +22,10 @@ is less than or equal to `alpha`.  The input vectors must be of equal
 length and correspond element-wise to candidate precursor–run pairs.
 """
 function get_ftr_threshold(scores::AbstractVector{U},
-                           is_target::AbstractVector{Bool},
                            is_bad_transfer::AbstractVector{Bool},
                            alpha::Real; doSort::Bool = true,
                            mask::Union{Nothing,AbstractVector{Bool}} = nothing) where {U<:Real}
-    @assert length(scores) == length(is_target) == length(is_bad_transfer)
+    @assert length(scores) == length(is_bad_transfer)
 
     if mask === nothing
         order = doSort ? sortperm(scores, rev=true, alg=QuickSort) : collect(eachindex(scores))

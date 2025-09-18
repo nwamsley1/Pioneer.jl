@@ -307,8 +307,8 @@ function summarize_results!(
             if params.match_between_runs
                 prob_col = apply_mbr_filter!(
                     merged_df,
-                    params,
-                    getLibraryFdrScaleFactor(search_context))
+                    params
+                    )
             else
                 prob_col = :prob
             end

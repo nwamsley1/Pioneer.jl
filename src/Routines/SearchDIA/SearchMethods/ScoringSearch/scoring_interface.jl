@@ -49,8 +49,7 @@ Returns column name for filtered probabilities.
 """
 function apply_mbr_filter!(
     merged_df::DataFrame,
-    params,
-    fdr_scale_factor::Float32,
+    params
 )
     # 1) identify transfer candidates
     candidate_mask = merged_df.MBR_transfer_candidate
@@ -86,7 +85,6 @@ function apply_mbr_filter!(
     candidate_labels = is_bad_transfer[candidate_mask]
     
     n_candidates = length(candidate_labels)
-    n_bad = sum(candidate_labels)
 
     # Test all methods and store results
     methods = [ThresholdFilter(), ProbitFilter(), XGBoostFilter()]
@@ -126,9 +124,11 @@ Method-Specific Training and Evaluation
 Train a filtering method and evaluate performance. Returns FilterResult with scores and threshold.
 """
 function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
+    # candidate_labels represents bad transfer flags
+    # For get_ftr_threshold: is_target should be the opposite of bad transfers
+    is_target = .!candidate_labels
     τ = get_ftr_threshold(
         candidate_data.prob,
-        candidate_data.target,
         candidate_labels,
         params.max_MBR_false_transfer_rate
     )
@@ -165,7 +165,8 @@ function train_and_evaluate(method::ProbitFilter, candidate_data::DataFrame, can
         
         return FilterResult("Probit", scores, τ, n_passing)
     catch e
-        @user_warn "Probit method failed with error: $(typeof(e)): $e"
+        throw(e)
+        #@user_warn "Probit method failed with error: $(typeof(e)): $e"
         return nothing
     end
 end
@@ -198,7 +199,8 @@ function train_and_evaluate(method::XGBoostFilter, candidate_data::DataFrame, ca
         
         return FilterResult("XGBoost", scores, τ, n_passing)
     catch e
-        @user_warn "XGBoost method failed with error: $(typeof(e)): $e"
+        throw(e)
+        #@user_warn "XGBoost method failed with error: $(typeof(e)): $e"
         return nothing
     end
 end
@@ -430,9 +432,9 @@ function prepare_mbr_features(df::DataFrame)
     return X, feature_names
 end
 
-function calibrate_ml_threshold(scores::AbstractVector, y_true::AbstractVector{Bool}, target_ftr::Float64)
+function calibrate_ml_threshold(scores::AbstractVector, is_bad_transfer::AbstractVector{Bool}, target_ftr::Float64)
     """Find score threshold that achieves target FTR."""
-    return get_ftr_threshold(scores, y_true, target_ftr)
+    return get_ftr_threshold(scores, is_bad_transfer, target_ftr)
 end
 
 
