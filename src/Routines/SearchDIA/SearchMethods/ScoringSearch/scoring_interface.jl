@@ -53,13 +53,13 @@ function apply_mbr_filter!(
 )
     # 1) identify transfer candidates
     candidate_mask = merged_df.MBR_transfer_candidate
-
     # 2) identify bad transfers
     is_bad_transfer = candidate_mask .& (
          (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .| # T->D
          (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, false)) # D->T
     )
 
+    # After computing is_bad_transfer
     # 3) Apply the main filtering function
     filtered_probs = apply_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
 
@@ -83,8 +83,14 @@ function apply_mbr_filter!(
     # Extract candidate data once
     candidate_data = merged_df[candidate_mask, :]
     candidate_labels = is_bad_transfer[candidate_mask]
-    
+
     n_candidates = length(candidate_labels)
+    
+    # Handle case with no MBR candidates
+    if n_candidates == 0
+        @user_warn "No MBR transfer candidates found - returning original probabilities unchanged"
+        return merged_df.prob
+    end
 
     # Test all methods and store results
     methods = [ThresholdFilter(), ProbitFilter(), XGBoostFilter()]
@@ -99,7 +105,8 @@ function apply_mbr_filter!(
     
     # Select best method (most candidates passing)
     if isempty(results)
-        error("No MBR filtering methods succeeded")
+        @user_warn "No MBR filtering methods succeeded - returning original probabilities unchanged"
+        return merged_df.prob
     end
     
     best_result = results[argmax([r.n_passing for r in results])]
@@ -130,7 +137,14 @@ function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, 
         candidate_labels,
         params.max_MBR_false_transfer_rate
     )
-    n_passing = sum(candidate_data.prob .>= τ)
+
+    # Handle edge case where threshold is infinite (no valid threshold found)
+    if isinf(τ)
+        @user_warn "ThresholdFilter: Infinite threshold returned - rejecting all candidates"
+        n_passing = 0
+    else
+        n_passing = sum(candidate_data.prob .>= τ)
+    end
 
     return FilterResult("Threshold", candidate_data.prob, τ, n_passing)
 end

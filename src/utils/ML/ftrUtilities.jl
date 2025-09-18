@@ -34,6 +34,11 @@ function get_ftr_threshold(scores::AbstractVector{U},
         order = doSort ? selected[sortperm(view(scores, selected), rev=true, alg=QuickSort)] : selected
     end
 
+    # Handle empty input case
+    if isempty(scores)
+        return U(Inf)  # Return threshold that rejects all candidates
+    end
+
     num_transfers = 0
     num_bad_transfers = 0
     τ = maximum(scores)

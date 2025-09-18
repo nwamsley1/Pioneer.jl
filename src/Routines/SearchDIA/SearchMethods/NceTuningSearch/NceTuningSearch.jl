@@ -183,7 +183,7 @@ function process_file!(
     try
         if typeof(getSpecLib(search_context))==FragmentIndexLibrary
             #No NCE tuning for basic FramgentIndexLibrary
-            @info "Skipping NCE tuning for $file_name (basic FragmentIndexLibrary)"
+            # Skipping NCE tuning for basic FragmentIndexLibrary
             return nothing
         end
         
@@ -201,7 +201,7 @@ function process_file!(
             return nothing
         end
         
-        @info "Processing $file_name with $(length(spectra)) total scans, $ms2_count MS2 scans"
+        # Processing file with scans for NCE tuning
         
         # Perform library search on all MS2 scans
         psms = library_search(spectra, search_context, params, ms_file_idx)   
