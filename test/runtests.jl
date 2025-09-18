@@ -137,8 +137,7 @@ end
     #    @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     #end
     #include("./UnitTests/empiricalLibTests.jl")
-    #=
-    @testset "process_test" begin 
+    @testset "process_test" begin
         @test SearchDIA(joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_params.json"))===nothing
     end
     
@@ -173,7 +172,6 @@ end
     include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
     include("./utils/FileOperations/core/test_core_references_basic.jl")
     include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
-    =#
     # ScoringSearch interface tests
     include("./Routines/SearchDIA/SearchMethods/ScoringSearch/test_scoring_interface.jl")
     
