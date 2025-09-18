@@ -129,6 +129,7 @@ function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, 
     try
         τ = get_ftr_threshold(
             candidate_data.prob,
+            candidate_data.target,
             candidate_labels,
             params.max_MBR_false_transfer_rate
         )
