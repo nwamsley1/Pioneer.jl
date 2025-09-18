@@ -36,7 +36,7 @@ function create_qc_plots(
     @user_info "Generating final QC plots"
     # Get file paths for successful files only
     all_file_paths = collect(getFilePaths(getMSData(search_context)))
-    valid_file_indices = getValidFileIndices(search_context)
+    valid_file_indices = get_valid_file_indices(search_context)
     successful_file_paths = [all_file_paths[i] for i in valid_file_indices if i <= length(all_file_paths)]
     
     qcPlots(
@@ -49,7 +49,8 @@ function create_qc_plots(
         joinpath(getDataOutDir(search_context), "qc_plots"),
         successful_file_paths,
         getIrtRtMap(search_context),
-        search_context.mass_error_model
+        search_context.mass_error_model,
+        valid_file_indices
     )
 end
 

@@ -508,7 +508,7 @@ function summarize_results!(
     )
 
         # Filter out failed files
-        valid_indices = getValidFileIndices(search_context)
+        valid_indices = get_valid_file_indices(search_context)
         all_psms_paths = getFirstPassPsms(getMSData(search_context))
         valid_psms_paths = [all_psms_paths[i] for i in valid_indices]
         

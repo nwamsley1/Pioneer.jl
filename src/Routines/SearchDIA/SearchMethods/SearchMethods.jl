@@ -37,23 +37,65 @@ The execution follows these steps for each MS file:
 5. Summarize overall results
 """
 function execute_search(
-    search_type::SearchMethod, 
+    search_type::SearchMethod,
     search_context::SearchContext,
     params::PioneerParameters)
 
     msdr = getMassSpecData(search_context)
     n_files=length(msdr.file_paths)
-    
+
     search_parameters = get_parameters(search_type, params)
     Random.seed!(1844)
     search_results = init_search_results(search_parameters, search_context)
+
+    n_processed = 0
+    n_failed = 0
+
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
-        process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
-        process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
+        # Skip files that have been marked as failed in previous search methods
+        if is_file_failed(search_context, ms_file_idx)
+            file_name = try
+                getMassSpecData(search_context).file_id_to_name[ms_file_idx]
+            catch
+                "file_$ms_file_idx"
+            end
+            @debug_l1 "Skipping file $ms_file_idx ($file_name) - marked as failed in previous step"
+            continue
+        end
+
+        try
+            process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
+            process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
+            n_processed += 1
+        catch e
+            file_name = try
+                getMassSpecData(search_context).file_id_to_name[ms_file_idx]
+            catch
+                "file_$ms_file_idx"
+            end
+            @user_warn "File $ms_file_idx ($file_name) failed during $(typeof(search_type)) processing: $e"
+            mark_file_as_failed_if_needed!(search_context, ms_file_idx, e)
+            n_failed += 1
+            # Continue with next file instead of crashing entire search
+        end
+
         reset_results!(search_results)
     end
-    
-    summarize_results!(search_results, search_parameters, search_context)
+
+    # Log summary of file processing
+    if n_failed > 0
+        @user_warn "$(typeof(search_type)): $n_processed files processed successfully, $n_failed files failed"
+    else
+        @debug_l1 "$(typeof(search_type)): $n_processed files processed successfully"
+    end
+
+    # Only proceed to summarize if we have some successful files
+    if n_processed > 0
+        summarize_results!(search_results, search_parameters, search_context)
+    else
+        @user_warn "$(typeof(search_type)): No files processed successfully - skipping result summarization"
+    end
+
     return nothing#search_results
 end
 
@@ -94,7 +136,7 @@ Check if a file should be skipped due to previous failure and log appropriate wa
 Returns true if file should be skipped, false otherwise.
 """
 function check_and_skip_failed_file(search_context::SearchContext, ms_file_idx::Int64, method_name::String)
-    if shouldSkipFile(search_context, ms_file_idx)
+    if is_file_failed(search_context, ms_file_idx)
         file_name = try
             getFileIdToName(getMSData(search_context), ms_file_idx)
         catch
@@ -138,7 +180,7 @@ Get paths for valid files, maintaining index association.
 Returns: Vector of (index, path) tuples for files that passed pipeline stages.
 """
 function get_valid_indexed_paths(path_array::Vector{String}, search_context::SearchContext)
-    valid_indices = getValidFileIndices(search_context)
+    valid_indices = get_valid_file_indices(search_context)
     indexed_paths = Tuple{Int64, String}[]
     
     for idx in valid_indices
@@ -169,11 +211,11 @@ Get file names for valid files, preserving index order.
 Uses the failed file tracking in SearchContext to determine which files are valid.
 """
 function get_valid_file_names_by_indices(search_context::SearchContext)
-    valid_indices = getValidFileIndices(search_context)
+    valid_indices = get_valid_file_indices(search_context)
     all_names = getFileIdToName(getMSData(search_context))
     
-    # Return names in index order
-    return [all_names[idx] for idx in sort(valid_indices)]
+    # Return names in index order (indices are already sorted)
+    return [all_names[idx] for idx in valid_indices]
 end
 
 """
@@ -299,6 +341,91 @@ function initSimpleSearchContext(
         zeros(Float32, 5),
         zeros(Float32, 5),
     )
+end
+
+#==========================================================
+Failed File Management Utilities
+==========================================================#
+
+"""
+    is_file_failed(search_context, ms_file_idx) -> Bool
+
+Check if a file has been marked as failed in the ArrowTableReference.
+"""
+function is_file_failed(search_context, ms_file_idx)
+    return getFailedIndicator(getMassSpecData(search_context), ms_file_idx)
+end
+
+"""
+    mark_file_as_failed_if_needed!(search_context, ms_file_idx, reason)
+
+Mark a file as failed in the ArrowTableReference and log the reason.
+"""
+function mark_file_as_failed_if_needed!(search_context, ms_file_idx, reason)
+    setFailedIndicator!(getMassSpecData(search_context), ms_file_idx, true)
+    file_name = try
+        getMassSpecData(search_context).file_id_to_name[ms_file_idx]
+    catch
+        "file_$ms_file_idx"
+    end
+    @user_warn "File $ms_file_idx ($file_name) marked as failed: $reason"
+end
+
+"""
+    get_valid_file_indices(search_context) -> Vector{Int}
+
+Get indices of files that have not been marked as failed.
+"""
+function get_valid_file_indices(search_context)
+    ms_data = getMassSpecData(search_context)
+    indices = [i for i in 1:length(ms_data.file_paths) if !getFailedIndicator(ms_data, i)]
+    return sort(indices)  # Ensure consistent ordering across all uses
+end
+
+"""
+    get_valid_file_paths(search_context, path_accessor_fn) -> Vector{Tuple{Int, String}}
+
+Get (index, path) pairs for valid files using the provided path accessor function.
+Returns only non-empty paths from files that haven't failed.
+"""
+function get_valid_file_paths(search_context, path_accessor_fn)
+    valid_indices = get_valid_file_indices(search_context)
+    all_paths = path_accessor_fn(getMassSpecData(search_context))
+    return [(i, all_paths[i]) for i in valid_indices if i <= length(all_paths) && !isempty(all_paths[i])]
+end
+
+"""
+    filter_to_valid_files(file_paths::Vector{String}, search_context) -> Vector{String}
+
+Filter a vector of file paths to only include those from valid (non-failed) files.
+"""
+function filter_to_valid_files(file_paths::Vector{String}, search_context)
+    valid_indices = get_valid_file_indices(search_context)
+    return [file_paths[i] for i in valid_indices if i <= length(file_paths) && !isempty(file_paths[i])]
+end
+
+"""
+    safe_process_file!(search_context, ms_file_idx, processing_fn) -> Bool
+
+Safely process a file with error handling. Returns true if successful, false if failed.
+Marks file as failed if processing produces no data or throws an error.
+"""
+function safe_process_file!(search_context, ms_file_idx, processing_fn)
+    if is_file_failed(search_context, ms_file_idx)
+        return false  # Already failed
+    end
+
+    try
+        result = processing_fn(ms_file_idx)
+        if result === nothing || (isa(result, DataFrame) && nrow(result) == 0)
+            mark_file_as_failed_if_needed!(search_context, ms_file_idx, "No valid data produced")
+            return false
+        end
+        return true
+    catch e
+        mark_file_as_failed_if_needed!(search_context, ms_file_idx, e)
+        return false
+    end
 end
 
 

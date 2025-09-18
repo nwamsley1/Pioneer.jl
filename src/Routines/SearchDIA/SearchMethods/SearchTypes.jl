@@ -293,51 +293,7 @@ function markFileFailed!(ctx::SearchContext, ms_file_idx::Int64, reason::String)
     ctx.file_failure_reasons[ms_file_idx] = reason
 end
 
-"""
-    isFileFailed(ctx::SearchContext, ms_file_idx::Int64)::Bool
 
-Check if a file has been marked as failed.
-"""
-function isFileFailed(ctx::SearchContext, ms_file_idx::Int64)::Bool
-    return ms_file_idx in ctx.failed_files
-end
-
-"""
-    getFailedFiles(ctx::SearchContext)::Set{Int64}
-
-Get the set of all failed file indices.
-"""
-function getFailedFiles(ctx::SearchContext)::Set{Int64}
-    return ctx.failed_files
-end
-
-"""
-    getFailureReason(ctx::SearchContext, ms_file_idx::Int64)::String
-
-Get the failure reason for a specific file.
-"""
-function getFailureReason(ctx::SearchContext, ms_file_idx::Int64)::String
-    return get(ctx.file_failure_reasons, ms_file_idx, "Unknown failure")
-end
-
-"""
-    shouldSkipFile(ctx::SearchContext, ms_file_idx::Int64)::Bool
-
-Check if a file should be skipped in processing.
-"""
-function shouldSkipFile(ctx::SearchContext, ms_file_idx::Int64)::Bool
-    return isFileFailed(ctx, ms_file_idx)
-end
-
-"""
-    getValidFileIndices(ctx::SearchContext)::Vector{Int64}
-
-Get indices of all valid (non-failed) files.
-"""
-function getValidFileIndices(ctx::SearchContext)::Vector{Int64}
-    total_files = length(getMSData(ctx))
-    return [i for i in 1:total_files if !isFileFailed(ctx, i)]
-end
 
 #==========================================================
 Interface Methods for Parameter Access

@@ -666,7 +666,7 @@ function process_file!(
 ) where {P<:ParameterTuningSearchParameters}
     
     # Check if file should be skipped due to previous failure
-    if shouldSkipFile(search_context, ms_file_idx)
+    if is_file_failed(search_context, ms_file_idx)
         file_name = try
             getFileIdToName(getMSData(search_context), ms_file_idx)
         catch

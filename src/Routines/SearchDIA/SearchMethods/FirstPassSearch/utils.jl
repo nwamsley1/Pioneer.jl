@@ -349,13 +349,14 @@ function map_retention_times!(
 )
 
     # Only process valid (non-failed) files
-    valid_files = getValidFileIndices(search_context)
+    valid_files = get_valid_file_indices(search_context)
     all_psms_paths = getFirstPassPsms(getMSData(search_context))
-    
+
     for ms_file_idx in valid_files
-        #if getFailedIndicator(getMSData(search_context), ms_file_idx)==true
-        #    continue
-        #end
+        # Skip files that have been marked as failed
+        if is_file_failed(search_context, ms_file_idx)
+            continue
+        end
         psms_path = all_psms_paths[ms_file_idx]
         psms = Arrow.Table(psms_path)
         best_hits = psms[:prob].>params.min_prob_for_irt_mapping#Map rts using only the best psms
@@ -402,15 +403,18 @@ function map_retention_times!(
     end
     
     # Set identity models for failed files
-    for failed_idx in getFailedFiles(search_context)
-        file_name = try
-            getFileIdToName(getMSData(search_context), failed_idx)
-        catch
-            "file_$failed_idx"
+    ms_data = getMassSpecData(search_context)
+    for failed_idx in 1:length(ms_data.file_paths)
+        if getFailedIndicator(ms_data, failed_idx)
+            file_name = try
+                getFileIdToName(getMSData(search_context), failed_idx)
+            catch
+                "file_$failed_idx"
+            end
+            @user_warn "Setting identity RT models for failed file: $file_name"
+            setRtIrtMap!(search_context, IdentityModel(), failed_idx)
+            setIrtRtMap!(search_context, IdentityModel(), failed_idx)
         end
-        @user_warn "Setting identity RT models for failed file: $file_name"
-        setRtIrtMap!(search_context, IdentityModel(), failed_idx)
-        setIrtRtMap!(search_context, IdentityModel(), failed_idx)
     end
     
     return nothing

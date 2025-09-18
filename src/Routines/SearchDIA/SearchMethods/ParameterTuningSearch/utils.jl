@@ -1522,21 +1522,7 @@ function get_fallback_parameters(
     search_context::SearchContext,
     ms_file_idx::Int64
 )
-    # Try to borrow from another successful file
-    n_files = length(getMSData(search_context).file_paths)
-    borrowed_from = nothing
-    
-    for other_idx in 1:n_files
-        if other_idx != ms_file_idx && 
-           haskey(search_context.mass_error_model, other_idx) &&
-           haskey(search_context.rt_irt_map, other_idx)
-            mass_err = getMassErrorModel(search_context, other_idx)
-            rt_model = getRtIrtModel(search_context, other_idx)
-            @user_info "Borrowed parameters from file $other_idx"
-            return mass_err, rt_model, other_idx
-        end
-    end
-    
+
     # Default mass error model
     mass_err = MassErrorModel(0.0f0, (20.0f0, 20.0f0))
     

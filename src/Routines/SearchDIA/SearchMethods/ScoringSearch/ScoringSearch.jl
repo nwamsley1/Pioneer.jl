@@ -223,25 +223,6 @@ function get_protein_pep_interpolation(merged_path::String, params::ScoringSearc
 end
 
 """
-Get file paths for valid (non-failed) files only.
-Filters out paths corresponding to files that failed in previous search methods.
-"""
-function get_valid_file_paths(all_paths::Vector{String}, search_context::SearchContext)
-    valid_indices = getValidFileIndices(search_context)
-    valid_paths = [all_paths[i] for i in valid_indices if i <= length(all_paths)]
-    
-    # Additionally filter to only include files that actually exist
-    existing_paths = filter(isfile, valid_paths)
-    
-    if length(existing_paths) < length(valid_paths)
-        missing_count = length(valid_paths) - length(existing_paths)
-        @user_warn "Found $missing_count missing Arrow files from valid files - this may indicate incomplete previous searches"
-    end
-    
-    return existing_paths
-end
-
-"""
 Process all results to get final protein scores.
 """
 function summarize_results!(
@@ -264,7 +245,9 @@ function summarize_results!(
         # Step 1: Train EvoTrees/XGBoost Models
         ##@debug_l1 "Step 1: Training EvoTrees/XGBoost models..."
         # Filter to only include valid (non-failed) files
-        valid_second_pass_psms = get_valid_file_paths(getSecondPassPsms(getMSData(search_context)), search_context)
+        valid_file_data = get_valid_file_paths(search_context, getSecondPassPsms)
+        valid_file_indices = [idx for (idx, _) in valid_file_data]
+        valid_second_pass_psms = [path for (_, path) in valid_file_data]
         
         # Check if any valid files remain
         if isempty(valid_second_pass_psms)
@@ -324,8 +307,8 @@ function summarize_results!(
                        
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
             # Write updated data back to individual files
-            for (idx, ref) in enumerate(second_pass_refs)
-                sub_df = merged_df[merged_df.ms_file_idx .== idx, :]
+            for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
+                sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
                 write_arrow_file(ref, sub_df)
             end
         end
@@ -462,8 +445,8 @@ function summarize_results!(
         #@debug_l1 "Step 10 completed in $(round(step10_time, digits=2)) seconds"
 
         # Update search context with passing PSM paths
-        for (idx, ref) in enumerate(passing_refs)
-            setPassingPsms!(getMSData(search_context), idx, file_path(ref))
+        for (file_idx, ref) in zip(valid_file_indices, passing_refs)
+            setPassingPsms!(getMSData(search_context), file_idx, file_path(ref))
         end
 
         # Step 11: Count protein peptides
@@ -496,8 +479,8 @@ function summarize_results!(
                 min_peptides = params.min_peptides
             )
             
-            paired_files = [PairedSearchFiles(psm_path, pg_path, idx) 
-                           for (idx, (psm_path, pg_path)) in enumerate(psm_to_pg_mapping)]
+            paired_files = [PairedSearchFiles(psm_path, pg_path, file_idx)
+                           for (file_idx, (psm_path, pg_path)) in zip(valid_file_indices, psm_to_pg_mapping)]
             
             isempty(paired_files) && error("No protein groups created during protein inference")
         end

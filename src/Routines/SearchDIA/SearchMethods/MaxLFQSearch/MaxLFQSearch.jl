@@ -164,15 +164,14 @@ function summarize_results!(
             spline_n_knots = params.spline_n_knots
         )
 
-        # Get PSM paths using index-based approach to maintain file mapping
-        all_passing_psm_paths = getPassingPsms(getMSData(search_context))
-        
-        # Use utility function to get valid indexed paths (maintains index → path mapping)
-        valid_indexed_paths = get_valid_indexed_paths(all_passing_psm_paths, search_context)
-        existing_passing_psm_paths = [path for (_, path) in valid_indexed_paths]
-        
-        # Get file names using the same valid indices
-        successful_file_names = get_valid_file_names_by_indices(search_context)
+        # Get PSM paths using valid file utilities to maintain proper file mapping
+        valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
+        existing_passing_psm_paths = [path for (_, path) in valid_file_data]
+
+        # Get all file names (needed for LFQ indexing by experiment ID)
+        all_file_names = collect(getMSData(search_context).file_id_to_name)
+        valid_indices = get_valid_file_indices(search_context)
+        successful_file_names = [all_file_names[i] for i in valid_indices]
 
         if isempty(existing_passing_psm_paths)
             @user_warn "No valid PSM files found for MaxLFQ analysis - all files may have failed in previous searches"
@@ -219,7 +218,7 @@ function summarize_results!(
             merged_psm_ref,  # Use FileReference instead of DataFrame
             protein_long_path,
             precursor_quant_col,
-            successful_file_names,
+            all_file_names,  # Use complete file name array for proper indexing
             params.q_value_threshold,
             batch_size = params.batch_size
         )
