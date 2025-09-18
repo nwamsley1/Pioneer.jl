@@ -173,9 +173,7 @@ function summarize_results!(
         
         # Get file names using the same valid indices
         successful_file_names = get_valid_file_names_by_indices(search_context)
-        
-        @user_info "MaxLFQ will process $(length(successful_file_names)) successful files: $(join(successful_file_names, ", "))"
-        
+
         if isempty(existing_passing_psm_paths)
             @user_warn "No valid PSM files found for MaxLFQ analysis - all files may have failed in previous searches"
             return nothing

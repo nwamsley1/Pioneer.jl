@@ -48,8 +48,6 @@ function get_ftr_threshold(scores::AbstractVector{U},
         end
     end
 
-    println("FTR probability threshold: ", τ, " Num passing candidate transfers: ", best_count, " out of ", num_transfers, "\n\n")
-
     return τ
 end
 

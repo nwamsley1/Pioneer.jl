@@ -252,8 +252,6 @@ function process_file!(
         "file_$ms_file_idx"
     end
     
-    @info "Quad tuning processing file: $file_name"
-          
     # Log fitted mass error model from ParameterTuningSearch
     fitted_model = getMassErrorModel(search_context, ms_file_idx)
     

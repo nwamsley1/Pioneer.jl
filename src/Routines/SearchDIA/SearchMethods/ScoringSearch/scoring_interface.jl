@@ -125,8 +125,6 @@ Train a filtering method and evaluate performance. Returns FilterResult with sco
 """
 function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
     # candidate_labels represents bad transfer flags
-    # For get_ftr_threshold: is_target should be the opposite of bad transfers
-    is_target = .!candidate_labels
     τ = get_ftr_threshold(
         candidate_data.prob,
         candidate_labels,
@@ -281,13 +279,11 @@ function train_probit_model_df(feature_data::DataFrame, y::AbstractVector{Bool},
 
         # Check for Inf or NaN values
         if any(isinf, col_data) || any(isnan, col_data)
-            @user_warn "Probit MBR: Skipping column $col (contains Inf/NaN values)"
             continue
         end
 
         # Check for zero variance (constant columns)
         if length(unique(col_data)) <= 1 || var(col_data) ≈ 0.0
-            @user_warn "Probit MBR: Skipping column $col (zero variance)"
             continue
         end
 
@@ -295,14 +291,11 @@ function train_probit_model_df(feature_data::DataFrame, y::AbstractVector{Bool},
     end
 
     if isempty(valid_cols)
-        @user_warn "Probit MBR: No valid columns for training - all have zero variance or Inf/NaN"
         throw(ArgumentError("No valid features for probit regression"))
     end
 
     # Use only valid columns
     filtered_data = feature_data[:, valid_cols]
-    @user_info "Probit MBR: Using $(length(valid_cols))/$(ncol(feature_data)) valid features: $(join(valid_cols, ", "))"
-
     # Initialize coefficients for filtered data
     β = zeros(Float64, size(filtered_data, 2))
 

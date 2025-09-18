@@ -1537,9 +1537,6 @@ function get_fallback_parameters(
         end
     end
     
-    # Use default fallback
-    @user_warn "No successful files to borrow from, using default parameters"
-    
     # Default mass error model
     mass_err = MassErrorModel(0.0f0, (20.0f0, 20.0f0))
     

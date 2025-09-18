@@ -179,8 +179,6 @@ function process_file!(
     catch
         "file_$ms_file_idx"
     end
-    
-    @info "NCE tuning processing file: $file_name"
 
     try
         if typeof(getSpecLib(search_context))==FragmentIndexLibrary
