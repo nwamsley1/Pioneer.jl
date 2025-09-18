@@ -28,6 +28,55 @@ using Pioneer: ProbitRegression, ModelPredict!
 
 
 @testset "Scoring Interface Tests" begin
+
+    @testset "MBR Running Statistics" begin
+        # Test the update_pair_statistics function
+        using Pioneer: update_pair_statistics
+
+        # Test first probability
+        initial_stats = (
+            best_prob_1 = 0.0f0,
+            best_prob_2 = 0.0f0,
+            worst_prob_1 = 0.0f0,
+            worst_prob_2 = 0.0f0,
+            mean_prob = 0.0f0,
+            count_pairs = Int32(0),
+            dummy_field = 42  # Test that other fields are preserved
+        )
+
+        updated = update_pair_statistics(initial_stats, 0.8f0)
+        @test updated.best_prob_1 ≈ 0.8f0
+        @test updated.worst_prob_1 ≈ 0.8f0
+        @test updated.mean_prob ≈ 0.8f0
+        @test updated.count_pairs == 1
+        @test updated.dummy_field == 42  # Preserved
+
+        # Test second probability
+        updated2 = update_pair_statistics(updated, 0.9f0)
+        @test updated2.best_prob_1 ≈ 0.9f0
+        @test updated2.best_prob_2 ≈ 0.8f0
+        @test updated2.worst_prob_1 ≈ 0.8f0
+        @test updated2.worst_prob_2 ≈ 0.9f0
+        @test updated2.mean_prob ≈ 0.85f0
+        @test updated2.count_pairs == 2
+
+        # Test third probability (lower than both)
+        updated3 = update_pair_statistics(updated2, 0.6f0)
+        @test updated3.best_prob_1 ≈ 0.9f0
+        @test updated3.best_prob_2 ≈ 0.8f0
+        @test updated3.worst_prob_1 ≈ 0.6f0
+        @test updated3.worst_prob_2 ≈ 0.8f0
+        @test updated3.mean_prob ≈ (0.9f0 + 0.8f0 + 0.6f0) / 3.0f0
+        @test updated3.count_pairs == 3
+
+        # Test fourth probability (middle value)
+        updated4 = update_pair_statistics(updated3, 0.75f0)
+        @test updated4.best_prob_1 ≈ 0.9f0
+        @test updated4.best_prob_2 ≈ 0.8f0
+        @test updated4.worst_prob_1 ≈ 0.6f0
+        @test updated4.worst_prob_2 ≈ 0.75f0
+        @test updated4.count_pairs == 4
+    end
     
     @testset "MBR Filter Method Traits" begin
         # Test that the trait types can be instantiated
@@ -53,6 +102,9 @@ using Pioneer: ProbitRegression, ModelPredict!
             prob = [0.9, 0.8, 0.7, 0.6],
             irt_error = [0.1, -0.2, 0.3, -0.1],
             MBR_max_pair_prob = [0.8, 0.9, 0.7, 0.6],
+            MBR_mean_pair_prob = [0.7, 0.8, 0.6, 0.5],
+            MBR_min_pair_prob = [0.6, 0.7, 0.5, 0.4],
+            MBR_num_pairs = [3, 4, 2, 2],
             MBR_best_irt_diff = [0.5, 0.2, 0.8, 0.3],
             some_other_feature = [1, 2, 3, 4],
             missing_feature = [missing, missing, missing, missing]
@@ -64,6 +116,9 @@ using Pioneer: ProbitRegression, ModelPredict!
         @test :prob in features
         @test :irt_error in features
         @test :MBR_max_pair_prob in features
+        @test :MBR_mean_pair_prob in features
+        @test :MBR_min_pair_prob in features
+        @test :MBR_num_pairs in features
         @test :MBR_best_irt_diff in features
 
         # Should not include features not in candidate list
