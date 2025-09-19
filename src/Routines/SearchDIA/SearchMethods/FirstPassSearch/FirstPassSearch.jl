@@ -15,8 +15,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-include("FragmentErrorCollection.jl")
-
 """
     FirstPassSearch
 
@@ -67,6 +65,62 @@ struct FirstPassSearch <: SearchMethod end
 #==========================================================
 Type Definitions
 ==========================================================#
+
+"""
+    FragmentMassError
+
+Structure to hold individual fragment mass error data for analysis.
+
+Contains all the information needed to investigate mass error distributions
+relative to fragment intensity, retention time, and other factors.
+"""
+struct FragmentMassError{T<:AbstractFloat}
+    # Mass error information
+    ppm_error::T                    # PPM mass error: (observed - theoretical) / (theoretical / 1e6)
+    theoretical_mz::T               # Theoretical m/z of the fragment
+    observed_mz::T                  # Observed m/z of the fragment
+
+    # Intensity information
+    fragment_intensity::T           # Intensity of this specific fragment
+    library_intensity::T            # Library/predicted intensity of this fragment
+    max_fragment_intensity::T       # Intensity of the most intense fragment for this precursor in this scan
+
+    # Context information
+    precursor_q_value::T            # Q-value of the precursor PSM this fragment belongs to
+    retention_time::T               # Retention time of the scan
+    scan_idx::UInt32                # Scan index
+    ms_file_idx::UInt32             # MS file index
+    precursor_idx::UInt32           # Precursor index
+
+    # Fragment metadata
+    fragment_charge::UInt8          # Fragment charge
+    ion_type::UInt8                 # Ion type (b, y, p)
+    fragment_number::UInt8          # Fragment position/number
+    is_isotope::Bool               # Whether this is an isotope peak
+end
+
+"""
+    FragmentMassError{Float32}()
+
+Default constructor for FragmentMassError.
+"""
+FragmentMassError{Float32}() = FragmentMassError{Float32}(
+    zero(Float32),  # ppm_error
+    zero(Float32),  # theoretical_mz
+    zero(Float32),  # observed_mz
+    zero(Float32),  # fragment_intensity
+    zero(Float32),  # library_intensity
+    zero(Float32),  # max_fragment_intensity
+    zero(Float32),  # precursor_q_value
+    zero(Float32),  # retention_time
+    zero(UInt32),   # scan_idx
+    zero(UInt32),   # ms_file_idx
+    zero(UInt32),   # precursor_idx
+    zero(UInt8),    # fragment_charge
+    zero(UInt8),    # ion_type
+    zero(UInt8),    # fragment_number
+    false           # is_isotope
+)
 
 """
 Results container for first pass search.
@@ -377,8 +431,8 @@ function process_file!(
         psms = perform_library_search(spectra, search_context, params, ms_file_idx)
         results.psms[] = process_psms!(psms, spectra, search_context, params, ms_file_idx)
 
-        # Collect fragment mass errors from PSMs passing 1% FDR
-        collect_fragment_errors_from_psms!(results, spectra, search_context, params, ms_file_idx)
+        # TODO: Collect fragment mass errors from PSMs passing 1% FDR
+        # collect_fragment_errors_from_psms!(results, spectra, search_context, params, ms_file_idx)
 
         temp_psms = results.psms[] 
         temp_psms = temp_psms[temp_psms[!,:q_value].<=0.001,:]
@@ -492,17 +546,17 @@ function process_search_results!(
     # Update models in search context
     setMs1MassErrorModel!(search_context, ms_file_idx, getMs1MassErrorModel(results))
 
-    # Write fragment mass errors to Arrow file
-    if results.fragment_error_count[] > 0
-        output_dir = getDataOutDir(search_context)
-        parsed_fname = getParsedFileName(search_context, ms_file_idx)
-        write_fragment_mass_errors(
-            results.fragment_errors,
-            results.fragment_error_count[],
-            output_dir,
-            parsed_fname
-        )
-    end
+    # TODO: Write fragment mass errors to Arrow file
+    # if results.fragment_error_count[] > 0
+    #     output_dir = getDataOutDir(search_context)
+    #     parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    #     write_fragment_mass_errors(
+    #         results.fragment_errors,
+    #         results.fragment_error_count[],
+    #         output_dir,
+    #         parsed_fname
+    #     )
+    # end
 end
 
 """
