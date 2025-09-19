@@ -88,6 +88,8 @@ const ADVANCED_FEATURE_SET = [
     :m0_error_ms1,
     :n_iso_ms1,
     :big_iso_ms1,
+    :rt_max_intensity_ms1,
+    :rt_diff_max_intensity_ms1,
     :ms1_features_missing,
     :percent_theoretical_ignored,
     :scribe,
@@ -112,7 +114,7 @@ const REDUCED_FEATURE_SET = [
     # MS1 features
     :weight_ms1, :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
     :fitted_spectral_contrast_ms1, :error_ms1, :m0_error_ms1, :n_iso_ms1,
-    :big_iso_ms1, :ms1_features_missing
+    :big_iso_ms1, :rt_max_intensity_ms1, :rt_diff_max_intensity_ms1, :ms1_features_missing
     # MBR features added automatically if match_between_runs=true
 ]
 

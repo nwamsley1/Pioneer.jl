@@ -339,10 +339,6 @@ function process_search_results!(
         # Get PSMs from results container
         psms = results.psms[]
         ms1_psms = results.ms1_psms[]
-        ms1_psms = parseMs1Psms( #Reduce to max intensity scan per precursor_idx
-            ms1_psms,
-            spectra
-        )
         # Add basic search columns (RT, charge, target/decoy status)
         add_second_search_columns!(psms, 
             getRetentionTimes(spectra),
@@ -391,40 +387,23 @@ function process_search_results!(
         end
         # Keep only apex scans for each PSM group
         filter!(x->x.best_scan, psms);
-        #Need to remove inf gof_ms1?
+
+        # Build MS2 RT lookup for efficient MS1 alignment
+        ms2_rt_lookup = Dict{UInt32, Float32}(
+            row.precursor_idx => row.rt for row in eachrow(psms)
+        )
+
+        # Apply hybrid MS1 selection (RT proximity + max intensity features)
+        ms1_psms = parseMs1Psms(ms1_psms, spectra, ms2_rt_lookup)
+
         #Join MS1 PSMs to MS2 PSMs
         if size(ms1_psms, 1) > 0
             @user_warn "size ms1 psms = $(size(ms1_psms, 1)) \n"
-            # Add RT column to MS1 PSMs if not present
-            if !in(:rt, names(ms1_psms))
-                ms1_psms[!, :rt] = [getRetentionTime(spectra, scan_idx) for scan_idx in ms1_psms.scan_idx]
-            end
 
-            # Group MS1 PSMs by precursor and select closest RT to MS2 apex
-            ms1_psms_best = combine(groupby(ms1_psms, :precursor_idx)) do group_df
-                best_ms1_idx = 1
-                min_rt_diff = typemax(Float32)
-
-                for i in 1:nrow(group_df)
-                    ms1_rt = group_df.rt[i]
-                    # Find corresponding MS2 PSM RT for this precursor
-                    ms2_rows = psms[psms.precursor_idx .== group_df.precursor_idx[1], :]
-                    if nrow(ms2_rows) > 0
-                        ms2_rt = ms2_rows.rt[1]  # Should be apex RT
-                        rt_diff = abs(ms1_rt - ms2_rt)
-                        if rt_diff < min_rt_diff
-                            min_rt_diff = rt_diff
-                            best_ms1_idx = i
-                        end
-                    end
-                end
-                return group_df[best_ms1_idx:best_ms1_idx, :]
-            end
-
-            # Now join with the proximity-selected MS1 PSMs
+            # Join with hybrid-selected MS1 PSMs
             psms = leftjoin(
                 psms,
-                ms1_psms_best,
+                ms1_psms,
                 on = :precursor_idx,
                 makeunique = true,
                 renamecols = "" => "_ms1",
@@ -435,7 +414,8 @@ function process_search_results!(
             ms1_cols = [
                 :rt_ms1, :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
                 :max_unmatched_residual_ms1, :fitted_spectral_contrast_ms1,
-                :error_ms1, :m0_error_ms1, :n_iso_ms1, :big_iso_ms1
+                :error_ms1, :m0_error_ms1, :n_iso_ms1, :big_iso_ms1,
+                :rt_max_intensity_ms1, :rt_diff_max_intensity_ms1
             ]
             miss_mask = trues(size(psms, 1))
             for col in ms1_cols

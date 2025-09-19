@@ -1056,23 +1056,53 @@ end
 
 function parseMs1Psms(
     psms::DataFrame,
-    spectra::MassSpecData
+    spectra::MassSpecData,
+    ms2_rt_lookup::Dict{UInt32, Float32}
 )
     if !hasproperty(psms, :precursor_idx) || (size(psms, 1) == 0)
         return DataFrame()
     end
+
+    # Add RT column
     rts = zeros(Float32, size(psms, 1))
     for i in range(1, size(psms, 1))
         scan_idx = psms[i, :scan_idx]
         rts[i] = getRetentionTime(spectra, scan_idx)
     end
-    psms[!,:rt] = rts
+    psms[!, :rt] = rts
 
-    #Group the psms by precursor_idx and return apex scan 
-    return combine(groupby(psms,:precursor_idx)) do group
-        # Find the row with the maximum value
-        idx = argmax(group[!, :weight])
-        # Return that row as a 1-row DataFrame
-        return group[idx, :]
+    # Pre-allocate new columns for max intensity features
+    psms[!, :rt_max_intensity] = zeros(Float32, size(psms, 1))
+    psms[!, :rt_diff_max_intensity] = zeros(Float32, size(psms, 1))
+
+    # Group by precursor and apply hybrid selection
+    return combine(groupby(psms, :precursor_idx)) do group
+        # Find max intensity scan
+        max_intensity_idx = argmax(group[!, :weight])
+        max_intensity_rt = group[max_intensity_idx, :rt]
+
+        # Find RT-closest scan to MS2 apex
+        precursor_idx = group[1, :precursor_idx]
+        if haskey(ms2_rt_lookup, precursor_idx)
+            ms2_rt = ms2_rt_lookup[precursor_idx]
+            rt_diffs = abs.(group[!, :rt] .- ms2_rt)
+            closest_rt_idx = argmin(rt_diffs)
+
+            # Start with RT-closest scan features
+            result_row = group[closest_rt_idx:closest_rt_idx, :]
+
+            # Set max intensity RT features for this row
+            result_row[1, :rt_max_intensity] = max_intensity_rt
+            result_row[1, :rt_diff_max_intensity] = abs(max_intensity_rt - ms2_rt)
+
+            return result_row
+        else
+            # Fallback to max intensity if no MS2 match
+            fallback_row = group[max_intensity_idx:max_intensity_idx, :]
+            # Set fallback values for new features
+            fallback_row[1, :rt_max_intensity] = max_intensity_rt
+            fallback_row[1, :rt_diff_max_intensity] = Float32(0.0)  # No reference RT
+            return fallback_row
+        end
     end
 end
