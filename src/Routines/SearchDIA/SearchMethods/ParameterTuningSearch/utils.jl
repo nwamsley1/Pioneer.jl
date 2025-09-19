@@ -755,6 +755,18 @@ function fit_mass_err_model(
     # Calculate error bounds using configured quantile
     frag_err_quantile = getFragErrQuantile(params)
 
+    # Empirical quantile bounds on bias-corrected errors
+    lower_emp = try
+        quantile(ppm_errs, 0.005)
+    catch
+        minimum(ppm_errs)
+    end
+    upper_emp = try
+        quantile(ppm_errs, 0.995)
+    catch
+        maximum(ppm_errs)
+    end
+
     r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
     l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
     r_bound, l_bound = nothing, nothing
@@ -777,9 +789,15 @@ function fit_mass_err_model(
         ), ppm_errs
     end
     
+    # Clamp exponential bounds to empirical range and enforce a 10 ppm minimum
+    l_emp_mag = Float32(abs(lower_emp))
+    r_emp_mag = Float32(max(0.0, upper_emp))
+    l_tol = max(10.0f0, min(Float32(abs(l_bound)), l_emp_mag))
+    r_tol = max(10.0f0, min(Float32(abs(r_bound)), r_emp_mag))
+
     return MassErrorModel(
         Float32(mass_err),
-        (Float32(abs(l_bound)), Float32(abs(r_bound)))
+        (l_tol, r_tol)
     ), ppm_errs
 end
 

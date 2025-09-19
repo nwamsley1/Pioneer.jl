@@ -597,12 +597,29 @@ function mass_err_ms1(ppm_errs::Vector{Float32},
         ), pmp_errs_corrected
     end
 
+    # Empirical quantile bounds (on bias-corrected errors)
+    lower_emp = try
+        quantile(pmp_errs_corrected, 0.005)
+    catch
+        minimum(pmp_errs_corrected)
+    end
+    upper_emp = try
+        quantile(pmp_errs_corrected, 0.995)
+    catch
+        maximum(pmp_errs_corrected)
+    end
+
+    # Clamp exponential bounds to empirical range and enforce a 10 ppm minimum
+    l_emp_mag = Float32(abs(lower_emp))
+    r_emp_mag = Float32(max(0.0, upper_emp))
+    l_tol = max(10.0f0, min(Float32(abs(l_bound)), l_emp_mag))
+    r_tol = max(10.0f0, min(Float32(abs(r_bound)), r_emp_mag))
+
     return MassErrorModel(
         Float32(mass_err),
-        (Float32(abs(l_bound)) + 1.0f0, Float32(abs(r_bound)) + 1.0f0)  # Add +1 ppm buffer like MS2
+        (l_tol, r_tol)
     ), pmp_errs_corrected
 end
-
 
 
 

@@ -50,7 +50,7 @@
             "max_frags_for_mass_err_estimation": 5
         },
         "iteration_settings": {
-            "init_mass_tol_ppm": 20.0,
+            "init_mass_tol_ppm": 30.0,
             "ms1_tol_ppm": 20.0,
             "mass_tolerance_scale_factor": 1.5,
             "iterations_per_phase": 3,
