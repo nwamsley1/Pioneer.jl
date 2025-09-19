@@ -328,7 +328,7 @@ function write_fragment_mass_errors(
     ms_file_name::String
 )
     if n_errors == 0
-        @user_warn "No fragment mass errors collected for file $ms_file_name"
+        @warn "No fragment mass errors collected for file $ms_file_name"
         return
     end
 
@@ -338,7 +338,7 @@ function write_fragment_mass_errors(
     output_path = joinpath(output_dir, output_filename)
 
     # Convert to DataFrame format
-    df = DataFrame(
+    df = DataFrames.DataFrame(
         ppm_error = [fragment_errors[i].ppm_error for i in 1:n_errors],
         theoretical_mz = [fragment_errors[i].theoretical_mz for i in 1:n_errors],
         observed_mz = [fragment_errors[i].observed_mz for i in 1:n_errors],
@@ -359,8 +359,8 @@ function write_fragment_mass_errors(
     # Write to Arrow file
     Arrow.write(output_path, df)
 
-    @user_info "Fragment mass errors written to: $output_path"
-    @user_info "Collected $(n_errors) fragment mass errors from $(length(unique(df.precursor_idx))) precursors"
+    @info "Fragment mass errors written to: $output_path"
+    @info "Collected $(n_errors) fragment mass errors from $(length(unique(df.precursor_idx))) precursors"
 
     return output_path
 end
@@ -386,12 +386,12 @@ function collect_fragment_errors_from_psms!(
     # Filter to PSMs passing 1% FDR and targets only
     passing_psms = psms[(psms.q_value .<= 0.01f0) .& psms.target, :]
 
-    if nrow(passing_psms) == 0
-        @user_info "No PSMs passed 1% FDR for fragment error collection in file $ms_file_idx"
+    if DataFrames.nrow(passing_psms) == 0
+        @info "No PSMs passed 1% FDR for fragment error collection in file $ms_file_idx"
         return
     end
 
-    @user_info "Collecting fragment mass errors from $(nrow(passing_psms)) PSMs passing 1% FDR"
+    @info "Collecting fragment mass errors from $(DataFrames.nrow(passing_psms)) PSMs passing 1% FDR"
 
     # Get necessary data structures
     spec_lib = getSpecLib(search_context)
@@ -407,7 +407,7 @@ function collect_fragment_errors_from_psms!(
     current_error_idx = results.fragment_error_count[]
 
     # Group PSMs by scan for efficient processing
-    psm_groups = groupby(passing_psms, :scan_idx)
+    psm_groups = DataFrames.groupby(passing_psms, :scan_idx)
 
     for group in psm_groups
         scan_idx = first(group.scan_idx)
@@ -466,7 +466,7 @@ function collect_fragment_errors_from_psms!(
         end
 
         # For each PSM in this scan, collect fragment errors
-        for psm_row in eachrow(group)
+        for psm_row in DataFrames.eachrow(group)
             precursor_idx = UInt32(psm_row.precursor_idx)
             q_value = Float32(psm_row.q_value)
             retention_time = Float32(psm_row.rt)
@@ -500,7 +500,7 @@ function collect_fragment_errors_from_psms!(
     previous_count = results.fragment_error_count[]
     results.fragment_error_count[] = current_error_idx
 
-    @user_info "Collected $(current_error_idx - previous_count) fragment mass errors from file $ms_file_idx"
+    @info "Collected $(current_error_idx - previous_count) fragment mass errors from file $ms_file_idx"
 end
 
 #==========================================================
