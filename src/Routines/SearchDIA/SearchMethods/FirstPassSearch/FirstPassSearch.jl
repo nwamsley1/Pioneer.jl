@@ -234,6 +234,276 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
 end
 
 #==========================================================
+Fragment Mass Error Collection Functions
+==========================================================#
+
+"""
+    collect_fragment_mass_errors!(fragment_errors::Vector{FragmentMassError{Float32}},
+                                  fragment_matches::Vector{FragmentMatch{Float32}},
+                                  n_matches::Int,
+                                  psm_q_value::Float32,
+                                  retention_time::Float32,
+                                  scan_idx::UInt32,
+                                  ms_file_idx::UInt32,
+                                  precursor_idx::UInt32,
+                                  current_idx::Int) -> Int
+
+Collects fragment mass errors from fragment matches into the collection vector.
+"""
+function collect_fragment_mass_errors!(
+    fragment_errors::Vector{FragmentMassError{Float32}},
+    fragment_matches::Vector{FragmentMatch{Float32}},
+    n_matches::Int,
+    psm_q_value::Float32,
+    retention_time::Float32,
+    scan_idx::UInt32,
+    ms_file_idx::UInt32,
+    precursor_idx::UInt32,
+    current_idx::Int
+)::Int
+    # Only collect from PSMs passing 1% FDR
+    if psm_q_value > 0.01f0 || n_matches == 0
+        return current_idx
+    end
+
+    # Find maximum fragment intensity for this precursor/scan
+    max_intensity = zero(Float32)
+    for i in 1:n_matches
+        fragment = fragment_matches[i]
+        if getIntensity(fragment) > max_intensity
+            max_intensity = getIntensity(fragment)
+        end
+    end
+
+    # Collect each fragment mass error
+    idx = current_idx
+    for i in 1:n_matches
+        fragment = fragment_matches[i]
+
+        # Calculate PPM mass error
+        theoretical_mz = getMZ(fragment)
+        observed_mz = getMatchMZ(fragment)
+        ppm_error = (observed_mz - theoretical_mz) / (theoretical_mz / 1e6f0)
+
+        # Grow vector if needed
+        if idx + 1 > length(fragment_errors)
+            resize!(fragment_errors, length(fragment_errors) + 10000)
+        end
+
+        idx += 1
+        fragment_errors[idx] = FragmentMassError{Float32}(
+            ppm_error,
+            theoretical_mz,
+            observed_mz,
+            getIntensity(fragment),
+            getPredictedIntensity(fragment),
+            max_intensity,
+            psm_q_value,
+            retention_time,
+            scan_idx,
+            ms_file_idx,
+            precursor_idx,
+            getCharge(fragment),
+            getIonType(fragment),
+            getFragInd(fragment),
+            isIsotope(fragment)
+        )
+    end
+
+    return idx
+end
+
+"""
+    write_fragment_mass_errors(fragment_errors::Vector{FragmentMassError{Float32}},
+                               n_errors::Int,
+                               output_dir::String,
+                               ms_file_name::String)
+
+Writes collected fragment mass errors to an Arrow file.
+"""
+function write_fragment_mass_errors(
+    fragment_errors::Vector{FragmentMassError{Float32}},
+    n_errors::Int,
+    output_dir::String,
+    ms_file_name::String
+)
+    if n_errors == 0
+        @user_warn "No fragment mass errors collected for file $ms_file_name"
+        return
+    end
+
+    # Create output filename with timestamp
+    timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
+    output_filename = "fragment_mass_errors_$(ms_file_name)_$(timestamp).arrow"
+    output_path = joinpath(output_dir, output_filename)
+
+    # Convert to DataFrame format
+    df = DataFrame(
+        ppm_error = [fragment_errors[i].ppm_error for i in 1:n_errors],
+        theoretical_mz = [fragment_errors[i].theoretical_mz for i in 1:n_errors],
+        observed_mz = [fragment_errors[i].observed_mz for i in 1:n_errors],
+        fragment_intensity = [fragment_errors[i].fragment_intensity for i in 1:n_errors],
+        library_intensity = [fragment_errors[i].library_intensity for i in 1:n_errors],
+        max_fragment_intensity = [fragment_errors[i].max_fragment_intensity for i in 1:n_errors],
+        precursor_q_value = [fragment_errors[i].precursor_q_value for i in 1:n_errors],
+        retention_time = [fragment_errors[i].retention_time for i in 1:n_errors],
+        scan_idx = [fragment_errors[i].scan_idx for i in 1:n_errors],
+        ms_file_idx = [fragment_errors[i].ms_file_idx for i in 1:n_errors],
+        precursor_idx = [fragment_errors[i].precursor_idx for i in 1:n_errors],
+        fragment_charge = [fragment_errors[i].fragment_charge for i in 1:n_errors],
+        ion_type = [fragment_errors[i].ion_type for i in 1:n_errors],
+        fragment_number = [fragment_errors[i].fragment_number for i in 1:n_errors],
+        is_isotope = [fragment_errors[i].is_isotope for i in 1:n_errors]
+    )
+
+    # Write to Arrow file
+    Arrow.write(output_path, df)
+
+    @user_info "Fragment mass errors written to: $output_path"
+    @user_info "Collected $(n_errors) fragment mass errors from $(length(unique(df.precursor_idx))) precursors"
+
+    return output_path
+end
+
+"""
+    collect_fragment_errors_from_psms!(results::FirstPassSearchResults,
+                                       spectra::MassSpecData,
+                                       search_context::SearchContext,
+                                       params::FirstPassSearchParameters,
+                                       ms_file_idx::Int64)
+
+Collects fragment mass errors from PSMs that pass 1% FDR threshold.
+"""
+function collect_fragment_errors_from_psms!(
+    results::FirstPassSearchResults,
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    params::FirstPassSearchParameters,
+    ms_file_idx::Int64
+)
+    psms = results.psms[]
+
+    # Filter to PSMs passing 1% FDR and targets only
+    passing_psms = psms[(psms.q_value .<= 0.01f0) .& psms.target, :]
+
+    if nrow(passing_psms) == 0
+        @user_info "No PSMs passed 1% FDR for fragment error collection in file $ms_file_idx"
+        return
+    end
+
+    @user_info "Collecting fragment mass errors from $(nrow(passing_psms)) PSMs passing 1% FDR"
+
+    # Get necessary data structures
+    spec_lib = getSpecLib(search_context)
+    search_data = getSearchData(search_context)
+    fragment_index = getFragmentIndex(spec_lib)
+    precursors = getPrecursors(spec_lib)
+    ion_list = getFragmentLookupTable(spec_lib)
+    qtm = getQuadTransmissionModel(search_context, ms_file_idx)
+    mem = getMassErrorModel(search_context, ms_file_idx)
+    rt_model = getRtIrtModel(search_context, ms_file_idx)
+    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+
+    current_error_idx = results.fragment_error_count[]
+
+    # Group PSMs by scan for efficient processing
+    psm_groups = groupby(passing_psms, :scan_idx)
+
+    for group in psm_groups
+        scan_idx = first(group.scan_idx)
+
+        # Skip invalid scans
+        (scan_idx <= 0 || scan_idx > length(spectra)) && continue
+        getMsOrder(spectra, scan_idx) ∉ getSpecOrder(params) && continue
+
+        # Get precursor IDs for this scan
+        prec_ids = UInt32.(group.precursor_idx)
+
+        # Select transitions for these precursors
+        isotopes = zeros(Float32, 5)
+        precursor_transmission = zeros(Float32, 5)
+
+        ion_idx, _ = selectTransitions!(
+            getIonTemplates(search_data[1]),
+            StandardTransitionSelection(),
+            getPrecEstimation(params),
+            ion_list,
+            1:length(prec_ids), prec_ids,  # Mock scan_to_prec_idx range
+            getMz(precursors),
+            getCharge(precursors),
+            getSulfurCount(precursors),
+            getIrt(precursors),
+            getIsoSplines(search_data[1]),
+            getQuadTransmissionFunction(qtm, getCenterMz(spectra, scan_idx), getIsolationWidthMz(spectra, scan_idx)),
+            precursor_transmission, isotopes, getNFragIsotopes(params),
+            getMaxFragRank(params),
+            Float32(getModel(rt_model)(getRetentionTime(spectra, scan_idx))),
+            Float32(irt_tol),
+            (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
+            isotope_err_bounds = getIsotopeErrBounds(params)
+        )
+
+        if ion_idx < 2
+            continue
+        end
+
+        # Match peaks for this scan
+        nmatches, nmisses = matchPeaks!(
+            getIonMatches(search_data[1]),
+            getIonMisses(search_data[1]),
+            getIonTemplates(search_data[1]),
+            ion_idx,
+            getMzArray(spectra, scan_idx),
+            getIntensityArray(spectra, scan_idx),
+            mem,
+            getHighMz(spectra, scan_idx),
+            UInt32(scan_idx),
+            UInt32(ms_file_idx)
+        )
+
+        if nmatches == 0
+            continue
+        end
+
+        # For each PSM in this scan, collect fragment errors
+        for psm_row in eachrow(group)
+            precursor_idx = UInt32(psm_row.precursor_idx)
+            q_value = Float32(psm_row.q_value)
+            retention_time = Float32(psm_row.rt)
+
+            # Filter fragment matches to this precursor
+            precursor_matches = Vector{FragmentMatch{Float32}}()
+            for i in 1:nmatches
+                fragment = getIonMatches(search_data[1])[i]
+                if getPrecID(fragment) == precursor_idx
+                    push!(precursor_matches, fragment)
+                end
+            end
+
+            if !isempty(precursor_matches)
+                current_error_idx = collect_fragment_mass_errors!(
+                    results.fragment_errors,
+                    precursor_matches,
+                    length(precursor_matches),
+                    q_value,
+                    retention_time,
+                    UInt32(scan_idx),
+                    UInt32(ms_file_idx),
+                    precursor_idx,
+                    current_error_idx
+                )
+            end
+        end
+    end
+
+    # Update the count
+    previous_count = results.fragment_error_count[]
+    results.fragment_error_count[] = current_error_idx
+
+    @user_info "Collected $(current_error_idx - previous_count) fragment mass errors from file $ms_file_idx"
+end
+
+#==========================================================
 Interface Implementation
 ==========================================================#
 
@@ -431,8 +701,8 @@ function process_file!(
         psms = perform_library_search(spectra, search_context, params, ms_file_idx)
         results.psms[] = process_psms!(psms, spectra, search_context, params, ms_file_idx)
 
-        # TODO: Collect fragment mass errors from PSMs passing 1% FDR
-        # collect_fragment_errors_from_psms!(results, spectra, search_context, params, ms_file_idx)
+        # Collect fragment mass errors from PSMs passing 1% FDR
+        collect_fragment_errors_from_psms!(results, spectra, search_context, params, ms_file_idx)
 
         temp_psms = results.psms[] 
         temp_psms = temp_psms[temp_psms[!,:q_value].<=0.001,:]
@@ -546,17 +816,17 @@ function process_search_results!(
     # Update models in search context
     setMs1MassErrorModel!(search_context, ms_file_idx, getMs1MassErrorModel(results))
 
-    # TODO: Write fragment mass errors to Arrow file
-    # if results.fragment_error_count[] > 0
-    #     output_dir = getDataOutDir(search_context)
-    #     parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    #     write_fragment_mass_errors(
-    #         results.fragment_errors,
-    #         results.fragment_error_count[],
-    #         output_dir,
-    #         parsed_fname
-    #     )
-    # end
+    # Write fragment mass errors to Arrow file
+    if results.fragment_error_count[] > 0
+        output_dir = getDataOutDir(search_context)
+        parsed_fname = getParsedFileName(search_context, ms_file_idx)
+        write_fragment_mass_errors(
+            results.fragment_errors,
+            results.fragment_error_count[],
+            output_dir,
+            parsed_fname
+        )
+    end
 end
 
 """
