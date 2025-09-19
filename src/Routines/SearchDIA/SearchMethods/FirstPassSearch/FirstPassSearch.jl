@@ -15,6 +15,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+include("FragmentErrorCollection.jl")
+
 """
     FirstPassSearch
 
@@ -77,6 +79,9 @@ struct FirstPassSearchResults <: SearchResults
     ms1_ppm_errs::Vector{Float32}
     ms1_mass_plots::Vector{Plots.Plot}
     qc_plots_folder_path::String
+    # Fragment mass error collection
+    fragment_errors::Vector{FragmentMassError{Float32}}
+    fragment_error_count::Base.Ref{Int}
 end
 
 """
@@ -198,7 +203,10 @@ function init_search_results(
         Base.Ref{MassErrorModel}(),
         Vector{Float32}(),
         Plots.Plot[],
-        qc_dir
+        qc_dir,
+        # Initialize fragment error collection with pre-allocated space
+        Vector{FragmentMassError{Float32}}(undef, 100000),
+        Ref(0)
     )
 end
 
@@ -369,6 +377,9 @@ function process_file!(
         psms = perform_library_search(spectra, search_context, params, ms_file_idx)
         results.psms[] = process_psms!(psms, spectra, search_context, params, ms_file_idx)
 
+        # Collect fragment mass errors from PSMs passing 1% FDR
+        collect_fragment_errors_from_psms!(results, spectra, search_context, params, ms_file_idx)
+
         temp_psms = results.psms[] 
         temp_psms = temp_psms[temp_psms[!,:q_value].<=0.001,:]
         most_intense = sortperm(temp_psms[!,:log2_summed_intensity], rev = true)
@@ -480,6 +491,18 @@ function process_search_results!(
     push!(results.ms1_mass_plots, generate_ms1_mass_error_plot(results, parsed_fname))
     # Update models in search context
     setMs1MassErrorModel!(search_context, ms_file_idx, getMs1MassErrorModel(results))
+
+    # Write fragment mass errors to Arrow file
+    if results.fragment_error_count[] > 0
+        output_dir = getDataOutDir(search_context)
+        parsed_fname = getParsedFileName(search_context, ms_file_idx)
+        write_fragment_mass_errors(
+            results.fragment_errors,
+            results.fragment_error_count[],
+            output_dir,
+            parsed_fname
+        )
+    end
 end
 
 """
@@ -488,6 +511,7 @@ No cleanup needed between files.
 function reset_results!(results::FirstPassSearchResults)
     empty!(results.psms[])
     resize!(results.ms1_ppm_errs, 0)
+    results.fragment_error_count[] = 0
     return nothing
 end
 
