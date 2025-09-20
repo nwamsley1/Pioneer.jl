@@ -398,8 +398,6 @@ function process_search_results!(
 
         #Join MS1 PSMs to MS2 PSMs
         if size(ms1_psms, 1) > 0
-            @user_warn "size ms1 psms = $(size(ms1_psms, 1)) \n"
-
             # Join with hybrid-selected MS1 PSMs
             psms = leftjoin(
                 psms,

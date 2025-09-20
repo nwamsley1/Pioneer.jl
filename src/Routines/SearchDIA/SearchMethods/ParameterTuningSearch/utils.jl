@@ -710,11 +710,8 @@ function mass_error_search(
 
             ########
             #Intensity filter to remove potentially erroneous matches 
-            mass_errs = mass_errs[1:frag_err_idx]
             if frag_err_idx > 1
-                peak_intensities = peak_intensities[1:frag_err_idx]
-                med_intensity = quantile(peak_intensities, 0.75)
-                return @view(mass_errs[peak_intensities.>med_intensity])
+                return @view(mass_errs[1:frag_err_idx])
             else
                 return mass_errs
             end
@@ -727,17 +724,6 @@ function fit_mass_err_model(
     params::P,
     fragments::Vector{FragmentMatch{Float32}}
 ) where {P<:FragmentIndexSearchParameters}
-    
-    # Filter fragments by intensity to remove low-quality matches
-    if length(fragments) > 0
-        intensity_threshold = getIntensityFilterQuantile(params)
-        if intensity_threshold > 0.0
-            intensities = [fragment.intensity for fragment in fragments]
-            min_intensity = quantile(intensities, intensity_threshold)
-            fragments = filter(f -> f.intensity > min_intensity, fragments)
-            # @info "Filtered to $(length(fragments)) fragments above $(round(intensity_threshold*100, digits=1))th percentile intensity"
-        end
-    end
     
     # Check if we have enough fragments after filtering
     if length(fragments) == 0
@@ -754,19 +740,6 @@ function fit_mass_err_model(
     
     # Calculate error bounds using configured quantile
     frag_err_quantile = getFragErrQuantile(params)
-
-    # Empirical quantile bounds on bias-corrected errors
-    lower_emp = try
-        quantile(ppm_errs, 0.005)
-    catch
-        minimum(ppm_errs)
-    end
-    upper_emp = try
-        quantile(ppm_errs, 0.995)
-    catch
-        maximum(ppm_errs)
-    end
-
     r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
     l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
     r_bound, l_bound = nothing, nothing
@@ -789,15 +762,9 @@ function fit_mass_err_model(
         ), ppm_errs
     end
     
-    # Clamp exponential bounds to empirical range and enforce a 10 ppm minimum
-    l_emp_mag = Float32(abs(lower_emp))
-    r_emp_mag = Float32(max(0.0, upper_emp))
-    l_tol = max(10.0f0, min(Float32(abs(l_bound)), l_emp_mag))
-    r_tol = max(10.0f0, min(Float32(abs(r_bound)), r_emp_mag))
-
     return MassErrorModel(
         Float32(mass_err),
-        (l_tol, r_tol)
+        (Float32(abs(l_bound)), Float32(abs(r_bound)))
     ), ppm_errs
 end
 

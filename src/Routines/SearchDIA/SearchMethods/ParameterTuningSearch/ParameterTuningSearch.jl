@@ -801,6 +801,7 @@ function process_file!(
         end
         
     catch e
+        throw(e)
         # Get the actual file name for clear error reporting
         file_name = try
             getFileIdToName(getMSData(search_context), ms_file_idx)
