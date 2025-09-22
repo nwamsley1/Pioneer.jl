@@ -70,6 +70,9 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     min_psms_for_comparison::Int64
     max_psms_for_comparison::Int64
 
+    # MS1 scoring parameter
+    ms1_scoring::Bool
+
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
         ml_params = params.optimization.machine_learning
@@ -104,7 +107,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Float64(get(ml_params, :validation_split_ratio, 0.2)),
             Float64(get(ml_params, :qvalue_threshold, 0.01)),
             Int64(get(ml_params, :min_psms_for_comparison, 1000)),
-            Int64(get(ml_params, :max_psms_for_comparison, 100000))
+            Int64(get(ml_params, :max_psms_for_comparison, 100000)),
+
+            # MS1 scoring parameter
+            Bool(global_params.ms1_scoring)
         )
     end
 end
@@ -265,7 +271,8 @@ function summarize_results!(
                 params.max_q_value_mbr_itr,
                 params.min_PEP_neg_threshold_itr,
                 params.max_psms_in_memory,
-                params.q_value_threshold
+                params.q_value_threshold,
+                params.ms1_scoring
             )
         end
         #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
@@ -514,7 +521,8 @@ function summarize_results!(
                 params.max_psms_in_memory,
                 qc_folder,
                 getPrecursors(getSpecLib(search_context));
-                protein_to_cv_fold = protein_to_cv_fold
+                protein_to_cv_fold = protein_to_cv_fold,
+                ms1_scoring = params.ms1_scoring
             )
             
             # Count protein groups after probit

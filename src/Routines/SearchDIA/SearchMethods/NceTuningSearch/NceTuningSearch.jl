@@ -106,11 +106,11 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         new{typeof(prec_estimation)}(
             # Core parameters
             (UInt8(0), UInt8(0)),  # Fixed isotope bounds for NCE tuning
-            # Handle min_score as either single value or array (use first value if array)
+            # Handle min_score as either single value or array (use maximum value if array)
             begin
                 min_score_raw = frag_params.min_score
                 if min_score_raw isa Vector
-                    UInt8(first(min_score_raw))
+                    UInt8(maximum(min_score_raw))  # Use most lenient (highest) score for NCE tuning
                 else
                     UInt8(min_score_raw)
                 end
@@ -134,8 +134,7 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     end
 end
 
-# Include scan priority index functionality after type definitions
-include("ScanPriorityIndex.jl")
+# ScanPriorityIndex.jl and IndexedMassSpecData.jl are loaded automatically by importScripts()
 
 #==========================================================
 Interface Implementation

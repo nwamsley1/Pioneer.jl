@@ -16,70 +16,75 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-Memory-efficient scan selection for NCE tuning search.
-Uses intelligent RT-binning with TIC-based prioritization.
+Memory-efficient scan selection for quadrupole tuning search.
+Uses intelligent isolation window m/z binning with TIC-based prioritization.
 """
 
 """
-    NCEScanPriorityIndex
+    QuadScanPriorityIndex
 
-Contains prioritized scan indices for memory-efficient NCE tuning.
+Contains prioritized scan indices for memory-efficient quadrupole tuning.
 Only stores metadata, never loads actual scan data until needed.
 """
-struct NCEScanPriorityIndex
+struct QuadScanPriorityIndex
     scan_indices::Vector{Int32}        # Ordered scan indices by priority
-    rt_values::Vector{Float32}         # RT values for each scan
+    center_mz_values::Vector{Float32}  # Center m/z values for each scan
     tic_values::Vector{Float32}        # TIC values for each scan
     ms_orders::Vector{UInt8}           # MS order for verification
     total_ms2_count::Int32             # Total MS2 scans
-    n_rt_bins::Int32                   # Number of RT bins used
+    n_mz_bins::Int32                   # Number of m/z bins used
 end
 
 """
-    build_nce_scan_priority_index(spectra::MassSpecData;
-                                  n_rt_bins::Int = 15,
-                                  target_ms_order::UInt8 = UInt8(2),
-                                  verbose::Bool = true)::NCEScanPriorityIndex
+    build_quad_scan_priority_index(spectra::MassSpecData;
+                                   n_mz_bins::Int = 20,
+                                   target_ms_order::UInt8 = UInt8(2),
+                                   verbose::Bool = true)::QuadScanPriorityIndex
 
-Build prioritized scan index for NCE tuning without loading scan data.
+Build prioritized scan index for quadrupole tuning without loading scan data.
 
 # Process
-1. Extract metadata (RT, TIC, MS order) for all scans - NO peak data
+1. Extract metadata (center m/z, TIC, MS order) for all scans - NO peak data
 2. Filter for MS2 scans only
-3. Divide RT range into N bins
+3. Divide center m/z range into N bins for even coverage across isolation windows
 4. Within each bin, sort scans by TIC (descending)
 5. Create priority vector by round-robin from bins
 
 # Arguments
 - `spectra`: MassSpecData object
-- `n_rt_bins`: Number of RT bins for even coverage (default: 15)
+- `n_mz_bins`: Number of m/z bins for even coverage (default: 20)
 - `target_ms_order`: MS order to filter for (default: 2)
 - `verbose`: Enable detailed logging with timing
 
 # Returns
-NCEScanPriorityIndex containing ordered scan indices and metadata
+QuadScanPriorityIndex containing ordered scan indices and metadata
+
+# Notes
+- Binning by center m/z ensures good coverage across the isolation window range
+- This is critical for quadrupole transmission modeling which needs data across m/z
+- Higher TIC scans within each bin provide better isotope patterns for modeling
 """
-function build_nce_scan_priority_index(
+function build_quad_scan_priority_index(
     spectra::MassSpecData;
-    n_rt_bins::Int = 15,
+    n_mz_bins::Int = 20,
     target_ms_order::UInt8 = UInt8(2),
     verbose::Bool = true
-)::NCEScanPriorityIndex
+)::QuadScanPriorityIndex
 
     start_time = time()
 
     if verbose
-        println("┌─ Building NCE scan priority index...")
+        println("┌─ Building Quad scan priority index...")
         println("│  Total scans in file: $(length(spectra))")
     end
 
     # Step 1: Extract metadata (NO peak data loaded)
     metadata_start = time()
     if verbose
-        println("│  ├─ Extracting metadata (RT, TIC, MS order)...")
+        println("│  ├─ Extracting metadata (center m/z, TIC, MS order)...")
     end
 
-    rt_values = getRetentionTimes(spectra)
+    center_mz_values = getCenterMzs(spectra)
     tic_values = getTICs(spectra)
     ms_orders = getMsOrders(spectra)
 
@@ -108,27 +113,49 @@ function build_nce_scan_priority_index(
         if verbose
             println("│  └─ ⚠ No MS2 scans found, returning empty index")
         end
-        return NCEScanPriorityIndex(
+        return QuadScanPriorityIndex(
             Int32[], Float32[], Float32[], UInt8[],
-            Int32(0), Int32(n_rt_bins)
+            Int32(0), Int32(n_mz_bins)
         )
     end
 
-    # Step 3: Create RT bins
+    # Step 3: Create center m/z bins
     binning_start = time()
     if verbose
-        println("│  ├─ Creating RT bins...")
+        println("│  ├─ Creating center m/z bins...")
     end
 
-    ms2_rt = rt_values[ms2_indices]
+    ms2_center_mz = center_mz_values[ms2_indices]
     ms2_tic = tic_values[ms2_indices]
 
-    rt_min, rt_max = extrema(ms2_rt)
-
-    # Handle edge case of single RT value
-    if rt_min == rt_max
+    # Filter out missing values
+    valid_mask = .!ismissing.(ms2_center_mz)
+    if !all(valid_mask)
         if verbose
-            println("│  │  ⚠ All scans have same RT ($(rt_min)), using single bin")
+            println("│  │  ⚠ Filtering out $(count(.!valid_mask)) scans with missing center m/z")
+        end
+        ms2_indices = ms2_indices[valid_mask]
+        ms2_center_mz = ms2_center_mz[valid_mask]
+        ms2_tic = ms2_tic[valid_mask]
+        n_ms2 = length(ms2_indices)
+    end
+
+    if n_ms2 == 0
+        if verbose
+            println("│  └─ ⚠ No valid MS2 scans found after filtering, returning empty index")
+        end
+        return QuadScanPriorityIndex(
+            Int32[], Float32[], Float32[], UInt8[],
+            Int32(0), Int32(n_mz_bins)
+        )
+    end
+
+    mz_min, mz_max = extrema(ms2_center_mz)
+
+    # Handle edge case of single m/z value
+    if mz_min == mz_max
+        if verbose
+            println("│  │  ⚠ All scans have same center m/z ($(mz_min)), using single bin")
         end
         priority_order = Int32.(ms2_indices[sortperm(ms2_tic, rev=true)])
         binning_time = time() - binning_start
@@ -139,9 +166,9 @@ function build_nce_scan_priority_index(
             println("└─ Index building complete: $(round(total_time, digits=3))s total")
         end
 
-        return NCEScanPriorityIndex(
+        return QuadScanPriorityIndex(
             priority_order,
-            rt_values[priority_order],
+            center_mz_values[priority_order],
             tic_values[priority_order],
             ms_orders[priority_order],
             Int32(n_ms2),
@@ -149,20 +176,20 @@ function build_nce_scan_priority_index(
         )
     end
 
-    bin_width = (rt_max - rt_min) / n_rt_bins
+    bin_width = (mz_max - mz_min) / n_mz_bins
 
     # Assign each MS2 scan to a bin
     bin_assignments = zeros(Int, n_ms2)
-    for (i, rt) in enumerate(ms2_rt)
-        bin_idx = min(max(1, ceil(Int, (rt - rt_min) / bin_width)), n_rt_bins)
+    for (i, center_mz) in enumerate(ms2_center_mz)
+        bin_idx = min(max(1, ceil(Int, (center_mz - mz_min) / bin_width)), n_mz_bins)
         bin_assignments[i] = bin_idx
     end
 
     binning_time = time() - binning_start
     if verbose
-        println("│  │  ✓ RT binning: $(round(binning_time, digits=3))s")
-        println("│  │  RT range: $(round(rt_min, digits=2)) - $(round(rt_max, digits=2)) min")
-        println("│  │  Bins: $n_rt_bins × $(round(bin_width, digits=2)) min")
+        println("│  │  ✓ Center m/z binning: $(round(binning_time, digits=3))s")
+        println("│  │  m/z range: $(round(mz_min, digits=2)) - $(round(mz_max, digits=2)) m/z")
+        println("│  │  Bins: $n_mz_bins × $(round(bin_width, digits=2)) m/z")
     end
 
     # Step 4: Sort within bins by TIC and create priority order
@@ -172,7 +199,7 @@ function build_nce_scan_priority_index(
     end
 
     # Group scans by bin
-    bins = [Int32[] for _ in 1:n_rt_bins]
+    bins = [Int32[] for _ in 1:n_mz_bins]
     for (i, bin_idx) in enumerate(bin_assignments)
         push!(bins[bin_idx], ms2_indices[i])
     end
@@ -189,7 +216,7 @@ function build_nce_scan_priority_index(
     max_bin_size = maximum(length.(bins))
 
     for round in 1:max_bin_size
-        for bin_idx in 1:n_rt_bins
+        for bin_idx in 1:n_mz_bins
             if round <= length(bins[bin_idx])
                 push!(priority_order, bins[bin_idx][round])
             end
@@ -205,7 +232,7 @@ function build_nce_scan_priority_index(
         non_empty_bins = count(x -> x > 0, bin_counts)
         if non_empty_bins > 0
             println("│  │  Scans per bin: min=$(minimum(bin_counts[bin_counts .> 0])), max=$(maximum(bin_counts)), mean=$(round(mean(bin_counts), digits=1))")
-            println("│  │  Non-empty bins: $non_empty_bins / $n_rt_bins")
+            println("│  │  Non-empty bins: $non_empty_bins / $n_mz_bins")
         end
     end
 
@@ -216,27 +243,27 @@ function build_nce_scan_priority_index(
         println("   Memory: Metadata only, no scan data loaded")
     end
 
-    return NCEScanPriorityIndex(
+    return QuadScanPriorityIndex(
         priority_order,
-        rt_values[priority_order],
+        center_mz_values[priority_order],
         tic_values[priority_order],
         ms_orders[priority_order],
         Int32(n_ms2),
-        Int32(n_rt_bins)
+        Int32(n_mz_bins)
     )
 end
 
 """
-    progressive_nce_psm_collection!(scan_index::NCEScanPriorityIndex,
-                                   spectra::MassSpecData,
-                                   search_context::SearchContext,
-                                   params::NceTuningSearchParameters,
-                                   ms_file_idx::Int64;
-                                   initial_percent::Float64 = 5.0,
-                                   min_psms_required::Int = 5000,
-                                   verbose::Bool = true)
+    progressive_quad_psm_collection!(scan_index::QuadScanPriorityIndex,
+                                    spectra::MassSpecData,
+                                    search_context::SearchContext,
+                                    params::QuadTuningSearchParameters,
+                                    ms_file_idx::Int64;
+                                    initial_percent::Float64 = 10.0,
+                                    min_psms_required::Int = 1000,
+                                    verbose::Bool = true)
 
-Progressively collect PSMs using sampling without replacement.
+Progressively collect PSMs using sampling without replacement for quadrupole tuning.
 
 # Process
 1. Start with initial_percent of prioritized scans
@@ -245,26 +272,30 @@ Progressively collect PSMs using sampling without replacement.
 4. Never re-process scans from previous iterations
 
 # Arguments
-- `scan_index`: NCEScanPriorityIndex with prioritized scan order
+- `scan_index`: QuadScanPriorityIndex with prioritized scan order
 - `spectra`: MassSpecData object
 - `search_context`: SearchContext for library search
-- `params`: NCE tuning search parameters
+- `params`: Quad tuning search parameters
 - `ms_file_idx`: File index for context
 - `initial_percent`: Starting percentage of scans to sample
-- `min_psms_required`: Minimum PSMs needed for NCE modeling
+- `min_psms_required`: Minimum PSMs needed for quad modeling
 - `verbose`: Enable detailed logging
 
 # Returns
 (all_psms::DataFrame, converged::Bool, scans_processed::Int)
+
+# Notes
+- Uses higher initial sampling (10%) than NCE since quad needs more data
+- Targets different PSM count requirement than NCE tuning
 """
-function progressive_nce_psm_collection!(
-    scan_index::NCEScanPriorityIndex,
+function progressive_quad_psm_collection!(
+    scan_index::QuadScanPriorityIndex,
     spectra::MassSpecData,
     search_context::SearchContext,
-    params::NceTuningSearchParameters,
+    params::QuadTuningSearchParameters,
     ms_file_idx::Int64;
-    initial_percent::Float64 = 5.0,  # Hardcoded as requested
-    min_psms_required::Int = 5000,   # Hardcoded as requested
+    initial_percent::Float64 = 10.0,  # Higher than NCE since quad needs more data
+    min_psms_required::Int = 1000,    # Different requirement than NCE
     verbose::Bool = true
 )
     total_scans = length(scan_index.scan_indices)
@@ -292,7 +323,7 @@ function progressive_nce_psm_collection!(
     end
 
     if verbose
-        println("\n┌─ NCE Progressive PSM Collection")
+        println("\n┌─ Quad Progressive PSM Collection")
         println("│  Total MS2 scans: $total_scans")
         println("│  Target PSMs: $min_psms_required")
         println("│  Initial sample: $(initial_percent)%")
@@ -328,7 +359,7 @@ function progressive_nce_psm_collection!(
 
         # Collect PSMs for this chunk - this is where scan data is FIRST loaded
         chunk_start = time()
-        chunk_psms = collect_nce_psms_for_scans(
+        chunk_psms = collect_quad_psms_for_scans(
             chunk_scan_indices,
             spectra,
             search_context,
@@ -380,32 +411,37 @@ function progressive_nce_psm_collection!(
 end
 
 """
-    collect_nce_psms_for_scans(scan_indices::Vector{Int32},
-                              spectra::MassSpecData,
-                              search_context::SearchContext,
-                              params::NceTuningSearchParameters,
-                              ms_file_idx::Int64,
-                              verbose::Bool)::DataFrame
+    collect_quad_psms_for_scans(scan_indices::Vector{Int32},
+                               spectra::MassSpecData,
+                               search_context::SearchContext,
+                               params::QuadTuningSearchParameters,
+                               ms_file_idx::Int64,
+                               verbose::Bool)::DataFrame
 
-Collect PSMs from specific scan indices for NCE tuning.
+Collect PSMs from specific scan indices for quadrupole tuning.
 This is where scan data is FIRST accessed after index building.
 
 # Arguments
 - `scan_indices`: Specific scans to process (from priority vector)
 - `spectra`: MassSpecData object
 - `search_context`: SearchContext for library search
-- `params`: NCE tuning search parameters
+- `params`: Quad tuning search parameters
 - `ms_file_idx`: File index for context
 - `verbose`: Enable logging
 
 # Returns
 DataFrame of processed PSMs from specified scans
+
+# Notes
+- Uses IndexedMassSpecData to only process selected scans
+- Eliminates post-filtering waste by filtering BEFORE library search
+- Maps virtual scan indices back to actual scan numbers
 """
-function collect_nce_psms_for_scans(
+function collect_quad_psms_for_scans(
     scan_indices::Vector{Int32},
     spectra::MassSpecData,
     search_context::SearchContext,
-    params::NceTuningSearchParameters,
+    params::QuadTuningSearchParameters,
     ms_file_idx::Int64,
     verbose::Bool
 )::DataFrame
@@ -437,30 +473,32 @@ function collect_nce_psms_for_scans(
     # Process PSMs using indexed spectra (no filtering needed!)
     if !isempty(psms)
         process_start = time()
-        psms = process_psms!(psms, indexed_spectra, search_context, params)
+        processed_psms = process_initial_psms(psms, indexed_spectra, search_context)
         process_time = time() - process_start
 
         if verbose
             println("│  │  │  PSM processing: $(round(process_time, digits=3))s")
-            println("│  │  │  Final PSMs: $(nrow(psms))")
+            println("│  │  │  Final PSMs: $(nrow(processed_psms))")
         end
 
         # CRITICAL: Map virtual scan indices back to actual scan indices
         # The library search used indices 1, 2, 3... but we need the actual scan indices
-        if !isempty(psms) && haskey(psms, :scan_idx)
+        if !isempty(processed_psms) && haskey(processed_psms, :scan_idx)
             # Create mapping from virtual to actual scan indices
             scan_mapping = create_scan_mapping(indexed_spectra)
 
             # Map all scan_idx values from virtual to actual
-            psms[!, :scan_idx] = [scan_mapping[Int32(virtual_idx)] for virtual_idx in psms[!, :scan_idx]]
+            processed_psms[!, :scan_idx] = [scan_mapping[Int32(virtual_idx)] for virtual_idx in processed_psms[!, :scan_idx]]
 
             if verbose
                 println("│  │  │  Scan indices mapped back to original numbering")
             end
         end
+
+        return processed_psms
     end
 
-    return psms
+    return DataFrame()
 end
 
 """

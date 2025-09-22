@@ -239,3 +239,63 @@ function create_model_configurations()
         )
     ]
 end
+
+"""
+    apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
+
+Remove MS1 features from feature list if MS1 scoring is disabled.
+This is applied to model configurations to prevent using MS1 features
+when they would have zero variance (ms1_scoring=false).
+
+# Arguments
+- `features`: Vector of feature symbols to filter
+- `ms1_scoring`: Whether MS1 scoring is enabled
+
+# Returns
+- Modified feature vector with MS1 features removed if ms1_scoring=false
+"""
+function apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
+    if !ms1_scoring
+        # MS1 features to exclude when ms1_scoring=false
+        ms1_features = Set([
+            :ms1_irt_diff, :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
+            :max_unmatched_residual_ms1, :fitted_spectral_contrast_ms1, :error_ms1,
+            :m0_error_ms1, :n_iso_ms1, :big_iso_ms1, :rt_max_intensity_ms1,
+            :rt_diff_max_intensity_ms1, :ms1_features_missing
+        ])
+
+        original_count = length(features)
+        filter!(feature -> !(feature in ms1_features), features)
+        removed_count = original_count - length(features)
+
+        if removed_count > 0
+            @user_info "Filtered $removed_count MS1 features from model (ms1_scoring=false)"
+        end
+    end
+
+    return features
+end
+
+"""
+    create_filtered_model_configurations(ms1_scoring::Bool = true) -> Vector{ModelConfig}
+
+Create model configurations with optional MS1 feature filtering.
+When ms1_scoring=false, removes MS1 features from all feature sets to prevent
+zero-variance columns and singular matrices in ML training.
+
+# Arguments
+- `ms1_scoring`: Whether MS1 scoring is enabled
+
+# Returns
+- Vector of ModelConfig objects with appropriately filtered features
+"""
+function create_filtered_model_configurations(ms1_scoring::Bool = true)
+    configs = create_model_configurations()
+
+    # Apply MS1 filtering to all model configurations
+    for config in configs
+        apply_ms1_filtering!(config.features, ms1_scoring)
+    end
+
+    return configs
+end

@@ -296,10 +296,49 @@ function process_file!(
             return results
         end
         window_width = first(window_widths)
-        # Collect and process PSMs
-        total_psms = collect_psms(spectra, search_context, results, params, ms_file_idx, parse(Float64, window_width))
-        
+        # Build scan priority index (metadata only, no peak data)
+        index_start = time()
+        scan_index = build_quad_scan_priority_index(spectra; verbose=true)
+        index_time = time() - index_start
+
+        log_memory_usage("After quad scan index building")
+
+        # Progressive PSM collection with sampling without replacement
+        collection_start = time()
+
+        # Calculate minimum PSMs required based on window width
         required_psms = params.min_quad_tuning_psms_per_thompson * parse(Float64, window_width)
+
+        total_psms, converged, scans_used = progressive_quad_psm_collection!(
+            scan_index,
+            spectra,
+            search_context,
+            params,
+            ms_file_idx;
+            min_psms_required=Int(required_psms),
+            verbose=true
+        )
+        collection_time = time() - collection_start
+
+        # Convert to DataFrame format expected by downstream processing
+        if !isempty(total_psms)
+            # Apply quad-specific processing if we got PSMs
+            total_psms = process_quad_pipeline(total_psms, spectra, search_context, results, params, ms_file_idx, parse(Float64, window_width))
+        else
+            # Return empty DataFrame with correct schema
+            total_psms = DataFrame(
+                scan_idx = Int64[],
+                precursor_idx = UInt32[],
+                center_mz = Union{Float32, Missing}[],
+                δ = Union{Float32, Missing}[],
+                yt = Union{Float32, Missing}[],
+                x0 = Union{Float32, Missing}[],
+                x1 = Union{Float32, Missing}[],
+                prec_charge = Union{UInt8, Missing}[],
+                half_width_mz = Float32[]
+            )
+        end
+
         if nrow(total_psms) < required_psms
             @user_warn "Too few PSMs found for quad modeling. required_psms $required_psms and total_psms $(nrow(total_psms))"
             setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
@@ -315,12 +354,23 @@ function process_file!(
         setQuadModel(results, fitted_model)
         # Plot quad model
         push!(results.quad_model_plots, plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
-        
+
+        # Log final statistics
+        total_time = index_time + collection_time
+        println("\n" * "─"^40)
+        println("Timing Summary:")
+        println("  Index building: $(round(index_time, digits=3))s")
+        println("  PSM collection: $(round(collection_time, digits=3))s")
+        println("  Total time: $(round(total_time, digits=3))s")
+        println("  Scans used: $scans_used / $(length(scan_index.scan_indices))")
+        println("  Memory efficiency: No scan data preloaded")
+        log_memory_usage("Final")
+
     catch e
         @user_warn "Quad transmission function fit failed for MS data file: $file_name. Error type: $(typeof(e)). Using fallback model: GeneralGaussModel(5.0, 0.0)"
         setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
     end
-    
+
     return results
 end
 
