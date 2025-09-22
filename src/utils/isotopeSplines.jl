@@ -476,15 +476,64 @@ function getPrecursorFractionTransmitted!(
     prec_mono_mz::Float32,
     prec_charge::UInt8,
     sulfur_count::UInt8,
-    ) where {I<:Real}
+) where {I<:Real}
 
-    precursor_transmission = zeros(Float32, last(precursor_isotopes))
+    last_iso = floor(Int, last(precursor_isotopes))
+    last_iso < 1 && return 0.0f0
+    precursor_transmission = zeros(Float32, last_iso)
     getPrecursorIsotopeTransmission!(precursor_transmission, prec_mono_mz, prec_charge, qtf)
-    probability = 0.0f0
-    for iso in range(first(precursor_isotopes), last(precursor_isotopes))
-        probability += iso_splines(min(Int64(sulfur_count), 5), Int64(iso-1), (prec_mono_mz*prec_charge) - prec_charge) * precursor_transmission[iso]
-    end
+    return _precursor_fraction_transmitted(
+        precursor_transmission,
+        iso_splines,
+        precursor_isotopes,
+        prec_mono_mz,
+        prec_charge,
+        sulfur_count,
+    )
+end
 
+function getPrecursorFractionTransmitted!(
+    precursor_transmission::AbstractVector{Float32},
+    iso_splines::IsotopeSplineModel{40, Float32},
+    precursor_isotopes::Tuple{I, I},
+    qtf::QuadTransmissionFunction,
+    prec_mono_mz::Float32,
+    prec_charge::UInt8,
+    sulfur_count::UInt8,
+) where {I<:Real}
+
+    getPrecursorIsotopeTransmission!(precursor_transmission, prec_mono_mz, prec_charge, qtf)
+    return _precursor_fraction_transmitted(
+        precursor_transmission,
+        iso_splines,
+        precursor_isotopes,
+        prec_mono_mz,
+        prec_charge,
+        sulfur_count,
+    )
+end
+
+@inline function _precursor_fraction_transmitted(
+    precursor_transmission::AbstractVector{Float32},
+    iso_splines::IsotopeSplineModel{40, Float32},
+    precursor_isotopes::Tuple{I, I},
+    prec_mono_mz::Float32,
+    prec_charge::UInt8,
+    sulfur_count::UInt8,
+) where {I<:Real}
+    probability = 0.0f0
+    first_iso = floor(Int, first(precursor_isotopes))
+    last_iso = floor(Int, last(precursor_isotopes))
+    last_iso < 1 && return probability
+    first_idx = max(first_iso, 1)
+    last_idx = min(last_iso, length(precursor_transmission))
+    last_idx < first_idx && return probability
+
+    precursor_mass = (prec_mono_mz * prec_charge) - prec_charge
+    sulfur_idx = min(Int64(sulfur_count), 5)
+    for iso in first_idx:last_idx
+        probability += iso_splines(sulfur_idx, iso - 1, precursor_mass) * precursor_transmission[iso]
+    end
     return probability
 end
 
