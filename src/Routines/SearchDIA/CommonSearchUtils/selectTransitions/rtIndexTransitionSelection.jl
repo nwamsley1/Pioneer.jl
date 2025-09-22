@@ -48,7 +48,8 @@ function _select_transitions_impl!(
     frag_mz_bounds::Tuple{Float32, Float32};
     precursors_passing::Union{Set{UInt32}, Nothing} = nothing,
     isotope_err_bounds::Tuple{I, I} = (3, 1),
-    block_size::Int64 = 10000
+    block_size::Int64 = 10000,
+    min_fraction_transmitted::Float32 = 0.0f0
 ) where {I<:Integer}
     n = 0
     min_prec_mz, max_prec_mz = getQuadrupoleBounds(quad_transmission_func)
@@ -87,20 +88,32 @@ function _select_transitions_impl!(
             end
 
             # Update counters and temp storage
+            fraction_transmitted = getPrecursorFractionTransmitted!(
+                precursor_transmission,
+                iso_splines,
+                (1, 5),
+                quad_transmission_func,
+                prec_mz,
+                prec_charge,
+                prec_sulfur_count,
+            )
+
+            fraction_transmitted < min_fraction_transmitted && continue
+
+            prec_isotope_set = getPrecursorIsotopeSet(prec_mz, prec_charge, quad_transmission_func)
+            last(prec_isotope_set) < 0 && continue
+
             precs_temp_size += 1
-            
+
             # Resize array if needed to prevent bounds error
             if precs_temp_size > length(precs_temp)
                 append!(precs_temp, Vector{UInt32}(undef, length(precs_temp)))
             end
-            
+
             n += 1
             precs_temp[precs_temp_size] = prec_idx
 
-            #nce = getNCE(lookup, prec_charge, prec_mz)
-        
-            
-            transition_idx = @inline fillTransitionList!(
+            transition_idx = @inline fillTransitionListPrecomputed!(
                 transitions,
                 prec_estimation_type,
                 getPrecFragRange(lookup, prec_idx),
@@ -110,14 +123,14 @@ function _select_transitions_impl!(
                 prec_charge,
                 prec_sulfur_count,
                 transition_idx,
-                quad_transmission_func,
                 precursor_transmission,
+                prec_isotope_set,
                 isotopes,
                 n_frag_isotopes,
                 max_frag_rank,
                 iso_splines,
                 frag_mz_bounds,
-                block_size
+                block_size,
             )
         end
     end

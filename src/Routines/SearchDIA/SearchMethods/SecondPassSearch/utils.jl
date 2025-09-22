@@ -195,7 +195,8 @@ function process_scans!(
                 irt_start,
                 irt_stop,
                 (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
-                block_size = 10000
+                block_size = 10000,
+                min_fraction_transmitted = params.min_fraction_transmitted
             )
         end
 

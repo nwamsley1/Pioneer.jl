@@ -46,7 +46,7 @@ precursor estimation strategy.
 # Returns
 - `Int64`: Updated transition index
 """
-function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
+function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             prec_estimation_type::PrecEstimation,
                             precursor_fragment_range::UnitRange{UInt64},
                             fragment_ions::Vector{F},
@@ -54,32 +54,89 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             prec_mz::Float32,
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
-                            transition_idx::Int64, 
+                            transition_idx::Int64,
                             quad_transmission_func::QuadTransmissionFunction,
                             precursor_transmission::Vector{Float32},
-                            isotopes::Vector{Float32}, 
+                            isotopes::Vector{Float32},
                             n_frag_isotopes::Int64,
                             max_frag_rank::UInt8,
-                            iso_splines::IsotopeSplineModel, 
+                            iso_splines::IsotopeSplineModel,
                             frag_mz_bounds::Tuple{Float32, Float32},
-                            block_size::Int64)::Int64 where {G<:IntensityDataType, F <: AltimeterFragment}#where {T,U,V,W<:AbstractFloat,I<:Integer}
+                            block_size::Int64)::Int64 where {G<:IntensityDataType, F <: AltimeterFragment}
 
     # Calculate precursor isotope transmission and range
     getPrecursorIsotopeTransmission!(precursor_transmission, prec_mz, prec_charge, quad_transmission_func)
     prec_isotope_set = getPrecursorIsotopeSet(prec_mz, prec_charge, quad_transmission_func)
-    frag_iso_idx_range = range(0, min(n_frag_isotopes - 1, last(prec_isotope_set)))
+    return fillTransitionListPrecomputed!(
+        transitions,
+        prec_estimation_type,
+        precursor_fragment_range,
+        fragment_ions,
+        spline_data,
+        prec_mz,
+        prec_charge,
+        prec_sulfur_count,
+        transition_idx,
+        precursor_transmission,
+        prec_isotope_set,
+        isotopes,
+        n_frag_isotopes,
+        max_frag_rank,
+        iso_splines,
+        frag_mz_bounds,
+        block_size,
+    )
+end
+
+function fillTransitionListPrecomputed!(transitions::Vector{DetailedFrag{Float32}},
+                                        prec_estimation_type::PrecEstimation,
+                                        precursor_fragment_range::UnitRange{UInt64},
+                                        fragment_ions::Vector{F},
+                                        spline_data::G,
+                                        prec_mz::Float32,
+                                        prec_charge::UInt8,
+                                        prec_sulfur_count::UInt8,
+                                        transition_idx::Int64,
+                                        precursor_transmission::Vector{Float32},
+                                        prec_isotope_set::Tuple{Int64, Int64},
+                                        isotopes::Vector{Float32},
+                                        n_frag_isotopes::Int64,
+                                        max_frag_rank::UInt8,
+                                        iso_splines::IsotopeSplineModel,
+                                        frag_mz_bounds::Tuple{Float32, Float32},
+                                        block_size::Int64)::Int64 where {G<:IntensityDataType, F <: AltimeterFragment}
+
+    max_iso_idx = min(n_frag_isotopes - 1, last(prec_isotope_set))
+    max_iso_idx < 0 && return transition_idx
+    frag_iso_idx_range = 0:max_iso_idx
 
     for frag_idx in precursor_fragment_range
         frag = fragment_ions[frag_idx]
         frag.rank > max_frag_rank && continue
         # Calculate isotope pattern based on estimation strategy
-        getFragIsotopes!(prec_estimation_type, isotopes, precursor_transmission,
-        prec_isotope_set, frag_iso_idx_range, iso_splines,
-        prec_mz, prec_charge, prec_sulfur_count, frag, spline_data)
+        getFragIsotopes!(
+            prec_estimation_type,
+            isotopes,
+            precursor_transmission,
+            prec_isotope_set,
+            frag_iso_idx_range,
+            iso_splines,
+            prec_mz,
+            prec_charge,
+            prec_sulfur_count,
+            frag,
+            spline_data,
+        )
         # Create transitions for each isotope
-        transition_idx = addTransitionIsotopes!(transitions, transition_idx, 
-                                                frag, isotopes, frag_iso_idx_range,
-                                                frag_mz_bounds, block_size)
+        transition_idx = addTransitionIsotopes!(
+            transitions,
+            transition_idx,
+            frag,
+            isotopes,
+            frag_iso_idx_range,
+            frag_mz_bounds,
+            block_size,
+        )
     end
     return transition_idx
 end

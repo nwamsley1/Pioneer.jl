@@ -240,11 +240,8 @@ function process_file!(
             getIsolationWidthMzs(spectra)
         )
 
-        # Assuming scans that isolated too little of the precursor are not reliable to quantify
-        filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, chromatograms)
-        
         # Integrate chromatographic peaks for each precursor
-        # Updates peak_area and new_best_scan in passing_psms   
+        # Updates peak_area and new_best_scan in passing_psms
         integrate_precursors(
             chromatograms,
             params.isotope_tracetype,

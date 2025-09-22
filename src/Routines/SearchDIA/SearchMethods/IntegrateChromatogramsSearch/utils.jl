@@ -284,7 +284,8 @@ function build_chromatograms(
                 (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
                 precursors_passing = precursors_passing,
                 isotope_err_bounds = params.isotope_err_bounds,
-                block_size = 10000
+                block_size = 10000,
+                min_fraction_transmitted = params.min_fraction_transmitted
             )
         end
 
