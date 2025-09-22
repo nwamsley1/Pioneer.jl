@@ -134,6 +134,9 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     end
 end
 
+# Include scan priority index functionality after type definitions
+include("ScanPriorityIndex.jl")
+
 #==========================================================
 Interface Implementation
 ==========================================================#
@@ -163,12 +166,12 @@ Core Processing Methods
 
 """
 Main file processing method for NCE tuning search.
-Performs grid search and fits NCE model.
+Uses progressive scan sampling for memory efficiency.
 """
 function process_file!(
     results::NceTuningSearchResults,
-    params::P, 
-    search_context::SearchContext,    
+    params::P,
+    search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:NceTuningSearchParameters}
@@ -186,13 +189,13 @@ function process_file!(
             # Skipping NCE tuning for basic FragmentIndexLibrary
             return nothing
         end
-        
+
         # Check if file has any scans
         if length(spectra) == 0
             @user_warn "Skipping NCE tuning for $file_name - file contains no scans"
             return nothing
         end
-        
+
         # Check if file has any MS2 scans
         ms_orders = getMsOrders(spectra)
         ms2_count = count(x -> x == 2, ms_orders)
@@ -200,64 +203,105 @@ function process_file!(
             @user_warn "Skipping NCE tuning for $file_name - file contains no MS2 scans"
             return nothing
         end
-        
-        # Processing file with scans for NCE tuning
-        
-        # Perform library search on all MS2 scans
-        psms = library_search(spectra, search_context, params, ms_file_idx)   
-        # Process and filter PSMs
-        processed_psms = process_psms!(psms, spectra, search_context, params)
-        
-        # Warn if insufficient PSMs for reliable NCE modeling
-        if nrow(processed_psms) < 100
-            @user_warn "Low PSM count ($(nrow(processed_psms))) may result in unreliable NCE calibration. Consider lowering filtering thresholds."
+
+        println("\n" * "═"^60)
+        println(" NCE Tuning Search - File $ms_file_idx")
+        println(" File: $file_name")
+        println("═"^60)
+
+        # Build scan priority index (metadata only, no peak data)
+        index_start = time()
+        scan_index = build_nce_scan_priority_index(spectra; verbose=true)
+        index_time = time() - index_start
+
+        log_memory_usage("After scan index building")
+
+        # Progressive PSM collection with sampling without replacement
+        collection_start = time()
+        processed_psms, converged, scans_used = progressive_nce_psm_collection!(
+            scan_index,
+            spectra,
+            search_context,
+            params,
+            ms_file_idx;
+            verbose=true
+        )
+        collection_time = time() - collection_start
+        # Check if we got sufficient PSMs for NCE modeling
+        if converged && !isempty(processed_psms)
+            model_start = time()
+
+            # Warn if insufficient PSMs for reliable NCE modeling
+            if nrow(processed_psms) < 100
+                @user_warn "Low PSM count ($(nrow(processed_psms))) may result in unreliable NCE calibration. Consider lowering filtering thresholds."
+            end
+
+            # Fit and store NCE model
+            nce_model = fit_nce_model(
+                PiecewiseNceModel(0.0f0),
+                processed_psms[!, :prec_mz],
+                processed_psms[!, :nce],
+                processed_psms[!, :charge],
+                params.nce_breakpoint
+            )
+
+            fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+            # Create the main plot
+            p = plot(
+                title = "NCE calibration for $fname",
+                right_margin = 50Plots.px
+            )
+
+            # Calculate bin range
+            pbins = LinRange(minimum(processed_psms[!,:prec_mz]), maximum(processed_psms[!,:prec_mz]), 100)
+
+            # Extend x-axis range to accommodate annotations
+            x_range = maximum(pbins) - minimum(pbins)
+
+            # Plot each charge state with annotations
+            for charge in sort(unique(processed_psms[!,:charge]))
+                # Calculate the curve
+                curve_values = nce_model.(pbins, charge)
+
+                # Plot the line
+                plot!(p, pbins, curve_values,
+                    label = "+"*string(charge))
+
+                # Add annotation at the rightmost point
+                last_x = pbins[end]
+                last_y = curve_values[end]
+
+                # Add text annotation
+                annotate!(p, [(last_x + x_range*0.02,  # Slight offset from end
+                            last_y,
+                            text("$(round(last_y, digits=1))",
+                                    :left,
+                                    8))])
+            end
+            push!(results.nce_plots, p)
+            results.nce_models[ms_file_idx] = nce_model
+            append!(results.nce_psms, processed_psms)
+
+            model_time = time() - model_start
+            println("\n✓ NCE model fitted successfully")
+            println("  Model fitting time: $(round(model_time, digits=3))s")
+        else
+            println("\n✗ Failed to collect sufficient PSMs for NCE modeling")
+            println("  PSMs found: $(nrow(processed_psms))")
+            println("  Using default NCE model")
+            # Continue without NCE model for this file
         end
 
-        # Fit and store NCE model
-        nce_model = fit_nce_model(
-            PiecewiseNceModel(0.0f0),
-            processed_psms[!, :prec_mz],
-            processed_psms[!, :nce],
-            processed_psms[!, :charge],
-            params.nce_breakpoint
-        )
-        
-        fname = getFileIdToName(getMSData(search_context), ms_file_idx)
-        # Create the main plot
-        p = plot(
-            title = "NCE calibration for $fname",
-            right_margin = 50Plots.px
-        )
-
-        # Calculate bin range
-        pbins = LinRange(minimum(processed_psms[!,:prec_mz]), maximum(processed_psms[!,:prec_mz]), 100)
-
-        # Extend x-axis range to accommodate annotations
-        x_range = maximum(pbins) - minimum(pbins)
-
-        # Plot each charge state with annotations
-        for charge in sort(unique(processed_psms[!,:charge]))
-            # Calculate the curve
-            curve_values = nce_model.(pbins, charge)
-            
-            # Plot the line
-            plot!(p, pbins, curve_values, 
-                label = "+"*string(charge))
-            
-            # Add annotation at the rightmost point
-            last_x = pbins[end]
-            last_y = curve_values[end]
-            
-            # Add text annotation
-            annotate!(p, [(last_x + x_range*0.02,  # Slight offset from end
-                        last_y,
-                        text("$(round(last_y, digits=1))", 
-                                :left, 
-                                8))])
-        end
-        push!(results.nce_plots, p)
-        results.nce_models[ms_file_idx] = nce_model
-        append!(results.nce_psms, processed_psms)
+        # Log final statistics
+        total_time = index_time + collection_time
+        println("\n" * "─"^40)
+        println("Timing Summary:")
+        println("  Index building: $(round(index_time, digits=3))s")
+        println("  PSM collection: $(round(collection_time, digits=3))s")
+        println("  Total time: $(round(total_time, digits=3))s")
+        println("  Scans used: $scans_used / $(length(scan_index.scan_indices))")
+        println("  Memory efficiency: No scan data preloaded")
+        log_memory_usage("Final")
 
     catch e
         @user_warn "NCE tuning failed for MS data file: $file_name. Error type: $(typeof(e)). Skipping NCE calibration for this file."
