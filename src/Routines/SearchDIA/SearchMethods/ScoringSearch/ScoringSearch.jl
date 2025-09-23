@@ -19,7 +19,7 @@
     ScoringSearch
 
 Search method for post-processing second pass results to get final protein scores.
-This includes EvoTrees/XGBoost model training, trace scoring, and protein group analysis.
+This includes LightGBM model training, trace scoring, and protein group analysis.
 """
 struct ScoringSearch <: SearchMethod end
 
@@ -47,7 +47,7 @@ end
 Parameters for scoring search.
 """
 struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
-    # EvoTrees/XGBoost parameters
+    # LightGBM parameters
     max_psms_in_memory::Int64
     min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
@@ -242,8 +242,8 @@ function summarize_results!(
     end
 
     try
-        # Step 1: Train EvoTrees/XGBoost Models
-        ##@debug_l1 "Step 1: Training EvoTrees/XGBoost models..."
+        # Step 1: Train LightGBM Models
+        ##@debug_l1 "Step 1: Training LightGBM models..."
         # Filter to only include valid (non-failed) files
         valid_file_data = get_valid_file_paths(search_context, getSecondPassPsms)
         valid_file_indices = [idx for (idx, _) in valid_file_data]
@@ -649,7 +649,7 @@ function summarize_results!(
                     step21_time + step22_time + step23_time
     
         @user_info "ScoringSearch completed - Total time: $(round(total_time, digits=2)) seconds"
-        #@debug_l1 "Breakdown: EvoTrees/XGBoost($(round(step1_time, digits=1))s) + Preprocess($(round(step2_time, digits=1))s) + Best_Traces($(round(step3_time, digits=1))s) + Quant_Processing($(round(step4_time, digits=1))s) + Merging($(round(step5_time + step7_time + step15_time + step18_time, digits=1))s) + Q-values($(round(step6_time + step8_time + step16_time + step19_time, digits=1))s) + Protein_Inference($(round(step11_time, digits=1))s) + Probit_Regression($(round(step12_time, digits=1))s) + Other($(round(step4_time + step9_time + step13_time + step14_time + step17_time + step20_time + step21_time, digits=1))s)"
+        #@debug_l1 "Breakdown: LightGBM($(round(step1_time, digits=1))s) + Preprocess($(round(step2_time, digits=1))s) + Best_Traces($(round(step3_time, digits=1))s) + Quant_Processing($(round(step4_time, digits=1))s) + Merging($(round(step5_time + step7_time + step15_time + step18_time, digits=1))s) + Q-values($(round(step6_time + step8_time + step16_time + step19_time, digits=1))s) + Protein_Inference($(round(step11_time, digits=1))s) + Probit_Regression($(round(step12_time, digits=1))s) + Other($(round(step4_time + step9_time + step13_time + step14_time + step17_time + step20_time + step21_time, digits=1))s)"
 
         best_traces = nothing # Free memory
     catch e
