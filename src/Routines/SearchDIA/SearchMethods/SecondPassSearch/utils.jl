@@ -368,8 +368,7 @@ function process_scans!(
     irt_start, irt_stop = 1, 1
     ion_idx = 0
     last_val = 0
-    precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
-    prec_temp_size = 0
+    # Note: prec_ids scratch array not required in MS1 path
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
 
     # Diagnostics counters
@@ -380,7 +379,7 @@ function process_scans!(
 
     for scan_idx in scan_range
         empty!(pair_id_dict)
-        ((scan_idx<1) | (scan_idx > length(spectra))) && continue
+        ((scan_idx < 1) || (scan_idx > length(spectra))) && continue
 
         # Process MS1 scans
         if getMsOrder(spectra, scan_idx) != 1
@@ -393,7 +392,7 @@ function process_scans!(
         irt_stop = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         # Update transitions if window changed
-        prec_temp_size = 0
+        # reset per-scan counters
         ion_idx = 0
         for rt_bin_idx in irt_start:irt_stop #All retention time bins covering the current scan 
             precs = rt_index.rt_bins[rt_bin_idx].prec #Precursor idxs for the current retention time bin
@@ -407,11 +406,7 @@ function process_scans!(
                         #If another precursor (the respective target or decoy complement) in this pair has already been added. 
                         continue
                     end
-                    prec_temp_size += 1 #Precursors in the scan 
-                    if prec_temp_size > length(precs_temp) #Adjust size of placeholder if necessary 
-                        append!(precs_temp, Vector{UInt32}(undef, length(precs_temp)))
-                    end
-                    precs_temp[prec_temp_size] = prec_idx
+                    # Track only in local structures for MS1 path (no scratch needed)
 
 
                     for iso in isotopes_dict[prec_idx] #Add the isotopes for the precursor to match to the scan 
@@ -428,6 +423,13 @@ function process_scans!(
         #Sort the precursor isotopes by m/z
         sort!(@view(ion_templates[1:ion_idx]), by = x->(getMZ(x)), alg=PartialQuickSort(1:ion_idx))
         # Match peaks
+        # Ensure match/miss buffers are large enough (cannot exceed ion_idx)
+        if ion_idx > length(ion_matches)
+            append!(ion_matches, [PrecursorMatch{Float32}() for _ in 1:max(ion_idx - length(ion_matches), length(ion_matches))])
+        end
+        if ion_idx > length(ion_misses)
+            append!(ion_misses, [PrecursorMatch{Float32}() for _ in 1:max(ion_idx - length(ion_misses), length(ion_misses))])
+        end
         nmatches, nmisses = matchPeaks!(
             ion_matches,
             ion_misses,
