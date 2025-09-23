@@ -470,7 +470,7 @@ end
 
 """
     score_precursor_isotope_traces_in_memory!(best_psms::DataFrame, file_paths::Vector{String},
-                                  precursors::LibraryPrecursors) -> Dictionary{UInt8, LightGBMModelWrapper}
+                                  precursors::LibraryPrecursors) -> Dictionary{UInt8, LightGBMModel}
 
 Train LightGBM models for PSM scoring. All psms are kept in memory
 
@@ -697,7 +697,7 @@ end
 
 """
     score_precursor_isotope_traces_out_of_memory!(best_psms::DataFrame, file_paths::Vector{String},
-                                  precursors::LibraryPrecursors) -> Dictionary{UInt8, LightGBMModelWrapper}
+                                  precursors::LibraryPrecursors) -> Dictionary{UInt8, LightGBMModel}
 
 Train LightGBM models for PSM scoring. Only a subset of psms are kept in memory
 

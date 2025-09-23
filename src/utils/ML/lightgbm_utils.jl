@@ -1,10 +1,13 @@
 # Utility helpers for working with LightGBM directly through its native API.
 
-struct LightGBMModelWrapper
+struct LightGBMModel
     booster::Union{LightGBM.LGBMClassification, Nothing}
-    feature_names::Vector{Symbol}
+    features::Vector{Symbol}
     constant_prediction::Union{Float32, Nothing}
 end
+
+const LightGBMModelVector = Vector{LightGBMModel}
+const LightGBMModelWrapper = LightGBMModel
 
 """
     feature_matrix(df, features) -> Matrix{Float32}
@@ -109,51 +112,51 @@ function fit_lightgbm_model(model::LightGBM.LGBMClassification,
                             feature_data::AbstractDataFrame,
                             labels::AbstractVector;
                             positive_label = true)
-    feature_names = Symbol.(names(feature_data))
-    X = feature_matrix(feature_data, feature_names)
+    features = Symbol.(names(feature_data))
+    X = feature_matrix(feature_data, features)
     y_int = _prepare_labels(labels)
 
     unique_labels = unique(y_int)
     if length(unique_labels) == 1
         constant_prob = unique_labels[1] == 0 ? 0.0f0 : 1.0f0
-        return LightGBMModelWrapper(nothing, feature_names, constant_prob)
+        return LightGBMModel(nothing, features, constant_prob)
     end
 
     LightGBM.fit!(model, X, y_int; verbosity = -1)
-    return LightGBMModelWrapper(model, feature_names, nothing)
+    return LightGBMModel(model, features, nothing)
 end
 
-function lightgbm_predict(wrapper::LightGBMModelWrapper,
+function lightgbm_predict(model::LightGBMModel,
                           feature_data::AbstractDataFrame;
                           output_type = Float64)
-    if wrapper.booster === nothing
+    if model.booster === nothing
         n = nrow(feature_data)
-        probs = fill(wrapper.constant_prediction === nothing ? 0.0f0 : wrapper.constant_prediction, n)
-        return convert.(output_type, probs)
+        prob = model.constant_prediction === nothing ? 0.0f0 : model.constant_prediction
+        return fill(convert(output_type, prob), n)
     end
 
-    X = feature_matrix(feature_data, wrapper.feature_names)
-    raw = LightGBM.predict(wrapper.booster, X)
+    X = feature_matrix(feature_data, model.features)
+    raw = LightGBM.predict(model.booster, X)
     ŷ = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
     return convert.(output_type, ŷ)
 end
 
-function lightgbm_feature_importances(wrapper::LightGBMModelWrapper)
-    if wrapper.booster === nothing
+function lightgbm_feature_importances(model::LightGBMModel)
+    if model.booster === nothing
         return nothing
     end
 
     try
-        return LightGBM.gain_importance(wrapper.booster)
+        return LightGBM.gain_importance(model.booster)
     catch
         return nothing
     end
 end
 
-predict(wrapper::LightGBMModelWrapper, df::AbstractDataFrame) =
-    lightgbm_predict(wrapper, df; output_type = Float32)
+predict(model::LightGBMModel, df::AbstractDataFrame) =
+    lightgbm_predict(model, df; output_type = Float32)
 
-function importance(wrapper::LightGBMModelWrapper)
-    output = lightgbm_feature_importances(wrapper)
-    return output === nothing ? nothing : collect(zip(wrapper.feature_names, output))
+function importance(model::LightGBMModel)
+    gains = lightgbm_feature_importances(model)
+    return gains === nothing ? nothing : collect(zip(model.features, gains))
 end
