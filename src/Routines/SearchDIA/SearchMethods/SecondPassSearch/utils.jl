@@ -488,21 +488,28 @@ function process_scans!(
                 precursors
             )
 
-            # Handle array resizing
-            if getIdToCol(search_data).size > length(weights)
-                new_entries = getIdToCol(search_data).size - length(weights) + 1000
-                resize!(weights, length(weights) + new_entries)
-                resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
-                append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+            # Populate id_to_col mapping from m/z grouping so MS1 scoring has valid indices
+            id_to_col = getIdToCol(search_data)
+            reset!(id_to_col)
+            for (mz_group, col) in mz_grouping.mz_to_col
+                if haskey(mz_grouping.mz_group_to_precids, mz_group)
+                    for prec_id in mz_grouping.mz_group_to_precids[mz_group]
+                        update!(id_to_col, prec_id, col)
+                    end
+                end
+            end
 
+            # Ensure arrays are sized for the number of grouped columns
+            if mz_grouping.current_col > length(weights)
+                new_entries = Int(mz_grouping.current_col) - length(weights) + 1000
+                resize!(weights, length(weights) + new_entries)
                 resize!(getMs1SpectralScores(search_data), length(getMs1SpectralScores(search_data)) + new_entries)
                 append!(getMs1UnscoredPsms(search_data), [eltype(getMs1UnscoredPsms(search_data))() for _ in 1:new_entries])
             end
 
-            # Initialize weights
-            for i in 1:getIdToCol(search_data).size
-                weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
-                    precursor_weights[getIdToCol(search_data).keys[i]]
+            # Initialize active group weights to zero (simple baseline)
+            @inbounds @fastmath for col in 1:Int(mz_grouping.current_col)
+                weights[col] = 0.0f0
             end
 
             # Solve deconvolution
