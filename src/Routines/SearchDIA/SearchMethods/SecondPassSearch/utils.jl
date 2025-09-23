@@ -65,9 +65,19 @@ function perform_second_pass_search(
         end
     end
     
-    # Collect results
-    results = fetch.(tasks)
-    return vcat([r for r in results]...)
+    # Collect results with detailed error logging per task
+    results = Vector{DataFrame}(undef, length(tasks))
+    for (i, t) in enumerate(tasks)
+        try
+            results[i] = fetch(t)
+        catch e
+            bt = catch_backtrace()
+            @user_error "SecondPassSearch task $(i) failed while fetching results (MS2CHROM)"
+            @user_error sprint(showerror, e, bt)
+            rethrow(e)
+        end
+    end
+    return vcat(results...)
 end
 
 function perform_second_pass_search(
@@ -100,8 +110,19 @@ function perform_second_pass_search(
             )
         end
     end
-    
-    return vcat(fetch.(tasks)...)
+    # Collect results with detailed error logging per task
+    results = Vector{DataFrame}(undef, length(tasks))
+    for (i, t) in enumerate(tasks)
+        try
+            results[i] = fetch(t)
+        catch e
+            bt = catch_backtrace()
+            @user_error "SecondPassSearch task $(i) failed while fetching results (MS1CHROM)"
+            @user_error sprint(showerror, e, bt)
+            rethrow(e)
+        end
+    end
+    return vcat(results...)
 end
 
 """

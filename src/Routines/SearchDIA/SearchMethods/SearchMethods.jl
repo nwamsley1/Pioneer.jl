@@ -73,7 +73,9 @@ function execute_search(
             catch
                 "file_$ms_file_idx"
             end
-            @user_warn "File $ms_file_idx ($file_name) failed during $(typeof(search_type)) processing: $e"
+            bt = catch_backtrace()
+            @user_error "File $ms_file_idx ($file_name) failed during $(typeof(search_type)) processing"
+            @user_error sprint(showerror, e, bt)
             mark_file_as_failed_if_needed!(search_context, ms_file_idx, e)
             n_failed += 1
             # Continue with next file instead of crashing entire search
@@ -162,8 +164,20 @@ function handle_search_error!(search_context::SearchContext, ms_file_idx::Int64,
     end
     
     reason = "$method_name failed: $(typeof(error))"
+
+    # Mark failed in both tracking systems (SearchContext set + Arrow reference flag)
     markFileFailed!(search_context, ms_file_idx, reason)
-    @user_warn "$method_name failed for MS data file: $file_name. Error type: $(typeof(error)). File marked as failed."
+    try
+        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
+    catch
+        # Fallback for legacy contexts
+        mark_file_as_failed_if_needed!(search_context, ms_file_idx, reason)
+    end
+
+    # Log full error with stacktrace for easier debugging
+    bt = catch_backtrace()
+    @user_error "$method_name failed for MS data file: $file_name"
+    @user_error sprint(showerror, error, bt)
     
     # Create fallback results
     fallback_function(results, ms_file_idx)

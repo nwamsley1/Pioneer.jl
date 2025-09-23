@@ -307,7 +307,7 @@ function process_file!(
         results.ms1_psms[] = ms1_psms
 
     catch e
-        # Handle failures gracefully using helper function
+        # Handle failures gracefully using helper function (logs full stacktrace)
         handle_search_error!(search_context, ms_file_idx, "SecondPassSearch", e, createFallbackResults!, results)
     end
 
@@ -476,7 +476,10 @@ function process_search_results!(
         writeArrow(temp_path, psms)
         setSecondPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
     catch e
-        @user_warn "Failed to process search results" ms_file_idx exception=e
+        # Log full exception and stack for diagnosis, then propagate
+        bt = catch_backtrace()
+        @user_error "Failed to process search results for file index $(ms_file_idx)"
+        @user_error sprint(showerror, e, bt)
         rethrow(e)
     end
 
