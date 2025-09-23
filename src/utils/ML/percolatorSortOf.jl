@@ -304,7 +304,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         qvals_prev = Vector{Float32}(undef, length(nonMBR_estimates))
         get_qvalues!(nonMBR_estimates, psms.target, qvals_prev)
         pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore)
-        prob_thresh = any(pass_mask) ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
+        has_passing_psms = !isempty(pass_mask) && any(pass_mask)
+        prob_thresh = has_passing_psms ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
         # Label as transfer candidates only those failing the q-value cutoff but
         # whose best matched pair surpassed the passing probability threshold.
         psms[!, :MBR_transfer_candidate] .= .!pass_mask .&
