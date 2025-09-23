@@ -565,39 +565,17 @@ function build_chromatograms(
                 Hs,
                 residuals,
                 weights,
-                getHuberDelta(search_context),
-                params.lambda,
+                params.ms1_huber_delta,
+                params.ms1_lambda,
                 params.max_iter_newton,
                 params.max_iter_bisection,
                 params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 params.max_diff,
-                params.reg_type
+                params.ms1_reg_type
             )
-            if scan_idx==6625#8241#Design Matrix 
-                N = Hs.n_vals
-                H = Matrix(sparse(Hs.rowval[1:N],
-                                    Hs.colval[1:N],
-                                    Hs.nzval[1:N])
-                                    )
-                #OLS Regression 
-                rowvals = copy(Hs.rowval)
-                y = zeros(Float32, Hs.m)
-                for i in range(1, N)
-                    y[Hs.rowval[i]] = Hs.x[i]
-                end
-                id_to_col = getIdToCol(search_data)
-                _matches_ = ion_matches[1:nmatches]
-                _misses_ = ion_misses[1:nmisses]
-                jldsave(joinpath(getQcPlotfolder(search_context), "A_mat.jld2"); H)
-                jldsave(joinpath(getQcPlotfolder(search_context), "y_mat.jld2"); y)
-                jldsave(joinpath(getQcPlotfolder(search_context), "residuals.jld2"); residuals)
-                jldsave(joinpath(getQcPlotfolder(search_context), "weights.jld2"); weights)
-                jldsave(joinpath(getQcPlotfolder(search_context), "getIdToCol.jld2"); id_to_col)
-                jldsave(joinpath(getQcPlotfolder(search_context), "ion_matches.jld2"); _matches_)
-                jldsave(joinpath(getQcPlotfolder(search_context), "ion_misses.jld2"); _misses_)
-            end
+
             # Record chromatogram points with weights
             for j in 1:prec_temp_size
                 rt_idx += 1

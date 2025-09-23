@@ -72,7 +72,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     spec_order::Set{Int64}
     match_between_runs::Bool
 
-    # Deconvolution parameters
+    # Deconvolution parameters (MS2)
     lambda::Float32
     reg_type::RegularizationType
     max_iter_newton::Int64
@@ -81,6 +81,11 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     accuracy_newton::Float32
     accuracy_bisection::Float32
     max_diff::Float32
+
+    # MS1 deconvolution parameters
+    ms1_lambda::Float32
+    ms1_reg_type::RegularizationType
+    ms1_huber_delta::Float32
 
     # PSM filtering
     min_y_count::Int64
@@ -116,7 +121,8 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
-        reg_type = deconv_params.reg_type
+        # Parse MS2 regularization type
+        reg_type = deconv_params.ms2.reg_type
         if reg_type == "none"
             reg_type = NoNorm()
         elseif reg_type == "l1"
@@ -125,7 +131,20 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             reg_type = L2Norm()
         else
             reg_type = NoNorm()
-            @user_warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+            @user_warn "Warning. MS2 reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+        end
+
+        # Parse MS1 regularization type
+        ms1_reg_type = deconv_params.ms1.reg_type
+        if ms1_reg_type == "none"
+            ms1_reg_type = NoNorm()
+        elseif ms1_reg_type == "l1"
+            ms1_reg_type = L1Norm()
+        elseif ms1_reg_type == "l2"
+            ms1_reg_type = L2Norm()
+        else
+            ms1_reg_type = NoNorm()
+            @user_warn "Warning. MS1 reg type `$ms1_reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
 
         ms1_scoring = Bool(global_params.ms1_scoring)
@@ -137,7 +156,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Set{Int64}([2]),
             Bool(global_params.match_between_runs),
             
-            Float32(deconv_params.lambda),
+            Float32(deconv_params.ms2.lambda),
             reg_type,
             Int64(deconv_params.newton_iters),
             Int64(deconv_params.bisection_iters),
@@ -145,7 +164,11 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.max_diff),
-            
+
+            Float32(deconv_params.ms1.lambda),
+            ms1_reg_type,
+            Float32(deconv_params.ms1.huber_delta),
+
             Int64(frag_params.min_y_count),
             Int64(frag_params.min_count),
             Float32(frag_params.min_spectral_contrast),

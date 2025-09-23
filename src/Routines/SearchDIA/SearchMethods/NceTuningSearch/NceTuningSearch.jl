@@ -26,28 +26,25 @@ This search:
 3. Fits piecewise NCE models based on precursor m/z
 4. Stores optimized models in SearchContext for use by other methods
 
-# Example Implementation
-```julia
-# Define search parameters
-params = Dict(
-    :isotope_err_bounds => (0, 2),
-    :presearch_params => Dict(
-        "frag_tol_ppm" => 30.0,
-        "min_index_search_score" => 3,
-        "min_frag_count" => 3,
-        "min_spectral_contrast" => 0.1,
-        "min_log2_matched_ratio" => -3.0,
-        "min_topn_of_m" => (3, 5),
-        "max_best_rank" => 3,
-        "n_frag_isotopes" => 2,
-        "max_frag_rank" => 10,
-        "abreviate_precursor_calc" => false
-    )
-)
+# Configuration
+NCE tuning parameters are configured in the parameter_tuning.nce_tuning section:
 
-# Execute search
-results = execute_search(NceTuningSearch(), search_context, params)
+```json
+{
+    "parameter_tuning": {
+        "nce_tuning": {
+            "min_psms": 2000,               // Fixed PSM requirement for NCE modeling
+            "initial_percent": 2.5,         // Initial sampling percentage
+            "min_initial_scans": 5000       // Minimum scans for initial sample
+        }
+    }
+}
 ```
+
+The search automatically:
+- Uses progressive sampling starting at max(initial_percent, min_initial_scans/total_scans)
+- Prioritizes scans by retention time for temporal coverage across LC gradient
+- Collects min_psms PSMs for reliable collision energy modeling
 """
 struct NceTuningSearch <: TuningMethod end
 
@@ -88,6 +85,9 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     nce_grid::LinRange{Float32, Int64}
     nce_breakpoint::Float32
     max_q_val::Float32
+    min_psms::Int64
+    initial_percent::Float32
+    min_initial_scans::Int64
     prec_estimation::P
 
     function NceTuningSearchParameters(params::PioneerParameters)
@@ -99,9 +99,29 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
 
         # Always use partial capture for NCE tuning
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        
+
         # Create NCE grid
         nce_grid = LinRange{Float32}(21.0f0, 40.0f0, 20)
+
+        # Extract NCE tuning parameters with backwards compatibility
+        nce_tuning_params = get(tuning_params, :nce_tuning, nothing)
+        min_psms = if nce_tuning_params !== nothing && haskey(nce_tuning_params, :min_psms)
+            Int64(nce_tuning_params.min_psms)
+        else
+            Int64(2000)  # Default value (previously hardcoded)
+        end
+
+        initial_percent = if nce_tuning_params !== nothing && haskey(nce_tuning_params, :initial_percent)
+            Float32(nce_tuning_params.initial_percent)
+        else
+            Float32(2.5)  # Default value
+        end
+
+        min_initial_scans = if nce_tuning_params !== nothing && haskey(nce_tuning_params, :min_initial_scans)
+            Int64(nce_tuning_params.min_initial_scans)
+        else
+            Int64(5000)  # Default value
+        end
 
         new{typeof(prec_estimation)}(
             # Core parameters
@@ -129,12 +149,15 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             nce_grid,
             NCE_MODEL_BREAKPOINT,  # Assuming this is defined as a constant
             Float32(0.01),  # Fixed max_q_val for NCE tuning
+            min_psms,
+            initial_percent,
+            min_initial_scans,
             prec_estimation
         )
     end
 end
 
-# ScanPriorityIndex.jl and IndexedMassSpecData.jl are loaded automatically by importScripts()
+# IndexedMassSpecData is defined in FilteredMassSpecData.jl and loaded by importScripts()
 
 #==========================================================
 Interface Implementation
@@ -175,6 +198,7 @@ function process_file!(
     spectra::MassSpecData
 ) where {P<:NceTuningSearchParameters}
 
+
     # Get file name for debugging
     file_name = try
         getFileIdToName(getMSData(search_context), ms_file_idx)
@@ -203,32 +227,20 @@ function process_file!(
             return nothing
         end
 
-        println("\n" * "═"^60)
-        println(" NCE Tuning Search - File $ms_file_idx")
-        println(" File: $file_name")
-        println("═"^60)
 
         # Build scan priority index (metadata only, no peak data)
-        index_start = time()
-        scan_index = build_nce_scan_priority_index(spectra; verbose=true)
-        index_time = time() - index_start
-
-        log_memory_usage("After scan index building")
+        scan_index = build_nce_scan_priority_index(spectra)
 
         # Progressive PSM collection with sampling without replacement
-        collection_start = time()
-        processed_psms, converged, scans_used = progressive_nce_psm_collection!(
+        processed_psms, converged, _ = progressive_nce_psm_collection!(
             scan_index,
             spectra,
             search_context,
             params,
-            ms_file_idx;
-            verbose=true
+            ms_file_idx
         )
-        collection_time = time() - collection_start
-        # Check if we got sufficient PSMs for NCE modeling
+
         if converged && !isempty(processed_psms)
-            model_start = time()
 
             # Warn if insufficient PSMs for reliable NCE modeling
             if nrow(processed_psms) < 100
@@ -281,30 +293,13 @@ function process_file!(
             results.nce_models[ms_file_idx] = nce_model
             append!(results.nce_psms, processed_psms)
 
-            model_time = time() - model_start
-            println("\n✓ NCE model fitted successfully")
-            println("  Model fitting time: $(round(model_time, digits=3))s")
         else
-            println("\n✗ Failed to collect sufficient PSMs for NCE modeling")
-            println("  PSMs found: $(nrow(processed_psms))")
-            println("  Using default NCE model")
             # Continue without NCE model for this file
         end
 
-        # Log final statistics
-        total_time = index_time + collection_time
-        println("\n" * "─"^40)
-        println("Timing Summary:")
-        println("  Index building: $(round(index_time, digits=3))s")
-        println("  PSM collection: $(round(collection_time, digits=3))s")
-        println("  Total time: $(round(total_time, digits=3))s")
-        println("  Scans used: $scans_used / $(length(scan_index.scan_indices))")
-        println("  Memory efficiency: No scan data preloaded")
-        log_memory_usage("Final")
-
     catch e
-        @user_warn "NCE tuning failed for MS data file: $file_name. Error type: $(typeof(e)). Skipping NCE calibration for this file."
-        # Don't rethrow - allow pipeline to continue without NCE model for this file
+        @user_warn "NCE transmission function fit failed for MS data file: $file_name. Error: $e. Using default NCE model."
+        # Continue without NCE model for this file
     end
 
     return results

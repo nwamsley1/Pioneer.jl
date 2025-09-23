@@ -229,9 +229,22 @@ function checkParams(json_path::String)
     check_param(opt_params, "machine_learning", Dict)
 
     deconv = opt_params["deconvolution"]
-    check_param(deconv, "lambda", Real)
-    check_param(deconv, "reg_type", String)
-    check_param(deconv, "huber_delta", Real)
+
+    # Check MS1 and MS2 specific parameters
+    check_param(deconv, "ms1", Dict)
+    check_param(deconv, "ms2", Dict)
+
+    ms1_params = deconv["ms1"]
+    check_param(ms1_params, "lambda", Real)
+    check_param(ms1_params, "reg_type", String)
+    check_param(ms1_params, "huber_delta", Real)
+
+    ms2_params = deconv["ms2"]
+    check_param(ms2_params, "lambda", Real)
+    check_param(ms2_params, "reg_type", String)
+    check_param(ms2_params, "huber_delta", Real)
+
+    # Check shared parameters
     check_param(deconv, "huber_exp", Real)
     check_param(deconv, "huber_iters", Integer)
     check_param(deconv, "newton_iters", Integer)

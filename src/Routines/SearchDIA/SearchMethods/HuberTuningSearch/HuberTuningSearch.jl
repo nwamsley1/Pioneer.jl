@@ -101,7 +101,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
         global_params = params.global_settings
         frag_params = params.quant_search.fragment_settings
         # Calculate Huber delta grid
-        delta0 = Float32(deconv_params.huber_delta)
+        delta0 = Float32(deconv_params.ms2.huber_delta)
         delta_exp = Float32(deconv_params.huber_exp)
         delta_iters = Int64(deconv_params.huber_iters)
         huber_δs = Float32[delta0 * (delta_exp^i) for i in range(-4,delta_iters+6)]
@@ -109,7 +109,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
 
         # Always use partial capture for Huber tuning
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        reg_type = deconv_params.reg_type
+        reg_type = deconv_params.ms2.reg_type
         if reg_type == "none"
             reg_type = NoNorm()
         elseif reg_type == "l1"
@@ -127,7 +127,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
             UInt8(frag_params.max_rank),  # Using max possible rank
             Set{Int64}([2]),
             
-            Float32(deconv_params.lambda),
+            Float32(deconv_params.ms2.lambda),
             reg_type, 
             Int64(deconv_params.newton_iters),
             Int64(deconv_params.bisection_iters),

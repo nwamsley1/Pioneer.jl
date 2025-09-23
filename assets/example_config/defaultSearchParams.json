@@ -39,8 +39,6 @@
         },
         "search_settings": {
             "min_samples": 1000,
-            "min_quad_tuning_psms_per_thompson": 250,
-            "min_quad_tuning_fragments": 3,
             "max_presearch_iters": 10,
             "frag_err_quantile": 0.0025,
             "max_q_value": 0.01,
@@ -48,6 +46,16 @@
             "initial_scan_count": 10000,
             "max_parameter_tuning_scans": 40000,
             "max_frags_for_mass_err_estimation": 12
+        },
+        "nce_tuning": {
+            "min_psms": 2000,
+            "initial_percent": 2.5,
+            "min_initial_scans": 5000
+        },
+        "quad_tuning": {
+            "min_psms_per_thompson": 250,
+            "min_fragments": 3,
+            "initial_percent": 2.5
         },
         "iteration_settings": {
             "init_mass_tol_ppm": 30.0,
@@ -99,7 +107,7 @@
     "acquisition": {
         "nce": 26,
         "quad_transmission": {
-            "fit_from_data": false,
+            "fit_from_data": true,
             "overhang": 0.25,
             "smoothness": 5.0
         }
@@ -112,9 +120,16 @@
     },
     "optimization": {
         "deconvolution": {
-            "lambda": 0.0,
-            "reg_type": "none",
-            "huber_delta": 300,
+            "ms1": {
+                "lambda": 0.001,
+                "reg_type": "l2",
+                "huber_delta": 1e6
+            },
+            "ms2": {
+                "lambda": 0.0,
+                "reg_type": "none",
+                "huber_delta": 300
+            },
             "huber_exp": 1.5,
             "huber_iters": 15,
             "newton_iters": 50,

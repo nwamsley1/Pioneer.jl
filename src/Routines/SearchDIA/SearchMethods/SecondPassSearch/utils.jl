@@ -480,15 +480,15 @@ function process_scans!(
                 Hs,
                 residuals,
                 weights,
-                Float32(1e8),#getHuberDelta(search_context),
-                Float32(0.001),#params.lambda,
+                params.ms1_huber_delta,
+                params.ms1_lambda,
                 params.max_iter_newton,
                 params.max_iter_bisection,
-                1000,#params.max_iter_outer,
+                params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 params.max_diff,
-                L2Norm()
+                params.ms1_reg_type
             )
             # Update precursor weights
             for i in 1:getIdToCol(search_data).size

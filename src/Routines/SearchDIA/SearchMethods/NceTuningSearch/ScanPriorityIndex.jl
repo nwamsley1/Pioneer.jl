@@ -54,7 +54,6 @@ Build prioritized scan index for NCE tuning without loading scan data.
 - `spectra`: MassSpecData object
 - `n_rt_bins`: Number of RT bins for even coverage (default: 15)
 - `target_ms_order`: MS order to filter for (default: 2)
-- `verbose`: Enable detailed logging with timing
 
 # Returns
 NCEScanPriorityIndex containing ordered scan indices and metadata
@@ -62,52 +61,20 @@ NCEScanPriorityIndex containing ordered scan indices and metadata
 function build_nce_scan_priority_index(
     spectra::MassSpecData;
     n_rt_bins::Int = 15,
-    target_ms_order::UInt8 = UInt8(2),
-    verbose::Bool = true
+    target_ms_order::UInt8 = UInt8(2)
 )::NCEScanPriorityIndex
 
-    start_time = time()
-
-    if verbose
-        println("┌─ Building NCE scan priority index...")
-        println("│  Total scans in file: $(length(spectra))")
-    end
-
     # Step 1: Extract metadata (NO peak data loaded)
-    metadata_start = time()
-    if verbose
-        println("│  ├─ Extracting metadata (RT, TIC, MS order)...")
-    end
-
     rt_values = getRetentionTimes(spectra)
     tic_values = getTICs(spectra)
     ms_orders = getMsOrders(spectra)
 
-    metadata_time = time() - metadata_start
-    if verbose
-        println("│  │  ✓ Metadata extraction: $(round(metadata_time, digits=3))s")
-    end
-
     # Step 2: Filter for MS2 scans
-    filter_start = time()
-    if verbose
-        println("│  ├─ Filtering for MS2 scans...")
-    end
-
     ms2_mask = ms_orders .== target_ms_order
     ms2_indices = findall(ms2_mask)
     n_ms2 = length(ms2_indices)
 
-    filter_time = time() - filter_start
-    if verbose
-        println("│  │  ✓ MS2 filtering: $(round(filter_time, digits=3))s")
-        println("│  │  Found $n_ms2 MS2 scans")
-    end
-
     if n_ms2 == 0
-        if verbose
-            println("│  └─ ⚠ No MS2 scans found, returning empty index")
-        end
         return NCEScanPriorityIndex(
             Int32[], Float32[], Float32[], UInt8[],
             Int32(0), Int32(n_rt_bins)
@@ -115,11 +82,6 @@ function build_nce_scan_priority_index(
     end
 
     # Step 3: Create RT bins
-    binning_start = time()
-    if verbose
-        println("│  ├─ Creating RT bins...")
-    end
-
     ms2_rt = rt_values[ms2_indices]
     ms2_tic = tic_values[ms2_indices]
 
@@ -127,18 +89,7 @@ function build_nce_scan_priority_index(
 
     # Handle edge case of single RT value
     if rt_min == rt_max
-        if verbose
-            println("│  │  ⚠ All scans have same RT ($(rt_min)), using single bin")
-        end
         priority_order = Int32.(ms2_indices[sortperm(ms2_tic, rev=true)])
-        binning_time = time() - binning_start
-        total_time = time() - start_time
-
-        if verbose
-            println("│  │  ✓ Single-bin ordering: $(round(binning_time, digits=3))s")
-            println("└─ Index building complete: $(round(total_time, digits=3))s total")
-        end
-
         return NCEScanPriorityIndex(
             priority_order,
             rt_values[priority_order],
@@ -158,19 +109,7 @@ function build_nce_scan_priority_index(
         bin_assignments[i] = bin_idx
     end
 
-    binning_time = time() - binning_start
-    if verbose
-        println("│  │  ✓ RT binning: $(round(binning_time, digits=3))s")
-        println("│  │  RT range: $(round(rt_min, digits=2)) - $(round(rt_max, digits=2)) min")
-        println("│  │  Bins: $n_rt_bins × $(round(bin_width, digits=2)) min")
-    end
-
     # Step 4: Sort within bins by TIC and create priority order
-    sorting_start = time()
-    if verbose
-        println("│  ├─ Sorting scans within bins by TIC...")
-    end
-
     # Group scans by bin
     bins = [Int32[] for _ in 1:n_rt_bins]
     for (i, bin_idx) in enumerate(bin_assignments)
@@ -196,26 +135,6 @@ function build_nce_scan_priority_index(
         end
     end
 
-    sorting_time = time() - sorting_start
-    if verbose
-        println("│  │  ✓ Priority ordering: $(round(sorting_time, digits=3))s")
-
-        # Show distribution across bins
-        bin_counts = [length(bin) for bin in bins]
-        non_empty_bins = count(x -> x > 0, bin_counts)
-        if non_empty_bins > 0
-            println("│  │  Scans per bin: min=$(minimum(bin_counts[bin_counts .> 0])), max=$(maximum(bin_counts)), mean=$(round(mean(bin_counts), digits=1))")
-            println("│  │  Non-empty bins: $non_empty_bins / $n_rt_bins")
-        end
-    end
-
-    total_time = time() - start_time
-    if verbose
-        println("└─ Index building complete: $(round(total_time, digits=3))s total")
-        println("   Priority vector contains $n_ms2 scans")
-        println("   Memory: Metadata only, no scan data loaded")
-    end
-
     return NCEScanPriorityIndex(
         priority_order,
         rt_values[priority_order],
@@ -232,9 +151,7 @@ end
                                    search_context::SearchContext,
                                    params::NceTuningSearchParameters,
                                    ms_file_idx::Int64;
-                                   initial_percent::Float64 = 5.0,
-                                   min_psms_required::Int = 5000,
-                                   verbose::Bool = true)
+                                   )
 
 Progressively collect PSMs using sampling without replacement.
 
@@ -250,9 +167,6 @@ Progressively collect PSMs using sampling without replacement.
 - `search_context`: SearchContext for library search
 - `params`: NCE tuning search parameters
 - `ms_file_idx`: File index for context
-- `initial_percent`: Starting percentage of scans to sample
-- `min_psms_required`: Minimum PSMs needed for NCE modeling
-- `verbose`: Enable detailed logging
 
 # Returns
 (all_psms::DataFrame, converged::Bool, scans_processed::Int)
@@ -262,10 +176,7 @@ function progressive_nce_psm_collection!(
     spectra::MassSpecData,
     search_context::SearchContext,
     params::NceTuningSearchParameters,
-    ms_file_idx::Int64;
-    initial_percent::Float64 = 5.0,  # Hardcoded as requested
-    min_psms_required::Int = 5000,   # Hardcoded as requested
-    verbose::Bool = true
+    ms_file_idx::Int64
 )
     total_scans = length(scan_index.scan_indices)
     scans_processed = 0  # Track position in priority vector
@@ -274,11 +185,12 @@ function progressive_nce_psm_collection!(
     all_psms = DataFrame()  # Accumulate PSMs across iterations
 
     if total_scans == 0
-        if verbose
-            println("│  ⚠ No scans available for processing")
-        end
         return all_psms, false, 0
     end
+
+    # Calculate sampling parameters from NCE tuning configuration
+    min_psms_required = params.min_psms
+    initial_percent = max(params.initial_percent, 100.0 * params.min_initial_scans / total_scans)
 
     # Calculate sampling schedule (percentages of total)
     sample_schedule = Float64[]
@@ -291,15 +203,6 @@ function progressive_nce_psm_collection!(
         current_chunk *= 2  # Double the chunk size each time
     end
 
-    if verbose
-        println("\n┌─ NCE Progressive PSM Collection")
-        println("│  Total MS2 scans: $total_scans")
-        println("│  Target PSMs: $min_psms_required")
-        println("│  Initial sample: $(initial_percent)%")
-        println("│  Sampling schedule: $(sample_schedule)%")
-        println("│")
-    end
-
     # Progressive sampling loop - sampling WITHOUT replacement
     for chunk_percent in sample_schedule
         iteration += 1
@@ -310,33 +213,20 @@ function progressive_nce_psm_collection!(
         end_idx = min(scans_processed + n_scans_this_chunk, total_scans)
 
         if start_idx > total_scans
-            if verbose
-                println("│  ⚠ All scans exhausted")
-            end
             break
         end
 
         # Extract scan indices for this chunk (NEVER re-process previous scans)
         chunk_scan_indices = scan_index.scan_indices[start_idx:end_idx]
-        n_chunk_scans = length(chunk_scan_indices)
-
-        if verbose
-            println("│  ┌─ Iteration $iteration")
-            println("│  │  Processing scans $start_idx to $end_idx ($n_chunk_scans scans)")
-            println("│  │  Cumulative: $end_idx / $total_scans ($(round(100*end_idx/total_scans, digits=1))%)")
-        end
 
         # Collect PSMs for this chunk - this is where scan data is FIRST loaded
-        chunk_start = time()
         chunk_psms = collect_nce_psms_for_scans(
             chunk_scan_indices,
             spectra,
             search_context,
             params,
-            ms_file_idx,
-            verbose
+            ms_file_idx
         )
-        chunk_time = time() - chunk_start
 
         # Combine with previous PSMs (accumulate across iterations)
         if !isempty(chunk_psms)
@@ -345,36 +235,16 @@ function progressive_nce_psm_collection!(
 
         total_psms = nrow(all_psms)
 
-        if verbose
-            println("│  │  Time: $(round(chunk_time, digits=3))s")
-            println("│  │  PSMs this chunk: $(nrow(chunk_psms))")
-            println("│  │  Total PSMs: $total_psms")
-        end
-
         # Check convergence
         if total_psms >= min_psms_required
             converged = true
-            if verbose
-                println("│  └─ ✓ CONVERGED with $total_psms PSMs")
-            end
             break
-        else
-            if verbose
-                println("│  └─ ✗ Need more PSMs ($total_psms < $min_psms_required)")
-            end
         end
 
         # Update position in priority vector (for next iteration)
         scans_processed = end_idx
     end
 
-    if verbose
-        println("└─ Collection complete")
-        println("   Iterations: $iteration")
-        println("   Scans used: $scans_processed / $total_scans ($(round(100*scans_processed/total_scans, digits=1))%)")
-        println("   PSMs found: $(nrow(all_psms))")
-        println("   Converged: $converged")
-    end
 
     return all_psms, converged, scans_processed
 end
@@ -385,7 +255,7 @@ end
                               search_context::SearchContext,
                               params::NceTuningSearchParameters,
                               ms_file_idx::Int64,
-                              verbose::Bool)::DataFrame
+                              )::DataFrame
 
 Collect PSMs from specific scan indices for NCE tuning.
 This is where scan data is FIRST accessed after index building.
@@ -396,7 +266,6 @@ This is where scan data is FIRST accessed after index building.
 - `search_context`: SearchContext for library search
 - `params`: NCE tuning search parameters
 - `ms_file_idx`: File index for context
-- `verbose`: Enable logging
 
 # Returns
 DataFrame of processed PSMs from specified scans
@@ -406,56 +275,30 @@ function collect_nce_psms_for_scans(
     spectra::MassSpecData,
     search_context::SearchContext,
     params::NceTuningSearchParameters,
-    ms_file_idx::Int64,
-    verbose::Bool
+    ms_file_idx::Int64
 )::DataFrame
 
-    if verbose
-        println("│  │  ├─ Creating indexed view of $(length(scan_indices)) scans...")
-    end
-
     # Create indexed view that only exposes the target scans
-    indexed_start = time()
     indexed_spectra = IndexedMassSpecData(spectra, scan_indices)
-    indexed_time = time() - indexed_start
-
-    if verbose
-        println("│  │  │  Indexed view creation: $(round(indexed_time, digits=3))s")
-        println("│  │  ├─ Running library search on indexed scans...")
-    end
 
     # Library search now only processes the selected scans (massive performance improvement!)
-    search_start = time()
     psms = library_search(indexed_spectra, search_context, params, ms_file_idx)
-    search_time = time() - search_start
-
-    if verbose
-        println("│  │  │  Library search: $(round(search_time, digits=3))s")
-        println("│  │  │  PSMs found: $(nrow(psms))")
-    end
 
     # Process PSMs using indexed spectra (no filtering needed!)
     if !isempty(psms)
-        process_start = time()
         psms = process_psms!(psms, indexed_spectra, search_context, params)
-        process_time = time() - process_start
-
-        if verbose
-            println("│  │  │  PSM processing: $(round(process_time, digits=3))s")
-            println("│  │  │  Final PSMs: $(nrow(psms))")
-        end
 
         # CRITICAL: Map virtual scan indices back to actual scan indices
         # The library search used indices 1, 2, 3... but we need the actual scan indices
-        if !isempty(psms) && haskey(psms, :scan_idx)
-            # Create mapping from virtual to actual scan indices
-            scan_mapping = create_scan_mapping(indexed_spectra)
+        if !isempty(psms) && "scan_idx" in names(psms)
+            try
+                # Create mapping from virtual to actual scan indices
+                scan_mapping = create_scan_mapping(indexed_spectra)
 
-            # Map all scan_idx values from virtual to actual
-            psms[!, :scan_idx] = [scan_mapping[Int32(virtual_idx)] for virtual_idx in psms[!, :scan_idx]]
-
-            if verbose
-                println("│  │  │  Scan indices mapped back to original numbering")
+                # Map all scan_idx values from virtual to actual
+                psms[!, :scan_idx] = [scan_mapping[Int32(virtual_idx)] for virtual_idx in psms[!, :scan_idx]]
+            catch e
+                throw(e)
             end
         end
     end

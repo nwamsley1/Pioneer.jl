@@ -7,8 +7,9 @@ using Random
 using Pioneer: BasicMassSpecData,
                getScanHeader, getScanNumber, getBasePeakMz, getBasePeakIntensity,
                getRetentionTime, getLowMz, getHighMz, getTIC, getMsOrder,
-               getMzArray, getIntensityArray,
-               FilteredMassSpecData,
+               getMzArray, getIntensityArray, getCenterMz, getIsolationWidthMz,
+               getCenterMzs, getIsolationWidthMzs, getRetentionTimes, getTICs, getMsOrders,
+               FilteredMassSpecData, IndexedMassSpecData, create_scan_mapping,
                getOriginalScanIndex, getOriginalScanIndices,
                compute_rt_bins, sort_scans_by_peak_density, create_priority_order
 
@@ -123,4 +124,145 @@ end
     scans, starts, ends = sort_scans_by_peak_density(original, UInt8(2), bins, 5)
     prio = create_priority_order(scans, starts, ends)
     @test length(prio) == length(scans)
+end
+
+@testset "IndexedMassSpecData Tests" begin
+    # Create temp Arrow file
+    temp_dir = mktempdir()
+    file_path = joinpath(temp_dir, "ms.arrow")
+    write_basic_ms_arrow(file_path, n=10)
+
+    # Load as Basic
+    original = BasicMassSpecData(file_path)
+    @test length(original) == 10
+
+    # Test IndexedMassSpecData construction
+    selected_indices = Int32[2, 4, 6, 8]
+    indexed = IndexedMassSpecData(original, selected_indices)
+
+    # Basic properties
+    @test length(indexed) == 4
+    @test indexed.n_scans == 4
+    @test indexed.scan_indices == selected_indices
+
+    # Test virtual-to-actual index mapping
+    @test getOriginalScanIndex(indexed, 1) == 2  # Virtual index 1 → actual index 2
+    @test getOriginalScanIndex(indexed, 2) == 4  # Virtual index 2 → actual index 4
+    @test getOriginalScanIndex(indexed, 3) == 6  # Virtual index 3 → actual index 6
+    @test getOriginalScanIndex(indexed, 4) == 8  # Virtual index 4 → actual index 8
+
+    # Test batch mapping
+    all_indices = getOriginalScanIndices(indexed)
+    @test all_indices == selected_indices
+
+    # Test metadata getters map correctly
+    for i in 1:length(indexed)
+        orig_idx = getOriginalScanIndex(indexed, i)
+        @test getScanHeader(indexed, i) == getScanHeader(original, orig_idx)
+        @test getScanNumber(indexed, i) == getScanNumber(original, orig_idx)
+        @test getBasePeakMz(indexed, i) ≈ getBasePeakMz(original, orig_idx)
+        @test getBasePeakIntensity(indexed, i) ≈ getBasePeakIntensity(original, orig_idx)
+        @test getRetentionTime(indexed, i) ≈ getRetentionTime(original, orig_idx)
+        @test getLowMz(indexed, i) ≈ getLowMz(original, orig_idx)
+        @test getHighMz(indexed, i) ≈ getHighMz(original, orig_idx)
+        @test getTIC(indexed, i) ≈ getTIC(original, orig_idx)
+        @test getMsOrder(indexed, i) == getMsOrder(original, orig_idx)
+    end
+
+    # Test array getters
+    for i in 1:length(indexed)
+        orig_idx = getOriginalScanIndex(indexed, i)
+        mz_indexed = getMzArray(indexed, i)
+        mz_original = getMzArray(original, orig_idx)
+        int_indexed = getIntensityArray(indexed, i)
+        int_original = getIntensityArray(original, orig_idx)
+
+        @test length(mz_indexed) == length(mz_original)
+        @test length(int_indexed) == length(int_original)
+        @test all(mz_indexed .≈ mz_original)
+        @test all(int_indexed .≈ int_original)
+    end
+
+    # Test batch getters
+    center_mzs = getCenterMzs(indexed)
+    isolation_widths = getIsolationWidthMzs(indexed)
+    retention_times = getRetentionTimes(indexed)
+    tics = getTICs(indexed)
+    ms_orders = getMsOrders(indexed)
+
+    @test length(center_mzs) == length(indexed)
+    @test length(isolation_widths) == length(indexed)
+    @test length(retention_times) == length(indexed)
+    @test length(tics) == length(indexed)
+    @test length(ms_orders) == length(indexed)
+
+    # Verify batch getters match individual getters
+    for i in 1:length(indexed)
+        @test getCenterMz(indexed, i) ≈ center_mzs[i]
+        @test getIsolationWidthMz(indexed, i) ≈ isolation_widths[i]
+        @test getRetentionTime(indexed, i) ≈ retention_times[i]
+        @test getTIC(indexed, i) ≈ tics[i]
+        @test getMsOrder(indexed, i) == ms_orders[i]
+    end
+
+    # Test create_scan_mapping function
+    mapping = create_scan_mapping(indexed)
+    @test length(mapping) == length(indexed)
+    for i in 1:length(indexed)
+        @test mapping[Int32(i)] == selected_indices[i]
+    end
+
+    # Edge cases
+
+    # Empty IndexedMassSpecData
+    empty_indices = Int32[]
+    empty_indexed = IndexedMassSpecData(original, empty_indices)
+    @test length(empty_indexed) == 0
+    @test empty_indexed.n_scans == 0
+    @test isempty(getOriginalScanIndices(empty_indexed))
+
+    # Single scan
+    single_indices = Int32[5]
+    single_indexed = IndexedMassSpecData(original, single_indices)
+    @test length(single_indexed) == 1
+    @test getOriginalScanIndex(single_indexed, 1) == 5
+    @test getScanNumber(single_indexed, 1) == getScanNumber(original, 5)
+
+    # All scans (identity mapping)
+    all_scan_indices = Int32.(1:length(original))
+    all_indexed = IndexedMassSpecData(original, all_scan_indices)
+    @test length(all_indexed) == length(original)
+    for i in 1:length(all_indexed)
+        @test getOriginalScanIndex(all_indexed, i) == i
+        @test getScanNumber(all_indexed, i) == getScanNumber(original, i)
+    end
+
+    # Constructor validation tests
+    @test_throws BoundsError IndexedMassSpecData(original, Int32[0])  # Invalid index
+    @test_throws BoundsError IndexedMassSpecData(original, Int32[11]) # Out of bounds
+    @test_throws BoundsError IndexedMassSpecData(original, Int32[-1]) # Negative index
+
+    # Test with duplicated indices (should work - represents repeated sampling)
+    duplicate_indices = Int32[3, 3, 7, 7]
+    dup_indexed = IndexedMassSpecData(original, duplicate_indices)
+    @test length(dup_indexed) == 4
+    @test getOriginalScanIndex(dup_indexed, 1) == 3
+    @test getOriginalScanIndex(dup_indexed, 2) == 3
+    @test getOriginalScanIndex(dup_indexed, 3) == 7
+    @test getOriginalScanIndex(dup_indexed, 4) == 7
+
+    # Test with unsorted indices (should work - maintains order)
+    unsorted_indices = Int32[9, 2, 7, 3]
+    unsorted_indexed = IndexedMassSpecData(original, unsorted_indices)
+    @test length(unsorted_indexed) == 4
+    @test getOriginalScanIndex(unsorted_indexed, 1) == 9
+    @test getOriginalScanIndex(unsorted_indexed, 2) == 2
+    @test getOriginalScanIndex(unsorted_indexed, 3) == 7
+    @test getOriginalScanIndex(unsorted_indexed, 4) == 3
+
+    # Verify scan order preservation
+    @test getScanNumber(unsorted_indexed, 1) == getScanNumber(original, 9)
+    @test getScanNumber(unsorted_indexed, 2) == getScanNumber(original, 2)
+    @test getScanNumber(unsorted_indexed, 3) == getScanNumber(original, 7)
+    @test getScanNumber(unsorted_indexed, 4) == getScanNumber(original, 3)
 end

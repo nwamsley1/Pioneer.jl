@@ -234,7 +234,7 @@ function partition_scans(ms_table, n_threads; ms_order_select = 2)
         n_threads,
         1
     )
-    else   
+    else
     thread_tasks, total_peaks = partitionScansToThreadsMS1(
         getMzArrays(ms_table),
         getRetentionTimes(ms_table),
@@ -244,6 +244,58 @@ function partition_scans(ms_table, n_threads; ms_order_select = 2)
         1
     )
     end
+    return thread_tasks
+end
+
+"""
+Specialized partition_scans for IndexedMassSpecData.
+This function handles the proper mapping between virtual indices (used by library search)
+and actual scan indices (stored in IndexedMassSpecData.scan_indices).
+"""
+function partition_scans(indexed_data::IndexedMassSpecData, n_threads; ms_order_select = 2)
+
+    # Get properties for the actual scan indices
+    actual_scan_indices = indexed_data.scan_indices
+    original_data = indexed_data.original_data
+
+    # Extract properties using actual scan indices
+    rt_values = Float32[getRetentionTime(original_data, actual_idx) for actual_idx in actual_scan_indices]
+    center_mz_values = Union{Missing, Float32}[getCenterMz(original_data, actual_idx) for actual_idx in actual_scan_indices]
+    ms_orders = UInt8[getMsOrder(original_data, actual_idx) for actual_idx in actual_scan_indices]
+    mz_arrays = [getMzArray(original_data, actual_idx) for actual_idx in actual_scan_indices]
+
+    @debug_l2 "partition_scans(IndexedMassSpecData): Processing $(length(actual_scan_indices)) scans"
+    @debug_l2 "partition_scans(IndexedMassSpecData): RT range: $(minimum(rt_values)) - $(maximum(rt_values))"
+
+    # Use the existing partitioning logic but with extracted data
+    if ms_order_select == 2
+        thread_tasks, total_peaks = partitionScansToThreadsIndexed(
+            mz_arrays,
+            rt_values,
+            center_mz_values,
+            ms_orders,
+            actual_scan_indices,
+            n_threads,
+            1
+        )
+    else
+        thread_tasks, total_peaks = partitionScansToThreadsMS1Indexed(
+            mz_arrays,
+            rt_values,
+            center_mz_values,
+            ms_orders,
+            actual_scan_indices,
+            n_threads,
+            1
+        )
+    end
+
+    @debug_l2 "partition_scans(IndexedMassSpecData): Created $(length(thread_tasks)) thread tasks"
+    for (i, task) in enumerate(thread_tasks)
+        task_range = last(task)
+        @debug_l2 "  Thread $i: $(length(task_range)) scans"
+    end
+
     return thread_tasks
 end
 

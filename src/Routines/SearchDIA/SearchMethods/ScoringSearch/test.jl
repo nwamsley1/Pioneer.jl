@@ -51,13 +51,13 @@ function assign_pair_ids(
         precursor_idx_to_pair_id[decoys[i]] = last_pair_id
     end
     if length(decoys) < length(targets)
-        @user_warn "Fewer decoy precursors ($(length(decoys))) than target precursors ($(length(targets))) in iRT bin $(first(irt_bin_idx)). Some targets will remain unpaired."
+        @debug_l2 "Fewer decoy precursors ($(length(decoys))) than target precursors ($(length(targets))) in iRT bin $(first(irt_bin_idx)). Some targets will remain unpaired."
         for i in range(length(decoys)+1, length(targets))
             last_pair_id += one(UInt32)
             precursor_idx_to_pair_id[targets[target_perm[i]]] = last_pair_id
         end
     elseif length(targets) < length(decoys)
-        @user_warn "Fewer target precursors ($(length(targets))) than decoy precursors ($(length(decoys))) in iRT bin $(first(irt_bin_idx)). Some decoys will remain unpaired."
+        @debug_l2 "Fewer target precursors ($(length(targets))) than decoy precursors ($(length(decoys))) in iRT bin $(first(irt_bin_idx)). Some decoys will remain unpaired."
         for i in range(length(targets)+1, length(decoys))
             last_pair_id += one(UInt32)
             precursor_idx_to_pair_id[decoys[i]] = last_pair_id
