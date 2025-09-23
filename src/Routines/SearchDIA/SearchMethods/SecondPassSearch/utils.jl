@@ -566,7 +566,7 @@ function process_scans!(
                 getIdToCol(search_data),
                 ion_matches,
                 nmatches,
-                getMassErrorModel(search_context, ms_file_idx),
+                mem,
                 last(params.min_topn_of_m)
                 )
         end
