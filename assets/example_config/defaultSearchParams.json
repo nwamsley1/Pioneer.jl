@@ -122,7 +122,7 @@
         "deconvolution": {
             "ms1": {
                 "lambda": 0.001,
-                "reg_type": "l2",
+                "reg_type": "none",
                 "huber_delta": 1e9
             },
             "ms2": {
