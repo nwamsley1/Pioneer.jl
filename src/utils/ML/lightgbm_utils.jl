@@ -149,3 +149,11 @@ function lightgbm_feature_importances(wrapper::LightGBMModelWrapper)
         return nothing
     end
 end
+
+predict(wrapper::LightGBMModelWrapper, df::AbstractDataFrame) =
+    lightgbm_predict(wrapper, df; output_type = Float32)
+
+function importance(wrapper::LightGBMModelWrapper)
+    output = lightgbm_feature_importances(wrapper)
+    return output === nothing ? nothing : collect(zip(wrapper.feature_names, output))
+end
