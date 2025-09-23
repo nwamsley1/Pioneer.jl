@@ -123,7 +123,7 @@
             "ms1": {
                 "lambda": 0.001,
                 "reg_type": "l2",
-                "huber_delta": 1e6
+                "huber_delta": 1e9
             },
             "ms2": {
                 "lambda": 0.0,

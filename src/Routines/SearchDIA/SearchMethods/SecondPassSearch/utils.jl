@@ -337,8 +337,12 @@ function process_scans!(
     pair_ids = getPairIdx(precursors)
     pair_id_dict = Dictionary{
         UInt32, #pair_id
-        UInt8 #Number of matches to spectrum 
+        UInt8 #Number of matches to spectrum
     }()
+
+    # NEW: Create m/z grouping map for MS1
+    mz_grouping = MzGroupingMap(UInt32(100000))  # 5 decimal place precision
+
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     ion_idx = 0
@@ -448,13 +452,19 @@ function process_scans!(
         sort!(@view(ion_matches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
         # Process matches
         if nmatches > 2
-            buildDesignMatrix!(
+
+            # Reset grouping for this scan
+            reset!(mz_grouping)
+
+            # Use MS1-specific design matrix construction with m/z grouping
+            buildDesignMatrixMS1!(
                 Hs,
                 ion_matches,
                 ion_misses,
                 nmatches,
                 nmisses,
-                getIdToCol(search_data)
+                mz_grouping,
+                precursors
             )
 
             # Handle array resizing
@@ -490,11 +500,16 @@ function process_scans!(
                 params.max_diff,
                 params.ms1_reg_type
             )
-            # Update precursor weights
-            for i in 1:getIdToCol(search_data).size
-                precursor_weights[getIdToCol(search_data).keys[i]] = 
-                    weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]]
-            end
+
+            # NEW: Distribute grouped coefficients back to individual precursors
+            distribute_ms1_coefficients!(
+                precursor_weights,  # Array indexed by precursor ID
+                weights,            # Array indexed by column number (group coefficients)
+                mz_grouping
+            )
+
+            # Update precursor weights - already handled by distribute_ms1_coefficients!
+            # No need for additional update
 
             getDistanceMetrics(weights, residuals, Hs, getMs1SpectralScores(search_data))
 

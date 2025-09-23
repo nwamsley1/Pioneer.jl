@@ -451,7 +451,9 @@ function build_chromatograms(
     pmz = [getMz(precursors)[pid] for pid in precursors_passing]
     isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
 
-   
+    # NEW: Create m/z grouping map for MS1
+    mz_grouping = MzGroupingMap(UInt32(100000))  # 5 decimal place precision
+
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     ion_idx = 0
@@ -536,13 +538,19 @@ function build_chromatograms(
         # Process matches
         if nmatches > 2
             i += 1
-            buildDesignMatrix!(
+
+            # Reset grouping for this scan
+            reset!(mz_grouping)
+
+            # Use MS1-specific design matrix construction with m/z grouping
+            buildDesignMatrixMS1!(
                 Hs,
                 ion_matches,
                 ion_misses,
                 nmatches,
                 nmisses,
-                getIdToCol(search_data)
+                mz_grouping,
+                precursors
             )
 
             # Handle array resizing
@@ -576,6 +584,13 @@ function build_chromatograms(
                 params.ms1_reg_type
             )
 
+            # NEW: Distribute grouped coefficients back to individual precursors
+            distribute_ms1_coefficients!(
+                precursor_weights,  # Array indexed by precursor ID
+                weights,            # Array indexed by column number (group coefficients)
+                mz_grouping
+            )
+
             # Record chromatogram points with weights
             for j in 1:prec_temp_size
                 rt_idx += 1
@@ -583,14 +598,18 @@ function build_chromatograms(
                     append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
                 end
 
-                if !iszero(getIdToCol(search_data)[precs_temp[j]])
+                # Get weight from precursor_weights array (now contains distributed group coefficients)
+                prec_id = precs_temp[j]
+                weight = prec_id <= length(precursor_weights) ? precursor_weights[prec_id] : 0.0f0
+
+                if weight > 0.0f0
                     chromatograms[rt_idx] = MS1ChromObject(
                         Float32(getRetentionTime(spectra, scan_idx)),
-                        weights[getIdToCol(search_data)[precs_temp[j]]],
-                        iso_count[precs_temp[j]].matched_mono,
-                        iso_count[precs_temp[j]].iso_count,
+                        weight,
+                        iso_count[prec_id].matched_mono,
+                        iso_count[prec_id].iso_count,
                         scan_idx,
-                        precs_temp[j]
+                        prec_id
                     )
                 else
                     chromatograms[rt_idx] = MS1ChromObject(
@@ -604,11 +623,8 @@ function build_chromatograms(
                 end
             end
 
-            # Update precursor weights
-            for i in 1:getIdToCol(search_data).size
-                precursor_weights[getIdToCol(search_data).keys[i]] = 
-                    weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]]
-            end
+            # Update precursor weights - already handled by distribute_ms1_coefficients!
+            # No need to update here since distribution already populated precursor_weights
 
         else
             for j in 1:prec_temp_size
