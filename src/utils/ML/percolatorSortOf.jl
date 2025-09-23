@@ -188,6 +188,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     unique_cv_folds = unique(psms[!, :cv_fold])
     models = Dict{UInt8, LightGBMModelVector}()
     mbr_start_iter = length(iter_scheme)
+    iterations_per_fold = match_between_runs ? length(iter_scheme) : max(mbr_start_iter - 1, 1)
 
     cv_fold_col = psms[!, :cv_fold]
     fold_indices = Dict(fold => findall(==(fold), cv_fold_col) for fold in unique_cv_folds)
@@ -196,7 +197,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     Random.seed!(1776)
     non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
 
-    pbar = show_progress ? ProgressBar(total=length(unique_cv_folds) * length(iter_scheme)) : nothing
+    total_progress_steps = length(unique_cv_folds) * iterations_per_fold
+    pbar = show_progress ? ProgressBar(total=total_progress_steps) : nothing
 
     for test_fold_idx in unique_cv_folds
 
@@ -526,7 +528,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
     unique_cv_folds = unique(psms[!, :cv_fold])
     #Train the model for 1:K-1 cross validation folds and apply to the held-out fold
     models = Dictionary{UInt8, LightGBMModelVector}()
-    pbar = ProgressBar(total=length(unique_cv_folds)*length(iter_scheme))
+    mbr_start_iter = length(iter_scheme)
+    iterations_per_fold = match_between_runs ? length(iter_scheme) : max(mbr_start_iter - 1, 1)
+    total_progress_steps = length(unique_cv_folds) * iterations_per_fold
+    pbar = ProgressBar(total=total_progress_steps)
     Random.seed!(1776);
     non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
 
