@@ -1,82 +1,151 @@
-# Utility helpers for working with LightGBM through the MLJ model interface.
+# Utility helpers for working with LightGBM directly through its native API.
 
 struct LightGBMModelWrapper
-    model::LightGBM.LGBMClassifier
-    fitresult::Any
-    cache::Any
-    report::Any
+    booster::Union{LightGBM.LGBMClassification, Nothing}
     feature_names::Vector{Symbol}
-    positive_label::Any
+    constant_prediction::Union{Float32, Nothing}
+end
+
+"""
+    feature_matrix(df, features) -> Matrix{Float32}
+
+Construct a dense matrix with the columns in `features` converted to `Float32`.
+Missing values are imputed with sensible defaults per type.
+"""
+function feature_matrix(df::AbstractDataFrame, features::Vector{Symbol})
+    n = nrow(df)
+    m = length(features)
+    matrix = Matrix{Float32}(undef, n, m)
+
+    for (j, feat) in enumerate(features)
+        column = df[!, feat]
+        T = nonmissingtype(eltype(column))
+
+        if T <: AbstractFloat
+            if eltype(column) <: Union{Missing, T}
+                matrix[:, j] = Float32.(coalesce.(column, zero(T)))
+            else
+                matrix[:, j] = Float32.(column)
+            end
+        elseif T <: Integer
+            if eltype(column) <: Union{Missing, T}
+                matrix[:, j] = Float32.(coalesce.(column, zero(T)))
+            else
+                matrix[:, j] = Float32.(column)
+            end
+        elseif T <: Bool
+            if eltype(column) <: Union{Missing, Bool}
+                matrix[:, j] = Float32.(coalesce.(column, false))
+            else
+                matrix[:, j] = Float32.(column)
+            end
+        else
+            throw(ArgumentError("Unsupported feature type $(eltype(column)) for LightGBM"))
+        end
+    end
+
+    return matrix
 end
 
 function build_lightgbm_classifier(; num_iterations::Integer = 100,
                                     max_depth::Integer = -1,
+                                    num_leaves::Integer = 31,
                                     learning_rate::Real = 0.1,
                                     feature_fraction::Real = 1.0,
                                     bagging_fraction::Real = 1.0,
                                     bagging_freq::Integer = 0,
                                     min_child_weight::Integer = 1,
-                                    min_gain_to_split::Real = 0.0)
-    return LightGBM.LGBMClassifier(
-        objective = "binary",
-        num_iterations = Int(num_iterations),
-        max_depth = Int(max_depth),
+                                    min_gain_to_split::Real = 0.0,
+                                    lambda_l2::Real = 0.0,
+                                    max_bin::Integer = 255,
+                                    num_threads::Integer = Threads.nthreads(),
+                                    metric = ["binary_logloss"],
+                                    objective::AbstractString = "binary",
+                                    verbosity::Integer = -1)
+    return LightGBM.LGBMClassification(
+        objective = objective,
+        metric = metric,
         learning_rate = float(learning_rate),
+        num_iterations = Int(num_iterations),
+        num_leaves = Int(num_leaves),
+        max_depth = Int(max_depth),
         feature_fraction = float(feature_fraction),
         bagging_fraction = float(bagging_fraction),
         bagging_freq = Int(bagging_freq),
-        min_child_weight = Int(min_child_weight),
+        min_data_in_leaf = Int(min_child_weight),
         min_gain_to_split = float(min_gain_to_split),
+        lambda_l2 = float(lambda_l2),
+        max_bin = Int(max_bin),
+        num_threads = Int(num_threads),
+        num_class = 1,
+        verbosity = Int(verbosity),
     )
 end
 
-function fit_lightgbm_model(model::LightGBM.LGBMClassifier,
+function _prepare_labels(labels)
+    label_vec = collect(labels)
+    if isempty(label_vec)
+        throw(ArgumentError("LightGBM requires at least one training example"))
+    end
+
+    if eltype(label_vec) <: Bool
+        label_vec = Int.(label_vec)
+    elseif eltype(label_vec) <: Integer
+        label_vec = Int.(label_vec)
+    elseif eltype(label_vec) <: AbstractFloat
+        label_vec = Int.(round.(label_vec))
+    else
+        throw(ArgumentError("Unsupported label type $(eltype(label_vec)) for LightGBM"))
+    end
+
+    if any(x -> x ∉ (0, 1), label_vec)
+        throw(ArgumentError("LightGBM requires binary labels encoded as 0 or 1."))
+    end
+
+    return label_vec
+end
+
+function fit_lightgbm_model(model::LightGBM.LGBMClassification,
                             feature_data::AbstractDataFrame,
                             labels::AbstractVector;
                             positive_label = true)
-    label_vec = collect(Bool.(labels))
-    fitresult, cache, report = fit(model, 0, feature_data, label_vec)
-    return LightGBMModelWrapper(model, fitresult, cache, report, Symbol.(names(feature_data)), positive_label)
+    feature_names = Symbol.(names(feature_data))
+    X = feature_matrix(feature_data, feature_names)
+    y_int = _prepare_labels(labels)
+
+    unique_labels = unique(y_int)
+    if length(unique_labels) == 1
+        constant_prob = unique_labels[1] == 0 ? 0.0f0 : 1.0f0
+        return LightGBMModelWrapper(nothing, feature_names, constant_prob)
+    end
+
+    LightGBM.fit!(model, X, y_int; verbosity = -1)
+    return LightGBMModelWrapper(model, feature_names, nothing)
 end
 
 function lightgbm_predict(wrapper::LightGBMModelWrapper,
                           feature_data::AbstractDataFrame;
                           output_type = Float64)
-    data_view = feature_data[:, wrapper.feature_names]
-    raw_predictions = predict(wrapper.model, wrapper.fitresult, data_view)
-    probabilities = _lightgbm_probabilities(raw_predictions, wrapper.positive_label)
-    return convert.(output_type, probabilities)
-end
-
-function _lightgbm_probabilities(predictions::AbstractVector{<:UnivariateFinite}, positive_label)
-    return [pdf(p, positive_label) for p in predictions]
-end
-
-function _lightgbm_probabilities(predictions::AbstractVector{<:Real}, _)
-    return Float64.(predictions)
-end
-
-function _lightgbm_probabilities(predictions::AbstractMatrix{<:Real}, _)
-    if size(predictions, 2) == 1
-        return vec(predictions)
-    else
-        return vec(predictions[:, end])
+    if wrapper.booster === nothing
+        n = nrow(feature_data)
+        probs = fill(wrapper.constant_prediction === nothing ? 0.0f0 : wrapper.constant_prediction, n)
+        return convert.(output_type, probs)
     end
-end
 
-function _lightgbm_probabilities(predictions, _)
-    return Float64.(collect(predictions))
+    X = feature_matrix(feature_data, wrapper.feature_names)
+    raw = LightGBM.predict(wrapper.booster, X)
+    ŷ = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
+    return convert.(output_type, ŷ)
 end
 
 function lightgbm_feature_importances(wrapper::LightGBMModelWrapper)
+    if wrapper.booster === nothing
+        return nothing
+    end
+
     try
-        if hasmethod(LightGBM.feature_importances, Tuple{typeof(wrapper.fitresult)})
-            return LightGBM.feature_importances(wrapper.fitresult)
-        elseif hasmethod(LightGBM.feature_importances, Tuple{typeof(wrapper.model), typeof(wrapper.fitresult)})
-            return LightGBM.feature_importances(wrapper.model, wrapper.fitresult)
-        end
+        return LightGBM.gain_importance(wrapper.booster)
     catch
         return nothing
     end
-    return nothing
 end
