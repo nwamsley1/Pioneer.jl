@@ -249,10 +249,8 @@ function process_file!(
             pmz = [getMz(precursors)[pid] for pid in precursors_passing]
             isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
             precursors_passing = Set(precursors_passing)
-            # Perform MS1 search
-            #times = @timed begin
-            #Profile.clear()
-            #@profile begin
+            # Perform MS1 search (diagnostic timing)
+            _ms1_start_ns = time_ns()
             ms1_psms = perform_second_pass_search(
                 spectra,
                 rt_index,
@@ -263,6 +261,8 @@ function process_file!(
                 isotopes_dict,
                 MS1CHROM()
             )
+            _ms1_elapsed_s = (time_ns() - _ms1_start_ns) / 1e9
+            @user_warn ("SecondPassSearch MS1 fitting time (file index=" * string(ms_file_idx) * "): " * @sprintf("%.3f s", _ms1_elapsed_s) * "\n")
             pair_idx = getPairIdx(precursors);
             is_decoy = getIsDecoy(precursors);
             partner_idx = getPartnerPrecursorIdx(precursors);

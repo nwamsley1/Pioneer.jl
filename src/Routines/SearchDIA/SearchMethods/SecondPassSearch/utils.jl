@@ -372,6 +372,12 @@ function process_scans!(
     prec_temp_size = 0
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
 
+    # Diagnostics counters
+    total_columns = 0
+    duplicate_columns = 0
+    total_precursor_candidates = 0
+    scans_considered = 0
+
     for scan_idx in scan_range
         empty!(pair_id_dict)
         ((scan_idx<1) | (scan_idx > length(spectra))) && continue
@@ -488,6 +494,20 @@ function process_scans!(
                 precursors
             )
 
+            # Collect diagnostics for grouping
+            cols = Int(mz_grouping.current_col)
+            total_columns += cols
+            if cols > 0
+                scans_considered += 1
+                # Count duplicates and total precursor candidates
+                for (_, prec_ids) in mz_grouping.mz_group_to_precids
+                    if length(prec_ids) > 1
+                        duplicate_columns += 1
+                    end
+                    total_precursor_candidates += length(prec_ids)
+                end
+            end
+
             # Populate id_to_col mapping from m/z grouping so MS1 scoring has valid indices
             id_to_col = getIdToCol(search_data)
             reset!(id_to_col)
@@ -570,6 +590,17 @@ function process_scans!(
         reset!(getIdToCol(search_data))
         reset!(Hs)
     end
+    # Emit per-thread diagnostics for MS1 grouping
+    avg_precursors_per_scan = scans_considered > 0 ? total_precursor_candidates / scans_considered : 0
+    avg_groups_per_scan = scans_considered > 0 ? total_columns / scans_considered : 0
+    dup_pct = total_columns > 0 ? (100 * duplicate_columns / total_columns) : 0
+    @user_warn (
+        "MS1 grouping stats (file index=" * string(ms_file_idx) * "): " *
+        "duplicate m/z columns=" * string(duplicate_columns) * "/" * string(total_columns) *
+        " (" * @sprintf("%.1f%%", dup_pct) * "), " *
+        "avg precursor candidates/scan=" * @sprintf("%.2f", avg_precursors_per_scan) * ", " *
+        "avg groups/scan=" * @sprintf("%.2f", avg_groups_per_scan) * "\n"
+    )
 
     return DataFrame(@view(getMs1ScoredPsms(search_data)[1:last_val]))
 end
