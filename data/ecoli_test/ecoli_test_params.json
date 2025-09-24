@@ -5,9 +5,9 @@
     "global": {
         "isotope_settings": {
             "err_bounds_first_pass": [1, 0],
-            "err_bounds_quant_search": [2, 0],
-            "combine_traces": false,
-            "partial_capture": false,
+            "err_bounds_quant_search": [3, 0],
+            "combine_traces": true,
+            "partial_capture": true,
             "min_fraction_transmitted" : 0.25
         },
         "scoring": {
@@ -18,8 +18,8 @@
             "spline_n_knots": 7
         },
         "huber_override": {
-            "override_huber_delta_fit": true,
-            "huber_delta": 1500.0
+            "override_huber_delta_fit": false,
+            "huber_delta": 1055
         }, 
         "ms1_scoring": true,
         "ms1_quant": false,
@@ -29,35 +29,40 @@
         "fragment_settings": {
             "min_count": 7,
             "max_rank": 25,
-            "min_score": [22],
+            "min_score": [22, 17, 15],
             "min_spectral_contrast": 0.5,
-            "relative_improvement_threshold": 1.5,
+            "relative_improvement_threshold": 1.25,
             "min_log2_ratio": 1.5,
-            "min_top_n": [
-                3,
-                3
-            ],
+            "min_top_n": [3, 3],
             "n_isotopes": 1,
             "intensity_filter_quantile": 0.50
         },
         "search_settings": {
-            "initial_scan_count":  10000,           
-            "max_parameter_tuning_scans": 10000,  
-            "max_q_value": 0.01, 
-            "min_samples": 100000000000,    
-            "topn_peaks": 200,
-            "max_frags_for_mass_err_estimation": 5,  
-            "min_quad_tuning_psms": 5000,
-            "min_quad_tuning_fragments": 3,
+            "min_samples": 1000,
             "max_presearch_iters": 10,
-            "frag_err_quantile": 0.0025
+            "frag_err_quantile": 0.0025,
+            "max_q_value": 0.01,
+            "topn_peaks": 200,
+            "initial_scan_count": 10000,
+            "max_parameter_tuning_scans": 40000,
+            "max_frags_for_mass_err_estimation": 12
         },
-        "iteration_settings" : {
-            "init_mass_tol_ppm": 10.0,
+        "nce_tuning": {
+            "min_psms": 2000,
+            "initial_percent": 2.5,
+            "min_initial_scans": 5000
+        },
+        "quad_tuning": {
+            "min_psms_per_thompson": 250,
+            "min_fragments": 3,
+            "initial_percent": 2.5
+        },
+        "iteration_settings": {
+            "init_mass_tol_ppm": 30.0,
             "ms1_tol_ppm": 20.0,
             "mass_tolerance_scale_factor": 1.5,
-            "iterations_per_phase": 1,
-            "scan_scale_factor": 1
+            "iterations_per_phase": 3,
+            "scan_scale_factor": 4
         }
     },
     "first_search": {
@@ -115,22 +120,30 @@
     },
     "optimization": {
         "deconvolution": {
-            "lambda": 0.0,
-            "reg_type": "none",
-            "huber_delta": 300,
+            "ms1": {
+                "lambda": 0.0001,
+                "reg_type": "l2",
+                "huber_delta": 1e9
+            },
+            "ms2": {
+                "lambda": 0.0,
+                "reg_type": "none",
+                "huber_delta": 300
+            },
             "huber_exp": 1.5,
             "huber_iters": 15,
             "newton_iters": 50,
             "bisection_iters": 100,
             "outer_iters": 1000,
             "newton_accuracy": 10,
+            "bisection_accuracy": 10,
             "max_diff": 0.01
         },
         "machine_learning": {
             "max_psms_in_memory": 50000000,
             "min_trace_prob": 0.75,
-			"max_q_value_lightgbm_mbr_rescore": 0.20,
-            "min_PEP_neg_threshold_lightgbm_rescore": 0.90,
+            "max_q_value_mbr_itr": 0.20,
+            "min_PEP_neg_threshold_itr": 0.90,
             "spline_points": 500,
             "interpolation_points": 10,
             "enable_model_comparison": true,
@@ -147,7 +160,7 @@
         "run_to_run_normalization": false
     },
     "output": {
-        "write_csv": false,
+        "write_csv": true,
         "write_decoys": false,
         "delete_temp": true,
         "plots_per_page": 12

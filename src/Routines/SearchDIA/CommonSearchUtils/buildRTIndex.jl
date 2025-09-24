@@ -16,7 +16,12 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 function buildRtIndex(rts::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{I}, bin_rt_size::AbstractFloat) where {T,U<:AbstractFloat,I<:Integer}
-    
+
+    # Handle empty input gracefully
+    if isempty(rts)
+        return retentionTimeIndex(T, U)  # Return empty index
+    end
+
     start_idx = 1
     start_rt =  rts[start_idx]
     rt_index = retentionTimeIndex(T, U) #Initialize retention time index

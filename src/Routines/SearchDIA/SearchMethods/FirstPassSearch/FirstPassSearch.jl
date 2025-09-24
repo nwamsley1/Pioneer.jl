@@ -373,35 +373,50 @@ function process_file!(
 
         temp_psms = results.psms[] 
         temp_psms = temp_psms[temp_psms[!,:q_value].<=0.001,:]
-        most_intense = sortperm(temp_psms[!,:log2_summed_intensity], rev = true)
-        ms1_errs = vcat(
-            mass_error_search(
-                spectra,
-                temp_psms[most_intense[1:(min(3000, length(most_intense)))],:scan_idx],
-                temp_psms[most_intense[1:(min(3000, length(most_intense)))],:precursor_idx],
-                UInt32(ms_file_idx),
-                getSpecLib(search_context),
-                getSearchData(search_context),
-                MassErrorModel(
-                0.0f0,
-                (getMs1TolPpm(params), getMs1TolPpm(params))  # Use MS1 tolerance from JSON config
-                ),
-                params,
-                MS1CHROM()
-            )...
-        )
+
+        # Check if we have any PSMs left after filtering
+        if nrow(temp_psms) > 0
+            most_intense = sortperm(temp_psms[!,:log2_summed_intensity], rev = true)
+            ms1_errs = vcat(
+                mass_error_search(
+                    spectra,
+                    temp_psms[most_intense[1:(min(3000, length(most_intense)))],:scan_idx],
+                    temp_psms[most_intense[1:(min(3000, length(most_intense)))],:precursor_idx],
+                    UInt32(ms_file_idx),
+                    getSpecLib(search_context),
+                    getSearchData(search_context),
+                    MassErrorModel(
+                    0.0f0,
+                    (getMs1TolPpm(params), getMs1TolPpm(params))  # Use MS1 tolerance from JSON config
+                    ),
+                    params,
+                    MS1CHROM()
+                )...
+            )
+        else
+            ms1_errs = Float32[]
+        end
+
         if length(ms1_errs) > 1
             mad_dev = mad(ms1_errs; normalize=true)
             med_errs = median(ms1_errs)
             low_bound, high_bound = med_errs - mad_dev*7, med_errs + mad_dev*7
             filter!(x->(low_bound<x)&(high_bound>x), ms1_errs)
-            ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)
-            results.ms1_mass_err_model[] = ms1_mass_err_model
-            append!(results.ms1_ppm_errs, ms1_ppm_errs)
+
+            # Check again after filtering if we still have data
+            if length(ms1_errs) > 0
+                ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)
+                results.ms1_mass_err_model[] = ms1_mass_err_model
+                append!(results.ms1_ppm_errs, ms1_ppm_errs)
+            else
+                # Filtering removed all data points, use defaults
+                results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
+                append!(results.ms1_ppm_errs, Float32[])
+            end
             select!(results.psms[] , Not(:log2_summed_intensity))
         else
             #ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)
-            #Default to MS2 pattern 
+            #Default to MS2 pattern
             results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
             append!(results.ms1_ppm_errs, Float32[])
             select!(results.psms[] , Not(:log2_summed_intensity))
