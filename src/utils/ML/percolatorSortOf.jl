@@ -69,8 +69,6 @@ function update_pair_statistics(current_stats, new_prob::Float32)
     ))
 end
 
-
-
 function getIrtBins(irts::AbstractVector{R}) where {R <:Real}
     sort_idx = sortperm(irts)
     bin_idx, bin_count = zero(UInt32), zero(UInt32)
@@ -97,7 +95,9 @@ function assign_random_target_decoy_pairs!(psms::DataFrame)
     last_pair_id = zero(UInt32)
     psms[!,:pair_id] = zeros(UInt32, nrow(psms))  # Initialize pair_id column
     psms[!,:irt_bin_idx] = getIrtBins(psms.irt_pred)  # Ensure irt_bin_idx column exists
-    for (irt_bin_idx, sub_psms) in pairs(groupby(psms, :irt_bin_idx))
+
+    irt_bin_groups = groupby(psms, :irt_bin_idx)
+    for (irt_bin_idx, sub_psms) in pairs(irt_bin_groups)
         last_pair_id = assignPairIds!(sub_psms, last_pair_id)
     end
 end
@@ -120,6 +120,11 @@ function assign_pair_ids(
     target_perm = randperm(MersenneTwister(PAIRING_RANDOM_SEED), length(targets))
     precursor_idx_to_pair_id = Dict{UInt32,UInt32}()  # Map from precursor_idx to pair_id
     pair_ids = similar(precursor_idx, UInt32)
+
+    n_paired = min(length(targets), length(decoys))
+    n_unpaired_targets = max(0, length(targets) - length(decoys))
+    n_unpaired_decoys = max(0, length(decoys) - length(targets))
+
     for i in range(1, min(length(targets), length(decoys)))
         last_pair_id += one(UInt32)
         precursor_idx_to_pair_id[targets[target_perm[i]]] = last_pair_id
@@ -138,6 +143,12 @@ function assign_pair_ids(
             precursor_idx_to_pair_id[decoys[i]] = last_pair_id
         end
     end
+
+    # Report pairing stats for this bin
+    if n_paired > 0 || n_unpaired_targets > 0 || n_unpaired_decoys > 0
+        @debug_l2 "iRT bin $(first(irt_bin_idx)): Paired=$n_paired, Unpaired targets=$n_unpaired_targets, Unpaired decoys=$n_unpaired_decoys"
+    end
+
     for (row_idx, precursor_idx) in enumerate(precursor_idx)
         pair_ids[row_idx] = precursor_idx_to_pair_id[precursor_idx]
     end
@@ -714,8 +725,18 @@ function update_mbr_features!(psms_train::AbstractDataFrame,
 end
 
 function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01f0)
+    # Diagnostic: Show isotope and pairing interaction
+    n_unique_pairs = length(unique(psms.pair_id))
+    unique_isotopes = unique(psms.isotopes_captured)
+    n_unique_isotopes = length(unique_isotopes)
+
     # Compute pair specific features that rely on decoys and chromatograms
     pair_groups = collect(pairs(groupby(psms, [:pair_id, :isotopes_captured])))
+    n_pair_isotope_groups = length(pair_groups)
+
+    @debug_l2 "MBR Feature Computation: $n_unique_pairs unique pair_ids × $n_unique_isotopes isotope combinations = $n_pair_isotope_groups groups"
+    @debug_l2 "Isotope combinations present: $unique_isotopes"
+
     Threads.@threads for idx in eachindex(pair_groups)
         _, sub_psms = pair_groups[idx]
         

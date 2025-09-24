@@ -53,13 +53,14 @@ function apply_mbr_filter!(
 )
     # 1) identify transfer candidates
     candidate_mask = merged_df.MBR_transfer_candidate
+    n_candidates = sum(candidate_mask)
+
     # 2) identify bad transfers
     is_bad_transfer = candidate_mask .& (
          (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .| # T->D
          (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, false)) # D->T
     )
 
-    # After computing is_bad_transfer
     # 3) Apply the main filtering function
     filtered_probs = apply_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
 
