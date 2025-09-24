@@ -167,7 +167,7 @@ function create_model_configurations()
                 :min_gain_to_split => 0.1,
                 :bagging_fraction => 0.8,
                 :max_depth => 4,
-                :num_leaves => 63,
+                :num_leaves => 15,
                 :learning_rate => 0.1,
                 :iter_scheme => [150, 300, 300]
             )
@@ -180,10 +180,10 @@ function create_model_configurations()
             ADVANCED_FEATURE_SET,
             Dict(
                 :feature_fraction => 0.5,
-                :min_data_in_leaf => 5,
-                :min_gain_to_split => 1.0,
+                :min_data_in_leaf => 200,
+                :min_gain_to_split => 0.0,
                 :bagging_fraction => 0.25,
-                :max_depth => 10,
+                :max_depth => -1,
                 :num_leaves => 63,
                 :learning_rate => 0.05,
                 :iter_scheme => [100, 200, 200]
@@ -226,11 +226,11 @@ function create_model_configurations()
             MINIMAL_FEATURE_SET,
             Dict(
                 :feature_fraction => 0.8,
-                :min_data_in_leaf => 20,
+                :min_data_in_leaf => 10,
                 :min_gain_to_split => 0.1,
                 :bagging_fraction => 0.8,
                 :max_depth => 4,
-                :num_leaves => 63,
+                :num_leaves => 15,
                 :learning_rate => 0.1,
                 :iter_scheme => [150, 300, 300]
             )
