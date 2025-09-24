@@ -35,9 +35,9 @@ This document proposes a simpler approach to pairing for MBR that achieves the s
 ```julia
 qvals_prev = similar(nonMBR_estimates)
 get_qvalues!(nonMBR_estimates, psms.target, qvals_prev)
-pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore) .& psms.target
+pass_mask = (qvals_prev .<= max_q_value_lightgbm_rescore) .& psms.target
 prob_thresh = any(pass_mask) ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
-psms[!, :MBR_transfer_candidate] .= (qvals_prev .> max_q_value_xgboost_rescore) .&
+psms[!, :MBR_transfer_candidate] .= (qvals_prev .> max_q_value_lightgbm_rescore) .&
                                     (psms.MBR_max_pair_prob .>= prob_thresh)
 ```
 

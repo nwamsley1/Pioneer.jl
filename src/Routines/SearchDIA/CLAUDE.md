@@ -126,7 +126,7 @@ ML scoring integration in `utils_protein_ml.jl` (memory-efficient OOM approach):
 1. **Memory-Efficient Architecture**: Uses out-of-memory (OOM) processing to handle large datasets
 2. **Sample-Train-Apply Workflow**: 
    - Samples protein groups proportionally from files for training
-   - Trains EvoTrees/XGBoost models on the sample
+   - Trains LightGBM models on the sample
    - Applies models file-by-file to avoid loading all data into memory
 3. **CV Fold Consistency**: Maintains cross-validation fold assignment based on constituent peptides
 4. **Feature Engineering**: Extracts top-N precursor scores plus protein-level statistics

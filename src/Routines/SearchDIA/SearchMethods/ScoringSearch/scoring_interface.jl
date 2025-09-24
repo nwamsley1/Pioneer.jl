@@ -353,7 +353,7 @@ function train_lightgbm_model_df(feature_data::DataFrame, y::AbstractVector{Bool
         feature_fraction = 0.5,
         bagging_fraction = 0.25,
         bagging_freq = 1,
-        min_child_weight = 200,
+        min_data_in_leaf = 200,
         min_gain_to_split = 0.0,
     )
     return fit_lightgbm_model(classifier, feature_data, labels; positive_label=true)

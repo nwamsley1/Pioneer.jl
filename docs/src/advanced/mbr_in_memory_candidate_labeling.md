@@ -14,7 +14,7 @@ Current code (abridged, as present in this branch):
 # Determine which precursors failed the q-value cutoff prior to MBR
 qvals_prev = Vector{Float32}(undef, length(nonMBR_estimates))
 get_qvalues!(nonMBR_estimates, psms.target, qvals_prev)
-pass_mask = (nonMBR_estimates .<= max_q_value_xgboost_rescore)
+pass_mask = (nonMBR_estimates .<= max_q_value_lightgbm_rescore)
 prob_thresh = any(pass_mask) ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
 
 # Label as transfer candidates only those failing the q-value cutoff but
@@ -26,11 +26,11 @@ psms[!, :MBR_transfer_candidate] .= .!pass_mask .&
 psms[!, :prob] = MBR_estimates
 ```
 
-Note: `nonMBR_estimates` are probabilities (higher=better). `max_q_value_xgboost_rescore` is a q‑value threshold (≈0.01) — a different scale.
+Note: `nonMBR_estimates` are probabilities (higher=better). `max_q_value_lightgbm_rescore` is a q‑value threshold (≈0.01) — a different scale.
 
 **What’s Wrong (Scale Mismatch)**
 
-- `pass_mask = (nonMBR_estimates .<= max_q_value_xgboost_rescore)` compares probabilities to a q‑value threshold. Since true positives have large probabilities (e.g., 0.8, 0.9), the condition `p ≤ 0.01` is almost never true.
+- `pass_mask = (nonMBR_estimates .<= max_q_value_lightgbm_rescore)` compares probabilities to a q‑value threshold. Since true positives have large probabilities (e.g., 0.8, 0.9), the condition `p ≤ 0.01` is almost never true.
   - Consequence: `pass_mask` is mostly false; `.!pass_mask` becomes “almost everyone”.
 - `prob_thresh = minimum(nonMBR_estimates[pass_mask])` is taken over a tiny set (often empty). If any are present, they tend to be extremely small (≈0), so the condition `MBR_max_pair_prob ≥ prob_thresh` is trivially satisfied by most rows.
 - Net effect: `MBR_transfer_candidate` is set to true for the vast majority of rows, which matches your observation:
@@ -80,11 +80,11 @@ qvals_prev = Vector{Float32}(undef, length(nonMBR_estimates))
 get_qvalues!(nonMBR_estimates, psms.target, qvals_prev)
 
 # 2) Build pass/fail by q-value threshold
-pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore) .& psms.target
+pass_mask = (qvals_prev .<= max_q_value_lightgbm_rescore) .& psms.target
 prob_thresh = any(pass_mask) ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
 
 # 3) Label transfer candidates: failed q-value but paired to a strong donor
-psms[!, :MBR_transfer_candidate] .= (qvals_prev .> max_q_value_xgboost_rescore) .&
+psms[!, :MBR_transfer_candidate] .= (qvals_prev .> max_q_value_lightgbm_rescore) .&
                                     (psms.MBR_max_pair_prob .>= prob_thresh)
 ```
 
