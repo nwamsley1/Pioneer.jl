@@ -347,13 +347,14 @@ function train_lightgbm_model_df(feature_data::DataFrame, y::AbstractVector{Bool
     labels = y .== false  # Invert labels so true indicates a good transfer
     classifier = build_lightgbm_classifier(
         num_iterations = 100,
-        max_depth = 3,
-        learning_rate = 0.1,
-        feature_fraction = 0.8,
-        bagging_fraction = 0.5,
+        #max_depth = 3,
+        num_leaves = 15,
+        learning_rate = 0.05,
+        feature_fraction = 0.5,
+        bagging_fraction = 0.25,
         bagging_freq = 1,
-        min_child_weight = 1,
-        min_gain_to_split = 1.0,
+        min_child_weight = 200,
+        min_gain_to_split = 0.0,
     )
     return fit_lightgbm_model(classifier, feature_data, labels; positive_label=true)
 end

@@ -648,13 +648,14 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
 
     classifier = build_lightgbm_classifier(
         num_iterations = num_round,
-        max_depth = max_depth,
+        max_depth = -1,#max_depth,
         learning_rate = eta,
+        num_leaves = 63,
         feature_fraction = colsample,
         bagging_fraction = subsample,
         bagging_freq = subsample < 1 ? 1 : 0,
-        min_child_weight = min_child_weight,
-        min_gain_to_split = gamma,
+        min_child_weight = 200,#min_child_weight,
+        min_gain_to_split = 0.0#gamma,
     )
     feature_frame = psms[:, features]
     return fit_lightgbm_model(classifier, feature_frame, psms.target; positive_label=true)

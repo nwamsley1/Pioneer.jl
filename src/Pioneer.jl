@@ -39,7 +39,7 @@ using StatsPlots, SentinelArrays
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics, SparseArrays
 using LightGBM
-import MLJModelInterface: fit, predict, UnivariateFinite
+import MLJModelInterface: fit, predict
 using KernelDensity
 using FastGaussQuadrature
 using LaTeXStrings, Printf
