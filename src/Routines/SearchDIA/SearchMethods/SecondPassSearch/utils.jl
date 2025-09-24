@@ -65,9 +65,19 @@ function perform_second_pass_search(
         end
     end
     
-    # Collect results
-    results = fetch.(tasks)
-    return vcat([r for r in results]...)
+    # Collect results with detailed error logging per task
+    results = Vector{DataFrame}(undef, length(tasks))
+    for (i, t) in enumerate(tasks)
+        try
+            results[i] = fetch(t)
+        catch e
+            bt = catch_backtrace()
+            @user_error "SecondPassSearch task $(i) failed while fetching results (MS2CHROM)"
+            @user_error sprint(showerror, e, bt)
+            rethrow(e)
+        end
+    end
+    return vcat(results...)
 end
 
 function perform_second_pass_search(
@@ -100,8 +110,19 @@ function perform_second_pass_search(
             )
         end
     end
-    
-    return vcat(fetch.(tasks)...)
+    # Collect results with detailed error logging per task
+    results = Vector{DataFrame}(undef, length(tasks))
+    for (i, t) in enumerate(tasks)
+        try
+            results[i] = fetch(t)
+        catch e
+            bt = catch_backtrace()
+            @user_error "SecondPassSearch task $(i) failed while fetching results (MS1CHROM)"
+            @user_error sprint(showerror, e, bt)
+            rethrow(e)
+        end
+    end
+    return vcat(results...)
 end
 
 """
@@ -337,19 +358,22 @@ function process_scans!(
     pair_ids = getPairIdx(precursors)
     pair_id_dict = Dictionary{
         UInt32, #pair_id
-        UInt8 #Number of matches to spectrum 
+        UInt8 #Number of matches to spectrum
     }()
+
+    # NEW: Create m/z grouping map for MS1
+    mz_grouping = MzGroupingMap(UInt32(100000))  # 5 decimal place precision
+
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     ion_idx = 0
     last_val = 0
-    precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
-    prec_temp_size = 0
+    # Note: prec_ids scratch array not required in MS1 path
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
 
     for scan_idx in scan_range
         empty!(pair_id_dict)
-        ((scan_idx<1) | (scan_idx > length(spectra))) && continue
+        ((scan_idx < 1) || (scan_idx > length(spectra))) && continue
 
         # Process MS1 scans
         if getMsOrder(spectra, scan_idx) != 1
@@ -362,7 +386,7 @@ function process_scans!(
         irt_stop = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         # Update transitions if window changed
-        prec_temp_size = 0
+        # reset per-scan counters
         ion_idx = 0
         for rt_bin_idx in irt_start:irt_stop #All retention time bins covering the current scan 
             precs = rt_index.rt_bins[rt_bin_idx].prec #Precursor idxs for the current retention time bin
@@ -376,11 +400,7 @@ function process_scans!(
                         #If another precursor (the respective target or decoy complement) in this pair has already been added. 
                         continue
                     end
-                    prec_temp_size += 1 #Precursors in the scan 
-                    if prec_temp_size > length(precs_temp) #Adjust size of placeholder if necessary 
-                        append!(precs_temp, Vector{UInt32}(undef, length(precs_temp)))
-                    end
-                    precs_temp[prec_temp_size] = prec_idx
+                    # Track only in local structures for MS1 path (no scratch needed)
 
 
                     for iso in isotopes_dict[prec_idx] #Add the isotopes for the precursor to match to the scan 
@@ -397,6 +417,13 @@ function process_scans!(
         #Sort the precursor isotopes by m/z
         sort!(@view(ion_templates[1:ion_idx]), by = x->(getMZ(x)), alg=PartialQuickSort(1:ion_idx))
         # Match peaks
+        # Ensure match/miss buffers are large enough (cannot exceed ion_idx)
+        if ion_idx > length(ion_matches)
+            append!(ion_matches, [PrecursorMatch{Float32}() for _ in 1:max(ion_idx - length(ion_matches), length(ion_matches))])
+        end
+        if ion_idx > length(ion_misses)
+            append!(ion_misses, [PrecursorMatch{Float32}() for _ in 1:max(ion_idx - length(ion_misses), length(ion_misses))])
+        end
         nmatches, nmisses = matchPeaks!(
             ion_matches,
             ion_misses,
@@ -448,30 +475,45 @@ function process_scans!(
         sort!(@view(ion_matches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
         # Process matches
         if nmatches > 2
-            buildDesignMatrix!(
+
+            # Reset grouping for this scan
+            reset!(mz_grouping)
+
+            # Use MS1-specific design matrix construction with m/z grouping
+            buildDesignMatrixMS1!(
                 Hs,
                 ion_matches,
                 ion_misses,
                 nmatches,
                 nmisses,
-                getIdToCol(search_data)
+                mz_grouping,
+                precursors
             )
 
-            # Handle array resizing
-            if getIdToCol(search_data).size > length(weights)
-                new_entries = getIdToCol(search_data).size - length(weights) + 1000
-                resize!(weights, length(weights) + new_entries)
-                resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
-                append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+            # m/z grouping completed for this scan
 
+            # Populate id_to_col mapping from m/z grouping so MS1 scoring has valid indices
+            id_to_col = getIdToCol(search_data)
+            reset!(id_to_col)
+            for (mz_group, col) in mz_grouping.mz_to_col
+                if haskey(mz_grouping.mz_group_to_precids, mz_group)
+                    for prec_id in mz_grouping.mz_group_to_precids[mz_group]
+                        update!(id_to_col, prec_id, col)
+                    end
+                end
+            end
+
+            # Ensure arrays are sized for the number of grouped columns
+            if mz_grouping.current_col > length(weights)
+                new_entries = Int(mz_grouping.current_col) - length(weights) + 1000
+                resize!(weights, length(weights) + new_entries)
                 resize!(getMs1SpectralScores(search_data), length(getMs1SpectralScores(search_data)) + new_entries)
                 append!(getMs1UnscoredPsms(search_data), [eltype(getMs1UnscoredPsms(search_data))() for _ in 1:new_entries])
             end
 
-            # Initialize weights
-            for i in 1:getIdToCol(search_data).size
-                weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
-                    precursor_weights[getIdToCol(search_data).keys[i]]
+            # Initialize active group weights to zero (simple baseline)
+            @inbounds @fastmath for col in 1:Int(mz_grouping.current_col)
+                weights[col] = 0.0f0
             end
 
             # Solve deconvolution
@@ -480,21 +522,26 @@ function process_scans!(
                 Hs,
                 residuals,
                 weights,
-                Float32(1e8),#getHuberDelta(search_context),
-                Float32(0.001),#params.lambda,
+                params.ms1_huber_delta,
+                params.ms1_lambda,
                 params.max_iter_newton,
                 params.max_iter_bisection,
-                1000,#params.max_iter_outer,
+                params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 params.max_diff,
-                NoNorm()
+                params.ms1_reg_type
             )
-            # Update precursor weights
-            for i in 1:getIdToCol(search_data).size
-                precursor_weights[getIdToCol(search_data).keys[i]] = 
-                    weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]]
-            end
+
+            # NEW: Distribute grouped coefficients back to individual precursors
+            distribute_ms1_coefficients!(
+                precursor_weights,  # Array indexed by precursor ID
+                weights,            # Array indexed by column number (group coefficients)
+                mz_grouping
+            )
+
+            # Update precursor weights - already handled by distribute_ms1_coefficients!
+            # No need for additional update
 
             getDistanceMetrics(weights, residuals, Hs, getMs1SpectralScores(search_data))
 
@@ -503,7 +550,7 @@ function process_scans!(
                 getIdToCol(search_data),
                 ion_matches,
                 nmatches,
-                getMassErrorModel(search_context, ms_file_idx),
+                mem,
                 last(params.min_topn_of_m)
                 )
         end
@@ -1056,23 +1103,53 @@ end
 
 function parseMs1Psms(
     psms::DataFrame,
-    spectra::MassSpecData
+    spectra::MassSpecData,
+    ms2_rt_lookup::Dict{UInt32, Float32}
 )
     if !hasproperty(psms, :precursor_idx) || (size(psms, 1) == 0)
         return DataFrame()
     end
+
+    # Add RT column
     rts = zeros(Float32, size(psms, 1))
     for i in range(1, size(psms, 1))
         scan_idx = psms[i, :scan_idx]
         rts[i] = getRetentionTime(spectra, scan_idx)
     end
-    psms[!,:rt] = rts
+    psms[!, :rt] = rts
 
-    #Group the psms by precursor_idx and return apex scan 
-    return combine(groupby(psms,:precursor_idx)) do group
-        # Find the row with the maximum value
-        idx = argmax(group[!, :weight])
-        # Return that row as a 1-row DataFrame
-        return group[idx, :]
+    # Pre-allocate new columns for max intensity features
+    psms[!, :rt_max_intensity] = zeros(Float32, size(psms, 1))
+    psms[!, :rt_diff_max_intensity] = zeros(Float32, size(psms, 1))
+
+    # Group by precursor and apply hybrid selection
+    return combine(groupby(psms, :precursor_idx)) do group
+        # Find max intensity scan
+        max_intensity_idx = argmax(group[!, :weight])
+        max_intensity_rt = group[max_intensity_idx, :rt]
+
+        # Find RT-closest scan to MS2 apex
+        precursor_idx = group[1, :precursor_idx]
+        if haskey(ms2_rt_lookup, precursor_idx)
+            ms2_rt = ms2_rt_lookup[precursor_idx]
+            rt_diffs = abs.(group[!, :rt] .- ms2_rt)
+            closest_rt_idx = argmin(rt_diffs)
+
+            # Start with RT-closest scan features
+            result_row = group[closest_rt_idx:closest_rt_idx, :]
+
+            # Set max intensity RT features for this row
+            result_row[1, :rt_max_intensity] = max_intensity_rt
+            result_row[1, :rt_diff_max_intensity] = abs(max_intensity_rt - ms2_rt)
+
+            return result_row
+        else
+            # Fallback to max intensity if no MS2 match
+            fallback_row = group[max_intensity_idx:max_intensity_idx, :]
+            # Set fallback values for new features
+            fallback_row[1, :rt_max_intensity] = max_intensity_rt
+            fallback_row[1, :rt_diff_max_intensity] = Float32(0.0)  # No reference RT
+            return fallback_row
+        end
     end
 end

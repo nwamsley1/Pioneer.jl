@@ -578,6 +578,260 @@ function Base.append!(
     
     # Update count
     filtered.n += length(new_scan_indices)
-    
+
     return length(new_scan_indices)
 end
+
+#==========================================================
+IndexedMassSpecData - View-based wrapper for memory-efficient scan selection
+==========================================================#
+
+"""
+    IndexedMassSpecData{T<:MassSpecData}
+
+A view-like wrapper around MassSpecData that only exposes selected scan indices.
+Acts as a transparent proxy for library_search - all getter methods redirect
+through the scan index mapping to only show the selected scans.
+
+# Purpose
+- Allows library_search to process only a subset of scans without modification
+- No data duplication - only stores index mapping
+- Dynamic scan selection by swapping scan_indices vector
+- Perfect for progressive sampling without replacement
+
+# Example Usage
+```julia
+# Create view of only specific scans
+target_scans = [100, 250, 890, 1200]  # The scans we want to process
+indexed_spectra = IndexedMassSpecData(original_spectra, target_scans)
+
+# Library search now only "sees" these 4 scans as indices 1, 2, 3, 4
+psms = library_search(indexed_spectra, search_context, params, ms_file_idx)
+# No post-filtering needed - only target scans were processed
+```
+"""
+struct IndexedMassSpecData{T<:MassSpecData} <: MassSpecData
+    # The underlying data source (never modified)
+    original_data::T
+
+    # The scan indices we want to expose (1-based indices into original_data)
+    scan_indices::Vector{Int32}
+
+    # Cached length for performance
+    n_scans::Int32
+
+    function IndexedMassSpecData(original_data::T, scan_indices::Vector{Int32}) where T<:MassSpecData
+        # Validate scan indices
+        if !isempty(scan_indices)
+            max_idx = maximum(scan_indices)
+            min_idx = minimum(scan_indices)
+            if max_idx > length(original_data) || min_idx < 1
+                throw(BoundsError("Scan indices must be between 1 and $(length(original_data))"))
+            end
+        end
+
+        new{T}(original_data, scan_indices, Int32(length(scan_indices)))
+    end
+end
+
+# =============================================================================
+# Core Interface Methods
+# =============================================================================
+
+"""
+Return the number of scans visible through this indexed view.
+"""
+Base.length(data::IndexedMassSpecData) = Int(data.n_scans)
+
+"""
+Map virtual index (1-based index into the view) to actual index in original data.
+"""
+@inline function get_actual_index(data::IndexedMassSpecData, virtual_idx::Integer)
+    @boundscheck if virtual_idx < 1 || virtual_idx > data.n_scans
+        throw(BoundsError(data, virtual_idx))
+    end
+    return data.scan_indices[virtual_idx]
+end
+
+# =============================================================================
+# Peak Data Access Methods
+# =============================================================================
+
+function getMzArray(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getMzArray(data.original_data, actual_idx)
+end
+
+function getIntensityArray(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getIntensityArray(data.original_data, actual_idx)
+end
+
+# =============================================================================
+# Scan Metadata Access Methods
+# =============================================================================
+
+function getScanHeader(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getScanHeader(data.original_data, actual_idx)
+end
+
+function getScanNumber(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getScanNumber(data.original_data, actual_idx)
+end
+
+function getRetentionTime(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getRetentionTime(data.original_data, actual_idx)
+end
+
+function getMsOrder(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getMsOrder(data.original_data, actual_idx)
+end
+
+function getBasePeakMz(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getBasePeakMz(data.original_data, actual_idx)
+end
+
+function getBasePeakIntensity(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getBasePeakIntensity(data.original_data, actual_idx)
+end
+
+function getTIC(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getTIC(data.original_data, actual_idx)
+end
+
+function getInjectionTime(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getInjectionTime(data.original_data, actual_idx)
+end
+
+function getPrecursorMz(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getPrecursorMz(data.original_data, actual_idx)
+end
+
+function getPrecursorCharge(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getPrecursorCharge(data.original_data, actual_idx)
+end
+
+function getIsolationWidthMz(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getIsolationWidthMz(data.original_data, actual_idx)
+end
+
+function getIsolationWidth(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getIsolationWidth(data.original_data, actual_idx)
+end
+
+function getCenterMz(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getCenterMz(data.original_data, actual_idx)
+end
+
+function getLowMz(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getLowMz(data.original_data, actual_idx)
+end
+
+function getHighMz(data::IndexedMassSpecData, virtual_idx::Integer)
+    actual_idx = get_actual_index(data, virtual_idx)
+    return getHighMz(data.original_data, actual_idx)
+end
+
+# =============================================================================
+# Batch Getter Methods (for performance)
+# =============================================================================
+
+function getMzArrays(data::IndexedMassSpecData)
+    return [getMzArray(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getIntensityArrays(data::IndexedMassSpecData)
+    return [getIntensityArray(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getScanHeaders(data::IndexedMassSpecData)
+    return [getScanHeader(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getScanNumbers(data::IndexedMassSpecData)
+    return [getScanNumber(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getRetentionTimes(data::IndexedMassSpecData)
+    return [getRetentionTime(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getMsOrders(data::IndexedMassSpecData)
+    return [getMsOrder(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getBasePeakMzs(data::IndexedMassSpecData)
+    return [getBasePeakMz(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getBasePeakIntensities(data::IndexedMassSpecData)
+    return [getBasePeakIntensity(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getTICs(data::IndexedMassSpecData)
+    return [getTIC(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getInjectionTimes(data::IndexedMassSpecData)
+    return [getInjectionTime(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getPrecursorMzs(data::IndexedMassSpecData)
+    return [getPrecursorMz(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getPrecursorCharges(data::IndexedMassSpecData)
+    return [getPrecursorCharge(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getIsolationWidthMzs(data::IndexedMassSpecData)
+    return [getIsolationWidthMz(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getCenterMzs(data::IndexedMassSpecData)
+    return [getCenterMz(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getLowMzs(data::IndexedMassSpecData)
+    return [getLowMz(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+function getHighMzs(data::IndexedMassSpecData)
+    return [getHighMz(data.original_data, actual_idx) for actual_idx in data.scan_indices]
+end
+
+# =============================================================================
+# Utility Methods
+# =============================================================================
+
+"""
+    create_scan_mapping(data::IndexedMassSpecData)
+
+Create a mapping from virtual scan indices (1-based in view) to actual scan indices.
+Returns a dictionary for easy lookup during PSM processing.
+"""
+function create_scan_mapping(data::IndexedMassSpecData)
+    mapping = Dict{Int32, Int32}()
+    for (virtual_idx, actual_idx) in enumerate(data.scan_indices)
+        mapping[Int32(virtual_idx)] = actual_idx
+    end
+    return mapping
+end
+
+# Index mapping methods for IndexedMassSpecData
+getOriginalScanIndex(data::IndexedMassSpecData, virtual_idx::Integer)::Int32 = data.scan_indices[virtual_idx]
+getOriginalScanIndices(data::IndexedMassSpecData)::Vector{Int32} = data.scan_indices

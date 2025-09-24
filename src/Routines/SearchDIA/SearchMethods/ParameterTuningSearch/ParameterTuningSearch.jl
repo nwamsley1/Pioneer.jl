@@ -30,7 +30,7 @@ This search:
 ```julia
 # Define search parameters
 params = Dict(
-    :isotope_err_bounds => (0, 2),
+    :isotope_err_bounds => (3, 1),
     :presearch_params => Dict(
         "frag_tol_ppm" => 30.0,
         "frag_err_quantile" => 0.01,
@@ -1061,7 +1061,6 @@ function process_search_results!(
         resize!(results.ppm_errs, 0)
         results.current_iteration_state[] = nothing  # Clear iteration state after use
     catch e
-        throw(e)
         @user_warn "Failed to generate plots for file $ms_file_idx" exception=(e, catch_backtrace())
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
     end
@@ -1100,7 +1099,6 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
                     safeRm(rt_combined_path, nothing)
                 end
             catch e
-                throw(e)
                 @user_warn "Could not clear existing RT plots file: $e"
             end
             save_multipage_pdf(results.rt_plots, rt_combined_path)
@@ -1115,7 +1113,6 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
                     safeRm(mass_combined_path, nothing)
                 end
             catch e
-                throw(e)
                 @user_warn "Could not clear existing mass error plots file: $e"
             end
             save_multipage_pdf(results.mass_plots, mass_combined_path)
@@ -1127,7 +1124,6 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
         # For now, the diagnostic summary below provides the key information
         
     catch e
-        throw(e)
         @user_warn "Failed to merge QC plots" exception=(e, catch_backtrace())
     end
     

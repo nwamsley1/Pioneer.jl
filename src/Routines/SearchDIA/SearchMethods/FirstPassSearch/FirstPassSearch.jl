@@ -30,7 +30,7 @@ This search:
 ```julia
 # Define search parameters
 params = Dict(
-    :isotope_err_bounds => (0, 2),
+    :isotope_err_bounds => (1, 0),
     :first_search_params => Dict(
         "n_train_rounds_probit" => 10,
         "max_iter_probit" => 100,
@@ -66,6 +66,7 @@ struct FirstPassSearch <: SearchMethod end
 Type Definitions
 ==========================================================#
 
+
 """
 Results container for first pass search.
 Holds FWHM statistics, PSM file paths, and model updates.
@@ -88,6 +89,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     isotope_err_bounds::Tuple{UInt8, UInt8}
     min_fraction_transmitted::Float32
     frag_tol_ppm::Float32
+    ms1_tol_ppm::Float32
     frag_err_quantile::Float32
     min_index_search_score::UInt8
     min_frag_count::Int64
@@ -134,6 +136,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             0.0f0,  # No transmission threshold for first pass
             0.0f0,  # No fragment tolerance for first pass
+            Float32(params.parameter_tuning.iteration_settings.ms1_tol_ppm),  # MS1 tolerance from config
             Float32(params.parameter_tuning.search_settings.frag_err_quantile),
             # Handle min_score as either single value or array (use first value if array)
             begin
@@ -172,12 +175,14 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     end
 end
 
+
 #==========================================================
 Interface Implementation
 ==========================================================#
 
 get_parameters(::FirstPassSearch, params::Any) = FirstPassSearchParameters(params)
 getMs1MassErrorModel(ptsr::FirstPassSearchResults) = ptsr.ms1_mass_err_model[]
+getMs1TolPpm(params::FirstPassSearchParameters) = params.ms1_tol_ppm
 
 function init_search_results(
     ::FirstPassSearchParameters,
@@ -371,23 +376,22 @@ function process_file!(
         most_intense = sortperm(temp_psms[!,:log2_summed_intensity], rev = true)
         ms1_errs = vcat(
             mass_error_search(
-                spectra, 
+                spectra,
                 temp_psms[most_intense[1:(min(3000, length(most_intense)))],:scan_idx],
                 temp_psms[most_intense[1:(min(3000, length(most_intense)))],:precursor_idx],
                 UInt32(ms_file_idx),
                 getSpecLib(search_context),
                 getSearchData(search_context),
                 MassErrorModel(
-                0.0f0, 
-                #(getFragTolPpm(params), getFragTolPpm(params))
-                (20.0f0, 20.0f0)
+                0.0f0,
+                (getMs1TolPpm(params), getMs1TolPpm(params))  # Use MS1 tolerance from JSON config
                 ),
                 params,
                 MS1CHROM()
             )...
         )
         if length(ms1_errs) > 1
-            mad_dev= mad(ms1_errs)
+            mad_dev = mad(ms1_errs; normalize=true)
             med_errs = median(ms1_errs)
             low_bound, high_bound = med_errs - mad_dev*7, med_errs + mad_dev*7
             filter!(x->(low_bound<x)&(high_bound>x), ms1_errs)
@@ -409,10 +413,10 @@ function process_file!(
         catch
             "file_$ms_file_idx"
         end
-        
+
         reason = "FirstPassSearch failed: $(typeof(e))"
         markFileFailed!(search_context, ms_file_idx, reason)
-        @user_warn "First pass search failed for MS data file: $file_name. Error type: $(typeof(e)). Creating empty results to continue pipeline."
+        @warn "First pass search failed for MS data file: $file_name. Error type: $(typeof(e)). Creating empty results to continue pipeline."
         
         # Create an empty but properly structured DataFrame to avoid downstream errors
         empty_psms = DataFrame(
@@ -455,7 +459,7 @@ function process_search_results!(
             median_fwhm = median(fwhms),
             mad_fwhm = mad(fwhms, normalize=true)))
     else
-        @user_warn "Insuficient fwhm_points to estimate for $ms_file_idx"
+        @warn "Insuficient fwhm_points to estimate for $ms_file_idx"
         insert!(results.fwhms, ms_file_idx, (
             median_fwhm = 0.2f0,
             mad_fwhm = 0.2f0))
@@ -517,7 +521,7 @@ function summarize_results!(
         valid_rt_irt = Dict{Int64, RtConversionModel}(i => all_rt_irt[i] for i in valid_indices if haskey(all_rt_irt, i))
         
         if isempty(valid_psms_paths)
-            @user_warn "No valid files for cross-run precursor analysis"
+            @warn "No valid files for cross-run precursor analysis"
             return Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}()
         end
         
@@ -580,7 +584,7 @@ function summarize_results!(
             rm(output_path)
         end
     catch e
-        @user_warn "Could not clear existing file: $e"
+        @warn "Could not clear existing file: $e"
     end
 
     if !isempty(results.ms1_mass_plots)

@@ -535,12 +535,73 @@ function get_irt_errs(
             irt_std = median(variance_)
         end
     end
-    #Number of standard deviations to cover 
+    #Number of standard deviations to cover
     irt_std *= params.irt_nstd
-    #dictionary maping file name to irt tolerance. 
+    #dictionary maping file name to irt tolerance.
     return map(x->Float32((x+irt_std))::Float32, fwhms)::Dictionary{Int64, Float32}
 end
 
+"""
+    mass_err_ms1(ppm_errs::Vector{Float32}, params::P) where {P<:FragmentIndexSearchParameters}
+
+Estimate MS1 mass error model using exponential distribution fitting (consistent with MS2 approach).
+
+Fits separate exponential distributions to positive and negative mass error tails,
+then calculates tolerance bounds at the specified quantile level.
+
+# Arguments
+- `ppm_errs`: Vector of PPM mass errors from MS1 precursor matches
+- `params`: Search parameters containing fragment error quantile
+
+# Returns
+- `(MassErrorModel, Vector{Float32})`: Fitted model and bias-corrected errors
+
+# Details
+Uses the same exponential distribution fitting approach as MS2 fragment tolerance estimation:
+1. Calculates median bias and removes it from errors
+2. Separates positive and negative errors for asymmetric modeling
+3. Fits exponential distributions to each tail: Exponential(mean_of_tail)
+4. Calculates tolerance bounds at 1-frag_err_quantile level
+5. Returns zero tolerances if exponential fitting fails (consistent with MS2)
+"""
+function mass_err_ms1(ppm_errs::Vector{Float32},
+    params::P) where {P<:FragmentIndexSearchParameters}
+    mass_err = median(ppm_errs)
+    pmp_errs_corrected = ppm_errs .- mass_err
+
+    # Calculate error bounds using exponential distribution fitting (matching MS2 approach)
+    frag_err_quantile = getFragErrQuantile(params)
+
+    # Separate positive and negative errors for asymmetric modeling
+    r_errs = abs.(pmp_errs_corrected[pmp_errs_corrected .> 0.0f0])
+    l_errs = abs.(pmp_errs_corrected[pmp_errs_corrected .< 0.0f0])
+
+    r_bound, l_bound = nothing, nothing
+    try
+        # Fit exponential distribution to right tail (positive errors)
+        # Exponential(θ) where θ is the scale parameter (mean)
+        r_bound = quantile(Exponential(
+            sum(r_errs)/length(r_errs)  # Mean of positive errors
+        ), 1 - frag_err_quantile)
+
+        # Fit exponential distribution to left tail (negative errors)
+        l_bound = quantile(Exponential(
+            sum(l_errs)/length(l_errs)  # Mean of negative errors
+        ), 1 - frag_err_quantile)
+    catch e
+        @debug_l1 "MS1 exponential fitting failed: length(r_errs)=$(length(r_errs)) length(l_errs)=$(length(l_errs)) sum(r_errs)=$(sum(r_errs)) sum(l_errs)=$(sum(l_errs))"
+        # Return zero tolerances on fitting failure (consistent with MS2 approach)
+        return MassErrorModel(
+            Float32(mass_err),
+            (zero(Float32), zero(Float32))
+        ), pmp_errs_corrected
+    end
+
+    return MassErrorModel(
+        Float32(mass_err),
+        (Float32(abs(l_bound)), Float32(abs(r_bound)))
+    ), pmp_errs_corrected
+end
 
 
 

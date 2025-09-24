@@ -57,7 +57,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     max_apex_offset::Int64
     write_decoys::Bool
     
-    # Deconvolution parameters
+    # Deconvolution parameters (MS2)
     lambda::Float32
     reg_type::RegularizationType
     max_iter_newton::Int64
@@ -66,6 +66,11 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     accuracy_newton::Float32
     accuracy_bisection::Float32
     max_diff::Float32
+
+    # MS1 deconvolution parameters
+    ms1_lambda::Float32
+    ms1_reg_type::RegularizationType
+    ms1_huber_delta::Float32
 
     # Analysis strategies
     isotope_tracetype::I
@@ -92,7 +97,9 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         # Always use partial precursor capture for integrate chromatogram
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        reg_type = deconv_params.reg_type
+
+        # Parse MS2 regularization type
+        reg_type = deconv_params.ms2.reg_type
         if reg_type == "none"
             reg_type = NoNorm()
         elseif reg_type == "l1"
@@ -101,7 +108,20 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             reg_type = L2Norm()
         else
             reg_type = NoNorm()
-            @user_warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+            @user_warn "Warning. MS2 reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+        end
+
+        # Parse MS1 regularization type
+        ms1_reg_type = deconv_params.ms1.reg_type
+        if ms1_reg_type == "none"
+            ms1_reg_type = NoNorm()
+        elseif ms1_reg_type == "l1"
+            ms1_reg_type = L1Norm()
+        elseif ms1_reg_type == "l2"
+            ms1_reg_type = L2Norm()
+        else
+            ms1_reg_type = NoNorm()
+            @user_warn "Warning. MS1 reg type `$ms1_reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
@@ -110,21 +130,25 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             UInt8(frag_params.max_rank),
             Set{Int64}([2]),
             global_params.ms1_quant,
-            
+
             Float32(chrom_params.smoothing_strength),
             Int64(chrom_params.padding),
             Int64(chrom_params.max_apex_offset),
             Bool(output_params.write_decoys),
-            
-            Float32(deconv_params.lambda),
-            reg_type, 
+
+            Float32(deconv_params.ms2.lambda),
+            reg_type,
             Int64(deconv_params.newton_iters),
             Int64(deconv_params.bisection_iters),
             Int64(deconv_params.outer_iters),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.max_diff),
-            
+
+            Float32(deconv_params.ms1.lambda),
+            ms1_reg_type,
+            Float32(deconv_params.ms1.huber_delta),
+
             isotope_trace_type,
             prec_estimation
         )

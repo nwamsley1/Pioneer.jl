@@ -710,11 +710,8 @@ function mass_error_search(
 
             ########
             #Intensity filter to remove potentially erroneous matches 
-            mass_errs = mass_errs[1:frag_err_idx]
             if frag_err_idx > 1
-                peak_intensities = peak_intensities[1:frag_err_idx]
-                med_intensity = quantile(peak_intensities, 0.75)
-                return @view(mass_errs[peak_intensities.>med_intensity])
+                return @view(mass_errs[1:frag_err_idx])
             else
                 return mass_errs
             end
@@ -727,17 +724,6 @@ function fit_mass_err_model(
     params::P,
     fragments::Vector{FragmentMatch{Float32}}
 ) where {P<:FragmentIndexSearchParameters}
-    
-    # Filter fragments by intensity to remove low-quality matches
-    if length(fragments) > 0
-        intensity_threshold = getIntensityFilterQuantile(params)
-        if intensity_threshold > 0.0
-            intensities = [fragment.intensity for fragment in fragments]
-            min_intensity = quantile(intensities, intensity_threshold)
-            fragments = filter(f -> f.intensity > min_intensity, fragments)
-            # @info "Filtered to $(length(fragments)) fragments above $(round(intensity_threshold*100, digits=1))th percentile intensity"
-        end
-    end
     
     # Check if we have enough fragments after filtering
     if length(fragments) == 0
@@ -754,7 +740,6 @@ function fit_mass_err_model(
     
     # Calculate error bounds using configured quantile
     frag_err_quantile = getFragErrQuantile(params)
-
     r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
     l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
     r_bound, l_bound = nothing, nothing
@@ -786,44 +771,6 @@ end
 # Deprecated: apply_mass_error_buffer removed – buffer applied inline per-file before plotting
 
 
-function mass_err_ms1(ppm_errs::Vector{Float32},
-    params::P) where {P<:FragmentIndexSearchParameters}
-    mass_err = median(ppm_errs)
-    ppm_errs .-= mass_err
-    
-    # Calculate error bounds using exponential distribution fitting (matching MS2 approach)
-    frag_err_quantile = getFragErrQuantile(params)
-    
-    # Separate positive and negative errors for asymmetric modeling
-    r_errs = abs.(ppm_errs[ppm_errs .> 0.0f0])
-    l_errs = abs.(ppm_errs[ppm_errs .< 0.0f0])
-    
-    r_bound, l_bound = nothing, nothing
-    try
-        # Fit exponential distribution to right tail (positive errors)
-        r_bound = quantile(Exponential(
-            (1/(length(r_errs)/sum(r_errs)))
-        ), 1 - frag_err_quantile)
-        
-        # Fit exponential distribution to left tail (negative errors)  
-        l_bound = quantile(Exponential(
-            (1/(length(l_errs)/sum(l_errs)))
-        ), 1 - frag_err_quantile)
-    catch e 
-        @debug "MS1 exponential fitting failed: length(r_errs)=$(length(r_errs)) length(l_errs)=$(length(l_errs)) sum(r_errs)=$(sum(r_errs)) sum(l_errs)=$(sum(l_errs))"
-        # Fallback to simple empirical quantiles if exponential fitting fails
-        return MassErrorModel(
-            Float32(mass_err),
-            (Float32(abs(quantile(ppm_errs, frag_err_quantile))), 
-             Float32(abs(quantile(ppm_errs, 1 - frag_err_quantile))))
-        ), ppm_errs
-    end
-    
-    return MassErrorModel(
-        Float32(mass_err),
-        (Float32(abs(l_bound)), Float32(abs(r_bound)))
-    ), ppm_errs
-end
 """
     get_matched_fragments(spectra::MassSpecData, psms::DataFrame,
                          results::ParameterTuningSearchResults,

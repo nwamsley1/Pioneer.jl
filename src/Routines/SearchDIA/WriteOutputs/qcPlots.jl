@@ -200,10 +200,7 @@ function qcPlots(
         )
         
         # Get counts for requested files
-        ids = Int64[]
-        for fname in parsed_fnames
-            push!(ids, fname_to_id[fname])
-        end
+        ids = [get(fname_to_id, fname, 0) for fname in parsed_fnames]
         
         p = Plots.plot(
             title = title,
@@ -240,8 +237,8 @@ function qcPlots(
             q_value_column = q_value_column,
             q_value_threshold = q_value_threshold
         )
-        # Use original file order, filtering to only include files that have data
-        fnames = [fname for fname in parsed_fnames if haskey(fname_to_id, fname)]
+        # Use original file order for all successful files; show 0 when missing
+        fnames = parsed_fnames
         # Calculate number of plots needed
         n_qc_plots = ceil(Int, length(fnames) / n_files_per_plot)
         plots = Plots.Plot[]
@@ -295,15 +292,8 @@ function qcPlots(
             return non_missing_count
         end
 
-        # Get file names from precursors data to ensure same ordering as precursor plots
-        fname_to_id = getIdCounts(
-            precursors_long,
-            file_column = file_column,
-            q_value_column = q_value_column,
-            q_value_threshold = q_value_threshold
-        )
-        # Use original file order, filtering to only include files that have data
-        fnames = [fname for fname in parsed_fnames if haskey(fname_to_id, fname)]
+        # Use original file order for all successful files
+        fnames = parsed_fnames
 
         # Create protein group counts using the same file order
         protein_fname_to_id = Dict{String, Int64}()

@@ -26,28 +26,25 @@ This search:
 3. Fits piecewise NCE models based on precursor m/z
 4. Stores optimized models in SearchContext for use by other methods
 
-# Example Implementation
-```julia
-# Define search parameters
-params = Dict(
-    :isotope_err_bounds => (0, 2),
-    :presearch_params => Dict(
-        "frag_tol_ppm" => 30.0,
-        "min_index_search_score" => 3,
-        "min_frag_count" => 3,
-        "min_spectral_contrast" => 0.1,
-        "min_log2_matched_ratio" => -3.0,
-        "min_topn_of_m" => (3, 5),
-        "max_best_rank" => 3,
-        "n_frag_isotopes" => 2,
-        "max_frag_rank" => 10,
-        "abreviate_precursor_calc" => false
-    )
-)
+# Configuration
+NCE tuning parameters are configured in the parameter_tuning.nce_tuning section:
 
-# Execute search
-results = execute_search(NceTuningSearch(), search_context, params)
+```json
+{
+    "parameter_tuning": {
+        "nce_tuning": {
+            "min_psms": 2000,               // Fixed PSM requirement for NCE modeling
+            "initial_percent": 2.5,         // Initial sampling percentage
+            "min_initial_scans": 5000       // Minimum scans for initial sample
+        }
+    }
+}
 ```
+
+The search automatically:
+- Uses progressive sampling starting at max(initial_percent, min_initial_scans/total_scans)
+- Prioritizes scans by retention time for temporal coverage across LC gradient
+- Collects min_psms PSMs for reliable collision energy modeling
 """
 struct NceTuningSearch <: TuningMethod end
 
@@ -88,6 +85,9 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     nce_grid::LinRange{Float32, Int64}
     nce_breakpoint::Float32
     max_q_val::Float32
+    min_psms::Int64
+    initial_percent::Float32
+    min_initial_scans::Int64
     prec_estimation::P
 
     function NceTuningSearchParameters(params::PioneerParameters)
@@ -99,18 +99,38 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
 
         # Always use partial capture for NCE tuning
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        
+
         # Create NCE grid
         nce_grid = LinRange{Float32}(21.0f0, 40.0f0, 20)
+
+        # Extract NCE tuning parameters with backwards compatibility
+        nce_tuning_params = get(tuning_params, :nce_tuning, nothing)
+        min_psms = if nce_tuning_params !== nothing && haskey(nce_tuning_params, :min_psms)
+            Int64(nce_tuning_params.min_psms)
+        else
+            Int64(2000)  # Default value (previously hardcoded)
+        end
+
+        initial_percent = if nce_tuning_params !== nothing && haskey(nce_tuning_params, :initial_percent)
+            Float32(nce_tuning_params.initial_percent)
+        else
+            Float32(2.5)  # Default value
+        end
+
+        min_initial_scans = if nce_tuning_params !== nothing && haskey(nce_tuning_params, :min_initial_scans)
+            Int64(nce_tuning_params.min_initial_scans)
+        else
+            Int64(5000)  # Default value
+        end
 
         new{typeof(prec_estimation)}(
             # Core parameters
             (UInt8(0), UInt8(0)),  # Fixed isotope bounds for NCE tuning
-            # Handle min_score as either single value or array (use first value if array)
+            # Handle min_score as either single value or array (use maximum value if array)
             begin
                 min_score_raw = frag_params.min_score
                 if min_score_raw isa Vector
-                    UInt8(first(min_score_raw))
+                    UInt8(maximum(min_score_raw))  # Use most lenient (highest) score for NCE tuning
                 else
                     UInt8(min_score_raw)
                 end
@@ -129,10 +149,15 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             nce_grid,
             NCE_MODEL_BREAKPOINT,  # Assuming this is defined as a constant
             Float32(0.01),  # Fixed max_q_val for NCE tuning
+            min_psms,
+            initial_percent,
+            min_initial_scans,
             prec_estimation
         )
     end
 end
+
+# IndexedMassSpecData is defined in FilteredMassSpecData.jl and loaded by importScripts()
 
 #==========================================================
 Interface Implementation
@@ -163,15 +188,16 @@ Core Processing Methods
 
 """
 Main file processing method for NCE tuning search.
-Performs grid search and fits NCE model.
+Uses progressive scan sampling for memory efficiency.
 """
 function process_file!(
     results::NceTuningSearchResults,
-    params::P, 
-    search_context::SearchContext,    
+    params::P,
+    search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:NceTuningSearchParameters}
+
 
     # Get file name for debugging
     file_name = try
@@ -186,13 +212,13 @@ function process_file!(
             # Skipping NCE tuning for basic FragmentIndexLibrary
             return nothing
         end
-        
+
         # Check if file has any scans
         if length(spectra) == 0
             @user_warn "Skipping NCE tuning for $file_name - file contains no scans"
             return nothing
         end
-        
+
         # Check if file has any MS2 scans
         ms_orders = getMsOrders(spectra)
         ms2_count = count(x -> x == 2, ms_orders)
@@ -200,68 +226,80 @@ function process_file!(
             @user_warn "Skipping NCE tuning for $file_name - file contains no MS2 scans"
             return nothing
         end
-        
-        # Processing file with scans for NCE tuning
-        
-        # Perform library search on all MS2 scans
-        psms = library_search(spectra, search_context, params, ms_file_idx)   
-        # Process and filter PSMs
-        processed_psms = process_psms!(psms, spectra, search_context, params)
-        
-        # Warn if insufficient PSMs for reliable NCE modeling
-        if nrow(processed_psms) < 100
-            @user_warn "Low PSM count ($(nrow(processed_psms))) may result in unreliable NCE calibration. Consider lowering filtering thresholds."
-        end
 
-        # Fit and store NCE model
-        nce_model = fit_nce_model(
-            PiecewiseNceModel(0.0f0),
-            processed_psms[!, :prec_mz],
-            processed_psms[!, :nce],
-            processed_psms[!, :charge],
-            params.nce_breakpoint
-        )
-        
-        fname = getFileIdToName(getMSData(search_context), ms_file_idx)
-        # Create the main plot
-        p = plot(
-            title = "NCE calibration for $fname",
-            right_margin = 50Plots.px
+
+        # Build scan priority index (metadata only, no peak data)
+        scan_index = build_nce_scan_priority_index(spectra)
+
+        # Progressive PSM collection with sampling without replacement
+        processed_psms, converged, _ = progressive_nce_psm_collection!(
+            scan_index,
+            spectra,
+            search_context,
+            params,
+            ms_file_idx
         )
 
-        # Calculate bin range
-        pbins = LinRange(minimum(processed_psms[!,:prec_mz]), maximum(processed_psms[!,:prec_mz]), 100)
+        if converged && !isempty(processed_psms)
 
-        # Extend x-axis range to accommodate annotations
-        x_range = maximum(pbins) - minimum(pbins)
+            # Warn if insufficient PSMs for reliable NCE modeling
+            if nrow(processed_psms) < 100
+                @user_warn "Low PSM count ($(nrow(processed_psms))) may result in unreliable NCE calibration. Consider lowering filtering thresholds."
+            end
 
-        # Plot each charge state with annotations
-        for charge in sort(unique(processed_psms[!,:charge]))
-            # Calculate the curve
-            curve_values = nce_model.(pbins, charge)
-            
-            # Plot the line
-            plot!(p, pbins, curve_values, 
-                label = "+"*string(charge))
-            
-            # Add annotation at the rightmost point
-            last_x = pbins[end]
-            last_y = curve_values[end]
-            
-            # Add text annotation
-            annotate!(p, [(last_x + x_range*0.02,  # Slight offset from end
-                        last_y,
-                        text("$(round(last_y, digits=1))", 
-                                :left, 
-                                8))])
+            # Fit and store NCE model
+            nce_model = fit_nce_model(
+                PiecewiseNceModel(0.0f0),
+                processed_psms[!, :prec_mz],
+                processed_psms[!, :nce],
+                processed_psms[!, :charge],
+                params.nce_breakpoint
+            )
+
+            fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+            # Create the main plot
+            p = plot(
+                title = "NCE calibration for $fname",
+                right_margin = 50Plots.px
+            )
+
+            # Calculate bin range
+            pbins = LinRange(minimum(processed_psms[!,:prec_mz]), maximum(processed_psms[!,:prec_mz]), 100)
+
+            # Extend x-axis range to accommodate annotations
+            x_range = maximum(pbins) - minimum(pbins)
+
+            # Plot each charge state with annotations
+            for charge in sort(unique(processed_psms[!,:charge]))
+                # Calculate the curve
+                curve_values = nce_model.(pbins, charge)
+
+                # Plot the line
+                plot!(p, pbins, curve_values,
+                    label = "+"*string(charge))
+
+                # Add annotation at the rightmost point
+                last_x = pbins[end]
+                last_y = curve_values[end]
+
+                # Add text annotation
+                annotate!(p, [(last_x + x_range*0.02,  # Slight offset from end
+                            last_y,
+                            text("$(round(last_y, digits=1))",
+                                    :left,
+                                    8))])
+            end
+            push!(results.nce_plots, p)
+            results.nce_models[ms_file_idx] = nce_model
+            append!(results.nce_psms, processed_psms)
+
+        else
+            # Continue without NCE model for this file
         end
-        push!(results.nce_plots, p)
-        results.nce_models[ms_file_idx] = nce_model
-        append!(results.nce_psms, processed_psms)
 
     catch e
-        @user_warn "NCE tuning failed for MS data file: $file_name. Error type: $(typeof(e)). Skipping NCE calibration for this file."
-        # Don't rethrow - allow pipeline to continue without NCE model for this file
+        @user_warn "NCE transmission function fit failed for MS data file: $file_name. Error: $e. Using default NCE model."
+        # Continue without NCE model for this file
     end
 
     return results

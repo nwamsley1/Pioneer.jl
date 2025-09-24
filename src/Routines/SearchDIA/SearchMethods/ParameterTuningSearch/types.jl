@@ -109,22 +109,25 @@ Always uses 3 phases: zero bias, positive shift, negative shift.
 """
 struct IterationSettings
     init_mass_tol_ppm::Float32               # Initial mass tolerance (moved from fragment_settings)
+    ms1_tol_ppm::Float32                     # MS1 precursor tolerance
     mass_tolerance_scale_factor::Float32     # Factor to scale tolerance each iteration
     iterations_per_phase::Int64              # Iterations before phase reset
     scan_scale_factor::Float32               # Factor to scale scan count between attempts
     
     function IterationSettings(
         init_tol::Float32,
+        ms1_tol::Float32,
         mass_scale_factor::Float32,
         iterations_per_phase::Int64,
         scan_scale_factor::Float32
     )
         @assert init_tol > 0.0f0 "Initial tolerance must be positive"
+        @assert ms1_tol > 0.0f0 "MS1 tolerance must be positive"
         @assert mass_scale_factor > 1.0f0 "Mass scale factor must be greater than 1"
         @assert iterations_per_phase > 0 "Iterations per phase must be positive"
         @assert scan_scale_factor >= 1.0f0 "Scan scale factor must be greater than 1"
-        
-        new(init_tol, mass_scale_factor, iterations_per_phase, scan_scale_factor)
+
+        new(init_tol, ms1_tol, mass_scale_factor, iterations_per_phase, scan_scale_factor)
     end
 end
 
@@ -268,6 +271,7 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
         iter = tuning_params.iteration_settings
         iteration_settings = IterationSettings(
             Float32(iter.init_mass_tol_ppm),
+            Float32(iter.ms1_tol_ppm),
             Float32(iter.mass_tolerance_scale_factor),
             Int64(iter.iterations_per_phase),
             Float32(iter.scan_scale_factor)
@@ -341,6 +345,7 @@ getIntensityFilterQuantile(params::ParameterTuningSearchParameters) = params.int
 getIterationSettings(params::ParameterTuningSearchParameters) = params.iteration_settings
 # Get initial mass tolerance from iteration settings
 getFragTolPpm(params::ParameterTuningSearchParameters) = params.iteration_settings.init_mass_tol_ppm
+getMs1TolPpm(params::ParameterTuningSearchParameters) = params.iteration_settings.ms1_tol_ppm
 
 # Override getMaxBestRank for ParameterTuningSearchParameters since it doesn't have max_best_rank field
 # This is for PSM filtering in LibrarySearch, not mass error estimation

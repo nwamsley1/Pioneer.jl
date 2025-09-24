@@ -364,32 +364,52 @@ function LibrarySearchNceTuning(
     params::P,
     nce_grid::AbstractVector{<:AbstractFloat},
     irt_tol::AbstractFloat) where {
-        M<:MassErrorModel, 
+        M<:MassErrorModel,
         Q<:QuadTransmissionModel,
-        S<:SearchDataStructures, 
+        S<:SearchDataStructures,
         P<:FragmentIndexSearchParameters}
 
+    # Check for valid inputs
+    if isempty(nce_grid)
+        @user_warn "LibrarySearchNceTuning: Empty NCE grid provided"
+        return DataFrame()
+    end
+
+    @debug_l2 "LibrarySearchNceTuning: Starting with $(length(spectra)) scans, NCE grid: $nce_grid"
+
     thread_tasks = partition_scans(spectra, Threads.nthreads())
+
+    @debug_l2 "LibrarySearchNceTuning: Created $(length(thread_tasks)) thread tasks"
+    for (i, task) in enumerate(thread_tasks)
+        task_range = last(task)
+        n_scans = length(task_range)
+        @debug_l2 "  Thread $i: $n_scans scans"
+    end
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
     # Do fragment index search once
     tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin 
+        Threads.@spawn begin
             thread_id = first(thread_task)
-            return searchFragmentIndex(
-                scan_to_prec_idx,
-                fragment_index,
-                spectra,
-                last(thread_task),
-                search_data[thread_id],
-                params,
-                qtm,
-                mem,
-                rt_to_irt_spline,
-                irt_tol
-            )
+            try
+                return searchFragmentIndex(
+                    scan_to_prec_idx,
+                    fragment_index,
+                    spectra,
+                    last(thread_task),
+                    search_data[thread_id],
+                    params,
+                    qtm,
+                    mem,
+                    rt_to_irt_spline,
+                    irt_tol
+                )
+            catch e
+                @user_warn "Fragment index search failed on thread $thread_id: $e"
+                return UInt32[]  # Return empty result on error
+            end
         end
     end
-    
+
     precursors_passed_scoring = fetch.(tasks)
 
     # For each NCE value, run getPSMS using the same fragment index results
@@ -403,33 +423,36 @@ function LibrarySearchNceTuning(
 
         # Run getPSMS with updated NCE model
         tasks = map(thread_tasks) do thread_task
-            Threads.@spawn begin 
+            Threads.@spawn begin
                 thread_id = first(thread_task)
-                psms = getPSMS(
-                    ms_file_idx,
-                    spectra,
-                    last(thread_task),
-                    getPrecursors(spec_lib),
-                    getFragmentLookupTable(spec_lib),
-                    scan_to_prec_idx,
-                    precursors_passed_scoring[thread_id],
-                    search_data[thread_id],
-                    params,
-                    qtm,
-                    mem,
-                    rt_to_irt_spline,
-                    irt_tol
-                )
-                if !isempty(psms)
-                    psms[!, :nce] .= nce
-                else
-                    psms = missing
+                try
+                    psms = getPSMS(
+                        ms_file_idx,
+                        spectra,
+                        last(thread_task),
+                        getPrecursors(spec_lib),
+                        getFragmentLookupTable(spec_lib),
+                        scan_to_prec_idx,
+                        precursors_passed_scoring[thread_id],
+                        search_data[thread_id],
+                        params,
+                        qtm,
+                        mem,
+                        rt_to_irt_spline,
+                        irt_tol
+                    )
+                    if !isempty(psms)
+                        psms[!, :nce] .= nce
+                        return psms
+                    else
+                        return missing
+                    end
+                catch e
+                    @user_warn "PSM search failed on thread $thread_id for NCE $nce: $e"
+                    return missing
                 end
-
-                return psms
             end
         end
-        
         vcat(skipmissing(fetch.(tasks))...)
     end
 
@@ -441,4 +464,3 @@ end
 function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
     return Float32(irt - irt_tol), Float32(irt + irt_tol)
 end
-

@@ -132,7 +132,7 @@ function assign_pair_ids(
             precursor_idx_to_pair_id[targets[target_perm[i]]] = last_pair_id
         end
     elseif length(targets) < length(decoys)
-        @user_warn "Fewer target precursors ($(length(targets))) than decoy precursors ($(length(decoys))) in iRT bin $(first(irt_bin_idx)). Some decoys will remain unpaired."
+        @debug_l2 "Fewer target precursors ($(length(targets))) than decoy precursors ($(length(decoys))) in iRT bin $(first(irt_bin_idx)). Some decoys will remain unpaired."
         for i in range(length(targets)+1, length(decoys))
             last_pair_id += one(UInt32)
             precursor_idx_to_pair_id[decoys[i]] = last_pair_id
@@ -161,6 +161,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   print_importance::Bool = false,
                   show_progress::Bool = true,
                   verbose_logging::Bool = false)
+    
+    save_training_df_path = "/Users/nathanwamsley/Desktop/xgboost_training_data.arrow"  # Set to `nothing` to disable saving
 
     # Apply random target-decoy pairing before ML training
     assign_random_target_decoy_pairs!(psms)
@@ -201,6 +203,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     total_progress_steps = length(unique_cv_folds) * iterations_per_fold
     pbar = show_progress ? ProgressBar(total=total_progress_steps) : nothing
 
+    # Collect final-iteration training sets if requested
+    final_train_parts = Vector{DataFrame}()
+
     for test_fold_idx in unique_cv_folds
 
         initialize_prob_group_features!(psms, match_between_runs)
@@ -240,6 +245,14 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
             train_feats = itr < mbr_start_iter ? non_mbr_features : features
             
+            # If saving requested and this is the final iteration, capture training data
+            if save_training_df_path !== nothing
+                final_itr = match_between_runs ? length(iter_scheme) : (length(iter_scheme) - 1)
+                if itr == final_itr
+                    push!(final_train_parts, DataFrame(psms_train_itr))
+                end
+            end
+
             bst = train_booster(psms_train_itr, train_feats, num_round;
                                feature_fraction=feature_fraction,
                                learning_rate=learning_rate,
@@ -321,6 +334,16 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         psms[!, :prob] = prob_test
     end
     
+    # Write concatenated final-iteration training DataFrame if requested
+    if save_training_df_path !== nothing && !isempty(final_train_parts)
+        try
+            mkpath(dirname(save_training_df_path))
+            writeArrow(save_training_df_path, vcat(final_train_parts...))
+        catch e
+            @user_warn "Failed to write final XGBoost training DataFrame: $(typeof(e)) — $(e)"
+        end
+    end
+
     return models
 end
 

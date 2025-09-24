@@ -451,7 +451,9 @@ function build_chromatograms(
     pmz = [getMz(precursors)[pid] for pid in precursors_passing]
     isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
 
-   
+    # NEW: Create m/z grouping map for MS1
+    mz_grouping = MzGroupingMap(UInt32(100000))  # 5 decimal place precision
+
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     ion_idx = 0
@@ -536,13 +538,19 @@ function build_chromatograms(
         # Process matches
         if nmatches > 2
             i += 1
-            buildDesignMatrix!(
+
+            # Reset grouping for this scan
+            reset!(mz_grouping)
+
+            # Use MS1-specific design matrix construction with m/z grouping
+            buildDesignMatrixMS1!(
                 Hs,
                 ion_matches,
                 ion_misses,
                 nmatches,
                 nmisses,
-                getIdToCol(search_data)
+                mz_grouping,
+                precursors
             )
 
             # Handle array resizing
@@ -565,39 +573,24 @@ function build_chromatograms(
                 Hs,
                 residuals,
                 weights,
-                getHuberDelta(search_context),
-                params.lambda,
+                params.ms1_huber_delta,
+                params.ms1_lambda,
                 params.max_iter_newton,
                 params.max_iter_bisection,
                 params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 params.max_diff,
-                params.reg_type
+                params.ms1_reg_type
             )
-            if scan_idx==6625#8241#Design Matrix 
-                N = Hs.n_vals
-                H = Matrix(sparse(Hs.rowval[1:N],
-                                    Hs.colval[1:N],
-                                    Hs.nzval[1:N])
-                                    )
-                #OLS Regression 
-                rowvals = copy(Hs.rowval)
-                y = zeros(Float32, Hs.m)
-                for i in range(1, N)
-                    y[Hs.rowval[i]] = Hs.x[i]
-                end
-                id_to_col = getIdToCol(search_data)
-                _matches_ = ion_matches[1:nmatches]
-                _misses_ = ion_misses[1:nmisses]
-                jldsave(joinpath(getQcPlotfolder(search_context), "A_mat.jld2"); H)
-                jldsave(joinpath(getQcPlotfolder(search_context), "y_mat.jld2"); y)
-                jldsave(joinpath(getQcPlotfolder(search_context), "residuals.jld2"); residuals)
-                jldsave(joinpath(getQcPlotfolder(search_context), "weights.jld2"); weights)
-                jldsave(joinpath(getQcPlotfolder(search_context), "getIdToCol.jld2"); id_to_col)
-                jldsave(joinpath(getQcPlotfolder(search_context), "ion_matches.jld2"); _matches_)
-                jldsave(joinpath(getQcPlotfolder(search_context), "ion_misses.jld2"); _misses_)
-            end
+
+            # NEW: Distribute grouped coefficients back to individual precursors
+            distribute_ms1_coefficients!(
+                precursor_weights,  # Array indexed by precursor ID
+                weights,            # Array indexed by column number (group coefficients)
+                mz_grouping
+            )
+
             # Record chromatogram points with weights
             for j in 1:prec_temp_size
                 rt_idx += 1
@@ -605,14 +598,18 @@ function build_chromatograms(
                     append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
                 end
 
-                if !iszero(getIdToCol(search_data)[precs_temp[j]])
+                # Get weight from precursor_weights array (now contains distributed group coefficients)
+                prec_id = precs_temp[j]
+                weight = prec_id <= length(precursor_weights) ? precursor_weights[prec_id] : 0.0f0
+
+                if weight > 0.0f0
                     chromatograms[rt_idx] = MS1ChromObject(
                         Float32(getRetentionTime(spectra, scan_idx)),
-                        weights[getIdToCol(search_data)[precs_temp[j]]],
-                        iso_count[precs_temp[j]].matched_mono,
-                        iso_count[precs_temp[j]].iso_count,
+                        weight,
+                        iso_count[prec_id].matched_mono,
+                        iso_count[prec_id].iso_count,
                         scan_idx,
-                        precs_temp[j]
+                        prec_id
                     )
                 else
                     chromatograms[rt_idx] = MS1ChromObject(
@@ -626,11 +623,8 @@ function build_chromatograms(
                 end
             end
 
-            # Update precursor weights
-            for i in 1:getIdToCol(search_data).size
-                precursor_weights[getIdToCol(search_data).keys[i]] = 
-                    weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]]
-            end
+            # Update precursor weights - already handled by distribute_ms1_coefficients!
+            # No need to update here since distribution already populated precursor_weights
 
         else
             for j in 1:prec_temp_size

@@ -544,6 +544,30 @@ function probit_regression_scoring_cv!(
     if :intercept ∉ available_features
         push!(available_features, :intercept)
     end
+
+    # Check for potential zero-variance issues
+    problematic_features = Symbol[]
+    for feature in available_features
+        if feature != :intercept  # Skip intercept column
+            col_data = psms[!, feature]
+            if length(unique(col_data)) <= 1
+                push!(problematic_features, feature)
+            end
+        end
+    end
+
+    if !isempty(problematic_features)
+        @user_warn "Found $(length(problematic_features)) zero-variance features: $(join(string.(problematic_features), ", "))"
+
+        # Remove zero-variance features from available_features
+        filter!(feature -> !(feature in problematic_features), available_features)
+        @user_info "After filtering: using $(length(available_features)) features"
+
+        if length(available_features) <= 1  # Only intercept left
+            @user_warn "No valid features remaining for probit regression after zero-variance filtering"
+            return  # Exit early to avoid singular matrix
+        end
+    end
     
     # Step 4: Train probit model per CV fold (two-pass with 1% q-value and optional negative mining)
     tasks_per_thread = 10

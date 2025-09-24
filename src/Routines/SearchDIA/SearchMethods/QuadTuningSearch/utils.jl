@@ -153,173 +153,318 @@ function add_columns!(
 end
 
 """
-    collect_psms(spectra::MassSpecData, search_context::SearchContext,
-                results::QuadTuningSearchResults, params::QuadTuningSearchParameters,
-                ms_file_idx::Int64) -> DataFrame
-
-Collect and process PSMs for quadrupole tuning analysis.
-
-# Arguments
-- `spectra`: MS/MS spectral data
-- `search_context`: Search context containing spectral library
-- `results`: Current quad tuning results
-- `params`: Search parameters
-- `ms_file_idx`: Index of MS file being processed
-
-# Process
-1. Performs single library search on all MS2 scans to get initial PSMs
-2. Processes initial PSMs with quality filters (q-value ≤ 0.01, target only)
-3. Performs quadrupole transmission search with deconvolution
-4. Applies strict filters: M0/M1 isotopes only, 2+ charge, minimum fragment matches
-5. Warns if insufficient PSMs are collected for reliable quad modeling
-
-# Returns
-DataFrame containing processed PSMs suitable for quad model fitting.
-
-# Notes
-- Processes ALL scans in a single pass (no scan sampling)
-- Uses comprehensive logging to track PSM counts at each step
-- Warns if final PSM count is below min_quad_tuning_psms_per_thompson * window_width threshold
+Filter quad PSMs based on criteria:
+- M0/M1 isotopes only
+- Minimum number of matches
+- Non-zero abundance
 """
-function collect_psms(
-    spectra::MassSpecData,
-    search_context::SearchContext,
-    results::QuadTuningSearchResults,
-    params::QuadTuningSearchParameters,
-    ms_file_idx::Int64,
-    window_width::Float64
+function filter_quad_psms(
+    iso_idx::AbstractVector{UInt8},
+    n_matches::AbstractVector{UInt8},
+    weight::AbstractVector{Float32},
+    charge::AbstractVector{UInt8},
+    params::QuadTuningSearchParameters
 )
-    """
-    Filter quad PSMs based on criteria:
-    - M0/M1 isotopes only
-    - Minimum number of matches
-    - Non-zero abundance
-    """
-    function filter_quad_psms(
-        iso_idx::AbstractVector{UInt8},
-        n_matches::AbstractVector{UInt8},
-        weight::AbstractVector{Float32}, 
-        charge::AbstractVector{UInt8},
-        params::QuadTuningSearchParameters
-    )
-        n = length(iso_idx)
-        mask = Vector{Bool}(undef, n)
-        @inbounds for i in 1:n
-            mask[i] = (
-                (iso_idx[i] < 3) &&  # M0/M1 only
-                (n_matches[i] >= params.min_quad_tuning_fragments) &&  # Min matches
-                (weight[i] > 0)  &&
-                (charge[i] == 2)# Non-zero abundance
-            )
-        end
-        return mask
-    end
-    
-    function getCharges(prec_charges::AbstractVector{UInt8}, precursor_idx::AbstractVector{UInt32})
-        charges = zeros(UInt8, length(precursor_idx))
-        for i in range(1, length(precursor_idx))
-            charges[i] = prec_charges[precursor_idx[i]]
-        end
-        return charges
-    end
-    
-    # Get initial PSMs - single library search processes all scans
-    psms = library_search(spectra, search_context, params, ms_file_idx)
-    
-    if isempty(psms)
-        @user_warn "QuadTuningSearch: No PSMs found from library search"
-        return DataFrame(
-            scan_idx = Int64[],
-            precursor_idx = UInt32[],
-            center_mz = Union{Float32, Missing}[],
-            δ = Union{Float32, Missing}[],
-            yt = Union{Float32, Missing}[],
-            x0 = Union{Float32, Missing}[],
-            x1 = Union{Float32, Missing}[],
-            prec_charge = Union{UInt8, Missing}[],
-            half_width_mz = Float32[]
+    n = length(iso_idx)
+    mask = Vector{Bool}(undef, n)
+    @inbounds for i in 1:n
+        mask[i] = (
+            (iso_idx[i] < 3) &&  # M0/M1 only
+            (n_matches[i] >= params.min_quad_tuning_fragments) &&  # Min matches
+            (weight[i] > 0)  &&
+            (charge[i] == 2)# Non-zero abundance
         )
     end
-
-    # Process PSMs
-    processed_psms = process_initial_psms(psms, spectra, search_context)
-    
-    # Get scan mapping and perform quad search
-    scan_idx_to_prec_idx = get_scan_to_prec_idx(
-        processed_psms[!, :scan_idx],
-        processed_psms[!, :precursor_idx],
-        getCenterMzs(spectra),
-        getIsolationWidthMzs(spectra)
-    )
-    
-    quad_psms = perform_quad_transmission_search(
-        spectra,
-        results,
-        scan_idx_to_prec_idx,
-        search_context,
-        params,
-        ms_file_idx
-    )
-    
-    if isempty(quad_psms)
-        return DataFrame(
-            scan_idx = Int64[],
-            precursor_idx = UInt32[],
-            center_mz = Union{Float32, Missing}[],
-            δ = Union{Float32, Missing}[],
-            yt = Union{Float32, Missing}[],
-            x0 = Union{Float32, Missing}[],
-            x1 = Union{Float32, Missing}[],
-            prec_charge = Union{UInt8, Missing}[],
-            half_width_mz = Float32[]
-        )
-    end
-    
-    # Filter and process results
-    quad_psms[!,:charge] = getCharges(getCharge(getPrecursors(getSpecLib(search_context))), quad_psms[!,:precursor_idx])
-    quad_psms = quad_psms[
-        filter_quad_psms(
-            quad_psms[!,:iso_idx],
-            quad_psms[!,:n_matches],
-            quad_psms[!,:weight],
-            quad_psms[!,:charge],
-            params
-        ),:]
-    
-    processed_psms = process_quad_results(
-        quad_psms,
-        getPrecursors(getSpecLib(search_context)),
-        getIsoSplines(first(getSearchData(search_context)))
-    )
-    processed_psms[!,:half_width_mz] = zeros(Float32, size(processed_psms, 1))
-    for (i, scan_idx) in enumerate(processed_psms[!,:scan_idx])
-        processed_psms[i,:half_width_mz] = getIsolationWidthMz(spectra, scan_idx)/2
-    end
-    keep_data = zeros(Bool, size(processed_psms, 1))
-    for i in range(1, size(processed_psms, 1))
-        x0 = processed_psms[i,:x0]::Float32
-        hw = processed_psms[i,:half_width_mz]::Float32
-        if x0 > zero(Float32)
-            if (x0 - hw) < (NEUTRON/4 + 0.1)
-                keep_data[i] = true
-            end
-        else
-            if (abs(x0) - hw) < (NEUTRON/2 + 0.1)
-                keep_data[i] = true
-            end
-        end
-    end
-    processed_psms = processed_psms[keep_data,:]
-    
-    # Check if we have sufficient PSMs for quad modeling
-    required_psms = params.min_quad_tuning_psms_per_thompson * window_width
-    if nrow(processed_psms) < required_psms
-        @user_warn "QuadTuningSearch: Insufficient PSMs for quad modeling ($(nrow(processed_psms)) < $(Int(required_psms)) required for $(window_width) Da window). Consider lowering thresholds or using more data."
-    end
-
-    return processed_psms
+    return mask
 end
 
+function getCharges(prec_charges::AbstractVector{UInt8}, precursor_idx::AbstractVector{UInt32})
+    charges = zeros(UInt8, length(precursor_idx))
+    for i in range(1, length(precursor_idx))
+        charges[i] = prec_charges[precursor_idx[i]]
+    end
+    return charges
+end
+
+#==========================================================
+Quad Scan Priority Index (moved from separate file to ensure loading)
+==========================================================#
+
+"""
+    QuadScanPriorityIndex
+
+Contains prioritized scan indices for memory-efficient quadrupole tuning.
+Only stores metadata, never loads actual scan data until needed.
+"""
+struct QuadScanPriorityIndex
+    scan_indices::Vector{Int32}        # Ordered scan indices by priority
+    center_mz_values::Vector{Float32}  # Center m/z values for each scan
+    tic_values::Vector{Float32}        # TIC values for each scan
+    ms_orders::Vector{UInt8}           # MS order for verification
+    total_ms2_count::Int32             # Total MS2 scans
+    n_mz_bins::Int32                   # Number of m/z bins used
+end
+
+"""
+    build_quad_scan_priority_index(spectra::MassSpecData;
+                                   n_mz_bins::Int = 20,
+                                   target_ms_order::UInt8 = UInt8(2))::QuadScanPriorityIndex
+
+Build prioritized scan index for quadrupole tuning without loading scan data.
+"""
+function build_quad_scan_priority_index(
+    spectra::MassSpecData;
+    n_mz_bins::Int = 20,
+    target_ms_order::UInt8 = UInt8(2)
+)::QuadScanPriorityIndex
+
+    # Step 1: Extract metadata (NO peak data loaded)
+    center_mz_values = getCenterMzs(spectra)
+    tic_values = getTICs(spectra)
+    ms_orders = getMsOrders(spectra)
+
+    # Step 2: Filter for MS2 scans
+
+    ms2_mask = ms_orders .== target_ms_order
+    ms2_indices = findall(ms2_mask)
+    n_ms2 = length(ms2_indices)
+
+    if n_ms2 == 0
+        return QuadScanPriorityIndex(
+            Int32[], Float32[], Float32[], UInt8[],
+            Int32(0), Int32(n_mz_bins)
+        )
+    end
+
+    # Step 3: Create center m/z bins
+
+    ms2_center_mz = center_mz_values[ms2_indices]
+    ms2_tic = tic_values[ms2_indices]
+
+    # Filter out missing values
+    valid_mask = .!ismissing.(ms2_center_mz)
+    if !all(valid_mask)
+        ms2_indices = ms2_indices[valid_mask]
+        ms2_center_mz = ms2_center_mz[valid_mask]
+        ms2_tic = ms2_tic[valid_mask]
+        n_ms2 = length(ms2_indices)
+    end
+
+    if n_ms2 == 0
+        return QuadScanPriorityIndex(
+            Int32[], Float32[], Float32[], UInt8[],
+            Int32(0), Int32(n_mz_bins)
+        )
+    end
+
+    mz_min, mz_max = extrema(ms2_center_mz)
+
+    # Handle edge case of single m/z value
+    if mz_min == mz_max
+        priority_order = Int32.(ms2_indices[sortperm(ms2_tic, rev=true)])
+        return QuadScanPriorityIndex(
+            priority_order,
+            center_mz_values[priority_order],
+            tic_values[priority_order],
+            ms_orders[priority_order],
+            Int32(n_ms2),
+            Int32(1)
+        )
+    end
+
+    bin_width = (mz_max - mz_min) / n_mz_bins
+
+    # Assign each MS2 scan to a bin
+    bin_assignments = zeros(Int, n_ms2)
+    for (i, center_mz) in enumerate(ms2_center_mz)
+        bin_idx = min(max(1, ceil(Int, (center_mz - mz_min) / bin_width)), n_mz_bins)
+        bin_assignments[i] = bin_idx
+    end
+
+    # Step 4: Sort within bins by TIC and create priority order
+
+    # Group scans by bin
+    bins = [Int32[] for _ in 1:n_mz_bins]
+    for (i, bin_idx) in enumerate(bin_assignments)
+        push!(bins[bin_idx], ms2_indices[i])
+    end
+
+    # Sort each bin by TIC (descending - highest TIC first)
+    for bin in bins
+        if !isempty(bin)
+            sort!(bin, by=idx -> tic_values[idx], rev=true)
+        end
+    end
+
+    # Round-robin selection from bins
+    priority_order = Int32[]
+    max_bin_size = maximum(length.(bins))
+
+    for round in 1:max_bin_size
+        for bin_idx in 1:n_mz_bins
+            if round <= length(bins[bin_idx])
+                push!(priority_order, bins[bin_idx][round])
+            end
+        end
+    end
+
+
+    return QuadScanPriorityIndex(
+        priority_order,
+        center_mz_values[priority_order],
+        tic_values[priority_order],
+        ms_orders[priority_order],
+        Int32(n_ms2),
+        Int32(n_mz_bins)
+    )
+end
+
+"""
+    progressive_quad_psm_collection!(scan_index::QuadScanPriorityIndex,
+                                    spectra::MassSpecData,
+                                    search_context::SearchContext,
+                                    params::QuadTuningSearchParameters,
+                                    ms_file_idx::Int64;
+                                    initial_percent::Float64 = 10.0,
+                                    min_psms_required::Int = 1000,
+                                    verbose::Bool = true)
+
+Progressively collect PSMs using sampling without replacement for quadrupole tuning.
+"""
+function progressive_quad_psm_collection!(
+    scan_index::QuadScanPriorityIndex,
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    params::QuadTuningSearchParameters,
+    ms_file_idx::Int64;
+    min_psms_required::Int,    # This will be calculated dynamically based on window width
+    verbose::Bool = true
+)
+    total_scans = length(scan_index.scan_indices)
+    scans_processed = 0  # Track position in priority vector
+    iteration = 0
+    converged = false
+    all_psms = DataFrame()  # Accumulate PSMs across iterations
+
+    if total_scans == 0
+        return all_psms, false, 0
+    end
+
+    # Calculate sampling parameters from Quad tuning configuration
+    initial_percent = params.initial_percent
+
+    # Calculate sampling schedule (percentages of total)
+    sample_schedule = Float64[]
+    remaining = 100.0
+    current_chunk = initial_percent
+    while remaining > 0
+        chunk = min(current_chunk, remaining)
+        push!(sample_schedule, chunk)
+        remaining -= chunk
+        current_chunk *= 2  # Double the chunk size each time
+    end
+
+
+    # Progressive sampling loop - sampling WITHOUT replacement
+    for chunk_percent in sample_schedule
+        iteration += 1
+
+        # Calculate range for THIS iteration (no overlap with previous)
+        n_scans_this_chunk = ceil(Int, total_scans * chunk_percent / 100)
+        start_idx = scans_processed + 1
+        end_idx = min(scans_processed + n_scans_this_chunk, total_scans)
+
+        if start_idx > total_scans
+            break
+        end
+
+        # Extract scan indices for this chunk (NEVER re-process previous scans)
+        chunk_scan_indices = scan_index.scan_indices[start_idx:end_idx]
+
+        # Collect PSMs for this chunk - this is where scan data is FIRST loaded
+        chunk_psms = collect_quad_psms_for_scans(
+            chunk_scan_indices,
+            spectra,
+            search_context,
+            params,
+            ms_file_idx
+        )
+
+        # Combine with previous PSMs (accumulate across iterations)
+        if !isempty(chunk_psms)
+            all_psms = isempty(all_psms) ? chunk_psms : vcat(all_psms, chunk_psms)
+        end
+
+        total_psms = nrow(all_psms)
+        # Check convergence
+        if total_psms >= min_psms_required
+            converged = true
+            break
+        end
+
+        # Update position in priority vector (for next iteration)
+        scans_processed = end_idx
+    end
+
+
+    return all_psms, converged, scans_processed
+end
+
+"""
+    collect_quad_psms_for_scans(scan_indices::Vector{Int32},
+                               spectra::MassSpecData,
+                               search_context::SearchContext,
+                               params::QuadTuningSearchParameters,
+                               ms_file_idx::Int64)::DataFrame
+
+Collect PSMs from specific scan indices for quadrupole tuning.
+This is where scan data is FIRST accessed after index building.
+"""
+function collect_quad_psms_for_scans(
+    scan_indices::Vector{Int32},
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    params::QuadTuningSearchParameters,
+    ms_file_idx::Int64
+)::DataFrame
+
+    # Create indexed view that only exposes the target scans
+    indexed_spectra = IndexedMassSpecData(spectra, scan_indices)
+
+    # Library search now only processes the selected scans (massive performance improvement!)
+    psms = library_search(indexed_spectra, search_context, params, ms_file_idx)
+
+    # Process PSMs using indexed spectra (no filtering needed!)
+    if !isempty(psms)
+        processed_psms = process_initial_psms(psms, indexed_spectra, search_context)
+
+        # CRITICAL: Map virtual scan indices back to actual scan indices
+        # The library search used indices 1, 2, 3... but we need the actual scan indices
+        if !isempty(processed_psms) && "scan_idx" in names(processed_psms)
+            # Create mapping from virtual to actual scan indices
+            scan_mapping = create_scan_mapping(indexed_spectra)
+
+            # Map all scan_idx values from virtual to actual
+            processed_psms[!, :scan_idx] = [scan_mapping[Int32(virtual_idx)] for virtual_idx in processed_psms[!, :scan_idx]]
+        end
+
+        # Pre-filter for charge==2 peptides to get accurate PSM counts
+        # This matches the filter that will be applied later in process_quad_pipeline
+        if !isempty(processed_psms) && "precursor_idx" in names(processed_psms)
+            # Extract charge states
+            charges = getCharges(getCharge(getPrecursors(getSpecLib(search_context))), processed_psms[!, :precursor_idx])
+            processed_psms[!, :charge] = charges
+
+            # Filter for charge==2 only (matching filter_quad_psms criteria)
+            charge_2_mask = charges .== 2
+            processed_psms = processed_psms[charge_2_mask, :]
+        end
+
+        return processed_psms
+    end
+
+    return DataFrame()
+end
 
 """
     process_initial_psms(psms::DataFrame, spectra::MassSpecData,
@@ -950,6 +1095,115 @@ function plot_quad_model(quad_model::QuadTransmissionModel, window_width::Float6
     return p
 end
 
+
+"""
+    process_quad_pipeline(initial_psms::DataFrame,
+                         spectra::MassSpecData,
+                         search_context::SearchContext,
+                         results::QuadTuningSearchResults,
+                         params::QuadTuningSearchParameters,
+                         ms_file_idx::Int64,
+                         window_width::Float64)::DataFrame
+
+Process initial PSMs through the complete quadrupole analysis pipeline.
+
+# Arguments
+- `initial_psms`: Initial PSMs from library search
+- `spectra`: MassSpecData object
+- `search_context`: SearchContext for analysis
+- `results`: QuadTuningSearchResults for storing intermediate data
+- `params`: Quad tuning parameters
+- `ms_file_idx`: File index
+- `window_width`: Isolation window width
+
+# Process
+1. Get scan mapping for quadrupole transmission search
+2. Perform quad transmission search with deconvolution
+3. Filter and process results for quad modeling
+4. Return processed DataFrame ready for model fitting
+
+# Returns
+Processed DataFrame containing quad transmission data
+"""
+function process_quad_pipeline(
+    initial_psms::DataFrame,
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    results::QuadTuningSearchResults,
+    params::QuadTuningSearchParameters,
+    ms_file_idx::Int64,
+    window_width::Float64
+)::DataFrame
+
+    # Get scan mapping and perform quad search
+    scan_idx_to_prec_idx = get_scan_to_prec_idx(
+        UInt32.(initial_psms[!, :scan_idx]),
+        UInt32.(initial_psms[!, :precursor_idx]),
+        getCenterMzs(spectra),
+        getIsolationWidthMzs(spectra)
+    )
+
+    quad_psms = perform_quad_transmission_search(
+        spectra,
+        results,
+        scan_idx_to_prec_idx,
+        search_context,
+        params,
+        ms_file_idx
+    )
+
+    if isempty(quad_psms)
+        return DataFrame(
+            scan_idx = Int64[],
+            precursor_idx = UInt32[],
+            center_mz = Union{Float32, Missing}[],
+            δ = Union{Float32, Missing}[],
+            yt = Union{Float32, Missing}[],
+            x0 = Union{Float32, Missing}[],
+            x1 = Union{Float32, Missing}[],
+            prec_charge = Union{UInt8, Missing}[],
+            half_width_mz = Float32[]
+        )
+    end
+
+    # Filter and process results
+    quad_psms[!,:charge] = getCharges(getCharge(getPrecursors(getSpecLib(search_context))), quad_psms[!,:precursor_idx])
+    quad_psms = quad_psms[
+        filter_quad_psms(
+            quad_psms[!,:iso_idx],
+            quad_psms[!,:n_matches],
+            quad_psms[!,:weight],
+            quad_psms[!,:charge],
+            params
+        ),:]
+
+    processed_psms = process_quad_results(
+        quad_psms,
+        getPrecursors(getSpecLib(search_context)),
+        getIsoSplines(first(getSearchData(search_context)))
+    )
+    processed_psms[!,:half_width_mz] = zeros(Float32, size(processed_psms, 1))
+    for (i, scan_idx) in enumerate(processed_psms[!,:scan_idx])
+        processed_psms[i,:half_width_mz] = getIsolationWidthMz(spectra, scan_idx)/2
+    end
+    keep_data = zeros(Bool, size(processed_psms, 1))
+    for i in range(1, size(processed_psms, 1))
+        x0 = processed_psms[i,:x0]::Float32
+        hw = processed_psms[i,:half_width_mz]::Float32
+        if x0 > zero(Float32)
+            if (x0 - hw) < (NEUTRON/4 + 0.1)
+                keep_data[i] = true
+            end
+        else
+            if (abs(x0) - hw) < (NEUTRON/2 + 0.1)
+                keep_data[i] = true
+            end
+        end
+    end
+    processed_psms = processed_psms[keep_data,:]
+
+    return processed_psms
+end
 
 """
     fit_quad_model(psms::DataFrame, window_width::Float64) -> QuadTransmissionModel

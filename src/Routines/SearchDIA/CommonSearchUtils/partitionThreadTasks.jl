@@ -112,3 +112,152 @@ function partitionScansToThreadsMS1(spectra::AbstractArray,
     end
     return thread_tasks, total_peaks
 end
+"""
+Specialized partitioning for IndexedMassSpecData MS2 scans.
+Returns virtual indices (1, 2, 3...) properly distributed to threads based on
+the underlying scan properties (RT, m/z) but respecting the IndexedMassSpecData view.
+"""
+function partitionScansToThreadsIndexed(
+    spectra::AbstractArray,
+    rt::AbstractVector{Float32},
+    prec_mz::AbstractVector{Union{Missing, Float32}},
+    ms_order::AbstractVector{UInt8},
+    actual_scan_indices::AbstractVector{Int32},
+    n_threads::Int,
+    tasks_per_thread::Int
+)
+    total_peaks = sum(length.(spectra))
+    n_tasks = n_threads * tasks_per_thread
+    peaks_per_task = total_peaks ÷ n_tasks
+
+    function round_float32_alt(x::Float32, decimals::Int)::Float32
+        Float32(round(x; digits=decimals))
+    end
+    function round_float32_alt(x::Missing, decimals::Int)::Float32
+        zero(Float32)
+    end
+
+    # Create virtual indices for MS2 scans only
+    virtual_ms2_indices = Int64[]
+    for i in eachindex(ms_order)
+        if ms_order[i] == 2
+            push!(virtual_ms2_indices, i)  # Virtual index, not actual scan index
+        end
+    end
+
+    @debug_l2 "partitionScansToThreadsIndexed: Found $(length(virtual_ms2_indices)) MS2 scans out of $(length(ms_order)) total"
+
+    if isempty(virtual_ms2_indices)
+        # Return empty thread tasks if no MS2 scans
+        empty_tasks = [[i, Int64[]] for i in 1:n_threads]
+        return empty_tasks, total_peaks
+    end
+
+    # Sort virtual indices by RT, then by m/z within RT bins
+    bin_start, bin_stop = 1, 1
+    for i in 2:length(virtual_ms2_indices)
+        virtual_idx = virtual_ms2_indices[i]
+        start_virtual_idx = virtual_ms2_indices[bin_start]
+        if rt[virtual_idx] - rt[start_virtual_idx] > 1.0f0
+            bin_stop = i - 1
+            # Sort by m/z within this RT bin
+            sort!(@view(virtual_ms2_indices[bin_start:bin_stop]),
+                  by = x -> round_float32_alt(prec_mz[x], 6))
+            bin_start = i
+        end
+    end
+    # Sort final bin
+    bin_stop = length(virtual_ms2_indices)
+    sort!(@view(virtual_ms2_indices[bin_start:bin_stop]),
+          by = x -> round_float32_alt(prec_mz[x], 6))
+
+    # Distribute virtual indices to threads
+    spectra_count = length(virtual_ms2_indices)
+    if spectra_count == 0
+        empty_tasks = [[i, Int64[]] for i in 1:n_threads]
+        return empty_tasks, total_peaks
+    end
+
+    scans_per_thread = max(1, spectra_count ÷ n_threads) + max(n_threads, 10) + 1
+    thread_tasks = [[0, zeros(Int64, scans_per_thread)] for _ in 1:n_threads]
+
+    for (thread_id, task) in enumerate(thread_tasks)
+        task[1] = thread_id
+        n = 1
+        for i in 1:length(task[2])
+            id = n_threads * (i - 1) * 10 + thread_id * 10 - 10 + 1
+            for j in id:(id + 10 - 1)
+                if j <= length(virtual_ms2_indices) && n <= length(task[2])
+                    task[2][n] = virtual_ms2_indices[j]  # These are virtual indices
+                    n += 1
+                else
+                    break
+                end
+            end
+            if id > length(virtual_ms2_indices)
+                break
+            end
+        end
+        # Resize to actual used length
+        task[2] = task[2][1:(n-1)]
+    end
+
+    @debug_l2 "partitionScansToThreadsIndexed: Distributed $(spectra_count) scans across $(n_threads) threads"
+    return thread_tasks, total_peaks
+end
+
+"""
+Specialized partitioning for IndexedMassSpecData MS1 scans.
+"""
+function partitionScansToThreadsMS1Indexed(
+    spectra::AbstractArray,
+    rt::AbstractVector{Float32},
+    prec_mz::AbstractVector{Union{Missing, Float32}},
+    ms_order::AbstractVector{UInt8},
+    actual_scan_indices::AbstractVector{Int32},
+    n_threads::Int,
+    tasks_per_thread::Int
+)
+    total_peaks = sum(length.(spectra))
+
+    # Create virtual indices for MS1 scans only
+    virtual_ms1_indices = Int64[]
+    for i in eachindex(ms_order)
+        if ms_order[i] == 1
+            push!(virtual_ms1_indices, i)  # Virtual index
+        end
+    end
+
+    if isempty(virtual_ms1_indices)
+        empty_tasks = [[i, Int64[]] for i in 1:n_threads]
+        return empty_tasks, total_peaks
+    end
+
+    # Simple distribution for MS1 scans
+    spectra_count = length(virtual_ms1_indices)
+    scans_per_thread = max(1, spectra_count ÷ n_threads) + max(n_threads, 10) + 1
+    thread_tasks = [[0, zeros(Int64, scans_per_thread)] for _ in 1:n_threads]
+
+    for (thread_id, task) in enumerate(thread_tasks)
+        task[1] = thread_id
+        n = 1
+        for i in 1:length(task[2])
+            id = n_threads * (i - 1) * 10 + thread_id * 10 - 10 + 1
+            for j in id:(id + 10 - 1)
+                if j <= length(virtual_ms1_indices) && n <= length(task[2])
+                    task[2][n] = virtual_ms1_indices[j]  # Virtual indices
+                    n += 1
+                else
+                    break
+                end
+            end
+            if id > length(virtual_ms1_indices)
+                break
+            end
+        end
+        # Resize to actual used length
+        task[2] = task[2][1:(n-1)]
+    end
+
+    return thread_tasks, total_peaks
+end

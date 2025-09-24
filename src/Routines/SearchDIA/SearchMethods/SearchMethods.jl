@@ -73,7 +73,9 @@ function execute_search(
             catch
                 "file_$ms_file_idx"
             end
-            @user_warn "File $ms_file_idx ($file_name) failed during $(typeof(search_type)) processing: $e"
+            bt = catch_backtrace()
+            @user_error "File $ms_file_idx ($file_name) failed during $(typeof(search_type)) processing"
+            @user_error sprint(showerror, e, bt)
             mark_file_as_failed_if_needed!(search_context, ms_file_idx, e)
             n_failed += 1
             # Continue with next file instead of crashing entire search
@@ -162,8 +164,20 @@ function handle_search_error!(search_context::SearchContext, ms_file_idx::Int64,
     end
     
     reason = "$method_name failed: $(typeof(error))"
+
+    # Mark failed in both tracking systems (SearchContext set + Arrow reference flag)
     markFileFailed!(search_context, ms_file_idx, reason)
-    @user_warn "$method_name failed for MS data file: $file_name. Error type: $(typeof(error)). File marked as failed."
+    try
+        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
+    catch
+        # Fallback for legacy contexts
+        mark_file_as_failed_if_needed!(search_context, ms_file_idx, reason)
+    end
+
+    # Log full error with stacktrace for easier debugging
+    bt = catch_backtrace()
+    @user_error "$method_name failed for MS data file: $file_name"
+    @user_error sprint(showerror, error, bt)
     
     # Create fallback results
     fallback_function(results, ms_file_idx)
@@ -234,7 +248,7 @@ function partition_scans(ms_table, n_threads; ms_order_select = 2)
         n_threads,
         1
     )
-    else   
+    else
     thread_tasks, total_peaks = partitionScansToThreadsMS1(
         getMzArrays(ms_table),
         getRetentionTimes(ms_table),
@@ -244,6 +258,58 @@ function partition_scans(ms_table, n_threads; ms_order_select = 2)
         1
     )
     end
+    return thread_tasks
+end
+
+"""
+Specialized partition_scans for IndexedMassSpecData.
+This function handles the proper mapping between virtual indices (used by library search)
+and actual scan indices (stored in IndexedMassSpecData.scan_indices).
+"""
+function partition_scans(indexed_data::IndexedMassSpecData, n_threads; ms_order_select = 2)
+
+    # Get properties for the actual scan indices
+    actual_scan_indices = indexed_data.scan_indices
+    original_data = indexed_data.original_data
+
+    # Extract properties using actual scan indices
+    rt_values = Float32[getRetentionTime(original_data, actual_idx) for actual_idx in actual_scan_indices]
+    center_mz_values = Union{Missing, Float32}[getCenterMz(original_data, actual_idx) for actual_idx in actual_scan_indices]
+    ms_orders = UInt8[getMsOrder(original_data, actual_idx) for actual_idx in actual_scan_indices]
+    mz_arrays = [getMzArray(original_data, actual_idx) for actual_idx in actual_scan_indices]
+
+    @debug_l2 "partition_scans(IndexedMassSpecData): Processing $(length(actual_scan_indices)) scans"
+    @debug_l2 "partition_scans(IndexedMassSpecData): RT range: $(minimum(rt_values)) - $(maximum(rt_values))"
+
+    # Use the existing partitioning logic but with extracted data
+    if ms_order_select == 2
+        thread_tasks, total_peaks = partitionScansToThreadsIndexed(
+            mz_arrays,
+            rt_values,
+            center_mz_values,
+            ms_orders,
+            actual_scan_indices,
+            n_threads,
+            1
+        )
+    else
+        thread_tasks, total_peaks = partitionScansToThreadsMS1Indexed(
+            mz_arrays,
+            rt_values,
+            center_mz_values,
+            ms_orders,
+            actual_scan_indices,
+            n_threads,
+            1
+        )
+    end
+
+    @debug_l2 "partition_scans(IndexedMassSpecData): Created $(length(thread_tasks)) thread tasks"
+    for (i, task) in enumerate(thread_tasks)
+        task_range = last(task)
+        @debug_l2 "  Thread $i: $(length(task_range)) scans"
+    end
+
     return thread_tasks
 end
 
