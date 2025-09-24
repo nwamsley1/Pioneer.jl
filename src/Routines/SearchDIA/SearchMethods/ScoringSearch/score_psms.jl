@@ -249,12 +249,13 @@ function create_default_advanced_xgboost_config()
         :xgboost,
         ADVANCED_FEATURE_SET,
         Dict(
-            :colsample_bytree => 0.5,
-            :min_child_weight => 500,
-            :gamma => 0.5,
-            :subsample => 0.25,
+            :feature_fraction => 0.5,
+            :min_data_in_leaf => 500,
+            :min_gain_to_split => 0.5,
+            :bagging_fraction => 0.25,
             :max_depth => 10,
-            :eta => 0.05,
+            :num_leaves => 63,
+            :learning_rate => 0.05,
             :iter_scheme => [100, 200, 200]
         )
     )
@@ -343,12 +344,13 @@ function train_xgboost_model_in_memory(
         best_psms, features, match_between_runs;
         max_q_value_xgboost_rescore, max_q_value_xgboost_mbr_rescore,
         min_PEP_neg_threshold_xgboost_rescore,
-        colsample_bytree = get(hp, :colsample_bytree, 0.5),
-        min_child_weight = get(hp, :min_child_weight, 500),
-        gamma = get(hp, :gamma, 0.5),
-        subsample = get(hp, :subsample, 0.25),
+        feature_fraction = get(hp, :feature_fraction, 0.5),
+        min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
+        min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
+        bagging_fraction = get(hp, :bagging_fraction, 0.25),
         max_depth = get(hp, :max_depth, 10),
-        eta = get(hp, :eta, 0.05),
+        num_leaves = get(hp, :num_leaves, 63),
+        learning_rate = get(hp, :learning_rate, 0.05),
         iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
         show_progress = show_progress
     )
@@ -740,19 +742,20 @@ function score_precursor_isotope_traces_out_of_memory!(
     # Hyperparameters from model_config
     hp = model_config.hyperparams
     models = sort_of_percolator_out_of_memory!(
-                            best_psms, 
+                            best_psms,
                             file_paths,
                             features,
                             match_between_runs;
                             max_q_value_xgboost_rescore,
                             max_q_value_xgboost_mbr_rescore,
                             min_PEP_neg_threshold_xgboost_rescore,
-                            colsample_bytree = get(hp, :colsample_bytree, 0.5), 
-                            min_child_weight = get(hp, :min_child_weight, 500), 
-                            gamma = get(hp, :gamma, 0.5),
-                            subsample = get(hp, :subsample, 0.25), 
+                            feature_fraction = get(hp, :feature_fraction, 0.5),
+                            min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
+                            min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
+                            bagging_fraction = get(hp, :bagging_fraction, 0.25),
                             max_depth = get(hp, :max_depth, 10),
-                            eta = get(hp, :eta, 0.05), 
+                            num_leaves = get(hp, :num_leaves, 63),
+                            learning_rate = get(hp, :learning_rate, 0.05),
                             iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
                             print_importance = false);
     return models;#best_psms

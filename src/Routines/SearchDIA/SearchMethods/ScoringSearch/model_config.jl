@@ -162,12 +162,13 @@ function create_model_configurations()
             :xgboost,
             REDUCED_FEATURE_SET,
             Dict(
-                :colsample_bytree => 0.8,
-                :min_child_weight => 20,
-                :gamma => 0.1,
-                :subsample => 0.8,
+                :feature_fraction => 0.8,
+                :min_data_in_leaf => 20,
+                :min_gain_to_split => 0.1,
+                :bagging_fraction => 0.8,
                 :max_depth => 4,
-                :eta => 0.1,
+                :num_leaves => 63,
+                :learning_rate => 0.1,
                 :iter_scheme => [150, 300, 300]
             )
         ),
@@ -178,12 +179,13 @@ function create_model_configurations()
             :xgboost,
             ADVANCED_FEATURE_SET,
             Dict(
-                :colsample_bytree => 0.5,
-                :min_child_weight => 5,
-                :gamma => 1.0,
-                :subsample => 0.25,
+                :feature_fraction => 0.5,
+                :min_data_in_leaf => 5,
+                :min_gain_to_split => 1.0,
+                :bagging_fraction => 0.25,
                 :max_depth => 10,
-                :eta => 0.05,
+                :num_leaves => 63,
+                :learning_rate => 0.05,
                 :iter_scheme => [100, 200, 200]
             )
         ),
@@ -223,12 +225,13 @@ function create_model_configurations()
             :xgboost,
             MINIMAL_FEATURE_SET,
             Dict(
-                :colsample_bytree => 0.8,
-                :min_child_weight => 20,
-                :gamma => 0.1,
-                :subsample => 0.8,
+                :feature_fraction => 0.8,
+                :min_data_in_leaf => 20,
+                :min_gain_to_split => 0.1,
+                :bagging_fraction => 0.8,
                 :max_depth => 4,
-                :eta => 0.1,
+                :num_leaves => 63,
+                :learning_rate => 0.1,
                 :iter_scheme => [150, 300, 300]
             )
         )

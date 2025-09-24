@@ -144,18 +144,19 @@ function assign_pair_ids(
     return pair_ids, last_pair_id
 end
 
-function sort_of_percolator_in_memory!(psms::DataFrame, 
+function sort_of_percolator_in_memory!(psms::DataFrame,
                   features::Vector{Symbol},
                   match_between_runs::Bool = true;
                   max_q_value_xgboost_rescore::Float32 = 0.01f0,
                   max_q_value_xgboost_mbr_rescore::Float32 = 0.20f0,
                   min_PEP_neg_threshold_xgboost_rescore = 0.90f0,
-                  colsample_bytree::Float64 = 0.5,
-                  eta::Float64 = 0.15,
-                  min_child_weight::Int = 1,
-                  subsample::Float64 = 0.5,
-                  gamma::Float64 = 0.0,
+                  feature_fraction::Float64 = 0.5,
+                  learning_rate::Float64 = 0.15,
+                  min_data_in_leaf::Int = 1,
+                  bagging_fraction::Float64 = 0.5,
+                  min_gain_to_split::Float64 = 0.0,
                   max_depth::Int = 10,
+                  num_leaves::Int = 63,
                   iter_scheme::Vector{Int} = [100, 200, 200],
                   print_importance::Bool = false,
                   show_progress::Bool = true,
@@ -240,12 +241,13 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             train_feats = itr < mbr_start_iter ? non_mbr_features : features
             
             bst = train_booster(psms_train_itr, train_feats, num_round;
-                               colsample=colsample_bytree,
-                               eta=eta,
-                               min_child_weight=min_child_weight,
-                               subsample=subsample,
-                               gamma=gamma,
-                               max_depth=max_depth)
+                               feature_fraction=feature_fraction,
+                               learning_rate=learning_rate,
+                               min_data_in_leaf=min_data_in_leaf,
+                               bagging_fraction=bagging_fraction,
+                               min_gain_to_split=min_gain_to_split,
+                               max_depth=max_depth,
+                               num_leaves=num_leaves)
                                
             fold_models[itr] = bst
 
@@ -322,19 +324,20 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     return models
 end
 
-function sort_of_percolator_out_of_memory!(psms::DataFrame, 
+function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     file_paths::Vector{String},
                     features::Vector{Symbol},
-                    match_between_runs::Bool = true; 
+                    match_between_runs::Bool = true;
                     max_q_value_xgboost_rescore::Float32 = 0.01f0,
                     max_q_value_xgboost_mbr_rescore::Float32 = 0.20f0,
                     min_PEP_neg_threshold_xgboost_rescore::Float32 = 0.90f0,
-                    colsample_bytree::Float64 = 0.5, 
-                    eta::Float64 = 0.15, 
-                    min_child_weight::Int = 1, 
-                    subsample::Float64 = 0.5, 
-                    gamma::Float64 = 0.0, 
+                    feature_fraction::Float64 = 0.5,
+                    learning_rate::Float64 = 0.15,
+                    min_data_in_leaf::Int = 1,
+                    bagging_fraction::Float64 = 0.5,
+                    min_gain_to_split::Float64 = 0.0,
                     max_depth::Int = 10,
+                    num_leaves::Int = 63,
                     iter_scheme::Vector{Int} = [100, 200, 200],
                     print_importance::Bool = false)
 
@@ -554,12 +557,13 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             #Train a model on the n-1 training folds.
             train_feats = itr < length(iter_scheme) ? non_mbr_features : features
             bst = train_booster(psms_train_itr, train_feats, num_round;
-                               colsample=colsample_bytree,
-                               eta=eta,
-                               min_child_weight=min_child_weight,
-                               subsample=subsample,
-                               gamma=gamma,
-                               max_depth=max_depth)
+                               feature_fraction=feature_fraction,
+                               learning_rate=learning_rate,
+                               min_data_in_leaf=min_data_in_leaf,
+                               bagging_fraction=bagging_fraction,
+                               min_gain_to_split=min_gain_to_split,
+                               max_depth=max_depth,
+                               num_leaves=num_leaves)
             if !haskey(models, test_fold_idx)
                 insert!(
                     models,
@@ -639,23 +643,24 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 end
 
 function train_booster(psms::AbstractDataFrame, features, num_round;
-                       colsample::Float64,
-                       eta::Float64,
-                       min_child_weight::Int,
-                       subsample::Float64,
-                       gamma::Float64,
-                       max_depth::Int)
+                       feature_fraction::Float64,
+                       learning_rate::Float64,
+                       min_data_in_leaf::Int,
+                       bagging_fraction::Float64,
+                       min_gain_to_split::Float64,
+                       max_depth::Int,
+                       num_leaves::Int)
 
     classifier = build_lightgbm_classifier(
         num_iterations = num_round,
-        max_depth = -1,#max_depth,
-        learning_rate = eta,
-        num_leaves = 63,
-        feature_fraction = colsample,
-        bagging_fraction = subsample,
-        bagging_freq = subsample < 1 ? 1 : 0,
-        min_child_weight = 200,#min_child_weight,
-        min_gain_to_split = 0.0#gamma,
+        max_depth = max_depth,
+        learning_rate = learning_rate,
+        num_leaves = num_leaves,
+        feature_fraction = feature_fraction,
+        bagging_fraction = bagging_fraction,
+        bagging_freq = bagging_fraction < 1 ? 1 : 0,
+        min_data_in_leaf = min_data_in_leaf,
+        min_gain_to_split = min_gain_to_split,
     )
     feature_frame = psms[:, features]
     return fit_lightgbm_model(classifier, feature_frame, psms.target; positive_label=true)
