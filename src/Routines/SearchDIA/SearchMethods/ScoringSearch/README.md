@@ -106,8 +106,8 @@ score_precursor_isotope_traces(
     precursors,
     match_between_runs,
     max_q_value_lightgbm_rescore,
-    max_q_value_mbr_rescore,
-    min_PEP_neg_threshold_rescore,
+    max_q_value_mbr_itr,
+    min_PEP_neg_threshold_itr,
     max_psms_in_memory,
     q_value_threshold
 )
@@ -251,8 +251,8 @@ The trained models integrate into the broader ScoringSearch pipeline:
             "max_psms_in_memory": 100000,
             "enable_model_comparison": true,
             "max_q_value_lightgbm_rescore": 0.01,
-            "max_q_value_mbr_rescore": 0.20,
-            "min_PEP_neg_threshold_rescore": 0.90
+            "max_q_value_mbr_itr": 0.20,
+            "min_PEP_neg_threshold_itr": 0.90
         }
     },
     "global_settings": {
@@ -268,6 +268,8 @@ The trained models integrate into the broader ScoringSearch pipeline:
 
 - **max_psms_in_memory**: Determines in-memory vs out-of-memory processing
 - **enable_model_comparison**: Controls automatic model selection for medium datasets
+- **max_q_value_mbr_itr**: Caps MBR transfers admitted to the iterative training (ITR) stage
+- **min_PEP_neg_threshold_itr**: Sets the PEP cutoff for relabeling weak targets as negatives during ITR
 - **q_value_threshold**: Used for model performance evaluation during comparison
 - **match_between_runs**: Enables MBR features and processing
 

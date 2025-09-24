@@ -148,8 +148,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   features::Vector{Symbol},
                   match_between_runs::Bool = true;
                   max_q_value_lightgbm_rescore::Float32 = 0.01f0,
-                  max_q_value_mbr_rescore::Float32 = 0.20f0,
-                  min_PEP_neg_threshold_rescore = 0.90f0,
+                  max_q_value_mbr_itr::Float32 = 0.20f0,
+                  min_PEP_neg_threshold_itr = 0.90f0,
                   feature_fraction::Float64 = 0.5,
                   learning_rate::Float64 = 0.15,
                   min_data_in_leaf::Int = 1,
@@ -234,8 +234,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                                               itr,
                                                               match_between_runs,
                                                               max_q_value_lightgbm_rescore,
-                                                              max_q_value_mbr_rescore,
-                                                              min_PEP_neg_threshold_rescore,
+                                                              max_q_value_mbr_itr,
+                                                              min_PEP_neg_threshold_itr,
                                                               itr >= mbr_start_iter)
 
             train_feats = itr < mbr_start_iter ? non_mbr_features : features
@@ -329,8 +329,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     features::Vector{Symbol},
                     match_between_runs::Bool = true;
                     max_q_value_lightgbm_rescore::Float32 = 0.01f0,
-                    max_q_value_mbr_rescore::Float32 = 0.20f0,
-                    min_PEP_neg_threshold_rescore::Float32 = 0.90f0,
+                    max_q_value_mbr_itr::Float32 = 0.20f0,
+                    min_PEP_neg_threshold_itr::Float32 = 0.90f0,
                     feature_fraction::Float64 = 0.5,
                     learning_rate::Float64 = 0.15,
                     min_data_in_leaf::Int = 1,
@@ -550,8 +550,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                                                 itr,
                                                                 match_between_runs, 
                                                                 max_q_value_lightgbm_rescore,
-                                                                max_q_value_mbr_rescore,
-                                                                min_PEP_neg_threshold_rescore,
+                                                                max_q_value_mbr_itr,
+                                                                min_PEP_neg_threshold_itr,
                                                                 itr >= length(iter_scheme))
             ###################
             #Train a model on the n-1 training folds.
@@ -798,8 +798,8 @@ function get_training_data_for_iteration!(
     itr::Int,
     match_between_runs::Bool,
     max_q_value_lightgbm_rescore::Float32,
-    max_q_value_mbr_rescore::Float32,
-    min_PEP_neg_threshold_rescore::Float32,
+    max_q_value_mbr_itr::Float32,
+    min_PEP_neg_threshold_itr::Float32,
     last_iter::Bool
 )
    
@@ -817,7 +817,7 @@ function get_training_data_for_iteration!(
         PEPs = Vector{Float32}(undef, length(order))
         get_PEP!(sorted_scores, sorted_targets, PEPs; doSort=false)
 
-        idx_cutoff = findfirst(x -> x >= min_PEP_neg_threshold_rescore, PEPs)
+        idx_cutoff = findfirst(x -> x >= min_PEP_neg_threshold_itr, PEPs)
         if !isnothing(idx_cutoff)
             worst_idxs = order[idx_cutoff:end]
             psms_train_itr.target[worst_idxs] .= false
@@ -851,7 +851,7 @@ function get_training_data_for_iteration!(
                 # Take all decoys and targets passing q_thresh (all 0's now) or mbr_q_thresh
                 psms_train_itr = subset(
                     psms_train_itr,
-                    [:target, :q_value, :MBR_is_best_decoy, :MBR_is_missing] => ByRow((t, q, MBR_d, im) -> (!t) || (t && !im && !MBR_d && q <= max_q_value_mbr_rescore))
+                    [:target, :q_value, :MBR_is_best_decoy, :MBR_is_missing] => ByRow((t, q, MBR_d, im) -> (!t) || (t && !im && !MBR_d && q <= max_q_value_mbr_itr))
                 )
             else
                 # Fall back to the standard q-value filtering when no targets pass the threshold.

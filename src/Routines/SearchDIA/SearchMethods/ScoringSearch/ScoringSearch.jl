@@ -57,8 +57,8 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     match_between_runs::Bool
     min_peptides::Int64
     max_q_value_lightgbm_rescore::Float32
-    max_q_value_mbr_rescore::Float32
-    min_PEP_neg_threshold_rescore::Float32
+    max_q_value_mbr_itr::Float32
+    min_PEP_neg_threshold_itr::Float32
     max_MBR_false_transfer_rate::Float32
     q_value_threshold::Float32
     isotope_tracetype::I
@@ -93,8 +93,8 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Bool(global_params.match_between_runs),
             Int64(protein_inference_params.min_peptides),
             Float32(global_params.scoring.q_value_threshold),
-            Float32(ml_params.max_q_value_mbr_rescore),
-            Float32(ml_params.min_PEP_neg_threshold_rescore),
+            Float32(ml_params.max_q_value_mbr_itr),
+            Float32(ml_params.min_PEP_neg_threshold_itr),
             Float32(global_params.scoring.q_value_threshold),
             Float32(global_params.scoring.q_value_threshold),
             isotope_trace_type,
@@ -262,8 +262,8 @@ function summarize_results!(
                 getPrecursors(getSpecLib(search_context)),
                 params.match_between_runs,
                 params.max_q_value_lightgbm_rescore,
-                params.max_q_value_mbr_rescore,
-                params.min_PEP_neg_threshold_rescore,
+                params.max_q_value_mbr_itr,
+                params.min_PEP_neg_threshold_itr,
                 params.max_psms_in_memory,
                 params.q_value_threshold
             )

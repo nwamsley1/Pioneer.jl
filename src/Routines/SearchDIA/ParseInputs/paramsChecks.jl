@@ -237,8 +237,8 @@ function checkParams(json_path::String)
     ml_params = opt_params["machine_learning"]
     check_param(ml_params, "max_psms_in_memory", Integer)
     check_param(ml_params, "min_trace_prob", Real)
-    check_param(ml_params, "max_q_value_mbr_rescore", Real)
-    check_param(ml_params, "min_PEP_neg_threshold_rescore", Real)
+    check_param(ml_params, "max_q_value_mbr_itr", Real)
+    check_param(ml_params, "min_PEP_neg_threshold_itr", Real)
     check_param(ml_params, "spline_points", Integer)
     check_param(ml_params, "interpolation_points", Integer)
 
