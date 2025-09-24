@@ -345,15 +345,15 @@ end
 function train_lightgbm_model_df(feature_data::DataFrame, y::AbstractVector{Bool}, params)
     labels = y .== false  # Invert labels so true indicates a good transfer
     classifier = build_lightgbm_classifier(
-        num_iterations = 100,
-        #max_depth = 3,
-        num_leaves = 15,
-        learning_rate = 0.05,
-        feature_fraction = 0.5,
-        bagging_fraction = 0.25,
+        num_iterations = 100,      # matches EvoTrees nrounds
+        max_depth = 3,             # matches EvoTrees max_depth
+        num_leaves = 8,            # 2^3 for max_depth=3
+        learning_rate = 0.1,       # matches EvoTrees eta
+        feature_fraction = 0.8,    # matches EvoTrees colsample
+        bagging_fraction = 0.5,    # matches EvoTrees rowsample
         bagging_freq = 1,
-        min_data_in_leaf = 200,
-        min_gain_to_split = 0.0,
+        min_data_in_leaf = 1,      # matches EvoTrees min_child_weight
+        min_gain_to_split = 1.0,   # matches EvoTrees gamma
     )
     return fit_lightgbm_model(classifier, feature_data, labels; positive_label=true)
 end
