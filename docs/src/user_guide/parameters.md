@@ -25,8 +25,8 @@ Most parameters should not be changed, but the following may need adjustement.
 
 * `acquisition.quad_transmission.fit_from_data`: Estimate the quad transmission function from the data. Otherwise defaults to symmetric, smooth function. 
 
-* `optimization.machine_learning.max_samples`: This is the maximum number of PSMs to use for training the EvoTrees/XGBoost model. These PSMs need to comfortably fit in memory in addition to the spectral library. As a rule of thumb, 7M rows is about 1GB. At the default maximum of 50M rows, the PSMs table will consume 7GB of memory.
-* During EvoTrees/XGBoost training, any missing feature values are replaced with the column median. If a column is entirely missing, the values are filled with zero of the appropriate type.
+* `optimization.machine_learning.max_samples`: This is the maximum number of PSMs to use for training the LightGBM model. These PSMs need to comfortably fit in memory in addition to the spectral library. As a rule of thumb, 7M rows is about 1GB. At the default maximum of 50M rows, the PSMs table will consume 7GB of memory.
+* During LightGBM training, any missing feature values are replaced with the column median. If a column is entirely missing, the values are filled with zero of the appropriate type.
 
 * `global.isotope_settings.combine_traces`: Some precursors may be split accross different acquisition windows. Pioneer refers to these as seperate isotope traces. When set to true, Pioneer does not distinguish between a precursor's isotope traces. They are combined for scoring and quantitation. With a clever acquisition scheme this can increase the number of data points accross chromatographic peaks. This is recomended only for acquisition windows 2-4 m/z. It should also be combined with `aquisition.quad_transmission.fit_from_data` = true. 
 
@@ -43,7 +43,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | `scoring.q_value_threshold` | Float | Global q-value threshold for filtering results. Also controls false transfer rate of MBR (default: 0.01) |
 | `normalization.n_rt_bins` | Int | Number of retention time bins for quant normalization (default: 100) |
 | `normalization.spline_n_knots` | Int | Number of knots in quant normalization spline (default: 7) |
-| `match_between_runs` | Boolean | Whether to attempt to transfer peptide identifications across runs. Turning this on will add additional features to the EvoTrees/XGBoost model (default: true) |
+| `match_between_runs` | Boolean | Whether to attempt to transfer peptide identifications across runs. Turning this on will add additional features to the LightGBM model (default: true) |
 
 ### Parameter Tuning Settings
 
@@ -130,10 +130,10 @@ Most parameters should not be changed, but the following may need adjustement.
 | `deconvolution.newton_accuracy` | Float | Absolute convergence threshold for Newton method (default: 10) |
 | `deconvolution.bisection_accuracy` | Float | Absolute convergence threshold for bisection method (default: 10) |
 | `deconvolution.max_diff` | Float | Relative convergence threshold - maximum relative change in weights between iterations. Also used as relative tolerance for Newton's method (default: 0.01) |
-| `machine_learning.max_samples` | Int | Maximum number of samples for EvoTrees/XGBoost training (default: 5000000) |
+| `machine_learning.max_samples` | Int | Maximum number of samples for LightGBM training (default: 5000000) |
 | `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
-| `machine_learning.max_q_value_xgboost_mbr_rescore` | Float | q-value threshold for match-between-runs candidates during semi-supervised learning with EvoTrees/XGBoost (default: 0.20) |
-| `machine_learning.min_PEP_neg_threshold_xgboost_rescore` | Float | Minimum posterior error probabilility threshold for poor scoring targets to be relabeled as negative examples during semi-supervised learning with EvoTrees/XGBoost (default: 0.20) |
+| `machine_learning.max_q_value_mbr_itr` | Float | q-value threshold for match-between-runs candidates kept during the iterative training (ITR) stage of LightGBM rescoring (default: 0.20) |
+| `machine_learning.min_PEP_neg_threshold_itr` | Float | Minimum posterior error probability threshold for reclassifying weak target PSMs as negatives during the ITR stage of LightGBM rescoring (default: 0.90) |
 | `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
 | `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |
 

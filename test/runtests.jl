@@ -75,7 +75,7 @@ using Measures, NumericalIntegration, Optim
 using Plots, Polynomials, ProgressBars
 using Tables, StatsPlots, SentinelArrays
 using Random, StaticArrays, StatsBase, SpecialFunctions, Statistics
-using EvoTrees
+using LightGBM
 using MLJModelInterface: fit, predict
 using KernelDensity, FastGaussQuadrature
 using LaTeXStrings, Printf

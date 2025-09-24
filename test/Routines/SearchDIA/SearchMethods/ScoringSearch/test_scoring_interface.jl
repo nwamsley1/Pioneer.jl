@@ -21,7 +21,7 @@ using Statistics
 using Pioneer  # Load the Pioneer module
 
 # Import the actual types and functions from Pioneer
-using Pioneer: MBRFilterMethod, ThresholdFilter, ProbitFilter, XGBoostFilter
+using Pioneer: MBRFilterMethod, ThresholdFilter, ProbitFilter, LightGBMFilter
 using Pioneer: FilterResult, train_and_evaluate, apply_filtering
 using Pioneer: select_mbr_features, prepare_mbr_features, logodds
 using Pioneer: ProbitRegression, ModelPredict!
@@ -82,11 +82,11 @@ using Pioneer: ProbitRegression, ModelPredict!
         # Test that the trait types can be instantiated
         threshold_method = ThresholdFilter()
         probit_method = ProbitFilter()
-        xgboost_method = XGBoostFilter()
-        
+        lightgbm_method = LightGBMFilter()
+
         @test threshold_method isa MBRFilterMethod
         @test probit_method isa MBRFilterMethod
-        @test xgboost_method isa MBRFilterMethod
+        @test lightgbm_method isa MBRFilterMethod
         
         # Test FilterResult construction
         result = FilterResult("TestMethod", [0.1, 0.2, 0.3], 0.15, 2)
@@ -244,7 +244,7 @@ using Pioneer: ProbitRegression, ModelPredict!
         @test length(threshold_result.scores) == nrow(candidate_data)
         
         # Test ML methods (these might return nothing if features/cv_fold are insufficient)
-        ml_methods = [ProbitFilter(), XGBoostFilter()]
+        ml_methods = [ProbitFilter(), LightGBMFilter()]
         
         for method in ml_methods
             result = train_and_evaluate(method, candidate_data, candidate_labels, params)
@@ -274,10 +274,10 @@ using Pioneer: ProbitRegression, ModelPredict!
         result_probit = train_and_evaluate(probit_method, df_no_cv, labels_no_cv, params)
         @test result_probit === nothing
         
-        # Test XGBoost method without cv_fold
-        xgb_method = XGBoostFilter()
-        result_xgb = train_and_evaluate(xgb_method, df_no_cv, labels_no_cv, params)
-        @test result_xgb === nothing
+        # Test LightGBM method without cv_fold
+        lightgbm_method = LightGBMFilter()
+        result_lightgbm = train_and_evaluate(lightgbm_method, df_no_cv, labels_no_cv, params)
+        @test result_lightgbm === nothing
     end
     
     @testset "Integration Test Components" begin

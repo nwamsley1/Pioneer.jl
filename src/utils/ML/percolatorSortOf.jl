@@ -144,18 +144,19 @@ function assign_pair_ids(
     return pair_ids, last_pair_id
 end
 
-function sort_of_percolator_in_memory!(psms::DataFrame, 
+function sort_of_percolator_in_memory!(psms::DataFrame,
                   features::Vector{Symbol},
                   match_between_runs::Bool = true;
-                  max_q_value_xgboost_rescore::Float32 = 0.01f0,
-                  max_q_value_xgboost_mbr_rescore::Float32 = 0.20f0,
-                  min_PEP_neg_threshold_xgboost_rescore = 0.90f0,
-                  colsample_bytree::Float64 = 0.5,
-                  eta::Float64 = 0.15,
-                  min_child_weight::Int = 1,
-                  subsample::Float64 = 0.5,
-                  gamma::Float64 = 0.0,
+                  max_q_value_lightgbm_rescore::Float32 = 0.01f0,
+                  max_q_value_mbr_itr::Float32 = 0.20f0,
+                  min_PEP_neg_threshold_itr = 0.90f0,
+                  feature_fraction::Float64 = 0.5,
+                  learning_rate::Float64 = 0.15,
+                  min_data_in_leaf::Int = 1,
+                  bagging_fraction::Float64 = 0.5,
+                  min_gain_to_split::Float64 = 0.0,
                   max_depth::Int = 10,
+                  num_leaves::Int = 63,
                   iter_scheme::Vector{Int} = [100, 200, 200],
                   print_importance::Bool = false,
                   show_progress::Bool = true,
@@ -186,8 +187,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     nonMBR_estimates  = zeros(Float32, nrow(psms)) # keep track of last nonMBR test scores
 
     unique_cv_folds = unique(psms[!, :cv_fold])
-    models = Dict{UInt8, Vector{EvoTrees.EvoTree}}()
+    models = Dict{UInt8, LightGBMModelVector}()
     mbr_start_iter = length(iter_scheme)
+    iterations_per_fold = match_between_runs ? length(iter_scheme) : max(mbr_start_iter - 1, 1)
 
     cv_fold_col = psms[!, :cv_fold]
     fold_indices = Dict(fold => findall(==(fold), cv_fold_col) for fold in unique_cv_folds)
@@ -196,7 +198,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     Random.seed!(1776)
     non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
 
-    pbar = show_progress ? ProgressBar(total=length(unique_cv_folds) * length(iter_scheme)) : nothing
+    total_progress_steps = length(unique_cv_folds) * iterations_per_fold
+    pbar = show_progress ? ProgressBar(total=total_progress_steps) : nothing
 
     for test_fold_idx in unique_cv_folds
 
@@ -224,37 +227,43 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             end
         end
 
-        fold_models = Vector{EvoTrees.EvoTree}(undef, length(iter_scheme))
+        fold_models = LightGBMModelVector(undef, length(iter_scheme))
 
         for (itr, num_round) in enumerate(iter_scheme)
             psms_train_itr = get_training_data_for_iteration!(psms_train,
                                                               itr,
                                                               match_between_runs,
-                                                              max_q_value_xgboost_rescore,
-                                                              max_q_value_xgboost_mbr_rescore,
-                                                              min_PEP_neg_threshold_xgboost_rescore,
+                                                              max_q_value_lightgbm_rescore,
+                                                              max_q_value_mbr_itr,
+                                                              min_PEP_neg_threshold_itr,
                                                               itr >= mbr_start_iter)
 
             train_feats = itr < mbr_start_iter ? non_mbr_features : features
             
             bst = train_booster(psms_train_itr, train_feats, num_round;
-                               colsample=colsample_bytree,
-                               eta=eta,
-                               min_child_weight=min_child_weight,
-                               subsample=subsample,
-                               gamma=gamma,
-                               max_depth=max_depth)
+                               feature_fraction=feature_fraction,
+                               learning_rate=learning_rate,
+                               min_data_in_leaf=min_data_in_leaf,
+                               bagging_fraction=bagging_fraction,
+                               min_gain_to_split=min_gain_to_split,
+                               max_depth=max_depth,
+                               num_leaves=num_leaves)
                                
             fold_models[itr] = bst
 
             # Print feature importances for each iteration and fold
             if print_importance
-                importances = EvoTrees.importance(bst)
-                @user_info "Feature Importances - Fold $(test_fold_idx), Iteration $(itr) ($(length(importances)) features):"
-                for i in 1:10:length(importances)
-                    chunk = importances[i:min(i+9, end)]
-                    feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
-                    @user_info "  " * join(feat_strs, " | ")
+                importances = lightgbm_feature_importances(bst)
+                if importances === nothing
+                    @user_warn "LightGBM backend did not provide feature importances for iteration $(itr)."
+                else
+                    feature_pairs = collect(zip(bst.features, importances))
+                    @user_info "Feature Importances - Fold $(test_fold_idx), Iteration $(itr) ($(length(feature_pairs)) features):"
+                    for i in 1:10:length(feature_pairs)
+                        chunk = feature_pairs[i:min(i+9, end)]
+                        feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
+                        @user_info "  " * join(feat_strs, " | ")
+                    end
                 end
             end
 
@@ -275,7 +284,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             if match_between_runs
                 update_mbr_features!(psms_train, psms_test, prob_test,
                                      test_idx, itr, mbr_start_iter,
-                                     max_q_value_xgboost_rescore)
+                                     max_q_value_lightgbm_rescore)
             end
 
             show_progress && update(pbar)
@@ -298,8 +307,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         # Determine which precursors failed the q-value cutoff prior to MBR
         qvals_prev = Vector{Float32}(undef, length(nonMBR_estimates))
         get_qvalues!(nonMBR_estimates, psms.target, qvals_prev)
-        pass_mask = (qvals_prev .<= max_q_value_xgboost_rescore)
-        prob_thresh = any(pass_mask) ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
+        pass_mask = (qvals_prev .<= max_q_value_lightgbm_rescore)
+        has_passing_psms = !isempty(pass_mask) && any(pass_mask)
+        prob_thresh = has_passing_psms ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
         # Label as transfer candidates only those failing the q-value cutoff but
         # whose best matched pair surpassed the passing probability threshold.
         psms[!, :MBR_transfer_candidate] .= .!pass_mask .&
@@ -314,26 +324,27 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     return models
 end
 
-function sort_of_percolator_out_of_memory!(psms::DataFrame, 
+function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     file_paths::Vector{String},
                     features::Vector{Symbol},
-                    match_between_runs::Bool = true; 
-                    max_q_value_xgboost_rescore::Float32 = 0.01f0,
-                    max_q_value_xgboost_mbr_rescore::Float32 = 0.20f0,
-                    min_PEP_neg_threshold_xgboost_rescore::Float32 = 0.90f0,
-                    colsample_bytree::Float64 = 0.5, 
-                    eta::Float64 = 0.15, 
-                    min_child_weight::Int = 1, 
-                    subsample::Float64 = 0.5, 
-                    gamma::Float64 = 0.0, 
+                    match_between_runs::Bool = true;
+                    max_q_value_lightgbm_rescore::Float32 = 0.01f0,
+                    max_q_value_mbr_itr::Float32 = 0.20f0,
+                    min_PEP_neg_threshold_itr::Float32 = 0.90f0,
+                    feature_fraction::Float64 = 0.5,
+                    learning_rate::Float64 = 0.15,
+                    min_data_in_leaf::Int = 1,
+                    bagging_fraction::Float64 = 0.5,
+                    min_gain_to_split::Float64 = 0.0,
                     max_depth::Int = 10,
+                    num_leaves::Int = 63,
                     iter_scheme::Vector{Int} = [100, 200, 200],
                     print_importance::Bool = false)
 
     function getBestScorePerPrec!(
         prec_to_best_score_new::Dictionary,
         file_paths::Vector{String},
-        models::Dictionary{UInt8,EvoTrees.EvoTree},
+        models::Dictionary{UInt8,LightGBMModel},
         features::Vector{Symbol},
         match_between_runs::Bool;
         is_last_iteration::Bool = false)
@@ -398,7 +409,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             prec_to_best_score_new[key] = updated_stats
                         end
 
-                        if qvals[i] <= max_q_value_xgboost_rescore
+                        if qvals[i] <= max_q_value_lightgbm_rescore
                             push!(scores.unique_passing_runs, psms_subset.ms_file_idx[i])
                         end
 
@@ -422,7 +433,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                 best_ms_file_idx_2              = zero(UInt32),
                                 is_best_decoy_1                 = psms_subset.decoy[i],
                                 is_best_decoy_2                 = false,
-                                unique_passing_runs             = ( qvals[i] <= max_q_value_xgboost_rescore ?
+                                unique_passing_runs             = ( qvals[i] <= max_q_value_lightgbm_rescore ?
                                                                     Set{UInt16}([psms_subset.ms_file_idx[i]]) :
                                                                     Set{UInt16}() )
                             ))
@@ -433,7 +444,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
             if is_last_iteration
                 if match_between_runs
-                    update_mbr_probs!(psms_subset, probs, max_q_value_xgboost_rescore)
+                    update_mbr_probs!(psms_subset, probs, max_q_value_lightgbm_rescore)
                 else
                     psms_subset.prob = probs
                 end
@@ -508,7 +519,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 psms_subset,
                 probs,
                 match_between_runs,
-                max_q_value_xgboost_rescore;
+                max_q_value_lightgbm_rescore;
                 dropVectors = is_last_iteration,
             )
         end
@@ -519,8 +530,11 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
     unique_cv_folds = unique(psms[!, :cv_fold])
     #Train the model for 1:K-1 cross validation folds and apply to the held-out fold
-    models = Dictionary{UInt8, Vector{EvoTrees.EvoTree}}()
-    pbar = ProgressBar(total=length(unique_cv_folds)*length(iter_scheme))
+    models = Dictionary{UInt8, LightGBMModelVector}()
+    mbr_start_iter = length(iter_scheme)
+    iterations_per_fold = match_between_runs ? length(iter_scheme) : max(mbr_start_iter - 1, 1)
+    total_progress_steps = length(unique_cv_folds) * iterations_per_fold
+    pbar = ProgressBar(total=total_progress_steps)
     Random.seed!(1776);
     non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
 
@@ -535,45 +549,51 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             psms_train_itr = get_training_data_for_iteration!(psms_train, 
                                                                 itr,
                                                                 match_between_runs, 
-                                                                max_q_value_xgboost_rescore,
-                                                                max_q_value_xgboost_mbr_rescore,
-                                                                min_PEP_neg_threshold_xgboost_rescore,
+                                                                max_q_value_lightgbm_rescore,
+                                                                max_q_value_mbr_itr,
+                                                                min_PEP_neg_threshold_itr,
                                                                 itr >= length(iter_scheme))
             ###################
             #Train a model on the n-1 training folds.
             train_feats = itr < length(iter_scheme) ? non_mbr_features : features
             bst = train_booster(psms_train_itr, train_feats, num_round;
-                               colsample=colsample_bytree,
-                               eta=eta,
-                               min_child_weight=min_child_weight,
-                               subsample=subsample,
-                               gamma=gamma,
-                               max_depth=max_depth)
+                               feature_fraction=feature_fraction,
+                               learning_rate=learning_rate,
+                               min_data_in_leaf=min_data_in_leaf,
+                               bagging_fraction=bagging_fraction,
+                               min_gain_to_split=min_gain_to_split,
+                               max_depth=max_depth,
+                               num_leaves=num_leaves)
             if !haskey(models, test_fold_idx)
                 insert!(
                     models,
                     test_fold_idx,
-                    Vector{EvoTrees.EvoTree}([bst])
+                    LightGBMModelVector([bst])
                 )
             else
                 push!(models[test_fold_idx], bst)
             end
             # Print feature importances
             if print_importance
-                importances = EvoTrees.importance(bst)
-                @user_info "Feature Importances ($(length(importances)) features):"
-                for i in 1:10:length(importances)
-                    chunk = importances[i:min(i+9, end)]
-                    feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
-                    @user_info "  " * join(feat_strs, " | ")
+                importances = lightgbm_feature_importances(bst)
+                if importances === nothing
+                    @user_warn "LightGBM backend did not provide feature importances for iteration $(itr)."
+                else
+                    feature_pairs = collect(zip(bst.features, importances))
+                    @user_info "Feature Importances ($(length(feature_pairs)) features):"
+                    for i in 1:10:length(feature_pairs)
+                        chunk = feature_pairs[i:min(i+9, end)]
+                        feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
+                        @user_info "  " * join(feat_strs, " | ")
+                    end
                 end
             end
 
             # Get probabilities for training sample so we can get q-values
-            psms_train[!,:prob] = EvoTrees.predict(bst, psms_train)
+            psms_train[!,:prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
             
             if match_between_runs
-                summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
+                summarize_precursors!(psms_train, q_cutoff = max_q_value_lightgbm_rescore)
             end
 
             show_progress && update(pbar)
@@ -604,7 +624,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                                 unique_passing_runs::Set{UInt16}}}()
 
     for (train_iter, num_round) in enumerate(iter_scheme)
-        models_for_iter = Dictionary{UInt8,EvoTrees.EvoTree}()
+        models_for_iter = Dictionary{UInt8,LightGBMModel}()
         for test_fold_idx in unique_cv_folds
             insert!(models_for_iter, test_fold_idx, models[test_fold_idx][train_iter])
         end
@@ -623,31 +643,33 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 end
 
 function train_booster(psms::AbstractDataFrame, features, num_round;
-                       colsample::Float64,
-                       eta::Float64,
-                       min_child_weight::Int,
-                       subsample::Float64,
-                       gamma::Float64,
-                       max_depth::Int)
+                       feature_fraction::Float64,
+                       learning_rate::Float64,
+                       min_data_in_leaf::Int,
+                       bagging_fraction::Float64,
+                       min_gain_to_split::Float64,
+                       max_depth::Int,
+                       num_leaves::Int)
 
-    config = EvoTreeRegressor(
-        loss=:logloss,
-        nrounds = num_round,
+    classifier = build_lightgbm_classifier(
+        num_iterations = num_round,
         max_depth = max_depth,
-        min_weight = min_child_weight,
-        rowsample = subsample,
-        colsample = colsample,
-        eta = eta,
-        gamma = gamma
+        learning_rate = learning_rate,
+        num_leaves = num_leaves,
+        feature_fraction = feature_fraction,
+        bagging_fraction = bagging_fraction,
+        bagging_freq = bagging_fraction < 1 ? 1 : 0,
+        min_data_in_leaf = min_data_in_leaf,
+        min_gain_to_split = min_gain_to_split,
     )
-    model = fit(config, psms; target_name = :target, feature_names = features, verbosity = 0)
-    return model
+    feature_frame = psms[:, features]
+    return fit_lightgbm_model(classifier, feature_frame, psms.target; positive_label=true)
 end
 
 function predict_fold!(bst, psms_train::AbstractDataFrame,
                        psms_test::AbstractDataFrame, features)
-    psms_test[!, :prob] = predict(bst, psms_test)
-    psms_train[!, :prob] = predict(bst, psms_train)
+    psms_test[!, :prob] = lightgbm_predict(bst, psms_test; output_type=Float32)
+    psms_train[!, :prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
     get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
 end
 
@@ -657,11 +679,11 @@ function update_mbr_features!(psms_train::AbstractDataFrame,
                               test_fold_idxs,
                               itr::Int,
                               mbr_start_iter::Int,
-                              max_q_value_xgboost_rescore::Float32)
+                              max_q_value_lightgbm_rescore::Float32)
     if itr >= mbr_start_iter - 1
         get_qvalues!(psms_test.prob, psms_test.target, psms_test.q_value)
-        summarize_precursors!(psms_test, q_cutoff = max_q_value_xgboost_rescore)
-        summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
+        summarize_precursors!(psms_test, q_cutoff = max_q_value_lightgbm_rescore)
+        summarize_precursors!(psms_train, q_cutoff = max_q_value_lightgbm_rescore)
     end
     if itr == mbr_start_iter - 1
         prob_test[test_fold_idxs] = psms_test.prob
@@ -775,9 +797,9 @@ function get_training_data_for_iteration!(
     psms_train::AbstractDataFrame,
     itr::Int,
     match_between_runs::Bool,
-    max_q_value_xgboost_rescore::Float32,
-    max_q_value_xgboost_mbr_rescore::Float32,
-    min_PEP_neg_threshold_xgboost_rescore::Float32,
+    max_q_value_lightgbm_rescore::Float32,
+    max_q_value_mbr_itr::Float32,
+    min_PEP_neg_threshold_itr::Float32,
     last_iter::Bool
 )
    
@@ -795,7 +817,7 @@ function get_training_data_for_iteration!(
         PEPs = Vector{Float32}(undef, length(order))
         get_PEP!(sorted_scores, sorted_targets, PEPs; doSort=false)
 
-        idx_cutoff = findfirst(x -> x >= min_PEP_neg_threshold_xgboost_rescore, PEPs)
+        idx_cutoff = findfirst(x -> x >= min_PEP_neg_threshold_itr, PEPs)
         if !isnothing(idx_cutoff)
             worst_idxs = order[idx_cutoff:end]
             psms_train_itr.target[worst_idxs] .= false
@@ -803,41 +825,46 @@ function get_training_data_for_iteration!(
 
         # Also train on top scoring MBR candidates if requested
         if match_between_runs && last_iter
-            # Determine prob threshold for precursors passing the q-value threshold
-            max_prob_threshold = minimum(
-                psms_train_itr.prob[
-                    psms_train_itr.target .& (psms_train_itr.q_value .<= max_q_value_xgboost_rescore)
-                ]
-            )
+            pass_mask = psms_train_itr.target .& (psms_train_itr.q_value .<= max_q_value_lightgbm_rescore)
+            if any(pass_mask)
+                # Determine prob threshold for precursors passing the q-value threshold
+                max_prob_threshold = minimum(psms_train_itr.prob[pass_mask])
 
-            # Hacky way to ensure anything passing the initial q-value threshold
-            # will pass the next q-value threshold
-            psms_train_itr.q_value[psms_train_itr.q_value .<= max_q_value_xgboost_rescore] .= 0.0
-            psms_train_itr.q_value[psms_train_itr.q_value .> max_q_value_xgboost_rescore]  .= 1.0
+                # Hacky way to ensure anything passing the initial q-value threshold
+                # will pass the next q-value threshold
+                psms_train_itr.q_value[psms_train_itr.q_value .<= max_q_value_lightgbm_rescore] .= 0.0
+                psms_train_itr.q_value[psms_train_itr.q_value .> max_q_value_lightgbm_rescore]  .= 1.0
 
-            # Must have at least one precursor passing the q-value threshold,
-            # and the best precursor can't be a decoy
-            psms_train_mbr = subset(
-                psms_train_itr,
-                [:MBR_is_best_decoy, :MBR_max_pair_prob, :prob, :MBR_is_missing] => ByRow((d, mp, p, im) ->
-                    (!im && !d && mp >= max_prob_threshold && p < max_prob_threshold)
-                );
-                view = true
-            )
+                # Must have at least one precursor passing the q-value threshold,
+                # and the best precursor can't be a decoy
+                psms_train_mbr = subset(
+                    psms_train_itr,
+                    [:MBR_is_best_decoy, :MBR_max_pair_prob, :prob, :MBR_is_missing] => ByRow((d, mp, p, im) ->
+                        (!im && !d && mp >= max_prob_threshold && p < max_prob_threshold)
+                    );
+                    view = true
+                )
 
-            # Compute MBR q-values.
-            get_qvalues!(psms_train_mbr[!,:prob], psms_train_mbr[!,:target], psms_train_mbr[!,:q_value])
+                # Compute MBR q-values.
+                get_qvalues!(psms_train_mbr[!,:prob], psms_train_mbr[!,:target], psms_train_mbr[!,:q_value])
 
-            # Take all decoys and targets passing q_thresh (all 0's now) or mbr_q_thresh
-            psms_train_itr = subset(
-                psms_train_itr,
-                [:target, :q_value, :MBR_is_best_decoy, :MBR_is_missing] => ByRow((t, q, MBR_d, im) -> (!t) || (t && !im && !MBR_d && q <= max_q_value_xgboost_mbr_rescore))
-            )
+                # Take all decoys and targets passing q_thresh (all 0's now) or mbr_q_thresh
+                psms_train_itr = subset(
+                    psms_train_itr,
+                    [:target, :q_value, :MBR_is_best_decoy, :MBR_is_missing] => ByRow((t, q, MBR_d, im) -> (!t) || (t && !im && !MBR_d && q <= max_q_value_mbr_itr))
+                )
+            else
+                # Fall back to the standard q-value filtering when no targets pass the threshold.
+                psms_train_itr = subset(
+                    psms_train_itr,
+                    [:target, :q_value] => ByRow((t,q) -> (!t) || (t && q <= max_q_value_lightgbm_rescore))
+                )
+            end
         else
             # Take all decoys and targets passing q_thresh
             psms_train_itr = subset(
                 psms_train_itr,
-                [:target, :q_value] => ByRow((t,q) -> (!t) || (t && q <= max_q_value_xgboost_rescore))
+                [:target, :q_value] => ByRow((t,q) -> (!t) || (t && q <= max_q_value_lightgbm_rescore))
             )
         end
 
@@ -890,14 +917,14 @@ end
 
 Return a vector of probabilities for `df` using the cross validation `models`.
 """
-function predict_cv_models(models::Dictionary{UInt8,EvoTrees.EvoTree},
+function predict_cv_models(models::Dictionary{UInt8,LightGBMModel},
                            df::AbstractDataFrame,
                            features::Vector{Symbol})
     probs = zeros(Float32, nrow(df))
     for (fold_idx, bst) in pairs(models)
         fold_rows = findall(==(fold_idx), df[!, :cv_fold])
         if !isempty(fold_rows)
-            probs[fold_rows] = predict(bst, df[fold_rows, :])
+            probs[fold_rows] = lightgbm_predict(bst, df[fold_rows, :]; output_type=Float32)
         end
     end
     return probs

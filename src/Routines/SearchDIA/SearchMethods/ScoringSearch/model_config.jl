@@ -25,21 +25,21 @@ The full model_comparison.jl file is deprecated and should not be used.
 Configuration for a single model in the scoring framework.
 
 # Fields
-- `name`: Model identifier (e.g., "SimpleXGBoost", "ProbitRegression")
-- `model_type`: Algorithm type (:xgboost or :probit)
+- `name`: Model identifier (e.g., "SimpleLightGBM", "ProbitRegression")
+- `model_type`: Algorithm type (:lightgbm or :probit)
 - `features`: Vector of feature symbols to use
 - `hyperparams`: Dictionary of hyperparameters for the model
 """
 struct ModelConfig
     name::String
-    model_type::Symbol  # :xgboost or :probit
+    model_type::Symbol  # :lightgbm or :probit
     features::Vector{Symbol}
     hyperparams::Dict{Symbol, Any}
 end
 
 # Feature set definitions
 
-# Full feature set used for advanced XGBoost model (matches out-of-memory case)
+# Full feature set used for advanced LightGBM model (matches out-of-memory case)
 # Note: :target is excluded as it's the label, not a feature
 const ADVANCED_FEATURE_SET = [
     :missed_cleavage,
@@ -151,39 +151,41 @@ const MINIMAL_FEATURE_SET = [
 Creates the model configurations for comparison.
 
 # Returns
-- Vector of ModelConfig objects for SimpleXGBoost, AdvancedXGBoost, ProbitRegression,
+- Vector of ModelConfig objects for SimpleLightGBM, AdvancedLightGBM, ProbitRegression,
 - ProbitRegressionSimple, and SuperSimplified models
 """
 function create_model_configurations()
     return [
-        # Model 1: Simple XGBoost (Default for small datasets)
+        # Model 1: Simple LightGBM (Default for small datasets)
         ModelConfig(
-            "SimpleXGBoost",
-            :xgboost,
+            "SimpleLightGBM",
+            :lightgbm,
             REDUCED_FEATURE_SET,
             Dict(
-                :colsample_bytree => 0.8,
-                :min_child_weight => 20,
-                :gamma => 0.1,
-                :subsample => 0.8,
+                :feature_fraction => 0.8,
+                :min_data_in_leaf => 20,
+                :min_gain_to_split => 0.1,
+                :bagging_fraction => 0.8,
                 :max_depth => 4,
-                :eta => 0.1,
+                :num_leaves => 15,
+                :learning_rate => 0.1,
                 :iter_scheme => [150, 300, 300]
             )
         ),
         
-        # Model 2: Advanced XGBoost (Same as used for >100K PSMs)
+        # Model 2: Advanced LightGBM (Same as used for >100K PSMs)
         ModelConfig(
-            "AdvancedXGBoost",
-            :xgboost,
+            "AdvancedLightGBM",
+            :lightgbm,
             ADVANCED_FEATURE_SET,
             Dict(
-                :colsample_bytree => 0.5,
-                :min_child_weight => 5,
-                :gamma => 1.0,
-                :subsample => 0.25,
-                :max_depth => 10,
-                :eta => 0.05,
+                :feature_fraction => 0.5,
+                :min_data_in_leaf => 200,
+                :min_gain_to_split => 0.0,
+                :bagging_fraction => 0.25,
+                :max_depth => -1,
+                :num_leaves => 63,
+                :learning_rate => 0.05,
                 :iter_scheme => [100, 200, 200]
             )
         ),
@@ -217,18 +219,19 @@ function create_model_configurations()
             )
         ),
 
-        # Model 5: Super Simplified Model
+        # Model 5: Super Simplified LightGBM Model
         ModelConfig(
             "SuperSimplified",
-            :xgboost,
+            :lightgbm,
             MINIMAL_FEATURE_SET,
             Dict(
-                :colsample_bytree => 0.8,
-                :min_child_weight => 20,
-                :gamma => 0.1,
-                :subsample => 0.8,
+                :feature_fraction => 0.8,
+                :min_data_in_leaf => 10,
+                :min_gain_to_split => 0.1,
+                :bagging_fraction => 0.8,
                 :max_depth => 4,
-                :eta => 0.1,
+                :num_leaves => 15,
+                :learning_rate => 0.1,
                 :iter_scheme => [150, 300, 300]
             )
         )

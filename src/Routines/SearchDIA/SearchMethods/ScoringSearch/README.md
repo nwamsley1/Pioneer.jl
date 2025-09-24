@@ -5,7 +5,7 @@ ScoringSearch is the 7th stage in the Pioneer DIA search pipeline, responsible f
 ## Overview
 
 ScoringSearch performs three main functions:
-1. **PSM Scoring**: Machine learning models (XGBoost/EvoTrees or Probit Regression) rescore PSMs
+1. **PSM Scoring**: Machine learning models (LightGBM or Probit Regression) rescore PSMs
 2. **FDR Control**: Calculate q-values and filter PSMs based on false discovery rate thresholds
 3. **Protein Inference**: Group peptides into minimal protein sets and calculate protein-level scores
 
@@ -43,14 +43,14 @@ PSM Count Decision Tree:
     < 1,000 PSMs   1K - 100K PSMs   > 100K PSMs
            │            │            │
            ▼            ▼            ▼
-   SimpleXGBoost   Model Comparison   AdvancedXGBoost
+   SimpleLightGBM   Model Comparison   AdvancedLightGBM
      (Direct)      (4 models tested)    (Direct)
                         │
                         ▼
             ┌─────────────────────────────┐
             │  Test 4 Models:             │
-            │  • SimpleXGBoost            │
-            │  • AdvancedXGBoost         │
+            │  • SimpleLightGBM            │
+            │  • AdvancedLightGBM         │
             │  • ProbitRegression        │
             │  • SuperSimplified         │
             │                            │
@@ -83,10 +83,10 @@ PSM Count Decision Tree:
 
 | Model | Type | Features | Use Case | Hyperparameters |
 |-------|------|----------|----------|-----------------|
-| **SimpleXGBoost** | XGBoost | REDUCED_FEATURE_SET (40+ features) | Default for small datasets | Conservative (depth=4, eta=0.1) |
-| **AdvancedXGBoost** | XGBoost | ADVANCED_FEATURE_SET (50+ features) | Default for large datasets | Aggressive (depth=10, eta=0.05) |
+| **SimpleLightGBM** | LightGBM | REDUCED_FEATURE_SET (40+ features) | Default for small datasets | Conservative (depth=4, eta=0.1) |
+| **AdvancedLightGBM** | LightGBM | ADVANCED_FEATURE_SET (50+ features) | Default for large datasets | Aggressive (depth=10, eta=0.05) |
 | **ProbitRegression** | Linear | REDUCED_FEATURE_SET | Fast alternative | Linear model (max_iter=30) |
-| **SuperSimplified** | XGBoost | MINIMAL_FEATURE_SET (5 features) | Minimal overfitting | Conservative (depth=4, eta=0.1) |
+| **SuperSimplified** | LightGBM | MINIMAL_FEATURE_SET (5 features) | Minimal overfitting | Conservative (depth=4, eta=0.1) |
 
 ### Feature Sets
 
@@ -105,9 +105,9 @@ score_precursor_isotope_traces(
     file_paths,
     precursors,
     match_between_runs,
-    max_q_value_xgboost_rescore,
-    max_q_value_xgboost_mbr_rescore,
-    min_PEP_neg_threshold_xgboost_rescore,
+    max_q_value_lightgbm_rescore,
+    max_q_value_mbr_itr,
+    min_PEP_neg_threshold_itr,
     max_psms_in_memory,
     q_value_threshold
 )
@@ -119,16 +119,16 @@ score_precursor_isotope_traces(
 score_precursor_isotope_traces()
 ├── get_psms_count(file_paths)
 ├── if psms_count >= max_psms_in_memory:
-│   ├── sample_psms_for_xgboost()
-│   ├── create_default_advanced_xgboost_config()
+│   ├── sample_psms_for_lightgbm()
+│   ├── create_default_advanced_lightgbm_config()
 │   └── score_precursor_isotope_traces_out_of_memory!()
 │       └── sort_of_percolator_out_of_memory!()
 │           └── [For each CV fold]
-│               └── train_booster() → EvoTreeRegressor
+│               └── train_booster() → LightGBMModel
 └── else (in-memory processing):
-    ├── load_psms_for_xgboost()
+    ├── load_psms_for_lightgbm()
     ├── if psms_count >= 100K:
-    │   └── create_default_advanced_xgboost_config()
+    │   └── create_default_advanced_lightgbm_config()
     └── else (< 100K):
         └── select_psm_scoring_model()
             ├── create_model_configurations()
@@ -136,11 +136,11 @@ score_precursor_isotope_traces()
                 ├── score_precursor_isotope_traces_in_memory()
                 └── count_passing_targets()
     └── score_precursor_isotope_traces_in_memory()
-        ├── if model_config.model_type == :xgboost:
-        │   └── train_xgboost_model_in_memory()
+        ├── if model_config.model_type == :lightgbm:
+        │   └── train_lightgbm_model_in_memory()
         │       └── sort_of_percolator_in_memory!()
         │           └── [For each CV fold × iteration]
-        │               └── train_booster() → EvoTreeRegressor
+        │               └── train_booster() → LightGBMModel
         └── elif model_config.model_type == :probit:
             └── train_probit_model_in_memory()
                 └── probit_regression_scoring_cv!()
@@ -148,7 +148,7 @@ score_precursor_isotope_traces()
                         └── Pioneer.ProbitRegression()
 ```
 
-## XGBoost Training Pipeline (percolatorSortOf.jl)
+## LightGBM Training Pipeline (percolatorSortOf.jl)
 
 ### sort_of_percolator_in_memory!() Flow
 
@@ -165,13 +165,13 @@ sort_of_percolator_in_memory!()
 │   │   │       ├── Convert worst targets to decoys (PEP filtering)
 │   │   │       └── Filter to high-confidence PSMs (q-value filtering)
 │   │   ├── train_booster()
-│   │   │   └── EvoTreeRegressor(loss=:logloss, hyperparams...)
+│   │   │   └── LightGBMModel(hyperparams...)
 │   │   ├── Predict on train/test sets
 │   │   ├── Calculate q-values
 │   │   └── update_mbr_features!() [if match_between_runs]
 │   └── Store fold predictions
 ├── Handle MBR transfer candidates [if match_between_runs]
-└── Return trained models (Dict{UInt8, Vector{EvoTrees.EvoTree}})
+└── Return trained models (Dict{UInt8, LightGBMModelVector})
 ```
 
 ### Key Training Features
@@ -205,9 +205,9 @@ probit_regression_scoring_cv!()
 └── Clean up temporary columns
 ```
 
-### Probit vs XGBoost Differences
+### Probit vs LightGBM Differences
 
-| Aspect | XGBoost | Probit Regression |
+| Aspect | LightGBM | Probit Regression |
 |--------|---------|------------------|
 | **Model Type** | Gradient boosted trees | Linear logistic model |
 | **Training** | Multi-stage iterative | Single-pass |
@@ -222,7 +222,7 @@ probit_regression_scoring_cv!()
 
 ### PSM Processing Output
 
-Both XGBoost and Probit models produce standardized outputs:
+Both LightGBM and Probit models produce standardized outputs:
 
 ```julia
 # Required columns for downstream processing
@@ -250,9 +250,9 @@ The trained models integrate into the broader ScoringSearch pipeline:
         "machine_learning": {
             "max_psms_in_memory": 100000,
             "enable_model_comparison": true,
-            "max_q_value_xgboost_rescore": 0.01,
-            "max_q_value_xgboost_mbr_rescore": 0.20,
-            "min_PEP_neg_threshold_xgboost_rescore": 0.90
+            "max_q_value_lightgbm_rescore": 0.01,
+            "max_q_value_mbr_itr": 0.20,
+            "min_PEP_neg_threshold_itr": 0.90
         }
     },
     "global_settings": {
@@ -268,6 +268,8 @@ The trained models integrate into the broader ScoringSearch pipeline:
 
 - **max_psms_in_memory**: Determines in-memory vs out-of-memory processing
 - **enable_model_comparison**: Controls automatic model selection for medium datasets
+- **max_q_value_mbr_itr**: Caps MBR transfers admitted to the iterative training (ITR) stage
+- **min_PEP_neg_threshold_itr**: Sets the PEP cutoff for relabeling weak targets as negatives during ITR
 - **q_value_threshold**: Used for model performance evaluation during comparison
 - **match_between_runs**: Enables MBR features and processing
 
@@ -278,9 +280,9 @@ The trained models integrate into the broader ScoringSearch pipeline:
 | Dataset Size | Model | Training Time | Memory Usage |
 |-------------|--------|---------------|--------------|
 | 1K PSMs | ProbitRegression | ~5 seconds | Low |
-| 1K PSMs | SimpleXGBoost | ~30 seconds | Low |
-| 50K PSMs | AdvancedXGBoost | ~5 minutes | Medium |
-| 200K PSMs | AdvancedXGBoost (OOM) | ~10 minutes | Constant |
+| 1K PSMs | SimpleLightGBM | ~30 seconds | Low |
+| 50K PSMs | AdvancedLightGBM | ~5 minutes | Medium |
+| 200K PSMs | AdvancedLightGBM (OOM) | ~10 minutes | Constant |
 
 ### Scaling Behavior
 
@@ -306,7 +308,7 @@ ScoringSearch/
 
 ```
 src/utils/ML/
-└── percolatorSortOf.jl          # Core XGBoost training implementation
+└── percolatorSortOf.jl          # Core LightGBM training implementation
 ```
 
 ## Debugging and Diagnostics
