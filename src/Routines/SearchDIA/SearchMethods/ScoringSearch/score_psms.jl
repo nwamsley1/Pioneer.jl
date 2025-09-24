@@ -63,7 +63,8 @@ function score_precursor_isotope_traces(
     max_q_value_mbr_itr::Float32,
     min_PEP_neg_threshold_itr::Float32,
     max_psms_in_memory::Int64,
-    q_value_threshold::Float32 = 0.01f0  # Default to 1% if not specified
+    q_value_threshold::Float32 = 0.01f0,  # Default to 1% if not specified
+    ms1_scoring::Bool = true
 )
     # Step 1: Count PSMs and determine processing approach
     psms_count = get_psms_count(file_paths)
@@ -73,7 +74,7 @@ function score_precursor_isotope_traces(
         @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
         best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
         # Use a ModelConfig (AdvancedLightGBM by default) for OOM path
-        model_config = create_default_advanced_lightgbm_config()
+        model_config = create_default_advanced_lightgbm_config(ms1_scoring)
         models = score_precursor_isotope_traces_out_of_memory!(
             best_psms,
             file_paths,
@@ -91,13 +92,13 @@ function score_precursor_isotope_traces(
         if psms_count >= MAX_FOR_MODEL_SELECTION  # 100K
             # Case 2: In-memory with default/advanced LightGBM (no comparison)
             @user_info "Using in-memory advanced LightGBM for $psms_count PSMs (< $max_psms_in_memory but ≥ 100K)"
-            model_config = create_default_advanced_lightgbm_config()
+            model_config = create_default_advanced_lightgbm_config(ms1_scoring)
         else
             # Case 3: In-memory with automatic model comparison (<100K)
             model_config = select_psm_scoring_model(
                 best_psms, file_paths, precursors, match_between_runs,
                 max_q_value_lightgbm_rescore, max_q_value_mbr_itr,
-                min_PEP_neg_threshold_itr, q_value_threshold
+                min_PEP_neg_threshold_itr, q_value_threshold, ms1_scoring
             )
         end
         
@@ -140,16 +141,17 @@ function select_psm_scoring_model(
     max_q_value_lightgbm_rescore::Float32,
     max_q_value_mbr_itr::Float32,
     min_PEP_neg_threshold_itr::Float32,
-    q_value_threshold::Float32
+    q_value_threshold::Float32,
+    ms1_scoring::Bool = true
 )
     psms_count = size(best_psms, 1)
     
     if psms_count >= MAX_FOR_MODEL_SELECTION
         @user_info "Using default advanced LightGBM for $psms_count PSMs (≥ 100K)"
-        return create_default_advanced_lightgbm_config()
+        return create_default_advanced_lightgbm_config(ms1_scoring)
     else
         # Get model configurations from model_config.jl
-        model_configs = create_model_configurations()
+        model_configs = create_model_configurations(ms1_scoring)
         best_model_config = nothing
         best_target_count = 0
         
@@ -239,15 +241,18 @@ function count_passing_targets(scored_psms::DataFrame, qvalue_threshold::Float32
 end
 
 """
-    create_default_advanced_lightgbm_config() -> ModelConfig
+    create_default_advanced_lightgbm_config(ms1_scoring::Bool = true) -> ModelConfig
 
 Creates the default advanced LightGBM configuration for large datasets.
 """
-function create_default_advanced_lightgbm_config()
+function create_default_advanced_lightgbm_config(ms1_scoring::Bool = true)
+    features = copy(ADVANCED_FEATURE_SET)
+    apply_ms1_filtering!(features, ms1_scoring)
+
     return ModelConfig(
         "AdvancedLightGBM",
         :lightgbm,
-        ADVANCED_FEATURE_SET,
+        features,
         Dict(
             :feature_fraction => 0.5,
             :min_data_in_leaf => 500,

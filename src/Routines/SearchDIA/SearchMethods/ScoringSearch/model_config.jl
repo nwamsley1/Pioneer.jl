@@ -154,21 +154,34 @@ const MINIMAL_FEATURE_SET = [
 ]
 
 """
-    create_model_configurations() -> Vector{ModelConfig}
+    create_model_configurations(ms1_scoring::Bool = true) -> Vector{ModelConfig}
 
 Creates the model configurations for comparison.
+
+# Arguments
+- `ms1_scoring`: Whether MS1 scoring is enabled (default: true)
 
 # Returns
 - Vector of ModelConfig objects for SimpleLightGBM, AdvancedLightGBM, ProbitRegression,
 - ProbitRegressionSimple, and SuperSimplified models
 """
-function create_model_configurations()
+function create_model_configurations(ms1_scoring::Bool = true)
+    # Apply MS1 filtering to feature sets if needed
+    reduced_features = copy(REDUCED_FEATURE_SET)
+    apply_ms1_filtering!(reduced_features, ms1_scoring)
+
+    advanced_features = copy(ADVANCED_FEATURE_SET)
+    apply_ms1_filtering!(advanced_features, ms1_scoring)
+
+    minimal_features = copy(MINIMAL_FEATURE_SET)
+    apply_ms1_filtering!(minimal_features, ms1_scoring)
+
     return [
         # Model 1: Simple LightGBM (Default for small datasets)
         ModelConfig(
             "SimpleLightGBM",
             :lightgbm,
-            REDUCED_FEATURE_SET,
+            reduced_features,
             Dict(
                 :feature_fraction => 0.8,
                 :min_data_in_leaf => 20,
@@ -185,7 +198,7 @@ function create_model_configurations()
         ModelConfig(
             "AdvancedLightGBM",
             :lightgbm,
-            ADVANCED_FEATURE_SET,
+            advanced_features,
             Dict(
                 :feature_fraction => 0.5,
                 :min_data_in_leaf => 200,
@@ -202,7 +215,7 @@ function create_model_configurations()
         ModelConfig(
             "ProbitRegression",
             :probit,
-            vcat(REDUCED_FEATURE_SET, [:intercept]),
+            vcat(reduced_features, [:intercept]),
             Dict(
                 :max_iter => 30
             )
@@ -231,7 +244,7 @@ function create_model_configurations()
         ModelConfig(
             "SuperSimplified",
             :lightgbm,
-            MINIMAL_FEATURE_SET,
+            minimal_features,
             Dict(
                 :feature_fraction => 0.8,
                 :min_data_in_leaf => 10,

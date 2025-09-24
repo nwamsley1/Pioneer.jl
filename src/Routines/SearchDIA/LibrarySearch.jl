@@ -63,40 +63,9 @@ function searchFragmentIndex(
             getIsotopeErrBounds(params)
         )
 
-        #=
-        my_scan_idx = 50138 
-        my_prec_idx = 1420683
-        if scan_idx == my_scan_idx
-            #println("irt_lo $irt_lo irt_hi $irt_hi, getRetentionTime(spectra, scan_idx) ", getRetentionTime(spectra, scan_idx))
-
-            #println("getHigh(getRTBin(frag_index, rt_bin_idx-2)) ", getHigh(getRTBin(frag_index, max(rt_bin_idx-2, 1))))
-            #println("getLow(rt_bins[rt_bin_idx]): ", getLow(getRTBins(frag_index)[max(rt_bin_idx-2, 1)]))
-            #println("getLow(rt_bins[rt_bin_idx]): ", getLow(getRTBins(frag_index)[max(rt_bin_idx-1, 1)]))
-            #println("getLow(rt_bins[rt_bin_idx]): ", getLow(getRTBins(frag_index)[rt_bin_idx]))
-
-            #println("\n Precursor $my_prec_idx for scan $my_scan_idx has index score: ",getPrecursorScores(search_data).counts[my_prec_idx])
-            #println("\n")
-        end
-        =#
         # Filter precursor matches based on score
         match_count, prec_count = filterPrecursorMatches!(getPrecursorScores(search_data), getMinIndexSearchScore(params))
-        #=
-        if getID(getPrecursorScores(search_data), 1) > 0
-            start_idx = prec_id + 1
-            for n in 1:getPrecursorScores(search_data).matches
-                prec_id += 1
-                if prec_id > length(precursors_passed_scoring)
-                    append!(precursors_passed_scoring, similar(precursors_passed_scoring))
-                end
-                precursors_passed_scoring[prec_id] = getID(getPrecursorScores(search_data), n)
-            end
-            scan_to_prec_idx[scan_idx] = start_idx:prec_id
-        else
-            scan_to_prec_idx[scan_idx] = missing
-        end
-        
-        reset!(getPrecursorScores(search_data))
-        =#
+
         if getID(getPrecursorScores(search_data), 1)>0
             start_idx = prec_id + 1
             n = 1

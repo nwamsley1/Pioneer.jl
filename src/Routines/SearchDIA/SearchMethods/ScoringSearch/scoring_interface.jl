@@ -53,13 +53,14 @@ function apply_mbr_filter!(
 )
     # 1) identify transfer candidates
     candidate_mask = merged_df.MBR_transfer_candidate
+    n_candidates = sum(candidate_mask)
+
     # 2) identify bad transfers
     is_bad_transfer = candidate_mask .& (
          (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .| # T->D
          (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, false)) # D->T
     )
 
-    # After computing is_bad_transfer
     # 3) Apply the main filtering function
     filtered_probs = apply_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
 
@@ -345,15 +346,15 @@ end
 function train_lightgbm_model_df(feature_data::DataFrame, y::AbstractVector{Bool}, params)
     labels = y .== false  # Invert labels so true indicates a good transfer
     classifier = build_lightgbm_classifier(
-        num_iterations = 100,
-        #max_depth = 3,
-        num_leaves = 15,
-        learning_rate = 0.05,
-        feature_fraction = 0.5,
-        bagging_fraction = 0.25,
+        num_iterations = 100,      # matches EvoTrees nrounds
+        max_depth = 3,             # matches EvoTrees max_depth
+        num_leaves = 8,            # 2^3 for max_depth=3
+        learning_rate = 0.1,       # matches EvoTrees eta
+        feature_fraction = 0.8,    # matches EvoTrees colsample
+        bagging_fraction = 0.5,    # matches EvoTrees rowsample
         bagging_freq = 1,
-        min_data_in_leaf = 200,
-        min_gain_to_split = 0.0,
+        min_data_in_leaf = 1,      # matches EvoTrees min_child_weight
+        min_gain_to_split = 1.0,   # matches EvoTrees gamma
     )
     return fit_lightgbm_model(classifier, feature_data, labels; positive_label=true)
 end
@@ -395,8 +396,8 @@ Feature Processing (Simplified)
 ==========================================================#
 
 function select_mbr_features(df::DataFrame)
-    # Core features for MBR filtering (MS2-based features only, no MS1-dependent features)
-    candidate_features = [:prob, :irt_error, :MBR_max_pair_prob, :MBR_best_irt_diff,
+    # Core features for MBR filtering (including MS1-MS2 RT difference feature)
+    candidate_features = [:prob, :irt_error, :ms1_ms2_rt_diff, :MBR_max_pair_prob, :MBR_best_irt_diff,
                          :MBR_rv_coefficient, :MBR_log2_weight_ratio, :MBR_log2_explained_ratio, :MBR_num_runs]
     
     # Filter to available columns
