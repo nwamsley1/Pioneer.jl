@@ -15,7 +15,7 @@ using Pioneer
     model_by_name = Dict(name => cfg for (name, cfg) in zip(names, configs))
     @test :intercept in model_by_name["ProbitRegression"].features
     @test :intercept in model_by_name["ProbitRegressionSimple"].features
-    @test :intercept ∉ model_by_name["SimpleXGBoost"].features
-    @test :intercept ∉ model_by_name["AdvancedXGBoost"].features
+    @test :intercept ∉ model_by_name["SimpleLightGBM"].features
+    @test :intercept ∉ model_by_name["AdvancedLightGBM"].features
     @test :intercept ∉ model_by_name["SuperSimplified"].features
 end

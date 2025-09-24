@@ -90,8 +90,8 @@
         "machine_learning": {
             "max_psms_in_memory": 5000,
             "min_trace_prob": 0.75,
-            "max_q_value_xgboost_mbr_rescore": 0.20,
-            "min_PEP_neg_threshold_xgboost_rescore": 0.90,
+            "max_q_value_lightgbm_mbr_rescore": 0.20,
+            "min_PEP_neg_threshold_lightgbm_rescore": 0.90,
             "spline_points": 500,
             "interpolation_points": 10
         }

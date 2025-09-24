@@ -29,16 +29,16 @@ const MAX_FOR_MODEL_SELECTION_PSMS = MAX_FOR_MODEL_SELECTION
                                   file_paths::Vector{String},
                                   precursors::LibraryPrecursors,
                                   match_between_runs::Bool,
-                                  max_q_value_xgboost_rescore::Float32,
-                                  max_q_value_xgboost_mbr_rescore::Float32,
-                                  min_PEP_neg_threshold_xgboost_rescore::Float32,
+                                  max_q_value_lightgbm_rescore::Float32,
+                                  max_q_value_lightgbm_mbr_rescore::Float32,
+                                  min_PEP_neg_threshold_lightgbm_rescore::Float32,
                                   max_psms_in_memory::Int64)
 
 Main entry point for PSM scoring with automatic model selection based on dataset size.
 
 # Three-Case Logic
-1. PSMs ≥ max_psms_in_memory: Out-of-memory processing with default XGBoost
-2. PSMs < max_psms_in_memory AND ≥ 100K: In-memory with default/advanced XGBoost
+1. PSMs ≥ max_psms_in_memory: Out-of-memory processing with default LightGBM
+2. PSMs < max_psms_in_memory AND ≥ 100K: In-memory with default/advanced LightGBM
 3. PSMs < 100K: In-memory with automatic model comparison
 
 # Arguments
@@ -46,9 +46,9 @@ Main entry point for PSM scoring with automatic model selection based on dataset
 - `file_paths`: Vector of PSM file paths
 - `precursors`: Library precursors
 - `match_between_runs`: Whether to perform match between runs
-- `max_q_value_xgboost_rescore`: Max q-value for LightGBM rescoring
-- `max_q_value_xgboost_mbr_rescore`: Max q-value for MBR rescoring
-- `min_PEP_neg_threshold_xgboost_rescore`: Min PEP for negative relabeling
+- `max_q_value_lightgbm_rescore`: Max q-value for LightGBM rescoring
+- `max_q_value_lightgbm_mbr_rescore`: Max q-value for MBR rescoring
+- `min_PEP_neg_threshold_lightgbm_rescore`: Min PEP for negative relabeling
 - `max_psms_in_memory`: Maximum PSMs to keep in memory
 
 # Returns
@@ -59,9 +59,9 @@ function score_precursor_isotope_traces(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
     match_between_runs::Bool,
-    max_q_value_xgboost_rescore::Float32,
-    max_q_value_xgboost_mbr_rescore::Float32,
-    min_PEP_neg_threshold_xgboost_rescore::Float32,
+    max_q_value_lightgbm_rescore::Float32,
+    max_q_value_lightgbm_mbr_rescore::Float32,
+    min_PEP_neg_threshold_lightgbm_rescore::Float32,
     max_psms_in_memory::Int64,
     q_value_threshold::Float32 = 0.01f0  # Default to 1% if not specified
 )
@@ -69,35 +69,35 @@ function score_precursor_isotope_traces(
     psms_count = get_psms_count(file_paths)
     
     if psms_count >= max_psms_in_memory
-        # Case 1: Out-of-memory processing with default XGBoost
+        # Case 1: Out-of-memory processing with default LightGBM
         @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
-        best_psms = sample_psms_for_xgboost(second_pass_folder, psms_count, max_psms_in_memory)
-        # Use a ModelConfig (AdvancedXGBoost by default) for OOM path
-        model_config = create_default_advanced_xgboost_config()
+        best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
+        # Use a ModelConfig (AdvancedLightGBM by default) for OOM path
+        model_config = create_default_advanced_lightgbm_config()
         models = score_precursor_isotope_traces_out_of_memory!(
             best_psms,
             file_paths,
             precursors,
             model_config,
             match_between_runs,
-            max_q_value_xgboost_rescore,
-            max_q_value_xgboost_mbr_rescore,
-            min_PEP_neg_threshold_xgboost_rescore
+            max_q_value_lightgbm_rescore,
+            max_q_value_lightgbm_mbr_rescore,
+            min_PEP_neg_threshold_lightgbm_rescore
         )
     else
         # In-memory processing - load PSMs first
-        best_psms = load_psms_for_xgboost(second_pass_folder)
+        best_psms = load_psms_for_lightgbm(second_pass_folder)
         
         if psms_count >= MAX_FOR_MODEL_SELECTION  # 100K
-            # Case 2: In-memory with default/advanced XGBoost (no comparison)
-            @user_info "Using in-memory advanced XGBoost for $psms_count PSMs (< $max_psms_in_memory but ≥ 100K)"
-            model_config = create_default_advanced_xgboost_config()
+            # Case 2: In-memory with default/advanced LightGBM (no comparison)
+            @user_info "Using in-memory advanced LightGBM for $psms_count PSMs (< $max_psms_in_memory but ≥ 100K)"
+            model_config = create_default_advanced_lightgbm_config()
         else
             # Case 3: In-memory with automatic model comparison (<100K)
             model_config = select_psm_scoring_model(
                 best_psms, file_paths, precursors, match_between_runs,
-                max_q_value_xgboost_rescore, max_q_value_xgboost_mbr_rescore,
-                min_PEP_neg_threshold_xgboost_rescore, q_value_threshold
+                max_q_value_lightgbm_rescore, max_q_value_lightgbm_mbr_rescore,
+                min_PEP_neg_threshold_lightgbm_rescore, q_value_threshold
             )
         end
         
@@ -105,8 +105,8 @@ function score_precursor_isotope_traces(
         @user_info "Training final model: $(model_config.name)"
         models = score_precursor_isotope_traces_in_memory(
             best_psms, file_paths, precursors, model_config,
-            match_between_runs, max_q_value_xgboost_rescore,
-            max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore
+            match_between_runs, max_q_value_lightgbm_rescore,
+            max_q_value_lightgbm_mbr_rescore, min_PEP_neg_threshold_lightgbm_rescore
         )
         
         # Write scored PSMs to files
@@ -126,7 +126,7 @@ end
 Selects the appropriate PSM scoring model based on dataset size and characteristics.
 
 # Model Selection Logic
-- ≥100K PSMs: Returns default/advanced XGBoost configuration (no comparison)
+- ≥100K PSMs: Returns default/advanced LightGBM configuration (no comparison)
 - <100K PSMs: Trains each model and selects based on training performance
 
 # Returns
@@ -137,16 +137,16 @@ function select_psm_scoring_model(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
     match_between_runs::Bool,
-    max_q_value_xgboost_rescore::Float32,
-    max_q_value_xgboost_mbr_rescore::Float32,
-    min_PEP_neg_threshold_xgboost_rescore::Float32,
+    max_q_value_lightgbm_rescore::Float32,
+    max_q_value_lightgbm_mbr_rescore::Float32,
+    min_PEP_neg_threshold_lightgbm_rescore::Float32,
     q_value_threshold::Float32
 )
     psms_count = size(best_psms, 1)
     
     if psms_count >= MAX_FOR_MODEL_SELECTION
-        @user_info "Using default advanced XGBoost for $psms_count PSMs (≥ 100K)"
-        return create_default_advanced_xgboost_config()
+        @user_info "Using default advanced LightGBM for $psms_count PSMs (≥ 100K)"
+        return create_default_advanced_lightgbm_config()
     else
         # Get model configurations from model_config.jl
         model_configs = create_model_configurations()
@@ -165,8 +165,8 @@ function select_psm_scoring_model(
                 # Redirect both stdout AND stderr to suppress all progress bars
                 score_precursor_isotope_traces_in_memory(
                     psms_copy, file_paths, precursors, config,
-                    match_between_runs, max_q_value_xgboost_rescore,
-                    max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore,
+                    match_between_runs, max_q_value_lightgbm_rescore,
+                    max_q_value_lightgbm_mbr_rescore, min_PEP_neg_threshold_lightgbm_rescore,
                     false  # show_progress = false during comparison
                 )
                 
@@ -200,10 +200,10 @@ function select_psm_scoring_model(
         
         @user_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         
-        # If no model succeeded, fall back to SimpleXGBoost
+        # If no model succeeded, fall back to SimpleLightGBM
         if best_model_config === nothing
-            @user_warn "All models failed, defaulting to SimpleXGBoost"
-            best_model_config = model_configs[1]  # SimpleXGBoost is first
+            @user_warn "All models failed, defaulting to SimpleLightGBM"
+            best_model_config = model_configs[1]  # SimpleLightGBM is first
         else
             @user_info "✓ Selected: $(best_model_config.name) ($(best_target_count) IDs)"
         end
@@ -239,14 +239,14 @@ function count_passing_targets(scored_psms::DataFrame, qvalue_threshold::Float32
 end
 
 """
-    create_default_advanced_xgboost_config() -> ModelConfig
+    create_default_advanced_lightgbm_config() -> ModelConfig
 
-Creates the default advanced XGBoost configuration for large datasets.
+Creates the default advanced LightGBM configuration for large datasets.
 """
-function create_default_advanced_xgboost_config()
+function create_default_advanced_lightgbm_config()
     return ModelConfig(
-        "AdvancedXGBoost",
-        :xgboost,
+        "AdvancedLightGBM",
+        :lightgbm,
         ADVANCED_FEATURE_SET,
         Dict(
             :feature_fraction => 0.5,
@@ -270,10 +270,10 @@ Unified in-memory PSM scoring function that executes the specified model.
 - `model_config`: ModelConfig specifying which model to use and its hyperparameters
 
 # Supported Models
-- SimpleXGBoost: Full feature set, standard hyperparameters
-- AdvancedXGBoost: Full feature set, advanced hyperparameters
+- SimpleLightGBM: Full feature set, standard hyperparameters
+- AdvancedLightGBM: Full feature set, advanced hyperparameters
 - ProbitRegression: Linear probit model with CV folds from library
-- SuperSimplified: Minimal 5-feature XGBoost model
+- SuperSimplified: Minimal 5-feature LightGBM model
 """
 function score_precursor_isotope_traces_in_memory(
     best_psms::DataFrame,
@@ -281,23 +281,23 @@ function score_precursor_isotope_traces_in_memory(
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
-    max_q_value_xgboost_rescore::Float32,
-    max_q_value_xgboost_mbr_rescore::Float32,
-    min_PEP_neg_threshold_xgboost_rescore::Float32,
+    max_q_value_lightgbm_rescore::Float32,
+    max_q_value_lightgbm_mbr_rescore::Float32,
+    min_PEP_neg_threshold_lightgbm_rescore::Float32,
     show_progress::Bool = true
 )
     
-    if model_config.model_type == :xgboost
-        return train_xgboost_model_in_memory(
+    if model_config.model_type == :lightgbm
+        return train_lightgbm_model_in_memory(
             best_psms, file_paths, precursors, model_config,
-            match_between_runs, max_q_value_xgboost_rescore,
-            max_q_value_xgboost_mbr_rescore, min_PEP_neg_threshold_xgboost_rescore,
+            match_between_runs, max_q_value_lightgbm_rescore,
+            max_q_value_lightgbm_mbr_rescore, min_PEP_neg_threshold_lightgbm_rescore,
             show_progress
         )
     elseif model_config.model_type == :probit
         return train_probit_model_in_memory(
             best_psms, file_paths, precursors, model_config, match_between_runs,
-            min_PEP_neg_threshold_xgboost_rescore
+            min_PEP_neg_threshold_lightgbm_rescore
         )
     else
         error("Unsupported model type: $(model_config.model_type)")
@@ -305,19 +305,19 @@ function score_precursor_isotope_traces_in_memory(
 end
 
 """
-    train_xgboost_model_in_memory(...) -> Models
+    train_lightgbm_model_in_memory(...) -> Models
 
-Trains XGBoost model using configuration from ModelConfig.
+Trains LightGBM model using configuration from ModelConfig.
 """
-function train_xgboost_model_in_memory(
+function train_lightgbm_model_in_memory(
     best_psms::DataFrame,
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
-    max_q_value_xgboost_rescore::Float32,
-    max_q_value_xgboost_mbr_rescore::Float32,
-    min_PEP_neg_threshold_xgboost_rescore::Float32,
+    max_q_value_lightgbm_rescore::Float32,
+    max_q_value_lightgbm_mbr_rescore::Float32,
+    min_PEP_neg_threshold_lightgbm_rescore::Float32,
     show_progress::Bool = true
 )
     # Add required columns
@@ -342,8 +342,8 @@ function train_xgboost_model_in_memory(
     hp = model_config.hyperparams
     return sort_of_percolator_in_memory!(
         best_psms, features, match_between_runs;
-        max_q_value_xgboost_rescore, max_q_value_xgboost_mbr_rescore,
-        min_PEP_neg_threshold_xgboost_rescore,
+        max_q_value_lightgbm_rescore, max_q_value_lightgbm_mbr_rescore,
+        min_PEP_neg_threshold_lightgbm_rescore,
         feature_fraction = get(hp, :feature_fraction, 0.5),
         min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
         min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
@@ -367,7 +367,7 @@ function train_probit_model_in_memory(
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
-    min_PEP_neg_threshold_xgboost_rescore::Float32
+    min_PEP_neg_threshold_lightgbm_rescore::Float32
 )
     # Add required columns
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
@@ -382,7 +382,7 @@ function train_probit_model_in_memory(
         file_paths,
         features,
         match_between_runs;
-        neg_mining_pep_threshold = min_PEP_neg_threshold_xgboost_rescore
+        neg_mining_pep_threshold = min_PEP_neg_threshold_lightgbm_rescore
     )
     
     # File writing removed - will be done at higher level
@@ -416,7 +416,7 @@ end
 
 
 """
-    sample_psms_for_xgboost(quant_psms_folder::String, psms_count::Integer max_psms::Integer) -> DataFrame
+    sample_psms_for_lightgbm(quant_psms_folder::String, psms_count::Integer max_psms::Integer) -> DataFrame
 
 Sample PSMs from multiple files for LightGBM model training.
 
@@ -429,7 +429,7 @@ Sample PSMs from multiple files for LightGBM model training.
 1. Proportionally samples from each file
 2. Combines samples into single DataFrame
 """
-function sample_psms_for_xgboost(quant_psms_folder::String, psms_count::Integer, max_psms::Integer)
+function sample_psms_for_lightgbm(quant_psms_folder::String, psms_count::Integer, max_psms::Integer)
 
     file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
 
@@ -464,7 +464,7 @@ end
 
 Loads all PSMs from multiple files for LightGBM model training.
 """
-function load_psms_for_xgboost(quant_psms_folder::String)
+function load_psms_for_lightgbm(quant_psms_folder::String)
     file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
     return DataFrame(Tables.columntable(Arrow.Table(file_paths)))
 end
@@ -529,7 +529,7 @@ function probit_regression_scoring_cv!(
         @user_warn "Unexpected CV folds: $unique_cv_folds (expected [0, 1] from library)"
     end
     
-    # Step 2: Initialize probability array (like XGBoost does)
+    # Step 2: Initialize probability array (like LightGBM does)
     # Use a separate array instead of directly modifying DataFrame
     prob_estimates = zeros(Float32, size(psms, 1))
     
@@ -656,7 +656,7 @@ function probit_regression_scoring_cv!(
         end
     end
     
-    # Step 5: Assign probabilities to DataFrame (like XGBoost does at line 105 of percolatorSortOf.jl)
+    # Step 5: Assign probabilities to DataFrame (like LightGBM does at line 105 of percolatorSortOf.jl)
     psms[!, :prob] = prob_estimates
     
     # If MBR is enabled, create MBR columns (probit doesn't do separate MBR scoring)
@@ -716,9 +716,9 @@ function score_precursor_isotope_traces_out_of_memory!(
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
-    max_q_value_xgboost_rescore::Float32,
-    max_q_value_xgboost_mbr_rescore::Float32,
-    min_PEP_neg_threshold_xgboost_rescore::Float32
+    max_q_value_lightgbm_rescore::Float32,
+    max_q_value_lightgbm_mbr_rescore::Float32,
+    min_PEP_neg_threshold_lightgbm_rescore::Float32
 )
     file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
     # Features from model_config; do not include :target
@@ -746,9 +746,9 @@ function score_precursor_isotope_traces_out_of_memory!(
                             file_paths,
                             features,
                             match_between_runs;
-                            max_q_value_xgboost_rescore,
-                            max_q_value_xgboost_mbr_rescore,
-                            min_PEP_neg_threshold_xgboost_rescore,
+                            max_q_value_lightgbm_rescore,
+                            max_q_value_lightgbm_mbr_rescore,
+                            min_PEP_neg_threshold_lightgbm_rescore,
                             feature_fraction = get(hp, :feature_fraction, 0.5),
                             min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
                             min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
