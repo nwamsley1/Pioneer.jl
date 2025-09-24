@@ -416,7 +416,7 @@ function process_file!(
 
         reason = "FirstPassSearch failed: $(typeof(e))"
         markFileFailed!(search_context, ms_file_idx, reason)
-        @warn "First pass search failed for MS data file: $file_name. Error type: $(typeof(e)). Creating empty results to continue pipeline."
+        @user_warn "First pass search failed for MS data file: $file_name. Error type: $(typeof(e)). Creating empty results to continue pipeline."
         
         # Create an empty but properly structured DataFrame to avoid downstream errors
         empty_psms = DataFrame(
@@ -459,7 +459,7 @@ function process_search_results!(
             median_fwhm = median(fwhms),
             mad_fwhm = mad(fwhms, normalize=true)))
     else
-        @warn "Insuficient fwhm_points to estimate for $ms_file_idx"
+        @user_warn "Insuficient fwhm_points to estimate for $ms_file_idx"
         insert!(results.fwhms, ms_file_idx, (
             median_fwhm = 0.2f0,
             mad_fwhm = 0.2f0))
@@ -521,7 +521,7 @@ function summarize_results!(
         valid_rt_irt = Dict{Int64, RtConversionModel}(i => all_rt_irt[i] for i in valid_indices if haskey(all_rt_irt, i))
         
         if isempty(valid_psms_paths)
-            @warn "No valid files for cross-run precursor analysis"
+            @user_warn "No valid files for cross-run precursor analysis"
             return Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}()
         end
         
@@ -584,7 +584,7 @@ function summarize_results!(
             rm(output_path)
         end
     catch e
-        @warn "Could not clear existing file: $e"
+        @user_warn "Could not clear existing file: $e"
     end
 
     if !isempty(results.ms1_mass_plots)
