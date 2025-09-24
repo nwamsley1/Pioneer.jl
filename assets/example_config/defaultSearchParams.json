@@ -121,8 +121,8 @@
     "optimization": {
         "deconvolution": {
             "ms1": {
-                "lambda": 0.001,
-                "reg_type": "none",
+                "lambda": 0.0001,
+                "reg_type": "l2",
                 "huber_delta": 1e9
             },
             "ms2": {

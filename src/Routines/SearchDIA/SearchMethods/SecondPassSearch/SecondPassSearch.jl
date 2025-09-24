@@ -250,7 +250,6 @@ function process_file!(
             isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
             precursors_passing = Set(precursors_passing)
             # Perform MS1 search (diagnostic timing)
-            _ms1_start_ns = time_ns()
             ms1_psms = perform_second_pass_search(
                 spectra,
                 rt_index,
@@ -261,8 +260,6 @@ function process_file!(
                 isotopes_dict,
                 MS1CHROM()
             )
-            _ms1_elapsed_s = (time_ns() - _ms1_start_ns) / 1e9
-            @user_warn ("SecondPassSearch MS1 fitting time (file index=" * string(ms_file_idx) * "): " * @sprintf("%.3f s", _ms1_elapsed_s) * "\n")
             pair_idx = getPairIdx(precursors);
             is_decoy = getIsDecoy(precursors);
             partner_idx = getPartnerPrecursorIdx(precursors);
@@ -448,10 +445,13 @@ function process_search_results!(
             psms[!, col] = coalesce.(psms[!, col], zero(nonmissingtype(eltype(psms[!, col]))))
             disallowmissing!(psms, col)
         end
-        psms[!,:rt_diff] = ifelse.(psms[!,:rt_ms1] .== -1,
+
+        # Calculate MS1-MS2 RT difference in iRT space
+        rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
+        psms[!,:ms1_ms2_rt_diff] = ifelse.(psms[!,:rt_ms1] .== -1,
                           -1,
-                          abs.(psms[!,:rt] .- psms[!,:rt_ms1]))
-        
+                          abs.(rt_to_irt_model.(psms[!,:rt]) .- rt_to_irt_model.(psms[!,:rt_ms1])))
+
         psms[!, :ms1_features_missing] = miss_mask
         #Add additional features for final analysis
         add_features!(

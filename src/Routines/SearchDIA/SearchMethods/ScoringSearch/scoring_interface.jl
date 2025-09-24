@@ -395,8 +395,8 @@ Feature Processing (Simplified)
 ==========================================================#
 
 function select_mbr_features(df::DataFrame)
-    # Core features for MBR filtering
-    candidate_features = [:prob, :irt_error, :rt_diff, :MBR_max_pair_prob, :MBR_best_irt_diff,
+    # Core features for MBR filtering (MS2-based features only, no MS1-dependent features)
+    candidate_features = [:prob, :irt_error, :MBR_max_pair_prob, :MBR_best_irt_diff,
                          :MBR_rv_coefficient, :MBR_log2_weight_ratio, :MBR_log2_explained_ratio, :MBR_num_runs]
     
     # Filter to available columns

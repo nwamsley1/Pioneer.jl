@@ -77,9 +77,10 @@ const ADVANCED_FEATURE_SET = [
     :tic,
     :num_scans,
     :smoothness,
-    :rt_diff,
-    :ms1_irt_diff,
-    :weight_ms1,
+    :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
+    #:ms1_irt_diff,
+    #:weight_ms1,
+    
     :gof_ms1,
     :max_matched_residual_ms1,
     :max_unmatched_residual_ms1,
@@ -101,7 +102,9 @@ const REDUCED_FEATURE_SET = [
     # Core peptide properties
     :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
     # RT features
-    :irt_pred, :irt_error, :irt_diff, :rt_diff, :ms1_irt_diff,
+    :irt_pred, :irt_error, :irt_diff,
+    :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
+    #:ms1_irt_diff,
     # Spectral features
     :max_y_ions, :y_ions_sum, :longest_y, :y_count, :b_count, :isotope_count,
     :total_ions, :best_rank, :best_rank_iso, :topn, :topn_iso, :gof,
@@ -112,9 +115,12 @@ const REDUCED_FEATURE_SET = [
     :err_norm, :poisson, :weight, :log2_intensity_explained, :tic, :num_scans,
     :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
     # MS1 features
-    :weight_ms1, :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
+    :weight_ms1, 
+    :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
     :fitted_spectral_contrast_ms1, :error_ms1, :m0_error_ms1, :n_iso_ms1,
-    :big_iso_ms1, :rt_max_intensity_ms1, :rt_diff_max_intensity_ms1, :ms1_features_missing
+    :big_iso_ms1, :rt_max_intensity_ms1, 
+    :rt_diff_max_intensity_ms1, 
+    :ms1_features_missing
     # MBR features added automatically if match_between_runs=true
 ]
 
@@ -258,7 +264,7 @@ function apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
     if !ms1_scoring
         # MS1 features to exclude when ms1_scoring=false
         ms1_features = Set([
-            :ms1_irt_diff, :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
+            :ms1_irt_diff, :ms1_ms2_rt_diff, :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
             :max_unmatched_residual_ms1, :fitted_spectral_contrast_ms1, :error_ms1,
             :m0_error_ms1, :n_iso_ms1, :big_iso_ms1, :rt_max_intensity_ms1,
             :rt_diff_max_intensity_ms1, :ms1_features_missing
