@@ -281,7 +281,6 @@ function summarize_results!(
         setHuberDelta!(search_context, optimal_delta)
         
     catch e
-        throw(e)
         @user_warn "Failed to determine optimal Huber delta, using default" exception=e
         default_delta = params.huber_override_delta
         results.huber_delta[] = default_delta

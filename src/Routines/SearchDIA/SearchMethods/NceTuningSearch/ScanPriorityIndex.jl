@@ -291,15 +291,11 @@ function collect_nce_psms_for_scans(
         # CRITICAL: Map virtual scan indices back to actual scan indices
         # The library search used indices 1, 2, 3... but we need the actual scan indices
         if !isempty(psms) && "scan_idx" in names(psms)
-            try
-                # Create mapping from virtual to actual scan indices
-                scan_mapping = create_scan_mapping(indexed_spectra)
+            # Create mapping from virtual to actual scan indices
+            scan_mapping = create_scan_mapping(indexed_spectra)
 
-                # Map all scan_idx values from virtual to actual
-                psms[!, :scan_idx] = [scan_mapping[Int32(virtual_idx)] for virtual_idx in psms[!, :scan_idx]]
-            catch e
-                throw(e)
-            end
+            # Map all scan_idx values from virtual to actual
+            psms[!, :scan_idx] = [scan_mapping[Int32(virtual_idx)] for virtual_idx in psms[!, :scan_idx]]
         end
     end
 

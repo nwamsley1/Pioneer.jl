@@ -391,7 +391,7 @@ function process_file!(
             )...
         )
         if length(ms1_errs) > 1
-            mad_dev= mad(ms1_errs)
+            mad_dev = mad(ms1_errs; normalize=true)
             med_errs = median(ms1_errs)
             low_bound, high_bound = med_errs - mad_dev*7, med_errs + mad_dev*7
             filter!(x->(low_bound<x)&(high_bound>x), ms1_errs)

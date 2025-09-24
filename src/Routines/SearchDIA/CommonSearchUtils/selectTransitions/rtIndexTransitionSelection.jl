@@ -47,7 +47,7 @@ function _select_transitions_impl!(
     rt_stop_idx::Int64,
     frag_mz_bounds::Tuple{Float32, Float32};
     precursors_passing::Union{Set{UInt32}, Nothing} = nothing,
-    isotope_err_bounds::Tuple{I, I} = (0, 2),
+    isotope_err_bounds::Tuple{I, I} = (3, 1),
     block_size::Int64 = 10000,
     min_fraction_transmitted::Float32 = 0.0f0
 ) where {I<:Integer}
