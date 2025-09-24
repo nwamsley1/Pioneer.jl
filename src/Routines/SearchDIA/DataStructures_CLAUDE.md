@@ -264,6 +264,6 @@ println("Spectral scores allocated: $(length(search_data.spectral_scores))")
 - Fragment indexing works with LibraryIon structures
 
 ### With ML Pipeline
-- ComplexScoredPSM features feed EvoTrees/XGBoost training
+- ComplexScoredPSM features feed LightGBM training
 - Protein group scoring uses aggregated PSM scores
 - Cross-validation assignments preserved across data structures

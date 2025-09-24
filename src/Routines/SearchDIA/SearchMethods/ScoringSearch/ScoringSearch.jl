@@ -19,7 +19,7 @@
     ScoringSearch
 
 Search method for post-processing second pass results to get final protein scores.
-This includes EvoTrees/XGBoost model training, trace scoring, and protein group analysis.
+This includes LightGBM model training, trace scoring, and protein group analysis.
 """
 struct ScoringSearch <: SearchMethod end
 
@@ -47,7 +47,7 @@ end
 Parameters for scoring search.
 """
 struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
-    # EvoTrees/XGBoost parameters
+    # LightGBM parameters
     max_psms_in_memory::Int64
     min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
@@ -56,9 +56,9 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     pg_q_value_interpolation_points_per_bin::Int64  # Added based on original struct
     match_between_runs::Bool
     min_peptides::Int64
-    max_q_value_xgboost_rescore::Float32
-    max_q_value_xgboost_mbr_rescore::Float32
-    min_PEP_neg_threshold_xgboost_rescore::Float32
+    max_q_value_lightgbm_rescore::Float32
+    max_q_value_mbr_itr::Float32
+    min_PEP_neg_threshold_itr::Float32
     max_MBR_false_transfer_rate::Float32
     q_value_threshold::Float32
     isotope_tracetype::I
@@ -69,6 +69,9 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     qvalue_threshold_comparison::Float64
     min_psms_for_comparison::Int64
     max_psms_for_comparison::Int64
+
+    # MS1 scoring parameter
+    ms1_scoring::Bool
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
@@ -93,8 +96,8 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Bool(global_params.match_between_runs),
             Int64(protein_inference_params.min_peptides),
             Float32(global_params.scoring.q_value_threshold),
-            Float32(ml_params.max_q_value_xgboost_mbr_rescore),
-            Float32(ml_params.min_PEP_neg_threshold_xgboost_rescore),
+            Float32(ml_params.max_q_value_mbr_itr),
+            Float32(ml_params.min_PEP_neg_threshold_itr),
             Float32(global_params.scoring.q_value_threshold),
             Float32(global_params.scoring.q_value_threshold),
             isotope_trace_type,
@@ -104,7 +107,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Float64(get(ml_params, :validation_split_ratio, 0.2)),
             Float64(get(ml_params, :qvalue_threshold, 0.01)),
             Int64(get(ml_params, :min_psms_for_comparison, 1000)),
-            Int64(get(ml_params, :max_psms_for_comparison, 100000))
+            Int64(get(ml_params, :max_psms_for_comparison, 100000)),
+
+            # MS1 scoring parameter
+            Bool(global_params.ms1_scoring)
         )
     end
 end
@@ -133,6 +139,11 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 )
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "ScoringSearch")
+        return results  # Return early with unchanged results
+    end
+    
     # No per-file processing needed
     return results
 end
@@ -237,25 +248,37 @@ function summarize_results!(
     end
 
     try
-        # Step 1: Train EvoTrees/XGBoost Models
-        ##@debug_l1 "Step 1: Training EvoTrees/XGBoost models..."
+        # Step 1: Train LightGBM Models
+        ##@debug_l1 "Step 1: Training LightGBM models..."
+        # Filter to only include valid (non-failed) files
+        valid_file_data = get_valid_file_paths(search_context, getSecondPassPsms)
+        valid_file_indices = [idx for (idx, _) in valid_file_data]
+        valid_second_pass_psms = [path for (_, path) in valid_file_data]
+        
+        # Check if any valid files remain
+        if isempty(valid_second_pass_psms)
+            @user_warn "No valid files for ScoringSearch - all files failed in previous search methods"
+            return nothing
+        end
+        
         step1_time = @elapsed begin
             score_precursor_isotope_traces(
                 second_pass_folder,
-                getSecondPassPsms(getMSData(search_context)),
+                valid_second_pass_psms,
                 getPrecursors(getSpecLib(search_context)),
                 params.match_between_runs,
-                params.max_q_value_xgboost_rescore,
-                params.max_q_value_xgboost_mbr_rescore,
-                params.min_PEP_neg_threshold_xgboost_rescore,
+                params.max_q_value_lightgbm_rescore,
+                params.max_q_value_mbr_itr,
+                params.min_PEP_neg_threshold_itr,
                 params.max_psms_in_memory,
-                params.q_value_threshold
+                params.q_value_threshold,
+                params.ms1_scoring
             )
         end
         #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
 
-        # Create references for second pass PSMs
-        second_pass_paths = getSecondPassPsms(getMSData(search_context))
+        # Create references for second pass PSMs (only valid files)
+        second_pass_paths = valid_second_pass_psms
         second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
         # Step 2: Compute precursor probabilities and FTR filtering
@@ -274,8 +297,8 @@ function summarize_results!(
             if params.match_between_runs
                 prob_col = apply_mbr_filter!(
                     merged_df,
-                    params,
-                    getLibraryFdrScaleFactor(search_context))
+                    params
+                    )
             else
                 prob_col = :prob
             end
@@ -291,8 +314,8 @@ function summarize_results!(
                        
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
             # Write updated data back to individual files
-            for (idx, ref) in enumerate(second_pass_refs)
-                sub_df = merged_df[merged_df.ms_file_idx .== idx, :]
+            for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
+                sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
                 write_arrow_file(ref, sub_df)
             end
         end
@@ -302,7 +325,7 @@ function summarize_results!(
         #@debug_l1 "Step 3: Finding best isotope traces..."
         step3_time = @elapsed begin
             best_traces = get_best_traces(
-                getSecondPassPsms(getMSData(search_context)),
+                valid_second_pass_psms,
                 params.min_best_trace_prob
             )
         end
@@ -429,8 +452,8 @@ function summarize_results!(
         #@debug_l1 "Step 10 completed in $(round(step10_time, digits=2)) seconds"
 
         # Update search context with passing PSM paths
-        for (idx, ref) in enumerate(passing_refs)
-            setPassingPsms!(getMSData(search_context), idx, file_path(ref))
+        for (file_idx, ref) in zip(valid_file_indices, passing_refs)
+            setPassingPsms!(getMSData(search_context), file_idx, file_path(ref))
         end
 
         # Step 11: Count protein peptides
@@ -463,8 +486,8 @@ function summarize_results!(
                 min_peptides = params.min_peptides
             )
             
-            paired_files = [PairedSearchFiles(psm_path, pg_path, idx) 
-                           for (idx, (psm_path, pg_path)) in enumerate(psm_to_pg_mapping)]
+            paired_files = [PairedSearchFiles(psm_path, pg_path, file_idx)
+                           for (file_idx, (psm_path, pg_path)) in zip(valid_file_indices, psm_to_pg_mapping)]
             
             isempty(paired_files) && error("No protein groups created during protein inference")
         end
@@ -498,7 +521,8 @@ function summarize_results!(
                 params.max_psms_in_memory,
                 qc_folder,
                 getPrecursors(getSpecLib(search_context));
-                protein_to_cv_fold = protein_to_cv_fold
+                protein_to_cv_fold = protein_to_cv_fold,
+                ms1_scoring = params.ms1_scoring
             )
             
             # Count protein groups after probit
@@ -633,7 +657,7 @@ function summarize_results!(
                     step21_time + step22_time + step23_time
     
         @user_info "ScoringSearch completed - Total time: $(round(total_time, digits=2)) seconds"
-        #@debug_l1 "Breakdown: EvoTrees/XGBoost($(round(step1_time, digits=1))s) + Preprocess($(round(step2_time, digits=1))s) + Best_Traces($(round(step3_time, digits=1))s) + Quant_Processing($(round(step4_time, digits=1))s) + Merging($(round(step5_time + step7_time + step15_time + step18_time, digits=1))s) + Q-values($(round(step6_time + step8_time + step16_time + step19_time, digits=1))s) + Protein_Inference($(round(step11_time, digits=1))s) + Probit_Regression($(round(step12_time, digits=1))s) + Other($(round(step4_time + step9_time + step13_time + step14_time + step17_time + step20_time + step21_time, digits=1))s)"
+        #@debug_l1 "Breakdown: LightGBM($(round(step1_time, digits=1))s) + Preprocess($(round(step2_time, digits=1))s) + Best_Traces($(round(step3_time, digits=1))s) + Quant_Processing($(round(step4_time, digits=1))s) + Merging($(round(step5_time + step7_time + step15_time + step18_time, digits=1))s) + Q-values($(round(step6_time + step8_time + step16_time + step19_time, digits=1))s) + Protein_Inference($(round(step11_time, digits=1))s) + Probit_Regression($(round(step12_time, digits=1))s) + Other($(round(step4_time + step9_time + step13_time + step14_time + step17_time + step20_time + step21_time, digits=1))s)"
 
         best_traces = nothing # Free memory
     catch e

@@ -170,6 +170,10 @@ function prepare_chronologer_input(
     protein_df = build_protein_df(protein_entries)
     Arrow.write(proteins_out_path, protein_df)
 
+    # Display decoy generation configuration
+    decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
+    entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
+
     # Step 1: Combine shared peptides (I/L equivalence)
     fasta_entries = combine_shared_peptides(fasta_entries)
     
@@ -179,30 +183,25 @@ function prepare_chronologer_input(
         fixed_mods, 
         var_mods,
         _params.fasta_digest_params["max_var_mods"])
-    @user_info "Step 2 - Modifications added (creates peptide variants for entrapment shuffling)"
 
     # Step 3: Assign base_pep_id for peptide tracking (after modifications)
     pep_entries_processed = assign_base_pep_ids!(fasta_entries)
-    pep_count = length(unique([get_base_pep_id(e) for e in fasta_entries]))
-    @user_info "Step 3 - Base Pep ID Assignment: $pep_entries_processed entries processed"
-    @user_info "  Unique base_pep_ids: $pep_count"
-    @user_info "  Purpose: Track peptides (sequence + modifications) through entrapment variants"
-    
-    # Step 4: Add entrapment sequences (now handles modifications properly)
-    fasta_entries = add_entrapment_sequences(
+
+    # Step 4: Add entrapment sequences (grouped by base sequence so all mods share the same entrapments)
+    entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
+    fasta_entries = add_entrapment_sequences_grouped(
         fasta_entries,
-        UInt8(_params.fasta_digest_params["entrapment_r"])
+        UInt8(_params.fasta_digest_params["entrapment_r"]);
+        entrapment_method = entrapment_method
     )
-    @user_info "Step 4 - Entrapment sequences added with shuffled modifications"
-    
+
     # Step 5: Assign base_target_id values for entrapment grouping
     assign_base_target_ids!(fasta_entries)
-    @user_info "Step 5 - base_target_id assigned for entrapment tracking"
 
-    # Step 6: Add decoys (inherit base_target_id and base_pep_id for pairing)
+    # Step 6: Add decoys (GROUPED by base sequence; all mods share same decoy)
     if _params.fasta_digest_params["add_decoys"]
-        fasta_entries = add_decoy_sequences(fasta_entries)
-        @user_info "Step 6 - Decoy sequences added (inherit base_target_id and base_pep_id)"
+        decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
+        fasta_entries = add_decoy_sequences_grouped(fasta_entries; decoy_method=decoy_method)
     end
         
     # Step 7: Add charges (creates precursor variants)
@@ -211,7 +210,6 @@ function prepare_chronologer_input(
         _params.fasta_digest_params["min_charge"],
         _params.fasta_digest_params["max_charge"]
     )
-    @user_info "Step 7 - Charge states added (creates precursor variants)"
 
     # Build UniSpec input dataframe
     fasta_df = build_fasta_df(
@@ -238,15 +236,9 @@ function prepare_chronologer_input(
         fasta_df[i, :missed_cleavages] = count(cleavage_regex, fasta_df[i, :sequence])
     end
 
-    # Filter by mass range
-    println("🔍 PARTNER INDEX DEBUG:")
-    nrow_before = nrow(fasta_df)
-    println("   Before m/z filtering: $nrow_before precursors")
+    # Filter by mass rang
     filter!(x -> (x.mz >= prec_mz_min) & (x.mz <= prec_mz_max), fasta_df)
-    nrow_after = nrow(fasta_df)
-    percent_removed = round((1 - nrow_after/nrow_before) * 100, digits=1)
-    println("   After m/z filtering: $nrow_after precursors ($percent_removed% removed)")
-    
+
     # Apply charge-specific target-decoy pairing AFTER all filtering is complete
     # This ensures partner_precursor_idx values are valid row indices
     fasta_df = add_charge_specific_partner_columns!(fasta_df)
@@ -617,4 +609,3 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
     
     return seq_df
 end
-

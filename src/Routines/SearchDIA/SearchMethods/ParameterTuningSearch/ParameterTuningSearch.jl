@@ -30,7 +30,7 @@ This search:
 ```julia
 # Define search parameters
 params = Dict(
-    :isotope_err_bounds => (0, 2),
+    :isotope_err_bounds => (3, 1),
     :presearch_params => Dict(
         "frag_tol_ppm" => 30.0,
         "frag_err_quantile" => 0.01,
@@ -57,6 +57,7 @@ results = execute_search(ParameterTuningSearch(), search_context, params)
 ```
 """
 # Type definitions moved to types.jl
+
 
 #==========================================================
 Iteration State Management Functions
@@ -664,6 +665,17 @@ function process_file!(
     spectra::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
     
+    # Check if file should be skipped due to previous failure
+    if is_file_failed(search_context, ms_file_idx)
+        file_name = try
+            getFileIdToName(getMSData(search_context), ms_file_idx)
+        catch
+            "file_$ms_file_idx"
+        end
+        @user_warn "Skipping ParameterTuningSearch for previously failed file: $file_name"
+        return results  # Return early with unchanged results
+    end
+    
     converged = false
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     final_psm_count = 0
@@ -686,12 +698,43 @@ function process_file!(
         initialize_models!(search_context, ms_file_idx, params)
         
         # Create filtered spectra ONCE with initial scan count
-        filtered_spectra = FilteredMassSpecData(
-            spectra,
-            max_scans = scan_count,
-            topn = something(getTopNPeaks(params), 200),
-            target_ms_order = UInt8(2)
-        )
+        try
+            filtered_spectra = FilteredMassSpecData(
+                spectra,
+                max_scans = scan_count,
+                topn = something(getTopNPeaks(params), 200),
+                target_ms_order = UInt8(2)
+            )
+            
+            # Check if we have any usable scans
+            if length(filtered_spectra) == 0
+                file_name = try
+                    getFileIdToName(getMSData(search_context), ms_file_idx)
+                catch
+                    "file_$ms_file_idx"
+                end
+                @user_warn "MS data file $file_name contains no usable MS2 scans for parameter tuning. Using conservative defaults."
+                # Force fallback by setting converged = false and raising an internal exception flag
+                iteration_state.failed_with_exception = true
+                # Skip to fallback logic by jumping out of the try block
+                throw(ErrorException("No usable MS2 scans"))
+            end
+        catch e
+            if isa(e, ErrorException) && e.msg == "No usable MS2 scans"
+                # Re-throw our controlled exception to handle in outer catch
+                rethrow(e)
+            else
+                # Handle other FilteredMassSpecData creation errors
+                file_name = try
+                    getFileIdToName(getMSData(search_context), ms_file_idx)
+                catch
+                    "file_$ms_file_idx"
+                end
+                @user_warn "Failed to create filtered spectra for MS data file: $file_name. Error type: $(typeof(e)). Using conservative defaults."
+                iteration_state.failed_with_exception = true
+                throw(e)  # Re-throw to be caught by outer catch block
+            end
+        end
         
         # Track current scan count
         current_scan_count = scan_count
@@ -758,8 +801,28 @@ function process_file!(
         end
         
     catch e
-        throw(e)
-        @user_warn "Parameter tuning failed for file $parsed_fname with error" exception=e
+        # Get the actual file name for clear error reporting
+        file_name = try
+            getFileIdToName(getMSData(search_context), ms_file_idx)
+        catch
+            "file_$ms_file_idx"
+        end
+        
+        reason = "ParameterTuningSearch failed: $(typeof(e))"
+        markFileFailed!(search_context, ms_file_idx, reason)
+        @user_warn "Parameter tuning failed for MS data file: $file_name. Error type: $(typeof(e)). Using conservative default parameters to continue analysis."
+        
+        # Set conservative defaults to allow pipeline to continue
+        converged = false
+        iteration_state.failed_with_exception = true
+        
+        # Set default IRT error to infinite tolerance (no IRT filtering)
+        getIrtErrors(search_context)[ms_file_idx] = typemax(Float32)
+        
+        # Clear any partial state
+        if filtered_spectra !== nothing
+            # If we got this far, we had some data structure initialized
+        end
     end
     
     # Store results and handle fallback if needed
@@ -870,9 +933,19 @@ function process_file!(
             final_psm_count = iteration_state.best_psm_count
             
         else
-            # No valid attempts found any PSMs - use conservative defaults or borrow
-            @user_warn "Failed to converge for file $ms_file_idx after $(iteration_state.scan_attempt) attempts. " *
-                      "No attempts found sufficient PSMs (best was $(iteration_state.best_psm_count)), using fallback strategy"
+            # Determine why we failed to provide appropriate messaging
+            if iteration_state.failed_with_exception
+                file_name = try
+                    getFileIdToName(getMSData(search_context), ms_file_idx)
+                catch
+                    "file_$ms_file_idx"
+                end
+                @user_warn "Processing failed with exception for MS data file: $file_name. Using conservative default parameters to continue analysis."
+            else
+                # No valid attempts found any PSMs - use conservative defaults or borrow
+                @user_warn "Failed to converge for file $ms_file_idx after $(iteration_state.scan_attempt) attempts. " *
+                          "No attempts found sufficient PSMs (best was $(iteration_state.best_psm_count)), using fallback strategy"
+            end
             
             fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
                 search_context, ms_file_idx
@@ -926,6 +999,7 @@ function process_search_results!(
         
         # Get iteration_state from results
         iteration_state = results.current_iteration_state[]
+        # Note: No mass-error buffer is applied. Plots reflect the fitted model.
         
         # Always generate plots, even with limited or no data
         # This ensures we have diagnostic output for all files
@@ -948,6 +1022,19 @@ function process_search_results!(
         end
         
         # Generate mass error plot (only store in memory, no individual files)
+        m = getMassErrorModel(search_context, ms_file_idx)
+        #buffered_model = MassErrorModel(
+        #    getMassOffset(m),
+        #    (getLeftTol(m) + 1.0f0, getRightTol(m) + 1.0f0)
+        #)
+        buffered_model = m  # No additional buffer applied
+        setMassErrorModel!(
+            search_context,
+            ms_file_idx,
+            buffered_model)
+
+        results.mass_err_model[] = buffered_model  # Update results with buffered model
+
         if length(results.ppm_errs) > 0
             # If we have mass error data, generate regular plot
             mass_plot = generate_mass_error_plot(results, parsed_fname)
@@ -974,7 +1061,6 @@ function process_search_results!(
         resize!(results.ppm_errs, 0)
         results.current_iteration_state[] = nothing  # Clear iteration state after use
     catch e
-        throw(e)
         @user_warn "Failed to generate plots for file $ms_file_idx" exception=(e, catch_backtrace())
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
     end
@@ -992,6 +1078,8 @@ function reset_results!(results::ParameterTuningSearchResults)
     # Models are per-file, so they get reset at the start of each file
     # No need to reset them here
 end
+
+# Deprecated: apply_final_mass_error_buffer! removed – buffer is applied per-file before plotting
 
 """
 Summarize results across all MS files.
@@ -1011,7 +1099,6 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
                     safeRm(rt_combined_path, nothing)
                 end
             catch e
-                throw(e)
                 @user_warn "Could not clear existing RT plots file: $e"
             end
             save_multipage_pdf(results.rt_plots, rt_combined_path)
@@ -1026,7 +1113,6 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
                     safeRm(mass_combined_path, nothing)
                 end
             catch e
-                throw(e)
                 @user_warn "Could not clear existing mass error plots file: $e"
             end
             save_multipage_pdf(results.mass_plots, mass_combined_path)
@@ -1038,9 +1124,12 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
         # For now, the diagnostic summary below provides the key information
         
     catch e
-        throw(e)
         @user_warn "Failed to merge QC plots" exception=(e, catch_backtrace())
     end
+    
+    # Apply buffer to all mass error models AFTER plots are generated
+    # This ensures plots show the actual fitted values, not buffered ones
+    # Do not apply an additional buffer here; models were buffered once per file
     
     # Log diagnostic summary
     diagnostics = getDiagnostics(results)

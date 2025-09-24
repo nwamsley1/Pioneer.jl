@@ -38,8 +38,8 @@ using Tables
 using StatsPlots, SentinelArrays
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics, SparseArrays
-using EvoTrees
-using MLJModelInterface: fit, predict
+using LightGBM
+import MLJModelInterface: fit, predict
 using KernelDensity
 using FastGaussQuadrature
 using LaTeXStrings, Printf

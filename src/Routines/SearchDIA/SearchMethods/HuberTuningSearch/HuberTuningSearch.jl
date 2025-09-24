@@ -101,7 +101,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
         global_params = params.global_settings
         frag_params = params.quant_search.fragment_settings
         # Calculate Huber delta grid
-        delta0 = Float32(deconv_params.huber_delta)
+        delta0 = Float32(deconv_params.ms2.huber_delta)
         delta_exp = Float32(deconv_params.huber_exp)
         delta_iters = Int64(deconv_params.huber_iters)
         huber_δs = Float32[delta0 * (delta_exp^i) for i in range(-4,delta_iters+6)]
@@ -109,7 +109,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
 
         # Always use partial capture for Huber tuning
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        reg_type = deconv_params.reg_type
+        reg_type = deconv_params.ms2.reg_type
         if reg_type == "none"
             reg_type = NoNorm()
         elseif reg_type == "l1"
@@ -127,7 +127,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
             UInt8(frag_params.max_rank),  # Using max possible rank
             Set{Int64}([2]),
             
-            Float32(deconv_params.lambda),
+            Float32(deconv_params.ms2.lambda),
             reg_type, 
             Int64(deconv_params.newton_iters),
             Int64(deconv_params.bisection_iters),
@@ -173,6 +173,11 @@ function process_file!(
     spectra::MassSpecData
 ) where {P<:HuberTuningSearchParameters}
 
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "HuberTuningSearch")
+        return results  # Return early with unchanged results
+    end
+
     if params.huber_override_bool==true
         return 
     end
@@ -207,10 +212,29 @@ function process_file!(
         push!(results.tuning_psms, tuning_results)
         
     catch e
-        @user_warn "Huber tuning failed for file $ms_file_idx" exception=e
+        # Handle failures gracefully using helper function
+        handle_search_error!(search_context, ms_file_idx, "HuberTuningSearch", e, createFallbackResults!, results)
     end
     
     return results
+end
+
+"""
+Create fallback results for a failed file in HuberTuningSearch.
+Uses default Huber delta value for robust quantification.
+"""
+function createFallbackResults!(results::HuberTuningSearchResults, ms_file_idx::Int64)
+    # Use default conservative Huber delta value
+    results.huber_delta[] = 1.0f0  # Conservative default
+    
+    # Create empty tuning PSMs DataFrame
+    empty_psms = DataFrame(
+        ms_file_idx = UInt32[],
+        scan_idx = UInt32[], 
+        precursor_idx = UInt32[],
+        delta = Float32[]
+    )
+    push!(results.tuning_psms, empty_psms)
 end
 
 function process_search_results!(
@@ -257,7 +281,6 @@ function summarize_results!(
         setHuberDelta!(search_context, optimal_delta)
         
     catch e
-        throw(e)
         @user_warn "Failed to determine optimal Huber delta, using default" exception=e
         default_delta = params.huber_override_delta
         results.huber_delta[] = default_delta

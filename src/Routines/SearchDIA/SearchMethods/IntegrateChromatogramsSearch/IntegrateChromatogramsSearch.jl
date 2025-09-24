@@ -57,7 +57,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     max_apex_offset::Int64
     write_decoys::Bool
     
-    # Deconvolution parameters
+    # Deconvolution parameters (MS2)
     lambda::Float32
     reg_type::RegularizationType
     max_iter_newton::Int64
@@ -66,6 +66,11 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     accuracy_newton::Float32
     accuracy_bisection::Float32
     max_diff::Float32
+
+    # MS1 deconvolution parameters
+    ms1_lambda::Float32
+    ms1_reg_type::RegularizationType
+    ms1_huber_delta::Float32
 
     # Analysis strategies
     isotope_tracetype::I
@@ -92,7 +97,9 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         # Always use partial precursor capture for integrate chromatogram
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        reg_type = deconv_params.reg_type
+
+        # Parse MS2 regularization type
+        reg_type = deconv_params.ms2.reg_type
         if reg_type == "none"
             reg_type = NoNorm()
         elseif reg_type == "l1"
@@ -101,7 +108,20 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             reg_type = L2Norm()
         else
             reg_type = NoNorm()
-            @user_warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+            @user_warn "Warning. MS2 reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+        end
+
+        # Parse MS1 regularization type
+        ms1_reg_type = deconv_params.ms1.reg_type
+        if ms1_reg_type == "none"
+            ms1_reg_type = NoNorm()
+        elseif ms1_reg_type == "l1"
+            ms1_reg_type = L1Norm()
+        elseif ms1_reg_type == "l2"
+            ms1_reg_type = L2Norm()
+        else
+            ms1_reg_type = NoNorm()
+            @user_warn "Warning. MS1 reg type `$ms1_reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
@@ -110,21 +130,25 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             UInt8(frag_params.max_rank),
             Set{Int64}([2]),
             global_params.ms1_quant,
-            
+
             Float32(chrom_params.smoothing_strength),
             Int64(chrom_params.padding),
             Int64(chrom_params.max_apex_offset),
             Bool(output_params.write_decoys),
-            
-            Float32(deconv_params.lambda),
-            reg_type, 
+
+            Float32(deconv_params.ms2.lambda),
+            reg_type,
             Int64(deconv_params.newton_iters),
             Int64(deconv_params.bisection_iters),
             Int64(deconv_params.outer_iters),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.max_diff),
-            
+
+            Float32(deconv_params.ms1.lambda),
+            ms1_reg_type,
+            Float32(deconv_params.ms1.huber_delta),
+
             isotope_trace_type,
             prec_estimation
         )
@@ -153,6 +177,11 @@ function process_file!(
     search_context::SearchContext,    
     ms_file_idx::Int64,
     spectra::MassSpecData) where {P<:IntegrateChromatogramSearchParameters}
+
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "IntegrateChromatogramSearch")
+        return results  # Return early with unchanged results
+    end
 
     try
         # Set the NCE model from the search context for fragment matching
@@ -235,11 +264,8 @@ function process_file!(
             getIsolationWidthMzs(spectra)
         )
 
-        # Assuming scans that isolated too little of the precursor are not reliable to quantify
-        filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, chromatograms)
-        
         # Integrate chromatographic peaks for each precursor
-        # Updates peak_area and new_best_scan in passing_psms   
+        # Updates peak_area and new_best_scan in passing_psms
         integrate_precursors(
             chromatograms,
             params.isotope_tracetype,
@@ -283,12 +309,33 @@ function process_file!(
         # Store processed PSMs in results
         results.psms[] = passing_psms
     catch e
-        # Log error and re-throw for debugging
-        @user_warn "Chromatogram integration failed" ms_file_idx exception=e
-        rethrow(e)
+        # Handle failures gracefully using helper function
+        handle_search_error!(search_context, ms_file_idx, "IntegrateChromatogramSearch", e, createFallbackResults!, results)
     end
 
     return results
+end
+
+"""
+Create empty chromatogram results for a failed file in IntegrateChromatogramSearch.
+"""
+function createFallbackResults!(results::IntegrateChromatogramSearchResults, ms_file_idx::Int64)
+    # Create empty PSM DataFrame with proper schema
+    empty_psms = DataFrame(
+        ms_file_idx = UInt32[],
+        scan_idx = UInt32[], 
+        precursor_idx = UInt32[],
+        rt = Float32[],
+        q_value = Float32[],
+        score = Float32[], 
+        prob = Float32[],
+        peak_area = Float32[],
+        peak_height = Float32[],
+        fwhm = Float32[]
+    )
+    
+    # Set empty results (don't append since this file failed)
+    results.psms[] = empty_psms
 end
 
 function process_search_results!(
@@ -298,6 +345,12 @@ function process_search_results!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:IntegrateChromatogramSearchParameters}
+
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "IntegrateChromatogramSearch results processing")
+        return nothing  # Return early 
+    end
+
     try
         passing_psms = results.psms[]
         parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)

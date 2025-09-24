@@ -138,6 +138,7 @@ function importScripts()
         [
             "fdrUtilities.jl",
             "ftrUtilities.jl",
+            "lightgbm_utils.jl",
             "percolatorSortOf.jl",
             "piecewiseLinearFunction.jl",
             "probitRegression.jl",

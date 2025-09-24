@@ -38,20 +38,44 @@ function apply_pipeline!(ref::FileReference, pipeline::TransformPipeline)
     if isempty(pipeline.operations)
         return ref
     end
-    
-    # Apply all operations in single pass
+
+    # Check if file exists and has data before processing
+    if !exists(ref)
+        @debug "Skipping non-existent file: $(file_path(ref))"
+        return ref
+    end
+
+    # Apply all operations in single pass with empty data detection
     transform_and_write!(ref) do df
+        # Check for empty input data
+        if nrow(df) == 0
+            @debug "Skipping empty file: $(file_path(ref))"
+            return df  # Return empty DataFrame unchanged
+        end
+
         for (desc, op) in pipeline.operations
-            df = op(df)
+            try
+                df = op(df)
+                # Check if operation resulted in empty data
+                if nrow(df) == 0
+                    @debug "File became empty after operation '$desc': $(file_path(ref))"
+                    break  # No point in continuing pipeline
+                end
+            catch e
+                @user_warn "Pipeline operation '$desc' failed for file $(file_path(ref)): $e"
+                rethrow(e)  # Let caller handle the error appropriately
+            end
         end
         return df
     end
-    
-    # Run post-actions (like mark_sorted!)
-    for action in pipeline.post_actions
-        action(ref)
+
+    # Run post-actions (like mark_sorted!) only if file still has data
+    if exists(ref) && row_count(ref) > 0
+        for action in pipeline.post_actions
+            action(ref)
+        end
     end
-    
+
     return ref
 end
 
@@ -60,18 +84,28 @@ end
 
 Apply pipeline to multiple files, optionally in parallel.
 """
-function apply_pipeline!(refs::Vector{<:FileReference}, pipeline::TransformPipeline; 
+function apply_pipeline!(refs::Vector{<:FileReference}, pipeline::TransformPipeline;
                         parallel::Bool=true)
     if parallel && length(refs) > 1
         Threads.@threads for ref in refs
             if exists(ref)
-                apply_pipeline!(ref, pipeline)
+                try
+                    apply_pipeline!(ref, pipeline)
+                catch e
+                    @user_warn "Pipeline failed for file $(file_path(ref)): $e"
+                    # Continue processing other files
+                end
             end
         end
     else
         for ref in refs
             if exists(ref)
-                apply_pipeline!(ref, pipeline)
+                try
+                    apply_pipeline!(ref, pipeline)
+                catch e
+                    @user_warn "Pipeline failed for file $(file_path(ref)): $e"
+                    # Continue processing other files
+                end
             end
         end
     end

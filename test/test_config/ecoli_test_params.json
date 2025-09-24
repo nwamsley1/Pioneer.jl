@@ -87,7 +87,7 @@
         "n_rt_bins": 100,
         "spline_n_knots": 7
     },
-    "xgboost_params":
+    "lightgbm_params":
     {
         "max_n_samples": 10000000,
         "min_best_trace_prob": 0.75,

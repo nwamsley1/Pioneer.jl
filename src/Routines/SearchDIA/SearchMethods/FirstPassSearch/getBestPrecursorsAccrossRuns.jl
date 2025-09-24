@@ -68,7 +68,7 @@ function get_best_precursors_accross_runs(
         rts::AbstractVector{Float32},
         scan_idxs::AbstractVector{UInt32},
         ms_file_idxs::AbstractVector{UInt32},
-        rt_irt::SplineRtConversionModel,
+        rt_irt::RtConversionModel,
         max_q_val::Float32)
 
         for row in eachindex(precursor_idxs)
@@ -139,7 +139,7 @@ function get_best_precursors_accross_runs(
         precursor_idxs::AbstractVector{UInt32},
         q_values::AbstractVector{Float16},
         rts::AbstractVector{Float32},
-        rt_irt::SplineRtConversionModel,
+        rt_irt::RtConversionModel,
         max_q_val::Float32)
         for row in eachindex(precursor_idxs)
             # Skip PSMs that don't pass q-value threshold
@@ -182,8 +182,20 @@ function get_best_precursors_accross_runs(
     # First pass: collect best matches and mean iRT
 
     n_precursors_vec = Vector{UInt64}()
-    for (key, psms_path) in enumerate(psms_paths) #For each data frame 
+    for psms_path in psms_paths #For each data frame 
         psms = Arrow.Table(psms_path)
+        
+        # Get the original file index from the PSM data
+        if isempty(psms[:ms_file_idx])
+            continue  # Skip empty files
+        end
+        file_idx = first(psms[:ms_file_idx])  # All PSMs in a file should have the same ms_file_idx
+        
+        # Check if RT model exists for this file
+        if !haskey(rt_irt, file_idx)
+            @warn "No RT model found for file index $file_idx, skipping"
+            continue
+        end
 
         push!(n_precursors_vec, length(psms[:precursor_idx]))
         #One row for each precursor 
@@ -195,10 +207,17 @@ function get_best_precursors_accross_runs(
             psms[:rt],
             psms[:scan_idx],
             psms[:ms_file_idx],
-            rt_irt[key],
+            rt_irt[file_idx],
             max_q_val
         )
     end
+    
+    # Handle case where no valid files were processed
+    if isempty(n_precursors_vec)
+        @warn "No valid PSM files found for cross-run analysis"
+        return prec_to_best_prob
+    end
+    
     max_precursors = maximum(n_precursors_vec)
     # Filter to top N precursors by probability
     sort!(prec_to_best_prob, by = x->x[:best_prob], alg=PartialQuickSort(1:max_precursors), rev = true);
@@ -211,15 +230,27 @@ function get_best_precursors_accross_runs(
     end
 
     # Second pass: calculate iRT variance for remaining precursors
-    for (key, psms_path) in enumerate(psms_paths) #For each data frame 
+    for psms_path in psms_paths #For each data frame 
         psms = Arrow.Table(psms_path)
+        
+        # Get the original file index from the PSM data
+        if isempty(psms[:ms_file_idx])
+            continue  # Skip empty files
+        end
+        file_idx = first(psms[:ms_file_idx])  # All PSMs in a file should have the same ms_file_idx
+        
+        # Check if RT model exists for this file
+        if !haskey(rt_irt, file_idx)
+            continue  # Skip files without RT models (already warned in first pass)
+        end
+        
         #One row for each precursor 
         getVariance!(
             prec_to_best_prob,
             psms[:precursor_idx],
             psms[:q_value],
             psms[:rt],
-            rt_irt[key],
+            rt_irt[file_idx],
             max_q_val
         )
     end 

@@ -25,21 +25,21 @@ The full model_comparison.jl file is deprecated and should not be used.
 Configuration for a single model in the scoring framework.
 
 # Fields
-- `name`: Model identifier (e.g., "SimpleXGBoost", "ProbitRegression")
-- `model_type`: Algorithm type (:xgboost or :probit)
+- `name`: Model identifier (e.g., "SimpleLightGBM", "ProbitRegression")
+- `model_type`: Algorithm type (:lightgbm or :probit)
 - `features`: Vector of feature symbols to use
 - `hyperparams`: Dictionary of hyperparameters for the model
 """
 struct ModelConfig
     name::String
-    model_type::Symbol  # :xgboost or :probit
+    model_type::Symbol  # :lightgbm or :probit
     features::Vector{Symbol}
     hyperparams::Dict{Symbol, Any}
 end
 
 # Feature set definitions
 
-# Full feature set used for advanced XGBoost model (matches out-of-memory case)
+# Full feature set used for advanced LightGBM model (matches out-of-memory case)
 # Note: :target is excluded as it's the label, not a feature
 const ADVANCED_FEATURE_SET = [
     :missed_cleavage,
@@ -77,9 +77,10 @@ const ADVANCED_FEATURE_SET = [
     :tic,
     :num_scans,
     :smoothness,
-    :rt_diff,
-    :ms1_irt_diff,
-    :weight_ms1,
+    :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
+    #:ms1_irt_diff,
+    #:weight_ms1,
+    
     :gof_ms1,
     :max_matched_residual_ms1,
     :max_unmatched_residual_ms1,
@@ -88,6 +89,8 @@ const ADVANCED_FEATURE_SET = [
     :m0_error_ms1,
     :n_iso_ms1,
     :big_iso_ms1,
+    :rt_max_intensity_ms1,
+    :rt_diff_max_intensity_ms1,
     :ms1_features_missing,
     :percent_theoretical_ignored,
     :scribe,
@@ -99,7 +102,9 @@ const REDUCED_FEATURE_SET = [
     # Core peptide properties
     :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
     # RT features
-    :irt_pred, :irt_error, :irt_diff, :rt_diff, :ms1_irt_diff,
+    :irt_pred, :irt_error, :irt_diff,
+    :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
+    #:ms1_irt_diff,
     # Spectral features
     :max_y_ions, :y_ions_sum, :longest_y, :y_count, :b_count, :isotope_count,
     :total_ions, :best_rank, :best_rank_iso, :topn, :topn_iso, :gof,
@@ -110,11 +115,35 @@ const REDUCED_FEATURE_SET = [
     :err_norm, :poisson, :weight, :log2_intensity_explained, :tic, :num_scans,
     :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
     # MS1 features
-    :weight_ms1, :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
+    :weight_ms1, 
+    :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
     :fitted_spectral_contrast_ms1, :error_ms1, :m0_error_ms1, :n_iso_ms1,
-    :big_iso_ms1, :ms1_features_missing
+    :big_iso_ms1, :rt_max_intensity_ms1, 
+    :rt_diff_max_intensity_ms1, 
+    :ms1_features_missing
     # MBR features added automatically if match_between_runs=true
 ]
+
+#=
+const PROBIT_FEATURE_SET = [
+    # Core peptide properties
+    :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
+    # RT features
+    :irt_error,
+    # Spectral features
+    :y_count, :b_count, :isotope_count,
+    :total_ions, :best_rank, :topn, :gof,
+    # Quality metrics
+    :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
+    :max_matched_residual, :max_unmatched_residual, :max_gof,
+    :err_norm, :poisson, :weight, :log2_intensity_explained, :tic, :num_scans,
+    :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
+    # MS1 features
+    :weight_ms1, :gof_ms1, :error_ms1, :ms1_features_missing
+    # MBR features added automatically if match_between_runs=true
+]
+=#
+
 
 const MINIMAL_FEATURE_SET = [
     :fitted_spectral_contrast,
@@ -125,43 +154,59 @@ const MINIMAL_FEATURE_SET = [
 ]
 
 """
-    create_model_configurations() -> Vector{ModelConfig}
+    create_model_configurations(ms1_scoring::Bool = true) -> Vector{ModelConfig}
 
 Creates the model configurations for comparison.
 
+# Arguments
+- `ms1_scoring`: Whether MS1 scoring is enabled (default: true)
+
 # Returns
-- Vector of ModelConfig objects for SimpleXGBoost, AdvancedXGBoost, ProbitRegression, and SuperSimplified models
+- Vector of ModelConfig objects for SimpleLightGBM, AdvancedLightGBM, ProbitRegression,
+- ProbitRegressionSimple, and SuperSimplified models
 """
-function create_model_configurations()
+function create_model_configurations(ms1_scoring::Bool = true)
+    # Apply MS1 filtering to feature sets if needed
+    reduced_features = copy(REDUCED_FEATURE_SET)
+    apply_ms1_filtering!(reduced_features, ms1_scoring)
+
+    advanced_features = copy(ADVANCED_FEATURE_SET)
+    apply_ms1_filtering!(advanced_features, ms1_scoring)
+
+    minimal_features = copy(MINIMAL_FEATURE_SET)
+    apply_ms1_filtering!(minimal_features, ms1_scoring)
+
     return [
-        # Model 1: Simple XGBoost (Default for small datasets)
+        # Model 1: Simple LightGBM (Default for small datasets)
         ModelConfig(
-            "SimpleXGBoost",
-            :xgboost,
-            REDUCED_FEATURE_SET,
+            "SimpleLightGBM",
+            :lightgbm,
+            reduced_features,
             Dict(
-                :colsample_bytree => 0.8,
-                :min_child_weight => 20,
-                :gamma => 0.1,
-                :subsample => 0.8,
+                :feature_fraction => 0.8,
+                :min_data_in_leaf => 20,
+                :min_gain_to_split => 0.1,
+                :bagging_fraction => 0.8,
                 :max_depth => 4,
-                :eta => 0.1,
+                :num_leaves => 15,
+                :learning_rate => 0.1,
                 :iter_scheme => [150, 300, 300]
             )
         ),
         
-        # Model 2: Advanced XGBoost (Same as used for >100K PSMs)
+        # Model 2: Advanced LightGBM (Same as used for >100K PSMs)
         ModelConfig(
-            "AdvancedXGBoost",
-            :xgboost,
-            ADVANCED_FEATURE_SET,
+            "AdvancedLightGBM",
+            :lightgbm,
+            advanced_features,
             Dict(
-                :colsample_bytree => 0.5,
-                :min_child_weight => 5,
-                :gamma => 1.0,
-                :subsample => 0.25,
-                :max_depth => 10,
-                :eta => 0.05,
+                :feature_fraction => 0.5,
+                :min_data_in_leaf => 200,
+                :min_gain_to_split => 0.0,
+                :bagging_fraction => 0.25,
+                :max_depth => -1,
+                :num_leaves => 63,
+                :learning_rate => 0.05,
                 :iter_scheme => [100, 200, 200]
             )
         ),
@@ -170,26 +215,106 @@ function create_model_configurations()
         ModelConfig(
             "ProbitRegression",
             :probit,
-            REDUCED_FEATURE_SET,
+            vcat(reduced_features, [:intercept]),
             Dict(
                 :max_iter => 30
             )
         ),
         
-        # Model 4: Super Simplified Model
+        # Model 4: Probit Regression (Simplified feature set)
+        ModelConfig(
+            "ProbitRegressionSimple",
+            :probit,
+            vcat([
+                # Keep core, broadly available features
+                :spectral_contrast,
+                :entropy_score,
+                :scribe,
+                :irt_error,
+                :err_norm,
+                :y_count,
+                :tic
+            ], [:intercept]),
+            Dict(
+                :max_iter => 30
+            )
+        ),
+
+        # Model 5: Super Simplified LightGBM Model
         ModelConfig(
             "SuperSimplified",
-            :xgboost,
-            MINIMAL_FEATURE_SET,
+            :lightgbm,
+            minimal_features,
             Dict(
-                :colsample_bytree => 0.8,
-                :min_child_weight => 20,
-                :gamma => 0.1,
-                :subsample => 0.8,
+                :feature_fraction => 0.8,
+                :min_data_in_leaf => 10,
+                :min_gain_to_split => 0.1,
+                :bagging_fraction => 0.8,
                 :max_depth => 4,
-                :eta => 0.1,
+                :num_leaves => 15,
+                :learning_rate => 0.1,
                 :iter_scheme => [150, 300, 300]
             )
         )
     ]
+end
+
+"""
+    apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
+
+Remove MS1 features from feature list if MS1 scoring is disabled.
+This is applied to model configurations to prevent using MS1 features
+when they would have zero variance (ms1_scoring=false).
+
+# Arguments
+- `features`: Vector of feature symbols to filter
+- `ms1_scoring`: Whether MS1 scoring is enabled
+
+# Returns
+- Modified feature vector with MS1 features removed if ms1_scoring=false
+"""
+function apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
+    if !ms1_scoring
+        # MS1 features to exclude when ms1_scoring=false
+        ms1_features = Set([
+            :ms1_irt_diff, :ms1_ms2_rt_diff, :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
+            :max_unmatched_residual_ms1, :fitted_spectral_contrast_ms1, :error_ms1,
+            :m0_error_ms1, :n_iso_ms1, :big_iso_ms1, :rt_max_intensity_ms1,
+            :rt_diff_max_intensity_ms1, :ms1_features_missing
+        ])
+
+        original_count = length(features)
+        filter!(feature -> !(feature in ms1_features), features)
+        removed_count = original_count - length(features)
+
+        if removed_count > 0
+            @user_info "Filtered $removed_count MS1 features from model (ms1_scoring=false)"
+        end
+    end
+
+    return features
+end
+
+"""
+    create_filtered_model_configurations(ms1_scoring::Bool = true) -> Vector{ModelConfig}
+
+Create model configurations with optional MS1 feature filtering.
+When ms1_scoring=false, removes MS1 features from all feature sets to prevent
+zero-variance columns and singular matrices in ML training.
+
+# Arguments
+- `ms1_scoring`: Whether MS1 scoring is enabled
+
+# Returns
+- Vector of ModelConfig objects with appropriately filtered features
+"""
+function create_filtered_model_configurations(ms1_scoring::Bool = true)
+    configs = create_model_configurations()
+
+    # Apply MS1 filtering to all model configurations
+    for config in configs
+        apply_ms1_filtering!(config.features, ms1_scoring)
+    end
+
+    return configs
 end

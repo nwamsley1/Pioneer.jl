@@ -72,7 +72,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     spec_order::Set{Int64}
     match_between_runs::Bool
 
-    # Deconvolution parameters
+    # Deconvolution parameters (MS2)
     lambda::Float32
     reg_type::RegularizationType
     max_iter_newton::Int64
@@ -81,6 +81,11 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     accuracy_newton::Float32
     accuracy_bisection::Float32
     max_diff::Float32
+
+    # MS1 deconvolution parameters
+    ms1_lambda::Float32
+    ms1_reg_type::RegularizationType
+    ms1_huber_delta::Float32
 
     # PSM filtering
     min_y_count::Int64
@@ -116,7 +121,8 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
-        reg_type = deconv_params.reg_type
+        # Parse MS2 regularization type
+        reg_type = deconv_params.ms2.reg_type
         if reg_type == "none"
             reg_type = NoNorm()
         elseif reg_type == "l1"
@@ -125,7 +131,20 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             reg_type = L2Norm()
         else
             reg_type = NoNorm()
-            @user_warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+            @user_warn "Warning. MS2 reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+        end
+
+        # Parse MS1 regularization type
+        ms1_reg_type = deconv_params.ms1.reg_type
+        if ms1_reg_type == "none"
+            ms1_reg_type = NoNorm()
+        elseif ms1_reg_type == "l1"
+            ms1_reg_type = L1Norm()
+        elseif ms1_reg_type == "l2"
+            ms1_reg_type = L2Norm()
+        else
+            ms1_reg_type = NoNorm()
+            @user_warn "Warning. MS1 reg type `$ms1_reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
 
         ms1_scoring = Bool(global_params.ms1_scoring)
@@ -137,7 +156,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Set{Int64}([2]),
             Bool(global_params.match_between_runs),
             
-            Float32(deconv_params.lambda),
+            Float32(deconv_params.ms2.lambda),
             reg_type,
             Int64(deconv_params.newton_iters),
             Int64(deconv_params.bisection_iters),
@@ -145,7 +164,11 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.max_diff),
-            
+
+            Float32(deconv_params.ms1.lambda),
+            ms1_reg_type,
+            Float32(deconv_params.ms1.huber_delta),
+
             Int64(frag_params.min_y_count),
             Int64(frag_params.min_count),
             Float32(frag_params.min_spectral_contrast),
@@ -193,6 +216,11 @@ function process_file!(
     spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}
 
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "SecondPassSearch")
+        return results  # Return early with unchanged results
+    end
+    
     try
         setNceModel!(
             getFragmentLookupTable(getSpecLib(search_context)), 
@@ -221,10 +249,7 @@ function process_file!(
             pmz = [getMz(precursors)[pid] for pid in precursors_passing]
             isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
             precursors_passing = Set(precursors_passing)
-            # Perform MS1 search
-            #times = @timed begin
-            #Profile.clear()
-            #@profile begin
+            # Perform MS1 search (diagnostic timing)
             ms1_psms = perform_second_pass_search(
                 spectra,
                 rt_index,
@@ -279,11 +304,42 @@ function process_file!(
         results.ms1_psms[] = ms1_psms
 
     catch e
-        @user_warn "Second pass search failed" ms_file_idx exception=e
-        rethrow(e)
+        # Handle failures gracefully using helper function (logs full stacktrace)
+        handle_search_error!(search_context, ms_file_idx, "SecondPassSearch", e, createFallbackResults!, results)
     end
 
     return results
+end
+
+"""
+Create empty PSM results for a failed file in SecondPassSearch.
+"""
+function createFallbackResults!(results::SecondPassSearchResults, ms_file_idx::Int64)
+    # Create empty PSM DataFrame with proper schema for regular PSMs
+    empty_psms = DataFrame(
+        ms_file_idx = UInt32[],
+        scan_idx = UInt32[], 
+        precursor_idx = UInt32[],
+        rt = Float32[],
+        q_value = Float32[],
+        score = Float32[], 
+        prob = Float32[]
+    )
+    
+    # Create empty MS1 PSM DataFrame with proper schema
+    empty_ms1_psms = DataFrame(
+        ms_file_idx = UInt32[],
+        scan_idx = UInt32[], 
+        precursor_idx = UInt32[],
+        rt = Float32[],
+        q_value = Float32[],
+        score = Float32[], 
+        prob = Float32[]
+    )
+    
+    # Set empty results (don't append since this file failed)
+    results.psms[] = empty_psms
+    results.ms1_psms[] = empty_ms1_psms
 end
 
 function process_search_results!(
@@ -294,14 +350,15 @@ function process_search_results!(
     spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}
 
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "SecondPassSearch results processing")
+        return nothing  # Return early 
+    end
+
     try
         # Get PSMs from results container
         psms = results.psms[]
         ms1_psms = results.ms1_psms[]
-        ms1_psms = parseMs1Psms( #Reduce to max intensity scan per precursor_idx
-            ms1_psms,
-            spectra
-        )
         # Add basic search columns (RT, charge, target/decoy status)
         add_second_search_columns!(psms, 
             getRetentionTimes(spectra),
@@ -350,9 +407,18 @@ function process_search_results!(
         end
         # Keep only apex scans for each PSM group
         filter!(x->x.best_scan, psms);
-        #Need to remove inf gof_ms1?
+
+        # Build MS2 RT lookup for efficient MS1 alignment
+        ms2_rt_lookup = Dict{UInt32, Float32}(
+            row.precursor_idx => row.rt for row in eachrow(psms)
+        )
+
+        # Apply hybrid MS1 selection (RT proximity + max intensity features)
+        ms1_psms = parseMs1Psms(ms1_psms, spectra, ms2_rt_lookup)
+
         #Join MS1 PSMs to MS2 PSMs
         if size(ms1_psms, 1) > 0
+            # Join with hybrid-selected MS1 PSMs
             psms = leftjoin(
                 psms,
                 ms1_psms,
@@ -366,7 +432,8 @@ function process_search_results!(
             ms1_cols = [
                 :rt_ms1, :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
                 :max_unmatched_residual_ms1, :fitted_spectral_contrast_ms1,
-                :error_ms1, :m0_error_ms1, :n_iso_ms1, :big_iso_ms1
+                :error_ms1, :m0_error_ms1, :n_iso_ms1, :big_iso_ms1,
+                :rt_max_intensity_ms1, :rt_diff_max_intensity_ms1
             ]
             miss_mask = trues(size(psms, 1))
             for col in ms1_cols
@@ -378,10 +445,13 @@ function process_search_results!(
             psms[!, col] = coalesce.(psms[!, col], zero(nonmissingtype(eltype(psms[!, col]))))
             disallowmissing!(psms, col)
         end
-        psms[!,:rt_diff] = ifelse.(psms[!,:rt_ms1] .== -1,
+
+        # Calculate MS1-MS2 RT difference in iRT space
+        rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
+        psms[!,:ms1_ms2_rt_diff] = ifelse.(psms[!,:rt_ms1] .== -1,
                           -1,
-                          abs.(psms[!,:rt] .- psms[!,:rt_ms1]))
-        
+                          abs.(rt_to_irt_model.(psms[!,:rt]) .- rt_to_irt_model.(psms[!,:rt_ms1])))
+
         psms[!, :ms1_features_missing] = miss_mask
         #Add additional features for final analysis
         add_features!(
@@ -406,7 +476,10 @@ function process_search_results!(
         writeArrow(temp_path, psms)
         setSecondPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
     catch e
-        @user_warn "Failed to process search results" ms_file_idx exception=e
+        # Log full exception and stack for diagnosis, then propagate
+        bt = catch_backtrace()
+        @user_error "Failed to process search results for file index $(ms_file_idx)"
+        @user_error sprint(showerror, e, bt)
         rethrow(e)
     end
 

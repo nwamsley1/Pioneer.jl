@@ -1,0 +1,64 @@
+{
+    "comment_paths": "=== File paths - Edit these first ===",
+    "fasta_paths": [],
+    "fasta_names": [],
+    "fasta_header_regex_accessions": [],
+    "fasta_header_regex_genes": [],
+    "fasta_header_regex_proteins": [],
+    "fasta_header_regex_organisms": [],
+    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output",
+    "lib_name": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "new_lib_name": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "out_name": "test_lib.tsv",
+    "comment_library": "=== Library settings ===",
+    "library_params": {
+        "auto_detect_frag_bounds": true,
+        "calibration_raw_file": "/path/to/calibration/file.arrow",
+        "instrument_type": "NONE",
+        "prediction_model": "altimeter"
+    },
+    "comment_digestion": "=== Protein digestion settings ===",
+    "fasta_digest_params": {
+        "min_length": 7,
+        "max_length": 40,
+        "min_charge": 2,
+        "max_charge": 3,
+        "cleavage_regex": "[KR][^_|$]",
+        "missed_cleavages": 1,
+        "max_var_mods": 1,
+        "add_decoys": true,
+        "entrapment_r": 0,
+        "decoy_method": "shuffle",
+        "entrapment_method": "shuffle"
+    },
+    "comment_modifications": "=== Protein modifications ===",
+    "variable_mods": {
+        "pattern": [
+            "M"
+        ],
+        "mass": [
+            15.99491
+        ],
+        "name": [
+            "Unimod:35"
+        ]
+    },
+    "fixed_mods": {
+        "pattern": [
+            "C"
+        ],
+        "mass": [
+            57.021464
+        ],
+        "name": [
+            "Unimod:4"
+        ]
+    },
+    "comment_processing": "=== Processing settings (usually no need to modify) ===",
+    "isotope_mod_groups": [],
+    "max_koina_requests": 24,
+    "max_koina_batch": 1000,
+    "match_lib_build_batch": 100000,
+    "include_contaminants": true,
+    "predict_fragments": true
+}

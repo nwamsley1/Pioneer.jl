@@ -129,7 +129,8 @@ function add_entrapment_sequences(
     target_fasta_entries::Vector{FastaEntry}, 
     entrapment_r::UInt8;
     max_shuffle_attempts::Int64 = 20,
-    fixed_chars::Vector{Char} = Vector{Char}()
+    fixed_chars::Vector{Char} = Vector{Char}(),
+    entrapment_method::String = "shuffle"
 )::Vector{FastaEntry}
     
     # Pre-allocate output vector
@@ -137,6 +138,10 @@ function add_entrapment_sequences(
         undef, 
         length(target_fasta_entries) * entrapment_r
     )
+    
+    # Counters for tracking fallback to shuffle
+    total_sequences = length(target_fasta_entries) * entrapment_r
+    fallback_to_shuffle_count = 0
     
     # Track unique sequences
     sequences_set = PeptideSequenceSet(target_fasta_entries)#Set{String}()
@@ -157,12 +162,36 @@ function add_entrapment_sequences(
     for target_entry in target_fasta_entries
         for entrapment_group_id in 1:entrapment_r
             n_shuffle_attempts = 0
-            #new_sequence = reverse(get_sequence(target_entry)[1:(end-1)]) * get_sequence(target_entry)[end]
-            while n_shuffle_attempts < max_shuffle_attempts
-                new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry))
-
-                #Make sure the entrapment sequence is unique (I and L are equivalent)
-                if (new_sequence, get_charge(target_entry)) ∉ sequences_set
+            # Try the specified method first
+            new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry); method=entrapment_method)
+            
+            # If it creates a duplicate and we're using reverse, fall back to shuffle
+            if (new_sequence, get_charge(target_entry)) ∈ sequences_set && entrapment_method == "reverse"
+                @debug_l2 "Reverse created duplicate for entrapment of $(get_sequence(target_entry)), falling back to shuffle"
+                fallback_to_shuffle_count += 1
+                # Fall back to shuffle since reverse is deterministic
+                while n_shuffle_attempts < max_shuffle_attempts
+                    new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry); method="shuffle")
+                    
+                    if (new_sequence, get_charge(target_entry)) ∉ sequences_set
+                        break
+                    end
+                    n_shuffle_attempts += 1
+                end
+            elseif (new_sequence, get_charge(target_entry)) ∈ sequences_set
+                # For shuffle method, keep trying with shuffle
+                while n_shuffle_attempts < max_shuffle_attempts
+                    new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry); method="shuffle")
+                    
+                    if (new_sequence, get_charge(target_entry)) ∉ sequences_set
+                        break
+                    end
+                    n_shuffle_attempts += 1
+                end
+            end
+            
+            #Make sure the entrapment sequence is unique (I and L are equivalent)
+            if (new_sequence, get_charge(target_entry)) ∉ sequences_set
                     # Get sequence length for modification adjustment
                     seq_length = UInt8(length(get_sequence(target_entry)))
                     
@@ -198,19 +227,198 @@ function add_entrapment_sequences(
                     )
                     n += 1
                     push!(sequences_set, new_sequence, get_charge(target_entry))
-                    break
-                end
-                new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry))
-                n_shuffle_attempts += 1
-            end
-            
-            if n_shuffle_attempts >= max_shuffle_attempts
+            elseif n_shuffle_attempts >= max_shuffle_attempts
                 @user_warn "Max shuffle attempts exceeded for $(get_sequence(target_entry))"
             end
         end
     end
     
+    # Report statistics if using reverse method for entrapment
+    #=
+    if entrapment_method == "reverse" && total_sequences > 0
+        if fallback_to_shuffle_count > 0
+            @user_warn "Entrapment generation statistics for REVERSE method:"
+            @user_warn "  Total entrapment sequences attempted: $total_sequences"
+            @user_warn "  Sequences where reverse created duplicates: $fallback_to_shuffle_count"
+            @user_warn "  Sequences successfully reversed: $(total_sequences - fallback_to_shuffle_count)"
+            @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_sequences, digits=1))%"
+        end
+    end
+    =#
+    
     return vcat(target_fasta_entries, entrapment_fasta_entries[1:n-1])
+end
+
+"""
+    add_entrapment_sequences_grouped(
+        target_fasta_entries::Vector{FastaEntry},
+        entrapment_r::UInt8;
+        max_shuffle_attempts::Int64 = 20,
+        fixed_chars::Vector{Char} = Vector{Char}(),
+        entrapment_method::String = "shuffle"
+    )::Vector{FastaEntry}
+
+Group-aware entrapment generation that ensures all modification variants of the
+same base peptide sequence receive the same set of entrapment sequences.
+
+# Parameters
+- `target_fasta_entries::Vector{FastaEntry}`: Vector of peptide entries (after modifications)
+- `entrapment_r::UInt8`: Number of entrapment sequences to generate per base sequence
+- `max_shuffle_attempts::Int64`: Max attempts to find a unique shuffled sequence
+- `fixed_chars::Vector{Char}`: Optional characters to keep fixed when shuffling
+- `entrapment_method::String`: "shuffle" or "reverse" (reverse may fall back to shuffle)
+
+# Returns
+- `Vector{FastaEntry}`: Combined vector of original entries and grouped entrapment entries
+
+# Details
+Algorithm:
+1. Group entries by base sequence (ignoring modifications)
+2. For each base sequence, generate `entrapment_r` unique entrapment sequences once
+3. Reuse those sequences for all modification variants in the group, adjusting mod positions
+4. Maintain I/L equivalence when checking uniqueness (via PeptideSequenceSet)
+"""
+function add_entrapment_sequences_grouped(
+    target_fasta_entries::Vector{FastaEntry},
+    entrapment_r::UInt8;
+    max_shuffle_attempts::Int64 = 20,
+    fixed_chars::Vector{Char} = Vector{Char}(),
+    entrapment_method::String = "shuffle"
+)::Vector{FastaEntry}
+
+    # Track existing sequences (I/L equivalence) including charges
+    sequences_set = PeptideSequenceSet(target_fasta_entries)
+
+    # Prepare shuffler
+    shuffle_seq = ShuffleSeq(
+        "",
+        Vector{Char}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        zero(UInt8),
+        zero(UInt8),
+        fixed_chars
+    )
+
+    # Group entries by base sequence (ignore mods)
+    groups = Dict{String, Vector{Int}}()
+    for (idx, entry) in enumerate(target_fasta_entries)
+        base_seq = get_sequence(entry)
+        if !haskey(groups, base_seq)
+            groups[base_seq] = Vector{Int}()
+        end
+        push!(groups[base_seq], idx)
+    end
+
+    # High-level diagnostics
+    n_entries = length(target_fasta_entries)
+    n_groups = length(groups)
+    avg_variants = n_groups == 0 ? 0.0 : round(n_entries / n_groups, digits=2)
+
+    entrapments_out = Vector{FastaEntry}()
+    fallback_to_shuffle_count = 0
+    total_attempted = length(groups) * Int(entrapment_r)
+
+    exhausted_groups = 0
+    sample_logged = 0
+    for (base_seq, idxs) in groups
+        # Collect unique charges observed among variants (usually 0 at this stage)
+        charges = unique([get_charge(target_fasta_entries[i]) for i in idxs])
+
+        # Generate unique entrapment sequences for this base sequence
+        entrap_seqs = Vector{String}()
+        entrap_positions = Vector{Vector{UInt8}}()
+        for entrapment_group_id in 1:entrapment_r
+            n_shuffle_attempts = 0
+
+            # Start with requested method
+            new_sequence = shuffle_sequence!(shuffle_seq, base_seq; method=entrapment_method)
+
+            # If duplicate: reverse may fall back to shuffle; shuffle keeps trying
+            needs_retry = any(((new_sequence, c) ∈ sequences_set) for c in charges)
+            if needs_retry && entrapment_method == "reverse"
+                @user_warn "Reverse duplicate for entrapment of $base_seq; fallback to shuffle"
+                fallback_to_shuffle_count += 1
+            end
+
+            while needs_retry && n_shuffle_attempts < max_shuffle_attempts
+                new_sequence = shuffle_sequence!(shuffle_seq, base_seq; method="shuffle")
+                needs_retry = any(((new_sequence, c) ∈ sequences_set) for c in charges)
+                n_shuffle_attempts += 1
+            end
+
+            if needs_retry
+                exhausted_groups += 1
+                continue
+            end
+
+            # Snapshot positions mapping for consistent mod adjustments across variants
+            positions_copy = Vector{UInt8}(shuffle_seq.new_positions)
+            push!(entrap_seqs, new_sequence)
+            push!(entrap_positions, positions_copy)
+
+            # Reserve the sequence globally for all observed charges
+            for c in charges
+                push!(sequences_set, new_sequence, c)
+            end
+        end
+
+        # Optional per-group diagnostics (debug level)
+        if sample_logged < 5
+            trunc_seq = length(base_seq) > 18 ? (base_seq[1:18] * "…") : base_seq
+            sample_logged += 1
+        end
+
+        # Create entrapment entries for all variants using the same entrapment specs
+        for idx in idxs
+            target_entry = target_fasta_entries[idx]
+            seq_length = UInt8(length(base_seq))
+            for i in 1:length(entrap_seqs)
+                adjusted_structural_mods = adjust_mod_positions(
+                    get_structural_mods(target_entry),
+                    entrap_positions[i],
+                    seq_length
+                )
+                adjusted_isotopic_mods = adjust_mod_positions(
+                    get_isotopic_mods(target_entry),
+                    entrap_positions[i],
+                    seq_length
+                )
+
+                push!(entrapments_out, FastaEntry(
+                    get_id(target_entry),
+                    get_description(target_entry),
+                    get_gene(target_entry),
+                    get_protein(target_entry),
+                    get_organism(target_entry),
+                    get_proteome(target_entry),
+                    entrap_seqs[i],
+                    get_start_idx(target_entry),
+                    adjusted_structural_mods,
+                    adjusted_isotopic_mods,
+                    get_charge(target_entry),
+                    get_base_target_id(target_entry),
+                    get_base_pep_id(target_entry),
+                    UInt8(i),
+                    false
+                ))
+            end
+        end
+    end
+
+    # Report statistics if using reverse method for entrapment
+    if entrapment_method == "reverse" && total_attempted > 0
+        if fallback_to_shuffle_count > 0
+            @user_warn "Entrapment generation (GROUPED) stats for REVERSE:"
+            @user_warn "  Total entrapments attempted: $total_attempted"
+            @user_warn "  Reverse duplicates: $fallback_to_shuffle_count"
+            @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_attempted, digits=1))%"
+        end
+    end
+
+    # General summary
+
+    return vcat(target_fasta_entries, entrapments_out)
 end
 
 mutable struct ShuffleSeq
@@ -277,9 +485,29 @@ function permuteNewPositions!(shuffle_sequence::ShuffleSeq)
     return nothing
 end
 
+function reverseMovablePositions!(shuffle_sequence::ShuffleSeq)
+    # Reverse the movable positions (all but the last amino acid)
+    n = shuffle_sequence.n_movable
+    
+    # Create reversed mapping
+    for i in 1:n
+        old_pos = shuffle_sequence.movable_positions[i]
+        new_pos = shuffle_sequence.movable_positions[n - i + 1]
+        
+        # Update sequence - place character from position i at position (n-i+1)
+        shuffle_sequence.new_sequence[old_pos] = 
+            shuffle_sequence.old_sequence[new_pos]
+        
+        # Update position mapping
+        shuffle_sequence.new_positions[old_pos] = new_pos
+    end
+    return nothing
+end
+
 function shuffle_sequence!(
     shuffle_sequence::ShuffleSeq,
-    sequence::String,
+    sequence::String;
+    method::String = "shuffle"
 )
     # Reset the sequence and positions
     resetSequence!(shuffle_sequence, sequence)
@@ -287,8 +515,14 @@ function shuffle_sequence!(
     # Fill movable positions
     fillMovablePositions!(shuffle_sequence)
     
-    # Permute new positions
-    permuteNewPositions!(shuffle_sequence)
+    # Apply the selected decoy generation method
+    if method == "shuffle"
+        permuteNewPositions!(shuffle_sequence)
+    elseif method == "reverse"
+        reverseMovablePositions!(shuffle_sequence)
+    else
+        error("Unknown decoy method: $method. Must be 'shuffle' or 'reverse'")
+    end
     
     return String(shuffle_sequence.new_sequence[1:shuffle_sequence.sequence_length])
 end
@@ -475,13 +709,18 @@ all_entries = add_decoy_sequences(target_entries, max_shuffle_attempts=50)
 function add_decoy_sequences(
     target_fasta_entries::Vector{FastaEntry}; 
     max_shuffle_attempts::Int64 = 20,
-    fixed_chars::Vector{Char} = Vector{Char}()
+    fixed_chars::Vector{Char} = Vector{Char}(),
+    decoy_method::String = "shuffle"
     )
     # Pre-allocate space for decoy entries
     decoy_fasta_entries = Vector{FastaEntry}(undef, length(target_fasta_entries))
     
     # Set to track unique sequences
     sequences_set = PeptideSequenceSet(target_fasta_entries)
+    
+    # Counters for tracking fallback to shuffle
+    total_sequences = length(target_fasta_entries)
+    fallback_to_shuffle_count = 0
     
     # Initialize position tracking vector (max peptide length of 255 should be sufficient)
     #positions = Vector{UInt8}(undef, 255)
@@ -501,22 +740,36 @@ function add_decoy_sequences(
         charge = get_charge(target_entry)
         seq_length = UInt8(length(target_sequence))
 
-        # Create reversed sequence (keeping last amino acid)
-        #decoy_sequence = reverse(target_sequence[1:(end-1)]) * target_sequence[end]
-        decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence)
+        # Create decoy sequence using the specified method
+        decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence; method=decoy_method)
                 
         n_shuffle_attempts = 0
         
-        # If reversal creates a duplicate, try shuffling
-        if (decoy_sequence, charge) ∈ sequences_set         
-            while n_shuffle_attempts < max_shuffle_attempts
-                # Use enhanced shuffle function that updates positions vector
-                 decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence)
-                
-                if (decoy_sequence, charge) ∉ sequences_set
-                    break
+        # If the decoy creates a duplicate, need to handle differently based on method
+        if (decoy_sequence, charge) ∈ sequences_set
+            if decoy_method == "reverse"
+                # If reverse creates a duplicate, fall back to shuffle
+                # (reverse is deterministic, so retrying won't help)
+                @debug_l2 "Reverse created duplicate for $target_sequence, falling back to shuffle"
+                fallback_to_shuffle_count += 1
+                while n_shuffle_attempts < max_shuffle_attempts
+                    decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence; method="shuffle")
+                    
+                    if (decoy_sequence, charge) ∉ sequences_set
+                        break
+                    end
+                    n_shuffle_attempts += 1
                 end
-                n_shuffle_attempts += 1
+            else
+                # For shuffle, keep trying with shuffle
+                while n_shuffle_attempts < max_shuffle_attempts
+                    decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence; method="shuffle")
+                    
+                    if (decoy_sequence, charge) ∉ sequences_set
+                        break
+                    end
+                    n_shuffle_attempts += 1
+                end
             end
         end
         
@@ -559,8 +812,185 @@ function add_decoy_sequences(
             push!(sequences_set, decoy_sequence, get_charge(target_entry))
         end
     end
+    
+    # Report statistics if using reverse method
+    #=
+    if decoy_method == "reverse"
+        if fallback_to_shuffle_count > 0
+            @user_warn "Decoy generation statistics for REVERSE method:"
+            @user_warn "  Total sequences attempted: $total_sequences"
+            @user_warn "  Sequences where reverse created duplicates: $fallback_to_shuffle_count"
+            @user_warn "  Sequences successfully reversed: $(total_sequences - fallback_to_shuffle_count)"
+            @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_sequences, digits=1))%"
+        else
+            @user_info "Successfully reversed all $total_sequences sequences without duplicates"
+        end
+    end
+    =#
     # Sort the peptides by sequence
     return sort(vcat(target_fasta_entries, decoy_fasta_entries[1:n-1]), by = x -> get_sequence(x))
+end
+
+"""
+    add_decoy_sequences_grouped(
+        target_fasta_entries::Vector{FastaEntry};
+        max_shuffle_attempts::Int64 = 20,
+        fixed_chars::Vector{Char} = Vector{Char}(),
+        decoy_method::String = "shuffle"
+    )::Vector{FastaEntry}
+
+Group-aware decoy generation that ensures all modification variants of the same
+base peptide sequence share a single decoy sequence and mod position mapping.
+
+# Parameters
+- `target_fasta_entries::Vector{FastaEntry}`: Peptide entries to generate decoys for (typically includes targets and entrapments)
+- `max_shuffle_attempts::Int64`: Max attempts to find a unique shuffled sequence
+- `fixed_chars::Vector{Char}`: Optional set of characters kept fixed when shuffling
+- `decoy_method::String`: "shuffle" or "reverse" (reverse may fall back to shuffle)
+
+# Returns
+- `Vector{FastaEntry}`: Sorted vector with both original entries and their decoys
+
+# Details
+Algorithm:
+1. Group by base sequence (ignoring modifications)
+2. For each base sequence, generate one decoy sequence once (respect I/L equivalence and charges)
+3. Apply the same position mapping to all modification variants in the group
+4. Preserve metadata and set `is_decoy = true`
+"""
+function add_decoy_sequences_grouped(
+    target_fasta_entries::Vector{FastaEntry};
+    max_shuffle_attempts::Int64 = 20,
+    fixed_chars::Vector{Char} = Vector{Char}(),
+    decoy_method::String = "shuffle"
+)::Vector{FastaEntry}
+
+    # Track sequences (I/L equivalence) with charge awareness
+    sequences_set = PeptideSequenceSet(target_fasta_entries)
+
+    # Prepare shuffler/reverser
+    shuffle_seq = ShuffleSeq(
+        "",
+        Vector{Char}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        zero(UInt8),
+        zero(UInt8),
+        fixed_chars
+    )
+
+    # Group entries by base sequence (sequence only, ignore mods)
+    groups = Dict{String, Vector{Int}}()
+    for (idx, entry) in enumerate(target_fasta_entries)
+        base_seq = get_sequence(entry)
+        if !haskey(groups, base_seq)
+            groups[base_seq] = Vector{Int}()
+        end
+        push!(groups[base_seq], idx)
+    end
+
+    # High-level diagnostics
+    n_entries = length(target_fasta_entries)
+    n_groups = length(groups)
+    avg_variants = n_groups == 0 ? 0.0 : round(n_entries / n_groups, digits=2)
+    decoy_entries = Vector{FastaEntry}()
+    fallback_to_shuffle_count = 0
+    total_groups = length(groups)
+
+    sample_logged = 0
+    exhausted_groups = 0
+    for (base_seq, idxs) in groups
+        # Unique charges across variants in this group
+        charges = unique([get_charge(target_fasta_entries[i]) for i in idxs])
+
+        # Generate a single decoy sequence for this base_seq
+        n_shuffle_attempts = 0
+        decoy_sequence = shuffle_sequence!(shuffle_seq, base_seq; method=decoy_method)
+
+        # Handle duplicates: reverse may fall back to shuffle; shuffle keeps trying
+        needs_retry = any(((decoy_sequence, c) ∈ sequences_set) for c in charges)
+        if needs_retry && decoy_method == "reverse"
+            @user_warn "Reverse duplicate for decoy of $base_seq; fallback to shuffle"
+            fallback_to_shuffle_count += 1
+        end
+        while needs_retry && n_shuffle_attempts < max_shuffle_attempts
+            decoy_sequence = shuffle_sequence!(shuffle_seq, base_seq; method="shuffle")
+            needs_retry = any(((decoy_sequence, c) ∈ sequences_set) for c in charges)
+            n_shuffle_attempts += 1
+        end
+
+        if needs_retry
+            exhausted_groups += 1
+            continue
+        end
+
+        # Snapshot positions for consistent mod adjustment across all variants
+        positions_copy = Vector{UInt8}(shuffle_seq.new_positions)
+        seq_length = UInt8(length(base_seq))
+
+        # Reserve the decoy sequence across all charges
+        for c in charges
+            push!(sequences_set, decoy_sequence, c)
+        end
+
+        # Optional per-group diagnostics (debug level)
+        if sample_logged < 5
+            trunc_seq = length(base_seq) > 18 ? (base_seq[1:18] * "…") : base_seq
+            trunc_decoy = length(decoy_sequence) > 18 ? (decoy_sequence[1:18] * "…") : decoy_sequence
+            @user_info "Decoy group: base_seq=$(trunc_seq), decoy=$(trunc_decoy), n_variants=$(length(idxs)), charges=$(collect(charges))"
+            sample_logged += 1
+        end
+
+        # Build decoys for each variant in this group using the same mapping
+        for idx in idxs
+            target_entry = target_fasta_entries[idx]
+
+            adjusted_structural_mods = adjust_mod_positions(
+                get_structural_mods(target_entry),
+                positions_copy,
+                seq_length
+            )
+            adjusted_isotopic_mods = adjust_mod_positions(
+                get_isotopic_mods(target_entry),
+                positions_copy,
+                seq_length
+            )
+
+            push!(decoy_entries, FastaEntry(
+                get_id(target_entry),
+                get_description(target_entry),
+                get_gene(target_entry),
+                get_protein(target_entry),
+                get_organism(target_entry),
+                get_proteome(target_entry),
+                decoy_sequence,
+                get_start_idx(target_entry),
+                adjusted_structural_mods,
+                adjusted_isotopic_mods,
+                get_charge(target_entry),
+                get_base_target_id(target_entry),
+                get_base_pep_id(target_entry),
+                get_entrapment_pair_id(target_entry),
+                true
+            ))
+        end
+    end
+
+    # Report statistics if using reverse method
+    #=
+    if decoy_method == "reverse" && total_groups > 0
+        if fallback_to_shuffle_count > 0
+            @user_warn "Decoy generation (GROUPED) stats for REVERSE:"
+            @user_warn "  Total base sequences attempted: $total_groups"
+            @user_warn "  Reverse duplicates: $fallback_to_shuffle_count"
+            @user_warn "  Fallback rate: $(round(100.0 * fallback_to_shuffle_count / total_groups, digits=1))%"
+        else
+            @user_info "Successfully reversed all $total_groups base sequences without duplicates"
+        end
+    end
+    =#
+    # General summary
+    return sort(vcat(target_fasta_entries, decoy_entries), by = x -> get_sequence(x))
 end
 
 """
@@ -715,4 +1145,3 @@ function assign_base_target_ids!(fasta_entries::Vector{FastaEntry})
     
     return length(fasta_entries)
 end
-

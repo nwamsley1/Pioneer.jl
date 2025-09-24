@@ -51,7 +51,8 @@ function qcPlots(
     qc_plot_folder,
     MS_TABLE_PATHS,
     irt_rt,
-    frag_err_dist_dict
+    frag_err_dist_dict,
+    valid_file_indices
 )
     short_fnames = shortenFileNames(parsed_fnames)
     #grouped_precursors = groupby(best_psms, :file_name)
@@ -59,6 +60,7 @@ function qcPlots(
     #Number of files to parse
     precursors_wide = Arrow.Table(precursors_wide_path)
     precursors_long = Arrow.Table(precursors_long_path)
+    precursors_long_df = DataFrame(Tables.columntable(precursors_long))
     protein_groups_wide = Arrow.Table(protein_groups_wide_path)
     n_files = length(parsed_fnames)
     n_files_per_plot = Int64(params_.output[:plots_per_page])
@@ -67,18 +69,43 @@ function qcPlots(
     qc_plots = Plots.Plot[]
     ###############
     #Plot precursor abundance distribution
-    function plotAbundanceECDF(
-        precursors_wide::Arrow.Table,
-        parsed_fnames::Any,
-        short_fnames::Any;
-        title::String = "precursor_abundance_qc",
-        f_out::String = "./test.pdf"
+
+    # Get counts of precursor IDs per file meeting q-value threshold
+    function getIdCounts(
+        precursors_long::DataFrame;
+        file_column::Symbol = :file_name,
+        q_value_column::Symbol = :qval,
+        q_value_threshold::Real = 0.01f0
         )
 
-        p = Plots.plot(title = title,
-        xlabel = "Log2(precursor rank)",
-        ylabel = "Log10(precursor abundance)",
-        legend=:outertopright, layout = (1, 1))
+        # Filter rows by q-value threshold
+        filtered_df = filter(row -> row[q_value_column] <= q_value_threshold, precursors_long)
+
+        # Count unique precursors per file
+        file_counts = combine(
+            groupby(filtered_df, file_column),
+            nrow => :precursor_count
+        )
+
+        # Create a mapping from filename to count
+        fname_to_id = Dict(
+            file_counts[!, file_column] .=> file_counts.precursor_count
+        )
+
+        return fname_to_id
+    end
+
+    # Create abundance ECDF plots using the same approach as other plots
+    function create_abundance_ecdf_plots(
+        precursors_wide::Arrow.Table,
+        precursors_long::DataFrame,
+        parsed_fnames::Vector{String};
+        n_files_per_plot::Int = 20,
+        file_column::Symbol = :file_name,
+        q_value_column::Symbol = :qval,
+        q_value_threshold::Real = 0.01f0,
+        qc_plot_folder::String = "./qc_plots/"
+    )
         function getColumnECDF(
             abundance::AbstractVector{Union{Missing, Float32}})
             non_missing_count = 0
@@ -100,64 +127,69 @@ function qcPlots(
             return log2.(sampled_range), [log10(x) for x in sorted_precursor_abundances[sampled_range]]
         end
 
-        for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
-            try
-            sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
-            plot!(p, 
-                    collect(sampled_range),
-                    sorted_precursor_abundances,
-                    #ylim = (0, log2(maximum(sorted_precursor_abundances))),
-                    subplot = 1,
-                    label = short_fname
-                    )
-            catch
-                continue
-            end
-        end
-        return p
-    end
-
-    for n in 1:n_qc_plots
-        start = (n - 1)*n_files_per_plot + 1
-        stop = min(n*n_files_per_plot, length(parsed_fnames))
-
-        p = plotAbundanceECDF(
-            precursors_wide,
-            [x for x in parsed_fnames[start:stop]],
-            [x for x in short_fnames[start:stop]],
-            title = "Precursor Abundance by Rank",
-            f_out = joinpath(qc_plot_folder, "precursor_abundance_qc_"*string(n)*".pdf")
+        # Get file names from precursors data to ensure same ordering as other plots
+        fname_to_id = getIdCounts(
+            precursors_long,
+            file_column = file_column,
+            q_value_column = q_value_column,
+            q_value_threshold = q_value_threshold
         )
-        push!(qc_plots, p)
+        # Use original file order, filtering to only include files that have data
+        fnames = [fname for fname in parsed_fnames if haskey(fname_to_id, fname)]
+
+        # Calculate number of plots needed
+        n_qc_plots = ceil(Int, length(fnames) / n_files_per_plot)
+        plots = Plots.Plot[]
+
+        # Create plots in chunks
+        for n in 1:n_qc_plots
+            start = (n - 1) * n_files_per_plot + 1
+            stop = min(n * n_files_per_plot, length(fnames))
+
+            chunk_fnames = fnames[start:stop]
+            chunk_short_names = shortenFileNames(chunk_fnames)
+
+            p = Plots.plot(title = "Precursor Abundance by Rank",
+                xlabel = "Log2(precursor rank)",
+                ylabel = "Log10(precursor abundance)",
+                legend = :outertopright, layout = (1, 1))
+
+            for (parsed_fname, short_fname) in zip(chunk_fnames, chunk_short_names)
+                try
+                    sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
+                    plot!(p,
+                        collect(sampled_range),
+                        sorted_precursor_abundances,
+                        subplot = 1,
+                        label = short_fname
+                    )
+                catch
+                    continue
+                end
+            end
+
+            push!(plots, p)
+        end
+
+        return plots
     end
+
+    # Create abundance ECDF plots using the same file ordering as other plots
+    abundance_ecdf_plots = create_abundance_ecdf_plots(
+        precursors_wide,
+        precursors_long_df,
+        parsed_fnames,
+        n_files_per_plot = n_files_per_plot,
+        file_column = :file_name,
+        q_value_column = :qval,
+        q_value_threshold = params_.global_settings.scoring.q_value_threshold,
+        qc_plot_folder = qc_plot_folder
+    )
+    append!(qc_plots, abundance_ecdf_plots)
 
     ###############
     # Plot precursor IDs using long-format data
     ###############
-    # Get counts of precursor IDs per file meeting q-value threshold
-    function getIdCounts(
-        precursors_long::DataFrame;
-        file_column::Symbol = :file_name,
-        q_value_column::Symbol = :qval,
-        q_value_threshold::Real = 0.01f0
-        )
-        
-        # Filter rows by q-value threshold
-        filtered_df = filter(row -> row[q_value_column] <= q_value_threshold, precursors_long)
-        
-        # Count unique precursors per file
-        file_counts = combine(
-            groupby(filtered_df, file_column), 
-            nrow => :precursor_count
-        )
-        
-        # Create a mapping from filename to count
-        fname_to_id = Dict(
-            file_counts[!, file_column] .=> file_counts.precursor_count
-        )
-        
-        return fname_to_id
-    end
 
     # Plot precursor IDs for a subset of files
     function plotPrecursorIDBarPlot(
@@ -168,10 +200,7 @@ function qcPlots(
         )
         
         # Get counts for requested files
-        ids = Int64[]
-        for fname in parsed_fnames
-            push!(ids, fname_to_id[fname])
-        end
+        ids = [get(fname_to_id, fname, 0) for fname in parsed_fnames]
         
         p = Plots.plot(
             title = title,
@@ -193,7 +222,8 @@ function qcPlots(
 
     # Create multiple plots with chunking
     function create_precursor_id_plots(
-        precursors_long::DataFrame;
+        precursors_long::DataFrame,
+        parsed_fnames::Vector{String};
         n_files_per_plot::Int = 20,
         file_column::Symbol = :ms_file_idx,
         q_value_column::Symbol = :qval,
@@ -207,7 +237,8 @@ function qcPlots(
             q_value_column = q_value_column,
             q_value_threshold = q_value_threshold
         )
-        fnames = collect(keys(fname_to_id))
+        # Use original file order for all successful files; show 0 when missing
+        fnames = parsed_fnames
         # Calculate number of plots needed
         n_qc_plots = ceil(Int, length(fnames) / n_files_per_plot)
         plots = Plots.Plot[]
@@ -227,9 +258,9 @@ function qcPlots(
         return plots
     end
 
-    # Example usage:
-    precursors_long_df = DataFrame(Tables.columntable(Arrow.Table(precursors_long_path)))
+    # Create precursor ID plots using the same file ordering approach
     id_plots = create_precursor_id_plots(precursors_long_df,
+                                parsed_fnames,
                                 n_files_per_plot=n_files_per_plot,
                                 file_column = :file_name,
                                 q_value_column = :qval,
@@ -238,14 +269,18 @@ function qcPlots(
     append!(qc_plots, id_plots)
     ###############
     #Plot Protein Group IDs
-    
-    function plotProteinGroupIDBarPlot(
+
+    # Create protein group ID plots using the same approach as precursor plots
+    function create_protein_group_id_plots(
         protein_groups_wide::Arrow.Table,
-        parsed_fnames::Any,
-        short_fnames::Any;
-        title::String = "protein_abundance_qc",
-        f_out::String = "./test.pdf"
-        )
+        precursors_long::DataFrame,
+        parsed_fnames::Vector{String};
+        n_files_per_plot::Int = 20,
+        file_column::Symbol = :file_name,
+        q_value_column::Symbol = :qval,
+        q_value_threshold::Real = 0.01f0,
+        qc_plot_folder::String = "./qc_plots/"
+    )
         function getColumnIDs(
             abundance::AbstractVector{Union{Missing, Float32}})
             non_missing_count = 0
@@ -256,53 +291,77 @@ function qcPlots(
             end
             return non_missing_count
         end
-        ids = zeros(Int64, length(parsed_fnames))
-        for (i, fname) in enumerate(parsed_fnames)
+
+        # Use original file order for all successful files
+        fnames = parsed_fnames
+
+        # Create protein group counts using the same file order
+        protein_fname_to_id = Dict{String, Int64}()
+        for fname in fnames
             try
-                ids[i] = getColumnIDs(protein_groups_wide[Symbol(fname)])
+                protein_fname_to_id[fname] = getColumnIDs(protein_groups_wide[Symbol(fname)])
             catch
-                continue
+                protein_fname_to_id[fname] = 0  # Use 0 for files that don't have data
             end
         end
-        p = Plots.plot(title = title,
-                        legend=:none, layout = (1, 1))
 
-        Plots.bar!(p, 
-        short_fnames,
-        ids,
-        subplot = 1,
-        texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
-        xrotation = 45,
-        )
+        # Calculate number of plots needed
+        n_qc_plots = ceil(Int, length(fnames) / n_files_per_plot)
+        plots = Plots.Plot[]
 
-        return p
+        # Create plots in chunks
+        for n in 1:n_qc_plots
+            start = (n - 1) * n_files_per_plot + 1
+            stop = min(n * n_files_per_plot, length(fnames))
+
+            chunk_fnames = fnames[start:stop]
+            chunk_ids = [protein_fname_to_id[fname] for fname in chunk_fnames]
+            chunk_short_names = shortenFileNames(chunk_fnames)
+
+            p = Plots.plot(title = "Protein Group ID's per File", legend = :none, layout = (1, 1))
+
+            Plots.bar!(p,
+                chunk_short_names,
+                chunk_ids,
+                subplot = 1,
+                texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in chunk_ids],
+                xrotation = 45,
+            )
+
+            push!(plots, p)
+        end
+
+        return plots
     end
 
-
-    for n in 1:n_qc_plots
-        start = (n - 1)*n_files_per_plot + 1
-        stop = min(n*n_files_per_plot, length(parsed_fnames))
-
-        p = plotProteinGroupIDBarPlot(
-            protein_groups_wide,
-            [x for x in parsed_fnames[start:stop]],
-            [x for x in short_fnames[start:stop]],
-            title = "Protein Group ID's per File",
-            f_out = joinpath(qc_plot_folder, "protein_group_ids_barplot_"*string(n)*".pdf")
-        )
-        push!(qc_plots, p)
-
-    end
+    # Create protein group ID plots using the same file ordering as precursor plots
+    protein_id_plots = create_protein_group_id_plots(
+        protein_groups_wide,
+        precursors_long_df,
+        parsed_fnames,
+        n_files_per_plot = n_files_per_plot,
+        file_column = :file_name,
+        q_value_column = :qval,
+        q_value_threshold = params_.global_settings.scoring.q_value_threshold,
+        qc_plot_folder = qc_plot_folder
+    )
+    append!(qc_plots, protein_id_plots)
     
     ###############
     #Plot missed cleavage rate
-    function plotMissedCleavageRate(
+
+    # Create missed cleavage plots using the same approach as precursor plots
+    function create_missed_cleavage_plots(
         precursors_wide::Arrow.Table,
-        parsed_fnames::Any,
-        short_fnames::Any;
-        title::String = "precursor_abundance_qc",
-        f_out::String = "./test.pdf"
-        )
+        precursors_long::DataFrame,
+        precursors,
+        parsed_fnames::Vector{String};
+        n_files_per_plot::Int = 20,
+        file_column::Symbol = :file_name,
+        q_value_column::Symbol = :qval,
+        q_value_threshold::Real = 0.01f0,
+        qc_plot_folder::String = "./qc_plots/"
+    )
         function getMissedCleavageRate(
             abundance::AbstractVector{Union{Missing, Float32}},
             precursor_idx::AbstractVector{Union{UInt32}},
@@ -318,44 +377,73 @@ function qcPlots(
             end
             return missed_cleavage_count/non_missing_count
         end
-        ids = zeros(Float32, length(parsed_fnames))
-        for (i, fname) in enumerate(parsed_fnames)
+
+        # Get file names from precursors data to ensure same ordering as other plots
+        fname_to_id = getIdCounts(
+            precursors_long,
+            file_column = file_column,
+            q_value_column = q_value_column,
+            q_value_threshold = q_value_threshold
+        )
+        # Use original file order, filtering to only include files that have data
+        fnames = [fname for fname in parsed_fnames if haskey(fname_to_id, fname)]
+
+        # Create missed cleavage rates using the same file order
+        fname_to_cleavage_rate = Dict{String, Float32}()
+        for fname in fnames
             try
-                ids[i] = 100*getMissedCleavageRate(precursors_wide[Symbol(fname)],
-                precursors_wide[:precursor_idx],
-                getMissedCleavages(precursors))#[:missed_cleavages])
+                fname_to_cleavage_rate[fname] = 100 * getMissedCleavageRate(
+                    precursors_wide[Symbol(fname)],
+                    precursors_wide[:precursor_idx],
+                    getMissedCleavages(precursors)
+                )
             catch
-                continue
+                fname_to_cleavage_rate[fname] = 0.0f0  # Use 0 for files that don't have data
             end
         end
-        p = Plots.plot(title = title,
-                        legend=:none, layout = (1, 1))
 
-        Plots.bar!(p, 
-        short_fnames,
-        ids,
-        subplot = 1,
-        texts = [text(string(x)[1:min(6,length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in ids],
-        xrotation = 45,
-        )
+        # Calculate number of plots needed
+        n_qc_plots = ceil(Int, length(fnames) / n_files_per_plot)
+        plots = Plots.Plot[]
 
-        return p
+        # Create plots in chunks
+        for n in 1:n_qc_plots
+            start = (n - 1) * n_files_per_plot + 1
+            stop = min(n * n_files_per_plot, length(fnames))
+
+            chunk_fnames = fnames[start:stop]
+            chunk_rates = [fname_to_cleavage_rate[fname] for fname in chunk_fnames]
+            chunk_short_names = shortenFileNames(chunk_fnames)
+
+            p = Plots.plot(title = "Missed Cleavage Percentage", legend = :none, layout = (1, 1))
+
+            Plots.bar!(p,
+                chunk_short_names,
+                chunk_rates,
+                subplot = 1,
+                texts = [text(string(x)[1:min(6,length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in chunk_rates],
+                xrotation = 45,
+            )
+
+            push!(plots, p)
+        end
+
+        return plots
     end
 
-    for n in 1:n_qc_plots
-        start = (n - 1)*n_files_per_plot + 1
-        stop = min(n*n_files_per_plot, length(parsed_fnames))
-
-        p = plotMissedCleavageRate(
-            precursors_wide,
-            [x for x in parsed_fnames[start:stop]],
-            [x for x in short_fnames[start:stop]],
-            title = "Missed Cleavage Percentage",
-            f_out = joinpath(qc_plot_folder, "missed_cleavage_plot_"*string(n)*".pdf")
-        )
-        push!(qc_plots, p)
-
-    end
+    # Create missed cleavage plots using the same file ordering as other plots
+    missed_cleavage_plots = create_missed_cleavage_plots(
+        precursors_wide,
+        precursors_long_df,
+        precursors,
+        parsed_fnames,
+        n_files_per_plot = n_files_per_plot,
+        file_column = :file_name,
+        q_value_column = :qval,
+        q_value_threshold = params_.global_settings.scoring.q_value_threshold,
+        qc_plot_folder = qc_plot_folder
+    )
+    append!(qc_plots, missed_cleavage_plots)
 
     ###############
     #Plot TIC
@@ -504,7 +592,34 @@ function qcPlots(
         short_fnames = [short_fnames[file_id] for file_id in file_ids]
         mass_corrections = [getMassCorrection(frag_err_dist_dict[file_id]) for file_id in file_ids]
 
-        Plots.bar!(p, 
+        Plots.bar!(p,
+        short_fnames,
+        mass_corrections,
+        subplot = 1,
+        yflip = true,
+        texts = [text(string(x)[1:min(5, length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in mass_corrections],
+        xrotation = 45,
+        )
+
+        return p
+    end
+
+    function plotMS2MassErrorCorrectionFixed(
+        parsed_fnames::Vector{String},
+        short_fnames::Vector{String},
+        frag_err_dist_dict::Dict{Int64, MassErrorModel},
+        actual_file_indices::Vector{Int64};
+        title::String = "precursor_abundance_qc",
+        f_out::String = "./test.pdf"
+        )
+
+        p = Plots.plot(title = title,
+                        legend=:none, layout = (1, 1))
+
+        # Use pre-sliced file names and actual file indices for mass error lookup
+        mass_corrections = [getMassCorrection(frag_err_dist_dict[file_id]) for file_id in actual_file_indices]
+
+        Plots.bar!(p,
         short_fnames,
         mass_corrections,
         subplot = 1,
@@ -521,11 +636,14 @@ function qcPlots(
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(short_fnames))
 
-        p = plotMS2MassErrorCorrection(
-            parsed_fnames,
-            short_fnames,
+        # Get actual file indices for this range
+        actual_file_indices = valid_file_indices[start:stop]
+        # Pass both sequential indices and actual file indices
+        p = plotMS2MassErrorCorrectionFixed(
+            parsed_fnames[start:stop],
+            short_fnames[start:stop],
             frag_err_dist_dict,
-            collect(start:stop),
+            actual_file_indices,
             title = "MS2 Mass Error Correction",
             f_out = joinpath(qc_plot_folder, "mass_err_correction_"*string(n)*".pdf")
         )

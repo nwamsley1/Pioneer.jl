@@ -21,44 +21,35 @@
 Search method for optimizing quadrupole transmission models.
 
 This search:
-1. Collects PSMs with extended precursor isotope patterns
-2. Performs deconvolution to estimate relative isotope abundances
-3. Fits transmission model based on isotope ratio deviations
-4. Stores optimized models in SearchContext for other methods
+1. Uses fitted MassErrorModel from ParameterTuningSearch for accurate fragment matching
+2. Collects PSMs with extended precursor isotope patterns
+3. Performs deconvolution to estimate relative isotope abundances
+4. Fits transmission model based on isotope ratio deviations
+5. Stores optimized models in SearchContext for other methods
 
-# Example Implementation
-```julia
-# Define search parameters
-params = Dict(
-    :isotope_err_bounds => (0, 0),  # Fixed for quad tuning
-    :presearch_params => Dict(
-        "frag_tol_ppm" => 30.0,
-        "min_index_search_score" => 3,
-        "min_frag_count" => 3,
-        "min_spectral_contrast" => 0.1,
-        "min_log2_matched_ratio" => -3.0,
-        "min_topn_of_m" => (3, 5),
-        "max_best_rank" => 3,
-        "n_frag_isotopes" => 2,
-        "max_frag_rank" => 10,
-        "quad_tuning_sample_rate" => 0.1,
-        "min_quad_tuning_fragments" => 3,
-        "min_quad_tuning_psms" => 1000,
-        "abreviate_precursor_calc" => false
-    ),
-    :deconvolution_params => Dict(
-        "max_iter_newton" => 100,
-        "max_iter_bisection" => 100,
-        "max_iter_outer" => 100,
-        "accuracy_newton" => 1e-5,
-        "accuracy_bisection" => 1e-4,
-        "max_diff" => 1e-5
-    )
-)
+Note: Mass tolerances are determined by the fitted MassErrorModel from ParameterTuningSearch,
+not by parameter settings. This ensures data-driven, instrument-specific tolerances.
 
-# Execute search
-results = execute_search(QuadTuningSearch(), search_context, params)
+# Configuration
+Quadrupole tuning parameters are configured in the parameter_tuning.quad_tuning section:
+
+```json
+{
+    "parameter_tuning": {
+        "quad_tuning": {
+            "min_psms_per_thompson": 250,  // PSMs required per Thomson isolation width
+            "min_fragments": 3,             // Minimum fragments for PSM acceptance
+            "initial_percent": 2.5,         // Initial sampling percentage
+            "min_initial_scans": 5000       // Minimum scans for initial sample
+        }
+    }
+}
 ```
+
+The search automatically:
+- Calculates dynamic PSM requirements based on isolation window width
+- Uses progressive sampling starting at max(initial_percent, min_initial_scans/total_scans)
+- Prioritizes scans by m/z distribution for optimal spectral coverage
 """
 struct QuadTuningSearch <: TuningMethod end
 
@@ -94,7 +85,6 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
 
     # Search parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
-    frag_tol_ppm::Float32
     min_index_search_score::UInt8
     min_log2_matched_ratio::Float32
     min_frag_count::Int64
@@ -117,7 +107,8 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     
     # Quad tuning specific parameters
     min_quad_tuning_fragments::Int64
-    min_quad_tuning_psms::Int64
+    min_quad_tuning_psms_per_thompson::Int64
+    initial_percent::Float32
     prec_estimation::P
 
     function QuadTuningSearchParameters(params::PioneerParameters)
@@ -129,25 +120,38 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
         
         # Always use partial capture for quad tuning
         prec_estimation = PartialPrecCapture()
-        
-        # Get initial tolerance from iteration_settings if available, otherwise use default
-        init_tol = if hasproperty(tuning_params, :iteration_settings) && 
-                     hasproperty(tuning_params.iteration_settings, :init_mass_tol_ppm)
-            Float32(tuning_params.iteration_settings.init_mass_tol_ppm)
+
+        # Extract Quad tuning parameters with backwards compatibility
+        quad_tuning_params = get(tuning_params, :quad_tuning, nothing)
+
+        min_quad_tuning_fragments = if quad_tuning_params !== nothing && haskey(quad_tuning_params, :min_fragments)
+            Int64(quad_tuning_params.min_fragments)
         else
-            20.0f0  # Default value
+            Int64(get(search_params, :min_quad_tuning_fragments, 3))  # Backwards compatibility
         end
-        
+
+        min_quad_tuning_psms_per_thompson = if quad_tuning_params !== nothing && haskey(quad_tuning_params, :min_psms_per_thompson)
+            Int64(quad_tuning_params.min_psms_per_thompson)
+        else
+            Int64(get(search_params, :min_quad_tuning_psms_per_thompson, 250))  # Backwards compatibility
+        end
+
+        initial_percent = if quad_tuning_params !== nothing && haskey(quad_tuning_params, :initial_percent)
+            Float32(quad_tuning_params.initial_percent)
+        else
+            Float32(2.5)  # Default value
+        end
+
+
         new{typeof(prec_estimation)}(
             # Search parameters
             params.acquisition.quad_transmission.fit_from_data,
             (UInt8(0), UInt8(0)),  # Fixed isotope bounds for quad tuning
-            init_tol,
-            # Handle min_score as either single value or array (use first value if array)
+            # Handle min_score as either single value or array (use maximum value if array)
             begin
                 min_score_raw = frag_params.min_score
                 if min_score_raw isa Vector
-                    UInt8(first(min_score_raw))
+                    UInt8(maximum(min_score_raw))  # Use most lenient (highest) score for Quad tuning
                 else
                     UInt8(min_score_raw)
                 end
@@ -172,8 +176,9 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             Float32(deconv_params.max_diff),
             
             # Quad tuning specific parameters
-            Int64(get(search_params, :min_quad_tuning_fragments, 3)),  # Default if not specified
-            Int64(get(search_params, :min_quad_tuning_psms, 5000)),   # Default if not specified
+            min_quad_tuning_fragments,
+            min_quad_tuning_psms_per_thompson,
+            initial_percent,
             prec_estimation
         )
     end
@@ -247,30 +252,107 @@ function process_file!(
     spectra::MassSpecData) where {P<:QuadTuningSearchParameters}
 
     setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(1.0f0))
+
+    # Get file name for debugging
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        "file_$ms_file_idx"
+    end
+
+    # Check if quad model fitting is enabled BEFORE any expensive operations
     if params.fit_from_data == false
         return nothing
     end
+
+    # Log fitted mass error model from ParameterTuningSearch
+    fitted_model = getMassErrorModel(search_context, ms_file_idx)
+
     try
-        setNceModel!(
-            getFragmentLookupTable(getSpecLib(search_context)), 
-            getNceModelModel(search_context, ms_file_idx)
-        )
+        # Check if file has any scans
+        if length(spectra) == 0
+            @user_warn "\nSkipping quad tuning for $file_name - file contains no scans"
+            setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
+            return results
+        end
+        
+        # Check for inconsistent array types (data quality issue)
+        try
+            # Test array access - this will fail if there are type mismatches
+            test_scan_idx = findfirst(i -> getMsOrder(spectra, i) == 2, 1:length(spectra))
+            if test_scan_idx !== nothing
+                _ = getMzArray(spectra, test_scan_idx)
+                _ = getIntensityArray(spectra, test_scan_idx)
+            end
+        catch type_error
+            if isa(type_error, MethodError) || contains(string(type_error), "SubArray")
+                @user_warn "\nData type inconsistency detected in $file_name. Array types don't match expected schema. This may be due to dummy/test data with inconsistent typing. Skipping quad tuning."
+                setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
+                return results
+            else
+                rethrow(type_error)
+            end
+        end
+        
+        # Set NCE model if available from NCE tuning
+        try
+            nce_model = getNceModelModel(search_context, ms_file_idx)
+            setNceModel!(
+                getFragmentLookupTable(getSpecLib(search_context)),
+                nce_model
+            )
+            catch
+            # Continue without NCE model - library search will use defaults
+        end
         # Adjust arrays for isotope variants
         adjust_precursor_arrays!(search_context)
         
         # Check window widths
         window_widths = check_window_widths(spectra)
         if length(window_widths) != 1
-            @user_warn "Multiple window sizes detected: $(join(collect(window_widths), ';'))"
+            @user_warn "\nMultiple window sizes detected: $(join(collect(window_widths), ';'))"
             setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
             return results
         end
-        
-        # Collect and process PSMs
-        total_psms = collect_psms(spectra, search_context, results, params, ms_file_idx)
-        
-        if nrow(total_psms) < 1000
-            @user_warn "Too few psms found for quad modeling. Using default model."
+        window_width = first(window_widths)
+        # Build scan priority index (metadata only, no peak data)
+        scan_index = build_quad_scan_priority_index(spectra)
+
+        # Calculate minimum PSMs required based on window width
+        required_psms = params.min_quad_tuning_psms_per_thompson * parse(Float64, window_width)
+        required_psms_int = round(Int, required_psms)
+
+        total_psms, _, _ = progressive_quad_psm_collection!(
+            scan_index,
+            spectra,
+            search_context,
+            params,
+            ms_file_idx;
+            min_psms_required=required_psms_int,
+            verbose=false
+        )
+
+        # Convert to DataFrame format expected by downstream processing
+        if !isempty(total_psms)
+            # Apply quad-specific processing if we got PSMs
+            total_psms = process_quad_pipeline(total_psms, spectra, search_context, results, params, ms_file_idx, parse(Float64, window_width))
+        else
+            # Return empty DataFrame with correct schema
+            total_psms = DataFrame(
+                scan_idx = Int64[],
+                precursor_idx = UInt32[],
+                center_mz = Union{Float32, Missing}[],
+                δ = Union{Float32, Missing}[],
+                yt = Union{Float32, Missing}[],
+                x0 = Union{Float32, Missing}[],
+                x1 = Union{Float32, Missing}[],
+                prec_charge = Union{UInt8, Missing}[],
+                half_width_mz = Float32[]
+            )
+        end
+
+        if nrow(total_psms) < required_psms
+            @user_warn "Too few PSMs found for quad modeling. required_psms $required_psms and total_psms $(nrow(total_psms)) \n"
             setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
             return results
         end
@@ -280,19 +362,17 @@ function process_file!(
         
         # Fit quad model
         window_width = parse(Float64, first(window_widths))
-
         fitted_model = RazoQuadModel(fit_quad_model(total_psms, window_width))
         setQuadModel(results, fitted_model)
-
         # Plot quad model
         push!(results.quad_model_plots, plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
-        
+
+
     catch e
-        throw(e)
-        @user_warn "Quad transmission function fit failed" exception=e
+        @user_warn "\nQuad transmission function fit failed for MS data file: $file_name. Error: $e. Using fallback model: GeneralGaussModel(5.0, 0.0)"
         setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
     end
-    
+
     return results
 end
 
@@ -303,6 +383,12 @@ function process_search_results!(
     ms_file_idx::Int64,
     ::MassSpecData
 ) where {P<:QuadTuningSearchParameters}
+    
+    # Check if file should be skipped due to previous failure
+    if check_and_skip_failed_file(search_context, ms_file_idx, "QuadTuningSearch results processing")
+        return nothing  # Return early 
+    end
+    
     if params.fit_from_data==true
         setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
     else
@@ -326,7 +412,7 @@ function summarize_results!(
             safeRm(data_path, nothing)
         end
     catch e
-        @user_warn "Could not clear existing file: $e"
+        @user_warn "\nCould not clear existing file: $e"
     end
 
     if !isempty(results.quad_model_plots)

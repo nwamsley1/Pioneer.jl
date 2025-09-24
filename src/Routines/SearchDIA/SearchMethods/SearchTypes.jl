@@ -125,12 +125,12 @@ struct ArrowTableReference{N} <: MassSpecDataReference
         new{n}(
             NTuple{n, String}(file_paths), 
             NTuple{n, String}(file_id_to_name),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{Bool}(undef, n)
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill(false, n)
         )
     end
 
@@ -143,13 +143,13 @@ struct ArrowTableReference{N} <: MassSpecDataReference
         n = length(file_paths)
         new{n}(
             NTuple{n, String}(file_paths...), 
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{String}(undef, n),
-            Vector{Bool}(undef, n)
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill("", n),
+            fill(false, n)
         )
     end
 
@@ -242,6 +242,10 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     n_library_decoys::Int64
     library_fdr_scale_factor::Float32
 
+    # Failed file tracking
+    failed_files::Set{Int64}
+    file_failure_reasons::Dict{Int64, String}
+
     # Constructor
     function SearchContext(
         spec_lib::L,
@@ -268,10 +272,28 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Ref{Any}(), Ref{Any}(), Ref{Any}(),
             Dict{Type{<:SearchMethod}, Any}(),  # Initialize method_results
             n_threads, n_precursors, buffer_size,
-            0, 0, 1.0f0  # Initialize library stats with defaults
+            0, 0, 1.0f0,  # Initialize library stats with defaults
+            Set{Int64}(),  # Initialize failed_files
+            Dict{Int64, String}()  # Initialize file_failure_reasons
         )
     end
 end
+
+#==========================================================
+Failed File Tracking Functions
+==========================================================#
+
+"""
+    markFileFailed!(ctx::SearchContext, ms_file_idx::Int64, reason::String)
+
+Mark a file as failed with the given reason.
+"""
+function markFileFailed!(ctx::SearchContext, ms_file_idx::Int64, reason::String)
+    push!(ctx.failed_files, ms_file_idx)
+    ctx.file_failure_reasons[ms_file_idx] = reason
+end
+
+
 
 #==========================================================
 Interface Methods for Parameter Access
@@ -280,6 +302,9 @@ Interface Methods for Parameter Access
 getMSData(msdr::MassSpecDataReference, ms_file_idx::I) where {I<:Integer} = BasicMassSpecData(msdr.file_paths[ms_file_idx])
 getMSData(sc::SearchContext) = sc.mass_spec_data_reference
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]
+
+# Add length method for ArrowTableReference
+Base.length(::ArrowTableReference{N}) where N = N
 
 import Base: enumerate
 function enumerate(msdr::ArrowTableReference)

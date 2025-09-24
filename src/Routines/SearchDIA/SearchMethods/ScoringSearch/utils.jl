@@ -108,6 +108,97 @@ function adjust_any_common_peps!(feature_names::Vector{Symbol}, df::AbstractData
     return feature_names
 end
 
+"""
+    remove_zero_variance_columns!(feature_names::Vector{Symbol}, df::AbstractDataFrame)
+
+Remove columns with zero variance from `feature_names` to prevent singular matrices
+in probit regression. This includes constant columns, columns with all missing values,
+and columns containing Inf/NaN values.
+
+# Arguments
+- `feature_names`: Vector of feature symbols to filter
+- `df`: DataFrame containing the feature data
+
+# Returns
+- `feature_names`: Filtered vector with problematic features removed
+"""
+function remove_zero_variance_columns!(feature_names::Vector{Symbol}, df::AbstractDataFrame)
+    removed_features = Symbol[]
+
+    # Filter out problematic columns
+    filter!(feature_names) do feature
+        if !hasproperty(df, feature)
+            push!(removed_features, feature)
+            return false
+        end
+
+        col_data = df[!, feature]
+
+        # Check for columns with all missing values
+        if all(ismissing, col_data)
+            push!(removed_features, feature)
+            return false
+        end
+
+        # Check for Inf or NaN values
+        if any(x -> !ismissing(x) && (isinf(x) || isnan(x)), col_data)
+            push!(removed_features, feature)
+            return false
+        end
+
+        # Check for zero variance (constant columns)
+        non_missing_data = collect(skipmissing(col_data))
+        if isempty(non_missing_data) || length(unique(non_missing_data)) <= 1 || var(non_missing_data) ≈ 0.0
+            push!(removed_features, feature)
+            return false
+        end
+
+        return true
+    end
+
+    # Log removed features if any
+    if !isempty(removed_features)
+        @user_warn "Removed $(length(removed_features)) problematic features to prevent singular matrix" removed_features = removed_features
+    end
+
+    return feature_names
+end
+
+"""
+    filter_ms1_features_if_disabled!(feature_names::Vector{Symbol}, ms1_scoring::Bool)
+
+Remove MS1 features from `feature_names` if MS1 scoring is disabled.
+This prevents including MS1 features with zero variance when ms1_scoring=false.
+
+# Arguments
+- `feature_names`: Vector of feature symbols to filter
+- `ms1_scoring`: Whether MS1 scoring is enabled
+
+# Returns
+- `feature_names`: Filtered vector with MS1 features removed if ms1_scoring=false
+"""
+function filter_ms1_features_if_disabled!(feature_names::Vector{Symbol}, ms1_scoring::Bool)
+    if !ms1_scoring
+        # Define MS1 features that should be excluded when ms1_scoring=false
+        ms1_features = Set([
+            :ms1_irt_diff, :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
+            :max_unmatched_residual_ms1, :fitted_spectral_contrast_ms1, :error_ms1,
+            :m0_error_ms1, :n_iso_ms1, :big_iso_ms1, :rt_max_intensity_ms1,
+            :rt_diff_max_intensity_ms1, :ms1_features_missing
+        ])
+
+        original_count = length(feature_names)
+        filter!(feature -> !(feature in ms1_features), feature_names)
+        removed_count = original_count - length(feature_names)
+
+        if removed_count > 0
+            @user_info "Excluded $removed_count MS1 features (ms1_scoring=false)"
+        end
+    end
+
+    return feature_names
+end
+
 
 
 
@@ -638,7 +729,8 @@ end
                                     max_psms_in_memory::Int64,
                                     qc_folder::String,
                                     precursors::LibraryPrecursors;
-                                    protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing)
+                                    protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
+                                    ms1_scoring::Bool = true)
 
 Perform probit regression on protein groups.
 
@@ -648,13 +740,15 @@ Perform probit regression on protein groups.
 - `qc_folder`: Folder for QC plots
 - `precursors`: Library precursors
 - `protein_to_cv_fold`: Optional pre-built mapping of proteins to CV folds
+- `ms1_scoring`: Whether MS1 scoring is enabled (affects feature selection)
 """
 function perform_protein_probit_regression(
     pg_refs::Vector{ProteinGroupFileReference},
     max_psms_in_memory::Int64,
     qc_folder::String,
     precursors::LibraryPrecursors;
-    protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing
+    protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
+    ms1_scoring::Bool = true
 )
     # Extract paths for compatibility with existing code
     passing_pg_paths = [file_path(ref) for ref in pg_refs]
@@ -690,8 +784,8 @@ function perform_protein_probit_regression(
         
         skip_scoring_oom = !(est_targets > 10 && est_decoys > 10 && total_protein_groups > 1000)
         
-        perform_probit_analysis_oom(pg_refs, total_protein_groups, max_protein_groups_in_memory_limit, qc_folder; 
-                                   skip_scoring = skip_scoring_oom)
+        perform_probit_analysis_oom(pg_refs, total_protein_groups, max_protein_groups_in_memory_limit, qc_folder;
+                                   skip_scoring = skip_scoring_oom, ms1_scoring = ms1_scoring)
     else
         # Load all protein group tables into a single DataFrame
         all_protein_groups = DataFrame()
@@ -715,7 +809,8 @@ function perform_protein_probit_regression(
             pg_refs,
             precursors;
             protein_to_cv_fold = protein_to_cv_fold,
-            skip_scoring = skip_scoring
+            skip_scoring = skip_scoring,
+            ms1_scoring = ms1_scoring
         )
     end
 end
@@ -881,9 +976,9 @@ Perform out-of-memory probit regression analysis on protein groups.
 4. Apply model to all protein groups file by file
 5. Calculate and report performance metrics
 """
-function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference}, total_protein_groups::Int, 
+function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference}, total_protein_groups::Int,
                                     max_protein_groups_in_memory::Int, qc_folder::String;
-                                    skip_scoring = false)
+                                    skip_scoring = false, ms1_scoring::Bool = true)
     
     # Calculate sampling ratio
     sampling_ratio = max_protein_groups_in_memory / total_protein_groups
@@ -921,7 +1016,16 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     
     # Define features to use
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff, :any_common_peps]
+
+    # Apply feature filtering
     adjust_any_common_peps!(feature_names, sampled_protein_groups)
+    remove_zero_variance_columns!(feature_names, sampled_protein_groups)
+
+    if isempty(feature_names)
+        @user_warn "No valid features remaining for OOM probit regression after filtering"
+        return
+    end
+
     X = Matrix{Float64}(sampled_protein_groups[:, feature_names])
     y = sampled_protein_groups.target
     
@@ -984,8 +1088,17 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
     # Define features to use
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps] # :log_binom_coeff] 
-    adjust_any_common_peps!(feature_names, sampled_protein_groups)
+    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps] # :log_binom_coeff]
+
+    # Apply feature filtering
+    adjust_any_common_peps!(feature_names, all_protein_groups)
+    remove_zero_variance_columns!(feature_names, all_protein_groups)
+
+    if isempty(feature_names)
+        @user_warn "No valid features remaining for probit regression after filtering"
+        return
+    end
+
     X = Matrix{Float64}(all_protein_groups[:, feature_names])
     y = all_protein_groups.target
 
@@ -1034,27 +1147,42 @@ Fit a probit regression model for protein group classification.
 - `X_std`: Feature standard deviations for standardization
 """
 function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
+    # Check for problematic columns in the feature matrix
+    X_df_temp = DataFrame(X, Symbol.("feature_", 1:size(X, 2)))
+    feature_names = Symbol.("feature_", 1:size(X, 2))
+
+    # Remove zero-variance columns to prevent singular matrices
+    valid_features = remove_zero_variance_columns!(copy(feature_names), X_df_temp)
+
+    if isempty(valid_features)
+        throw(ArgumentError("No valid features remaining for probit regression after variance filtering"))
+    end
+
+    # Use only valid features
+    valid_indices = [findfirst(==(f), feature_names) for f in valid_features]
+    X_filtered = X[:, valid_indices]
+
     # Standardize features
-    #X_mean = mean(X, dims=1)
-    #X_std = std(X, dims=1)
-    #X_std[X_std .== 0] .= 1.0  # Avoid division by zero
-    X_standardized =X#(X .- X_mean) ./ X_std
-    
+    #X_mean = mean(X_filtered, dims=1)
+    #X_std = std(X_filtered, dims=1)
+    #X_std[X_std .== 0] .= 1.0  # Should not happen after filtering, but defensive
+    X_standardized = X_filtered #(X_filtered .- X_mean) ./ X_std
+
     # Add intercept column
     X_with_intercept = hcat(ones(size(X_standardized, 1)), X_standardized)
-    X_df = DataFrame(X_with_intercept, [:intercept; Symbol.("feature_", 1:size(X, 2))])
-    
+    X_df = DataFrame(X_with_intercept, [:intercept; valid_features])
+
     # Initialize coefficients
     β = zeros(Float64, size(X_with_intercept, 2))
-    
+
     # Create data chunks for parallel processing
     n_chunks = max(1, Threads.nthreads())
     chunk_size = max(1, ceil(Int, length(y) / n_chunks))
     data_chunks = Iterators.partition(1:length(y), chunk_size)
-    
+
     # Fit probit model
     β_fitted = Pioneer.ProbitRegression(β, X_df, y, data_chunks, max_iter=30)
-    
+
     return β_fitted#, vec(X_mean), vec(X_std)
 end
 
@@ -1758,7 +1886,8 @@ function perform_probit_analysis_multifold(
     precursors::LibraryPrecursors;
     protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
     show_improvement = true,
-    skip_scoring = false
+    skip_scoring = false,
+    ms1_scoring::Bool = true
 )
     # 1. Detect unique CV folds from library
     unique_cv_folds = detect_unique_cv_folds(precursors)
@@ -1782,7 +1911,15 @@ function perform_probit_analysis_multifold(
 
     # 4. Define features (same as original)
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps]
+
+    # Apply feature filtering
     adjust_any_common_peps!(feature_names, all_protein_groups)
+    remove_zero_variance_columns!(feature_names, all_protein_groups)
+
+    if isempty(feature_names)
+        @user_warn "No valid features remaining for multifold probit regression after filtering"
+        return
+    end
     
     # 5. Train probit model for each fold (skip if skip_scoring = true)
     models = Dict{UInt8, Vector{Float64}}()
