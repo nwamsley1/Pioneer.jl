@@ -132,8 +132,8 @@ Most parameters should not be changed, but the following may need adjustement.
 | `deconvolution.max_diff` | Float | Relative convergence threshold - maximum relative change in weights between iterations. Also used as relative tolerance for Newton's method (default: 0.01) |
 | `machine_learning.max_samples` | Int | Maximum number of samples for LightGBM training (default: 5000000) |
 | `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
-| `machine_learning.max_q_value_lightgbm_mbr_rescore` | Float | q-value threshold for match-between-runs candidates during semi-supervised learning with LightGBM (default: 0.20) |
-| `machine_learning.min_PEP_neg_threshold_lightgbm_rescore` | Float | Minimum posterior error probabilility threshold for poor scoring targets to be relabeled as negative examples during semi-supervised learning with LightGBM (default: 0.20) |
+| `machine_learning.max_q_value_mbr_rescore` | Float | q-value threshold for match-between-runs candidates during semi-supervised learning with LightGBM (default: 0.20) |
+| `machine_learning.min_PEP_neg_threshold_rescore` | Float | Minimum posterior error probabilility threshold for poor scoring targets to be relabeled as negative examples during semi-supervised learning with LightGBM (default: 0.20) |
 | `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
 | `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |
 

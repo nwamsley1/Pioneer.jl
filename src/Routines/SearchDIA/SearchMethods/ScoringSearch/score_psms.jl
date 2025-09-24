@@ -30,8 +30,8 @@ const MAX_FOR_MODEL_SELECTION_PSMS = MAX_FOR_MODEL_SELECTION
                                   precursors::LibraryPrecursors,
                                   match_between_runs::Bool,
                                   max_q_value_lightgbm_rescore::Float32,
-                                  max_q_value_lightgbm_mbr_rescore::Float32,
-                                  min_PEP_neg_threshold_lightgbm_rescore::Float32,
+                                  max_q_value_mbr_rescore::Float32,
+                                  min_PEP_neg_threshold_rescore::Float32,
                                   max_psms_in_memory::Int64)
 
 Main entry point for PSM scoring with automatic model selection based on dataset size.
@@ -47,8 +47,8 @@ Main entry point for PSM scoring with automatic model selection based on dataset
 - `precursors`: Library precursors
 - `match_between_runs`: Whether to perform match between runs
 - `max_q_value_lightgbm_rescore`: Max q-value for LightGBM rescoring
-- `max_q_value_lightgbm_mbr_rescore`: Max q-value for MBR rescoring
-- `min_PEP_neg_threshold_lightgbm_rescore`: Min PEP for negative relabeling
+- `max_q_value_mbr_rescore`: Max q-value for MBR rescoring
+- `min_PEP_neg_threshold_rescore`: Min PEP for negative relabeling
 - `max_psms_in_memory`: Maximum PSMs to keep in memory
 
 # Returns
@@ -60,8 +60,8 @@ function score_precursor_isotope_traces(
     precursors::LibraryPrecursors,
     match_between_runs::Bool,
     max_q_value_lightgbm_rescore::Float32,
-    max_q_value_lightgbm_mbr_rescore::Float32,
-    min_PEP_neg_threshold_lightgbm_rescore::Float32,
+    max_q_value_mbr_rescore::Float32,
+    min_PEP_neg_threshold_rescore::Float32,
     max_psms_in_memory::Int64,
     q_value_threshold::Float32 = 0.01f0  # Default to 1% if not specified
 )
@@ -81,8 +81,8 @@ function score_precursor_isotope_traces(
             model_config,
             match_between_runs,
             max_q_value_lightgbm_rescore,
-            max_q_value_lightgbm_mbr_rescore,
-            min_PEP_neg_threshold_lightgbm_rescore
+            max_q_value_mbr_rescore,
+            min_PEP_neg_threshold_rescore
         )
     else
         # In-memory processing - load PSMs first
@@ -96,8 +96,8 @@ function score_precursor_isotope_traces(
             # Case 3: In-memory with automatic model comparison (<100K)
             model_config = select_psm_scoring_model(
                 best_psms, file_paths, precursors, match_between_runs,
-                max_q_value_lightgbm_rescore, max_q_value_lightgbm_mbr_rescore,
-                min_PEP_neg_threshold_lightgbm_rescore, q_value_threshold
+                max_q_value_lightgbm_rescore, max_q_value_mbr_rescore,
+                min_PEP_neg_threshold_rescore, q_value_threshold
             )
         end
         
@@ -106,7 +106,7 @@ function score_precursor_isotope_traces(
         models = score_precursor_isotope_traces_in_memory(
             best_psms, file_paths, precursors, model_config,
             match_between_runs, max_q_value_lightgbm_rescore,
-            max_q_value_lightgbm_mbr_rescore, min_PEP_neg_threshold_lightgbm_rescore
+            max_q_value_mbr_rescore, min_PEP_neg_threshold_rescore
         )
         
         # Write scored PSMs to files
@@ -138,8 +138,8 @@ function select_psm_scoring_model(
     precursors::LibraryPrecursors,
     match_between_runs::Bool,
     max_q_value_lightgbm_rescore::Float32,
-    max_q_value_lightgbm_mbr_rescore::Float32,
-    min_PEP_neg_threshold_lightgbm_rescore::Float32,
+    max_q_value_mbr_rescore::Float32,
+    min_PEP_neg_threshold_rescore::Float32,
     q_value_threshold::Float32
 )
     psms_count = size(best_psms, 1)
@@ -166,7 +166,7 @@ function select_psm_scoring_model(
                 score_precursor_isotope_traces_in_memory(
                     psms_copy, file_paths, precursors, config,
                     match_between_runs, max_q_value_lightgbm_rescore,
-                    max_q_value_lightgbm_mbr_rescore, min_PEP_neg_threshold_lightgbm_rescore,
+                    max_q_value_mbr_rescore, min_PEP_neg_threshold_rescore,
                     false  # show_progress = false during comparison
                 )
                 
@@ -282,8 +282,8 @@ function score_precursor_isotope_traces_in_memory(
     model_config::ModelConfig,
     match_between_runs::Bool,
     max_q_value_lightgbm_rescore::Float32,
-    max_q_value_lightgbm_mbr_rescore::Float32,
-    min_PEP_neg_threshold_lightgbm_rescore::Float32,
+    max_q_value_mbr_rescore::Float32,
+    min_PEP_neg_threshold_rescore::Float32,
     show_progress::Bool = true
 )
     
@@ -291,13 +291,13 @@ function score_precursor_isotope_traces_in_memory(
         return train_lightgbm_model_in_memory(
             best_psms, file_paths, precursors, model_config,
             match_between_runs, max_q_value_lightgbm_rescore,
-            max_q_value_lightgbm_mbr_rescore, min_PEP_neg_threshold_lightgbm_rescore,
+            max_q_value_mbr_rescore, min_PEP_neg_threshold_rescore,
             show_progress
         )
     elseif model_config.model_type == :probit
         return train_probit_model_in_memory(
             best_psms, file_paths, precursors, model_config, match_between_runs,
-            min_PEP_neg_threshold_lightgbm_rescore
+            min_PEP_neg_threshold_rescore
         )
     else
         error("Unsupported model type: $(model_config.model_type)")
@@ -316,8 +316,8 @@ function train_lightgbm_model_in_memory(
     model_config::ModelConfig,
     match_between_runs::Bool,
     max_q_value_lightgbm_rescore::Float32,
-    max_q_value_lightgbm_mbr_rescore::Float32,
-    min_PEP_neg_threshold_lightgbm_rescore::Float32,
+    max_q_value_mbr_rescore::Float32,
+    min_PEP_neg_threshold_rescore::Float32,
     show_progress::Bool = true
 )
     # Add required columns
@@ -342,8 +342,8 @@ function train_lightgbm_model_in_memory(
     hp = model_config.hyperparams
     return sort_of_percolator_in_memory!(
         best_psms, features, match_between_runs;
-        max_q_value_lightgbm_rescore, max_q_value_lightgbm_mbr_rescore,
-        min_PEP_neg_threshold_lightgbm_rescore,
+        max_q_value_lightgbm_rescore, max_q_value_mbr_rescore,
+        min_PEP_neg_threshold_rescore,
         feature_fraction = get(hp, :feature_fraction, 0.5),
         min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
         min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
@@ -367,7 +367,7 @@ function train_probit_model_in_memory(
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
-    min_PEP_neg_threshold_lightgbm_rescore::Float32
+    min_PEP_neg_threshold_rescore::Float32
 )
     # Add required columns
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
@@ -382,7 +382,7 @@ function train_probit_model_in_memory(
         file_paths,
         features,
         match_between_runs;
-        neg_mining_pep_threshold = min_PEP_neg_threshold_lightgbm_rescore
+        neg_mining_pep_threshold = min_PEP_neg_threshold_rescore
     )
     
     # File writing removed - will be done at higher level
@@ -717,8 +717,8 @@ function score_precursor_isotope_traces_out_of_memory!(
     model_config::ModelConfig,
     match_between_runs::Bool,
     max_q_value_lightgbm_rescore::Float32,
-    max_q_value_lightgbm_mbr_rescore::Float32,
-    min_PEP_neg_threshold_lightgbm_rescore::Float32
+    max_q_value_mbr_rescore::Float32,
+    min_PEP_neg_threshold_rescore::Float32
 )
     file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
     # Features from model_config; do not include :target
@@ -747,8 +747,8 @@ function score_precursor_isotope_traces_out_of_memory!(
                             features,
                             match_between_runs;
                             max_q_value_lightgbm_rescore,
-                            max_q_value_lightgbm_mbr_rescore,
-                            min_PEP_neg_threshold_lightgbm_rescore,
+                            max_q_value_mbr_rescore,
+                            min_PEP_neg_threshold_rescore,
                             feature_fraction = get(hp, :feature_fraction, 0.5),
                             min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
                             min_gain_to_split = get(hp, :min_gain_to_split, 0.5),

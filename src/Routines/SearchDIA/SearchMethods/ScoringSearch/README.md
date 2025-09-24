@@ -106,8 +106,8 @@ score_precursor_isotope_traces(
     precursors,
     match_between_runs,
     max_q_value_lightgbm_rescore,
-    max_q_value_lightgbm_mbr_rescore,
-    min_PEP_neg_threshold_lightgbm_rescore,
+    max_q_value_mbr_rescore,
+    min_PEP_neg_threshold_rescore,
     max_psms_in_memory,
     q_value_threshold
 )
@@ -251,8 +251,8 @@ The trained models integrate into the broader ScoringSearch pipeline:
             "max_psms_in_memory": 100000,
             "enable_model_comparison": true,
             "max_q_value_lightgbm_rescore": 0.01,
-            "max_q_value_lightgbm_mbr_rescore": 0.20,
-            "min_PEP_neg_threshold_lightgbm_rescore": 0.90
+            "max_q_value_mbr_rescore": 0.20,
+            "min_PEP_neg_threshold_rescore": 0.90
         }
     },
     "global_settings": {
