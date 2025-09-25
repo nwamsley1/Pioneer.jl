@@ -118,6 +118,29 @@ function apply_mbr_filter!(
         @user_info "  $(result.method_name): $(result.n_passing)/$n_candidates pass ($(round(100*result.n_passing/n_candidates, digits=1))%)$marker"
     end
     
+    # Compute per-candidate MBR q-values (FTR) based on the selected method's scores
+    try
+        # Scores aligned to candidate_data row order
+        scores = best_result.scores
+        # Use is_bad_transfer as numerator flag; denominator counts all candidates at threshold
+        candidate_qvals = Vector{Float32}(undef, length(scores))
+        # get_ftr! expects placeholders for targets; it accumulates total candidates internally
+        get_ftr!(scores, trues(length(scores)), candidate_labels, candidate_qvals)
+
+        # Map back to full dataframe rows (only when candidates exist)
+        full_qvals = Vector{Union{Missing, Float32}}(missing, nrow(merged_df))
+        cand_indices = findall(candidate_mask)
+        @inbounds for (i, idx) in enumerate(cand_indices)
+            full_qvals[idx] = candidate_qvals[i]
+        end
+
+        # Add columns for downstream pipelines and outputs
+        merged_df[!, :MBR_candidate] = merged_df.MBR_transfer_candidate
+        merged_df[!, :MBR_transfer_q_value] = full_qvals
+    catch e
+        @user_warn "Failed to compute per-candidate MBR q-values: $(typeof(e)) — $(e)"
+    end
+
     # Apply best method's filtering
     return apply_filtering(best_result, merged_df, candidate_mask, params)
 end
@@ -458,6 +481,8 @@ function get_quant_necessary_columns()
         :run_specific_qval,
         :prec_mz,
         :pep,
+        :MBR_candidate,
+        :MBR_transfer_q_value,
         :weight,
         :target,
         :rt,

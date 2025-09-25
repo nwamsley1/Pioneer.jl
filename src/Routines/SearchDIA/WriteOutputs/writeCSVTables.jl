@@ -147,7 +147,33 @@ function writePrecursorCSV(
                     combine = sum)      # or combine = maximum, first, etc.
 
     end
+    # Replace empty strings with missing to avoid CSV.write indexing errors on empty Strings
+    function _sanitize_empty_strings!(df::DataFrame)
+        for nm in names(df)
+            col = df[!, nm]
+            if eltype(col) <: AbstractString
+                if any(==(""), col)
+                    df[!, nm] = replace(col, "" => missing)
+                end
+            elseif eltype(col) <: Union{Missing, AbstractString}
+                has_empty = false
+                @inbounds for v in col
+                    if !ismissing(v) && v == ""
+                        has_empty = true
+                        break
+                    end
+                end
+                if has_empty
+                    df[!, nm] = replace(col, "" => missing)
+                end
+            end
+        end
+        return df
+    end
     precursors_long = DataFrame(Arrow.Table(long_precursors_path))
+
+    unique_files_in_data = unique(precursors_long.file_name)
+
     n_rows = size(precursors_long, 1)
 
     out_dir, arrow_path = splitdir(long_precursors_path)
@@ -198,37 +224,43 @@ function writePrecursorCSV(
         rename!(precursors_long, rename_pairs)
     end
 
-    # order columns
-    select!(precursors_long, [:file_name,
-                             :species,
-                             :gene_names,
-                             :protein_names,
-                             :inferred_protein_group,
-                             :accession_numbers,
-                             :sequence,
-                             :charge,
-                             :structural_mods,
-                             :isotopic_mods,
-                             :prec_mz,
-                             :missed_cleavage,
-                             :global_score,
-                             :score,
-                             :global_qval,
-                             :qval,
-                             :pep,
-                             :peak_area,
-                             :peak_area_normalized,
-                             :points_integrated,
-                             :precursor_fraction_transmitted,
-                             :isotopes_captured,
-                             :rt,
-                             :apex_scan,
-                             :global_pg_score,
-                             :pg_score,
-                             :use_for_protein_quant,
-                             :precursor_idx,
-                             :target,
-                             :entrapment_group_id])
+    # order columns (tolerant to optional columns such as MBR outputs)
+    requested_cols = [
+        :file_name,
+        :species,
+        :gene_names,
+        :protein_names,
+        :inferred_protein_group,
+        :accession_numbers,
+        :sequence,
+        :charge,
+        :structural_mods,
+        :isotopic_mods,
+        :prec_mz,
+        :missed_cleavage,
+        :global_score,
+        :score,
+        :global_qval,
+        :qval,
+        :pep,
+        :MBR_candidate,
+        :MBR_transfer_q_value,
+        :peak_area,
+        :peak_area_normalized,
+        :points_integrated,
+        :precursor_fraction_transmitted,
+        :isotopes_captured,
+        :rt,
+        :apex_scan,
+        :global_pg_score,
+        :pg_score,
+        :use_for_protein_quant,
+        :precursor_idx,
+        :target,
+        :entrapment_group_id
+    ]
+    available_cols = intersect(requested_cols, Symbol.(names(precursors_long)))
+    select!(precursors_long, available_cols)
 
     sorted_columns = vcat(wide_columns, file_names)
     open(long_precursors_path,"w") do io1
@@ -254,7 +286,8 @@ function writePrecursorCSV(
                 batch_start_idx = batch_end_idx + 1
                 batch_end_idx = min(batch_start_idx + batch_size, n_rows)
                 if write_csv 
-                    CSV.write(io1, subdf, append=true, header=false, delim="\t")
+                    _sanitize_empty_strings!(subdf)
+                    CSV.write(io1, subdf, append=true, header=false, delim='\t')
                 end
                 subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
                 col_names = names(subunstack)
@@ -264,7 +297,8 @@ function writePrecursorCSV(
                     end
                 end
                 if write_csv
-                    CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
+                    _sanitize_empty_strings!(subunstack)
+                    CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
                 end
                 if iszero(n_writes)
                     if isfile(wide_precursors_arrow_path)
@@ -312,6 +346,9 @@ function writeProteinGroupsCSV(
     end
 
     protein_groups_long = DataFrame(Arrow.Table(long_pg_path))
+
+    unique_files_in_data = unique(protein_groups_long.file_name)
+
     n_rows = size(protein_groups_long, 1)
 
     out_dir, arrow_path = splitdir(long_pg_path)
@@ -329,6 +366,15 @@ function writeProteinGroupsCSV(
     prot_map = Dict(accs[i] => prots[i] for i in eachindex(accs))
     protein_groups_long[!, :gene_names] = _map_accession_vector(protein_groups_long.protein, gene_map)
     protein_groups_long[!, :protein_names] = _map_accession_vector(protein_groups_long.protein, prot_map)
+    # Normalize empty strings to missing for robust CSV writing
+    try
+        allowmissing!(protein_groups_long, :gene_names)
+        allowmissing!(protein_groups_long, :protein_names)
+        protein_groups_long[!, :gene_names] = replace(protein_groups_long[!, :gene_names], "" => missing)
+        protein_groups_long[!, :protein_names] = replace(protein_groups_long[!, :protein_names], "" => missing)
+    catch
+        # If allowmissing! is not needed or columns already typed, proceed
+    end
 
     # Update wide columns to include n_peptides
     wide_columns = ["species", "gene_names", "protein_names", "protein", "target", "entrap_id", "global_pg_score", "global_qval"]
@@ -390,8 +436,14 @@ function writeProteinGroupsCSV(
                 end
                 subdf[!,:peptides] = subdf[!,:modified_sequence]
                 select!(subdf, Not([:modified_sequence]))
+                # Replace empty peptide strings with missing to avoid writer edge-cases
+                try
+                    allowmissing!(subdf, :peptides)
+                    replace!(subdf[!, :peptides], "" => missing)
+                catch
+                end
                 if write_csv 
-                    CSV.write(io1, subdf, append=true, header=false, delim="\t")
+                    CSV.write(io1, subdf, append=true, header=false, delim='\t')
                 end
                 subunstack = makeWideFormat(subdf)
                 col_names = names(subunstack)
@@ -401,7 +453,7 @@ function writeProteinGroupsCSV(
                     end
                 end
                 if write_csv
-                    CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
+                    CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
                 end
 
                 if iszero(n_writes)

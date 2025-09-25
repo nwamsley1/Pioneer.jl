@@ -1,7 +1,7 @@
 name = "Pioneer"
 uuid = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
 authors = ["Nathan Wamsley"]
-version = "0.4.0"
+version = "0.4.1"
 
 [deps]
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"

@@ -468,16 +468,43 @@ function create_rt_indices!(
     rt_indices_folder = joinpath(getDataOutDir(search_context), "temp_data", "rt_indices")
     !isdir(rt_indices_folder) && mkdir(rt_indices_folder)
 
-    # Make RT indices
+    # Get PSM paths and RT models
+    all_psm_paths = getFirstPassPsms(getMSData(search_context))
+    all_rt_models = getRtIrtMap(search_context)
+
+    # Filter to get valid file indices and their paths
+    valid_indexed_data = []
+    for (idx, path) in enumerate(all_psm_paths)
+        if !isempty(path) && haskey(all_rt_models, idx)
+            push!(valid_indexed_data, (idx, path))
+        end
+    end
+
+    # If no valid paths, skip RT index creation
+    if isempty(valid_indexed_data)
+        @user_warn "No valid PSM files for RT index creation - all files may have failed"
+        return nothing
+    end
+
+    # Extract just the paths and indices
+    valid_indices = [idx for (idx, _) in valid_indexed_data]
+    valid_psm_paths = [path for (_, path) in valid_indexed_data]
+    valid_rt_models = Dict(i => all_rt_models[idx] for (i, idx) in enumerate(valid_indices))
+
+    # Make RT indices only for valid files
     rt_index_paths = makeRTIndices(
         rt_indices_folder,
-        getFirstPassPsms(getMSData(search_context)),
+        valid_psm_paths,
         prec_to_irt,
-        getRtIrtMap(search_context),
+        valid_rt_models,
         min_prob=params.max_prob_to_impute
     )
-    for (ms_file_idx, rt_index_path) in pairs(rt_index_paths)
-        setRtIndex!(getMSData(search_context), ms_file_idx, rt_index_path)
+
+    # Map the results back to original indices
+    for (new_idx, orig_idx) in enumerate(valid_indices)
+        if new_idx <= length(rt_index_paths)
+            setRtIndex!(getMSData(search_context), orig_idx, rt_index_paths[new_idx])
+        end
     end
 end
 
