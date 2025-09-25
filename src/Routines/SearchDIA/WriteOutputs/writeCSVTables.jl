@@ -201,37 +201,43 @@ function writePrecursorCSV(
         rename!(precursors_long, rename_pairs)
     end
 
-    # order columns
-    select!(precursors_long, [:file_name,
-                             :species,
-                             :gene_names,
-                             :protein_names,
-                             :inferred_protein_group,
-                             :accession_numbers,
-                             :sequence,
-                             :charge,
-                             :structural_mods,
-                             :isotopic_mods,
-                             :prec_mz,
-                             :missed_cleavage,
-                             :global_score,
-                             :score,
-                             :global_qval,
-                             :qval,
-                             :pep,
-                             :peak_area,
-                             :peak_area_normalized,
-                             :points_integrated,
-                             :precursor_fraction_transmitted,
-                             :isotopes_captured,
-                             :rt,
-                             :apex_scan,
-                             :global_pg_score,
-                             :pg_score,
-                             :use_for_protein_quant,
-                             :precursor_idx,
-                             :target,
-                             :entrapment_group_id])
+    # order columns (tolerant to optional columns such as MBR outputs)
+    requested_cols = [
+        :file_name,
+        :species,
+        :gene_names,
+        :protein_names,
+        :inferred_protein_group,
+        :accession_numbers,
+        :sequence,
+        :charge,
+        :structural_mods,
+        :isotopic_mods,
+        :prec_mz,
+        :missed_cleavage,
+        :global_score,
+        :score,
+        :global_qval,
+        :qval,
+        :pep,
+        :MBR_candidate,
+        :MBR_transfer_q_value,
+        :peak_area,
+        :peak_area_normalized,
+        :points_integrated,
+        :precursor_fraction_transmitted,
+        :isotopes_captured,
+        :rt,
+        :apex_scan,
+        :global_pg_score,
+        :pg_score,
+        :use_for_protein_quant,
+        :precursor_idx,
+        :target,
+        :entrapment_group_id
+    ]
+    available_cols = intersect(requested_cols, Symbol.(names(precursors_long)))
+    select!(precursors_long, available_cols)
 
     sorted_columns = vcat(wide_columns, file_names)
     open(long_precursors_path,"w") do io1
