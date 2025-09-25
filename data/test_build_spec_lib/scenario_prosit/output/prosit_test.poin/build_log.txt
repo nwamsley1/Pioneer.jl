@@ -3,7 +3,7 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-09-24T15:13:14.619
+Starting library build at: 2025-09-25T00:11:22.057
 Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_prosit/output/prosit_test.poin
 
 Detecting fragment bounds...
@@ -40,26 +40,26 @@ Directory Setup                          0.00         0.00         0.00         
 Model Validation                         0.00         0.00         0.00         0.0         
 Parameter Loading                        0.00         0.00         0.00         0.0         
 Fragment Bound Detection                 0.00         0.00         0.00         0.0         
-Chronologer Preparation                  0.62         0.01         0.00         0.0         
-Chronologer Output Processing            0.65         0.01         0.06         9.6         
-Retention Time Prediction                0.90         0.01         0.00         0.0         
-Index Building                           1.15         0.04         0.06         5.6         
+Chronologer Preparation                  0.63         0.01         0.00         0.0         
+Chronologer Output Processing            0.68         0.01         0.07         9.9         
+Retention Time Prediction                0.87         0.01         0.00         0.0         
 Fragment Prediction                      1.17         0.06         0.00         0.0         
-Prediction Processing                    1.85         0.14         0.07         3.7         
+Index Building                           1.19         0.04         0.07         5.9         
+Prediction Processing                    1.87         0.14         0.07         3.8         
 ------------------------------------------------------------------------------------------
-TOTAL                                    6.33         0.27         0.19         3.1         
+TOTAL                                    6.42         0.27         0.21         3.3         
 
 Performance Summary:
 ------------------------------------------------------------------------------------------
 Total Runtime: 0.11 minutes
-Total Garbage Collection Time: 0.19 seconds
+Total Garbage Collection Time: 0.21 seconds
 Number of Steps: 12
-Average Step Runtime: 0.53 seconds
+Average Step Runtime: 0.54 seconds
 
 Memory Usage Summary:
 ------------------------------------------------------------------------------------------
 Total Memory Allocated: 0.27 GB
-Peak  Memory Usage: 2.71 GB
+Peak  Memory Usage: 3.69 GB
 Total Available System Memory: 48.0 GB
 
 Process Information:
@@ -70,6 +70,6 @@ System: arm64-apple-darwin24.0.0
 
 ==========================================================================================
 
-Library building completed at: 2025-09-24T15:13:20.952
+Library building completed at: 2025-09-25T00:11:28.484
 
 Library location: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_prosit/output/prosit_test.poin

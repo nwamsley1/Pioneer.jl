@@ -147,6 +147,29 @@ function writePrecursorCSV(
                     combine = sum)      # or combine = maximum, first, etc.
 
     end
+    # Replace empty strings with missing to avoid CSV.write indexing errors on empty Strings
+    function _sanitize_empty_strings!(df::DataFrame)
+        for nm in names(df)
+            col = df[!, nm]
+            if eltype(col) <: AbstractString
+                if any(==(""), col)
+                    df[!, nm] = replace(col, "" => missing)
+                end
+            elseif eltype(col) <: Union{Missing, AbstractString}
+                has_empty = false
+                @inbounds for v in col
+                    if !ismissing(v) && v == ""
+                        has_empty = true
+                        break
+                    end
+                end
+                if has_empty
+                    df[!, nm] = replace(col, "" => missing)
+                end
+            end
+        end
+        return df
+    end
     precursors_long = DataFrame(Arrow.Table(long_precursors_path))
 
     unique_files_in_data = unique(precursors_long.file_name)
@@ -263,6 +286,7 @@ function writePrecursorCSV(
                 batch_start_idx = batch_end_idx + 1
                 batch_end_idx = min(batch_start_idx + batch_size, n_rows)
                 if write_csv 
+                    _sanitize_empty_strings!(subdf)
                     CSV.write(io1, subdf, append=true, header=false, delim="\t")
                 end
                 subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
@@ -273,6 +297,7 @@ function writePrecursorCSV(
                     end
                 end
                 if write_csv
+                    _sanitize_empty_strings!(subunstack)
                     CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
                 end
                 if iszero(n_writes)
