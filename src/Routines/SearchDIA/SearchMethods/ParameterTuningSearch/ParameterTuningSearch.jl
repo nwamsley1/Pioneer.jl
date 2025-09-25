@@ -1060,8 +1060,9 @@ function process_search_results!(
         resize!(results.ppm_errs, 0)
         results.current_iteration_state[] = nothing  # Clear iteration state after use
     catch e
+        # Plot-generation failures are non-fatal and should not mark the file as failed.
+        # Keep downstream processing intact; log and continue.
         @user_warn "Failed to generate plots for file $ms_file_idx" exception=(e, catch_backtrace())
-        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
     end
 end
 
