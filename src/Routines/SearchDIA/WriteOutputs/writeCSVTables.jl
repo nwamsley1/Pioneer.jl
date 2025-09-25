@@ -148,6 +148,9 @@ function writePrecursorCSV(
 
     end
     precursors_long = DataFrame(Arrow.Table(long_precursors_path))
+
+    unique_files_in_data = unique(precursors_long.file_name)
+
     n_rows = size(precursors_long, 1)
 
     out_dir, arrow_path = splitdir(long_precursors_path)
@@ -312,6 +315,9 @@ function writeProteinGroupsCSV(
     end
 
     protein_groups_long = DataFrame(Arrow.Table(long_pg_path))
+
+    unique_files_in_data = unique(protein_groups_long.file_name)
+
     n_rows = size(protein_groups_long, 1)
 
     out_dir, arrow_path = splitdir(long_pg_path)

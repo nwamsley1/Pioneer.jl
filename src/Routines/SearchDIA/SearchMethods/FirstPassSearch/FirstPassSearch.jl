@@ -431,6 +431,8 @@ function process_file!(
 
         reason = "FirstPassSearch failed: $(typeof(e))"
         markFileFailed!(search_context, ms_file_idx, reason)
+        # Also explicitly set the failed indicator for downstream tracking
+        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
         @user_warn "First pass search failed for MS data file: $file_name. Error type: $(typeof(e)). Creating empty results to continue pipeline."
         
         # Create an empty but properly structured DataFrame to avoid downstream errors

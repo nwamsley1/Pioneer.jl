@@ -34,23 +34,27 @@ function create_qc_plots(
     # - Dynamic range
     # Implementation depends on plotting library
     @user_info "Generating final QC plots"
-    # Get file paths for successful files only
+    # Get only successful files for QC plots
     all_file_paths = collect(getFilePaths(getMSData(search_context)))
     valid_file_indices = get_valid_file_indices(search_context)
-    successful_file_paths = [all_file_paths[i] for i in valid_file_indices if i <= length(all_file_paths)]
-    
+
+    # Filter to get only successful files
+    # Note: successful_file_names parameter is actually all_file_names from MaxLFQSearch
+    filtered_file_names = [successful_file_names[i] for i in valid_file_indices]
+    filtered_file_paths = [all_file_paths[i] for i in valid_file_indices]
+
     qcPlots(
         precursors_path,
         precursors_long_path,
         proteins_path,
         params.params,
         precursors,
-        successful_file_names,
+        filtered_file_names,  # Only successful files
         joinpath(getDataOutDir(search_context), "qc_plots"),
-        successful_file_paths,
+        filtered_file_paths,  # Only successful files
         getIrtRtMap(search_context),
         search_context.mass_error_model,
-        valid_file_indices
+        valid_file_indices  # Pass actual file indices to correctly lookup in dicts
     )
 end
 

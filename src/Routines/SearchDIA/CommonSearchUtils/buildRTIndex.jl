@@ -75,7 +75,7 @@ function makeRTIndices(temp_folder::String,
 
     #Maps filepath to a retentionTimeIndex (see buildrtIndex.jl)
     rt_index_paths = Vector{String}(undef, length(psms_paths))
-    #Fill retention time index for each file. 
+    #Fill retention time index for each file.
     for (key, psms_path) in enumerate(psms_paths)
         psms = Arrow.Table(psms_path)
         rt_to_irt = rt_to_irt_splines[key]

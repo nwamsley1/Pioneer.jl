@@ -170,8 +170,6 @@ function summarize_results!(
 
         # Get all file names (needed for LFQ indexing by experiment ID)
         all_file_names = collect(getMSData(search_context).file_id_to_name)
-        valid_indices = get_valid_file_indices(search_context)
-        successful_file_names = [all_file_names[i] for i in valid_indices]
 
         if isempty(existing_passing_psm_paths)
             @user_warn "No valid PSM files found for MaxLFQ analysis - all files may have failed in previous searches"
@@ -200,10 +198,10 @@ function summarize_results!(
             :batch_size => params.batch_size,
             :min_peptides => params.min_peptides
         ))
-        # Create wide format precursor table using only successful files
+        # Create wide format precursor table
         precursors_wide_path = writePrecursorCSV(
             precursors_long_path,
-            sort(successful_file_names),
+            all_file_names,
             params.run_to_run_normalization,
             getProteins(getSpecLib(search_context)),
             write_csv = params.write_csv
@@ -213,12 +211,12 @@ function summarize_results!(
         # Perform MaxLFQ protein quantification
         precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
 
-        # Use FileReference-based LFQ with TransformPipeline preprocessing (only successful files)
+        # Use FileReference-based LFQ with TransformPipeline preprocessing
         LFQ(
             merged_psm_ref,  # Use FileReference instead of DataFrame
             protein_long_path,
             precursor_quant_col,
-            all_file_names,  # Use complete file name array for proper indexing
+            all_file_names,  # Use all file names to maintain proper index mapping
             params.q_value_threshold,
             batch_size = params.batch_size
         )
@@ -236,7 +234,7 @@ function summarize_results!(
             getIsotopicMods(precursors),
             getStructuralMods(precursors),
             getCharge(precursors),
-            sort(successful_file_names),
+            all_file_names,
             getProteins(getSpecLib(search_context)),
             write_csv = params.write_csv
         )
@@ -252,7 +250,7 @@ function summarize_results!(
             search_context,
             precursors,
             params,
-            successful_file_names
+            all_file_names
         )
 
 

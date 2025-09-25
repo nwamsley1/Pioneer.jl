@@ -198,25 +198,43 @@ function qcPlots(
         title::String = "Precursor ID's per File",
         f_out::String = "./test.pdf"
         )
-        
-        # Get counts for requested files
-        ids = [get(fname_to_id, fname, 0) for fname in parsed_fnames]
-        
+
+        # Filter to only files that have data (successful files)
+        successful_files = String[]
+        successful_ids = Int[]
+        for fname in parsed_fnames
+            if haskey(fname_to_id, fname)
+                push!(successful_files, fname)
+                push!(successful_ids, fname_to_id[fname])
+            end
+        end
+
+        # If no successful files, create empty plot with message
+        if isempty(successful_files)
+            p = Plots.plot(
+                title = title,
+                legend = :none,
+                layout = (1, 1),
+                annotations = [(0.5, 0.5, text("No successful files", :center))]
+            )
+            return p
+        end
+
         p = Plots.plot(
             title = title,
-            legend = :none, 
+            legend = :none,
             layout = (1, 1)
         )
-        
+
         Plots.bar!(
-            p, 
-            parsed_fnames,
-            ids,
+            p,
+            successful_files,
+            successful_ids,
             subplot = 1,
-            texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
+            texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in successful_ids],
             xrotation = 45,
         )
-        
+
         return p
     end
 
@@ -292,29 +310,37 @@ function qcPlots(
             return non_missing_count
         end
 
-        # Use original file order for all successful files
-        fnames = parsed_fnames
-
-        # Create protein group counts using the same file order
+        # Create protein group counts only for successful files
         protein_fname_to_id = Dict{String, Int64}()
-        for fname in fnames
+        for fname in parsed_fnames
             try
-                protein_fname_to_id[fname] = getColumnIDs(protein_groups_wide[Symbol(fname)])
+                count = getColumnIDs(protein_groups_wide[Symbol(fname)])
+                if count > 0  # Only add files with actual protein groups
+                    protein_fname_to_id[fname] = count
+                end
             catch
-                protein_fname_to_id[fname] = 0  # Use 0 for files that don't have data
+                # Skip files that don't have data
             end
         end
 
+        # Filter to only successful files
+        successful_fnames = [fname for fname in parsed_fnames if haskey(protein_fname_to_id, fname)]
+
+        # If no successful files, return empty array
+        if isempty(successful_fnames)
+            return Plots.Plot[]
+        end
+
         # Calculate number of plots needed
-        n_qc_plots = ceil(Int, length(fnames) / n_files_per_plot)
+        n_qc_plots = ceil(Int, length(successful_fnames) / n_files_per_plot)
         plots = Plots.Plot[]
 
         # Create plots in chunks
         for n in 1:n_qc_plots
             start = (n - 1) * n_files_per_plot + 1
-            stop = min(n * n_files_per_plot, length(fnames))
+            stop = min(n * n_files_per_plot, length(successful_fnames))
 
-            chunk_fnames = fnames[start:stop]
+            chunk_fnames = successful_fnames[start:stop]
             chunk_ids = [protein_fname_to_id[fname] for fname in chunk_fnames]
             chunk_short_names = shortenFileNames(chunk_fnames)
 
@@ -449,8 +475,7 @@ function qcPlots(
     #Plot TIC
     function plotTIC(
         ms_table_paths::Vector{String},
-        parsed_fnames::Any,
-        short_fnames::Any;
+        short_fnames::Vector{String};  # Now expects only the chunk of file names
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -459,12 +484,12 @@ function qcPlots(
         legend=:outertopright, layout = (1, 1))
 
         for (id, ms_table_path) in enumerate(ms_table_paths)
-            short_fname = short_fnames[id]
+            short_fname = short_fnames[id]  # Now correctly indexed
             ms_table = BasicMassSpecData(ms_table_path)
             ms1_scans = getMsOrders(ms_table).==1
 
-            
-            plot!(p, 
+
+            plot!(p,
             [getRetentionTime(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
             [getTIC(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
                     subplot = 1,
@@ -481,8 +506,7 @@ function qcPlots(
         stop = min(n*n_files_per_plot, length(parsed_fnames))
         p = plotTIC(
             MS_TABLE_PATHS[start:stop],
-            parsed_fnames,
-            short_fnames,
+            short_fnames[start:stop],  # Pass only the chunk of file names
             title = "TIC plot",
             f_out = joinpath(qc_plot_folder, "tic_plot_"*string(n)*".pdf")
         )
