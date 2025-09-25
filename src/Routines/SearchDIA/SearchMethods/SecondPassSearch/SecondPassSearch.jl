@@ -242,39 +242,47 @@ function process_file!(
         )
         if params.ms1_scoring
             precursors_passing = unique(psms[!,:precursor_idx])
-            precursors = getPrecursors(getSpecLib(search_context));
-            seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
-            pids = [pid for pid in precursors_passing]
-            pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
-            pmz = [getMz(precursors)[pid] for pid in precursors_passing]
-            isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
-            precursors_passing = Set(precursors_passing)
-            # Perform MS1 search (diagnostic timing)
-            ms1_psms = perform_second_pass_search(
-                spectra,
-                rt_index,
-                search_context,
-                params,
-                ms_file_idx,
-                precursors_passing,
-                isotopes_dict,
-                MS1CHROM()
-            )
-            pair_idx = getPairIdx(precursors);
-            is_decoy = getIsDecoy(precursors);
-            partner_idx = getPartnerPrecursorIdx(precursors);
-            ms1_psms[!,:pair_idx] = [pair_idx[pid] for pid in ms1_psms[!,:precursor_idx]]
-            ms1_psms_partner = copy(ms1_psms)
-            for i in range(1, size(ms1_psms_partner, 1))
-                p = partner_idx[ms1_psms_partner[i,:precursor_idx]]
-                if !ismissing(p)
-                    ms1_psms_partner[i,:precursor_idx] = p
-                else
-                    ms1_psms_partner[i,:precursor_idx] = 0
+
+            # Check if we have any passing precursors for MS1 scoring
+            if !isempty(precursors_passing)
+                precursors = getPrecursors(getSpecLib(search_context));
+                seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
+                pids = [pid for pid in precursors_passing]
+                pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
+                pmz = [getMz(precursors)[pid] for pid in precursors_passing]
+                isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
+                precursors_passing = Set(precursors_passing)
+                # Perform MS1 search (diagnostic timing)
+                ms1_psms = perform_second_pass_search(
+                    spectra,
+                    rt_index,
+                    search_context,
+                    params,
+                    ms_file_idx,
+                    precursors_passing,
+                    isotopes_dict,
+                    MS1CHROM()
+                )
+                pair_idx = getPairIdx(precursors);
+                is_decoy = getIsDecoy(precursors);
+                partner_idx = getPartnerPrecursorIdx(precursors);
+                ms1_psms[!,:pair_idx] = [pair_idx[pid] for pid in ms1_psms[!,:precursor_idx]]
+                ms1_psms_partner = copy(ms1_psms)
+                for i in range(1, size(ms1_psms_partner, 1))
+                    p = partner_idx[ms1_psms_partner[i,:precursor_idx]]
+                    if !ismissing(p)
+                        ms1_psms_partner[i,:precursor_idx] = p
+                    else
+                        ms1_psms_partner[i,:precursor_idx] = 0
+                    end
                 end
+                filter!(x->!iszero(x.precursor_idx), ms1_psms_partner);
+                ms1_psms = vcat([ms1_psms, ms1_psms_partner]...)
+            else
+                # No passing precursors for MS1 scoring
+                @debug_l2 "No passing precursors found for MS1 scoring in file $ms_file_idx. Skipping MS1 isotope calculations."
+                ms1_psms = DataFrame()
             end
-            filter!(x->!iszero(x.precursor_idx), ms1_psms_partner);
-            ms1_psms = vcat([ms1_psms, ms1_psms_partner]...)
             #rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
             #ms1_psms[!,:irt] = zeros(Float32, size(ms1_psms, 1))
             #ms1_psms[!,:pred_irt] = zeros(Float32, size(ms1_psms, 1))
@@ -466,21 +474,40 @@ function process_search_results!(
 
         # Initialize probability scores (will be calculated later)
         initialize_prob_group_features!(psms, params.match_between_runs)
-        
-        # Save processed results
-        temp_path = joinpath(
-            getDataOutDir(search_context), "temp_data",
-            "second_pass_psms",
-            getParsedFileName(search_context, ms_file_idx) * ".arrow"
-        )
-        writeArrow(temp_path, psms)
-        setSecondPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
+
+        # Only save results if we have actual PSMs
+        if nrow(psms) > 0
+            # Save processed results
+            temp_path = joinpath(
+                getDataOutDir(search_context), "temp_data",
+                "second_pass_psms",
+                getParsedFileName(search_context, ms_file_idx) * ".arrow"
+            )
+            writeArrow(temp_path, psms)
+            setSecondPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
+        else
+            # No PSMs found - mark as empty but don't fail
+            @debug_l2 "No PSMs found for file $ms_file_idx in SecondPassSearch, setting empty path"
+            setSecondPassPsms!(getMSData(search_context), ms_file_idx, "")
+        end
     catch e
-        # Log full exception and stack for diagnosis, then propagate
-        bt = catch_backtrace()
-        @user_error "Failed to process search results for file index $(ms_file_idx)"
-        @user_error sprint(showerror, e, bt)
-        rethrow(e)
+        # Mark file as failed and handle gracefully
+        file_name = try
+            getMassSpecData(search_context).file_id_to_name[ms_file_idx]
+        catch
+            "file_$ms_file_idx"
+        end
+
+        reason = "SecondPassSearch failed: $(typeof(e))"
+        markFileFailed!(search_context, ms_file_idx, reason)
+        # Also mark in ArrowTableReference for downstream methods
+        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
+        @user_warn "Second pass search failed for MS data file: $file_name. Error type: $(typeof(e)). Creating empty results to continue pipeline."
+
+        # Set empty path for failed file
+        setSecondPassPsms!(getMSData(search_context), ms_file_idx, "")
+
+        # Don't rethrow - continue with next file
     end
 
     return nothing

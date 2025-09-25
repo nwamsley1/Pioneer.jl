@@ -3,7 +3,7 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-09-24T11:02:42.375
+Starting library build at: 2025-09-25T11:28:34.649
 Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_4/output/frag_mult_4.poin
 
 Detecting fragment bounds...
@@ -40,26 +40,26 @@ Directory Setup                          0.00         0.00         0.00         
 Model Validation                         0.00         0.00         0.00         0.0         
 Parameter Loading                        0.00         0.00         0.00         0.0         
 Fragment Bound Detection                 0.00         0.00         0.00         0.0         
-Fragment Prediction                      0.57         0.01         0.00         0.0         
-Chronologer Preparation                  0.58         0.01         0.00         0.0         
-Chronologer Output Processing            0.63         0.01         0.06         8.9         
-Index Building                           0.82         0.02         0.06         7.1         
-Retention Time Prediction                0.91         0.01         0.00         0.0         
-Prediction Processing                    1.18         0.02         0.06         4.8         
+Chronologer Preparation                  0.64         0.01         0.00         0.0         
+Chronologer Output Processing            0.70         0.01         0.07         10.2        
+Fragment Prediction                      0.77         0.01         0.00         0.0         
+Retention Time Prediction                0.89         0.01         0.00         0.0         
+Index Building                           0.90         0.02         0.07         7.6         
+Prediction Processing                    1.29         0.02         0.07         5.4         
 ------------------------------------------------------------------------------------------
-TOTAL                                    4.70         0.07         0.17         3.6         
+TOTAL                                    5.19         0.07         0.21         4.0         
 
 Performance Summary:
 ------------------------------------------------------------------------------------------
-Total Runtime: 0.08 minutes
-Total Garbage Collection Time: 0.17 seconds
+Total Runtime: 0.09 minutes
+Total Garbage Collection Time: 0.21 seconds
 Number of Steps: 12
-Average Step Runtime: 0.39 seconds
+Average Step Runtime: 0.43 seconds
 
 Memory Usage Summary:
 ------------------------------------------------------------------------------------------
 Total Memory Allocated: 0.07 GB
-Peak  Memory Usage: 2.65 GB
+Peak  Memory Usage: 3.81 GB
 Total Available System Memory: 48.0 GB
 
 Process Information:
@@ -70,6 +70,6 @@ System: arm64-apple-darwin24.0.0
 
 ==========================================================================================
 
-Library building completed at: 2025-09-24T11:02:47.076
+Library building completed at: 2025-09-25T11:28:39.847
 
 Library location: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_4/output/frag_mult_4.poin

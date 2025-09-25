@@ -186,19 +186,33 @@ function process_file!(
     try
         # Set the NCE model from the search context for fragment matching
         setNceModel!(
-            getFragmentLookupTable(getSpecLib(search_context)), 
+            getFragmentLookupTable(getSpecLib(search_context)),
             getNceModelModel(search_context, ms_file_idx)
         )
+
+        # Check if required files exist (not empty paths from failed files)
+        rt_index_path = getRtIndex(getMSData(search_context), ms_file_idx)
+        passing_psms_path = getPassingPsms(getMSData(search_context), ms_file_idx)
+
+        if isempty(rt_index_path) || isempty(passing_psms_path)
+            file_name = try
+                getMassSpecData(search_context).file_id_to_name[ms_file_idx]
+            catch
+                "file_$ms_file_idx"
+            end
+            @debug_l2 "Skipping IntegrateChromatogramSearch for file $file_name - missing required files from previous steps"
+            return results
+        end
 
         # Build retention time index for efficient precursor lookup
         # Groups RTs into bins of 0.1 minute width
         rt_index = buildRtIndex(
-            DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx))),
+            DataFrame(Arrow.Table(rt_index_path)),
             bin_rt_size = 0.1)
 
         # Load PSMs that passed previous filtering steps
         # Convert to DataFrame for processing
-        passing_psms = DataFrame(Tables.columntable(Arrow.Table(getPassingPsms(getMSData(search_context), ms_file_idx))))#load_passing_psms(search_context, parsed_fname)
+        passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))#load_passing_psms(search_context, parsed_fname)
         
         # Keep only target (non-decoy) PSMs
         if !params.write_decoys
@@ -353,6 +367,13 @@ function process_search_results!(
 
     try
         passing_psms = results.psms[]
+
+        # Skip processing if no PSMs (empty DataFrame from failed search)
+        if nrow(passing_psms) == 0 || ncol(passing_psms) == 0
+            @debug_l2 "No PSMs to process for file $ms_file_idx in IntegrateChromatogramSearch results"
+            return nothing
+        end
+
         parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
         # Process final PSMs
         process_final_psms!(
