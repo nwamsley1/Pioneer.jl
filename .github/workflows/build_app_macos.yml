@@ -214,18 +214,17 @@ jobs:
           chmod -R a+w "$PKGROOT/usr/local/$APP/share/julia"
 
           # Codesign only code objects (frameworks, Mach-O dylibs/executables) with timestamp fallback
-          # 1) Sign frameworks first
-          find "$PKGROOT/usr/local/$APP" -type d -name "*.framework" -print0 \
-            | xargs -0 -I{} sh -c '
-                set -e
-                codesign --force --options runtime --timestamp \
-                  --entitlements src/build/osx/entitlements.plist \
-                  --sign "$CODESIGN_IDENTITY" "{}" || {
-                  echo "Framework timestamp failed for {} — retrying without timestamp";
-                  codesign --force --options runtime \
-                    --entitlements src/build/osx/entitlements.plist \
-                    --sign "$CODESIGN_IDENTITY" "{}"; }
-              '
+          # 1) Sign frameworks first (loop to avoid xargs command length limits)
+          while IFS= read -r -d '' fw; do
+            echo "Signing framework: $fw"
+            codesign --force --options runtime --timestamp \
+              --entitlements src/build/osx/entitlements.plist \
+              --sign "$CODESIGN_IDENTITY" "$fw" || {
+              echo "Framework timestamp failed for $fw — retrying without timestamp";
+              codesign --force --options runtime \
+                --entitlements src/build/osx/entitlements.plist \
+                --sign "$CODESIGN_IDENTITY" "$fw"; }
+          done < <(find "$PKGROOT/usr/local/$APP" -type d -name "*.framework" -print0)
 
           # 2) Sign Mach-O files (executables and dylibs)
           while IFS= read -r -d '' f; do
