@@ -7,7 +7,7 @@ Replace the current heuristic `:global_prob` aggregation (log-odds of per-run `:
 ## Rationale
 
 - The present `logodds(p, sqrt_n_runs)` is simple and robust but cannot exploit richer cross‑run signals (e.g., score dispersion, coverage, consistency).
-- A small tree‑based model (XGBoost/LightGBM) can learn non‑linearities and interactions from a compact, per‑precursor feature vector, improving separation of targets and decoys at the precursor level.
+- A small tree‑based model (LightGBM, same backend used elsewhere) can learn non‑linearities and interactions from a compact, per‑precursor feature vector, improving separation of targets and decoys at the precursor level.
 
 ## Scope
 
@@ -59,31 +59,28 @@ Notes:
 3. Convert the dictionary to a unique DataFrame with one row per `precursor_idx` and columns:
    - `precursor_idx::UInt32`, feature columns expanded from the struct, and `target::Bool`.
 
-### Cross-validation
+### Cross-validation (match MBR/regular scoring)
 
-- Use grouped folds to prevent leakage: all rows for a `precursor_idx` are already one row, but the same peptide/protein relationships can induce leakage across related precursors.
-- Recommended grouping for fold assignment (choose one, in order of preference depending on metadata availability):
-  - By protein group or protein accession (via library mapping) to keep closely related precursors in the same fold.
-  - Fallback by `base_pep_id` if available.
-  - If neither exists, stratified K‑fold by `target` with a fixed random seed.
-- Use K=5 folds (configurable), stratified by label, and keep fold mapping stable via a fixed seed.
+- Use Pioneer’s existing CV folds supplied by the spectral library: `getCvFold(precursors, precursor_idx)` (from `StandardLibraryPrecursors.pid_to_cv_fold`).
+- This mapping ensures all products of a given peptide (and all precursors belonging to the same protein group) end up in the same CV fold, consistent with MBR and regular scoring.
+- Typical folds are two values (0 and 1). Perform CV by holding out one fold and training on the remaining fold(s), rotating across all unique fold values.
 
 ### Model choice
 
-- Default: LightGBM (already in dependencies and used elsewhere). Binary logistic objective with probability output.
-- Optional: XGBoost via `XGBoost.jl` behind a feature flag (adds dependency; consider only if strictly required).
+- LightGBM only (binary logistic objective with probability output). No XGBoost.
 
-### Hyperparameters (initial)
+### Hyperparameters (match MBR scoring; not user-configured)
 
-- num_leaves: 31
-- max_depth: -1 (no explicit limit)
-- learning_rate: 0.05
-- n_estimators/num_boost_round: 200–500 with early stopping
-- min_data_in_leaf: 20
-- feature_fraction / bagging_fraction: 0.8 / 0.8
-- objective: binary
-- metric: auc, binary_logloss
-- class_weight or scale_pos_weight: derive from target/decoy ratio or use `fdr_scale_factor` as guidance.
+- num_leaves: 63
+- max_depth: 10
+- learning_rate: 0.15
+- min_data_in_leaf: 1
+- feature_fraction: 0.5
+- bagging_fraction: 0.5 (with `bagging_freq = 1`)
+- min_gain_to_split: 0.0
+- num_iterations: 200 (aligned with the final LightGBM round used in MBR)
+- objective: binary (logistic), outputs calibrated probabilities
+- metrics tracked: AUC, binary logloss (diagnostics only)
 
 ### Calibration
 
@@ -103,34 +100,14 @@ Target file: `src/Routines/SearchDIA/SearchMethods/ScoringSearch/ScoringSearch.j
    - Build the per‑precursor dictionary of `GlobalPrecFeatures{N}`.
    - Train the model with CV and generate out‑of‑fold predictions for training diagnostics.
    - Fit final model on all data.
-2. Generate per‑precursor predictions `global_prob_pred[precursor_idx]`.
+2. Generate per‑precursor predictions `global_prob_pred[precursor_idx]` using LightGBM trained with the library‑defined folds.
 3. Assign `:global_prob = global_prob_pred[precursor_idx]` to every row of `merged_df` by a single vectorized lookup or join.
 4. Continue existing pipeline steps that consume `:global_prob` (e.g., global q‑value spline and filtering).
 
-## Configuration Additions
+## Configuration
 
-`optimization.machine_learning.global_prob_model` block (example):
-
-```json
-{
-  "enabled": true,
-  "top_n": 5,
-  "prec_prob_threshold": 0.95,
-  "cv_folds": 5,
-  "random_seed": 1776,
-  "engine": "lightgbm",  // or "xgboost"
-  "hyperparams": {
-    "num_leaves": 31,
-    "learning_rate": 0.05,
-    "num_boost_round": 300,
-    "early_stopping_rounds": 50,
-    "feature_fraction": 0.8,
-    "bagging_fraction": 0.8
-  }
-}
-```
-
-Defaults: `enabled=false` initially (feature gate), `top_n=5`, `cv_folds=5`.
+- Keep the feature behind a simple enable flag (e.g., `optimization.machine_learning.global_prob_model.enabled`; default false) and a small set of feature controls only (e.g., `top_n`, `prec_prob_threshold`).
+- Do not expose model hyperparameters in JSON; they are fixed to the MBR settings listed above.
 
 ## File/Type Additions
 
@@ -170,8 +147,19 @@ for g in groupby(merged_df, :precursor_idx)
 end
 
 feat_df = features_to_dataframe(dict, labels)  # 1 row per pid
-folds = make_grouped_folds(feat_df; strategy=:protein, k=5, seed=1776)
-model, oof_pred = train_global_prob_model(feat_df, folds, params)
+folds = [getCvFold(getPrecursors(getSpecLib(ctx)), pid) for pid in feat_df.precursor_idx]
+model, oof_pred = train_global_prob_model(
+    feat_df,
+    folds;
+    num_iterations=200,
+    learning_rate=0.15,
+    num_leaves=63,
+    max_depth=10,
+    feature_fraction=0.5,
+    bagging_fraction=0.5,
+    min_data_in_leaf=1,
+    min_gain_to_split=0.0,
+)
 global_prob_map = predict_global_prob(model, feat_df)
 
 # Assign back to merged_df
@@ -194,7 +182,7 @@ merged_df.global_prob = [global_prob_map[pid] for pid in merged_df.precursor_idx
 
 - Leakage across folds via related precursors: Use protein or peptide grouping to partition folds.
 - Class imbalance: Use class weights or scale_pos_weight; also track `fdr_scale_factor` for consistency with q‑value estimation.
-- Dependency sprawl: Prefer LightGBM first; make XGBoost optional via a flag.
+- Dependency sprawl: Use LightGBM only (already present); no new dependencies.
 - Overfitting on small datasets: Use early stopping, CV monitoring, and keep feature set compact.
 
 ## Rollout
@@ -202,4 +190,3 @@ merged_df.global_prob = [global_prob_map[pid] for pid in merged_df.precursor_idx
 1. Implement behind `optimization.machine_learning.global_prob_model.enabled` (default false).
 2. Land feature with comprehensive tests and docs; keep old log‑odds as fallback.
 3. Evaluate on public and internal datasets; if improvements are consistent, flip default.
-
