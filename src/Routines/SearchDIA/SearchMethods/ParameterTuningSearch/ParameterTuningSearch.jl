@@ -559,9 +559,8 @@ function run_single_phase(
                 psms_bias, spectra, search_context, params, ms_file_idx
             )
 
-            if mass_err_model_bias !== nothing && psm_count_bias > psm_count
+            if mass_err_model_bias !== nothing && psm_count_bias > psm_count/2
                 # Keep bias-adjusted model and improved PSMs
-                @user_info "Initial bias adjustment improved PSMs | file=$(try getFileIdToName(getMSData(search_context), ms_file_idx) catch; string(ms_file_idx) end) | $psm_count → $psm_count_bias"
                 mass_err_model = mass_err_model_bias
                 ppm_errs = ppm_errs_bias
                 psm_count = psm_count_bias
