@@ -720,6 +720,7 @@ function process_file!(
                 throw(ErrorException("No usable MS2 scans"))
             end
         catch e
+            throw(e)
             if isa(e, ErrorException) && e.msg == "No usable MS2 scans"
                 # Re-throw our controlled exception to handle in outer catch
                 rethrow(e)
@@ -822,10 +823,8 @@ function process_file!(
             @user_error sprint(showerror, e, bt)
         catch
         end
-        # Optional: allow developers to force rethrow via environment variable
-        if get(ENV, "PIONEER_DEBUG_RETHROW", "0") == "1"
-            rethrow(e)
-        end
+        # During debugging, rethrow to stop the pipeline and surface the root cause
+        rethrow(e)
         
         # Set conservative defaults to allow pipeline to continue
         converged = false
