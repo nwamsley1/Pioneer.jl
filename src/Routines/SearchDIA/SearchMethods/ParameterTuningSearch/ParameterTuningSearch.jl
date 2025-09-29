@@ -539,6 +539,41 @@ function run_single_phase(
             current_model = getMassErrorModel(search_context, ms_file_idx)
             iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
             
+            # ========================================
+            # INITIAL BIAS ADJUSTMENT (one-shot)
+            # ========================================
+            # Use the fitted model's offset as a bias guess and re-collect once.
+            new_bias = getMassOffset(mass_err_model)
+            adjusted_model = MassErrorModel(
+                new_bias,
+                (getLeftTol(current_model), getRightTol(current_model))
+            )
+            setMassErrorModel!(search_context, ms_file_idx, adjusted_model)
+
+            psms_bias, _ = collect_and_log_psms(
+                filtered_spectra, spectra, search_context,
+                params, ms_file_idx, "initial bias-adjusted attempt with min_score=$min_score"
+            )
+
+            mass_err_model_bias, ppm_errs_bias, psm_count_bias = fit_models_from_psms(
+                psms_bias, spectra, search_context, params, ms_file_idx
+            )
+
+            if mass_err_model_bias !== nothing && psm_count_bias > psm_count
+                # Keep bias-adjusted model and improved PSMs
+                @user_info "Initial bias adjustment improved PSMs | file=$(try getFileIdToName(getMSData(search_context), ms_file_idx) catch; string(ms_file_idx) end) | $psm_count → $psm_count_bias"
+                mass_err_model = mass_err_model_bias
+                ppm_errs = ppm_errs_bias
+                psm_count = psm_count_bias
+                psms_initial = psms_bias
+                # collection tolerance unchanged (same window), but recompute in case upstream adjusted
+                current_model = getMassErrorModel(search_context, ms_file_idx)
+                iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
+            else
+                # Revert to pre-adjustment model if no improvement
+                setMassErrorModel!(search_context, ms_file_idx, current_model)
+            end
+
             # Track best attempt even if not converged
             if psm_count > 0 && !isempty(psms_initial)
                 # Fit RT model for best attempt tracking (only if we have filtered PSMs)
@@ -572,8 +607,6 @@ function run_single_phase(
             # Step 1: EXPAND TOLERANCE
             expand_mass_tolerance!(search_context, ms_file_idx, params, 
                                   settings.mass_tolerance_scale_factor)
-            current_tolerance = settings.init_mass_tol_ppm * 
-                              (settings.mass_tolerance_scale_factor ^ iter)
             current_model = getMassErrorModel(search_context, ms_file_idx)
 
             # Step 2: COLLECT PSMs with expanded tolerance (to determine bias)
@@ -590,9 +623,7 @@ function run_single_phase(
             # Step 4: ADJUST BIAS based on fitted model
             if mass_err_for_bias !== nothing
                 new_bias = getMassOffset(mass_err_for_bias)
-                current_model = getMassErrorModel(search_context, ms_file_idx)
-                old_bias = getMassOffset(current_model)
-                
+                current_model = getMassErrorModel(search_context, ms_file_idx)                
                 # Update the bias while keeping the expanded tolerance
                 adjusted_model = MassErrorModel(
                     new_bias,
