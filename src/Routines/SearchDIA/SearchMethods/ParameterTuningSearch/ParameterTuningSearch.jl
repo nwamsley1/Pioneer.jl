@@ -268,8 +268,7 @@ function collect_and_log_psms(filtered_spectra, spectra, search_context, params,
     catch
         string(ms_file_idx)
     end
-    @user_info "PSM collection ($context_msg) | file=$file_name | count=$psm_count"
-    
+
     return psms, psm_count
 end
 
@@ -299,11 +298,6 @@ function fit_models_from_psms(psms, spectra, search_context, params, ms_file_idx
         catch
             string(ms_file_idx)
         end
-        offset = round(getMassOffset(mass_err_model), digits=2)
-        ltol = round(getLeftTol(mass_err_model), digits=2)
-        rtol = round(getRightTol(mass_err_model), digits=2)
-        n_ppm = length(ppm_errs)
-        @user_info "Mass error fit | file=$file_name | PSMs=$psm_count | offset_ppm=$offset | tol_ppm=-$(ltol)/+$(rtol) | n_ppm=$n_ppm"
     end
     return mass_err_model, ppm_errs, psm_count
 end
