@@ -1398,7 +1398,14 @@ function test_tolerance_expansion!(
     
     # Update the model in search context
     setMassErrorModel!(search_context, ms_file_idx, refitted_model)
-    @user_info "Expanded model accepted | file=$file_name | offset_ppm=$(round(getMassOffset(refitted_model), digits=2)) | tol_ppm=-$(round(getLeftTol(refitted_model), digits=2))/+$(round(getRightTol(refitted_model), digits=2)) | n_ppm=$(length(refitted_ppm_errs))"
+    # Log old vs new model side-by-side
+    old_off = round(getMassOffset(current_model), digits=2)
+    old_lt  = round(getLeftTol(current_model),  digits=2)
+    old_rt  = round(getRightTol(current_model), digits=2)
+    new_off = round(getMassOffset(refitted_model), digits=2)
+    new_lt  = round(getLeftTol(refitted_model),  digits=2)
+    new_rt  = round(getRightTol(refitted_model), digits=2)
+    @user_info "Expansion model change | file=$file_name | old: offset_ppm=$old_off tol=-$(old_lt)/+$(old_rt) | new: offset_ppm=$new_off tol=-$(new_lt)/+$(new_rt) | n_ppm=$(length(refitted_ppm_errs))"
     
     return expanded_psms, refitted_model, refitted_ppm_errs, true
 end
