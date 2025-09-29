@@ -303,7 +303,7 @@ function fit_models_from_psms(psms, spectra, search_context, params, ms_file_idx
         ltol = round(getLeftTol(mass_err_model), digits=2)
         rtol = round(getRightTol(mass_err_model), digits=2)
         n_ppm = length(ppm_errs)
-        @user_info "Mass error fit | file=$file_name | PSMs=$psm_count | offset_ppm=$offset | tol_ppm=-$ltol/+${rtol} | n_ppm=$n_ppm"
+        @user_info "Mass error fit | file=$file_name | PSMs=$psm_count | offset_ppm=$offset | tol_ppm=-$(ltol)/+$(rtol) | n_ppm=$n_ppm"
     end
     return mass_err_model, ppm_errs, psm_count
 end
