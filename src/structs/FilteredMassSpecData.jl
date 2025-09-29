@@ -395,6 +395,12 @@ function filterTopNPeaks(
     for i in 1:n_peaks
         if !ismissing(intensity_array[i]) && intensity_array[i] >= min_intensity
             valid_count += 1
+            # Grow buffer dynamically if needed to accommodate large scans
+            if valid_count > length(indices_buffer)
+                # Use amortized growth; ensure at least some minimal capacity
+                new_len = length(indices_buffer) == 0 ? max(1024, valid_count) : max(valid_count, 2 * length(indices_buffer))
+                resize!(indices_buffer, new_len)
+            end
             indices_buffer[valid_count] = i
         end
     end
