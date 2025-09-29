@@ -731,6 +731,12 @@ function process_file!(
                     "file_$ms_file_idx"
                 end
                 @user_warn "Failed to create filtered spectra for MS data file: $file_name. Error type: $(typeof(e)). Using conservative defaults."
+                # Log full stacktrace for diagnostics
+                try
+                    bt = catch_backtrace()
+                    @user_error sprint(showerror, e, bt)
+                catch
+                end
                 iteration_state.failed_with_exception = true
                 throw(e)  # Re-throw to be caught by outer catch block
             end
@@ -810,6 +816,16 @@ function process_file!(
         
         # Don't mark as failed - just continue with defaults
         @user_warn "Parameter tuning failed for MS data file: $file_name. Error type: $(typeof(e)). Using conservative default parameters to continue analysis."
+        # Log full stacktrace for diagnostics
+        try
+            bt = catch_backtrace()
+            @user_error sprint(showerror, e, bt)
+        catch
+        end
+        # Optional: allow developers to force rethrow via environment variable
+        if get(ENV, "PIONEER_DEBUG_RETHROW", "0") == "1"
+            rethrow(e)
+        end
         
         # Set conservative defaults to allow pipeline to continue
         converged = false
