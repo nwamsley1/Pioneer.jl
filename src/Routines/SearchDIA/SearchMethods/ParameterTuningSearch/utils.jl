@@ -1330,6 +1330,12 @@ function test_tolerance_expansion!(
     # Calculate expanded tolerance
     expanded_tolerance = collection_tolerance * expansion_factor
     
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        string(ms_file_idx)
+    end
+    @user_info "Tolerance expansion test | file=$file_name | base_count=$current_psm_count | base_tol=±$(round(collection_tolerance, digits=2)) → expanded_tol=±$(round(expanded_tolerance, digits=2)) | offset_ppm=$(round(getMassOffset(current_model), digits=2))"
     # Create expanded model for collection
     # Keep the same bias, just expand the window
     expanded_model = MassErrorModel(
@@ -1350,13 +1356,11 @@ function test_tolerance_expansion!(
     # Calculate improvement
     psm_increase = expanded_psm_count - current_psm_count
     improvement_ratio = current_psm_count > 0 ? psm_increase / current_psm_count : 0.0
-    
-    # @info "Expansion results:" *
-    #       "\n  Expanded PSM count: $expanded_psm_count" *
-    #       "\n  PSM increase: $psm_increase ($(round(100*improvement_ratio, digits=1))%)"
+    @user_info "Expansion results | file=$file_name | expanded_count=$expanded_psm_count | Δ=$psm_increase (+$(round(100*improvement_ratio, digits=1))%)"
     
     # Check if expansion was beneficial (any improvement)
     if expanded_psm_count <= current_psm_count
+        @user_info "No improvement from expansion | file=$file_name | keeping original model"
         # No improvement, restore original and return
         setMassErrorModel!(search_context, ms_file_idx, original_model)
         # @info "No improvement found, keeping original results"
@@ -1394,6 +1398,7 @@ function test_tolerance_expansion!(
     
     # Update the model in search context
     setMassErrorModel!(search_context, ms_file_idx, refitted_model)
+    @user_info "Expanded model accepted | file=$file_name | offset_ppm=$(round(getMassOffset(refitted_model), digits=2)) | tol_ppm=-$(round(getLeftTol(refitted_model), digits=2))/+$(round(getRightTol(refitted_model), digits=2)) | n_ppm=$(length(refitted_ppm_errs))"
     
     return expanded_psms, refitted_model, refitted_ppm_errs, true
 end

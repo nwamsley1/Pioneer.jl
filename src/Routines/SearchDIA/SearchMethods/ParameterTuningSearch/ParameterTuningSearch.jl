@@ -262,6 +262,13 @@ Returns (psms, psm_count) where psm_count is the number of filtered PSMs (0 if f
 function collect_and_log_psms(filtered_spectra, spectra, search_context, params, ms_file_idx, context_msg::String)
     psms, was_filtered = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
     psm_count = size(psms, 1)
+    # Log collection summary for visibility
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        string(ms_file_idx)
+    end
+    @user_info "PSM collection ($context_msg) | file=$file_name | count=$psm_count"
     
     return psms, psm_count
 end
@@ -285,6 +292,19 @@ function fit_models_from_psms(psms, spectra, search_context, params, ms_file_idx
     end
     
     mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
+    # Log model fit summary
+    if mass_err_model !== nothing
+        file_name = try
+            getFileIdToName(getMSData(search_context), ms_file_idx)
+        catch
+            string(ms_file_idx)
+        end
+        offset = round(getMassOffset(mass_err_model), digits=2)
+        ltol = round(getLeftTol(mass_err_model), digits=2)
+        rtol = round(getRightTol(mass_err_model), digits=2)
+        n_ppm = length(ppm_errs)
+        @user_info "Mass error fit | file=$file_name | PSMs=$psm_count | offset_ppm=$offset | tol_ppm=-$ltol/+${rtol} | n_ppm=$n_ppm"
+    end
     return mass_err_model, ppm_errs, psm_count
 end
 
@@ -370,6 +390,13 @@ function expand_mass_tolerance!(search_context, ms_file_idx, params, scale_facto
     )
     
     setMassErrorModel!(search_context, ms_file_idx, new_model)
+    # Log expansion action
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        string(ms_file_idx)
+    end
+    @user_info "Expanded mass tolerance | file=$file_name | from=-$(round(current_left, digits=2))/+$(round(current_right, digits=2)) to -$(round(new_left, digits=2))/+$(round(new_right, digits=2))"
 end
 
 
