@@ -83,6 +83,46 @@ const WARNINGS_FILE = Ref{Union{Nothing, IOStream}}(nothing)   # All warnings
 # Global debug level setting (0 = no debug on console, 1-3 = show debug levels 1-3)
 const DEBUG_CONSOLE_LEVEL = Ref{Int}(0)
 
+# Max bytes of a single log message's content before truncation.
+# This applies to the message text; suffix indicating truncation may exceed this cap.
+const MAX_LOG_MSG_BYTES = Ref{Int}(4096)
+
+"""
+    truncate_for_log(msg::String; max_bytes::Int=MAX_LOG_MSG_BYTES[])
+
+Safely truncate a message by bytes without splitting UTF-8 characters.
+Adds a suffix indicating how many bytes were omitted.
+Returns `msg` unchanged when within the byte limit.
+"""
+function truncate_for_log(msg::String; max_bytes::Int=MAX_LOG_MSG_BYTES[])
+    nb = ncodeunits(msg)
+    if nb <= max_bytes
+        return msg
+    end
+    # Walk valid codepoint indices and accumulate bytes up to max_bytes
+    n = 0
+    i = firstindex(msg)
+    stop = lastindex(msg)
+    last_end = i
+    while i <= stop
+        j = nextind(msg, i)
+        cu = j - i
+        if n + cu > max_bytes
+            break
+        end
+        n += cu
+        last_end = j
+        i = j
+    end
+    # Ensure we have at least one full character; otherwise, return minimal safe truncation
+    if last_end <= firstindex(msg)
+        return string(msg[1:prevind(msg, lastindex(msg))], " … [truncated]")
+    end
+    prefix = String(@view msg[1:prevind(msg, last_end)])
+    omitted = nb - n
+    return string(prefix, " … [truncated ", omitted, " bytes]")
+end
+
 # List of message patterns that are "essential" (like dual_println)
 # These match the messages that would have been output by dual_println
 const ESSENTIAL_PATTERNS = [
@@ -106,38 +146,40 @@ end
 
 # Core logging functions - these do the actual work
 function user_info(msg::String)
+    msg_trunc = truncate_for_log(msg)
     # Console output - match Julia's [ Info: format
     printstyled("[ ", bold=true, color=:cyan)
     printstyled("Info:", bold=true, color=:cyan)
-    println(" ", msg)
+    println(" ", msg_trunc)
     
     timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS")
     
     # Essential file - only for key messages
-    if is_essential_message(msg) && ESSENTIAL_FILE[] !== nothing
-        println(ESSENTIAL_FILE[], "[$timestamp] $msg")
+    if is_essential_message(msg_trunc) && ESSENTIAL_FILE[] !== nothing
+        println(ESSENTIAL_FILE[], "[$timestamp] $msg_trunc")
         flush(ESSENTIAL_FILE[])
     end
     
     # Console file - all info messages
     if CONSOLE_FILE[] !== nothing
-        println(CONSOLE_FILE[], "[$timestamp] [INFO] $msg")
+        println(CONSOLE_FILE[], "[$timestamp] [INFO] $msg_trunc")
         flush(CONSOLE_FILE[])
     end
     
     # Debug file - everything
     if DEBUG_FILE[] !== nothing
         debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        println(DEBUG_FILE[], "[$debug_timestamp] [info] $msg")
+        println(DEBUG_FILE[], "[$debug_timestamp] [info] $msg_trunc")
         flush(DEBUG_FILE[])
     end
 end
 
 function user_warn(msg::String, file::String="", line::String="", mod::String="")
+    msg_trunc = truncate_for_log(msg)
     # Console output
     printstyled("┌ ", bold=true, color=:yellow)
     printstyled("Warning:", bold=true, color=:yellow)
-    println(" ", msg)
+    println(" ", msg_trunc)
     
     # Add source location line if available and debug level > 0
     if !isempty(file) && !isempty(line) && DEBUG_CONSOLE_LEVEL[] > 0
@@ -154,14 +196,14 @@ function user_warn(msg::String, file::String="", line::String="", mod::String=""
     end
     
     # Essential file - only critical warnings
-    if is_essential_message(msg) && ESSENTIAL_FILE[] !== nothing
-        println(ESSENTIAL_FILE[], "[$timestamp] WARNING: $msg$source_loc")
+    if is_essential_message(msg_trunc) && ESSENTIAL_FILE[] !== nothing
+        println(ESSENTIAL_FILE[], "[$timestamp] WARNING: $msg_trunc$source_loc")
         flush(ESSENTIAL_FILE[])
     end
     
     # Console file - mirror console format exactly
     if CONSOLE_FILE[] !== nothing
-        println(CONSOLE_FILE[], "[$timestamp] [WARN] $msg")
+        println(CONSOLE_FILE[], "[$timestamp] [WARN] $msg_trunc")
         if !isempty(source_loc)
             println(CONSOLE_FILE[], "                        └$source_loc")  # Indented continuation
         end
@@ -171,22 +213,23 @@ function user_warn(msg::String, file::String="", line::String="", mod::String=""
     # Debug file - everything with full details
     if DEBUG_FILE[] !== nothing
         debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        println(DEBUG_FILE[], "[$debug_timestamp] [warn] $msg$source_loc")
+        println(DEBUG_FILE[], "[$debug_timestamp] [warn] $msg_trunc$source_loc")
         flush(DEBUG_FILE[])
     end
     
     # Warnings file - all warnings with source for easy debugging
     if WARNINGS_FILE[] !== nothing
-        println(WARNINGS_FILE[], "[$timestamp] $msg$source_loc")
+        println(WARNINGS_FILE[], "[$timestamp] $msg_trunc$source_loc")
         flush(WARNINGS_FILE[])
     end
 end
 
 function user_error(msg::String, file::String="", line::String="", mod::String="")
+    msg_trunc = truncate_for_log(msg)
     # Console output
     printstyled("┌ ", color=:red)
     printstyled("Error:", bold=true, color=:red)
-    println(" ", msg)
+    println(" ", msg_trunc)
     
     # Add source location line if available and debug level > 0
     if !isempty(file) && !isempty(line) && DEBUG_CONSOLE_LEVEL[] > 0
@@ -204,13 +247,13 @@ function user_error(msg::String, file::String="", line::String="", mod::String="
     
     # Essential file - errors are always essential
     if ESSENTIAL_FILE[] !== nothing
-        println(ESSENTIAL_FILE[], "[$timestamp] ERROR: $msg$source_loc")
+        println(ESSENTIAL_FILE[], "[$timestamp] ERROR: $msg_trunc$source_loc")
         flush(ESSENTIAL_FILE[])
     end
     
     # Console file - mirror console format exactly
     if CONSOLE_FILE[] !== nothing
-        println(CONSOLE_FILE[], "[$timestamp] [ERROR] $msg")
+        println(CONSOLE_FILE[], "[$timestamp] [ERROR] $msg_trunc")
         if !isempty(source_loc)
             println(CONSOLE_FILE[], "                         └$source_loc")  # Indented continuation
         end
@@ -220,30 +263,31 @@ function user_error(msg::String, file::String="", line::String="", mod::String="
     # Debug file - everything with full details
     if DEBUG_FILE[] !== nothing
         debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-        println(DEBUG_FILE[], "[$debug_timestamp] [error] $msg$source_loc")
+        println(DEBUG_FILE[], "[$debug_timestamp] [error] $msg_trunc$source_loc")
         flush(DEBUG_FILE[])
     end
 end
 
 function user_print(msg::String)
+    msg_trunc = truncate_for_log(msg)
     # Direct output without formatting
-    println(msg)
+    println(msg_trunc)
     
     # Essential file - ALWAYS gets @user_print messages (like dual_println)
     if ESSENTIAL_FILE[] !== nothing
-        println(ESSENTIAL_FILE[], msg)
+        println(ESSENTIAL_FILE[], msg_trunc)
         flush(ESSENTIAL_FILE[])
     end
     
     # Console file - mirror console exactly
     if CONSOLE_FILE[] !== nothing
-        println(CONSOLE_FILE[], msg)
+        println(CONSOLE_FILE[], msg_trunc)
         flush(CONSOLE_FILE[])
     end
     
     # Debug file - everything
     if DEBUG_FILE[] !== nothing
-        println(DEBUG_FILE[], msg)
+        println(DEBUG_FILE[], msg_trunc)
         flush(DEBUG_FILE[])
     end
 end
@@ -252,16 +296,17 @@ end
 function debug_l1(msg::String, file::String="", line::String="", mod::String="")
     # Only process if debug level allows
     if DEBUG_CONSOLE_LEVEL[] >= 1
+        msg_trunc = truncate_for_log(msg)
         # Console output WITHOUT line numbers
         printstyled("┌ ", bold=true, color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
-        println(" ", msg)
+        println(" ", msg_trunc)
         # NO LINE NUMBER OUTPUT for debug_l1
         
         # File output WITHOUT line numbers (only when debug level allows)
         if DEBUG_FILE[] !== nothing
             debug_timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG1] $msg")
+            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG1] $msg_trunc")
             flush(DEBUG_FILE[])
         end
     end
@@ -271,10 +316,11 @@ end
 function debug_l2(msg::String, file::String="", line::String="", mod::String="")
     # Only process if debug level allows
     if DEBUG_CONSOLE_LEVEL[] >= 2
+        msg_trunc = truncate_for_log(msg)
         # Console output WITH line numbers
         printstyled("┌ ", bold=true, color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
-        println(" ", msg)
+        println(" ", msg_trunc)
         
         if !isempty(file) && !isempty(line)
             printstyled("└ ", color=:blue)
@@ -288,7 +334,7 @@ function debug_l2(msg::String, file::String="", line::String="", mod::String="")
             if !isempty(file) && !isempty(line)
                 source_loc = " @ $mod $file:$line"
             end
-            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG2] $msg$source_loc")
+            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG2] $msg_trunc$source_loc")
             flush(DEBUG_FILE[])
         end
     end
@@ -298,10 +344,11 @@ end
 function debug_l3(msg::String, file::String="", line::String="", mod::String="")
     # Only process if debug level allows
     if DEBUG_CONSOLE_LEVEL[] >= 3
+        msg_trunc = truncate_for_log(msg)
         # Console output WITH line numbers
         printstyled("┌ ", bold=true, color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
-        println(" ", msg)
+        println(" ", msg_trunc)
         
         if !isempty(file) && !isempty(line)
             printstyled("└ ", color=:blue)
@@ -315,7 +362,7 @@ function debug_l3(msg::String, file::String="", line::String="", mod::String="")
             if !isempty(file) && !isempty(line)
                 source_loc = " @ $mod $file:$line"
             end
-            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG3] $msg$source_loc")
+            println(DEBUG_FILE[], "[$debug_timestamp] [DEBUG3] $msg_trunc$source_loc")
             flush(DEBUG_FILE[])
         end
     end
@@ -325,10 +372,11 @@ end
 function trace_msg(msg::String, file::String="", line::String="", mod::String="")
     # Only process if debug level allows (4+)
     if DEBUG_CONSOLE_LEVEL[] >= 4
+        msg_trunc = truncate_for_log(msg)
         # Console output WITH line numbers
         printstyled("┌ ", bold=true, color=:blue)
         printstyled("Debug:", bold=true, color=:blue)
-        println(" ", msg)
+        println(" ", msg_trunc)
         
         if !isempty(file) && !isempty(line)
             printstyled("└ ", color=:blue)
@@ -342,7 +390,7 @@ function trace_msg(msg::String, file::String="", line::String="", mod::String=""
             if !isempty(file) && !isempty(line)
                 source_loc = " @ $mod $file:$line"
             end
-            println(DEBUG_FILE[], "[$debug_timestamp] [TRACE] $msg$source_loc")
+            println(DEBUG_FILE[], "[$debug_timestamp] [TRACE] $msg_trunc$source_loc")
             flush(DEBUG_FILE[])
         end
     end

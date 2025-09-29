@@ -1,6 +1,7 @@
 {
     "logging": {
-        "debug_console_level": 0
+        "debug_console_level": 0,
+        "max_message_bytes": 4096
     },
     "global": {
         "isotope_settings": {
