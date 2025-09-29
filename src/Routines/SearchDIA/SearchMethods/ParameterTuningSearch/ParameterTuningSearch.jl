@@ -390,7 +390,6 @@ function expand_mass_tolerance!(search_context, ms_file_idx, params, scale_facto
     catch
         string(ms_file_idx)
     end
-    @user_info "Expanded mass tolerance | file=$file_name | from=-$(round(current_left, digits=2))/+$(round(current_right, digits=2)) to -$(round(new_left, digits=2))/+$(round(new_right, digits=2))"
 end
 
 
