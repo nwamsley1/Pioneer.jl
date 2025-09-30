@@ -3,7 +3,7 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-09-25T11:27:48.540
+Starting library build at: 2025-09-29T16:44:08.606
 Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_var_mods/max_0_mods/output/var_mods_0.poin
 
 Detecting fragment bounds...
@@ -35,41 +35,41 @@ Detailed Step Analysis:
 Step                                     Time (s)     Memory (GB)  GC Time (s)  GC %        
 ------------------------------------------------------------------------------------------
 Collision Energy Setup                   0.00         0.00         0.00         0.0         
-File Verification                        0.00         0.00         0.00         0.0         
 Directory Setup                          0.00         0.00         0.00         0.0         
+File Verification                        0.00         0.00         0.00         0.0         
 Model Validation                         0.00         0.00         0.00         0.0         
 Parameter Loading                        0.00         0.00         0.00         0.0         
 Fragment Bound Detection                 0.00         0.00         0.00         0.0         
-Chronologer Preparation                  0.63         0.01         0.00         0.0         
-Chronologer Output Processing            0.68         0.01         0.07         10.3        
-Fragment Prediction                      0.78         0.01         0.00         0.0         
-Retention Time Prediction                0.87         0.01         0.00         0.0         
-Index Building                           0.90         0.02         0.07         7.4         
-Prediction Processing                    1.25         0.02         0.07         5.3         
+Chronologer Preparation                  0.73         0.01         0.00         0.0         
+Chronologer Output Processing            1.01         0.01         0.25         24.9        
+Fragment Prediction                      1.06         0.01         0.00         0.0         
+Retention Time Prediction                1.07         0.01         0.00         0.0         
+Index Building                           1.26         0.02         0.25         19.9        
+Prediction Processing                    1.73         0.02         0.25         14.6        
 ------------------------------------------------------------------------------------------
-TOTAL                                    5.12         0.08         0.20         4.0         
+TOTAL                                    6.86         0.08         0.75         11.0        
 
 Performance Summary:
 ------------------------------------------------------------------------------------------
-Total Runtime: 0.09 minutes
-Total Garbage Collection Time: 0.2 seconds
+Total Runtime: 0.11 minutes
+Total Garbage Collection Time: 0.75 seconds
 Number of Steps: 12
-Average Step Runtime: 0.43 seconds
+Average Step Runtime: 0.57 seconds
 
 Memory Usage Summary:
 ------------------------------------------------------------------------------------------
 Total Memory Allocated: 0.08 GB
-Peak  Memory Usage: 3.81 GB
+Peak  Memory Usage: 3.26 GB
 Total Available System Memory: 48.0 GB
 
 Process Information:
 ------------------------------------------------------------------------------------------
-Number of Threads: 10
-Julia Version: 1.11.3
+Number of Threads: 1
+Julia Version: 1.11.7
 System: arm64-apple-darwin24.0.0
 
 ==========================================================================================
 
-Library building completed at: 2025-09-25T11:27:53.666
+Library building completed at: 2025-09-29T16:44:15.475
 
 Library location: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_var_mods/max_0_mods/output/var_mods_0.poin

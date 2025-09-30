@@ -151,7 +151,12 @@
             "validation_split_ratio": 0.2,
             "qvalue_threshold": 0.01,
             "min_psms_for_comparison": 1000,
-            "max_psms_for_comparison": 100000
+            "max_psms_for_comparison": 100000,
+            "global_prob_model": {
+                "enabled": false,
+                "top_n": 5,
+                "prob_thresh": 0.95
+            }
         }
     },
     "proteinInference": {

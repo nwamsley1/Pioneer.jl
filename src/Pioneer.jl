@@ -32,6 +32,7 @@ using JSON, JLD2
 using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, Logging
 using Measures
 using NumericalIntegration
+using OnlineStats
 using Optim
 using Plots, Polynomials, ProgressBars, Printf
 using Tables

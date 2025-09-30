@@ -59,10 +59,12 @@ Notes:
 
 ### Dataset construction
 
-1. Group `merged_df` by `:precursor_idx` and collect `:prec_prob` values (one per run where observed).
-   - Note: `merged_df` is memory-mapped, allowing efficient full scan without loading entire table into memory.
-   - **Streaming approach**: For each group, collect only the top-N scores (sorted descending) and compute streaming statistics (mean, std, skewness) on-the-fly without materializing a full in-memory array of all scores across all runs. This is critical for scalability when datasets have many runs.
-2. Build `GlobalPrecFeatures{N}` per group using streaming statistics and record `target`.
+1. **Streaming single-pass approach**: Loop through `merged_df` row-by-row (memory-mapped) and update a dictionary keyed by `precursor_idx`.
+   - For each row: extract `:precursor_idx` and `:prec_prob`, update running statistics using OnlineStats accumulators stored in the dictionary.
+   - Maintain a bounded buffer of top-N scores per precursor (e.g., min-heap or sorted insert into fixed-size vector).
+   - This avoids expensive `groupby` operations on disk-backed data where precursor rows may be scattered.
+   - **Critical for performance**: Single sequential pass through Arrow table eliminates random seeks.
+2. After the full pass, finalize each `GlobalPrecFeatures{N}` struct from accumulators and record `target` labels from library.
 3. Convert the dictionary to a unique DataFrame with one row per `precursor_idx` and columns:
    - `precursor_idx::UInt32`, feature columns expanded from the struct, and `target::Bool`.
 
@@ -146,59 +148,91 @@ Target file: `src/Routines/SearchDIA/SearchMethods/ScoringSearch/ScoringSearch.j
 
 ```julia
 # After prec_prob computed per (precursor_idx, ms_file_idx)
-merged_df = DataFrame(Arrow.Table(merged_scores_path))  # memory-mapped
+merged_table = Arrow.Table(merged_scores_path)  # memory-mapped, no DataFrame materialization
 n_runs = length(getFilePaths(getMSData(ctx)))
 sqrt_n_runs = floor(Int, sqrt(n_runs))
 
+# Streaming accumulators: one per precursor_idx
+mutable struct PrecursorAccumulator
+    stats::Series  # OnlineStats: Mean, Variance, Skewness
+    top_scores::Vector{Float32}  # Bounded buffer for top-N (sorted descending)
+    n_above_thresh::Int
+end
+
+accumulators = Dict{UInt32, PrecursorAccumulator}()
+
+# Single-pass streaming through Arrow table (row-by-row, no groupby)
+for row_idx in 1:length(merged_table.precursor_idx)
+    pid = UInt32(merged_table.precursor_idx[row_idx])
+    prob = Float32(merged_table.prec_prob[row_idx])
+
+    # Get or create accumulator
+    if !haskey(accumulators, pid)
+        accumulators[pid] = PrecursorAccumulator(
+            Series(Mean(), Variance(), Skewness()),
+            Float32[],
+            0
+        )
+    end
+
+    acc = accumulators[pid]
+
+    # Update streaming statistics
+    fit!(acc.stats, prob)
+
+    # Maintain top-N scores using bounded insertion
+    if length(acc.top_scores) < TOPN
+        push!(acc.top_scores, prob)
+        sort!(acc.top_scores; rev=true)
+    elseif prob > acc.top_scores[end]
+        acc.top_scores[end] = prob
+        sort!(acc.top_scores; rev=true)  # Or use sorted insert
+    end
+
+    # Count above threshold
+    if prob >= prob_thresh
+        acc.n_above_thresh += 1
+    end
+end
+
+# Finalize features: convert accumulators to GlobalPrecFeatures
 dict = Dict{UInt32, GlobalPrecFeatures{TOPN}}()
 labels = Dict{UInt32, Bool}()
 
-# Process with streaming statistics (minimize in-memory arrays)
-for g in groupby(merged_df, :precursor_idx)
-    pid = first(g.precursor_idx)
+for (pid, acc) in accumulators
+    n_available = nobs(acc.stats[1])  # Get observation count from Mean()
 
-    # Extract probabilities and determine top-N
-    probs_view = g.prec_prob  # view, not a copy
-    n_available = length(probs_view)
+    # Pad top scores to fixed size
+    top_scores = ntuple(i -> i <= length(acc.top_scores) ? acc.top_scores[i] : -1.0f0, TOPN)
 
-    # For top_scores: materialize only top-N by partial sorting
-    top_n_vals = partialsort(probs_view, 1:min(n_available, TOPN); rev=true)
-    top_scores = ntuple(i -> i <= length(top_n_vals) ? Float32(top_n_vals[i]) : -1.0f0, TOPN)
-
-    # Streaming statistics using OnlineStats (single pass, no full array)
-    stats_series = Series(Mean(), Variance(), Skewness())
-    for p in probs_view
-        fit!(stats_series, p)
-    end
-
+    # Extract statistics
     if n_available > 0
-        meanp = Float32(value(stats_series[1]))
-        maxp = Float32(maximum(probs_view))
-        minp = Float32(minimum(probs_view))
-        stdp = n_available > 1 ? Float32(sqrt(value(stats_series[2]))) : -1.0f0
-        skewp = n_available >= 3 ? Float32(value(stats_series[3])) : -1.0f0
+        meanp = Float32(value(acc.stats[1]))
+        maxp = Float32(maximum(acc.top_scores))  # Max from top scores
+        minp = -1.0f0  # Min not tracked (would require full array or Extrema())
+        stdp = n_available > 1 ? Float32(sqrt(value(acc.stats[2]))) : -1.0f0
+        skewp = n_available >= 3 ? Float32(value(acc.stats[3])) : -1.0f0
     else
         meanp = maxp = minp = stdp = skewp = -1.0f0
     end
 
-    nabove = count(>=(prob_thresh), probs_view)
+    # Delta features
+    del12 = (length(acc.top_scores) >= 2) ? (top_scores[1] - top_scores[2]) : -1.0f0
+    del23 = (length(acc.top_scores) >= 3) ? (top_scores[2] - top_scores[3]) : -1.0f0
 
-    # Delta features with sentinel values
-    del12 = (n_available >= 2) ? (top_scores[1] - top_scores[2]) : -1.0f0
-    del23 = (n_available >= 3) ? (top_scores[2] - top_scores[3]) : -1.0f0
-
-    # Baseline: logodds returns a probability (sigmoid of avg log-odds)
-    lodds_baseline = n_available > 0 ? logodds(probs_view, sqrt_n_runs) : -1.0f0
+    # Baseline: logodds requires full array - reconstruct from top scores or use approximation
+    # Option 1: Use only top scores for logodds (approximate but fast)
+    lodds_baseline = length(acc.top_scores) > 0 ? logodds(acc.top_scores, sqrt_n_runs) : -1.0f0
 
     dict[pid] = GlobalPrecFeatures{TOPN}(
         top_scores,
         Int32(n_available),
         (meanp, maxp, minp, stdp, skewp),
-        (Int32(n_available), Int32(n_runs), Int32(nabove)),
+        (Int32(n_available), Int32(n_runs), Int32(acc.n_above_thresh)),
         (del12, del23),
         Float32(lodds_baseline),
     )
-    labels[pid] = library_is_target(pid)
+    labels[pid] = getIsDecoy(getPrecursors(getSpecLib(ctx))[pid])
 end
 
 feat_df = features_to_dataframe(dict, labels)  # 1 row per pid

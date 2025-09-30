@@ -70,6 +70,11 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     min_psms_for_comparison::Int64
     max_psms_for_comparison::Int64
 
+    # Global probability model parameters
+    global_prob_model_enabled::Bool
+    global_prob_model_top_n::Int
+    global_prob_model_prob_thresh::Float32
+
     # MS1 scoring parameter
     ms1_scoring::Bool
 
@@ -108,6 +113,11 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Float64(get(ml_params, :qvalue_threshold, 0.01)),
             Int64(get(ml_params, :min_psms_for_comparison, 1000)),
             Int64(get(ml_params, :max_psms_for_comparison, 100000)),
+
+            # Global probability model parameters with defaults
+            Bool(get(get(ml_params, :global_prob_model, Dict()), :enabled, false)),
+            Int(get(get(ml_params, :global_prob_model, Dict()), :top_n, 5)),
+            Float32(get(get(ml_params, :global_prob_model, Dict()), :prob_thresh, 0.95)),
 
             # MS1 scoring parameter
             Bool(global_params.ms1_scoring)
@@ -308,10 +318,69 @@ function summarize_results!(
                            prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
                            Float32(prob)
                        end) => :prec_prob)
-                       
-            transform!(groupby(merged_df, :precursor_idx),
-                       :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
-                       
+
+            # Global probability calculation: ML model or baseline logodds
+            if params.global_prob_model_enabled
+                @info "Training global probability model..."
+
+                # Build features using streaming approach
+                feature_dict, labels_dict = build_global_prec_features(
+                    merged_scores_path,
+                    getPrecursors(getSpecLib(search_context)),
+                    length(getFilePaths(getMSData(search_context)));
+                    top_n=params.global_prob_model_top_n,
+                    prob_thresh=params.global_prob_model_prob_thresh
+                )
+
+                # Convert to DataFrame
+                feat_df = features_to_dataframe(feature_dict, labels_dict)
+
+                # Get CV folds from library
+                folds = [getCvFold(getPrecursors(getSpecLib(search_context)), pid)
+                         for pid in feat_df.precursor_idx]
+
+                # Check minimum data requirements
+                fold_counts = StatsBase.countmap(collect(zip(folds, feat_df.target)))
+                unique_folds = unique(folds)
+                has_min_data = all(f ->
+                    get(fold_counts, (f, true), 0) >= 1 && get(fold_counts, (f, false), 0) >= 1,
+                    unique_folds
+                )
+
+                if has_min_data
+                    # Train model
+                    @info "Training LightGBM model with $(nrow(feat_df)) precursors..."
+                    model, oof_preds = train_global_prob_model(feat_df, folds)
+
+                    # Generate predictions
+                    model_scores = predict_global_prob(model, feat_df)
+                    baseline_scores = Dict(pid => feat.logodds_baseline
+                                          for (pid, feat) in feature_dict)
+
+                    # Compare methods and select best
+                    @info "Comparing model vs baseline performance..."
+                    use_model, model_passing, baseline_passing = compare_global_prob_methods(
+                        model_scores, baseline_scores, merged_scores_path, params, search_context
+                    )
+
+                    global_prob_map = use_model ? model_scores : baseline_scores
+
+                    @info "Global prob method selection" model_passing baseline_passing use_model
+
+                    # Assign to dataframe
+                    merged_df.global_prob = [global_prob_map[UInt32(pid)]
+                                            for pid in merged_df.precursor_idx]
+                else
+                    @info "Insufficient data for model training (need ≥1 target and ≥1 decoy per fold), using baseline logodds"
+                    transform!(groupby(merged_df, :precursor_idx),
+                              :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+                end
+            else
+                # Baseline: existing logodds approach
+                transform!(groupby(merged_df, :precursor_idx),
+                          :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+            end
+
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
             # Write updated data back to individual files
             for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
