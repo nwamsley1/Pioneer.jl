@@ -323,9 +323,9 @@ function summarize_results!(
             if params.global_prob_model_enabled
                 @info "Training global probability model..."
 
-                # Build features using streaming approach
+                # Build features using streaming approach on in-memory DataFrame
                 feature_dict, labels_dict = build_global_prec_features(
-                    merged_scores_path,
+                    merged_df,
                     getPrecursors(getSpecLib(search_context)),
                     length(getFilePaths(getMSData(search_context)));
                     top_n=params.global_prob_model_top_n,
@@ -360,7 +360,7 @@ function summarize_results!(
                     # Compare methods and select best
                     @info "Comparing model vs baseline performance..."
                     use_model, model_passing, baseline_passing = compare_global_prob_methods(
-                        model_scores, baseline_scores, merged_scores_path, params, search_context
+                        model_scores, baseline_scores, merged_df, params, search_context
                     )
 
                     global_prob_map = use_model ? model_scores : baseline_scores

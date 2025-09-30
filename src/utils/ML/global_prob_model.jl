@@ -76,7 +76,7 @@ function update_accumulator!(acc::PrecursorAccumulator{N}, prob::Float32, prob_t
 end
 
 """
-    build_global_prec_features(merged_path::String, precursors, n_runs::Int;
+    build_global_prec_features(merged_df::AbstractDataFrame, precursors, n_runs::Int;
                                top_n::Int=5, prob_thresh::Float32=0.95f0) ->
                                (Dict{UInt32, GlobalPrecFeatures{top_n}}, Dict{UInt32, Bool})
 
@@ -84,7 +84,7 @@ Build per-precursor feature summaries for global probability model from merged s
 Uses single-pass streaming approach with accumulators to minimize memory and avoid groupby.
 
 # Arguments
-- `merged_path`: Path to Arrow file with columns :precursor_idx, :prec_prob
+- `merged_df`: DataFrame with columns :precursor_idx, :prec_prob
 - `precursors`: Precursor library for target/decoy labels
 - `n_runs`: Total number of MS files in experiment
 - `top_n`: Number of top scores to retain (default 5)
@@ -95,16 +95,13 @@ Uses single-pass streaming approach with accumulators to minimize memory and avo
 - Dict mapping precursor_idx to target label (Bool)
 """
 function build_global_prec_features(
-    merged_path::String,
+    merged_df::AbstractDataFrame,
     precursors,
     n_runs::Int;
     top_n::Int=5,
     prob_thresh::Float32=0.95f0
 )
     sqrt_n_runs = floor(Int, sqrt(n_runs))
-
-    # Load Arrow table (memory-mapped, no full DataFrame materialization)
-    merged_table = Arrow.Table(merged_path)
 
     # Dictionary of streaming accumulators
     if top_n == 5
@@ -113,11 +110,11 @@ function build_global_prec_features(
         accumulators = Dict{UInt32, PrecursorAccumulator{top_n}}()
     end
 
-    # Single-pass streaming through Arrow table
-    n_rows = length(merged_table.precursor_idx)
+    # Single-pass streaming through DataFrame
+    n_rows = nrow(merged_df)
     for row_idx in 1:n_rows
-        pid = UInt32(merged_table.precursor_idx[row_idx])
-        prob = Float32(merged_table.prec_prob[row_idx])
+        pid = UInt32(merged_df.precursor_idx[row_idx])
+        prob = Float32(merged_df.prec_prob[row_idx])
 
         # Get or create accumulator
         if !haskey(accumulators, pid)
@@ -398,7 +395,7 @@ end
 """
     compare_global_prob_methods(model_scores::Dict{UInt32, Float32},
                                baseline_scores::Dict{UInt32, Float32},
-                               merged_path::String,
+                               merged_df::AbstractDataFrame,
                                params,
                                search_context) ->
                                (Bool, Int, Int)
@@ -412,18 +409,16 @@ temporary file, runs stream_sorted_merge + get_precursor_global_qval_spline.
 function compare_global_prob_methods(
     model_scores::Dict{UInt32, Float32},
     baseline_scores::Dict{UInt32, Float32},
-    merged_path::String,
+    merged_df::AbstractDataFrame,
     params,
     search_context
 )
-    # Load original merged data
-    merged_table = Arrow.Table(merged_path)
-
+    # Use provided in-memory DataFrame
     temp_dir = mktempdir()
 
     try
-        # Test model scores
-        model_df = DataFrame(merged_table)
+        # Test model scores - create copy to avoid modifying original
+        model_df = copy(merged_df)
         model_df.global_prob = [model_scores[UInt32(pid)] for pid in model_df.precursor_idx]
         model_path = joinpath(temp_dir, "model_merged.arrow")
         Arrow.write(model_path, model_df)
@@ -443,8 +438,8 @@ function compare_global_prob_methods(
         model_qvals = [model_qval_interp(p) for p in model_sorted.global_prob]
         model_passing = count(<=(params.precursor_global_qvalue_threshold), model_qvals)
 
-        # Test baseline scores
-        baseline_df = DataFrame(merged_table)
+        # Test baseline scores - create copy to avoid modifying original
+        baseline_df = copy(merged_df)
         baseline_df.global_prob = [baseline_scores[UInt32(pid)] for pid in baseline_df.precursor_idx]
         baseline_path = joinpath(temp_dir, "baseline_merged.arrow")
         Arrow.write(baseline_path, baseline_df)
