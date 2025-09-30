@@ -213,9 +213,11 @@ jobs:
           cp -R assets/* "$PKGROOT/usr/local/$APP/data/"
           chmod -R a+w "$PKGROOT/usr/local/$APP/share/julia"
           
-          # 1) Prune non-runtime files
+          # 1) Prune non-runtime files and clear extended attributes
           find "$PKGROOT/usr/local/$APP" -type f \( -name '*.o' -o -name '*.a' \) -delete
           find "$PKGROOT/usr/local/$APP" -type d -name 'objects-Release' -prune -exec rm -rf {} +
+          # Clear quarantine attributes to avoid propagation
+          xattr -rd com.apple.quarantine "$PKGROOT/usr/local/$APP" || true
 
           echo "Prune & signing starting for $APP"
           echo "Frameworks to sign:"
@@ -291,6 +293,7 @@ jobs:
 
       - name: Notarize macOS package (release tags only)
         if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && startsWith(github.ref, 'refs/tags/v')
+        timeout-minutes: 120
         env:
           AC_USERNAME: ${{ secrets.NOTARIZE_APPLE_ID }}
           AC_PASSWORD: ${{ secrets.NOTARIZE_PASSWORD }}
