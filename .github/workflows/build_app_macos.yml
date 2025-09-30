@@ -217,6 +217,16 @@ jobs:
           find "$PKGROOT/usr/local/$APP" -type f \( -name '*.o' -o -name '*.a' \) -delete
           find "$PKGROOT/usr/local/$APP" -type d -name 'objects-Release' -prune -exec rm -rf {} +
 
+          echo "Prune & signing starting for $APP"
+          echo "Frameworks to sign:"
+          find "$PKGROOT/usr/local/$APP" -type d -name "*.framework" | wc -l || true
+          echo "App bundle binaries to sign:"
+          find "$PKGROOT/usr/local/$APP" -type f -path '*/Contents/MacOS/*' | wc -l || true
+          echo "CLI executables to sign:"
+          if [ -d "$PKGROOT/usr/local/$APP/bin" ]; then find "$PKGROOT/usr/local/$APP/bin" -type f -perm -111 | wc -l || true; fi
+          echo "Dylibs/plugins to sign:"
+          find "$PKGROOT/usr/local/$APP" \( -name '*.dylib' -o -name '*.so' \) -not -path '*/.framework/*' | wc -l || true
+
           # 2) Sign frameworks (bundle directories)
           find "$PKGROOT/usr/local/$APP" -type d -name "*.framework" -print0 | \
           while IFS= read -r -d '' fw; do
