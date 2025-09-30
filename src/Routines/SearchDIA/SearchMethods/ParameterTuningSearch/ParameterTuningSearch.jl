@@ -262,7 +262,13 @@ Returns (psms, psm_count) where psm_count is the number of filtered PSMs (0 if f
 function collect_and_log_psms(filtered_spectra, spectra, search_context, params, ms_file_idx, context_msg::String)
     psms, was_filtered = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
     psm_count = size(psms, 1)
-    
+    # Log collection summary for visibility
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        string(ms_file_idx)
+    end
+
     return psms, psm_count
 end
 
@@ -285,6 +291,14 @@ function fit_models_from_psms(psms, spectra, search_context, params, ms_file_idx
     end
     
     mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
+    # Log model fit summary
+    if mass_err_model !== nothing
+        file_name = try
+            getFileIdToName(getMSData(search_context), ms_file_idx)
+        catch
+            string(ms_file_idx)
+        end
+    end
     return mass_err_model, ppm_errs, psm_count
 end
 
@@ -370,6 +384,12 @@ function expand_mass_tolerance!(search_context, ms_file_idx, params, scale_facto
     )
     
     setMassErrorModel!(search_context, ms_file_idx, new_model)
+    # Log expansion action
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        string(ms_file_idx)
+    end
 end
 
 
@@ -512,6 +532,40 @@ function run_single_phase(
             current_model = getMassErrorModel(search_context, ms_file_idx)
             iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
             
+            # ========================================
+            # INITIAL BIAS ADJUSTMENT (one-shot)
+            # ========================================
+            # Use the fitted model's offset as a bias guess and re-collect once.
+            new_bias = getMassOffset(mass_err_model)
+            adjusted_model = MassErrorModel(
+                new_bias,
+                (getLeftTol(current_model), getRightTol(current_model))
+            )
+            setMassErrorModel!(search_context, ms_file_idx, adjusted_model)
+
+            psms_bias, _ = collect_and_log_psms(
+                filtered_spectra, spectra, search_context,
+                params, ms_file_idx, "initial bias-adjusted attempt with min_score=$min_score"
+            )
+
+            mass_err_model_bias, ppm_errs_bias, psm_count_bias = fit_models_from_psms(
+                psms_bias, spectra, search_context, params, ms_file_idx
+            )
+
+            if mass_err_model_bias !== nothing && psm_count_bias > psm_count/2
+                # Keep bias-adjusted model and improved PSMs
+                mass_err_model = mass_err_model_bias
+                ppm_errs = ppm_errs_bias
+                psm_count = psm_count_bias
+                psms_initial = psms_bias
+                # collection tolerance unchanged (same window), but recompute in case upstream adjusted
+                current_model = getMassErrorModel(search_context, ms_file_idx)
+                iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
+            else
+                # Revert to pre-adjustment model if no improvement
+                setMassErrorModel!(search_context, ms_file_idx, current_model)
+            end
+
             # Track best attempt even if not converged
             if psm_count > 0 && !isempty(psms_initial)
                 # Fit RT model for best attempt tracking (only if we have filtered PSMs)
@@ -545,8 +599,6 @@ function run_single_phase(
             # Step 1: EXPAND TOLERANCE
             expand_mass_tolerance!(search_context, ms_file_idx, params, 
                                   settings.mass_tolerance_scale_factor)
-            current_tolerance = settings.init_mass_tol_ppm * 
-                              (settings.mass_tolerance_scale_factor ^ iter)
             current_model = getMassErrorModel(search_context, ms_file_idx)
 
             # Step 2: COLLECT PSMs with expanded tolerance (to determine bias)
@@ -563,9 +615,7 @@ function run_single_phase(
             # Step 4: ADJUST BIAS based on fitted model
             if mass_err_for_bias !== nothing
                 new_bias = getMassOffset(mass_err_for_bias)
-                current_model = getMassErrorModel(search_context, ms_file_idx)
-                old_bias = getMassOffset(current_model)
-                
+                current_model = getMassErrorModel(search_context, ms_file_idx)                
                 # Update the bias while keeping the expanded tolerance
                 adjusted_model = MassErrorModel(
                     new_bias,
@@ -720,6 +770,7 @@ function process_file!(
                 throw(ErrorException("No usable MS2 scans"))
             end
         catch e
+            throw(e)
             if isa(e, ErrorException) && e.msg == "No usable MS2 scans"
                 # Re-throw our controlled exception to handle in outer catch
                 rethrow(e)
@@ -731,6 +782,12 @@ function process_file!(
                     "file_$ms_file_idx"
                 end
                 @user_warn "Failed to create filtered spectra for MS data file: $file_name. Error type: $(typeof(e)). Using conservative defaults."
+                # Log full stacktrace for diagnostics
+                try
+                    bt = catch_backtrace()
+                    @user_error sprint(showerror, e, bt)
+                catch
+                end
                 iteration_state.failed_with_exception = true
                 throw(e)  # Re-throw to be caught by outer catch block
             end
@@ -810,6 +867,14 @@ function process_file!(
         
         # Don't mark as failed - just continue with defaults
         @user_warn "Parameter tuning failed for MS data file: $file_name. Error type: $(typeof(e)). Using conservative default parameters to continue analysis."
+        # Log full stacktrace for diagnostics
+        try
+            bt = catch_backtrace()
+            @user_error sprint(showerror, e, bt)
+        catch
+        end
+        # During debugging, rethrow to stop the pipeline and surface the root cause
+        rethrow(e)
         
         # Set conservative defaults to allow pipeline to continue
         converged = false

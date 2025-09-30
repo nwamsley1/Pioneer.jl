@@ -1330,6 +1330,7 @@ function test_tolerance_expansion!(
     # Calculate expanded tolerance
     expanded_tolerance = collection_tolerance * expansion_factor
     
+    # (debug logs removed)
     # Create expanded model for collection
     # Keep the same bias, just expand the window
     expanded_model = MassErrorModel(
@@ -1350,13 +1351,11 @@ function test_tolerance_expansion!(
     # Calculate improvement
     psm_increase = expanded_psm_count - current_psm_count
     improvement_ratio = current_psm_count > 0 ? psm_increase / current_psm_count : 0.0
-    
-    # @info "Expansion results:" *
-    #       "\n  Expanded PSM count: $expanded_psm_count" *
-    #       "\n  PSM increase: $psm_increase ($(round(100*improvement_ratio, digits=1))%)"
+    # (debug logs removed)
     
     # Check if expansion was beneficial (any improvement)
     if expanded_psm_count <= current_psm_count
+        # (debug logs removed)
         # No improvement, restore original and return
         setMassErrorModel!(search_context, ms_file_idx, original_model)
         # @info "No improvement found, keeping original results"

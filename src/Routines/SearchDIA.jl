@@ -139,6 +139,24 @@ function SearchDIA(params_path::String)
         DEBUG_CONSOLE_LEVEL[] = 0  # Default: no debug on console
     end
     
+    # Configure max log message bytes (clamped with ENV override)
+    local max_bytes_val::Int = 4096
+    if haskey(params.logging, :max_message_bytes)
+        try
+            max_bytes_val = Int(params.logging.max_message_bytes)
+        catch
+            max_bytes_val = 4096
+        end
+    end
+    if haskey(ENV, "PIONEER_MAX_LOG_MSG_BYTES")
+        env_val = tryparse(Int, ENV["PIONEER_MAX_LOG_MSG_BYTES"])
+        if env_val !== nothing
+            max_bytes_val = env_val
+        end
+    end
+    max_bytes_val = clamp(max_bytes_val, 1024, 1048576)
+    Pioneer.MAX_LOG_MSG_BYTES[] = max_bytes_val
+    
     # Open FOUR log files
     essential_path = joinpath(params.paths[:results], "pioneer_search_report.txt")
     console_path = joinpath(params.paths[:results], "pioneer_search_log.log")

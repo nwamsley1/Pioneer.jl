@@ -157,6 +157,13 @@ Most parameters should not be changed, but the following may need adjustement.
 | `delete_temp` | Boolean | Whether to delete temporary files |
 | `plots_per_page` | Int | Number of plots per page in reports (default: 12) |
 
+### Logging Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `debug_console_level` | Int | Verbosity of console debug output (0 disables; higher values include more details). |
+| `max_message_bytes` | Int | Maximum bytes of a single log message before truncation (default: 4096). Truncation preserves valid UTF-8 and appends a suffix like `… [truncated N bytes]`. Can be overridden at runtime with `PIONEER_MAX_LOG_MSG_BYTES` (values clamped to [1024, 1048576]). |
+
 ### Path Parameters
 
 | Parameter | Type | Description |
@@ -289,4 +296,3 @@ The regex patterns for parsing FASTA headers can be configured in three ways:
 | `new_lib_name` | String | Name for updated library files |
 | `out_name` | String | Output filename |
 | `predict_fragments` | Boolean | Predict fragment intensities (default: true) |
-
