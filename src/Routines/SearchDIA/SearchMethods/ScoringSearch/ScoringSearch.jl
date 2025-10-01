@@ -138,6 +138,53 @@ Helper Functions
 ==========================================================#
 
 """
+    apply_global_competition_on_global_prob!(merged_df::AbstractDataFrame,
+                                              precursors::LibraryPrecursors) -> Set{UInt32}
+
+Apply global target/decoy competition based on the actual global_prob scores.
+
+Groups by precursor_idx, takes the maximum global_prob across all runs for each precursor,
+then applies target/decoy competition on these scores. This ensures we compete on the
+actual scores that will be used downstream, not on intermediate logodds calculations.
+
+# Arguments
+- `merged_df`: DataFrame with columns :precursor_idx, :global_prob
+- `precursors`: Library precursors for pair_id and target/decoy labels
+
+# Returns
+- Set{UInt32} of precursor_idx values that survived competition
+"""
+function apply_global_competition_on_global_prob!(
+    merged_df::AbstractDataFrame,
+    precursors::LibraryPrecursors
+)
+    # Group by precursor to get max global_prob per precursor
+    grouped = groupby(merged_df, :precursor_idx)
+
+    precursor_ids = UInt32[]
+    targets = Bool[]
+    max_scores = Float32[]
+
+    is_decoy_array = getIsDecoy(precursors)
+
+    for group in grouped
+        pid = first(group.precursor_idx)
+        push!(precursor_ids, pid)
+        push!(targets, !is_decoy_array[pid])
+        push!(max_scores, maximum(group.global_prob))
+    end
+
+    temp_df = DataFrame(
+        precursor_idx = precursor_ids,
+        target = targets,
+        logodds_baseline = max_scores  # Reuse column name for competition
+    )
+
+    # Apply competition on these scores
+    return apply_global_target_decoy_competition!(temp_df, precursors)
+end
+
+"""
     build_minimal_feat_df(merged_df::AbstractDataFrame,
                           precursors::LibraryPrecursors,
                           sqrt_n_runs::Int) -> DataFrame
@@ -399,25 +446,6 @@ function summarize_results!(
                            end) => :infold_prec_prob)
             end
 
-            # Apply global-level target/decoy competition first (independent of model)
-            surviving_precursors = if params.enable_global_target_decoy_competition
-                @info "Applying global-level target/decoy competition..."
-                # Build minimal feat_df for competition
-                feat_df_minimal = build_minimal_feat_df(
-                    merged_df,
-                    getPrecursors(getSpecLib(search_context)),
-                    sqrt_n_runs
-                )
-                # Apply competition and get surviving precursors
-                apply_global_target_decoy_competition!(
-                    feat_df_minimal,
-                    getPrecursors(getSpecLib(search_context))
-                )
-            else
-                # No competition - all precursors survive
-                Set{UInt32}(unique(merged_df.precursor_idx))
-            end
-
             # Global probability calculation: ML model or baseline logodds
             if params.global_prob_model_enabled
                 @info "Training global probability model..."
@@ -436,11 +464,6 @@ function summarize_results!(
 
                 # Convert to DataFrame
                 feat_df = features_to_dataframe(feature_dict, labels_dict)
-
-                # Filter feat_df by surviving precursors if competition was applied
-                if params.enable_global_target_decoy_competition
-                    filter!(:precursor_idx => pid -> pid in surviving_precursors, feat_df)
-                end
 
                 # Get CV folds from library
                 folds = [getCvFold(getPrecursors(getSpecLib(search_context)), pid)
@@ -473,19 +496,51 @@ function summarize_results!(
                                              for (pid, feat) in feature_dict)
                     end
 
-                    # Assign to dataframe, using get() to handle precursors filtered by competition
-                    # Precursors not in global_prob_map were filtered out, use 0.0f0 (will be removed in write-back)
-                    merged_df.global_prob = [get(global_prob_map, UInt32(pid), 0.0f0)
+                    # Assign to dataframe
+                    merged_df.global_prob = [global_prob_map[UInt32(pid)]
                                             for pid in merged_df.precursor_idx]
+
+                    # Apply global-level target/decoy competition on actual global_prob scores
+                    surviving_precursors = if params.enable_global_target_decoy_competition
+                        @info "Applying global-level target/decoy competition on global_prob scores..."
+                        apply_global_competition_on_global_prob!(
+                            merged_df,
+                            getPrecursors(getSpecLib(search_context))
+                        )
+                    else
+                        Set{UInt32}(unique(merged_df.precursor_idx))
+                    end
                 else
                     @info "Insufficient data for model training (need ≥1 target and ≥1 decoy per fold), using baseline logodds"
                     transform!(groupby(merged_df, :precursor_idx),
                               :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+
+                    # Apply global-level target/decoy competition on baseline logodds scores
+                    surviving_precursors = if params.enable_global_target_decoy_competition
+                        @info "Applying global-level target/decoy competition on global_prob scores..."
+                        apply_global_competition_on_global_prob!(
+                            merged_df,
+                            getPrecursors(getSpecLib(search_context))
+                        )
+                    else
+                        Set{UInt32}(unique(merged_df.precursor_idx))
+                    end
                 end
             else
                 # Baseline: existing logodds approach (no model training)
                 transform!(groupby(merged_df, :precursor_idx),
                           :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+
+                # Apply global-level target/decoy competition on baseline logodds scores
+                surviving_precursors = if params.enable_global_target_decoy_competition
+                    @info "Applying global-level target/decoy competition on global_prob scores..."
+                    apply_global_competition_on_global_prob!(
+                        merged_df,
+                        getPrecursors(getSpecLib(search_context))
+                    )
+                else
+                    Set{UInt32}(unique(merged_df.precursor_idx))
+                end
             end
 
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
