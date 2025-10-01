@@ -134,7 +134,52 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
 end
 
 #==========================================================
-Interface Implementation  
+Helper Functions
+==========================================================#
+
+"""
+    build_minimal_feat_df(merged_df::AbstractDataFrame,
+                          precursors::LibraryPrecursors,
+                          sqrt_n_runs::Int) -> DataFrame
+
+Build a minimal feat_df with only columns needed for global target/decoy competition:
+- precursor_idx: Precursor identifier
+- target: Target (true) or decoy (false) label
+- logodds_baseline: Score calculated from prec_prob using logodds aggregation
+
+This lightweight DataFrame is used when global competition is enabled but the
+global probability model is disabled.
+"""
+function build_minimal_feat_df(
+    merged_df::AbstractDataFrame,
+    precursors::LibraryPrecursors,
+    sqrt_n_runs::Int
+)
+    # Group by precursor_idx to calculate per-precursor logodds
+    grouped = groupby(merged_df, :precursor_idx)
+
+    precursor_ids = UInt32[]
+    targets = Bool[]
+    logodds_baselines = Float32[]
+
+    is_decoy_array = getIsDecoy(precursors)
+
+    for group in grouped
+        pid = first(group.precursor_idx)
+        push!(precursor_ids, pid)
+        push!(targets, !is_decoy_array[pid])
+        push!(logodds_baselines, logodds(group.prec_prob, sqrt_n_runs))
+    end
+
+    return DataFrame(
+        precursor_idx = precursor_ids,
+        target = targets,
+        logodds_baseline = logodds_baselines
+    )
+end
+
+#==========================================================
+Interface Implementation
 ==========================================================#
 
 get_parameters(::ScoringSearch, params::Any) = ScoringSearchParameters(params)
@@ -339,6 +384,25 @@ function summarize_results!(
                            Float32(prob)
                        end) => :prec_prob)
 
+            # Apply global-level target/decoy competition first (independent of model)
+            surviving_precursors = if params.enable_global_target_decoy_competition
+                @info "Applying global-level target/decoy competition..."
+                # Build minimal feat_df for competition
+                feat_df_minimal = build_minimal_feat_df(
+                    merged_df,
+                    getPrecursors(getSpecLib(search_context)),
+                    sqrt_n_runs
+                )
+                # Apply competition and get surviving precursors
+                apply_global_target_decoy_competition!(
+                    feat_df_minimal,
+                    getPrecursors(getSpecLib(search_context))
+                )
+            else
+                # No competition - all precursors survive
+                Set{UInt32}(unique(merged_df.precursor_idx))
+            end
+
             # Global probability calculation: ML model or baseline logodds
             if params.global_prob_model_enabled
                 @info "Training global probability model..."
@@ -355,15 +419,9 @@ function summarize_results!(
                 # Convert to DataFrame
                 feat_df = features_to_dataframe(feature_dict, labels_dict)
 
-                # Apply global-level target/decoy competition if enabled
-                surviving_precursors = if params.enable_global_target_decoy_competition
-                    @info "Applying global-level target/decoy competition on feat_df..."
-                    apply_global_target_decoy_competition!(
-                        feat_df,
-                        getPrecursors(getSpecLib(search_context))
-                    )
-                else
-                    Set{UInt32}(feat_df.precursor_idx)
+                # Filter feat_df by surviving precursors if competition was applied
+                if params.enable_global_target_decoy_competition
+                    filter!(:precursor_idx => pid -> pid in surviving_precursors, feat_df)
                 end
 
                 # Get CV folds from library
@@ -403,13 +461,11 @@ function summarize_results!(
                                             for pid in merged_df.precursor_idx]
                 else
                     @info "Insufficient data for model training (need ≥1 target and ≥1 decoy per fold), using baseline logodds"
-                    surviving_precursors = Set{UInt32}(unique(merged_df.precursor_idx))
                     transform!(groupby(merged_df, :precursor_idx),
                               :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
                 end
             else
-                # Baseline: existing logodds approach (no feat_df, so no global competition possible)
-                surviving_precursors = Set{UInt32}(unique(merged_df.precursor_idx))
+                # Baseline: existing logodds approach (no model training)
                 transform!(groupby(merged_df, :precursor_idx),
                           :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
             end
@@ -421,7 +477,7 @@ function summarize_results!(
                 sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
 
                 # Filter sub_df by surviving precursors if global competition was applied
-                if params.enable_global_target_decoy_competition && params.global_prob_model_enabled
+                if params.enable_global_target_decoy_competition
                     sub_df = sub_df[in.(sub_df.precursor_idx, Ref(surviving_precursors)), :]
                 end
 
