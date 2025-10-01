@@ -507,11 +507,15 @@ function compare_global_prob_methods_oof(
     @info "Calculating model AUC with diagnostics..."
     model_auc = calculate_auc(oof_preds, is_target; verbose=true)
 
-    # Temporarily removed baseline comparison since logodds_baseline feature is disabled
-    # Just use the model
-    @info "Using model without baseline comparison (logodds_baseline feature temporarily disabled)"
+    # Use top_1 score as baseline (simple heuristic: use best score across runs)
+    @info "Calculating baseline AUC using top_1 scores..."
+    baseline_preds = Vector{Float32}(feat_df.top_1)
+    baseline_auc = calculate_auc(baseline_preds, is_target; verbose=false)
 
-    return true, model_auc, 0.0f0  # Always use model, baseline_auc = 0
+    # Choose method with better AUC
+    use_model = model_auc >= baseline_auc
+
+    return use_model, model_auc, baseline_auc
 end
 
 """
