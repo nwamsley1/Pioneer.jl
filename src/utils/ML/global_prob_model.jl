@@ -323,6 +323,28 @@ function train_global_prob_model(
     min_data_in_leaf::Int=1,
     min_gain_to_split::Float64=1.0
 )
+    # Diagnostic logging for feature distributions
+    @info "Global prob model diagnostics:" n_precursors=nrow(feat_df) n_folds=length(unique(folds))
+
+    # Log target/decoy balance
+    n_targets = count(feat_df.target)
+    n_decoys = nrow(feat_df) - n_targets
+    @info "Target/Decoy balance:" n_targets n_decoys ratio=n_targets/n_decoys
+
+    # Log feature ranges for targets vs decoys
+    target_mask = feat_df.target
+    if :top_1 in propertynames(feat_df)
+        target_top1_range = (minimum(feat_df.top_1[target_mask]), maximum(feat_df.top_1[target_mask]))
+        decoy_top1_range = (minimum(feat_df.top_1[.!target_mask]), maximum(feat_df.top_1[.!target_mask]))
+        @info "Top-1 score ranges:" targets=target_top1_range decoys=decoy_top1_range
+    end
+
+    if :logodds_baseline in propertynames(feat_df)
+        target_baseline_range = (minimum(feat_df.logodds_baseline[target_mask]), maximum(feat_df.logodds_baseline[target_mask]))
+        decoy_baseline_range = (minimum(feat_df.logodds_baseline[.!target_mask]), maximum(feat_df.logodds_baseline[.!target_mask]))
+        @info "Baseline logodds ranges:" targets=target_baseline_range decoys=decoy_baseline_range
+    end
+
     # Separate features and labels
     feature_cols = setdiff(names(feat_df), [:precursor_idx, :target])
     X = feat_df[!, feature_cols]
@@ -334,6 +356,9 @@ function train_global_prob_model(
     oof_preds = Vector{Float32}(undef, nrow(feat_df))
     fill!(oof_preds, -1.0f0)
 
+    # Track per-fold AUCs
+    fold_aucs = Float32[]
+
     # Cross-validation
     for test_fold in unique_folds
         test_mask = folds .== test_fold
@@ -342,6 +367,7 @@ function train_global_prob_model(
         X_train = X[train_mask, :]
         y_train = y[train_mask]
         X_test = X[test_mask, :]
+        y_test = y[test_mask]
 
         # Build and fit model
         lgbm = build_lightgbm_classifier(;
@@ -362,8 +388,17 @@ function train_global_prob_model(
         model = fit_lightgbm_model(lgbm, X_train, y_train)
 
         # Predict on held-out fold
-        oof_preds[test_mask] = lightgbm_predict(model, X_test; output_type=Float32)
+        fold_preds = lightgbm_predict(model, X_test; output_type=Float32)
+        oof_preds[test_mask] = fold_preds
+
+        # Calculate per-fold AUC
+        fold_auc = calculate_auc(fold_preds, y_test)
+        push!(fold_aucs, fold_auc)
+        @info "Fold $test_fold AUC:" fold_auc n_test=sum(test_mask) n_train=sum(train_mask)
     end
+
+    # Log overall fold AUC statistics
+    @info "Per-fold AUC statistics:" mean=mean(fold_aucs) min=minimum(fold_aucs) max=maximum(fold_aucs)
 
     return oof_preds
 end
