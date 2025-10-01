@@ -874,14 +874,10 @@ function apply_target_decoy_competition!(
 
         # Step 2: Map precursor_idx to library pair_id
         df.pair_id = [pair_id_array[pid] for pid in df.precursor_idx]
-
+        df[!,:rows_to_keep] = ones(Bool, nrow(df))  # Initialize boolean array
         # Step 3: Group by (pair_id, isotopes_captured)
         groups = groupby(df, [:pair_id, :isotopes_captured])
-
-        # Step 4: Process each group
-        rows_to_keep = Bool[]
-        sizehint!(rows_to_keep, nrow(df))
-
+        
         for group in groups
             n = nrow(group)
 
@@ -892,7 +888,7 @@ function apply_target_decoy_competition!(
 
             if n == 1
                 # No competition - keep the row
-                push!(rows_to_keep, true)
+                group.rows_to_keep[1] = true
             else  # n == 2
                 # Validate one target, one decoy
                 targets = group.target
@@ -903,15 +899,15 @@ function apply_target_decoy_competition!(
                 # Find winner (higher prob)
                 probs = group.prob
                 winner_idx = argmax(probs)
-
+                loser_idx = argmin(probs)
                 # Mark winner to keep, loser to delete
-                push!(rows_to_keep, 1 == winner_idx)
-                push!(rows_to_keep, 2 == winner_idx)
+                group.rows_to_keep[winner_idx] = true
+                group.rows_to_keep[loser_idx] = false
             end
         end
 
         # Step 5: Filter DataFrame
-        filtered_df = df[rows_to_keep, :]
+        filtered_df = df[df.rows_to_keep, :]
 
         # Step 6: Calculate removal statistics
         n_after = nrow(filtered_df)
@@ -923,6 +919,7 @@ function apply_target_decoy_competition!(
 
         # Step 7: Remove temporary pair_id column
         select!(filtered_df, Not(:pair_id))
+        select!(filtered_df, Not(:rows_to_keep))
 
         # Step 8: Write back to file
         writeArrow(file_path, filtered_df)
@@ -937,4 +934,100 @@ function apply_target_decoy_competition!(
     end
 
     @info "Target/decoy competition summary: $total_before → $total_after PSMs | Removed: $total_targets_removed targets, $total_decoys_removed decoys (total: $(total_targets_removed + total_decoys_removed))"
+end
+
+"""
+    apply_global_target_decoy_competition!(feat_df::DataFrame,
+                                           precursors::LibraryPrecursors) -> Set{UInt32}
+
+Apply target/decoy competition filtering at the global precursor level.
+
+This function filters the feat_df DataFrame (one row per precursor across all runs)
+by applying competition between target/decoy pairs. For each pair_id:
+- If only one precursor (target or decoy) is present: keep it
+- If both target and decoy are present: keep the one with higher logodds_baseline
+
+# Arguments
+- `feat_df`: DataFrame with precursor-level features (one row per precursor_idx)
+- `precursors`: Library precursors for pair_id lookup
+
+# Returns
+- Set{UInt32} containing precursor_idx values that survived competition
+
+# Modifies
+- Filters `feat_df` in-place to remove losing precursors
+
+# Errors
+- Throws if any pair_id group has >2 rows
+- Throws if 2-row group doesn't have exactly 1 target and 1 decoy
+"""
+function apply_global_target_decoy_competition!(
+    feat_df::DataFrame,
+    precursors::LibraryPrecursors
+)
+    # Get library pair_id mapping
+    pair_id_array = getPairIdx(precursors)
+
+    n_before = nrow(feat_df)
+    n_targets_before = count(feat_df.target)
+    n_decoys_before = n_before - n_targets_before
+
+    # Add pair_id column
+    feat_df.pair_id = [pair_id_array[pid] for pid in feat_df.precursor_idx]
+    feat_df.rows_to_keep = ones(Bool, nrow(feat_df))
+
+    # Group by pair_id (no isotopes_captured at global level)
+    groups = groupby(feat_df, :pair_id)
+
+    for group in groups
+        n = nrow(group)
+
+        # Validation
+        if n > 2
+            error("Global competition: pair_id=$(group.pair_id[1]) has $n precursors (expected 1 or 2)")
+        end
+
+        if n == 1
+            # No competition - keep the row
+            group.rows_to_keep[1] = true
+        else  # n == 2
+            # Validate one target, one decoy
+            targets = group.target
+            if count(targets) != 1
+                error("Global competition: pair_id=$(group.pair_id[1]) has $(count(targets)) targets (expected exactly 1)")
+            end
+
+            # Find winner: higher logodds_baseline score
+            scores = group.logodds_baseline
+            winner_idx = argmax(scores)
+            loser_idx = argmin(scores)
+
+            # Mark winner to keep, loser to delete
+            group.rows_to_keep[winner_idx] = true
+            group.rows_to_keep[loser_idx] = false
+        end
+    end
+
+    # Filter DataFrame
+    feat_df_filtered = feat_df[feat_df.rows_to_keep, :]
+
+    # Calculate statistics
+    n_after = nrow(feat_df_filtered)
+    n_targets_after = count(feat_df_filtered.target)
+    n_decoys_after = n_after - n_targets_after
+
+    targets_removed = n_targets_before - n_targets_after
+    decoys_removed = n_decoys_before - n_decoys_after
+
+    # Get surviving precursor set
+    surviving_precursors = Set{UInt32}(feat_df_filtered.precursor_idx)
+
+    # Update feat_df in place
+    select!(feat_df, Not(:pair_id))
+    select!(feat_df, Not(:rows_to_keep))
+    filter!(:precursor_idx => pid -> pid in surviving_precursors, feat_df)
+
+    @info "Global target/decoy competition: $n_before → $n_after precursors | Removed: $targets_removed targets, $decoys_removed decoys (total: $(targets_removed + decoys_removed))"
+
+    return surviving_precursors
 end

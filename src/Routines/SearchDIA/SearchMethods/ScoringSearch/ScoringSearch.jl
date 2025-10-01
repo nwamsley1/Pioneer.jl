@@ -78,8 +78,9 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # MS1 scoring parameter
     ms1_scoring::Bool
 
-    # Target/decoy competition parameter
+    # Target/decoy competition parameters
     enable_target_decoy_competition::Bool
+    enable_global_target_decoy_competition::Bool
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
@@ -125,8 +126,9 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             # MS1 scoring parameter
             Bool(global_params.ms1_scoring),
 
-            # Target/decoy competition parameter (default: false)
-            Bool(get(ml_params, :enable_target_decoy_competition, false))
+            # Target/decoy competition parameters (default: false)
+            Bool(get(ml_params, :enable_target_decoy_competition, false)),
+            Bool(get(ml_params, :enable_global_target_decoy_competition, false))
         )
     end
 end
@@ -353,6 +355,17 @@ function summarize_results!(
                 # Convert to DataFrame
                 feat_df = features_to_dataframe(feature_dict, labels_dict)
 
+                # Apply global-level target/decoy competition if enabled
+                surviving_precursors = if params.enable_global_target_decoy_competition
+                    @info "Applying global-level target/decoy competition on feat_df..."
+                    apply_global_target_decoy_competition!(
+                        feat_df,
+                        getPrecursors(getSpecLib(search_context))
+                    )
+                else
+                    Set{UInt32}(feat_df.precursor_idx)
+                end
+
                 # Get CV folds from library
                 folds = [getCvFold(getPrecursors(getSpecLib(search_context)), pid)
                          for pid in feat_df.precursor_idx]
@@ -389,19 +402,28 @@ function summarize_results!(
                                             for pid in merged_df.precursor_idx]
                 else
                     @info "Insufficient data for model training (need ≥1 target and ≥1 decoy per fold), using baseline logodds"
+                    surviving_precursors = Set{UInt32}(unique(merged_df.precursor_idx))
                     transform!(groupby(merged_df, :precursor_idx),
                               :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
                 end
             else
-                # Baseline: existing logodds approach
+                # Baseline: existing logodds approach (no feat_df, so no global competition possible)
+                surviving_precursors = Set{UInt32}(unique(merged_df.precursor_idx))
                 transform!(groupby(merged_df, :precursor_idx),
                           :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
             end
 
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
-            # Write updated data back to individual files
+
+            # Write updated data back to individual files, filtering by surviving_precursors
             for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
                 sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
+
+                # Filter sub_df by surviving precursors if global competition was applied
+                if params.enable_global_target_decoy_competition && params.global_prob_model_enabled
+                    sub_df = sub_df[in.(sub_df.precursor_idx, Ref(surviving_precursors)), :]
+                end
+
                 write_arrow_file(ref, sub_df)
             end
         end
