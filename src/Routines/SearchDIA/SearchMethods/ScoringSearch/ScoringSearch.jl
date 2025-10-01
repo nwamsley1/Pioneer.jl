@@ -480,20 +480,24 @@ function summarize_results!(
                 )
 
                 if has_min_data
-                    # Train model
+                    # Train model with cross-validation to get out-of-fold predictions
                     @info "Training LightGBM model with $(nrow(feat_df)) precursors..."
                     model, oof_preds = train_global_prob_model(feat_df, folds)
 
-                    # Compare methods and select best based on AUC
+                    # Compare OOF predictions vs baseline using AUC
                     @info "Comparing model vs baseline performance..."
-                    use_model, model_auc, baseline_auc = compare_global_prob_methods(model, feat_df)
+                    use_model, model_auc, baseline_auc = compare_global_prob_methods_oof(oof_preds, feat_df)
 
                     @info "Global prob method selection" model_auc baseline_auc use_model
 
-                    # Generate predictions using the selected method
+                    # Use out-of-fold predictions from CV (no data leakage!)
+                    # Create map from OOF predictions or baseline
                     if use_model
-                        global_prob_map = predict_global_prob(model, feat_df)
+                        # Use OOF predictions from CV
+                        global_prob_map = Dict(feat_df.precursor_idx[i] => oof_preds[i]
+                                             for i in 1:nrow(feat_df))
                     else
+                        # Use baseline logodds
                         global_prob_map = Dict(pid => feat.logodds_baseline
                                              for (pid, feat) in feature_dict)
                     end

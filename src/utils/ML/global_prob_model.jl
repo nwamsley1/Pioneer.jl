@@ -440,6 +440,34 @@ function compare_global_prob_methods(
 end
 
 """
+    compare_global_prob_methods_oof(oof_preds::Vector{Float32},
+                                   feat_df::DataFrame) ->
+                                   (Bool, Float32, Float32)
+
+Compare out-of-fold model predictions against baseline global probability using ROC AUC.
+This version uses pre-computed OOF predictions to avoid data leakage.
+Returns (use_model, model_auc, baseline_auc) where use_model indicates whether
+the ML model achieved better AUC than the baseline method.
+"""
+function compare_global_prob_methods_oof(
+    oof_preds::Vector{Float32},
+    feat_df::DataFrame
+)
+    # Extract baseline scores and target flags
+    baseline_preds = Vector{Float32}(feat_df.logodds_baseline)
+    is_target = Vector{Bool}(feat_df.target)
+
+    # Calculate AUC for both methods
+    model_auc = calculate_auc(oof_preds, is_target)
+    baseline_auc = calculate_auc(baseline_preds, is_target)
+
+    # Choose method with better AUC
+    use_model = model_auc >= baseline_auc
+
+    return use_model, model_auc, baseline_auc
+end
+
+"""
     calculate_auc(scores::Vector{Float32}, is_target::Vector{Bool})
 
 Calculate ROC AUC using Mann-Whitney U statistic.
