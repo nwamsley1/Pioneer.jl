@@ -229,22 +229,44 @@ jobs:
           echo "Dylibs/plugins to sign:"
           find "$PKGROOT/usr/local/$APP" \( -name '*.dylib' -o -name '*.so' \) -not -path '*/.framework/*' | wc -l || true
 
+          # Helper function: retry codesign with exponential backoff
+          codesign_with_retry() {
+            local target="$1"
+            local max_attempts=5
+            local attempt=1
+            local wait_time=2
+
+            while [ $attempt -le $max_attempts ]; do
+              if codesign --force --options runtime \
+                --entitlements src/build/osx/entitlements.plist \
+                --sign "$CODESIGN_IDENTITY" "$target" 2>&1; then
+                return 0
+              fi
+
+              if [ $attempt -lt $max_attempts ]; then
+                echo "Codesign attempt $attempt failed for $target, retrying in ${wait_time}s..."
+                sleep $wait_time
+                wait_time=$((wait_time * 2))
+                attempt=$((attempt + 1))
+              else
+                echo "Codesign failed after $max_attempts attempts for $target"
+                return 1
+              fi
+            done
+          }
+
           # 2) Sign frameworks (bundle directories)
           find "$PKGROOT/usr/local/$APP" -type d -name "*.framework" -print0 | \
           while IFS= read -r -d '' fw; do
             echo "Signing framework: $fw"
-            codesign --force --options runtime \
-              --entitlements src/build/osx/entitlements.plist \
-              --sign "$CODESIGN_IDENTITY" "$fw"
+            codesign_with_retry "$fw"
           done
 
           # 3) Sign app bundle executables (Contents/MacOS)
           find "$PKGROOT/usr/local/$APP" -type f -path '*/Contents/MacOS/*' -print0 | \
           while IFS= read -r -d '' f; do
             echo "Signing app binary: $f"
-            codesign --force --options runtime \
-              --entitlements src/build/osx/entitlements.plist \
-              --sign "$CODESIGN_IDENTITY" "$f"
+            codesign_with_retry "$f"
           done
 
           # 4) Sign CLI executables in bin/
@@ -252,9 +274,7 @@ jobs:
             find "$PKGROOT/usr/local/$APP/bin" -type f -perm -111 -print0 | \
             while IFS= read -r -d '' f; do
               echo "Signing CLI: $f"
-              codesign --force --options runtime \
-                --entitlements src/build/osx/entitlements.plist \
-                --sign "$CODESIGN_IDENTITY" "$f"
+              codesign_with_retry "$f"
             done
           fi
 
@@ -262,9 +282,7 @@ jobs:
           find "$PKGROOT/usr/local/$APP" \( -name '*.dylib' -o -name '*.so' \) -not -path '*/.framework/*' -print0 | \
           while IFS= read -r -d '' f; do
             echo "Signing dylib/plugin: $f"
-            codesign --force --options runtime \
-              --entitlements src/build/osx/entitlements.plist \
-              --sign "$CODESIGN_IDENTITY" "$f"
+            codesign_with_retry "$f"
           done
 
           # 6) Verify code signatures once
