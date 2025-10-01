@@ -77,18 +77,20 @@ end
 
 """
     build_global_prec_features(merged_df::AbstractDataFrame, precursors, n_runs::Int;
-                               top_n::Int=5, prob_thresh::Float32=0.95f0) ->
+                               top_n::Int=5, prob_thresh::Float32=0.95f0,
+                               prob_column::Symbol=:prec_prob) ->
                                (Dict{UInt32, GlobalPrecFeatures{top_n}}, Dict{UInt32, Bool})
 
 Build per-precursor feature summaries for global probability model from merged search results.
 Uses single-pass streaming approach with accumulators to minimize memory and avoid groupby.
 
 # Arguments
-- `merged_df`: DataFrame with columns :precursor_idx, :prec_prob
+- `merged_df`: DataFrame with columns :precursor_idx and prob_column
 - `precursors`: Precursor library for target/decoy labels
 - `n_runs`: Total number of MS files in experiment
 - `top_n`: Number of top scores to retain (default 5)
 - `prob_thresh`: Threshold for n_above_thresh count (default 0.95)
+- `prob_column`: Column to use for probability values (default :prec_prob, use :infold_prec_prob to avoid data leakage)
 
 # Returns
 - Dict mapping precursor_idx to GlobalPrecFeatures{top_n}
@@ -99,7 +101,8 @@ function build_global_prec_features(
     precursors,
     n_runs::Int;
     top_n::Int=5,
-    prob_thresh::Float32=0.95f0
+    prob_thresh::Float32=0.95f0,
+    prob_column::Symbol=:prec_prob
 )
     sqrt_n_runs = floor(Int, sqrt(n_runs))
 
@@ -114,7 +117,7 @@ function build_global_prec_features(
     n_rows = nrow(merged_df)
     for row_idx in 1:n_rows
         pid = UInt32(merged_df.precursor_idx[row_idx])
-        prob = Float32(merged_df.prec_prob[row_idx])
+        prob = Float32(merged_df[row_idx, prob_column])
 
         # Get or create accumulator
         if !haskey(accumulators, pid)

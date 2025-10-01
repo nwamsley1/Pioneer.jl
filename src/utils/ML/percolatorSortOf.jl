@@ -194,8 +194,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         end
     end
 
-    prob_test   = zeros(Float32, nrow(psms))  # final CV predictions
+    prob_test   = zeros(Float32, nrow(psms))  # final CV predictions (out-of-fold)
     prob_train  = zeros(Float32, nrow(psms))  # temporary, used during training
+    prob_infold = zeros(Float32, nrow(psms))  # in-fold predictions for global model features
     MBR_estimates = zeros(Float32, nrow(psms)) # optional MBR layer
     nonMBR_estimates  = zeros(Float32, nrow(psms)) # keep track of last nonMBR test scores
 
@@ -301,6 +302,11 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             prob_test[test_idx] = predict(bst, psms_test)
             psms_test[!,:prob] = prob_test[test_idx]
 
+            # Store in-fold predictions on final iteration (for global model features)
+            if itr == iterations_per_fold
+                prob_infold[train_idx] = prob_train[train_idx]
+            end
+
             if itr == (mbr_start_iter - 1)
 			    nonMBR_estimates[test_idx] = prob_test[test_idx]
             end
@@ -339,10 +345,15 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         psms[!, :MBR_transfer_candidate] .= .!pass_mask .&
                                             (psms.MBR_max_pair_prob .>= prob_thresh)
 
-        # Use the final MBR probabilities for all precursors
+        # Use the final MBR probabilities for all precursors (out-of-fold)
         psms[!, :prob] = MBR_estimates
+        # Store in-fold predictions for global model feature building
+        psms[!, :infold_prob] = prob_infold
     else
+        # Use non-MBR probabilities (out-of-fold)
         psms[!, :prob] = prob_test
+        # Store in-fold predictions for global model feature building
+        psms[!, :infold_prob] = prob_infold
     end
     
     # Write concatenated final-iteration training DataFrame if requested

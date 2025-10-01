@@ -149,12 +149,17 @@ Build a minimal feat_df with only columns needed for global target/decoy competi
 
 This lightweight DataFrame is used when global competition is enabled but the
 global probability model is disabled.
+
+Uses infold_prec_prob if available to avoid data leakage in global model features.
 """
 function build_minimal_feat_df(
     merged_df::AbstractDataFrame,
     precursors::LibraryPrecursors,
     sqrt_n_runs::Int
 )
+    # Use infold_prec_prob if available to avoid data leakage, otherwise fall back to prec_prob
+    prob_col = :infold_prec_prob in propertynames(merged_df) ? :infold_prec_prob : :prec_prob
+
     # Group by precursor_idx to calculate per-precursor logodds
     grouped = groupby(merged_df, :precursor_idx)
 
@@ -168,7 +173,7 @@ function build_minimal_feat_df(
         pid = first(group.precursor_idx)
         push!(precursor_ids, pid)
         push!(targets, !is_decoy_array[pid])
-        push!(logodds_baselines, logodds(group.prec_prob, sqrt_n_runs))
+        push!(logodds_baselines, logodds(group[!, prob_col], sqrt_n_runs))
     end
 
     return DataFrame(
@@ -384,6 +389,16 @@ function summarize_results!(
                            Float32(prob)
                        end) => :prec_prob)
 
+            # Aggregate infold_prob if present (for global model features without data leakage)
+            if :infold_prob in propertynames(merged_df)
+                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
+                           :infold_prob => (p -> begin
+                               prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+                               prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                               Float32(prob)
+                           end) => :infold_prec_prob)
+            end
+
             # Apply global-level target/decoy competition first (independent of model)
             surviving_precursors = if params.enable_global_target_decoy_competition
                 @info "Applying global-level target/decoy competition..."
@@ -408,12 +423,15 @@ function summarize_results!(
                 @info "Training global probability model..."
 
                 # Build features using streaming approach on in-memory DataFrame
+                # Use infold_prec_prob if available to avoid data leakage, otherwise fall back to prec_prob
+                prob_col_for_features = :infold_prec_prob in propertynames(merged_df) ? :infold_prec_prob : :prec_prob
                 feature_dict, labels_dict = build_global_prec_features(
                     merged_df,
                     getPrecursors(getSpecLib(search_context)),
                     length(getFilePaths(getMSData(search_context)));
                     top_n=params.global_prob_model_top_n,
-                    prob_thresh=params.global_prob_model_prob_thresh
+                    prob_thresh=params.global_prob_model_prob_thresh,
+                    prob_column=prob_col_for_features
                 )
 
                 # Convert to DataFrame
