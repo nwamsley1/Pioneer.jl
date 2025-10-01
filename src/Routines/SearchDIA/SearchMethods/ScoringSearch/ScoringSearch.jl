@@ -482,7 +482,7 @@ function summarize_results!(
                 if has_min_data
                     # Train model with cross-validation to get out-of-fold predictions
                     @info "Training LightGBM model with $(nrow(feat_df)) precursors..."
-                    model, oof_preds = train_global_prob_model(feat_df, folds)
+                    oof_preds = train_global_prob_model(feat_df, folds)
 
                     # Compare OOF predictions vs baseline using AUC
                     @info "Comparing model vs baseline performance..."

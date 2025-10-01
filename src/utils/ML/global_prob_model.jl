@@ -298,10 +298,10 @@ end
                            num_leaves::Int=8, max_depth::Int=3,
                            feature_fraction::Float64=0.8, bagging_fraction::Float64=0.5,
                            min_data_in_leaf::Int=1, min_gain_to_split::Float64=1.0) ->
-                           (LightGBMModel, Vector{Float32})
+                           Vector{Float32}
 
 Train LightGBM classifier for global precursor probability with CV folds.
-Returns fitted model and out-of-fold predictions for diagnostics.
+Returns out-of-fold predictions without data leakage.
 
 # Arguments
 - `feat_df`: Feature DataFrame with :target column and feature columns
@@ -309,8 +309,7 @@ Returns fitted model and out-of-fold predictions for diagnostics.
 - Hyperparameters matching MBR model from scoring_interface.jl
 
 # Returns
-- Fitted LightGBMModel on all data
-- Vector of out-of-fold predictions (for CV diagnostics)
+- Vector of out-of-fold predictions (one per row in feat_df)
 """
 function train_global_prob_model(
     feat_df::DataFrame,
@@ -366,25 +365,7 @@ function train_global_prob_model(
         oof_preds[test_mask] = lightgbm_predict(model, X_test; output_type=Float32)
     end
 
-    # Train final model on all data
-    lgbm_final = build_lightgbm_classifier(;
-        num_iterations=num_iterations,
-        learning_rate=learning_rate,
-        num_leaves=num_leaves,
-        max_depth=max_depth,
-        feature_fraction=feature_fraction,
-        bagging_fraction=bagging_fraction,
-        bagging_freq=1,
-        min_data_in_leaf=min_data_in_leaf,
-        min_gain_to_split=min_gain_to_split,
-        objective="binary",
-        metric=["binary_logloss", "auc"],
-        verbosity=-1
-    )
-
-    final_model = fit_lightgbm_model(lgbm_final, X, y)
-
-    return final_model, oof_preds
+    return oof_preds
 end
 
 """
