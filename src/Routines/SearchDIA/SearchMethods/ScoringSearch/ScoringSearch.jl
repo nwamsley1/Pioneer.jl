@@ -397,8 +397,9 @@ function summarize_results!(
                                              for (pid, feat) in feature_dict)
                     end
 
-                    # Assign to dataframe
-                    merged_df.global_prob = [global_prob_map[UInt32(pid)]
+                    # Assign to dataframe, using get() to handle precursors filtered by competition
+                    # Precursors not in global_prob_map were filtered out, so use missing
+                    merged_df.global_prob = [get(global_prob_map, UInt32(pid), missing)
                                             for pid in merged_df.precursor_idx]
                 else
                     @info "Insufficient data for model training (need ≥1 target and ≥1 decoy per fold), using baseline logodds"
