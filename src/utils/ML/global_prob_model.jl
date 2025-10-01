@@ -356,8 +356,9 @@ function train_global_prob_model(
     oof_preds = Vector{Float32}(undef, nrow(feat_df))
     fill!(oof_preds, -1.0f0)
 
-    # Track per-fold AUCs
+    # Track per-fold AUCs and feature importances
     fold_aucs = Float32[]
+    all_importances = Dict{Symbol, Vector{Float32}}()
 
     # Cross-validation
     for test_fold in unique_folds
@@ -387,9 +388,25 @@ function train_global_prob_model(
 
         model = fit_lightgbm_model(lgbm, X_train, y_train)
 
+        # Extract feature importances
+        importances = lightgbm_feature_importances(model)
+        if importances !== nothing
+            for (i, feat) in enumerate(feature_cols)
+                if !haskey(all_importances, Symbol(feat))
+                    all_importances[Symbol(feat)] = Float32[]
+                end
+                push!(all_importances[Symbol(feat)], importances[i])
+            end
+        end
+
         # Predict on held-out fold
         fold_preds = lightgbm_predict(model, X_test; output_type=Float32)
         oof_preds[test_mask] = fold_preds
+
+        # Diagnostic: check prediction distribution
+        n_unique_preds = length(unique(fold_preds))
+        pred_range = (minimum(fold_preds), maximum(fold_preds))
+        @info "Fold $test_fold predictions:" n_unique=n_unique_preds range=pred_range
 
         # Calculate per-fold AUC
         fold_auc = calculate_auc(fold_preds, y_test)
@@ -399,6 +416,16 @@ function train_global_prob_model(
 
     # Log overall fold AUC statistics
     @info "Per-fold AUC statistics:" mean=mean(fold_aucs) min=minimum(fold_aucs) max=maximum(fold_aucs)
+
+    # Log feature importances (averaged across folds)
+    if !isempty(all_importances)
+        avg_importances = [(feat, mean(imps)) for (feat, imps) in all_importances]
+        sort!(avg_importances, by=x->x[2], rev=true)
+        @info "Top 10 feature importances (averaged across folds):"
+        for (i, (feat, imp)) in enumerate(avg_importances[1:min(10, length(avg_importances))])
+            @info "  $i. $feat: $(round(imp, digits=2))"
+        end
+    end
 
     return oof_preds
 end
@@ -473,9 +500,12 @@ function compare_global_prob_methods_oof(
     baseline_preds = Vector{Float32}(feat_df.logodds_baseline)
     is_target = Vector{Bool}(feat_df.target)
 
-    # Calculate AUC for both methods
-    model_auc = calculate_auc(oof_preds, is_target)
-    baseline_auc = calculate_auc(baseline_preds, is_target)
+    # Calculate AUC for both methods with verbose diagnostics for model
+    @info "Calculating model AUC with diagnostics..."
+    model_auc = calculate_auc(oof_preds, is_target; verbose=true)
+
+    @info "Calculating baseline AUC..."
+    baseline_auc = calculate_auc(baseline_preds, is_target; verbose=false)
 
     # Choose method with better AUC
     use_model = model_auc >= baseline_auc
@@ -484,14 +514,30 @@ function compare_global_prob_methods_oof(
 end
 
 """
-    calculate_auc(scores::Vector{Float32}, is_target::Vector{Bool})
+    calculate_auc(scores::Vector{Float32}, is_target::Vector{Bool}; verbose::Bool=false)
 
 Calculate ROC AUC using Mann-Whitney U statistic.
 Higher scores should indicate higher probability of being a target.
 """
-function calculate_auc(scores::Vector{Float32}, is_target::Vector{Bool})
+function calculate_auc(scores::Vector{Float32}, is_target::Vector{Bool}; verbose::Bool=false)
     n = length(scores)
     n == length(is_target) || throw(ArgumentError("scores and is_target must have same length"))
+
+    # Diagnostic: score distributions
+    if verbose
+        target_scores = scores[is_target]
+        decoy_scores = scores[.!is_target]
+        @info "Score distributions:" target_range=(minimum(target_scores), maximum(target_scores)) decoy_range=(minimum(decoy_scores), maximum(decoy_scores))
+        @info "Score quantiles (targets):" q25=quantile(target_scores, 0.25) q50=quantile(target_scores, 0.5) q75=quantile(target_scores, 0.75)
+        @info "Score quantiles (decoys):" q25=quantile(decoy_scores, 0.25) q50=quantile(decoy_scores, 0.5) q75=quantile(decoy_scores, 0.75)
+
+        # Check if all targets > all decoys (which would give AUC = 1.0)
+        min_target = minimum(target_scores)
+        max_decoy = maximum(decoy_scores)
+        if min_target > max_decoy
+            @warn "Perfect separation detected: minimum target score ($min_target) > maximum decoy score ($max_decoy)"
+        end
+    end
 
     # Sort by score (descending) and get ranks
     perm = sortperm(scores, rev=true)
@@ -516,6 +562,13 @@ function calculate_auc(scores::Vector{Float32}, is_target::Vector{Bool})
 
     # AUC = U / (n_targets * n_decoys)
     auc = Float32(u / (n_targets * n_decoys))
+
+    if verbose
+        # Count correctly ordered pairs
+        n_correct_pairs = Int(u)
+        n_total_pairs = n_targets * n_decoys
+        @info "Pair ordering:" n_correct=n_correct_pairs n_total=n_total_pairs pct_correct=100*n_correct_pairs/n_total_pairs
+    end
 
     return auc
 end
