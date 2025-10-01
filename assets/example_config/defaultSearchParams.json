@@ -157,7 +157,7 @@
                 "top_n": 5,
                 "prob_thresh": 0.95
             },
-            "enable_target_decoy_competition": true,
+            "enable_target_decoy_competition": false,
             "enable_global_target_decoy_competition": true
         }
     },
