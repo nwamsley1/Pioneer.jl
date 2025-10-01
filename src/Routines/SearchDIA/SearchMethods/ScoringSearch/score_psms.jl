@@ -861,12 +861,16 @@ function apply_target_decoy_competition!(
 
     total_before = 0
     total_after = 0
+    total_targets_removed = 0
+    total_decoys_removed = 0
 
     for file_path in file_paths
         # Step 1: Load file into mutable DataFrame
         # Must use columntable to materialize for modification
         df = DataFrame(Tables.columntable(Arrow.Table(file_path)))
         n_before = nrow(df)
+        n_targets_before = count(df.target)
+        n_decoys_before = n_before - n_targets_before
 
         # Step 2: Map precursor_idx to library pair_id
         df.pair_id = [pair_id_array[pid] for pid in df.precursor_idx]
@@ -909,18 +913,28 @@ function apply_target_decoy_competition!(
         # Step 5: Filter DataFrame
         filtered_df = df[rows_to_keep, :]
 
-        # Step 6: Remove temporary pair_id column
+        # Step 6: Calculate removal statistics
+        n_after = nrow(filtered_df)
+        n_targets_after = count(filtered_df.target)
+        n_decoys_after = n_after - n_targets_after
+
+        targets_removed = n_targets_before - n_targets_after
+        decoys_removed = n_decoys_before - n_decoys_after
+
+        # Step 7: Remove temporary pair_id column
         select!(filtered_df, Not(:pair_id))
 
-        # Step 7: Write back to file
+        # Step 8: Write back to file
         writeArrow(file_path, filtered_df)
 
-        n_after = nrow(filtered_df)
+        # Update totals
         total_before += n_before
         total_after += n_after
+        total_targets_removed += targets_removed
+        total_decoys_removed += decoys_removed
 
-        @debug "Target/decoy competition" file=basename(file_path) before=n_before after=n_after removed=n_before-n_after
+        @info "Target/decoy competition" file=basename(file_path) targets_removed decoys_removed total_removed=targets_removed+decoys_removed before=n_before after=n_after
     end
 
-    @info "Target/decoy competition filtering: $total_before → $total_after PSMs (removed $(total_before - total_after))"
+    @info "Target/decoy competition summary: $total_before → $total_after PSMs | Removed: $total_targets_removed targets, $total_decoys_removed decoys (total: $(total_targets_removed + total_decoys_removed))"
 end
