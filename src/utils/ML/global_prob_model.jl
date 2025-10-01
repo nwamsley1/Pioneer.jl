@@ -346,7 +346,8 @@ function train_global_prob_model(
     end
 
     # Separate features and labels
-    feature_cols = setdiff(names(feat_df), [:precursor_idx, :target])
+    # Note: names() returns Strings, so use String literals not Symbols
+    feature_cols = setdiff(names(feat_df), ["precursor_idx", "target"])
     X = feat_df[!, feature_cols]
     y = feat_df.target
 
@@ -436,7 +437,8 @@ end
 Generate per-precursor probability predictions from trained model.
 """
 function predict_global_prob(model::LightGBMModel, feat_df::DataFrame)
-    feature_cols = setdiff(names(feat_df), [:precursor_idx, :target])
+    # Note: names() returns Strings, so use String literals not Symbols
+    feature_cols = setdiff(names(feat_df), ["precursor_idx", "target"])
     X = feat_df[!, feature_cols]
 
     preds = lightgbm_predict(model, X; output_type=Float32)
@@ -464,7 +466,8 @@ function compare_global_prob_methods(
     feat_df::DataFrame
 )
     # Get model predictions (use same features as training)
-    feature_cols = setdiff(names(feat_df), [:precursor_idx, :target])
+    # Note: names() returns Strings, so use String literals not Symbols
+    feature_cols = setdiff(names(feat_df), ["precursor_idx", "target"])
     X = feat_df[!, feature_cols]
     model_preds = lightgbm_predict(model, X; output_type=Float32)
 
