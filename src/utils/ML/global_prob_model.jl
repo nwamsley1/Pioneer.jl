@@ -28,7 +28,7 @@ end
 
 function PrecursorAccumulator{N}() where N
     PrecursorAccumulator{N}(
-        Series(Mean(), Variance(), Skewness()),
+        Series(Mean(), Variance(), Moments()),
         Float32[],
         Int32(0),
         -Inf32
@@ -44,7 +44,7 @@ Maintains top-N scores using bounded insertion sort.
 """
 function update_accumulator!(acc::PrecursorAccumulator{N}, prob::Float32, prob_thresh::Float32) where N
     # Update streaming statistics
-    fit!(acc.stats, prob)
+    OnlineStats.fit!(acc.stats, prob)
 
     # Track max
     if prob > acc.max_observed
@@ -132,6 +132,9 @@ function build_global_prec_features(
     dict = Dict{UInt32, GlobalPrecFeatures{top_n}}()
     labels = Dict{UInt32, Bool}()
 
+    # Get all is_decoy flags once (returns vector)
+    is_decoy_array = getIsDecoy(precursors)
+
     for (pid, acc) in accumulators
         n_available = nobs(acc.stats[1])  # Observation count from Mean()
 
@@ -145,7 +148,15 @@ function build_global_prec_features(
             # Min not tracked in streaming (would need Extrema() which doesn't support skewness in same Series)
             minp = -1.0f0
             stdp = n_available > 1 ? Float32(sqrt(value(acc.stats[2]))) : -1.0f0
-            skewp = n_available >= 3 ? Float32(value(acc.stats[3])) : -1.0f0
+            skewp = if n_available >= 3
+                try
+                    Float32(skewness(acc.stats[3]))
+                catch
+                    -1.0f0  # Return sentinel if skewness fails (near-zero variance)
+                end
+            else
+                -1.0f0
+            end
         else
             meanp = maxp = minp = stdp = skewp = -1.0f0
         end
@@ -171,8 +182,8 @@ function build_global_prec_features(
             lodds_baseline
         )
 
-        # Get target label from library
-        labels[pid] = getIsDecoy(precursors[pid])
+        # Get target label from library (true=target, false=decoy)
+        labels[pid] = !is_decoy_array[pid]
     end
 
     return dict, labels
@@ -300,7 +311,7 @@ Returns fitted model and out-of-fold predictions for diagnostics.
 """
 function train_global_prob_model(
     feat_df::DataFrame,
-    folds::Vector{Int};
+    folds::Vector{UInt8};
     num_iterations::Int=200,
     learning_rate::Float64=0.15,
     num_leaves::Int=63,
@@ -393,79 +404,71 @@ function predict_global_prob(model::LightGBMModel, feat_df::DataFrame)
 end
 
 """
-    compare_global_prob_methods(model_scores::Dict{UInt32, Float32},
-                               baseline_scores::Dict{UInt32, Float32},
-                               merged_df::AbstractDataFrame,
-                               params,
-                               search_context) ->
-                               (Bool, Int, Int)
+    compare_global_prob_methods(model::LightGBMModel,
+                               feat_df::DataFrame) ->
+                               (Bool, Float32, Float32)
 
-Compare model-based and baseline global probability methods by computing q-values
-and counting passing precursors. Returns (use_model, model_passing, baseline_passing).
-
-Uses existing Pioneer q-value pipeline: assigns scores to :global_prob, writes to
-temporary file, runs stream_sorted_merge + get_precursor_global_qval_spline.
+Compare model-based and baseline global probability methods using ROC AUC.
+Compares model predictions against the logodds_baseline column in feat_df.
+Returns (use_model, model_auc, baseline_auc) where use_model indicates whether
+the ML model achieved better AUC than the baseline method.
 """
 function compare_global_prob_methods(
-    model_scores::Dict{UInt32, Float32},
-    baseline_scores::Dict{UInt32, Float32},
-    merged_df::AbstractDataFrame,
-    params,
-    search_context
+    model::LightGBMModel,
+    feat_df::DataFrame
 )
-    # Use provided in-memory DataFrame
-    temp_dir = mktempdir()
+    # Get model predictions (use same features as training)
+    feature_cols = setdiff(names(feat_df), [:precursor_idx, :target])
+    X = feat_df[!, feature_cols]
+    model_preds = lightgbm_predict(model, X; output_type=Float32)
 
-    try
-        # Test model scores - create copy to avoid modifying original
-        model_df = copy(merged_df)
-        model_df.global_prob = [model_scores[UInt32(pid)] for pid in model_df.precursor_idx]
-        model_path = joinpath(temp_dir, "model_merged.arrow")
-        Arrow.write(model_path, model_df)
+    # Extract baseline scores and target flags
+    baseline_preds = Vector{Float32}(feat_df.logodds_baseline)
+    is_target = Vector{Bool}(feat_df.target)
 
-        # Sort and compute q-values for model
-        model_sorted_path = joinpath(temp_dir, "model_sorted.arrow")
-        model_ref = FileReference(model_path, :arrow)
-        stream_sorted_merge([model_ref], model_sorted_path, :global_prob, :target;
-                          batch_size=10_000_000, reverse=[true, true])
+    # Calculate AUC for both methods
+    model_auc = calculate_auc(model_preds, is_target)
+    baseline_auc = calculate_auc(baseline_preds, is_target)
 
-        model_qval_interp = get_precursor_global_qval_spline(
-            model_sorted_path, params, search_context
-        )
+    # Choose method with better AUC
+    use_model = model_auc >= baseline_auc
 
-        # Count passing precursors for model
-        model_sorted = DataFrame(Arrow.Table(model_sorted_path))
-        model_qvals = [model_qval_interp(p) for p in model_sorted.global_prob]
-        model_passing = count(<=(params.precursor_global_qvalue_threshold), model_qvals)
+    return use_model, model_auc, baseline_auc
+end
 
-        # Test baseline scores - create copy to avoid modifying original
-        baseline_df = copy(merged_df)
-        baseline_df.global_prob = [baseline_scores[UInt32(pid)] for pid in baseline_df.precursor_idx]
-        baseline_path = joinpath(temp_dir, "baseline_merged.arrow")
-        Arrow.write(baseline_path, baseline_df)
+"""
+    calculate_auc(scores::Vector{Float32}, is_target::Vector{Bool})
 
-        # Sort and compute q-values for baseline
-        baseline_sorted_path = joinpath(temp_dir, "baseline_sorted.arrow")
-        baseline_ref = FileReference(baseline_path, :arrow)
-        stream_sorted_merge([baseline_ref], baseline_sorted_path, :global_prob, :target;
-                          batch_size=10_000_000, reverse=[true, true])
+Calculate ROC AUC using Mann-Whitney U statistic.
+Higher scores should indicate higher probability of being a target.
+"""
+function calculate_auc(scores::Vector{Float32}, is_target::Vector{Bool})
+    n = length(scores)
+    n == length(is_target) || throw(ArgumentError("scores and is_target must have same length"))
 
-        baseline_qval_interp = get_precursor_global_qval_spline(
-            baseline_sorted_path, params, search_context
-        )
+    # Sort by score (descending) and get ranks
+    perm = sortperm(scores, rev=true)
+    sorted_is_target = is_target[perm]
 
-        # Count passing precursors for baseline
-        baseline_sorted = DataFrame(Arrow.Table(baseline_sorted_path))
-        baseline_qvals = [baseline_qval_interp(p) for p in baseline_sorted.global_prob]
-        baseline_passing = count(<=(params.precursor_global_qvalue_threshold), baseline_qvals)
+    # Calculate sum of ranks for targets (1-indexed ranks)
+    n_targets = count(sorted_is_target)
+    n_decoys = n - n_targets
 
-        # Choose method with more passing precursors
-        use_model = model_passing >= baseline_passing
+    # Edge cases
+    n_targets == 0 && return 0.0f0
+    n_decoys == 0 && return 1.0f0
 
-        return use_model, model_passing, baseline_passing
+    # Sum of ranks for targets (ranks are 1-indexed)
+    rank_sum = sum(i for (i, is_tgt) in enumerate(sorted_is_target) if is_tgt)
 
-    finally
-        # Clean up temp directory
-        rm(temp_dir; recursive=true, force=true)
-    end
+    # Mann-Whitney U statistic (adjusted for descending sort)
+    # Since we sort descending (high scores first), we need the complement
+    # U = number of (target, decoy) pairs where target score > decoy score
+    u_standard = rank_sum - n_targets * (n_targets + 1) / 2
+    u = n_targets * n_decoys - u_standard
+
+    # AUC = U / (n_targets * n_decoys)
+    auc = Float32(u / (n_targets * n_decoys))
+
+    return auc
 end

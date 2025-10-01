@@ -352,20 +352,19 @@ function summarize_results!(
                     @info "Training LightGBM model with $(nrow(feat_df)) precursors..."
                     model, oof_preds = train_global_prob_model(feat_df, folds)
 
-                    # Generate predictions
-                    model_scores = predict_global_prob(model, feat_df)
-                    baseline_scores = Dict(pid => feat.logodds_baseline
-                                          for (pid, feat) in feature_dict)
-
-                    # Compare methods and select best
+                    # Compare methods and select best based on AUC
                     @info "Comparing model vs baseline performance..."
-                    use_model, model_passing, baseline_passing = compare_global_prob_methods(
-                        model_scores, baseline_scores, merged_df, params, search_context
-                    )
+                    use_model, model_auc, baseline_auc = compare_global_prob_methods(model, feat_df)
 
-                    global_prob_map = use_model ? model_scores : baseline_scores
+                    @info "Global prob method selection" model_auc baseline_auc use_model
 
-                    @info "Global prob method selection" model_passing baseline_passing use_model
+                    # Generate predictions using the selected method
+                    if use_model
+                        global_prob_map = predict_global_prob(model, feat_df)
+                    else
+                        global_prob_map = Dict(pid => feat.logodds_baseline
+                                             for (pid, feat) in feature_dict)
+                    end
 
                     # Assign to dataframe
                     merged_df.global_prob = [global_prob_map[UInt32(pid)]

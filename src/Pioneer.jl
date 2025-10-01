@@ -32,7 +32,8 @@ using JSON, JLD2
 using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, Logging
 using Measures
 using NumericalIntegration
-using OnlineStats
+import OnlineStats
+using OnlineStats: Mean, Variance, Moments, Series, skewness, value, nobs
 using Optim
 using Plots, Polynomials, ProgressBars, Printf
 using Tables
