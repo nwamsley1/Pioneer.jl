@@ -78,6 +78,9 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # MS1 scoring parameter
     ms1_scoring::Bool
 
+    # Target/decoy competition parameter
+    enable_target_decoy_competition::Bool
+
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
         ml_params = params.optimization.machine_learning
@@ -120,7 +123,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Float32(get(get(ml_params, :global_prob_model, Dict()), :prob_thresh, 0.95)),
 
             # MS1 scoring parameter
-            Bool(global_params.ms1_scoring)
+            Bool(global_params.ms1_scoring),
+
+            # Target/decoy competition parameter (default: false)
+            Bool(get(ml_params, :enable_target_decoy_competition, false))
         )
     end
 end
@@ -286,6 +292,18 @@ function summarize_results!(
             )
         end
         #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
+
+        # Apply target/decoy competition filtering if enabled
+        if params.enable_target_decoy_competition
+            @info "Applying target/decoy competition filtering..."
+            competition_time = @elapsed begin
+                apply_target_decoy_competition!(
+                    valid_second_pass_psms,
+                    getPrecursors(getSpecLib(search_context))
+                )
+            end
+            @debug "Target/decoy competition completed in $(round(competition_time, digits=2)) seconds"
+        end
 
         # Create references for second pass PSMs (only valid files)
         second_pass_paths = valid_second_pass_psms

@@ -825,3 +825,102 @@ function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String}
         end
     end
 end
+
+#==========================================================
+Target/Decoy Competition Filtering
+==========================================================#
+
+"""
+    apply_target_decoy_competition!(file_paths::Vector{String},
+                                   precursors::LibraryPrecursors)
+
+Apply target/decoy competition filtering to scored PSM files.
+
+For each file:
+1. Load scored PSMs
+2. Add library pair_id column
+3. Group by (pair_id, isotopes_captured)
+4. Validate group sizes (1 or 2 rows only)
+5. For 2-row groups: keep winner (higher prob), delete loser
+6. Write filtered data back to file
+
+# Arguments
+- `file_paths`: Paths to scored PSM Arrow files
+- `precursors`: Library precursors for pair_id lookup
+
+# Errors
+- Throws if any group has >2 rows
+- Throws if 2-row group doesn't have exactly 1 target and 1 decoy
+"""
+function apply_target_decoy_competition!(
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors
+)
+    # Get library pair_id mapping
+    pair_id_array = getPairIdx(precursors)  # Returns entire :pair_id column
+
+    total_before = 0
+    total_after = 0
+
+    for file_path in file_paths
+        # Step 1: Load file into mutable DataFrame
+        # Must use columntable to materialize for modification
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+        n_before = nrow(df)
+
+        # Step 2: Map precursor_idx to library pair_id
+        df.pair_id = [pair_id_array[pid] for pid in df.precursor_idx]
+
+        # Step 3: Group by (pair_id, isotopes_captured)
+        groups = groupby(df, [:pair_id, :isotopes_captured])
+
+        # Step 4: Process each group
+        rows_to_keep = Bool[]
+        sizehint!(rows_to_keep, nrow(df))
+
+        for group in groups
+            n = nrow(group)
+
+            # Validation
+            if n > 2
+                error("Group (pair_id=$(group.pair_id[1]), isotopes=$(group.isotopes_captured[1])) has $n rows (expected 1 or 2)")
+            end
+
+            if n == 1
+                # No competition - keep the row
+                push!(rows_to_keep, true)
+            else  # n == 2
+                # Validate one target, one decoy
+                targets = group.target
+                if count(targets) != 1
+                    error("Group (pair_id=$(group.pair_id[1]), isotopes=$(group.isotopes_captured[1])) has $(count(targets)) targets (expected exactly 1)")
+                end
+
+                # Find winner (higher prob)
+                probs = group.prob
+                winner_idx = argmax(probs)
+
+                # Mark winner to keep, loser to delete
+                push!(rows_to_keep, 1 == winner_idx)
+                push!(rows_to_keep, 2 == winner_idx)
+            end
+        end
+
+        # Step 5: Filter DataFrame
+        filtered_df = df[rows_to_keep, :]
+
+        # Step 6: Remove temporary pair_id column
+        select!(filtered_df, Not(:pair_id))
+
+        # Step 7: Write back to file
+        writeArrow(file_path, filtered_df)
+
+        n_after = nrow(filtered_df)
+        total_before += n_before
+        total_after += n_after
+
+        @debug "Target/decoy competition" file=basename(file_path) before=n_before after=n_after removed=n_before-n_after
+    end
+
+    @info "Target/decoy competition filtering: $total_before → $total_after PSMs (removed $(total_before - total_after))"
+end
