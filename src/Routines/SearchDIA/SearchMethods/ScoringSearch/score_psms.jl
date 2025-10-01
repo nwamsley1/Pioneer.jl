@@ -979,6 +979,11 @@ function apply_global_target_decoy_competition!(
     # Group by pair_id (no isotopes_captured at global level)
     groups = groupby(feat_df, :pair_id)
 
+    # Track competition outcomes
+    n_competed_pairs = 0
+    n_target_wins = 0
+    n_decoy_wins = 0
+
     for group in groups
         n = nrow(group)
 
@@ -991,6 +996,8 @@ function apply_global_target_decoy_competition!(
             # No competition - keep the row
             group.rows_to_keep[1] = true
         else  # n == 2
+            n_competed_pairs += 1
+
             # Validate one target, one decoy
             targets = group.target
             if count(targets) != 1
@@ -1001,6 +1008,13 @@ function apply_global_target_decoy_competition!(
             scores = group.logodds_baseline
             winner_idx = argmax(scores)
             loser_idx = argmin(scores)
+
+            # Track who won
+            if group.target[winner_idx]
+                n_target_wins += 1
+            else
+                n_decoy_wins += 1
+            end
 
             # Mark winner to keep, loser to delete
             group.rows_to_keep[winner_idx] = true
@@ -1027,7 +1041,9 @@ function apply_global_target_decoy_competition!(
     select!(feat_df, Not(:rows_to_keep))
     filter!(:precursor_idx => pid -> pid in surviving_precursors, feat_df)
 
-    @info "Global target/decoy competition: $n_before → $n_after precursors | Removed: $targets_removed targets, $decoys_removed decoys (total: $(targets_removed + decoys_removed))"
+    @info "Global target/decoy competition summary:" n_before n_after n_competed_pairs
+    @info "  Competition outcomes: $n_target_wins target wins, $n_decoy_wins decoy wins"
+    @info "  Precursors removed: $targets_removed targets, $decoys_removed decoys (total: $(targets_removed + decoys_removed))"
 
     return surviving_precursors
 end
