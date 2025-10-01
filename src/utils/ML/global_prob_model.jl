@@ -294,10 +294,10 @@ end
 
 """
     train_global_prob_model(feat_df::DataFrame, folds::Vector{Int};
-                           num_iterations::Int=200, learning_rate::Float64=0.15,
-                           num_leaves::Int=63, max_depth::Int=10,
-                           feature_fraction::Float64=0.5, bagging_fraction::Float64=0.5,
-                           min_data_in_leaf::Int=1, min_gain_to_split::Float64=0.0) ->
+                           num_iterations::Int=100, learning_rate::Float64=0.1,
+                           num_leaves::Int=8, max_depth::Int=3,
+                           feature_fraction::Float64=0.8, bagging_fraction::Float64=0.5,
+                           min_data_in_leaf::Int=1, min_gain_to_split::Float64=1.0) ->
                            (LightGBMModel, Vector{Float32})
 
 Train LightGBM classifier for global precursor probability with CV folds.
@@ -306,7 +306,7 @@ Returns fitted model and out-of-fold predictions for diagnostics.
 # Arguments
 - `feat_df`: Feature DataFrame with :target column and feature columns
 - `folds`: Vector of fold assignments (one per row in feat_df)
-- Hyperparameters matching MBR scoring defaults
+- Hyperparameters matching MBR model from scoring_interface.jl
 
 # Returns
 - Fitted LightGBMModel on all data
@@ -315,14 +315,14 @@ Returns fitted model and out-of-fold predictions for diagnostics.
 function train_global_prob_model(
     feat_df::DataFrame,
     folds::Vector{UInt8};
-    num_iterations::Int=200,
-    learning_rate::Float64=0.15,
-    num_leaves::Int=63,
-    max_depth::Int=10,
-    feature_fraction::Float64=0.5,
+    num_iterations::Int=100,
+    learning_rate::Float64=0.1,
+    num_leaves::Int=8,
+    max_depth::Int=3,
+    feature_fraction::Float64=0.8,
     bagging_fraction::Float64=0.5,
     min_data_in_leaf::Int=1,
-    min_gain_to_split::Float64=0.0
+    min_gain_to_split::Float64=1.0
 )
     # Separate features and labels
     feature_cols = setdiff(names(feat_df), [:precursor_idx, :target])
