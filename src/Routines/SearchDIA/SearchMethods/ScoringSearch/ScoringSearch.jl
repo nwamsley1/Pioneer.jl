@@ -438,6 +438,7 @@ function summarize_results!(
 
             # Aggregate infold_prob if present (for global model features without data leakage)
             if :infold_prob in propertynames(merged_df)
+                @user_info "Calculating infold_prec_prob for global model features..."
                 transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                            :infold_prob => (p -> begin
                                prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
@@ -453,6 +454,7 @@ function summarize_results!(
                 # Build features using streaming approach on in-memory DataFrame
                 # Use infold_prec_prob if available to avoid data leakage, otherwise fall back to prec_prob
                 prob_col_for_features = :infold_prec_prob in propertynames(merged_df) ? :infold_prec_prob : :prec_prob
+                @user_info "Using probability column '$prob_col_for_features' for global model features"
                 feature_dict, labels_dict = build_global_prec_features(
                     merged_df,
                     getPrecursors(getSpecLib(search_context)),
