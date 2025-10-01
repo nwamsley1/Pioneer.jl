@@ -492,15 +492,16 @@ function summarize_results!(
 
                     # Use out-of-fold predictions from CV (no data leakage!)
                     if use_model
+                        @user_info "Using LightGBM model predictions for global_prob scores"
                         # Use OOF predictions from CV - create lookup dict
                         global_prob_map = Dict(feat_df.precursor_idx[i] => oof_preds[i]
                                              for i in 1:nrow(feat_df))
                         transform!(merged_df, :precursor_idx => ByRow(pid -> global_prob_map[UInt32(pid)]) => :global_prob)
                     else
-                        # Use baseline logodds - create lookup dict
-                        global_prob_map = Dict(pid => feat.logodds_baseline
-                                             for (pid, feat) in feature_dict)
-                        transform!(merged_df, :precursor_idx => ByRow(pid -> global_prob_map[UInt32(pid)]) => :global_prob)
+                        # Baseline not selected - fall back to simple logodds aggregation
+                        @user_info "Using simple logodds aggregation for global_prob scores"
+                        transform!(groupby(merged_df, :precursor_idx),
+                                  :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
                     end
 
                     # Apply global-level target/decoy competition on actual global_prob scores

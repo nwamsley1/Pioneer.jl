@@ -287,7 +287,8 @@ function features_to_dataframe(
     df[!, :n_above_thresh] = n_above_thresh
     df[!, :delta_12] = delta_12
     df[!, :delta_23] = delta_23
-    df[!, :logodds_baseline] = logodds_baseline
+    # Temporarily remove logodds_baseline to test if it's causing overfitting
+    # df[!, :logodds_baseline] = logodds_baseline
 
     return df
 end
@@ -499,21 +500,18 @@ function compare_global_prob_methods_oof(
     oof_preds::Vector{Float32},
     feat_df::DataFrame
 )
-    # Extract baseline scores and target flags
-    baseline_preds = Vector{Float32}(feat_df.logodds_baseline)
+    # Extract target flags
     is_target = Vector{Bool}(feat_df.target)
 
-    # Calculate AUC for both methods with verbose diagnostics for model
+    # Calculate AUC for model with verbose diagnostics
     @info "Calculating model AUC with diagnostics..."
     model_auc = calculate_auc(oof_preds, is_target; verbose=true)
 
-    @info "Calculating baseline AUC..."
-    baseline_auc = calculate_auc(baseline_preds, is_target; verbose=false)
+    # Temporarily removed baseline comparison since logodds_baseline feature is disabled
+    # Just use the model
+    @info "Using model without baseline comparison (logodds_baseline feature temporarily disabled)"
 
-    # Choose method with better AUC
-    use_model = model_auc >= baseline_auc
-
-    return use_model, model_auc, baseline_auc
+    return true, model_auc, 0.0f0  # Always use model, baseline_auc = 0
 end
 
 """
