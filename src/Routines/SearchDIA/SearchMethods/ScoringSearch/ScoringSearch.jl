@@ -491,20 +491,17 @@ function summarize_results!(
                     @info "Global prob method selection" model_auc baseline_auc use_model
 
                     # Use out-of-fold predictions from CV (no data leakage!)
-                    # Create map from OOF predictions or baseline
                     if use_model
-                        # Use OOF predictions from CV
+                        # Use OOF predictions from CV - create lookup dict
                         global_prob_map = Dict(feat_df.precursor_idx[i] => oof_preds[i]
                                              for i in 1:nrow(feat_df))
+                        transform!(merged_df, :precursor_idx => ByRow(pid -> global_prob_map[UInt32(pid)]) => :global_prob)
                     else
-                        # Use baseline logodds
+                        # Use baseline logodds - create lookup dict
                         global_prob_map = Dict(pid => feat.logodds_baseline
                                              for (pid, feat) in feature_dict)
+                        transform!(merged_df, :precursor_idx => ByRow(pid -> global_prob_map[UInt32(pid)]) => :global_prob)
                     end
-
-                    # Assign to dataframe
-                    merged_df.global_prob = [global_prob_map[UInt32(pid)]
-                                            for pid in merged_df.precursor_idx]
 
                     # Apply global-level target/decoy competition on actual global_prob scores
                     surviving_precursors = if params.enable_global_target_decoy_competition
