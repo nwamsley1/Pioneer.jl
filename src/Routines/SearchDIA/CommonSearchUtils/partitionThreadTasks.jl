@@ -346,7 +346,6 @@ function partition_scans_batched(
     rt_to_irt_spline;
     irt_bin_width::Float32 = 0.1f0
 )
-    @user_info "irt_bin_width = $irt_bin_width"
     # Collect MS2 scans
     scan_indices = collect_ms2_scans(spectra)
 
@@ -387,41 +386,5 @@ function partition_scans_batched(
           by = x -> (round_float32_alt(getCenterMz(spectra, x), 0),
                     scan_to_irt[x]))
 
-    # Partition into batches
-    batches = partition_into_batches(scan_indices, batch_size)
-
-    # Debug output: Write batch assignments to Arrow table on desktop
-    try
-        # Build debug table
-        debug_scan_idx = Int[]
-        debug_center_mz = Float32[]
-        debug_rt = Float32[]
-        debug_irt = Float32[]
-        debug_batch_id = Int[]
-
-        for (batch_id, batch_scans) in enumerate(batches)
-            for scan_idx in batch_scans
-                push!(debug_scan_idx, scan_idx)
-                push!(debug_center_mz, getCenterMz(spectra, scan_idx))
-                push!(debug_rt, getRetentionTime(spectra, scan_idx))
-                push!(debug_irt, scan_to_irt[scan_idx])
-                push!(debug_batch_id, batch_id)
-            end
-        end
-
-        # Write to desktop
-        desktop_path = joinpath(homedir(), "Desktop", "batch_assignments.arrow")
-        Arrow.write(desktop_path,
-            (scan_idx=debug_scan_idx,
-             centerMz=debug_center_mz,
-             retentionTime=debug_rt,
-             iRT=debug_irt,
-             batch_id=debug_batch_id))
-
-        @user_info "Wrote batch assignments to $desktop_path"
-    catch e
-        @warn "Failed to write batch debug output: $e"
-    end
-
-    return batches
+    return partition_into_batches(scan_indices, batch_size)
 end
