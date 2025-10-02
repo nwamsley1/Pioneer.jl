@@ -151,10 +151,11 @@ function perform_second_pass_search_batched(
     params::SecondPassSearchParameters,
     ms_file_idx::Int64,
     ::MS2CHROM;
-    batch_size::Int = 100
+    batch_size::Int = 100,
+    irt_bin_width::Float32 = 0.1f0
 )
     # Create batches (sorted by m/z and iRT for cache locality)
-    scan_batches = partition_scans_batched(spectra, batch_size, getRtIrtModel(search_context, ms_file_idx))
+    scan_batches = partition_scans_batched(spectra, batch_size, getRtIrtModel(search_context, ms_file_idx); irt_bin_width=irt_bin_width)
 
     @user_info "Processing $(sum(length.(scan_batches))) MS2 scans in $(length(scan_batches)) batches " *
                "of ~$(batch_size) scans each with $(Threads.nthreads()) threads"

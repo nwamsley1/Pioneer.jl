@@ -239,7 +239,7 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
                 )...)
 end
 
-function library_search_batched(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64; batch_size::Int = 100) where {P<:ParameterTuningSearchParameters}
+function library_search_batched(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64; batch_size::Int = 100, irt_bin_width::Float32 = 0.1f0) where {P<:ParameterTuningSearchParameters}
     return vcat(LibrarySearch_batched(
                     spectra,
                     UInt32(ms_file_idx),
@@ -251,11 +251,12 @@ function library_search_batched(spectra::MassSpecData, search_context::SearchCon
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
                     getIRTTol(search_parameters);
-                    batch_size=batch_size
+                    batch_size=batch_size,
+                    irt_bin_width=irt_bin_width
                 )...)
 end
 
-function library_search_batched(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64; batch_size::Int = 100) where {P<:SearchParameters}
+function library_search_batched(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64; batch_size::Int = 100, irt_bin_width::Float32 = 0.1f0) where {P<:SearchParameters}
 
     return vcat(LibrarySearch_batched(
                     spectra,
@@ -268,7 +269,8 @@ function library_search_batched(spectra::MassSpecData, search_context::SearchCon
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
                     getIrtErrors(search_context)[ms_file_idx];
-                    batch_size=batch_size
+                    batch_size=batch_size,
+                    irt_bin_width=irt_bin_width
                 )...)
 end
 
@@ -365,14 +367,15 @@ function LibrarySearch_batched(
     rt_to_irt_spline::Any,
     params::P,
     irt_tol::AbstractFloat;
-    batch_size::Int = 100) where {
+    batch_size::Int = 100,
+    irt_bin_width::Float32 = 0.1f0) where {
         M<:MassErrorModel,
         Q<:QuadTransmissionModel,
         S<:SearchDataStructures,
         P<:FragmentIndexSearchParameters}
 
     # Create batches with cache locality using iRT binning
-    scan_batches = partition_scans_batched(spectra, batch_size, rt_to_irt_spline)
+    scan_batches = partition_scans_batched(spectra, batch_size, rt_to_irt_spline; irt_bin_width=irt_bin_width)
 
     if isempty(scan_batches)
         @user_warn "No MS2 scans found for batched library search"

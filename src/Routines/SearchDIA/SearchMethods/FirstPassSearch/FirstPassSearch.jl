@@ -121,6 +121,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
 
     # Batching parameters
     batch_size::Int
+    irt_bin_width::Float32
 
     function FirstPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -175,8 +176,9 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Float32(irt_mapping_params.irt_nstd),   # Default irt_nstd
             prec_estimation,
 
-            # Batching parameters - default to 100 if not specified
-            Int(get(first_params, :batching, (batch_size=100,)).batch_size)
+            # Batching parameters - defaults if not specified
+            Int(get(first_params, :batching, (batch_size=100, irt_bin_width=0.1)).batch_size),
+            Float32(get(first_params, :batching, (batch_size=100, irt_bin_width=0.1)).irt_bin_width)
         )
     end
 end
@@ -239,7 +241,8 @@ function process_file!(
         )
 
         return library_search_batched(spectra, search_context, params, ms_file_idx;
-                                      batch_size=params.batch_size)
+                                      batch_size=params.batch_size,
+                                      irt_bin_width=params.irt_bin_width)
     end
 
     """
