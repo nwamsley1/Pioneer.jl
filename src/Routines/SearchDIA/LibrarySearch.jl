@@ -381,9 +381,7 @@ function LibrarySearch_batched(
         @user_warn "No MS2 scans found for batched library search"
         return DataFrame[]
     end
-
-    @user_info "Processing $(sum(length.(scan_batches))) MS2 scans in $(length(scan_batches)) batches of ~$batch_size scans each with $(Threads.nthreads()) threads"
-
+    
     # Create work queue
     work_queue = Channel{Tuple{Int, Vector{Int}}}(length(scan_batches))
     for (batch_id, batch_scans) in enumerate(scan_batches)

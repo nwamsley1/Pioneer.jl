@@ -156,10 +156,7 @@ function perform_second_pass_search_batched(
 )
     # Create batches (sorted by m/z and iRT for cache locality)
     scan_batches = partition_scans_batched(spectra, batch_size, getRtIrtModel(search_context, ms_file_idx); irt_bin_width=irt_bin_width)
-
-    @user_info "Processing $(sum(length.(scan_batches))) MS2 scans in $(length(scan_batches)) batches " *
-               "of ~$(batch_size) scans each with $(Threads.nthreads()) threads"
-
+    
     # Create thread-safe work queue
     work_queue = Channel{Tuple{Int, Vector{Int}}}(length(scan_batches))
 
