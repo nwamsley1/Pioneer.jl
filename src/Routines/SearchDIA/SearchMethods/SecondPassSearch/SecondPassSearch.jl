@@ -102,6 +102,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     # Collect MS1 data?
     ms1_scoring::Bool
 
+    # Batching parameters
+    batch_size::Int
+
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -179,7 +182,10 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             isotope_trace_type,
             prec_estimation,
 
-            ms1_scoring
+            ms1_scoring,
+
+            # Batching parameters - default to 100 if not specified
+            Int(get(quant_params, :batching, (batch_size=100,)).batch_size)
         )
     end
 end
@@ -232,13 +238,14 @@ function process_file!(
             bin_rt_size = 0.1)
 
         # Perform second pass search
-        psms = perform_second_pass_search(
+        psms = perform_second_pass_search_batched(
             spectra,
             rt_index,
             search_context,
             params,
             ms_file_idx,
-            MS2CHROM()
+            MS2CHROM();
+            batch_size=params.batch_size
         )
         if params.ms1_scoring
             precursors_passing = unique(psms[!,:precursor_idx])

@@ -239,6 +239,39 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
                 )...)
 end
 
+function library_search_batched(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64; batch_size::Int = 100) where {P<:ParameterTuningSearchParameters}
+    return vcat(LibrarySearch_batched(
+                    spectra,
+                    UInt32(ms_file_idx),
+                    getPresearchFragmentIndex(getSpecLib(search_context)),
+                    getSpecLib(search_context),
+                    getSearchData(search_context),
+                    getQuadTransmissionModel(search_context, ms_file_idx),
+                    getMassErrorModel(search_context, ms_file_idx),
+                    getRtIrtModel(search_context, ms_file_idx),
+                    search_parameters,
+                    getIRTTol(search_parameters);
+                    batch_size=batch_size
+                )...)
+end
+
+function library_search_batched(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64; batch_size::Int = 100) where {P<:SearchParameters}
+
+    return vcat(LibrarySearch_batched(
+                    spectra,
+                    UInt32(ms_file_idx),
+                    getFragmentIndex(getSpecLib(search_context)),
+                    getSpecLib(search_context),
+                    getSearchData(search_context),
+                    getQuadTransmissionModel(search_context, ms_file_idx),
+                    getMassErrorModel(search_context, ms_file_idx),
+                    getRtIrtModel(search_context, ms_file_idx),
+                    search_parameters,
+                    getIrtErrors(search_context)[ms_file_idx];
+                    batch_size=batch_size
+                )...)
+end
+
 function library_search(
     spectra::MassSpecData,
     search_context::SearchContext,
@@ -319,6 +352,149 @@ function LibrarySearch(
     end
 
     return fetch.(tasks)
+end
+
+function LibrarySearch_batched(
+    spectra::MassSpecData,
+    ms_file_idx::UInt32,
+    fragment_index::FragmentIndex{Float32},
+    spec_lib::SpectralLibrary,
+    search_data::AbstractVector{S},
+    qtm::Q,
+    mem::M,
+    rt_to_irt_spline::Any,
+    params::P,
+    irt_tol::AbstractFloat;
+    batch_size::Int = 100) where {
+        M<:MassErrorModel,
+        Q<:QuadTransmissionModel,
+        S<:SearchDataStructures,
+        P<:FragmentIndexSearchParameters}
+
+    # Create batches with cache locality using iRT binning
+    scan_batches = partition_scans_batched(spectra, batch_size, rt_to_irt_spline)
+
+    if isempty(scan_batches)
+        @user_warn "No MS2 scans found for batched library search"
+        return DataFrame[]
+    end
+
+    @user_info "Processing $(sum(length.(scan_batches))) MS2 scans in $(length(scan_batches)) batches of ~$batch_size scans each with $(Threads.nthreads()) threads"
+
+    # Create work queue
+    work_queue = Channel{Tuple{Int, Vector{Int}}}(length(scan_batches))
+    for (batch_id, batch_scans) in enumerate(scan_batches)
+        put!(work_queue, (batch_id, batch_scans))
+    end
+    close(work_queue)
+
+    # Shared data structures
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    results_lock = ReentrantLock()
+    precursors_passed_scoring_dict = Dict{Int, Vector{UInt32}}()
+
+    # Per-thread statistics
+    thread_stats = [(batches=Threads.Atomic{Int}(0), scans=Threads.Atomic{Int}(0))
+                    for _ in 1:Threads.nthreads()]
+
+    # Phase 1: Fragment index search
+    @sync begin
+        for thread_idx in 1:Threads.nthreads()
+            Threads.@spawn begin
+                search_data_local = search_data[thread_idx]
+
+                for (batch_id, batch_scans) in work_queue
+                    precs_passed = searchFragmentIndex(
+                        scan_to_prec_idx,
+                        fragment_index,
+                        spectra,
+                        batch_scans,
+                        search_data_local,
+                        params,
+                        qtm,
+                        mem,
+                        rt_to_irt_spline,
+                        irt_tol
+                    )
+
+                    lock(results_lock) do
+                        precursors_passed_scoring_dict[batch_id] = precs_passed
+                    end
+
+                    # Update statistics
+                    Threads.atomic_add!(thread_stats[thread_idx].batches, 1)
+                    Threads.atomic_add!(thread_stats[thread_idx].scans, length(batch_scans))
+                end
+            end
+        end
+    end
+
+    # Reconstruct precursors_passed_scoring in batch order
+    precursors_passed_scoring = [precursors_passed_scoring_dict[i] for i in 1:length(scan_batches)]
+
+    # Recreate work queue for phase 2
+    work_queue = Channel{Tuple{Int, Vector{Int}}}(length(scan_batches))
+    for (batch_id, batch_scans) in enumerate(scan_batches)
+        put!(work_queue, (batch_id, batch_scans))
+    end
+    close(work_queue)
+
+    # Reset statistics
+    for stats in thread_stats
+        stats.batches[] = 0
+        stats.scans[] = 0
+    end
+
+    psm_results = DataFrame[]
+
+    # Phase 2: Get PSMs
+    @sync begin
+        for thread_idx in 1:Threads.nthreads()
+            Threads.@spawn begin
+                search_data_local = search_data[thread_idx]
+
+                for (batch_id, batch_scans) in work_queue
+                    batch_psms = getPSMS(
+                        ms_file_idx,
+                        spectra,
+                        batch_scans,
+                        getPrecursors(spec_lib),
+                        getFragmentLookupTable(spec_lib),
+                        scan_to_prec_idx,
+                        precursors_passed_scoring[batch_id],
+                        search_data_local,
+                        params,
+                        qtm,
+                        mem,
+                        rt_to_irt_spline,
+                        irt_tol
+                    )
+
+                    lock(results_lock) do
+                        push!(psm_results, batch_psms)
+                    end
+
+                    # Update statistics
+                    Threads.atomic_add!(thread_stats[thread_idx].batches, 1)
+                    Threads.atomic_add!(thread_stats[thread_idx].scans, length(batch_scans))
+                end
+            end
+        end
+    end
+
+    # Report statistics (commented out for production)
+    #@user_info "Batched processing statistics (Phase 2 - PSMs):"
+    #for (tid, stats) in enumerate(thread_stats)
+    #    @user_info "  Thread $(tid): $(stats.batches[]) batches, $(stats.scans[]) scans"
+    #end
+
+    batch_counts = [stats.batches[] for stats in thread_stats]
+    min_batches = minimum(batch_counts)
+    max_batches = maximum(batch_counts)
+    imbalance = max_batches / max(min_batches, 1)
+    #@user_info "  Load balance: $(min_batches)-$(max_batches) batches/thread ($(round(imbalance, digits=2))x imbalance)"
+
+    return psm_results
 end
 
 function LibrarySearchNceTuning(

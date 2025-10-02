@@ -119,6 +119,9 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     irt_nstd::Float32
     prec_estimation::P
 
+    # Batching parameters
+    batch_size::Int
+
     function FirstPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -170,7 +173,10 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Float32(irt_mapping_params.max_prob_to_impute_irt),  # Default max_prob_to_impute
             Float32(irt_mapping_params.fwhm_nstd),   # Default fwhm_nstd
             Float32(irt_mapping_params.irt_nstd),   # Default irt_nstd
-            prec_estimation
+            prec_estimation,
+
+            # Batching parameters - default to 100 if not specified
+            Int(get(first_params, :batching, (batch_size=100,)).batch_size)
         )
     end
 end
@@ -228,11 +234,12 @@ function process_file!(
         params::FirstPassSearchParameters,
         ms_file_idx::Int64)
         setNceModel!(
-            getFragmentLookupTable(getSpecLib(search_context)), 
+            getFragmentLookupTable(getSpecLib(search_context)),
             getNceModelModel(search_context, ms_file_idx)
         )
-        
-        return library_search(spectra, search_context, params, ms_file_idx)
+
+        return library_search_batched(spectra, search_context, params, ms_file_idx;
+                                      batch_size=params.batch_size)
     end
 
     """

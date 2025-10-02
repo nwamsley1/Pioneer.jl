@@ -125,6 +125,115 @@ function perform_second_pass_search(
     return vcat(results...)
 end
 
+#==========================================================
+Batched Dynamic Work Distribution
+==========================================================#
+
+"""
+    perform_second_pass_search_batched(spectra, rt_index, search_context, params,
+                                       ms_file_idx, ::MS2CHROM; batch_size=100)
+
+Dynamic work distribution version of second pass search for MS2.
+Partitions scans into batches and distributes them dynamically to threads.
+Faster threads process more batches, eliminating idle time.
+
+# Arguments
+- Standard second pass search arguments
+- `batch_size`: Number of scans per batch (default: 100)
+
+# Returns
+Combined DataFrame of all PSMs across all batches
+"""
+function perform_second_pass_search_batched(
+    spectra::MassSpecData,
+    rt_index::retentionTimeIndex,
+    search_context::SearchContext,
+    params::SecondPassSearchParameters,
+    ms_file_idx::Int64,
+    ::MS2CHROM;
+    batch_size::Int = 100
+)
+    # Create batches (sorted by m/z and iRT for cache locality)
+    scan_batches = partition_scans_batched(spectra, batch_size, getRtIrtModel(search_context, ms_file_idx))
+
+    @user_info "Processing $(sum(length.(scan_batches))) MS2 scans in $(length(scan_batches)) batches " *
+               "of ~$(batch_size) scans each with $(Threads.nthreads()) threads"
+
+    # Create thread-safe work queue
+    work_queue = Channel{Tuple{Int, Vector{Int}}}(length(scan_batches))
+
+    # Enqueue all batches
+    for (batch_id, batch_scans) in enumerate(scan_batches)
+        put!(work_queue, (batch_id, batch_scans))
+    end
+    close(work_queue)  # Signal no more work will be added
+
+    # Thread-safe result collection
+    results_lock = ReentrantLock()
+    results = DataFrame[]
+
+    # Per-thread statistics for monitoring
+    thread_stats = [(batches=Threads.Atomic{Int}(0), scans=Threads.Atomic{Int}(0))
+                    for _ in 1:Threads.nthreads()]
+
+    # Process batches dynamically
+    @sync begin
+        for thread_idx in 1:Threads.nthreads()
+            Threads.@spawn begin
+                # Use loop index for safe search_data access
+                # This ensures thread_idx ∈ [1, nthreads] and is unique per task
+                search_data = getSearchData(search_context)[thread_idx]
+
+                # Process batches from queue until empty
+                for (batch_id, batch_scans) in work_queue
+                    batch_result = try
+                        process_scans!(
+                            batch_scans,
+                            spectra,
+                            rt_index,
+                            search_context,
+                            search_data,
+                            params,
+                            ms_file_idx,
+                            MS2CHROM()
+                        )
+                    catch e
+                        bt = catch_backtrace()
+                        @user_error "Batch $(batch_id) failed on task $(thread_idx) (MS2CHROM)"
+                        @user_error sprint(showerror, e, bt)
+                        rethrow(e)
+                    end
+
+                    lock(results_lock) do
+                        push!(results, batch_result)
+                    end
+
+                    # Update statistics
+                    Threads.atomic_add!(thread_stats[thread_idx].batches, 1)
+                    Threads.atomic_add!(thread_stats[thread_idx].scans, length(batch_scans))
+                end
+            end
+        end
+    end
+
+    # Report work distribution (commented out for production)
+    #@user_info "Batched processing statistics:"
+    #for (tid, stats) in enumerate(thread_stats)
+    #    @user_info "  Thread $(tid): $(stats.batches[]) batches, $(stats.scans[]) scans"
+    #end
+
+    # Calculate load balance
+    batch_counts = [stats.batches[] for stats in thread_stats]
+    min_batches = minimum(batch_counts)
+    max_batches = maximum(batch_counts)
+    imbalance = max_batches / max(min_batches, 1)  # Avoid div by zero
+    #@user_info "  Load balance: $(min_batches)-$(max_batches) batches/thread " *
+    #           "($(round(imbalance, digits=2))x imbalance)"
+
+    # Combine all batch results
+    return vcat(results...)
+end
+
 """
     process_scans!(scan_range::Vector{Int64}, spectra::MassSpecData,
                   rt_index::retentionTimeIndex, search_context::SearchContext,
