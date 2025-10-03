@@ -333,7 +333,7 @@ jobs:
           # Show available identities in the imported keychain (diagnostic)
           security find-identity -v -p codesigning ~/Library/Keychains/signing_temp.keychain-db || true
 
-          productsign -v \
+          productsign \
             --keychain ~/Library/Keychains/signing_temp.keychain-db \
             --sign "$PKG_SIGN_IDENTITY" \
             PioneerUnsigned.pkg \
