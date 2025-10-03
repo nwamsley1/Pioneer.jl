@@ -285,8 +285,40 @@ jobs:
             codesign_with_retry "$f"
           done
 
-          # 6) Verify code signatures once
-          codesign --verify --deep --strict --verbose=2 "$PKGROOT/usr/local/$APP"
+          # 6) Verify code signatures on actual code objects (not plain directories)
+          echo "Verifying signed frameworks…"
+          find "$PKGROOT/usr/local/$APP" -type d -name "*.framework" -print0 | \
+          while IFS= read -r -d '' fw; do
+            echo "Verify framework: $fw"
+            codesign --verify --strict --verbose=2 "$fw"
+          done
+
+          echo "Verifying app bundle executables…"
+          find "$PKGROOT/usr/local/$APP" -type f -path '*/Contents/MacOS/*' -print0 | \
+          while IFS= read -r -d '' f; do
+            echo "Verify app binary: $f"
+            codesign --verify --strict --verbose=2 "$f"
+          done
+
+          echo "Verifying CLI Mach-O executables…"
+          if [ -d "$PKGROOT/usr/local/$APP/bin" ]; then
+            find "$PKGROOT/usr/local/$APP/bin" -type f -perm -111 -print0 | \
+            while IFS= read -r -d '' f; do
+              if file -b "$f" | grep -q 'Mach-O'; then
+                echo "Verify CLI: $f"
+                codesign --verify --strict --verbose=2 "$f"
+              fi
+            done
+          fi
+
+          echo "Verifying Mach-O dylibs/plugins…"
+          find "$PKGROOT/usr/local/$APP" \( -name '*.dylib' -o -name '*.so' \) -not -path '*/.framework/*' -print0 | \
+          while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              echo "Verify dylib/plugin: $f"
+              codesign --verify --strict --verbose=2 "$f"
+            fi
+          done
 
           mkdir -p "$PKGROOT/usr/local/bin"
           ln -sf /usr/local/Pioneer/pioneer "$PKGROOT/usr/local/bin/pioneer"
@@ -342,6 +374,13 @@ jobs:
         run: |
           cd build/Pioneer_${{ matrix.identifier }}/Applications
           zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
+
+      - name: Validate signed pkg (release tags only)
+        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          PKG="Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg"
+          echo "Validating pkg with spctl: $PKG"
+          spctl -a -vv -t install "$PKG"
 
       - name: Upload zipped binaries
         uses: actions/upload-artifact@v4
