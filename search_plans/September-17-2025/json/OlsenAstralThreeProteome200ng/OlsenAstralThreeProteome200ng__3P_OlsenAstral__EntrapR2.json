@@ -1,0 +1,37 @@
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
