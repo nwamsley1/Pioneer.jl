@@ -754,14 +754,22 @@ function fit_mass_err_model(
         (length(l_errs)/sum(l_errs))
         ))
         , 1 - frag_err_quantile)
-    catch e 
+    catch e
         @debug_l1 "length(r_errs) $(length(r_errs)) length(l_errs) $(length(l_errs)) sum(r_errs) $(sum(r_errs)) sum(l_errs) $(sum(l_errs))"
         return MassErrorModel(
             zero(Float32),
             (zero(Float32), zero(Float32))
         ), ppm_errs
     end
-    
+
+    # Calculate what proportion of empirical errors exceed the fitted bounds
+    n_right_exceed = sum(r_errs .> r_bound)
+    n_left_exceed = sum(l_errs .> l_bound)
+    pct_right_exceed = length(r_errs) > 0 ? 100.0 * n_right_exceed / length(r_errs) : 0.0
+    pct_left_exceed = length(l_errs) > 0 ? 100.0 * n_left_exceed / length(l_errs) : 0.0
+
+    @user_info "Mass error fit: offset=$(round(mass_err, digits=2)) ppm, bounds=(-$(round(l_bound, digits=2)), +$(round(r_bound, digits=2))) ppm | Empirical exceedance: left=$(round(pct_left_exceed, digits=1))% ($(n_left_exceed)/$(length(l_errs))), right=$(round(pct_right_exceed, digits=1))% ($(n_right_exceed)/$(length(r_errs))) | Target quantile=$(round(100*frag_err_quantile, digits=1))%"
+
     return MassErrorModel(
         Float32(mass_err),
         (Float32(abs(l_bound)), Float32(abs(r_bound)))
