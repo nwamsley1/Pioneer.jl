@@ -1364,7 +1364,7 @@ function test_tolerance_expansion!(
     setMassErrorModel!(search_context, ms_file_idx, expanded_model)
     
     # Collect PSMs with expanded tolerance
-    expanded_psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
+    expanded_psms, _ = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
     expanded_psm_count = size(expanded_psms, 1)
     
     # Calculate improvement
