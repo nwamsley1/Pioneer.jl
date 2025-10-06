@@ -104,32 +104,32 @@ end
     IterationSettings
 
 Configuration for iteration behavior in parameter tuning.
-Controls initial mass tolerance, how it scales, and iterations per phase.
+Specifies explicit mass tolerances for each iteration.
 Always uses 3 phases: zero bias, positive shift, negative shift.
 """
 struct IterationSettings
-    init_mass_tol_ppm::Float32               # Initial mass tolerance (moved from fragment_settings)
+    mass_tol_per_iteration::Vector{Float32} # Mass tolerance for each iteration [30.0, 45.0, 67.5]
     ms1_tol_ppm::Float32                     # MS1 precursor tolerance
-    mass_tolerance_scale_factor::Float32     # Factor to scale tolerance each iteration
-    iterations_per_phase::Int64              # Iterations before phase reset
     scan_scale_factor::Float32               # Factor to scale scan count between attempts
-    
+
     function IterationSettings(
-        init_tol::Float32,
+        mass_tol_per_iter::Vector{Float32},
         ms1_tol::Float32,
-        mass_scale_factor::Float32,
-        iterations_per_phase::Int64,
         scan_scale_factor::Float32
     )
-        @assert init_tol > 0.0f0 "Initial tolerance must be positive"
+        @assert !isempty(mass_tol_per_iter) "Must specify at least one mass tolerance"
+        @assert all(tol -> tol > 0.0f0, mass_tol_per_iter) "All mass tolerances must be positive"
         @assert ms1_tol > 0.0f0 "MS1 tolerance must be positive"
-        @assert mass_scale_factor > 1.0f0 "Mass scale factor must be greater than 1"
-        @assert iterations_per_phase > 0 "Iterations per phase must be positive"
-        @assert scan_scale_factor >= 1.0f0 "Scan scale factor must be greater than 1"
+        @assert scan_scale_factor >= 1.0f0 "Scan scale factor must be >= 1"
 
-        new(init_tol, ms1_tol, mass_scale_factor, iterations_per_phase, scan_scale_factor)
+        new(mass_tol_per_iter, ms1_tol, scan_scale_factor)
     end
 end
+
+# Convenience getters for IterationSettings
+getIterationsPerPhase(settings::IterationSettings) = length(settings.mass_tol_per_iteration)
+getMassToleranceForIteration(settings::IterationSettings, iter::Int) = settings.mass_tol_per_iteration[iter]
+getInitMassTolPpm(settings::IterationSettings) = first(settings.mass_tol_per_iteration)
 
 """
     IterationState
@@ -269,11 +269,24 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
         # Extract iteration settings (all fields required)
         @assert hasproperty(tuning_params, :iteration_settings) "iteration_settings is required"
         iter = tuning_params.iteration_settings
+
+        # Handle init_mass_tol_ppm as either vector or scalar (with optional scaling)
+        mass_tol_per_iteration = if hasproperty(iter, :init_mass_tol_ppm) && iter.init_mass_tol_ppm isa Vector
+            # New format: explicit vector of tolerances
+            Vector{Float32}(iter.init_mass_tol_ppm)
+        elseif hasproperty(iter, :init_mass_tol_ppm) && hasproperty(iter, :mass_tolerance_scale_factor) && hasproperty(iter, :iterations_per_phase)
+            # Legacy format: calculate from init_tol, scale_factor, and iterations
+            init_tol = Float32(iter.init_mass_tol_ppm)
+            scale = Float32(iter.mass_tolerance_scale_factor)
+            n_iters = Int64(iter.iterations_per_phase)
+            Float32[init_tol * (scale ^ (i-1)) for i in 1:n_iters]
+        else
+            error("iteration_settings must have either: (1) init_mass_tol_ppm as vector, or (2) init_mass_tol_ppm + mass_tolerance_scale_factor + iterations_per_phase")
+        end
+
         iteration_settings = IterationSettings(
-            Float32(iter.init_mass_tol_ppm),
+            mass_tol_per_iteration,
             Float32(iter.ms1_tol_ppm),
-            Float32(iter.mass_tolerance_scale_factor),
-            Int64(iter.iterations_per_phase),
             Float32(iter.scan_scale_factor)
         )
         
@@ -331,11 +344,9 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
 end
 
 # Accessor functions for ParameterTuningSearchParameters
-# Calculate max tolerance dynamically based on iteration settings
+# Get max tolerance from the tolerance vector (last iteration has highest tolerance)
 function getMaxTolerancePpm(params::ParameterTuningSearchParameters)
-    settings = params.iteration_settings
-    # Max tolerance is reached at the end of a phase
-    return settings.init_mass_tol_ppm * (settings.mass_tolerance_scale_factor ^ settings.iterations_per_phase)
+    return maximum(params.iteration_settings.mass_tol_per_iteration)
 end
 getInitialScanCount(params::ParameterTuningSearchParameters) = params.initial_scan_count
 getMaxParameterTuningScans(params::ParameterTuningSearchParameters) = params.max_parameter_tuning_scans
@@ -344,7 +355,8 @@ getMaxFragsForMassErrEstimation(params::ParameterTuningSearchParameters) = param
 getIntensityFilterQuantile(params::ParameterTuningSearchParameters) = params.intensity_filter_quantile
 getIterationSettings(params::ParameterTuningSearchParameters) = params.iteration_settings
 # Get initial mass tolerance from iteration settings
-getFragTolPpm(params::ParameterTuningSearchParameters) = params.iteration_settings.init_mass_tol_ppm
+# Get initial fragment tolerance (first iteration tolerance)
+getFragTolPpm(params::ParameterTuningSearchParameters) = getInitMassTolPpm(params.iteration_settings)
 getMs1TolPpm(params::ParameterTuningSearchParameters) = params.iteration_settings.ms1_tol_ppm
 
 # Override getMaxBestRank for ParameterTuningSearchParameters since it doesn't have max_best_rank field

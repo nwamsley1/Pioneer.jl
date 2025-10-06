@@ -41,7 +41,7 @@
         "search_settings": {
             "min_samples": 1000,
             "max_presearch_iters": 10,
-            "frag_err_quantile": 0.0025,
+            "frag_err_quantile": 0.005,
             "max_q_value": 0.01,
             "topn_peaks": 200,
             "initial_scan_count": 10000,
@@ -59,10 +59,8 @@
             "initial_percent": 2.5
         },
         "iteration_settings": {
-            "init_mass_tol_ppm": 30.0,
+            "init_mass_tol_ppm": [20.0, 30.0],
             "ms1_tol_ppm": 20.0,
-            "mass_tolerance_scale_factor": 1.5,
-            "iterations_per_phase": 3,
             "scan_scale_factor": 4
         }
     },

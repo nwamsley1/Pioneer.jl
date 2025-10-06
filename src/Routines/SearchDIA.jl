@@ -325,7 +325,10 @@ function SearchDIA(params_path::String)
             # Ensure temporary files are written to the results directory
             ENV["TMPDIR"] = params.paths[:results]
 
-            write( joinpath(normpath(params.paths[:results]), "config.json"), params_string)
+            # Write complete merged config (user + defaults) to output directory
+            merged_config = params_to_dict(params)
+            merged_json = JSON.json(merged_config, 4)  # Pretty print with 4-space indent
+            write(joinpath(normpath(params.paths[:results]), "config.json"), merged_json)
             nothing
         end
         [rm(fpath) for fpath in readdir(getDataOutDir(SEARCH_CONTEXT), join=true) if endswith(fpath, ".tsv")]
