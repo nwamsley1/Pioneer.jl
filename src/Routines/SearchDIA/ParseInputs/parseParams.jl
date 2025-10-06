@@ -32,6 +32,46 @@ struct PioneerParameters
     paths::NamedTuple
 end
 
+"""
+    params_to_dict(params::PioneerParameters)
+
+Convert PioneerParameters struct back to nested Dict for JSON serialization.
+Used to write complete merged configuration (user + defaults) to output directory.
+
+# Returns
+Dict with all parameter sections, ready for JSON.json() conversion
+"""
+function params_to_dict(params::PioneerParameters)
+    # Recursively convert NamedTuples to Dicts
+    function namedtuple_to_dict(nt::NamedTuple)
+        result = Dict{String, Any}()
+        for (k, v) in pairs(nt)
+            key_str = string(k)
+            result[key_str] = if v isa NamedTuple
+                namedtuple_to_dict(v)
+            else
+                v
+            end
+        end
+        return result
+    end
+
+    return Dict{String, Any}(
+        "global" => namedtuple_to_dict(params.global_settings),
+        "parameter_tuning" => namedtuple_to_dict(params.parameter_tuning),
+        "first_search" => namedtuple_to_dict(params.first_search),
+        "quant_search" => namedtuple_to_dict(params.quant_search),
+        "acquisition" => namedtuple_to_dict(params.acquisition),
+        "rt_alignment" => namedtuple_to_dict(params.rt_alignment),
+        "optimization" => namedtuple_to_dict(params.optimization),
+        "proteinInference" => namedtuple_to_dict(params.protein_inference),
+        "maxLFQ" => namedtuple_to_dict(params.maxLFQ),
+        "output" => namedtuple_to_dict(params.output),
+        "logging" => namedtuple_to_dict(params.logging),
+        "paths" => namedtuple_to_dict(params.paths)
+    )
+end
+
 # Helper function to merge settings with global defaults
 function merge_with_globals(specific_settings::NamedTuple, global_settings::NamedTuple)
     merged = Dict{Symbol,Any}()
