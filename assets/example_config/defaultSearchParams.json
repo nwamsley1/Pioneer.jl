@@ -59,10 +59,8 @@
             "initial_percent": 2.5
         },
         "iteration_settings": {
-            "init_mass_tol_ppm": 30.0,
+            "init_mass_tol_ppm": [30.0, 45.0],
             "ms1_tol_ppm": 20.0,
-            "mass_tolerance_scale_factor": 1.5,
-            "iterations_per_phase": 3,
             "scan_scale_factor": 4
         }
     },

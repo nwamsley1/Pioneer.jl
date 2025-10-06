@@ -364,33 +364,7 @@ function check_and_store_convergence!(results, search_context, params, ms_file_i
 end
 
 # DEPRECATED: add_scans_for_iteration! removed - use run_single_phase_attempt and run_all_phases_with_scan_count instead
-
-"""
-    expand_mass_tolerance!(search_context, ms_file_idx, params, scale_factor::Float32 = 2.0f0)
-
-Scale the current mass tolerance by the given factor up to maximum.
-"""
-function expand_mass_tolerance!(search_context, ms_file_idx, params, scale_factor::Float32 = 2.0f0)
-    current_model = getMassErrorModel(search_context, ms_file_idx)
-    current_left = getLeftTol(current_model)
-    current_right = getRightTol(current_model)
-    
-    new_left = current_left * scale_factor
-    new_right = current_right * scale_factor
-    
-    new_model = MassErrorModel(
-        getMassOffset(current_model),
-        (new_left, new_right)
-    )
-    
-    setMassErrorModel!(search_context, ms_file_idx, new_model)
-    # Log expansion action
-    file_name = try
-        getFileIdToName(getMSData(search_context), ms_file_idx)
-    catch
-        string(ms_file_idx)
-    end
-end
+# DEPRECATED: expand_mass_tolerance! removed - tolerances now set explicitly from vector in iteration_settings
 
 
 """
@@ -606,35 +580,42 @@ function run_single_phase(
         end
         
         # ========================================
-        # ITERATION LOOP (collect → adjust → collect → expand cycles)
-        # Each iteration: 1) collect PSMs, 2) fit bias, 3) adjust bias,
-        #                 4) re-collect, 5) fit final, 6) check convergence,
-        #                 7) expand tolerance for next iteration
+        # ITERATION LOOP (set tolerance → collect → adjust → collect cycles)
+        # Each iteration: 1) set tolerance from vector, 2) collect PSMs,
+        #                 3) fit bias, 4) adjust bias, 5) re-collect,
+        #                 6) fit final, 7) check convergence
         # ========================================
-        
-        for iter in 1:settings.iterations_per_phase
+
+        for iter in 1:getIterationsPerPhase(settings)
             iteration_state.current_iteration_in_phase = iter
             iteration_state.total_iterations += 1
 
-            # Log current tolerance at start of iteration
+            # Step 1: SET TOLERANCE for this iteration from vector
+            target_tolerance = getMassToleranceForIteration(settings, iter)
             current_model = getMassErrorModel(search_context, ms_file_idx)
-            @user_info "Phase $phase, Score $min_score, Iteration $iter: START - current model: offset=$(getMassOffset(current_model)) ppm, tol=($(getLeftTol(current_model)),$(getRightTol(current_model))) ppm"
+            # Keep current bias, but set tolerance from vector
+            new_model = MassErrorModel(
+                getMassOffset(current_model),
+                (target_tolerance, target_tolerance)
+            )
+            setMassErrorModel!(search_context, ms_file_idx, new_model)
+            @user_info "Phase $phase, Score $min_score, Iteration $iter: START - set tolerance to $(target_tolerance) ppm (from tolerance vector), offset=$(getMassOffset(current_model)) ppm"
 
-            # Step 1: COLLECT PSMs with current tolerance (to determine bias)
-            @user_info "Phase $phase, Score $min_score, Iteration $iter: COLLECT FOR BIAS - collecting PSMs with current tolerance"
+            # Step 2: COLLECT PSMs with current tolerance (to determine bias)
+            @user_info "Phase $phase, Score $min_score, Iteration $iter: COLLECT FOR BIAS - collecting PSMs with tolerance $(target_tolerance) ppm"
             psms_for_bias, _ = collect_and_log_psms(
                 filtered_spectra, spectra, search_context,
                 params, ms_file_idx, "iteration $iter with min_score=$min_score"
             )
             @user_info "Phase $phase, Score $min_score, Iteration $iter: COLLECT FOR BIAS - collected $(nrow(psms_for_bias)) PSMs"
 
-            # Step 2: FIT MODEL to determine bias adjustment
+            # Step 3: FIT MODEL to determine bias adjustment
             @user_info "Phase $phase, Score $min_score, Iteration $iter: FIT FOR BIAS - fitting mass error model from $(nrow(psms_for_bias)) PSMs"
             mass_err_for_bias, _, _ = fit_models_from_psms(
                 psms_for_bias, spectra, search_context, params, ms_file_idx
             )
             
-            # Step 3: ADJUST BIAS based on fitted model
+            # Step 4: ADJUST BIAS based on fitted model
             if mass_err_for_bias !== nothing
                 new_bias = getMassOffset(mass_err_for_bias)
                 @user_info "Phase $phase, Score $min_score, Iteration $iter: FIT FOR BIAS - fitted model: offset=$new_bias ppm"
@@ -650,7 +631,7 @@ function run_single_phase(
                 @user_info "Phase $phase, Score $min_score, Iteration $iter: FIT FOR BIAS - model fit FAILED (returned nothing)"
             end
 
-            # Step 4: COLLECT PSMs again with adjusted bias
+            # Step 5: COLLECT PSMs again with adjusted bias
             @user_info "Phase $phase, Score $min_score, Iteration $iter: COLLECT WITH ADJUSTED BIAS - collecting PSMs"
             psms_adjusted, _ = collect_and_log_psms(
                 filtered_spectra, spectra, search_context,
@@ -658,7 +639,7 @@ function run_single_phase(
             )
             @user_info "Phase $phase, Score $min_score, Iteration $iter: COLLECT WITH ADJUSTED BIAS - collected $(nrow(psms_adjusted)) PSMs"
 
-            # Step 5: FIT FINAL MODELS with bias-adjusted PSMs
+            # Step 6: FIT FINAL MODELS with bias-adjusted PSMs
             @user_info "Phase $phase, Score $min_score, Iteration $iter: FIT FINAL MODEL - fitting from $(nrow(psms_adjusted)) PSMs"
             mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
                 psms_adjusted, spectra, search_context, params, ms_file_idx
@@ -686,7 +667,7 @@ function run_single_phase(
                 )
             end
 
-            # Step 6: CHECK CONVERGENCE
+            # Step 7: CHECK CONVERGENCE
             @user_info "Phase $phase, Score $min_score, Iteration $iter: CHECK CONVERGENCE - checking with psm_count=$psm_count"
             if check_and_store_convergence!(
                 results, search_context, params, ms_file_idx,
@@ -698,15 +679,6 @@ function run_single_phase(
                 return true
             end
             @user_info "Phase $phase, Score $min_score, Iteration $iter: CHECK CONVERGENCE - not converged, continuing"
-
-            # Step 7: EXPAND TOLERANCE for next iteration (if not last iteration)
-            if iter < settings.iterations_per_phase
-                @user_info "Phase $phase, Score $min_score, Iteration $iter: EXPAND TOLERANCE - expanding by factor $(settings.mass_tolerance_scale_factor) for next iteration"
-                expand_mass_tolerance!(search_context, ms_file_idx, params,
-                                      settings.mass_tolerance_scale_factor)
-                current_model = getMassErrorModel(search_context, ms_file_idx)
-                @user_info "Phase $phase, Score $min_score, Iteration $iter: EXPAND TOLERANCE - new model for iteration $(iter+1): offset=$(getMassOffset(current_model)) ppm, tol=($(getLeftTol(current_model)),$(getRightTol(current_model))) ppm"
-            end
         end
     end  # End of score threshold loop
 
