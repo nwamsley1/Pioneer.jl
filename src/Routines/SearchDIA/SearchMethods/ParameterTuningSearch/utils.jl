@@ -762,13 +762,23 @@ function fit_mass_err_model(
         ), ppm_errs
     end
 
-    # Calculate what proportion of empirical errors exceed the fitted bounds
+    # Compare empirical quantile to fitted exponential quantile
+    # The fitted bound is the (1 - frag_err_quantile) quantile of the exponential
+    # We want to see if the empirical (1 - frag_err_quantile) quantile matches it
+    empirical_r_quantile = length(r_errs) > 0 ? quantile(r_errs, 1 - frag_err_quantile) : 0.0
+    empirical_l_quantile = length(l_errs) > 0 ? quantile(l_errs, 1 - frag_err_quantile) : 0.0
+
+    # Calculate difference: empirical - fitted (positive = empirical is wider)
+    right_diff_ppm = empirical_r_quantile - r_bound
+    left_diff_ppm = empirical_l_quantile - l_bound
+
+    # Also show what proportion exceeds the fitted bounds for context
     n_right_exceed = sum(r_errs .> r_bound)
     n_left_exceed = sum(l_errs .> l_bound)
     pct_right_exceed = length(r_errs) > 0 ? 100.0 * n_right_exceed / length(r_errs) : 0.0
     pct_left_exceed = length(l_errs) > 0 ? 100.0 * n_left_exceed / length(l_errs) : 0.0
 
-    @user_info "Mass error fit: offset=$(round(mass_err, digits=2)) ppm, bounds=(-$(round(l_bound, digits=2)), +$(round(r_bound, digits=2))) ppm | Empirical exceedance: left=$(round(pct_left_exceed, digits=1))% ($(n_left_exceed)/$(length(l_errs))), right=$(round(pct_right_exceed, digits=1))% ($(n_right_exceed)/$(length(r_errs))) | Target quantile=$(round(100*frag_err_quantile, digits=1))%"
+    @user_info "Mass error fit: offset=$(round(mass_err, digits=2)) ppm, bounds=(-$(round(l_bound, digits=2)), +$(round(r_bound, digits=2))) ppm | Empirical vs Exponential quantile ($(round(100*(1-frag_err_quantile), digits=1))%): left=$(round(empirical_l_quantile, digits=2)) vs $(round(l_bound, digits=2)) (Δ=$(round(left_diff_ppm, digits=2)) ppm), right=$(round(empirical_r_quantile, digits=2)) vs $(round(r_bound, digits=2)) (Δ=$(round(right_diff_ppm, digits=2)) ppm) | Exceedance: L=$(round(pct_left_exceed, digits=1))%, R=$(round(pct_right_exceed, digits=1))%"
 
     return MassErrorModel(
         Float32(mass_err),
