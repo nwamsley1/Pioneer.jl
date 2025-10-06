@@ -1347,8 +1347,9 @@ function test_tolerance_expansion!(
     
     # Calculate expanded tolerance
     expanded_tolerance = collection_tolerance * expansion_factor
-    
-    # (debug logs removed)
+
+    @user_info "Testing tolerance expansion: collection_tol=$(round(collection_tolerance, digits=2)) ppm → expanded_tol=$(round(expanded_tolerance, digits=2)) ppm (factor=$(expansion_factor))"
+
     # Create expanded model for collection
     # Keep the same bias, just expand the window
     expanded_model = MassErrorModel(
@@ -1369,19 +1370,19 @@ function test_tolerance_expansion!(
     # Calculate improvement
     psm_increase = expanded_psm_count - current_psm_count
     improvement_ratio = current_psm_count > 0 ? psm_increase / current_psm_count : 0.0
-    # (debug logs removed)
-    
+
+    @user_info "Tolerance expansion results: original_psms=$current_psm_count, expanded_psms=$expanded_psm_count, increase=$psm_increase ($(round(100*improvement_ratio, digits=1))%)"
+
     # Check if expansion was beneficial (any improvement)
     if expanded_psm_count <= current_psm_count
-        # (debug logs removed)
+        @user_info "No improvement from expansion - keeping original tolerance"
         # No improvement, restore original and return
         setMassErrorModel!(search_context, ms_file_idx, original_model)
-        # @info "No improvement found, keeping original results"
         return current_psms, current_model, current_ppm_errs, false
     end
-    
+
     # Significant improvement found - refit model with expanded PSM set
-    # @info "Improvement found, refitting model with expanded PSM set"
+    @user_info "Expansion beneficial - refitting model with expanded PSM set"
     
     # Get matched fragments for the expanded PSM set
     fragments = get_matched_fragments(spectra, expanded_psms, search_context, params, ms_file_idx)
@@ -1404,11 +1405,10 @@ function test_tolerance_expansion!(
     end
     
     # Success! Use the expanded results
-    # @info "Successfully expanded tolerance:" *
-    #       "\n  Original fitted: ±$(round((getLeftTol(current_model) + getRightTol(current_model))/2, digits=1)) ppm" *
-    #       "\n  Expanded fitted: ±$(round((getLeftTol(refitted_model) + getRightTol(refitted_model))/2, digits=1)) ppm" *
-    #       "\n  PSM improvement: $psm_increase PSMs ($(round(100*improvement_ratio, digits=1))%)"
-    
+    orig_avg_tol = (getLeftTol(current_model) + getRightTol(current_model)) / 2
+    expanded_avg_tol = (getLeftTol(refitted_model) + getRightTol(refitted_model)) / 2
+    @user_info "Successfully expanded tolerance: original_fitted=±$(round(orig_avg_tol, digits=1)) ppm → expanded_fitted=±$(round(expanded_avg_tol, digits=1)) ppm, PSM improvement=$psm_increase ($(round(100*improvement_ratio, digits=1))%)"
+
     # Update the model in search context
     setMassErrorModel!(search_context, ms_file_idx, refitted_model)
     
