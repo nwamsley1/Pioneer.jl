@@ -489,25 +489,17 @@ function run_single_phase(
         # ========================================
         # INITIAL ATTEMPT (before iteration loop)
         # ========================================
-        
+
         # Collect PSMs at initial tolerance with phase bias and current score
-        @user_info "Phase $phase, Score $min_score: INITIAL ATTEMPT - collecting PSMs"
         psms_initial, _ = collect_and_log_psms(
             filtered_spectra, spectra, search_context,
             params, ms_file_idx, "initial attempt with min_score=$min_score"
         )
 
         # Fit models and check initial convergence
-        @user_info "Phase $phase, Score $min_score: INITIAL ATTEMPT - fitting mass error model from $(nrow(psms_initial)) PSMs"
         mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
             psms_initial, spectra, search_context, params, ms_file_idx
         )
-
-        if mass_err_model !== nothing
-            @user_info "Phase $phase, Score $min_score: INITIAL ATTEMPT - fitted model: offset=$(getMassOffset(mass_err_model)) ppm, tol=($(getLeftTol(mass_err_model)),$(getRightTol(mass_err_model))) ppm, psm_count=$psm_count"
-        else
-            @user_info "Phase $phase, Score $min_score: INITIAL ATTEMPT - model fit FAILED (returned nothing)"
-        end
         
         # Track collection tolerance if we have a model
         if mass_err_model !== nothing
@@ -950,8 +942,6 @@ function process_file!(
                                 resize!(results.ppm_errs, 0)
                                 append!(results.ppm_errs, refitted_ppm_errs)
                                 setMassErrorModel!(search_context, ms_file_idx, refitted_model)
-                                
-                                @user_info "EXPANDED_BEST_ATTEMPT: Tolerance expansion increased PSMs by $percent_increase%"
                             else
                                 # Revert to best iteration model if refitting failed
                                 setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)

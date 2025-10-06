@@ -772,14 +772,6 @@ function fit_mass_err_model(
     right_diff_ppm = empirical_r_quantile - r_bound
     left_diff_ppm = empirical_l_quantile - l_bound
 
-    # Also show what proportion exceeds the fitted bounds for context
-    n_right_exceed = sum(r_errs .> r_bound)
-    n_left_exceed = sum(l_errs .> l_bound)
-    pct_right_exceed = length(r_errs) > 0 ? 100.0 * n_right_exceed / length(r_errs) : 0.0
-    pct_left_exceed = length(l_errs) > 0 ? 100.0 * n_left_exceed / length(l_errs) : 0.0
-
-    @user_info "Mass error fit: offset=$(round(mass_err, digits=2)) ppm, bounds=(-$(round(l_bound, digits=2)), +$(round(r_bound, digits=2))) ppm | Empirical vs Exponential quantile ($(round(100*(1-frag_err_quantile), digits=1))%): left=$(round(empirical_l_quantile, digits=2)) vs $(round(l_bound, digits=2)) (Δ=$(round(left_diff_ppm, digits=2)) ppm), right=$(round(empirical_r_quantile, digits=2)) vs $(round(r_bound, digits=2)) (Δ=$(round(right_diff_ppm, digits=2)) ppm) | Exceedance: L=$(round(pct_left_exceed, digits=1))%, R=$(round(pct_right_exceed, digits=1))%"
-
     return MassErrorModel(
         Float32(mass_err),
         (Float32(abs(l_bound)), Float32(abs(r_bound)))
@@ -1371,18 +1363,14 @@ function test_tolerance_expansion!(
     psm_increase = expanded_psm_count - current_psm_count
     improvement_ratio = current_psm_count > 0 ? psm_increase / current_psm_count : 0.0
 
-    @user_info "Tolerance expansion results: original_psms=$current_psm_count, expanded_psms=$expanded_psm_count, increase=$psm_increase ($(round(100*improvement_ratio, digits=1))%)"
-
     # Check if expansion was beneficial (any improvement)
     if expanded_psm_count <= current_psm_count
-        @user_info "No improvement from expansion - keeping original tolerance"
         # No improvement, restore original and return
         setMassErrorModel!(search_context, ms_file_idx, original_model)
         return current_psms, current_model, current_ppm_errs, false
     end
 
     # Significant improvement found - refit model with expanded PSM set
-    @user_info "Expansion beneficial - refitting model with expanded PSM set"
     
     # Get matched fragments for the expanded PSM set
     fragments = get_matched_fragments(spectra, expanded_psms, search_context, params, ms_file_idx)
@@ -1404,12 +1392,7 @@ function test_tolerance_expansion!(
         return current_psms, current_model, current_ppm_errs, false
     end
     
-    # Success! Use the expanded results
-    orig_avg_tol = (getLeftTol(current_model) + getRightTol(current_model)) / 2
-    expanded_avg_tol = (getLeftTol(refitted_model) + getRightTol(refitted_model)) / 2
-    @user_info "Successfully expanded tolerance: original_fitted=±$(round(orig_avg_tol, digits=1)) ppm → expanded_fitted=±$(round(expanded_avg_tol, digits=1)) ppm, PSM improvement=$psm_increase ($(round(100*improvement_ratio, digits=1))%)"
-
-    # Update the model in search context
+    # Success! Update the model in search context
     setMassErrorModel!(search_context, ms_file_idx, refitted_model)
     
     return expanded_psms, refitted_model, refitted_ppm_errs, true
