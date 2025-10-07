@@ -1,0 +1,6642 @@
+# json/EWZ_MBR/EWZ_MBR__3P_OlsenExploris__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_YeastHuman_len7o40_ch2o3_mc1_Eclipse_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\EWZ_MBR_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/EWZ_MBR/EWZ_MBR__3P_OlsenExploris__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_YeastHuman_len7o40_ch2o3_mc1_Eclipse_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\EWZ_MBR_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/EWZ_MBR/EWZ_MBR__3P_OlsenExploris__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_YeastHuman_len7o40_ch2o3_mc1_Eclipse_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\EWZ_MBR_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/EWZ_MBR/EWZ_MBR__3P_OlsenExploris__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_YeastHuman_len7o40_ch2o3_mc1_Eclipse_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\EWZ_MBR_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/EWZ_MBR/EWZ_MBR__3P_OlsenExploris__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_YeastHuman_len7o40_ch2o3_mc1_Eclipse_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\EWZ_MBR_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/EWZ_MBR/EWZ_MBR__3P_OlsenExploris__Standard__MBRoff.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_YeastHuman_len7o40_ch2o3_mc1_Eclipse_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\EWZ_MBR\\EWZ_MBR_Standard_MBRoff"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": false,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__Standard__HuberDelta_100.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_Standard_Huber100"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 100
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__Standard__HuberDelta_1000000.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_Standard_Huber1000000"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1000000
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__Standard__HuberDelta_1500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_Standard_Huber1500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__Standard__HuberDelta_26375.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_Standard_Huber26375"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 26375
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__Standard__HuberDelta_500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_Standard_Huber500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__Standard__HuberDelta_5275.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_Standard_Huber5275"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 5275
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__Standard__Isotopes1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_Standard_Isotopes1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 1
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__Standard__Isotopes3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_Standard_Isotopes3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 3
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeAlternating/MtacThreeProteomeAlternating__3P_MTACAstral__Standard__SeparateTraces.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeAlternating\\MtacThreeProteomeAlternating_Standard_SeparateTraces"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "isotope_settings": {
+      "combine_traces": false
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__Standard__HuberDelta_100.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_Standard_Huber100"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 100
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__Standard__HuberDelta_1000000.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_Standard_Huber1000000"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1000000
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__Standard__HuberDelta_1500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_Standard_Huber1500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__Standard__HuberDelta_26375.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_Standard_Huber26375"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 26375
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__Standard__HuberDelta_500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_Standard_Huber500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__Standard__HuberDelta_5275.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_Standard_Huber5275"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 5275
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__Standard__Isotopes1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_Standard_Isotopes1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 1
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__Standard__Isotopes3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_Standard_Isotopes3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 3
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacThreeProteomeStandard/MtacThreeProteomeStandard__3P_MTACAstral__Standard__SeparateTraces.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_Standard_SeparateTraces"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "isotope_settings": {
+      "combine_traces": false
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__Standard__HuberDelta_100.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_Standard_Huber100"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 100
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__Standard__HuberDelta_1000000.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_Standard_Huber1000000"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1000000
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__Standard__HuberDelta_1500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_Standard_Huber1500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__Standard__HuberDelta_26375.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_Standard_Huber26375"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 26375
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__Standard__HuberDelta_500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_Standard_Huber500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__Standard__HuberDelta_5275.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_Standard_Huber5275"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 5275
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__Standard__Isotopes1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_Standard_Isotopes1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 1
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__Standard__Isotopes3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_Standard_Isotopes3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 3
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating3M/MtacYeastAlternating3M__Yeast_MTACAstral__Standard__SeparateTraces.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating3M\\MtacYeastAlternating3M_Standard_SeparateTraces"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "isotope_settings": {
+      "combine_traces": false
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__Standard__HuberDelta_100.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_Standard_Huber100"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 100
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__Standard__HuberDelta_1000000.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_Standard_Huber1000000"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1000000
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__Standard__HuberDelta_1500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_Standard_Huber1500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__Standard__HuberDelta_26375.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_Standard_Huber26375"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 26375
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__Standard__HuberDelta_500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_Standard_Huber500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__Standard__HuberDelta_5275.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_Standard_Huber5275"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 5275
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__Standard__Isotopes1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_Standard_Isotopes1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 1
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__Standard__Isotopes3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_Standard_Isotopes3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 3
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastAlternating5M/MtacYeastAlternating5M__Yeast_MTACAstral__Standard__SeparateTraces.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastAlternating5M\\MtacYeastAlternating5M_Standard_SeparateTraces"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "isotope_settings": {
+      "combine_traces": false
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__Standard__HuberDelta_100.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_Standard_Huber100"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 100
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__Standard__HuberDelta_1000000.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_Standard_Huber1000000"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1000000
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__Standard__HuberDelta_1500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_Standard_Huber1500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__Standard__HuberDelta_26375.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_Standard_Huber26375"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 26375
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__Standard__HuberDelta_500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_Standard_Huber500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__Standard__HuberDelta_5275.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_Standard_Huber5275"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 5275
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__Standard__Isotopes1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_Standard_Isotopes1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 1
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__Standard__Isotopes3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_Standard_Isotopes3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 3
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard3M/MtacYeastStandard3M__Yeast_MTACAstral__Standard__SeparateTraces.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard3M\\MtacYeastStandard3M_Standard_SeparateTraces"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "isotope_settings": {
+      "combine_traces": false
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__Standard__HuberDelta_100.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_Standard_Huber100"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 100
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__Standard__HuberDelta_1000000.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_Standard_Huber1000000"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1000000
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__Standard__HuberDelta_1500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_Standard_Huber1500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__Standard__HuberDelta_26375.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_Standard_Huber26375"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 26375
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__Standard__HuberDelta_500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_Standard_Huber500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__Standard__HuberDelta_5275.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_Standard_Huber5275"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 5275
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__Standard__Isotopes1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_Standard_Isotopes1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 1
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__Standard__Isotopes3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_Standard_Isotopes3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 3
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/MtacYeastStandard5M/MtacYeastStandard5M__Yeast_MTACAstral__Standard__SeparateTraces.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacYeastStandard5M\\MtacYeastStandard5M_Standard_SeparateTraces"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "isotope_settings": {
+      "combine_traces": false
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__Standard__HuberDelta_100.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_Standard_Huber100"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 100
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__Standard__HuberDelta_1000000.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_Standard_Huber1000000"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1000000
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__Standard__HuberDelta_1500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_Standard_Huber1500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__Standard__HuberDelta_26375.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_Standard_Huber26375"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 26375
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__Standard__HuberDelta_500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_Standard_Huber500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__Standard__HuberDelta_5275.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_Standard_Huber5275"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 5275
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__Standard__Isotopes1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_Standard_Isotopes1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 1
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenAstralThreeProteome200ng/OlsenAstralThreeProteome200ng__3P_OlsenAstral__Standard__Isotopes3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralThreeProteome200ng\\OlsenAstralThreeProteome200ng_Standard_Isotopes3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 3
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__Standard__HuberDelta_100.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_Standard_Huber100"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 100
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__Standard__HuberDelta_1000000.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_Standard_Huber1000000"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1000000
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__Standard__HuberDelta_1500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_Standard_Huber1500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__Standard__HuberDelta_26375.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_Standard_Huber26375"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 26375
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__Standard__HuberDelta_500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_Standard_Huber500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__Standard__HuberDelta_5275.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_Standard_Huber5275"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 5275
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__Standard__Isotopes1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_Standard_Isotopes1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 1
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/OlsenExplorisThreeProteome500ng/OlsenExplorisThreeProteome500ng__3P_OlsenExploris__Standard__Isotopes3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenExplorisThreeProteome500ng\\OlsenExplorisThreeProteome500ng_Standard_Isotopes3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 3
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__Standard__HuberDelta_100.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_Standard_Huber100"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 100
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__Standard__HuberDelta_1000000.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_Standard_Huber1000000"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1000000
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__Standard__HuberDelta_1500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_Standard_Huber1500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 1500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__Standard__HuberDelta_26375.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_Standard_Huber26375"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 26375
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__Standard__HuberDelta_500.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_Standard_Huber500"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 500
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__Standard__HuberDelta_5275.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_Standard_Huber5275"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "huber_override": {
+      "override_huber_delta_fit": true,
+      "huber_delta": 5275
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__Standard__Isotopes1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_Standard_Isotopes1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 1
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SciexThreeProteomeNswath4/SciexThreeProteomeNswath4__3P_Sciex__Standard__Isotopes3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_Sciex_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SciexThreeProteomeNswath4\\SciexThreeProteomeNswath4_Standard_Isotopes3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "quant_search": {
+    "fragment_settings": {
+      "n_isotopes": 3
+    }
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__1000pg_12ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\1000pg\\12ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_1000pg_12ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__1000pg_24ms__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\1000pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_1000pg_24ms_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__1000pg_24ms__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\1000pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_1000pg_24ms_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__1000pg_24ms__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\1000pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_1000pg_24ms_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__1000pg_24ms__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\1000pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_1000pg_24ms_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__1000pg_24ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\1000pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_1000pg_24ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__1000pg_3ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\1000pg\\3ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_1000pg_3ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__1000pg_6ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\1000pg\\6ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_1000pg_6ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__10ng_12ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\10ng\\12ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_10ng_12ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__10ng_24ms__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\10ng\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_10ng_24ms_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__10ng_24ms__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\10ng\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_10ng_24ms_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__10ng_24ms__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\10ng\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_10ng_24ms_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__10ng_24ms__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\10ng\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_10ng_24ms_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__10ng_24ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\10ng\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_10ng_24ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__10ng_3ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\10ng\\3ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_10ng_3ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__10ng_6ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\10ng\\6ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_10ng_6ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__250pg_12ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\250pg\\12ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_250pg_12ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__250pg_24ms__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\250pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_250pg_24ms_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__250pg_24ms__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\250pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_250pg_24ms_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__250pg_24ms__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\250pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_250pg_24ms_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__250pg_24ms__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\250pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_250pg_24ms_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__250pg_24ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\250pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_250pg_24ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__250pg_3ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\250pg\\3ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_250pg_3ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__250pg_6ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\250pg\\6ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_250pg_6ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__500pg_12ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\500pg\\12ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_500pg_12ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__500pg_24ms__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\500pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_500pg_24ms_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__500pg_24ms__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\500pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_500pg_24ms_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__500pg_24ms__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\500pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_500pg_24ms_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__500pg_24ms__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\500pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_500pg_24ms_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__500pg_24ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\500pg\\24ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_500pg_24ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__500pg_3ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\500pg\\3ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_500pg_3ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__500pg_6ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\500pg\\6ms\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_500pg_6ms_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__MBR example_24ms__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\MBR example\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_MBR example_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/SingleCell/SingleCell__Human_SCP__MBR example_24ms__Standard__MBRoff.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\MBR example\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_human_len7o40_ch2o3_mc1_SCP_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SingleCell\\SingleCell_MBR example_Standard__MBRoff"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": false,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/YEAST_KO/YEAST_KO__Yeast_OlsenAstral__ARAB.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\YEAST_KO\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025_ARAB.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\YEAST_KO\\YEAST_KO_ARAB"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/YEAST_KO/YEAST_KO__Yeast_OlsenAstral__EntrapR1.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\YEAST_KO\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025_entrapR1.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\YEAST_KO\\YEAST_KO_EntrapR1"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/YEAST_KO/YEAST_KO__Yeast_OlsenAstral__EntrapR2.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\YEAST_KO\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025_entrapR2.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\YEAST_KO\\YEAST_KO_EntrapR2"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/YEAST_KO/YEAST_KO__Yeast_OlsenAstral__EntrapR3.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\YEAST_KO\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025_entrapR3.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\YEAST_KO\\YEAST_KO_EntrapR3"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+
+# json/YEAST_KO/YEAST_KO__Yeast_OlsenAstral__Standard.json
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\YEAST_KO\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_yeast_len7o40_ch2o3_mc1_OlsenAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\YEAST_KO\\YEAST_KO_Standard"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
+

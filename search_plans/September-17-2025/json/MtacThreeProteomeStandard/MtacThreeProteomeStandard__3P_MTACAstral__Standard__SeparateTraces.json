@@ -1,0 +1,40 @@
+{
+  "paths": {
+    "ms_data": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\",
+    "library": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\SPEC_LIB\\September-17-2025\\altimeter_3P_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
+    "results": "C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\MtacThreeProteomeStandard\\MtacThreeProteomeStandard_Standard_SeparateTraces"
+  },
+  "output": {
+    "write_csv": true,
+    "write_decoys": false,
+    "delete_temp": true,
+    "plots_per_page": 12
+  },
+  "logging": {
+    "debug_console_level": 0
+  },
+  "global": {
+    "isotope_settings": {
+      "combine_traces": false
+    },
+    "scoring": {
+      "q_value_threshold": 0.01
+    },
+    "match_between_runs": true,
+    "ms1_quant": false
+  },
+  "first_search": {
+    "fragment_settings": {
+      "min_score": 15
+    }
+  },
+  "acquisition": {
+    "nce": 26,
+    "quad_transmission": {
+      "fit_from_data": true
+    }
+  },
+  "maxLFQ": {
+    "run_to_run_normalization": false
+  }
+}
