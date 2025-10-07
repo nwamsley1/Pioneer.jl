@@ -754,14 +754,24 @@ function fit_mass_err_model(
         (length(l_errs)/sum(l_errs))
         ))
         , 1 - frag_err_quantile)
-    catch e 
+    catch e
         @debug_l1 "length(r_errs) $(length(r_errs)) length(l_errs) $(length(l_errs)) sum(r_errs) $(sum(r_errs)) sum(l_errs) $(sum(l_errs))"
         return MassErrorModel(
             zero(Float32),
             (zero(Float32), zero(Float32))
         ), ppm_errs
     end
-    
+
+    # Compare empirical quantile to fitted exponential quantile
+    # The fitted bound is the (1 - frag_err_quantile) quantile of the exponential
+    # We want to see if the empirical (1 - frag_err_quantile) quantile matches it
+    empirical_r_quantile = length(r_errs) > 0 ? quantile(r_errs, 1 - frag_err_quantile) : 0.0
+    empirical_l_quantile = length(l_errs) > 0 ? quantile(l_errs, 1 - frag_err_quantile) : 0.0
+
+    # Calculate difference: empirical - fitted (positive = empirical is wider)
+    right_diff_ppm = empirical_r_quantile - r_bound
+    left_diff_ppm = empirical_l_quantile - l_bound
+
     return MassErrorModel(
         Float32(mass_err),
         (Float32(abs(l_bound)), Float32(abs(r_bound)))
@@ -1329,8 +1339,9 @@ function test_tolerance_expansion!(
     
     # Calculate expanded tolerance
     expanded_tolerance = collection_tolerance * expansion_factor
-    
-    # (debug logs removed)
+
+    @user_info "Testing tolerance expansion: collection_tol=$(round(collection_tolerance, digits=2)) ppm → expanded_tol=$(round(expanded_tolerance, digits=2)) ppm (factor=$(expansion_factor))"
+
     # Create expanded model for collection
     # Keep the same bias, just expand the window
     expanded_model = MassErrorModel(
@@ -1345,25 +1356,21 @@ function test_tolerance_expansion!(
     setMassErrorModel!(search_context, ms_file_idx, expanded_model)
     
     # Collect PSMs with expanded tolerance
-    expanded_psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
+    expanded_psms, _ = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
     expanded_psm_count = size(expanded_psms, 1)
     
     # Calculate improvement
     psm_increase = expanded_psm_count - current_psm_count
     improvement_ratio = current_psm_count > 0 ? psm_increase / current_psm_count : 0.0
-    # (debug logs removed)
-    
+
     # Check if expansion was beneficial (any improvement)
     if expanded_psm_count <= current_psm_count
-        # (debug logs removed)
         # No improvement, restore original and return
         setMassErrorModel!(search_context, ms_file_idx, original_model)
-        # @info "No improvement found, keeping original results"
         return current_psms, current_model, current_ppm_errs, false
     end
-    
+
     # Significant improvement found - refit model with expanded PSM set
-    # @info "Improvement found, refitting model with expanded PSM set"
     
     # Get matched fragments for the expanded PSM set
     fragments = get_matched_fragments(spectra, expanded_psms, search_context, params, ms_file_idx)
@@ -1385,13 +1392,7 @@ function test_tolerance_expansion!(
         return current_psms, current_model, current_ppm_errs, false
     end
     
-    # Success! Use the expanded results
-    # @info "Successfully expanded tolerance:" *
-    #       "\n  Original fitted: ±$(round((getLeftTol(current_model) + getRightTol(current_model))/2, digits=1)) ppm" *
-    #       "\n  Expanded fitted: ±$(round((getLeftTol(refitted_model) + getRightTol(refitted_model))/2, digits=1)) ppm" *
-    #       "\n  PSM improvement: $psm_increase PSMs ($(round(100*improvement_ratio, digits=1))%)"
-    
-    # Update the model in search context
+    # Success! Update the model in search context
     setMassErrorModel!(search_context, ms_file_idx, refitted_model)
     
     return expanded_psms, refitted_model, refitted_ppm_errs, true

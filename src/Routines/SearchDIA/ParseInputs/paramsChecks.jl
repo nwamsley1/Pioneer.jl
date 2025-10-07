@@ -114,31 +114,51 @@ function checkParams(json_path::String)
     end
     # max_tolerance_ppm removed - calculated dynamically from iteration_settings
     
-    # Check iteration_settings (all fields are now required)
+    # Check iteration_settings
     if haskey(tuning_params, "iteration_settings")
         iter_settings = tuning_params["iteration_settings"]
-        
-        # All iteration_settings fields are required
-        check_param(iter_settings, "init_mass_tol_ppm", Real)
+
+        # Required fields
         check_param(iter_settings, "ms1_tol_ppm", Real)
-        check_param(iter_settings, "mass_tolerance_scale_factor", Real)
-        check_param(iter_settings, "iterations_per_phase", Integer)
         check_param(iter_settings, "scan_scale_factor", Real)
-        
-        # Validate ranges
-        if iter_settings["mass_tolerance_scale_factor"] <= 1.0
-            error("iteration_settings.mass_tolerance_scale_factor must be greater than 1.0")
+
+        # init_mass_tol_ppm can be either Real (legacy) or Vector (new format)
+        if !haskey(iter_settings, "init_mass_tol_ppm")
+            throw(InvalidParametersError("Missing parameter: init_mass_tol_ppm", iter_settings))
         end
+
+        tol_value = iter_settings["init_mass_tol_ppm"]
+        if tol_value isa Real
+            # Legacy format - also require scaling parameters
+            check_param(iter_settings, "mass_tolerance_scale_factor", Real)
+            check_param(iter_settings, "iterations_per_phase", Integer)
+
+            # Validate ranges for legacy format
+            if iter_settings["mass_tolerance_scale_factor"] <= 1.0
+                error("iteration_settings.mass_tolerance_scale_factor must be greater than 1.0")
+            end
+        elseif tol_value isa Vector
+            # New format - validate vector
+            if isempty(tol_value)
+                error("iteration_settings.init_mass_tol_ppm vector must not be empty")
+            end
+            if !all(x -> x isa Real && x > 0, tol_value)
+                error("iteration_settings.init_mass_tol_ppm vector must contain only positive numbers")
+            end
+        else
+            throw(InvalidParametersError("Invalid type for parameter init_mass_tol_ppm: expected Real or Vector{Real}, got $(typeof(tol_value))", iter_settings))
+        end
+
+        # Validate remaining ranges
         if iter_settings["scan_scale_factor"] < 1.0
             error("iteration_settings.scan_scale_factor must be greater than or equal to 1.0")
-        end
-        if iter_settings["init_mass_tol_ppm"] <= 0.0
-            error("iteration_settings.init_mass_tol_ppm must be positive")
         end
         if iter_settings["ms1_tol_ppm"] <= 0.0
             error("iteration_settings.ms1_tol_ppm must be positive")
         end
-        if iter_settings["iterations_per_phase"] <= 0
+
+        # Only validate iterations_per_phase if it exists (legacy format)
+        if haskey(iter_settings, "iterations_per_phase") && iter_settings["iterations_per_phase"] <= 0
             error("iteration_settings.iterations_per_phase must be positive")
         end
     else

@@ -364,33 +364,7 @@ function check_and_store_convergence!(results, search_context, params, ms_file_i
 end
 
 # DEPRECATED: add_scans_for_iteration! removed - use run_single_phase_attempt and run_all_phases_with_scan_count instead
-
-"""
-    expand_mass_tolerance!(search_context, ms_file_idx, params, scale_factor::Float32 = 2.0f0)
-
-Scale the current mass tolerance by the given factor up to maximum.
-"""
-function expand_mass_tolerance!(search_context, ms_file_idx, params, scale_factor::Float32 = 2.0f0)
-    current_model = getMassErrorModel(search_context, ms_file_idx)
-    current_left = getLeftTol(current_model)
-    current_right = getRightTol(current_model)
-    
-    new_left = current_left * scale_factor
-    new_right = current_right * scale_factor
-    
-    new_model = MassErrorModel(
-        getMassOffset(current_model),
-        (new_left, new_right)
-    )
-    
-    setMassErrorModel!(search_context, ms_file_idx, new_model)
-    # Log expansion action
-    file_name = try
-        getFileIdToName(getMSData(search_context), ms_file_idx)
-    catch
-        string(ms_file_idx)
-    end
-end
+# DEPRECATED: expand_mass_tolerance! removed - tolerances now set explicitly from vector in iteration_settings
 
 
 """
@@ -515,10 +489,10 @@ function run_single_phase(
         # ========================================
         # INITIAL ATTEMPT (before iteration loop)
         # ========================================
-        
+
         # Collect PSMs at initial tolerance with phase bias and current score
         psms_initial, _ = collect_and_log_psms(
-            filtered_spectra, spectra, search_context, 
+            filtered_spectra, spectra, search_context,
             params, ms_file_idx, "initial attempt with min_score=$min_score"
         )
 
@@ -589,24 +563,32 @@ function run_single_phase(
         end
         
         # ========================================
-        # ITERATION LOOP (expand → collect → adjust → collect cycles)
+        # ITERATION LOOP (set tolerance → collect → adjust → collect cycles)
+        # Each iteration: 1) set tolerance from vector, 2) collect PSMs,
+        #                 3) fit bias, 4) adjust bias, 5) re-collect,
+        #                 6) fit final, 7) check convergence
         # ========================================
-        
-        for iter in 1:settings.iterations_per_phase
+
+        for iter in 1:getIterationsPerPhase(settings)
             iteration_state.current_iteration_in_phase = iter
             iteration_state.total_iterations += 1
-            
-            # Step 1: EXPAND TOLERANCE
-            expand_mass_tolerance!(search_context, ms_file_idx, params, 
-                                  settings.mass_tolerance_scale_factor)
-            current_model = getMassErrorModel(search_context, ms_file_idx)
 
-            # Step 2: COLLECT PSMs with expanded tolerance (to determine bias)
+            # Step 1: SET TOLERANCE for this iteration from vector
+            target_tolerance = getMassToleranceForIteration(settings, iter)
+            current_model = getMassErrorModel(search_context, ms_file_idx)
+            # Keep current bias, but set tolerance from vector
+            new_model = MassErrorModel(
+                getMassOffset(current_model),
+                (target_tolerance, target_tolerance)
+            )
+            setMassErrorModel!(search_context, ms_file_idx, new_model)
+
+            # Step 2: COLLECT PSMs with current tolerance (to determine bias)
             psms_for_bias, _ = collect_and_log_psms(
                 filtered_spectra, spectra, search_context,
-                params, ms_file_idx, "with expanded tolerance and min_score=$min_score"
+                params, ms_file_idx, "iteration $iter with min_score=$min_score"
             )
-            
+
             # Step 3: FIT MODEL to determine bias adjustment
             mass_err_for_bias, _, _ = fit_models_from_psms(
                 psms_for_bias, spectra, search_context, params, ms_file_idx
@@ -615,7 +597,7 @@ function run_single_phase(
             # Step 4: ADJUST BIAS based on fitted model
             if mass_err_for_bias !== nothing
                 new_bias = getMassOffset(mass_err_for_bias)
-                current_model = getMassErrorModel(search_context, ms_file_idx)                
+                current_model = getMassErrorModel(search_context, ms_file_idx)
                 # Update the bias while keeping the expanded tolerance
                 adjusted_model = MassErrorModel(
                     new_bias,
@@ -623,34 +605,34 @@ function run_single_phase(
                 )
                 setMassErrorModel!(search_context, ms_file_idx, adjusted_model)
             end
-            
+
             # Step 5: COLLECT PSMs again with adjusted bias
             psms_adjusted, _ = collect_and_log_psms(
                 filtered_spectra, spectra, search_context,
                 params, ms_file_idx, "with adjusted bias and min_score=$min_score"
             )
-            
+
             # Step 6: FIT FINAL MODELS with bias-adjusted PSMs
             mass_err_model, ppm_errs, psm_count = fit_models_from_psms(
                 psms_adjusted, spectra, search_context, params, ms_file_idx
             )
-            
+
             # Update collection tolerance tracking
             current_model = getMassErrorModel(search_context, ms_file_idx)
             iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
-            
+
             # Track best attempt after each iteration
             if mass_err_model !== nothing && psm_count > 0 && !isempty(psms_adjusted)
                 # Fit RT model for best attempt tracking (only if we have filtered PSMs)
                 rt_model_data = fit_irt_model(params, psms_adjusted)
-                
+
                 # Update best attempt with filtered PSM count
                 update_best_attempt!(
                     iteration_state, psm_count, mass_err_model, rt_model_data, ppm_errs,
                     phase, min_score, iter, iteration_state.current_scan_count
                 )
             end
-            
+
             # Step 7: CHECK CONVERGENCE
             if check_and_store_convergence!(
                 results, search_context, params, ms_file_idx,
@@ -770,7 +752,6 @@ function process_file!(
                 throw(ErrorException("No usable MS2 scans"))
             end
         catch e
-            throw(e)
             if isa(e, ErrorException) && e.msg == "No usable MS2 scans"
                 # Re-throw our controlled exception to handle in outer catch
                 rethrow(e)
@@ -873,9 +854,7 @@ function process_file!(
             @user_error sprint(showerror, e, bt)
         catch
         end
-        # During debugging, rethrow to stop the pipeline and surface the root cause
-        rethrow(e)
-        
+
         # Set conservative defaults to allow pipeline to continue
         converged = false
         iteration_state.failed_with_exception = true
@@ -963,8 +942,6 @@ function process_file!(
                                 resize!(results.ppm_errs, 0)
                                 append!(results.ppm_errs, refitted_ppm_errs)
                                 setMassErrorModel!(search_context, ms_file_idx, refitted_model)
-                                
-                                @user_info "EXPANDED_BEST_ATTEMPT: Tolerance expansion increased PSMs by $percent_increase%"
                             else
                                 # Revert to best iteration model if refitting failed
                                 setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)

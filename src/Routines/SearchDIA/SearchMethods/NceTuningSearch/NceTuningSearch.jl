@@ -298,6 +298,7 @@ function process_file!(
         end
 
     catch e
+        throw(e)
         @user_warn "NCE transmission function fit failed for MS data file: $file_name. Error: $e. Using default NCE model."
         # Continue without NCE model for this file
     end
