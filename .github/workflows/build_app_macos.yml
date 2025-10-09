@@ -261,7 +261,7 @@ jobs:
 
           productsign \
             --keychain "$KEYCHAIN" \
-            --timestamp=none \   # try this first; re-enable once stable
+            --timestamp=none \ 
             --sign "$PKG_SIGN_IDENTITY" \
             PioneerUnsigned.pkg \
             "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg"
