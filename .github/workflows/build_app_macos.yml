@@ -259,9 +259,12 @@ jobs:
                   --version "$VERSION" \
                   --install-location / PioneerUnsigned.pkg
 
-          productsign --sign "$PKG_SIGN_IDENTITY" \
-                      PioneerUnsigned.pkg \
-                      Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg
+          productsign \
+            --keychain "$KEYCHAIN" \
+            --timestamp=none \   # try this first; re-enable once stable
+            --sign "$PKG_SIGN_IDENTITY" \
+            PioneerUnsigned.pkg \
+            "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg"
 
           rm PioneerUnsigned.pkg
 
