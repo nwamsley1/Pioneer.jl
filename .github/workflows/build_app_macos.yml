@@ -87,25 +87,48 @@ jobs:
           NOTARIZE_APPLE_ID: ${{ secrets.NOTARIZE_APPLE_ID }}
           NOTARIZE_PASSWORD: ${{ secrets.NOTARIZE_PASSWORD }}
           NOTARIZE_TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          PKG_SIGN_IDENTITY: ${{ secrets.PKG_SIGN_IDENTITY }}
         run: |
           CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
           INSTALLER_CERT_PATH=$RUNNER_TEMP/installer_certificate.p12
           PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_NAME=app-signing.keychain-db
+          KEYCHAIN_PATH="$RUNNER_TEMP/$KEYCHAIN_NAME"
 
           echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
           echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
           echo -n "$INSTALLER_CERT_BASE64" | base64 --decode -o $INSTALLER_CERT_PATH
 
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          if [[ -z "${CODESIGN_IDENTITY}" ]]; then
+            echo "Error: CODESIGN_IDENTITY is not set or empty."
+            exit 1
+          fi
 
-          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security import $INSTALLER_CERT_PATH -P "$INSTALLER_CERT_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          if [[ -z "${PKG_SIGN_IDENTITY}" ]]; then
+            echo "Error: PKG_SIGN_IDENTITY is not set or empty."
+            exit 1
+          fi
 
-          security list-keychains -d user -s $KEYCHAIN_PATH login.keychain
+          security list-keychains -d user -s login.keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed s/\"//g)
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-keychain-settings "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH" \
+            -T "/usr/bin/codesign" -T "/usr/bin/productsign"
+          security import "$INSTALLER_CERT_PATH" -P "$INSTALLER_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH" \
+            -T "/usr/bin/codesign" -T "/usr/bin/productsign"
+
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" -D "$CODESIGN_IDENTITY" -t private "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" -D "$PKG_SIGN_IDENTITY" -t private "$KEYCHAIN_PATH"
+
+          {
+            echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
+            echo "KEYCHAIN_NAME=$KEYCHAIN_NAME"
+          } >> "$GITHUB_ENV"
 
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
@@ -322,6 +345,15 @@ jobs:
           PKG="Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg"
           echo "Validating pkg with spctl: $PKG"
           spctl -a -vv -t install "$PKG"
+
+      - name: Clean up temporary signing keychain
+        if: always() && github.event_name != 'pull_request' && env.MACOS_CERT_P12 != ''
+        run: |
+          if [[ -n "${KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          security default-keychain -d user -s login.keychain
+          security list-keychains -d user -s login.keychain
 
       - name: Upload zipped binaries
         uses: actions/upload-artifact@v4
