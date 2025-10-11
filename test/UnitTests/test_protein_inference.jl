@@ -315,24 +315,72 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test all(result.use_for_quant[pep] for pep in peptides[9:12])
     end
     
+    @testset "Case I: Complex Component with Merge-First" begin
+        # Test case demonstrating merge-first fix for indistinguishable proteins
+        # This validates that B;C and E;F are properly merged during greedy set cover
+        proteins = [
+            ProteinKey("A", true, UInt8(1)),          # pep1
+            ProteinKey("A;B", true, UInt8(1)),        # pep2
+            ProteinKey("B;C", true, UInt8(1)),        # pep3
+            ProteinKey("C;D", true, UInt8(1)),        # pep4
+            ProteinKey("D", true, UInt8(1)),          # pep5
+            ProteinKey("D;E", true, UInt8(1)),        # pep6
+            ProteinKey("F;E", true, UInt8(1)),        # pep7
+            ProteinKey("A;E", true, UInt8(1))         # pep8
+        ]
+
+        peptides = [
+            PeptideKey("1", true, UInt8(1)),
+            PeptideKey("2", true, UInt8(1)),
+            PeptideKey("3", true, UInt8(1)),
+            PeptideKey("4", true, UInt8(1)),
+            PeptideKey("5", true, UInt8(1)),
+            PeptideKey("6", true, UInt8(1)),
+            PeptideKey("7", true, UInt8(1)),
+            PeptideKey("8", true, UInt8(1))
+        ]
+
+        result = infer_proteins(proteins, peptides)
+
+        # Peptide assignments
+        @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
+        @test result.peptide_to_protein[peptides[2]].name == "A;B"    # pep2 shared between A and B
+        @test result.peptide_to_protein[peptides[3]].name == "B;C"    # pep3 - B and C indistinguishable, merged
+        @test result.peptide_to_protein[peptides[4]].name == "D"      # pep4 uniquely explained by D in selected set
+        @test result.peptide_to_protein[peptides[5]].name == "D"      # pep5 unique to D
+        @test result.peptide_to_protein[peptides[6]].name == "D"      # pep6 uniquely explained by D in selected set
+        @test result.peptide_to_protein[peptides[7]].name == "E;F"    # pep7 - E and F indistinguishable, merged
+        @test result.peptide_to_protein[peptides[8]].name == "A"      # pep8 uniquely explained by A in selected set
+
+        # Quantification flags
+        @test result.use_for_quant[peptides[1]] == true   # pep1 unique to A
+        @test result.use_for_quant[peptides[2]] == false  # pep2 shared between A and B
+        @test result.use_for_quant[peptides[3]] == true   # pep3 unique to B;C merged group
+        @test result.use_for_quant[peptides[4]] == true   # pep4 unique to D in selected set (C not selected)
+        @test result.use_for_quant[peptides[5]] == true   # pep5 unique to D
+        @test result.use_for_quant[peptides[6]] == true   # pep6 unique to D in selected set (E not selected alone)
+        @test result.use_for_quant[peptides[7]] == true   # pep7 unique to E;F merged group
+        @test result.use_for_quant[peptides[8]] == true   # pep8 unique to A in selected set (E not selected alone)
+    end
+
     @testset "InferenceResult Structure" begin
         # Test that the result structure is correctly formed
         proteins = [ProteinKey("A", true, UInt8(1))]
         peptides = [PeptideKey("pep1", true, UInt8(1))]
-        
+
         result = infer_proteins(proteins, peptides)
-        
+
         @test isa(result, InferenceResult)
         @test isa(result.peptide_to_protein, Dictionary{PeptideKey, ProteinKey})
         @test isa(result.use_for_quant, Dictionary{PeptideKey, Bool})
         @test length(result.peptide_to_protein) == 1
         @test length(result.use_for_quant) == 1
-        
+
         # Check that all peptides have both mappings
         for peptide in peptides
             @test haskey(result.peptide_to_protein, peptide)
             @test haskey(result.use_for_quant, peptide)
         end
     end
-    
+
 end
