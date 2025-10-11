@@ -100,6 +100,9 @@ Nesvizhskii AI, Aebersold R. Interpretation of shotgun proteomic data: the prote
 Mol Cell Proteomics. 2005 Oct;4(10):1419-40. doi: 10.1074/mcp.R500012-MCP200.
 Zhang B, Chambers MC, Tabb DL. Proteomic parsimony through bipartite graph analysis improves accuracy
 and transparency. J Proteome Res. 2007 Sep;6(9):3549-57. doi: 10.1021/pr070230d.
+
+Notes... Better input. might be Vector{Tuple{ProteinKey, PeptideKey}}. The input is really an edge list. 
+This also enforces equal length because unequal length inputs should be invalid. 
 """ 
 function infer_proteins(
     proteins::Vector{ProteinKey}, 
@@ -311,12 +314,53 @@ function infer_proteins(
         
         # Continue with greedy set cover for remaining peptides
         candidate_proteins = collect(setdiff(component_proteins, necessary_proteins))
-        
+
         while !isempty(remaining_peptides) && !isempty(candidate_proteins)
-            # Find protein that covers the most remaining peptides
+            # Step 1: Merge indistinguishable proteins before greedy selection
+            # Group proteins by (remaining peptide set, is_target, entrap_id)
+            peptide_set_to_proteins = Dictionary{Tuple{UInt64, Bool, UInt8}, Tuple{Set{PeptideKey}, Vector{ProteinKey}}}()
+
+            for protein in candidate_proteins
+                remaining_peps = intersect(protein_to_peptides[protein], remaining_peptides)
+                # Use hash of sorted peptide set as key for grouping
+                pep_set_hash = hash(sort(collect(remaining_peps)))
+                group_key = (pep_set_hash, protein.is_target, protein.entrap_id)
+
+                if !haskey(peptide_set_to_proteins, group_key)
+                    insert!(peptide_set_to_proteins, group_key, (remaining_peps, ProteinKey[]))
+                end
+                push!(peptide_set_to_proteins[group_key][2], protein)
+            end
+
+            # Create merged candidates
+            merged_candidates = ProteinKey[]
+
+            for ((pep_set_hash, is_target, entrap_id), (pep_set, proteins)) in pairs(peptide_set_to_proteins)
+                if length(proteins) == 1
+                    # No merge needed - single protein
+                    push!(merged_candidates, proteins[1])
+                else
+                    # Merge proteins with identical remaining peptide sets
+                    protein_names = sort([p.name for p in proteins])
+                    merged_protein = ProteinKey(
+                        join(protein_names, ";"),
+                        is_target,
+                        entrap_id
+                    )
+                    push!(merged_candidates, merged_protein)
+
+                    # Update protein_to_peptides mapping for merged protein
+                    # Use the full peptide set from the first protein (they should all be identical)
+                    insert!(protein_to_peptides, merged_protein, protein_to_peptides[proteins[1]])
+                end
+            end
+
+            candidate_proteins = merged_candidates
+
+            # Step 2: Find protein/group that covers the most remaining peptides
             best_protein = nothing
             best_coverage = 0
-            
+
             for protein in candidate_proteins
                 coverage = length(intersect(protein_to_peptides[protein], remaining_peptides))
                 if coverage > best_coverage
@@ -324,14 +368,16 @@ function infer_proteins(
                     best_protein = protein
                 end
             end
-            
+
             if best_coverage == 0
                 break  # No more peptides can be covered
             end
-            
+
+            # Step 3: Add best protein/group to necessary set
             push!(necessary_proteins, best_protein)
             filter!(p -> p != best_protein, candidate_proteins)
-            
+
+            # Step 4: Remove covered peptides
             for peptide_key in intersect(protein_to_peptides[best_protein], remaining_peptides)
                 delete!(remaining_peptides, peptide_key)
             end
