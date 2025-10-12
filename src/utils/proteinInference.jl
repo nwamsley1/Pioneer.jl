@@ -44,15 +44,20 @@ The algorithm handles the following cases (based on Nesvizhskii & Aebersold, 200
 - `peptides::Vector{PeptideKey}`: Peptide identifiers corresponding to the proteins vector.
 
 # Returns
-- `InferenceResult`: Contains two dictionaries:
-  - `peptide_to_protein`: Maps each PeptideKey to its assigned ProteinKey
-  - `use_for_quant`: Maps each PeptideKey to whether it should be used for quantification
+- `InferenceResult`: Contains a single dictionary `peptide_to_protein` mapping unique peptides to their
+  assigned proteins. Shared peptides are excluded from the result (not usable for quantification).
+
+# Semantics
+Peptides present in `peptide_to_protein` are unique peptides assigned to the minimal protein set and
+should be used for quantification. Shared peptides are excluded from the result entirely. Downstream
+code can check presence with `haskey(result.peptide_to_protein, peptide_key)` to determine if a
+peptide should be used for quantification.
 
 # Examples
 ```julia
 using Pioneer
 
-# Case A: Distinct proteins
+# Case A: Distinct proteins - all peptides unique
 protein_keys = [
     ProteinKey("A", true, UInt8(1)),
     ProteinKey("A", true, UInt8(1)),
@@ -67,11 +72,11 @@ peptide_keys = [
 ]
 
 result = infer_proteins(protein_keys, peptide_keys)
-# Result maps:
-# pep1 => A (use_for_quant: true)
-# pep2 => A (use_for_quant: true)
-# pep3 => B (use_for_quant: true)
-# pep4 => B (use_for_quant: true)
+# Result contains all 4 peptides (all unique):
+# pep1 => A
+# pep2 => A
+# pep3 => B
+# pep4 => B
 
 # Case B: Differentiable proteins with shared peptides
 protein_keys = [
@@ -88,11 +93,10 @@ peptide_keys = [
 ]
 
 result = infer_proteins(protein_keys, peptide_keys)
-# Result maps:
-# pep1 => A (use_for_quant: true)
-# pep2 => A;B (use_for_quant: false)  # Ambiguous peptide
-# pep3 => A;B (use_for_quant: false)  # Ambiguous peptide
-# pep4 => B (use_for_quant: true)
+# Result contains only 2 unique peptides (shared peptides excluded):
+# pep1 => A
+# pep4 => B
+# pep2 and pep3 are NOT in the result (shared between A and B, not usable for quantification)
 ```
 
 # References
@@ -192,9 +196,8 @@ function infer_proteins(
         push!(components, (component_peptides, component_proteins))
     end
     
-    # Initialize result dictionaries
+    # Initialize result dictionary
     peptide_to_protein = Dictionary{PeptideKey, ProteinKey}()
-    use_for_quant = Dictionary{PeptideKey, Bool}()
     
     # Process each component independently
     for (component_peptides, component_proteins) in components
@@ -241,7 +244,6 @@ function infer_proteins(
                         for peptide_key in component_peptides
                             if (is_target == peptide_key.is_target) && (entrap_id == peptide_key.entrap_id)
                                 insert!(peptide_to_protein, peptide_key, final_protein)
-                                insert!(use_for_quant, peptide_key, true)
                             end
                         end
                     end
@@ -291,7 +293,6 @@ function infer_proteins(
                     for peptide_key in component_peptides
                         if (is_target == peptide_key.is_target) && (entrap_id == peptide_key.entrap_id)
                             insert!(peptide_to_protein, peptide_key, final_protein)
-                            insert!(use_for_quant, peptide_key, true)
                         end
                     end
                 end
@@ -423,18 +424,16 @@ function infer_proteins(
         end
 
         # Assign peptides to proteins
+        # Only add unique peptides (those in peptide_to_necessary_protein)
+        # Shared peptides will be excluded from the result entirely
         for peptide_key in component_peptides
             if haskey(peptide_to_necessary_protein, peptide_key)
-                # Peptide is unique to one necessary protein - assign with use_for_quant=true
+                # Peptide is unique to one necessary protein
                 protein = peptide_to_necessary_protein[peptide_key]
                 insert!(peptide_to_protein, peptide_key, protein)
-                insert!(use_for_quant, peptide_key, true)
-            else
-                # Shared peptide - use original protein group and mark as use_for_quant=false
-                original_group = original_groups[peptide_key]
-                insert!(peptide_to_protein, peptide_key, original_group)
-                insert!(use_for_quant, peptide_key, false)
             end
+            # Note: Shared peptides are NOT added to peptide_to_protein
+            # This implicitly marks them as not usable for quantification
         end
 
         #= Alternative approach: Assign based on protein_to_peptides from greedy set cover
@@ -454,16 +453,8 @@ function infer_proteins(
             end
         end
         =#
-
-        # Remove shared peptides from results (they won't be used for quantification)
-        for peptide_key in component_peptides
-            if haskey(use_for_quant, peptide_key) && !use_for_quant[peptide_key]
-                delete!(peptide_to_protein, peptide_key)
-                delete!(use_for_quant, peptide_key)
-            end
-        end
     end
 
-    return InferenceResult(peptide_to_protein, use_for_quant)
+    return InferenceResult(peptide_to_protein)
 end
 

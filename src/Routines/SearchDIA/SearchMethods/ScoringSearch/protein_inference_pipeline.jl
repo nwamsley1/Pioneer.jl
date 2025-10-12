@@ -117,8 +117,7 @@ function apply_inference_to_dataframe(df::DataFrame, precursors::LibraryPrecurso
     if nrow(df) == 0
         # Return empty result for empty input
         return InferenceResult(
-            Dictionary{PeptideKey, ProteinKey}(),
-            Dictionary{PeptideKey, Bool}()
+            Dictionary{PeptideKey, ProteinKey}()
         )
     end
     
@@ -196,38 +195,39 @@ end
     add_quantification_flag(inference_result::InferenceResult)
 
 Add flag indicating whether peptide should be used for quantification.
+
+Peptides present in the inference result (unique peptides assigned to minimal protein set)
+are marked as usable for quantification. Peptides not in the result (shared peptides or
+filtered out) are marked as NOT usable for quantification.
 """
 function add_quantification_flag(inference_result::InferenceResult)
     desc = "add_quantification_flag"
-    
+
     op = function(df)
         # Extract columns with type assertions for performance
         sequences = df.sequence::AbstractVector{String}
         is_decoy = df.is_decoy::AbstractVector{Bool}
         entrap_ids = df.entrap_id::AbstractVector{UInt8}
-        
+
         n_rows = length(sequences)
         use_for_quant = Vector{Bool}(undef, n_rows)
-        
+
         for i in 1:n_rows
             pep_key = PeptideKey(
                 sequences[i],
                 !is_decoy[i],
                 entrap_ids[i]
             )
-            
-            if haskey(inference_result.use_for_quant, pep_key)
-                use_for_quant[i] = inference_result.use_for_quant[pep_key]
-            else
-                # Default to true if not in inference results
-                use_for_quant[i] = true
-            end
+
+            # Peptide is usable for quantification if it's in the inference results
+            # (i.e., it's a unique peptide assigned to a protein)
+            use_for_quant[i] = haskey(inference_result.peptide_to_protein, pep_key)
         end
-        
+
         df.use_for_protein_quant = use_for_quant
         return df
     end
-    
+
     return desc => op
 end
 

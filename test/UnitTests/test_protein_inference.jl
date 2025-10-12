@@ -36,9 +36,8 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         empty_proteins = ProteinKey[]
         empty_peptides = PeptideKey[]
         result = infer_proteins(empty_proteins, empty_peptides)
-        
+
         @test length(result.peptide_to_protein) == 0
-        @test length(result.use_for_quant) == 0
     end
 
     @testset "Case A: Distinct Proteins" begin
@@ -64,10 +63,10 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test result.peptide_to_protein[peptides[2]].name == "A"
         @test result.peptide_to_protein[peptides[3]].name == "B"
         @test result.peptide_to_protein[peptides[4]].name == "B"
-        
-        # All peptides should be used for quantification
-        @test all(values(result.use_for_quant))
-        
+
+        # All peptides are unique and present (usable for quantification)
+        @test length(result.peptide_to_protein) == 4
+
         # Check target status and entrapment IDs are preserved
         for (pep_key, prot_key) in pairs(result.peptide_to_protein)
             @test prot_key.is_target == pep_key.is_target
@@ -94,23 +93,16 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
 
         result = infer_proteins(proteins, peptides)
 
-        # Only unique peptides should be in results
+        # Only unique peptides should be in results (shared peptides excluded)
         @test length(result.peptide_to_protein) == 2
-        @test length(result.use_for_quant) == 2
 
         # Check unique peptide assignments
         @test result.peptide_to_protein[peptides[1]].name == "A"
         @test result.peptide_to_protein[peptides[4]].name == "B"
 
-        # Check quantification flags
-        @test result.use_for_quant[peptides[1]] == true   # Unique to A
-        @test result.use_for_quant[peptides[4]] == true   # Unique to B
-
-        # Shared peptides should not be in results
-        @test !haskey(result.peptide_to_protein, peptides[2])  # Shared, deleted
-        @test !haskey(result.peptide_to_protein, peptides[3])  # Shared, deleted
-        @test !haskey(result.use_for_quant, peptides[2])
-        @test !haskey(result.use_for_quant, peptides[3])
+        # Shared peptides should not be in results (not usable for quantification)
+        @test !haskey(result.peptide_to_protein, peptides[2])  # Shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[3])  # Shared, excluded
     end
     
     @testset "Case C: Indistinguishable Proteins" begin
@@ -131,9 +123,9 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
         
         # All peptides should be assigned to the combined protein group
+        @test length(result.peptide_to_protein) == 4
         for peptide in peptides
             @test result.peptide_to_protein[peptide].name == "A;B"
-            @test result.use_for_quant[peptide] == true
         end
     end
     
@@ -155,9 +147,9 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
         
         # All peptides should be assigned to A (minimal explanation)
+        @test length(result.peptide_to_protein) == 4
         for peptide in peptides
             @test result.peptide_to_protein[peptide].name == "A"
-            @test result.use_for_quant[peptide] == true
         end
     end
     
@@ -180,17 +172,13 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         
         # Check that minimal set A and C is chosen
         # All peptides get assigned to necessary proteins with maximum parsimony
+        @test length(result.peptide_to_protein) == 4
         @test result.peptide_to_protein[peptides[1]].name == "A"
         @test result.peptide_to_protein[peptides[2]].name == "A"  # A can explain pep2
-        @test result.peptide_to_protein[peptides[3]].name == "C"  # C can explain pep3  
+        @test result.peptide_to_protein[peptides[3]].name == "C"  # C can explain pep3
         @test result.peptide_to_protein[peptides[4]].name == "C"
-        
-        # All peptides should be used for quantification in this case
-        # since the necessary proteins (A and C) can uniquely explain all peptides
-        @test result.use_for_quant[peptides[1]] == true
-        @test result.use_for_quant[peptides[2]] == true  
-        @test result.use_for_quant[peptides[3]] == true  
-        @test result.use_for_quant[peptides[4]] == true
+
+        # All peptides are unique to their assigned proteins (usable for quantification)
     end
     
     @testset "Case F: Shared Peptides Only" begin
@@ -211,9 +199,9 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
         
         # All peptides should be assigned to the combined group
+        @test length(result.peptide_to_protein) == 4
         for peptide in peptides
             @test result.peptide_to_protein[peptide].name == "A;B;C"
-            @test result.use_for_quant[peptide] == true
         end
     end
     
@@ -231,10 +219,9 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
         
         # Each peptide should be assigned to protein in matching entrapment group
+        @test length(result.peptide_to_protein) == 2
         @test result.peptide_to_protein[peptides[1]].entrap_id == UInt8(1)
         @test result.peptide_to_protein[peptides[2]].entrap_id == UInt8(2)
-        @test result.use_for_quant[peptides[1]] == true
-        @test result.use_for_quant[peptides[2]] == true
     end
     
     @testset "Target/Decoy Handling" begin
@@ -251,10 +238,9 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
         
         # Check target/decoy status is preserved
+        @test length(result.peptide_to_protein) == 2
         @test result.peptide_to_protein[peptides[1]].is_target == true
         @test result.peptide_to_protein[peptides[2]].is_target == false
-        @test result.use_for_quant[peptides[1]] == true
-        @test result.use_for_quant[peptides[2]] == true
     end
     
     @testset "Complex Case H: Multiple Scenarios" begin
@@ -296,34 +282,28 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         
         result = infer_proteins(proteins, peptides)
 
-        # Should have 10 peptides (12 total - 2 shared deleted: pep6, pep7)
+        # Should have 10 peptides (12 total - 2 shared excluded: pep6, pep7)
         @test length(result.peptide_to_protein) == 10
-        @test length(result.use_for_quant) == 10
 
-        # Case A results
+        # Case A results (distinct proteins - all unique)
         @test result.peptide_to_protein[peptides[1]].name == "A"
         @test result.peptide_to_protein[peptides[2]].name == "A"
         @test result.peptide_to_protein[peptides[3]].name == "B"
         @test result.peptide_to_protein[peptides[4]].name == "B"
-        @test all(result.use_for_quant[pep] for pep in peptides[1:4])
-        
-        # Case B-like results (differentiable proteins C, D - C has unique pep5, D has unique pep8)
+
+        # Case B-like results (differentiable proteins C, D)
         @test result.peptide_to_protein[peptides[5]].name == "C"
         @test result.peptide_to_protein[peptides[8]].name == "D"
-        @test result.use_for_quant[peptides[5]] == true
-        @test result.use_for_quant[peptides[8]] == true
-        # Shared peptides should not be in results
-        @test !haskey(result.peptide_to_protein, peptides[6])  # Shared, deleted
-        @test !haskey(result.peptide_to_protein, peptides[7])  # Shared, deleted
-        @test !haskey(result.use_for_quant, peptides[6])
-        @test !haskey(result.use_for_quant, peptides[7])
-        
-        # Case C results
+
+        # Shared peptides should not be in results (not usable for quantification)
+        @test !haskey(result.peptide_to_protein, peptides[6])  # Shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[7])  # Shared, excluded
+
+        # Case C results (indistinguishable proteins)
         @test result.peptide_to_protein[peptides[9]].name == "E;F"
         @test result.peptide_to_protein[peptides[10]].name == "E;F"
         @test result.peptide_to_protein[peptides[11]].name == "E;F"
         @test result.peptide_to_protein[peptides[12]].name == "E;F"
-        @test all(result.use_for_quant[pep] for pep in peptides[9:12])
     end
 
     @testset "Case I: Complex Component with Merge-First" begin
@@ -353,9 +333,8 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
 
         result = infer_proteins(proteins, peptides)
 
-        # Only unique peptides should be in results (shared peptides are deleted)
+        # Only unique peptides should be in results (shared peptides excluded)
         @test length(result.peptide_to_protein) == 4
-        @test length(result.use_for_quant) == 4
 
         # Unique peptide assignments
         @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
@@ -363,17 +342,11 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test result.peptide_to_protein[peptides[5]].name == "D"      # pep5 unique to D
         @test result.peptide_to_protein[peptides[7]].name == "E;F"    # pep7 unique to E;F merged group
 
-        # All returned peptides have use_for_quant = true
-        @test result.use_for_quant[peptides[1]] == true
-        @test result.use_for_quant[peptides[3]] == true
-        @test result.use_for_quant[peptides[5]] == true
-        @test result.use_for_quant[peptides[7]] == true
-
-        # Shared peptides are not in results
-        @test !haskey(result.peptide_to_protein, peptides[2])  # pep2 shared, deleted
-        @test !haskey(result.peptide_to_protein, peptides[4])  # pep4 shared, deleted
-        @test !haskey(result.peptide_to_protein, peptides[6])  # pep6 shared, deleted
-        @test !haskey(result.peptide_to_protein, peptides[8])  # pep8 shared, deleted
+        # Shared peptides are not in results (not usable for quantification)
+        @test !haskey(result.peptide_to_protein, peptides[2])  # pep2 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[4])  # pep4 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[6])  # pep6 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[8])  # pep8 shared, excluded
     end
 
     @testset "Case J: Merge-First with Original Bug Case" begin
@@ -404,23 +377,17 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
 
         result = infer_proteins(proteins, peptides)
 
-        # Only unique peptides should be in results
+        # Only unique peptides should be in results (shared peptides excluded)
         @test length(result.peptide_to_protein) == 3
-        @test length(result.use_for_quant) == 3
 
         # Unique peptide assignments
         @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
         @test result.peptide_to_protein[peptides[3]].name == "B;C"    # pep3 unique to B;C merged group
         @test result.peptide_to_protein[peptides[5]].name == "D"      # pep5 unique to D
 
-        # All returned peptides have use_for_quant = true
-        @test result.use_for_quant[peptides[1]] == true
-        @test result.use_for_quant[peptides[3]] == true
-        @test result.use_for_quant[peptides[5]] == true
-
-        # Shared peptides are not in results
-        @test !haskey(result.peptide_to_protein, peptides[2])  # pep2 shared, deleted
-        @test !haskey(result.peptide_to_protein, peptides[4])  # pep4 shared, deleted
+        # Shared peptides are not in results (not usable for quantification)
+        @test !haskey(result.peptide_to_protein, peptides[2])  # pep2 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[4])  # pep4 shared, excluded
     end
 
     @testset "Case K: Shared Peptides with Duplicate Protein Groups" begin
@@ -457,25 +424,19 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
 
         result = infer_proteins(proteins, peptides)
 
-        # Only unique peptides should be in results (shared peptides are deleted)
+        # Only unique peptides should be in results (shared peptides excluded)
         @test length(result.peptide_to_protein) == 3
-        @test length(result.use_for_quant) == 3
 
         # Unique peptide assignments
         @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
         @test result.peptide_to_protein[peptides[3]].name == "A"      # pep3 unique to A (C not selected)
         @test result.peptide_to_protein[peptides[4]].name == "B"      # pep4 unique to B
 
-        # All remaining peptides should be marked for quantification
-        @test result.use_for_quant[peptides[1]] == true   # pep1 unique to A
-        @test result.use_for_quant[peptides[3]] == true   # pep3 unique to A (C not selected)
-        @test result.use_for_quant[peptides[4]] == true   # pep4 unique to B
-
-        # Shared peptides are not in results
-        @test !haskey(result.peptide_to_protein, peptides[2])  # pep2 shared, deleted
-        @test !haskey(result.peptide_to_protein, peptides[5])  # pep5 shared, deleted
-        @test !haskey(result.peptide_to_protein, peptides[6])  # pep6 shared, deleted
-        @test !haskey(result.peptide_to_protein, peptides[7])  # pep7 shared, deleted
+        # Shared peptides are not in results (not usable for quantification)
+        @test !haskey(result.peptide_to_protein, peptides[2])  # pep2 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[5])  # pep5 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[6])  # pep6 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[7])  # pep7 shared, excluded
     end
 
     @testset "InferenceResult Structure" begin
@@ -487,14 +448,11 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
 
         @test isa(result, InferenceResult)
         @test isa(result.peptide_to_protein, Dictionary{PeptideKey, ProteinKey})
-        @test isa(result.use_for_quant, Dictionary{PeptideKey, Bool})
         @test length(result.peptide_to_protein) == 1
-        @test length(result.use_for_quant) == 1
 
-        # Check that all peptides have both mappings
+        # Check that all unique peptides are present
         for peptide in peptides
             @test haskey(result.peptide_to_protein, peptide)
-            @test haskey(result.use_for_quant, peptide)
         end
     end
 
