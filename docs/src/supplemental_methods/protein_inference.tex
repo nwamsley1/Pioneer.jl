@@ -34,7 +34,7 @@ Pioneer implements a two-phase parsimony-based inference algorithm to identify a
 \end{equation}
 Each pair $(p, a) \in \mathcal{E}^{(r)}$ represents an edge in a bipartite graph connecting observed peptide $p$ to library protein accession $a$. Separate edge sets $\mathcal{E}_{\text{target}}^{(r)}$ and $\mathcal{E}_{\text{decoy}}^{(r)}$ are constructed for target and decoy precursors respectively, maintaining target-decoy separation throughout inference.
 
-\paragraph{Algorithm Overview} The inference algorithm decomposes the bipartite graph into disjoint connected components using depth-first search, ensuring peptides in different components share no common proteins. Within each component, the algorithm applies a two-phase approach: first automatically selecting all proteins with unique peptide evidence (satisfying the parsimony principle), then applying greedy set cover to select proteins covering the most remaining peptides.
+\paragraph{Algorithm Overview} The inference algorithm decomposes the bipartite graph into disjoint connected components using depth-first search, ensuring peptides in different components share no common proteins. Within each component, the algorithm applies a two-phase approach: first automatically selecting all proteins with unique peptide evidence (satisfying the parsimony principle), then applying a merge-first greedy set cover strategy. At each iteration of the greedy phase, proteins with identical remaining peptide sets are first merged into protein groups (e.g., proteins B and C both covering only peptide 7 are merged into ``B;C''), then the protein or group covering the most remaining peptides is selected. This merge-first approach ensures indistinguishable proteins are treated as single entities and prevents arbitrary selection among equivalent proteins.
 
 \begin{algorithm}[H]
 \caption{Two-Phase Protein Inference}
@@ -79,16 +79,42 @@ Each pair $(p, a) \in \mathcal{E}^{(r)}$ represents an edge in a bipartite graph
     \State $S \gets \{a \in A_c : P[a] \cap U \neq \emptyset\}$ \Comment{Necessary proteins}
     \State $R \gets P_c \setminus \bigcup_{a \in S} P[a]$ \Comment{Remaining uncovered peptides}
     \State
-    \State \textit{// Phase 2: Greedy set cover for remaining peptides (lines 312-338)}
+    \State \textit{// Phase 2: Merge-first greedy set cover for remaining peptides (lines 322-399)}
     \State $K \gets A_c \setminus S$ \Comment{Candidate proteins}
     \While{$R \neq \emptyset$ and $K \neq \emptyset$}
-        \State $a^* \gets \arg\max_{a \in K} |P[a] \cap R|$ \Comment{Protein covering most peptides (lines 316-326)}
+        \State \textit{// Step 1: Merge indistinguishable proteins (lines 326-371)}
+        \State \textit{// Group proteins by their remaining peptide sets}
+        \For{$a \in K$}
+            \State $R_a \gets P[a] \cap R$ \Comment{Remaining peptides for protein $a$}
+            \State $h_a \gets \text{hash}(\text{sort}(R_a))$ \Comment{Hash of peptide set}
+        \EndFor
+        \State \textit{// Merge proteins with identical remaining peptide sets}
+        \State $K' \gets \emptyset$ \Comment{Merged candidate set}
+        \For{each unique hash $h$}
+            \State $M_h \gets \{a \in K : h_a = h\}$ \Comment{Proteins with same remaining peptides}
+            \If{$|M_h| = 1$}
+                \State $K' \gets K' \cup M_h$ \Comment{Single protein, no merge}
+            \Else
+                \State $a_{\text{merged}} \gets \text{join}(\text{sort}(M_h), ";")$ \Comment{Create merged protein (lines 352-357)}
+                \State $P[a_{\text{merged}}] \gets P[a]$ for any $a \in M_h$ \Comment{Use remaining peptides (line 362)}
+                \State $K' \gets K' \cup \{a_{\text{merged}}\}$
+                \For{$a \in M_h$}
+                    \State Delete $P[a]$ \Comment{Remove individual entries (lines 365-367)}
+                \EndFor
+            \EndIf
+        \EndFor
+        \State $K \gets K'$ \Comment{Update candidates with merged proteins}
+        \State
+        \State \textit{// Step 2: Find protein/group with best coverage (lines 373-383)}
+        \State $a^* \gets \arg\max_{a \in K} |P[a] \cap R|$ \Comment{Protein covering most peptides}
         \If{$|P[a^*] \cap R| = 0$}
-            \State \textbf{break} \Comment{Line 329}
+            \State \textbf{break} \Comment{Line 386}
         \EndIf
-        \State $S \gets S \cup \{a^*\}$ \Comment{Line 332}
-        \State $R \gets R \setminus P[a^*]$ \Comment{Line 335-337}
-        \State $K \gets K \setminus \{a^*\}$ \Comment{Line 333}
+        \State
+        \State \textit{// Step 3-4: Add to necessary set and remove covered peptides (lines 389-398)}
+        \State $S \gets S \cup \{a^*\}$ \Comment{Line 390}
+        \State $R \gets R \setminus P[a^*]$ \Comment{Lines 395-397}
+        \State $K \gets K \setminus \{a^*\}$ \Comment{Line 391}
     \EndWhile
     \State
     \State \textit{// Assign peptides to protein groups (lines 365-377)}
@@ -106,7 +132,7 @@ Each pair $(p, a) \in \mathcal{E}^{(r)}$ represents an edge in a bipartite graph
 \end{algorithmic}
 \end{algorithm}
 
-This two-phase approach ensures that proteins with unique peptide evidence are never excluded (satisfying the parsimony principle), while efficiently handling ambiguous peptides through greedy selection.
+This two-phase approach ensures that proteins with unique peptide evidence are never excluded (satisfying the parsimony principle), while the merge-first greedy strategy efficiently handles ambiguous peptides by detecting and merging indistinguishable proteins at each iteration before selection. This prevents arbitrary tie-breaking and ensures that protein groups accurately reflect equivalent evidence across proteins.
 
 \paragraph{Protein Group Filtering} After protein inference, protein groups are filtered by the minimum number of peptides. For each protein $q \in S$ selected across all components, let $\mathcal{N}(q)$ denote its set of assigned peptides. Filter proteins by:
 
