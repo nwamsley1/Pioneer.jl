@@ -257,18 +257,13 @@ function infer_proteins(
         # Find peptides unique to a protein
         unique_peptide_to_protein = Dictionary{PeptideKey, ProteinKey}()
         
-        #@info("Starting greedy set cover with $(length(remaining_peptides)) remaining peptides and $(length(candidate_proteins)) candidate proteins, and
-        #    $(length(necessary_proteins)) necessary proteins from unique peptides.")
-        @info("remaining peptides: $([p.sequence for p in remaining_peptides])")
-        @info("protein_to_peptides: $([k.name => [p.sequence for p in v] for (k,v) in pairs(protein_to_peptides)])")
-
         for peptide_key in component_peptides
             proteins_for_peptide = intersect(peptide_to_proteins[peptide_key], component_proteins)
             if length(proteins_for_peptide) == 1
                 insert!(unique_peptide_to_protein, peptide_key, first(proteins_for_peptide))
             end
         end
-        @info("unique_peptide_to_protein: $([p.sequence => unique_peptide_to_protein[p].name for p in keys(unique_peptide_to_protein)])")
+
         # Case F handling: No protein has unique peptides
         if isempty(unique_peptide_to_protein) && !isempty(component_proteins)
             # Group proteins by their target status and entrapment group
@@ -312,16 +307,13 @@ function infer_proteins(
         
         for protein in unique_proteins
             push!(necessary_proteins, protein)
-            @info ("Adding protein $(protein.name) for unique peptides and protein_to_peptides[protein]: $([p.sequence for p in protein_to_peptides[protein]])")
-            @info ("remaining peptides before removal: $([p.sequence for p in remaining_peptides])")
-            for peptide_key in protein_to_peptides[protein]#intersect(protein_to_peptides[protein], remaining_peptides)
+            for peptide_key in protein_to_peptides[protein]
                 delete!(remaining_peptides, peptide_key)
             end
         end
-        @info "Remaining peptides after unique peptide removal: $([p.sequence for p in remaining_peptides])"
+
         # Continue with greedy set cover for remaining peptides
         candidate_proteins = collect(setdiff(component_proteins, necessary_proteins))
-        @info "candidate_proteins: $([p.name for p in candidate_proteins])"
         while !isempty(remaining_peptides) && !isempty(candidate_proteins)
             # Step 1: Merge indistinguishable proteins before greedy selection
             # Group proteins by (remaining peptide set, is_target, entrap_id)
@@ -339,7 +331,7 @@ function infer_proteins(
                 end
                 push!(peptide_set_to_proteins[group_key][2], protein)
             end
-            @info("peptide_set_to_proteins: $([(k, [p.name for p in v[2]]) for (k,v) in pairs(peptide_set_to_proteins)])")
+
             # Create merged candidates
             merged_candidates = ProteinKey[]
 
@@ -367,7 +359,7 @@ function infer_proteins(
                     end
                 end
             end
-            @info("Merged candidates: $([p.name for p in merged_candidates])")
+
             candidate_proteins = merged_candidates
 
             # Step 2: Find protein/group that covers the most remaining peptides
@@ -389,16 +381,13 @@ function infer_proteins(
             # Step 3: Add best protein/group to necessary set
             push!(necessary_proteins, best_protein)
             filter!(p -> p != best_protein, candidate_proteins)
-            @info ("Adding protein $(best_protein.name) covering peptides $([p.sequence for p in intersect(protein_to_peptides[best_protein], remaining_peptides)])")
-            @info ("necessary_proteins: $([p.name for p in necessary_proteins])")
+
             # Step 4: Remove covered peptides
             for peptide_key in intersect(protein_to_peptides[best_protein], remaining_peptides)
                 delete!(remaining_peptides, peptide_key)
             end
-            @info ("remaining peptides after removal: $([p.sequence for p in remaining_peptides])")
         end
-        @info ("protein_to_peptides after greedy set cover: $([k.name => [p.sequence for p in v] for (k,v) in pairs(protein_to_peptides)])")
-        @info ("Neccessary proteins for component: $([p.name for p in necessary_proteins])")
+
         # Create a mapping to track peptides that can be uniquely attributed to a protein in the necessary set
         peptide_to_necessary_protein = Dictionary{PeptideKey, ProteinKey}()
 
@@ -432,8 +421,7 @@ function infer_proteins(
                 push!(ambiguous_peptides, peptide_key)
             end
         end
-        @info ("proteins_with_peptide: $([p.sequence => [pr.name for pr in [protein for protein in necessary_proteins if p in protein_to_peptides[protein]]] for p in component_peptides])")
-        @info ("peptide_to_necessary_protein: $([p.sequence => peptide_to_necessary_protein[p].name for p in keys(peptide_to_necessary_protein)])")
+
         # Assign peptides to proteins
         for peptide_key in component_peptides
             if haskey(peptide_to_necessary_protein, peptide_key)
@@ -466,14 +454,6 @@ function infer_proteins(
             end
         end
         =#
-
-        @info("Peptide assignments for component:")
-        @info("  Peptide → Protein (use_for_quant):")
-        for peptide_key in component_peptides
-            protein = peptide_to_protein[peptide_key]
-            quant = use_for_quant[peptide_key]
-            @info("    $(peptide_key.sequence) → $(protein.name) ($(quant))")
-        end
 
         # Remove shared peptides from results (they won't be used for quantification)
         for peptide_key in component_peptides
