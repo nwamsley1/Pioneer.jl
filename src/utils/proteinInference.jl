@@ -449,6 +449,24 @@ function infer_proteins(
             end
         end
 
+        #= Alternative approach: Assign based on protein_to_peptides from greedy set cover
+        for protein in necessary_proteins
+            if haskey(protein_to_peptides, protein)
+                for peptide_key in protein_to_peptides[protein]
+                    # Assign peptide to this protein
+                    insert!(peptide_to_protein, peptide_key, protein)
+
+                    # Set use_for_quant based on whether it's in peptide_to_necessary_protein
+                    if haskey(peptide_to_necessary_protein, peptide_key)
+                        insert!(use_for_quant, peptide_key, true)
+                    else
+                        insert!(use_for_quant, peptide_key, false)
+                    end
+                end
+            end
+        end
+        =#
+
         @info("Peptide assignments for component:")
         @info("  Peptide → Protein (use_for_quant):")
         for peptide_key in component_peptides
