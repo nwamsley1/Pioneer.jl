@@ -40,7 +40,7 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test length(result.peptide_to_protein) == 0
         @test length(result.use_for_quant) == 0
     end
-    #=
+    
     @testset "Case A: Distinct Proteins" begin
         # Protein A has peptides 1, 2
         # Protein B has peptides 3, 4
@@ -362,7 +362,7 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test result.use_for_quant[peptides[7]] == true   # pep7 unique to E;F merged group
         @test result.use_for_quant[peptides[8]] == true   # pep8 unique to A (F not selected)
     end
-    =#
+    
     @testset "Case J: Merge-First with Original Bug Case" begin
         # This is the original failing test case that exposed the merge-first bug
         # Protein-Peptide mapping:
@@ -391,20 +391,20 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
 
         # Peptide assignments
-        @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
-        @test result.peptide_to_protein[peptides[2]].name == "A"      # pep2 uniquely explained by A in selected set
-        @test result.peptide_to_protein[peptides[3]].name == "B;C"    # pep3 - B and C indistinguishable, merged
-        @test result.peptide_to_protein[peptides[4]].name == "D"      # pep4 unique to D (C not selected)
-        @test result.peptide_to_protein[peptides[5]].name == "D"      # pep5 unique to D
+        @test result.peptide_to_protein[peptides[1]].name == "A"        # pep1 unique to A
+        @test result.peptide_to_protein[peptides[2]].name == "A;B;C"    # pep2 shared between A, B, C
+        @test result.peptide_to_protein[peptides[3]].name == "B;C"      # pep3 unique to B;C merged group
+        @test result.peptide_to_protein[peptides[4]].name == "B;C;D"    # pep4 shared between B, C, D
+        @test result.peptide_to_protein[peptides[5]].name == "D"        # pep5 unique to D
 
         # Quantification flags
         @test result.use_for_quant[peptides[1]] == true   # pep1 unique to A
-        @test result.use_for_quant[peptides[2]] == false   # pep2 uniquely explained by A in selected set
+        @test result.use_for_quant[peptides[2]] == false  # pep2 shared (maps to A and B;C)
         @test result.use_for_quant[peptides[3]] == true   # pep3 unique to B;C merged group
-        @test result.use_for_quant[peptides[4]] == false   # pep4 unique to D (C not selected)
+        @test result.use_for_quant[peptides[4]] == false  # pep4 shared (maps to B;C and D)
         @test result.use_for_quant[peptides[5]] == true   # pep5 unique to D
     end
-    #=
+    
     @testset "Case K: Shared Peptides with Duplicate Protein Groups" begin
         # Test case with duplicate protein groups in input and shared peptides
         # Protein-Peptide mapping:
@@ -457,7 +457,7 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test result.use_for_quant[peptides[6]] == false  # pep6 shared between A and B
         @test result.use_for_quant[peptides[7]] == false  # pep7 shared between A and B
     end
-    =#
+    
     @testset "InferenceResult Structure" begin
         # Test that the result structure is correctly formed
         proteins = [ProteinKey("A", true, UInt8(1))]

@@ -401,19 +401,29 @@ function infer_proteins(
         @info ("Neccessary proteins for component: $([p.name for p in necessary_proteins])")
         # Create a mapping to track peptides that can be uniquely attributed to a protein in the necessary set
         peptide_to_necessary_protein = Dictionary{PeptideKey, ProteinKey}()
-        
+
         # Track peptides that can be attributed to multiple necessary proteins
         ambiguous_peptides = Set{PeptideKey}()
-        
+
         for peptide_key in component_peptides
-            # Get all necessary proteins that contain this peptide
+            # Get the original proteins that this peptide maps to (before any merging)
+            original_protein_set = peptide_to_proteins[peptide_key]
+
+            # Count how many necessary proteins contain this peptide
+            # For merged proteins (e.g., "B;C"), check if any component is in the original set
             proteins_with_peptide = Set{ProteinKey}()
             for protein in necessary_proteins
-                if peptide_key in protein_to_peptides[protein]
-                    push!(proteins_with_peptide, protein)
+                # Split protein name by ";" to handle merged protein groups
+                protein_components = split(protein.name, ";")
+                for component_name in protein_components
+                    component_protein = ProteinKey(component_name, protein.is_target, protein.entrap_id)
+                    if component_protein in original_protein_set
+                        push!(proteins_with_peptide, protein)
+                        break  # Only count this necessary protein once
+                    end
                 end
             end
-            
+
             if length(proteins_with_peptide) == 1
                 # This peptide is unique to one necessary protein
                 insert!(peptide_to_necessary_protein, peptide_key, first(proteins_with_peptide))
