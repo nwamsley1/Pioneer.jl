@@ -40,7 +40,7 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test length(result.peptide_to_protein) == 0
         @test length(result.use_for_quant) == 0
     end
-    #=
+
     @testset "Case A: Distinct Proteins" begin
         # Protein A has peptides 1, 2
         # Protein B has peptides 3, 4
@@ -91,20 +91,26 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
             PeptideKey("pep3", true, UInt8(1)),
             PeptideKey("pep4", true, UInt8(1))
         ]
-        
+
         result = infer_proteins(proteins, peptides)
-        
-        # Check assignments
+
+        # Only unique peptides should be in results
+        @test length(result.peptide_to_protein) == 2
+        @test length(result.use_for_quant) == 2
+
+        # Check unique peptide assignments
         @test result.peptide_to_protein[peptides[1]].name == "A"
-        @test result.peptide_to_protein[peptides[2]].name == "A;B"
-        @test result.peptide_to_protein[peptides[3]].name == "A;B"
         @test result.peptide_to_protein[peptides[4]].name == "B"
-        
+
         # Check quantification flags
         @test result.use_for_quant[peptides[1]] == true   # Unique to A
-        @test result.use_for_quant[peptides[2]] == false  # Shared peptide
-        @test result.use_for_quant[peptides[3]] == false  # Shared peptide
         @test result.use_for_quant[peptides[4]] == true   # Unique to B
+
+        # Shared peptides should not be in results
+        @test !haskey(result.peptide_to_protein, peptides[2])  # Shared, deleted
+        @test !haskey(result.peptide_to_protein, peptides[3])  # Shared, deleted
+        @test !haskey(result.use_for_quant, peptides[2])
+        @test !haskey(result.use_for_quant, peptides[3])
     end
     
     @testset "Case C: Indistinguishable Proteins" begin
@@ -289,7 +295,11 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         ]
         
         result = infer_proteins(proteins, peptides)
-        
+
+        # Should have 10 peptides (12 total - 2 shared deleted: pep6, pep7)
+        @test length(result.peptide_to_protein) == 10
+        @test length(result.use_for_quant) == 10
+
         # Case A results
         @test result.peptide_to_protein[peptides[1]].name == "A"
         @test result.peptide_to_protein[peptides[2]].name == "A"
@@ -299,13 +309,14 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         
         # Case B-like results (differentiable proteins C, D - C has unique pep5, D has unique pep8)
         @test result.peptide_to_protein[peptides[5]].name == "C"
-        @test result.peptide_to_protein[peptides[6]].name == "C;D"  # Shared peptide
-        @test result.peptide_to_protein[peptides[7]].name == "C;D"  # Shared peptide
         @test result.peptide_to_protein[peptides[8]].name == "D"
         @test result.use_for_quant[peptides[5]] == true
-        @test result.use_for_quant[peptides[6]] == false  # Shared, not used for quant
-        @test result.use_for_quant[peptides[7]] == false  # Shared, not used for quant
         @test result.use_for_quant[peptides[8]] == true
+        # Shared peptides should not be in results
+        @test !haskey(result.peptide_to_protein, peptides[6])  # Shared, deleted
+        @test !haskey(result.peptide_to_protein, peptides[7])  # Shared, deleted
+        @test !haskey(result.use_for_quant, peptides[6])
+        @test !haskey(result.use_for_quant, peptides[7])
         
         # Case C results
         @test result.peptide_to_protein[peptides[9]].name == "E;F"
@@ -314,7 +325,7 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test result.peptide_to_protein[peptides[12]].name == "E;F"
         @test all(result.use_for_quant[pep] for pep in peptides[9:12])
     end
-    =#
+
     @testset "Case I: Complex Component with Merge-First" begin
         # Test case demonstrating merge-first fix for indistinguishable proteins
         # This validates that B;C and E;F are properly merged during greedy set cover
