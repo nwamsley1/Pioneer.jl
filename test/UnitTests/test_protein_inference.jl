@@ -363,6 +363,101 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test result.use_for_quant[peptides[8]] == true   # pep8 unique to A (F not selected)
     end
 
+    @testset "Case J: Merge-First with Original Bug Case" begin
+        # This is the original failing test case that exposed the merge-first bug
+        # Protein-Peptide mapping:
+        #   pep1 → {A}
+        #   pep2 → {A, B, C}
+        #   pep3 → {B, C}
+        #   pep4 → {B, C, D}
+        #   pep5 → {D}
+        # Expected: A selected (unique pep1), D selected (unique pep5), B and C merged to B;C
+        proteins = [
+            ProteinKey("A", true, UInt8(1)),
+            ProteinKey("A;B;C", true, UInt8(1)),
+            ProteinKey("B;C", true, UInt8(1)),
+            ProteinKey("B;C;D", true, UInt8(1)),
+            ProteinKey("D", true, UInt8(1)),
+        ]
+
+        peptides = [
+            PeptideKey("1", true, UInt8(1)),
+            PeptideKey("2", true, UInt8(1)),
+            PeptideKey("3", true, UInt8(1)),
+            PeptideKey("4", true, UInt8(1)),
+            PeptideKey("5", true, UInt8(1)),
+        ]
+
+        result = infer_proteins(proteins, peptides)
+
+        # Peptide assignments
+        @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
+        @test result.peptide_to_protein[peptides[2]].name == "A"      # pep2 uniquely explained by A in selected set
+        @test result.peptide_to_protein[peptides[3]].name == "B;C"    # pep3 - B and C indistinguishable, merged
+        @test result.peptide_to_protein[peptides[4]].name == "D"      # pep4 unique to D (C not selected)
+        @test result.peptide_to_protein[peptides[5]].name == "D"      # pep5 unique to D
+
+        # Quantification flags
+        @test result.use_for_quant[peptides[1]] == true   # pep1 unique to A
+        @test result.use_for_quant[peptides[2]] == true   # pep2 uniquely explained by A in selected set
+        @test result.use_for_quant[peptides[3]] == true   # pep3 unique to B;C merged group
+        @test result.use_for_quant[peptides[4]] == true   # pep4 unique to D (C not selected)
+        @test result.use_for_quant[peptides[5]] == true   # pep5 unique to D
+    end
+
+    @testset "Case K: Shared Peptides with Duplicate Protein Groups" begin
+        # Test case with duplicate protein groups in input and shared peptides
+        # Protein-Peptide mapping:
+        #   pep1 → {A}
+        #   pep2 → {A, B}
+        #   pep3 → {A, C}
+        #   pep4 → {B}
+        #   pep5 → {A, B}
+        #   pep6 → {A, B}
+        #   pep7 → {A, B}
+        # Expected: A selected (unique pep1), B selected (unique pep4)
+        # Shared peptides: pep2, pep5, pep6, pep7 → A;B
+        proteins = [
+            ProteinKey("A", true, UInt8(1)),
+            ProteinKey("A;B", true, UInt8(1)),
+            ProteinKey("A;C", true, UInt8(1)),
+            ProteinKey("B", true, UInt8(1)),
+            ProteinKey("A;B", true, UInt8(1)),
+            ProteinKey("A;B", true, UInt8(1)),
+            ProteinKey("A;B", true, UInt8(1))
+        ]
+
+        peptides = [
+            PeptideKey("1", true, UInt8(1)),
+            PeptideKey("2", true, UInt8(1)),
+            PeptideKey("3", true, UInt8(1)),
+            PeptideKey("4", true, UInt8(1)),
+            PeptideKey("5", true, UInt8(1)),
+            PeptideKey("6", true, UInt8(1)),
+            PeptideKey("7", true, UInt8(1)),
+        ]
+
+        result = infer_proteins(proteins, peptides)
+
+        # Peptide assignments
+        @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
+        @test result.peptide_to_protein[peptides[2]].name == "A;B"    # pep2 shared between A and B
+        @test result.peptide_to_protein[peptides[3]].name == "A"      # pep3 unique to A (C not selected)
+        @test result.peptide_to_protein[peptides[4]].name == "B"      # pep4 unique to B
+        @test result.peptide_to_protein[peptides[5]].name == "A;B"    # pep5 shared between A and B
+        @test result.peptide_to_protein[peptides[6]].name == "A;B"    # pep6 shared between A and B
+        @test result.peptide_to_protein[peptides[7]].name == "A;B"    # pep7 shared between A and B
+
+        # Quantification flags
+        @test result.use_for_quant[peptides[1]] == true   # pep1 unique to A
+        @test result.use_for_quant[peptides[2]] == false  # pep2 shared between A and B
+        @test result.use_for_quant[peptides[3]] == true   # pep3 unique to A (C not selected)
+        @test result.use_for_quant[peptides[4]] == true   # pep4 unique to B
+        @test result.use_for_quant[peptides[5]] == false  # pep5 shared between A and B
+        @test result.use_for_quant[peptides[6]] == false  # pep6 shared between A and B
+        @test result.use_for_quant[peptides[7]] == false  # pep7 shared between A and B
+    end
+
     @testset "InferenceResult Structure" begin
         # Test that the result structure is correctly formed
         proteins = [ProteinKey("A", true, UInt8(1))]
