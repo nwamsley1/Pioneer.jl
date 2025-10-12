@@ -474,6 +474,14 @@ function infer_proteins(
             quant = use_for_quant[peptide_key]
             @info("    $(peptide_key.sequence) → $(protein.name) ($(quant))")
         end
+
+        # Remove shared peptides from results (they won't be used for quantification)
+        for peptide_key in component_peptides
+            if haskey(use_for_quant, peptide_key) && !use_for_quant[peptide_key]
+                delete!(peptide_to_protein, peptide_key)
+                delete!(use_for_quant, peptide_key)
+            end
+        end
     end
 
     return InferenceResult(peptide_to_protein, use_for_quant)
