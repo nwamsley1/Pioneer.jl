@@ -358,8 +358,8 @@ function infer_proteins(
                     push!(merged_candidates, merged_protein)
 
                     # Update protein_to_peptides mapping for merged protein
-                    # Use the full peptide set from the first protein (they should all be identical)
-                    insert!(protein_to_peptides, merged_protein, protein_to_peptides[proteins[1]])
+                    # Use only the remaining peptides, not the full original set
+                    insert!(protein_to_peptides, merged_protein, pep_set)
 
                     # Remove individual protein entries to avoid incorrect shared peptide detection
                     for protein in proteins
@@ -422,7 +422,8 @@ function infer_proteins(
                 push!(ambiguous_peptides, peptide_key)
             end
         end
-        
+        @info ("proteins_with_peptide: $([p.sequence => [pr.name for pr in [protein for protein in necessary_proteins if p in protein_to_peptides[protein]]] for p in component_peptides])")
+        @info ("peptide_to_necessary_protein: $([p.sequence => peptide_to_necessary_protein[p].name for p in keys(peptide_to_necessary_protein)])")
         # Assign peptides to proteins
         for peptide_key in component_peptides
             if haskey(peptide_to_necessary_protein, peptide_key)

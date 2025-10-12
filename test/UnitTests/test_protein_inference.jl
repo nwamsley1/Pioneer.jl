@@ -346,21 +346,21 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
         @test result.peptide_to_protein[peptides[2]].name == "A"      # pep2 uniquely explained by A in selected set
         @test result.peptide_to_protein[peptides[3]].name == "B;C"    # pep3 - B and C indistinguishable, merged
-        @test result.peptide_to_protein[peptides[4]].name == "C;D"    # pep4 shared between B;C and D
+        @test result.peptide_to_protein[peptides[4]].name == "D"      # pep4 unique to D (C not selected)
         @test result.peptide_to_protein[peptides[5]].name == "D"      # pep5 unique to D
         @test result.peptide_to_protein[peptides[6]].name == "D"      # pep6 uniquely explained by D in selected set
         @test result.peptide_to_protein[peptides[7]].name == "E;F"    # pep7 - E and F indistinguishable, merged
-        @test result.peptide_to_protein[peptides[8]].name == "A;F"    # pep8 shared between A and E;F
+        @test result.peptide_to_protein[peptides[8]].name == "A"      # pep8 unique to A (F not selected)
 
         # Quantification flags
         @test result.use_for_quant[peptides[1]] == true   # pep1 unique to A
         @test result.use_for_quant[peptides[2]] == true   # pep2 uniquely explained by A in selected set
         @test result.use_for_quant[peptides[3]] == true   # pep3 unique to B;C merged group
-        @test result.use_for_quant[peptides[4]] == false  # pep4 shared between B;C and D
+        @test result.use_for_quant[peptides[4]] == true   # pep4 unique to D (C not selected)
         @test result.use_for_quant[peptides[5]] == true   # pep5 unique to D
         @test result.use_for_quant[peptides[6]] == true   # pep6 uniquely explained by D in selected set
         @test result.use_for_quant[peptides[7]] == true   # pep7 unique to E;F merged group
-        @test result.use_for_quant[peptides[8]] == false  # pep8 shared between A and E;F
+        @test result.use_for_quant[peptides[8]] == true   # pep8 unique to A (F not selected)
     end
 
     @testset "InferenceResult Structure" begin
