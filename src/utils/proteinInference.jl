@@ -360,6 +360,11 @@ function infer_proteins(
                     # Update protein_to_peptides mapping for merged protein
                     # Use the full peptide set from the first protein (they should all be identical)
                     insert!(protein_to_peptides, merged_protein, protein_to_peptides[proteins[1]])
+
+                    # Remove individual protein entries to avoid incorrect shared peptide detection
+                    for protein in proteins
+                        delete!(protein_to_peptides, protein)
+                    end
                 end
             end
             @info("Merged candidates: $([p.name for p in merged_candidates])")
@@ -393,6 +398,7 @@ function infer_proteins(
             @info ("remaining peptides after removal: $([p.sequence for p in remaining_peptides])")
         end
         @info ("protein_to_peptides after greedy set cover: $([k.name => [p.sequence for p in v] for (k,v) in pairs(protein_to_peptides)])")
+        @info ("Neccessary proteins for component: $([p.name for p in necessary_proteins])")
         # Create a mapping to track peptides that can be uniquely attributed to a protein in the necessary set
         peptide_to_necessary_protein = Dictionary{PeptideKey, ProteinKey}()
         
