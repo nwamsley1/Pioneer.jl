@@ -15,7 +15,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-
 """
     infer_proteins(proteins::Vector{ProteinKey}, peptides::Vector{PeptideKey})::InferenceResult
 
@@ -116,7 +115,7 @@ function infer_proteins(
     if length(proteins) != length(peptides)
         throw(ArgumentError("proteins and peptides vectors must have the same length"))
     end
-    
+
     # Build peptide-to-protein and protein-to-peptide mappings
     peptide_to_proteins = Dictionary{PeptideKey, Set{ProteinKey}}()
     original_groups = Dictionary{PeptideKey, ProteinKey}()
@@ -315,6 +314,7 @@ function infer_proteins(
 
         # Continue with greedy set cover for remaining peptides
         candidate_proteins = collect(setdiff(component_proteins, necessary_proteins))
+        #@user_info "Candidate proteins after unique peptide assignment: $(length(candidate_proteins)) remaining, $(length(remaining_peptides)) peptides left"
         while !isempty(remaining_peptides) && !isempty(candidate_proteins)
             # Step 1: Merge indistinguishable proteins before greedy selection
             # Group proteins by (remaining peptide set, is_target, entrap_id)
