@@ -2,6 +2,7 @@
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
+\usepackage{float}
 
 \begin{document}
 
@@ -38,7 +39,7 @@ Each pair $(p, a) \in \mathcal{E}^{(r)}_{Y,e}$ represents an edge in a bipartite
 
 \paragraph{Algorithm Overview} Within each population $(Y, e)$, the inference algorithm decomposes the bipartite graph into disjoint connected components using depth-first search, ensuring peptides in different components share no common proteins. Within each component, the algorithm applies a two-phase approach: first automatically selecting all proteins with unique peptide evidence (satisfying the parsimony principle), then applying a merge-first greedy set cover strategy. At each iteration of the greedy phase, proteins with identical remaining peptide sets are first merged into protein groups (e.g., proteins B and C both covering only peptide 7 are merged into ``B;C''), then the protein or group covering the most remaining peptides is selected. This merge-first approach ensures indistinguishable proteins are treated as single entities and prevents arbitrary selection among equivalent proteins. After processing all populations, results are combined into a single mapping from unique peptides to their assigned protein groups.
 
-\begin{algorithm}[t]
+\begin{algorithm}[H]
 \caption{Protein Inference Phase 1: Graph Decomposition}
 \begin{algorithmic}[1]
 \State \textbf{Input:} Edges $\mathcal{E}^{(r)}_{Y,e} = \{(p, a)\}$ for population $(Y, e)$, where $p$ is peptide, $a$ is protein
@@ -67,7 +68,7 @@ Each pair $(p, a) \in \mathcal{E}^{(r)}_{Y,e}$ represents an edge in a bipartite
 \end{algorithmic}
 \end{algorithm}
 
-\begin{algorithm}[t]
+\begin{algorithm}[H]
 \caption{Protein Inference Phase 2: Component Processing with Merge-First Set Cover}
 \begin{algorithmic}[1]
 \State \textbf{Input:} Components $C$, mappings $A[p]$ and $P[a]$ from Algorithm 1
