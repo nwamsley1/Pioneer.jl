@@ -10,7 +10,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection{Protein Inference and Quantification}\label{subsec:protein_inference}
 
-After precursor-level FDR control, Pioneer performs protein inference to group peptides into minimal protein sets and assigns peptide-specific quantification flags. The protein inference algorithm operates on both target and decoy precursors to enable protein-level FDR calculation.
+After precursor-level FDR control, Pioneer performs protein inference to group peptides into minimal protein sets. The algorithm returns only unique peptides assigned to proteins; shared peptides are excluded from the result to ensure unambiguous quantification. The protein inference algorithm operates on both target and decoy precursors to enable protein-level FDR calculation.
 
 \subsubsection{Input Selection for Protein Inference}
 
@@ -26,7 +26,7 @@ where $\alpha_g = 0.01$ is the global FDR threshold and $\alpha_e = 0.01$ is the
 
 \subsubsection{Parsimony-Based Protein Inference Algorithm}
 
-Pioneer implements a two-phase parsimony-based inference algorithm to identify a minimal set of protein groups that explains all observed peptides \cite{Nesvizhskii2005,Zhang2007}. The algorithm is applied independently to each run $r$, operating separately on target and decoy precursors to produce run-specific target and decoy protein groups. The algorithm proceeds in three main steps: (1) decompose the peptide-protein bipartite graph into independent connected components using depth-first search, (2) within each component, first select all proteins with unique peptide evidence, then apply greedy set cover to handle remaining ambiguous peptides, and (3) assign quantification flags to peptides based on whether they uniquely map to a single protein group.
+Pioneer implements a two-phase parsimony-based inference algorithm to identify a minimal set of protein groups that explains all observed peptides \cite{Nesvizhskii2005,Zhang2007}. The algorithm is applied independently to each run $r$, operating separately on target and decoy precursors to produce run-specific target and decoy protein groups. The algorithm proceeds in three main steps: (1) decompose the peptide-protein bipartite graph into independent connected components using depth-first search, (2) within each component, first select all proteins with unique peptide evidence, then apply greedy set cover to handle remaining ambiguous peptides, and (3) return only peptides that uniquely map to a single protein group in the minimal set. Shared peptides are excluded from the output to ensure unambiguous protein quantification.
 
 \paragraph{Protein-Peptide Bipartite Graph} Let $\mathcal{A}$ denote the set of all protein accession numbers in the spectral library (as defined in Section~\ref{subsec2}). For each run $r$, define the set of peptide-protein associations:
 \begin{equation}
@@ -40,7 +40,7 @@ Each pair $(p, a) \in \mathcal{E}^{(r)}$ represents an edge in a bipartite graph
 \caption{Two-Phase Protein Inference}
 \begin{algorithmic}[1]
 \State \textbf{Input:} Edges $\mathcal{E}^{(r)} = \{(p, a)\}$ where $p$ is peptide, $a$ is protein accession
-\State \textbf{Output:} $G[p] \to q$ where $q \subseteq \mathcal{A}$ is protein group; $Q[p] \to \text{bool}$ for quantification flag
+\State \textbf{Output:} $G[p] \to q$ where $q \subseteq \mathcal{A}$ is protein group (only unique peptides included)
 \State \textbf{Define:} $A[p] = \{a : (p, a) \in \mathcal{E}^{(r)}\}$ (proteins containing peptide $p$)
 \State \hspace{2.3em} $P[a] = \{p : (p, a) \in \mathcal{E}^{(r)}\}$ (peptides in protein $a$)
 \State
@@ -67,7 +67,7 @@ Each pair $(p, a) \in \mathcal{E}^{(r)}$ represents an edge in a bipartite graph
     \State \textit{// Case 1: All proteins indistinguishable - identical peptide sets (lines 198-247)}
     \If{$P[a] = P[a']$ for all $a, a' \in A_c$}
         \For{$p \in P_c$}
-            \State $G[p] \gets A_c$, $Q[p] \gets \text{true}$ \Comment{Lines 228-243}
+            \State $G[p] \gets A_c$ \Comment{All peptides unique to protein group (Lines 228-243)}
         \EndFor
         \State \textbf{continue}
     \EndIf
@@ -117,18 +117,17 @@ Each pair $(p, a) \in \mathcal{E}^{(r)}$ represents an edge in a bipartite graph
         \State $K \gets K \setminus \{a^*\}$ \Comment{Line 391}
     \EndWhile
     \State
-    \State \textit{// Assign peptides to protein groups (lines 365-377)}
+    \State \textit{// Add only unique peptides to result (lines 365-377)}
     \For{$p \in P_c$}
         \State $S_p \gets A[p] \cap S$ \Comment{Necessary proteins for this peptide (lines 347-353)}
         \If{$|S_p| = 1$}
-            \State $G[p] \gets S_p$, $Q[p] \gets \text{true}$ \Comment{Unique assignment (lines 366-370)}
-        \Else
-            \State $G[p] \gets G_0[p]$, $Q[p] \gets \text{false}$ \Comment{Shared - use original group (lines 372-375)}
+            \State $G[p] \gets S_p$ \Comment{Unique assignment - add to result (lines 366-370)}
         \EndIf
+        \State \textit{// Note: Shared peptides ($|S_p| > 1$) are excluded from G}
     \EndFor
 \EndFor
 \State
-\State \textbf{return} $G$, $Q$ \Comment{Line 380}
+\State \textbf{return} $G$ \Comment{Line 380}
 \end{algorithmic}
 \end{algorithm}
 
@@ -174,12 +173,13 @@ Protein groups passing the protein-level FDR threshold (typically $\text{protein
 
 \subsubsection{MaxLFQ Quantification}
 
-Pioneer implements the MaxLFQ algorithm \cite{Cox2014} for label-free protein quantification using integrated chromatographic peak areas from unique peptides. Only precursors with $\text{use\_for\_quant} = \text{true}$ are used for quantification, ensuring unambiguous intensity assignment to proteins.
+Pioneer implements the MaxLFQ algorithm \cite{Cox2014} for label-free protein quantification using integrated chromatographic peak areas from unique peptides. Only peptides present in the inference result $G$ are used for quantification, ensuring unambiguous intensity assignment to proteins.
 
 \paragraph{Quantification Input} For each protein $q$ passing protein-level FDR thresholds, let $\mathcal{N}_{\text{quant}}(q)$ be the set of unique peptides:
 \begin{equation}
-\mathcal{N}_{\text{quant}}(q) = \{p : (p, q) \in \mathcal{E}^{(r)}, \, \text{use\_for\_quant}(p) = \text{true}\}
+\mathcal{N}_{\text{quant}}(q) = \{p : G[p] = q\}
 \end{equation}
+where peptides are included only if they appear in the inference result $G$ (i.e., they are unique peptides assigned to the minimal protein set).
 
 For each peptide $p \in \mathcal{N}_{\text{quant}}(q)$ and run $r$, the integrated chromatographic peak area $A_{p,r}$ (computed as described in Section~\ref{subsec:chrom_integration}) serves as the quantification intensity.
 
