@@ -166,7 +166,7 @@ function add_inferred_protein_column(inference_result::InferenceResult)
         accession_numbers = df.accession_numbers::AbstractVector{String}
         
         n_rows = length(sequences)
-        inferred_proteins = Vector{String}(undef, n_rows)
+        inferred_proteins = Vector{Union{Missing, String}}(undef, n_rows)
         
         for i in 1:n_rows
             pep_key = PeptideKey(
@@ -180,7 +180,7 @@ function add_inferred_protein_column(inference_result::InferenceResult)
                 inferred_proteins[i] = protein_key.name
             else
                 # Fallback to original protein
-                inferred_proteins[i] = accession_numbers[i]
+                inferred_proteins[i] = missing#accession_numbers[i]
             end
         end
         

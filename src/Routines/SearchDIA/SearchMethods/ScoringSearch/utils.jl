@@ -880,15 +880,21 @@ function update_psms_with_probit_scores_refs(
             pg_peps = Vector{Union{Missing, Float32}}(undef, n_psms)
             
             for i in 1:n_psms
-                # Skip if missing inferred protein group
+                # Skip if missing inferred protein group (shared peptides excluded from inference)
                 if ismissing(psms_df[i, :inferred_protein_group])
-                    throw("Missing Inferred Protein Group!!!")
+                    n_missing_pg += 1
+                    probit_pg_scores[i] = missing
+                    global_pg_scores[i] = missing
+                    pg_qvals[i] = missing
+                    global_pg_qvals[i] = missing
+                    pg_peps[i] = missing
+                    continue
                 end
-                
+
                 # Skip if peptide didn't match to a distinct protein group
                 if psms_df[i,:use_for_protein_quant] == false
                     n_not_for_quant += 1
-                    #Should be able to make this 'missing' since that is more clear 
+                    #Should be able to make this 'missing' since that is more clear
                     probit_pg_scores[i] = missing
                     global_pg_scores[i] =  missing
                     pg_qvals[i] =  missing
