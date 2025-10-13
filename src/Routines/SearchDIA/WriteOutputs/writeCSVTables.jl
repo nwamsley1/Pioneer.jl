@@ -52,8 +52,12 @@ function _map_accessions(accession_str::AbstractString, mapping::Dict{String,Str
     accs = split(accession_str, ';')
     names = String[]
     for acc in accs
-        if haskey(mapping, acc) && acc != ""
-            push!(names, mapping[acc])
+        if acc != ""
+            # Use mapped value if available and non-empty, otherwise fallback to accession
+            mapped_value = get(mapping, acc, acc)
+            # If mapped value is empty, use accession as fallback
+            final_value = (mapped_value == "" || ismissing(mapped_value)) ? acc : mapped_value
+            push!(names, final_value)
         end
     end
     return join(names, ';')

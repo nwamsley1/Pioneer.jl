@@ -36,11 +36,10 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         empty_proteins = ProteinKey[]
         empty_peptides = PeptideKey[]
         result = infer_proteins(empty_proteins, empty_peptides)
-        
+
         @test length(result.peptide_to_protein) == 0
-        @test length(result.use_for_quant) == 0
     end
-    
+
     @testset "Case A: Distinct Proteins" begin
         # Protein A has peptides 1, 2
         # Protein B has peptides 3, 4
@@ -64,10 +63,10 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         @test result.peptide_to_protein[peptides[2]].name == "A"
         @test result.peptide_to_protein[peptides[3]].name == "B"
         @test result.peptide_to_protein[peptides[4]].name == "B"
-        
-        # All peptides should be used for quantification
-        @test all(values(result.use_for_quant))
-        
+
+        # All peptides are unique and present (usable for quantification)
+        @test length(result.peptide_to_protein) == 4
+
         # Check target status and entrapment IDs are preserved
         for (pep_key, prot_key) in pairs(result.peptide_to_protein)
             @test prot_key.is_target == pep_key.is_target
@@ -91,20 +90,19 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
             PeptideKey("pep3", true, UInt8(1)),
             PeptideKey("pep4", true, UInt8(1))
         ]
-        
+
         result = infer_proteins(proteins, peptides)
-        
-        # Check assignments
+
+        # Only unique peptides should be in results (shared peptides excluded)
+        @test length(result.peptide_to_protein) == 2
+
+        # Check unique peptide assignments
         @test result.peptide_to_protein[peptides[1]].name == "A"
-        @test result.peptide_to_protein[peptides[2]].name == "A;B"
-        @test result.peptide_to_protein[peptides[3]].name == "A;B"
         @test result.peptide_to_protein[peptides[4]].name == "B"
-        
-        # Check quantification flags
-        @test result.use_for_quant[peptides[1]] == true   # Unique to A
-        @test result.use_for_quant[peptides[2]] == false  # Shared peptide
-        @test result.use_for_quant[peptides[3]] == false  # Shared peptide
-        @test result.use_for_quant[peptides[4]] == true   # Unique to B
+
+        # Shared peptides should not be in results (not usable for quantification)
+        @test !haskey(result.peptide_to_protein, peptides[2])  # Shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[3])  # Shared, excluded
     end
     
     @testset "Case C: Indistinguishable Proteins" begin
@@ -125,9 +123,9 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
         
         # All peptides should be assigned to the combined protein group
+        @test length(result.peptide_to_protein) == 4
         for peptide in peptides
             @test result.peptide_to_protein[peptide].name == "A;B"
-            @test result.use_for_quant[peptide] == true
         end
     end
     
@@ -149,9 +147,9 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
         
         # All peptides should be assigned to A (minimal explanation)
+        @test length(result.peptide_to_protein) == 4
         for peptide in peptides
             @test result.peptide_to_protein[peptide].name == "A"
-            @test result.use_for_quant[peptide] == true
         end
     end
     
@@ -174,17 +172,13 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         
         # Check that minimal set A and C is chosen
         # All peptides get assigned to necessary proteins with maximum parsimony
+        @test length(result.peptide_to_protein) == 4
         @test result.peptide_to_protein[peptides[1]].name == "A"
         @test result.peptide_to_protein[peptides[2]].name == "A"  # A can explain pep2
-        @test result.peptide_to_protein[peptides[3]].name == "C"  # C can explain pep3  
+        @test result.peptide_to_protein[peptides[3]].name == "C"  # C can explain pep3
         @test result.peptide_to_protein[peptides[4]].name == "C"
-        
-        # All peptides should be used for quantification in this case
-        # since the necessary proteins (A and C) can uniquely explain all peptides
-        @test result.use_for_quant[peptides[1]] == true
-        @test result.use_for_quant[peptides[2]] == true  
-        @test result.use_for_quant[peptides[3]] == true  
-        @test result.use_for_quant[peptides[4]] == true
+
+        # All peptides are unique to their assigned proteins (usable for quantification)
     end
     
     @testset "Case F: Shared Peptides Only" begin
@@ -205,9 +199,9 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
         
         # All peptides should be assigned to the combined group
+        @test length(result.peptide_to_protein) == 4
         for peptide in peptides
             @test result.peptide_to_protein[peptide].name == "A;B;C"
-            @test result.use_for_quant[peptide] == true
         end
     end
     
@@ -225,10 +219,9 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
         
         # Each peptide should be assigned to protein in matching entrapment group
+        @test length(result.peptide_to_protein) == 2
         @test result.peptide_to_protein[peptides[1]].entrap_id == UInt8(1)
         @test result.peptide_to_protein[peptides[2]].entrap_id == UInt8(2)
-        @test result.use_for_quant[peptides[1]] == true
-        @test result.use_for_quant[peptides[2]] == true
     end
     
     @testset "Target/Decoy Handling" begin
@@ -245,10 +238,9 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
         
         # Check target/decoy status is preserved
+        @test length(result.peptide_to_protein) == 2
         @test result.peptide_to_protein[peptides[1]].is_target == true
         @test result.peptide_to_protein[peptides[2]].is_target == false
-        @test result.use_for_quant[peptides[1]] == true
-        @test result.use_for_quant[peptides[2]] == true
     end
     
     @testset "Complex Case H: Multiple Scenarios" begin
@@ -289,50 +281,541 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         ]
         
         result = infer_proteins(proteins, peptides)
-        
-        # Case A results
+
+        # Should have 10 peptides (12 total - 2 shared excluded: pep6, pep7)
+        @test length(result.peptide_to_protein) == 10
+
+        # Case A results (distinct proteins - all unique)
         @test result.peptide_to_protein[peptides[1]].name == "A"
         @test result.peptide_to_protein[peptides[2]].name == "A"
         @test result.peptide_to_protein[peptides[3]].name == "B"
         @test result.peptide_to_protein[peptides[4]].name == "B"
-        @test all(result.use_for_quant[pep] for pep in peptides[1:4])
-        
-        # Case B-like results (differentiable proteins C, D - C has unique pep5, D has unique pep8)
+
+        # Case B-like results (differentiable proteins C, D)
         @test result.peptide_to_protein[peptides[5]].name == "C"
-        @test result.peptide_to_protein[peptides[6]].name == "C;D"  # Shared peptide
-        @test result.peptide_to_protein[peptides[7]].name == "C;D"  # Shared peptide
         @test result.peptide_to_protein[peptides[8]].name == "D"
-        @test result.use_for_quant[peptides[5]] == true
-        @test result.use_for_quant[peptides[6]] == false  # Shared, not used for quant
-        @test result.use_for_quant[peptides[7]] == false  # Shared, not used for quant
-        @test result.use_for_quant[peptides[8]] == true
-        
-        # Case C results
+
+        # Shared peptides should not be in results (not usable for quantification)
+        @test !haskey(result.peptide_to_protein, peptides[6])  # Shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[7])  # Shared, excluded
+
+        # Case C results (indistinguishable proteins)
         @test result.peptide_to_protein[peptides[9]].name == "E;F"
         @test result.peptide_to_protein[peptides[10]].name == "E;F"
         @test result.peptide_to_protein[peptides[11]].name == "E;F"
         @test result.peptide_to_protein[peptides[12]].name == "E;F"
-        @test all(result.use_for_quant[pep] for pep in peptides[9:12])
     end
-    
+
+    @testset "Case I: Complex Component with Merge-First" begin
+        # Test case demonstrating merge-first fix for indistinguishable proteins
+        # This validates that B;C and E;F are properly merged during greedy set cover
+        proteins = [
+            ProteinKey("A", true, UInt8(1)),          # pep1
+            ProteinKey("A;B", true, UInt8(1)),        # pep2
+            ProteinKey("B;C", true, UInt8(1)),        # pep3
+            ProteinKey("C;D", true, UInt8(1)),        # pep4
+            ProteinKey("D", true, UInt8(1)),          # pep5
+            ProteinKey("D;E", true, UInt8(1)),        # pep6
+            ProteinKey("F;E", true, UInt8(1)),        # pep7
+            ProteinKey("A;F", true, UInt8(1))         # pep8
+        ]
+
+        peptides = [
+            PeptideKey("1", true, UInt8(1)),
+            PeptideKey("2", true, UInt8(1)),
+            PeptideKey("3", true, UInt8(1)),
+            PeptideKey("4", true, UInt8(1)),
+            PeptideKey("5", true, UInt8(1)),
+            PeptideKey("6", true, UInt8(1)),
+            PeptideKey("7", true, UInt8(1)),
+            PeptideKey("8", true, UInt8(1))
+        ]
+
+        result = infer_proteins(proteins, peptides)
+
+        # Only unique peptides should be in results (shared peptides excluded)
+        @test length(result.peptide_to_protein) == 4
+
+        # Unique peptide assignments
+        @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
+        @test result.peptide_to_protein[peptides[3]].name == "B;C"    # pep3 unique to B;C merged group
+        @test result.peptide_to_protein[peptides[5]].name == "D"      # pep5 unique to D
+        @test result.peptide_to_protein[peptides[7]].name == "E;F"    # pep7 unique to E;F merged group
+
+        # Shared peptides are not in results (not usable for quantification)
+        @test !haskey(result.peptide_to_protein, peptides[2])  # pep2 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[4])  # pep4 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[6])  # pep6 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[8])  # pep8 shared, excluded
+    end
+
+    @testset "Case J: Merge-First with Original Bug Case" begin
+        # This is the original failing test case that exposed the merge-first bug
+        # Protein-Peptide mapping:
+        #   pep1 → {A}
+        #   pep2 → {A, B, C}
+        #   pep3 → {B, C}
+        #   pep4 → {B, C, D}
+        #   pep5 → {D}
+        # Expected: A selected (unique pep1), D selected (unique pep5), B and C merged to B;C
+        # Only unique peptides (pep1, pep3, pep5) should be in results
+        proteins = [
+            ProteinKey("A", true, UInt8(1)),
+            ProteinKey("A;B;C", true, UInt8(1)),
+            ProteinKey("B;C", true, UInt8(1)),
+            ProteinKey("B;C;D", true, UInt8(1)),
+            ProteinKey("D", true, UInt8(1)),
+        ]
+
+        peptides = [
+            PeptideKey("1", true, UInt8(1)),
+            PeptideKey("2", true, UInt8(1)),
+            PeptideKey("3", true, UInt8(1)),
+            PeptideKey("4", true, UInt8(1)),
+            PeptideKey("5", true, UInt8(1)),
+        ]
+
+        result = infer_proteins(proteins, peptides)
+
+        # Only unique peptides should be in results (shared peptides excluded)
+        @test length(result.peptide_to_protein) == 3
+
+        # Unique peptide assignments
+        @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
+        @test result.peptide_to_protein[peptides[3]].name == "B;C"    # pep3 unique to B;C merged group
+        @test result.peptide_to_protein[peptides[5]].name == "D"      # pep5 unique to D
+
+        # Shared peptides are not in results (not usable for quantification)
+        @test !haskey(result.peptide_to_protein, peptides[2])  # pep2 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[4])  # pep4 shared, excluded
+    end
+
+    @testset "Case K: Shared Peptides with Duplicate Protein Groups" begin
+        # Test case with duplicate protein groups in input and shared peptides
+        # Protein-Peptide mapping:
+        #   pep1 → {A}
+        #   pep2 → {A, B}
+        #   pep3 → {A, C}
+        #   pep4 → {B}
+        #   pep5 → {A, B}
+        #   pep6 → {A, B}
+        #   pep7 → {A, B}
+        # Expected: A selected (unique pep1), B selected (unique pep4)
+        # Shared peptides: pep2, pep5, pep6, pep7 → A;B
+        proteins = [
+            ProteinKey("A", true, UInt8(1)),
+            ProteinKey("A;B", true, UInt8(1)),
+            ProteinKey("A;C", true, UInt8(1)),
+            ProteinKey("B", true, UInt8(1)),
+            ProteinKey("A;B", true, UInt8(1)),
+            ProteinKey("A;B", true, UInt8(1)),
+            ProteinKey("A;B", true, UInt8(1))
+        ]
+
+        peptides = [
+            PeptideKey("1", true, UInt8(1)),
+            PeptideKey("2", true, UInt8(1)),
+            PeptideKey("3", true, UInt8(1)),
+            PeptideKey("4", true, UInt8(1)),
+            PeptideKey("5", true, UInt8(1)),
+            PeptideKey("6", true, UInt8(1)),
+            PeptideKey("7", true, UInt8(1)),
+        ]
+
+        result = infer_proteins(proteins, peptides)
+
+        # Only unique peptides should be in results (shared peptides excluded)
+        @test length(result.peptide_to_protein) == 3
+
+        # Unique peptide assignments
+        @test result.peptide_to_protein[peptides[1]].name == "A"      # pep1 unique to A
+        @test result.peptide_to_protein[peptides[3]].name == "A"      # pep3 unique to A (C not selected)
+        @test result.peptide_to_protein[peptides[4]].name == "B"      # pep4 unique to B
+
+        # Shared peptides are not in results (not usable for quantification)
+        @test !haskey(result.peptide_to_protein, peptides[2])  # pep2 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[5])  # pep5 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[6])  # pep6 shared, excluded
+        @test !haskey(result.peptide_to_protein, peptides[7])  # pep7 shared, excluded
+    end
+
+    @testset "Real World Complex Example" begin 
+        
+        # Data from failing_component_2025-10-13T12-00-28.902.jl
+        # Simplified protein/peptide names for readability:
+        # Original → Simple:
+        #   O60814→A, P33778→B, P02293→O, Q6DRA6→Q, Q93079→C, Q99880→D, P58876→E
+        #   P23527→L, Q99879→F, Q5QNW6→G, P62807→H, P02294→P, P06899→M, Q99877→I
+        #   Q96A08→S, Q16778→N, Q6DN03→R, Q8N257→J, P57053→K
+        #   ESYSVYVYK→p1, QVHPDTGISSK→p2, KESYSVYVYK→p3, AMGIMNSFVNDIFER→p4, EIQTAVR→p5
+        #   ESYSIYVYK→p6, KESYSIYVYK→p7, ETYSSYIYK→p8, SMSILNSFVNDIFER→p9
+        #   ESYSIYIYK→p10, AMSIMNSFVTDIFER→p11
+
+        #=
+        Proteins: A-S (19 proteins organized into 6 groups)
+        - Group 1: A,C,D,E,F,G,H,I,K → {p1,p2,p3,p4,p5}
+        - Group 2: B,L,M,N → {p6,p2,p7,p4,p5}
+        - Group 3: O,P (histones) → {p8,p9,p5}
+        - Group 4: Q,R → {p6,p7}
+        - Group 5: S → {p2,p10,p11,p5}
+        - Group 6: J → {p6,p2,p7,p4} (no p5)
+        =#
+
+        proteins_realworld = [
+            ProteinKey("A", true, UInt8(0)),  # A -> {p1,p2,p3,p4,p5} (Group 1)
+            ProteinKey("A", true, UInt8(0)),
+            ProteinKey("A", true, UInt8(0)),
+            ProteinKey("A", true, UInt8(0)),
+            ProteinKey("A", true, UInt8(0)),
+            ProteinKey("B", true, UInt8(0)),  # B -> {p6,p2,p7,p4,p5} (Group 2)
+            ProteinKey("B", true, UInt8(0)),
+            ProteinKey("B", true, UInt8(0)),
+            ProteinKey("B", true, UInt8(0)),
+            ProteinKey("B", true, UInt8(0)),
+            ProteinKey("O", true, UInt8(0)),  # O -> {p8,p9,p5} (Histone, Group 3)
+            ProteinKey("O", true, UInt8(0)),
+            ProteinKey("O", true, UInt8(0)),
+            ProteinKey("Q", true, UInt8(0)),  # Q -> {p6,p7} (Group 4)
+            ProteinKey("Q", true, UInt8(0)),
+            ProteinKey("C", true, UInt8(0)),  # C -> {p1,p2,p3,p4,p5} (Group 1)
+            ProteinKey("C", true, UInt8(0)),
+            ProteinKey("C", true, UInt8(0)),
+            ProteinKey("C", true, UInt8(0)),
+            ProteinKey("C", true, UInt8(0)),
+            ProteinKey("D", true, UInt8(0)),  # D -> {p1,p2,p3,p4,p5} (Group 1)
+            ProteinKey("D", true, UInt8(0)),
+            ProteinKey("D", true, UInt8(0)),
+            ProteinKey("D", true, UInt8(0)),
+            ProteinKey("D", true, UInt8(0)),
+            ProteinKey("E", true, UInt8(0)),  # E -> {p1,p2,p3,p4,p5} (Group 1)
+            ProteinKey("E", true, UInt8(0)),
+            ProteinKey("E", true, UInt8(0)),
+            ProteinKey("E", true, UInt8(0)),
+            ProteinKey("E", true, UInt8(0)),
+            ProteinKey("L", true, UInt8(0)),  # L -> {p6,p2,p7,p4,p5} (Group 2)
+            ProteinKey("L", true, UInt8(0)),
+            ProteinKey("L", true, UInt8(0)),
+            ProteinKey("L", true, UInt8(0)),
+            ProteinKey("L", true, UInt8(0)),
+            ProteinKey("F", true, UInt8(0)),  # F -> {p1,p2,p3,p4,p5} (Group 1)
+            ProteinKey("F", true, UInt8(0)),
+            ProteinKey("F", true, UInt8(0)),
+            ProteinKey("F", true, UInt8(0)),
+            ProteinKey("F", true, UInt8(0)),
+            ProteinKey("G", true, UInt8(0)),  # G -> {p1,p2,p3,p4,p5} (Group 1)
+            ProteinKey("G", true, UInt8(0)),
+            ProteinKey("G", true, UInt8(0)),
+            ProteinKey("G", true, UInt8(0)),
+            ProteinKey("G", true, UInt8(0)),
+            ProteinKey("H", true, UInt8(0)),  # H -> {p1,p2,p3,p4,p5} (Group 1)
+            ProteinKey("H", true, UInt8(0)),
+            ProteinKey("H", true, UInt8(0)),
+            ProteinKey("H", true, UInt8(0)),
+            ProteinKey("H", true, UInt8(0)),
+            ProteinKey("P", true, UInt8(0)),  # P -> {p8,p9,p5} (Histone, Group 3)
+            ProteinKey("P", true, UInt8(0)),
+            ProteinKey("P", true, UInt8(0)),
+            ProteinKey("M", true, UInt8(0)),  # M -> {p6,p2,p7,p4,p5} (Group 2)
+            ProteinKey("M", true, UInt8(0)),
+            ProteinKey("M", true, UInt8(0)),
+            ProteinKey("M", true, UInt8(0)),
+            ProteinKey("M", true, UInt8(0)),
+            ProteinKey("I", true, UInt8(0)),  # I -> {p1,p2,p3,p4,p5} (Group 1)
+            ProteinKey("I", true, UInt8(0)),
+            ProteinKey("I", true, UInt8(0)),
+            ProteinKey("I", true, UInt8(0)),
+            ProteinKey("I", true, UInt8(0)),
+            ProteinKey("S", true, UInt8(0)),  # S -> {p2,p10,p11,p5} (Group 5)
+            ProteinKey("S", true, UInt8(0)),
+            ProteinKey("S", true, UInt8(0)),
+            ProteinKey("S", true, UInt8(0)),
+            ProteinKey("N", true, UInt8(0)),  # N -> {p6,p2,p7,p4,p5} (Group 2)
+            ProteinKey("N", true, UInt8(0)),
+            ProteinKey("N", true, UInt8(0)),
+            ProteinKey("N", true, UInt8(0)),
+            ProteinKey("N", true, UInt8(0)),
+            ProteinKey("R", true, UInt8(0)),  # R -> {p6,p7} (Group 4)
+            ProteinKey("R", true, UInt8(0)),
+            ProteinKey("J", true, UInt8(0)),  # J -> {p6,p2,p7,p4} (Group 6, no p5!)
+            ProteinKey("J", true, UInt8(0)),
+            ProteinKey("J", true, UInt8(0)),
+            ProteinKey("J", true, UInt8(0)),
+            ProteinKey("K", true, UInt8(0)),  # K -> {p1,p2,p3,p4,p5} (Group 1)
+            ProteinKey("K", true, UInt8(0)),
+            ProteinKey("K", true, UInt8(0)),
+            ProteinKey("K", true, UInt8(0)),
+            ProteinKey("K", true, UInt8(0)),
+        ]
+
+        peptides_realworld = [
+            PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR (highly shared!)
+            PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p8", true, UInt8(0)),  # ETYSSYIYK
+            PeptideKey("p9", true, UInt8(0)),  # SMSILNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+            PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+            PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p8", true, UInt8(0)),  # ETYSSYIYK
+            PeptideKey("p9", true, UInt8(0)),  # SMSILNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p10", true, UInt8(0)),  # ESYSIYIYK
+            PeptideKey("p11", true, UInt8(0)),  # AMSIMNSFVTDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+            PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+            PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+            PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+            PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+            PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+            PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+            PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+        ]
+
+        result = infer_proteins(proteins_realworld, peptides_realworld)
+            # Only unique peptides should be in results (shared peptides excluded)
+        @test length(result.peptide_to_protein) == 8
+
+        # Unique peptide assignments
+        @test result.peptide_to_protein[PeptideKey("p1", true, UInt8(0))].name == "A;C;D;E;F;G;H;I;K"    
+        @test !haskey(result.peptide_to_protein,PeptideKey("p2", true, UInt8(0)))  # pep2 shared, excluded  
+        @test result.peptide_to_protein[PeptideKey("p3", true, UInt8(0))].name == "A;C;D;E;F;G;H;I;K"     
+        @test !haskey(result.peptide_to_protein, PeptideKey("p4", true, UInt8(0)))
+        @test !haskey(result.peptide_to_protein, PeptideKey("p5", true, UInt8(0)))
+        @test result.peptide_to_protein[PeptideKey("p6", true, UInt8(0))].name == "B;J;L;M;N;Q;R"    
+        @test result.peptide_to_protein[PeptideKey("p7", true, UInt8(0))].name == "B;J;L;M;N;Q;R"
+        @test result.peptide_to_protein[PeptideKey("p8", true, UInt8(0))].name == "O;P"
+        @test result.peptide_to_protein[PeptideKey("p9", true, UInt8(0))].name == "O;P"
+        @test result.peptide_to_protein[PeptideKey("p10", true, UInt8(0))].name == "S"
+        @test result.peptide_to_protein[PeptideKey("p11", true, UInt8(0))].name == "S"
+    end
     @testset "InferenceResult Structure" begin
         # Test that the result structure is correctly formed
         proteins = [ProteinKey("A", true, UInt8(1))]
         peptides = [PeptideKey("pep1", true, UInt8(1))]
-        
+
         result = infer_proteins(proteins, peptides)
-        
+
         @test isa(result, InferenceResult)
         @test isa(result.peptide_to_protein, Dictionary{PeptideKey, ProteinKey})
-        @test isa(result.use_for_quant, Dictionary{PeptideKey, Bool})
         @test length(result.peptide_to_protein) == 1
-        @test length(result.use_for_quant) == 1
-        
-        # Check that all peptides have both mappings
+
+        # Check that all unique peptides are present
         for peptide in peptides
             @test haskey(result.peptide_to_protein, peptide)
-            @test haskey(result.use_for_quant, peptide)
         end
     end
-    
+
+    @testset "Automatic Grouping by (is_target, entrap_id)" begin
+
+        @testset "Single group (backward compatibility)" begin
+            # All proteins have same (is_target=true, entrap_id=0)
+            # Should behave identically to direct _infer_proteins_single_group() call
+            proteins = [
+                ProteinKey("A", true, UInt8(0)),
+                ProteinKey("A", true, UInt8(0)),
+                ProteinKey("B", true, UInt8(0)),
+            ]
+            peptides = [
+                PeptideKey("pep1", true, UInt8(0)),
+                PeptideKey("pep2", true, UInt8(0)),
+                PeptideKey("pep3", true, UInt8(0)),
+            ]
+
+            result = infer_proteins(proteins, peptides)
+            @test length(result.peptide_to_protein) == 3
+            @test haskey(result.peptide_to_protein, peptides[1])
+            @test haskey(result.peptide_to_protein, peptides[2])
+            @test haskey(result.peptide_to_protein, peptides[3])
+        end
+
+        @testset "Target and decoy separation" begin
+            # Mix of targets (is_target=true) and decoys (is_target=false)
+            proteins = [
+                ProteinKey("P1", true, UInt8(0)),   # Target
+                ProteinKey("P1", true, UInt8(0)),
+                ProteinKey("REV_P2", false, UInt8(0)),  # Decoy
+                ProteinKey("REV_P2", false, UInt8(0)),
+            ]
+            peptides = [
+                PeptideKey("PEP1", true, UInt8(0)),
+                PeptideKey("PEP2", true, UInt8(0)),
+                PeptideKey("REV_PEP1", false, UInt8(0)),
+                PeptideKey("REV_PEP2", false, UInt8(0)),
+            ]
+
+            result = infer_proteins(proteins, peptides)
+
+            # All peptides should be present (unique within their groups)
+            @test length(result.peptide_to_protein) == 4
+
+            # Check target peptides map to target protein
+            @test result.peptide_to_protein[peptides[1]].is_target == true
+            @test result.peptide_to_protein[peptides[2]].is_target == true
+
+            # Check decoy peptides map to decoy protein
+            @test result.peptide_to_protein[peptides[3]].is_target == false
+            @test result.peptide_to_protein[peptides[4]].is_target == false
+        end
+
+        @testset "Multiple entrapment groups" begin
+            # Test with entrap_id 0, 1, 2
+            proteins = [
+                ProteinKey("P1", true, UInt8(0)),
+                ProteinKey("P2", true, UInt8(1)),
+                ProteinKey("P3", true, UInt8(2)),
+            ]
+            peptides = [
+                PeptideKey("PEP1", true, UInt8(0)),
+                PeptideKey("PEP2", true, UInt8(1)),
+                PeptideKey("PEP3", true, UInt8(2)),
+            ]
+
+            result = infer_proteins(proteins, peptides)
+
+            # All peptides should be present
+            @test length(result.peptide_to_protein) == 3
+
+            # Check each peptide maps to correct entrap group
+            @test result.peptide_to_protein[peptides[1]].entrap_id == UInt8(0)
+            @test result.peptide_to_protein[peptides[2]].entrap_id == UInt8(1)
+            @test result.peptide_to_protein[peptides[3]].entrap_id == UInt8(2)
+        end
+
+        @testset "Combined target/decoy and entrapment groups" begin
+            # Test all combinations: (true, 0), (false, 0), (true, 1), (false, 1)
+            proteins = [
+                ProteinKey("P1", true, UInt8(0)),
+                ProteinKey("P1", true, UInt8(0)),
+                ProteinKey("REV_P1", false, UInt8(0)),
+                ProteinKey("P2", true, UInt8(1)),
+                ProteinKey("REV_P2", false, UInt8(1)),
+            ]
+            peptides = [
+                PeptideKey("PEP1", true, UInt8(0)),
+                PeptideKey("PEP2", true, UInt8(0)),
+                PeptideKey("REV_PEP1", false, UInt8(0)),
+                PeptideKey("PEP3", true, UInt8(1)),
+                PeptideKey("REV_PEP2", false, UInt8(1)),
+            ]
+
+            result = infer_proteins(proteins, peptides)
+
+            # All peptides should be present
+            @test length(result.peptide_to_protein) == 5
+
+            # Verify correct grouping
+            @test result.peptide_to_protein[peptides[1]].is_target == true
+            @test result.peptide_to_protein[peptides[1]].entrap_id == UInt8(0)
+
+            @test result.peptide_to_protein[peptides[3]].is_target == false
+            @test result.peptide_to_protein[peptides[3]].entrap_id == UInt8(0)
+
+            @test result.peptide_to_protein[peptides[4]].is_target == true
+            @test result.peptide_to_protein[peptides[4]].entrap_id == UInt8(1)
+
+            @test result.peptide_to_protein[peptides[5]].is_target == false
+            @test result.peptide_to_protein[peptides[5]].entrap_id == UInt8(1)
+        end
+
+        @testset "Shared peptides within groups" begin
+            # Test that shared peptides are excluded within each group
+            proteins = [
+                ProteinKey("A", true, UInt8(0)),
+                ProteinKey("A;B", true, UInt8(0)),  # Shared
+                ProteinKey("B", true, UInt8(0)),
+                ProteinKey("REV_A", false, UInt8(0)),
+                ProteinKey("REV_A;REV_B", false, UInt8(0)),  # Shared decoy
+                ProteinKey("REV_B", false, UInt8(0)),
+            ]
+            peptides = [
+                PeptideKey("PEP1", true, UInt8(0)),
+                PeptideKey("PEP_SHARED", true, UInt8(0)),
+                PeptideKey("PEP2", true, UInt8(0)),
+                PeptideKey("REV_PEP1", false, UInt8(0)),
+                PeptideKey("REV_PEP_SHARED", false, UInt8(0)),
+                PeptideKey("REV_PEP2", false, UInt8(0)),
+            ]
+
+            result = infer_proteins(proteins, peptides)
+
+            # Only unique peptides should be present (shared ones excluded)
+            @test length(result.peptide_to_protein) == 4
+            @test haskey(result.peptide_to_protein, peptides[1])  # PEP1
+            @test !haskey(result.peptide_to_protein, peptides[2])  # PEP_SHARED (excluded)
+            @test haskey(result.peptide_to_protein, peptides[3])  # PEP2
+            @test haskey(result.peptide_to_protein, peptides[4])  # REV_PEP1
+            @test !haskey(result.peptide_to_protein, peptides[5])  # REV_PEP_SHARED (excluded)
+            @test haskey(result.peptide_to_protein, peptides[6])  # REV_PEP2
+        end
+
+        @testset "Empty input after grouping" begin
+            # Test with empty input
+            result = infer_proteins(ProteinKey[], PeptideKey[])
+            @test length(result.peptide_to_protein) == 0
+        end
+
+    end
+
 end

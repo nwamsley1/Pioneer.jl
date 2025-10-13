@@ -1339,9 +1339,7 @@ function test_tolerance_expansion!(
     
     # Calculate expanded tolerance
     expanded_tolerance = collection_tolerance * expansion_factor
-
-    @user_info "Testing tolerance expansion: collection_tol=$(round(collection_tolerance, digits=2)) ppm → expanded_tol=$(round(expanded_tolerance, digits=2)) ppm (factor=$(expansion_factor))"
-
+    
     # Create expanded model for collection
     # Keep the same bias, just expand the window
     expanded_model = MassErrorModel(
