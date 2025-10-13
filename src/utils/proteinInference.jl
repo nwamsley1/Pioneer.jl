@@ -16,9 +16,9 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    infer_proteins(proteins::Vector{ProteinKey}, peptides::Vector{PeptideKey})::InferenceResult
+    _infer_proteins_single_group(proteins::Vector{ProteinKey}, peptides::Vector{PeptideKey})::InferenceResult
 
-Infer minimal set of proteins that explain observed peptides, following the parsimony principle.
+Internal implementation of protein inference for a single group (same is_target and entrap_id).
 
 This function implements a protein inference algorithm for shotgun proteomics using:
 1. Connected component analysis to partition the problem into independent protein-peptide clusters
@@ -37,77 +37,26 @@ The algorithm handles the following cases (based on Nesvizhskii & Aebersold, 200
 - Case H: Concatenation of cases A-G
 
 # Arguments
-- `proteins::Vector{ProteinKey}`: Protein identifiers for each peptide. Each ProteinKey can contain 
-  multiple protein identifiers separated by semicolons in the name field, indicating that the peptide 
-  maps to multiple proteins.
+- `proteins::Vector{ProteinKey}`: Protein identifiers for each peptide. Each ProteinKey can contain
+  multiple protein identifiers separated by semicolons in the name field, indicating that the peptide
+  maps to multiple proteins. All proteins should have the same (is_target, entrap_id).
 - `peptides::Vector{PeptideKey}`: Peptide identifiers corresponding to the proteins vector.
 
 # Returns
 - `InferenceResult`: Contains a single dictionary `peptide_to_protein` mapping unique peptides to their
   assigned proteins. Shared peptides are excluded from the result (not usable for quantification).
 
-# Semantics
-Peptides present in `peptide_to_protein` are unique peptides assigned to the minimal protein set and
-should be used for quantification. Shared peptides are excluded from the result entirely. Downstream
-code can check presence with `haskey(result.peptide_to_protein, peptide_key)` to determine if a
-peptide should be used for quantification.
-
-# Examples
-```julia
-using Pioneer
-
-# Case A: Distinct proteins - all peptides unique
-protein_keys = [
-    ProteinKey("A", true, UInt8(1)),
-    ProteinKey("A", true, UInt8(1)),
-    ProteinKey("B", true, UInt8(1)),
-    ProteinKey("B", true, UInt8(1))
-]
-peptide_keys = [
-    PeptideKey("pep1", true, UInt8(1)),
-    PeptideKey("pep2", true, UInt8(1)),
-    PeptideKey("pep3", true, UInt8(1)),
-    PeptideKey("pep4", true, UInt8(1))
-]
-
-result = infer_proteins(protein_keys, peptide_keys)
-# Result contains all 4 peptides (all unique):
-# pep1 => A
-# pep2 => A
-# pep3 => B
-# pep4 => B
-
-# Case B: Differentiable proteins with shared peptides
-protein_keys = [
-    ProteinKey("A", true, UInt8(1)),
-    ProteinKey("A;B", true, UInt8(1)),
-    ProteinKey("A;B", true, UInt8(1)),
-    ProteinKey("B", true, UInt8(1))
-]
-peptide_keys = [
-    PeptideKey("pep1", true, UInt8(1)),
-    PeptideKey("pep2", true, UInt8(1)),
-    PeptideKey("pep3", true, UInt8(1)),
-    PeptideKey("pep4", true, UInt8(1))
-]
-
-result = infer_proteins(protein_keys, peptide_keys)
-# Result contains only 2 unique peptides (shared peptides excluded):
-# pep1 => A
-# pep4 => B
-# pep2 and pep3 are NOT in the result (shared between A and B, not usable for quantification)
-```
+# Note
+This is an internal function. Use `infer_proteins()` instead, which automatically handles grouping
+by target/decoy status and entrapment groups.
 
 # References
 Nesvizhskii AI, Aebersold R. Interpretation of shotgun proteomic data: the protein inference problem.
 Mol Cell Proteomics. 2005 Oct;4(10):1419-40. doi: 10.1074/mcp.R500012-MCP200.
 Zhang B, Chambers MC, Tabb DL. Proteomic parsimony through bipartite graph analysis improves accuracy
 and transparency. J Proteome Res. 2007 Sep;6(9):3549-57. doi: 10.1021/pr070230d.
-
-Notes... Better input. might be Vector{Tuple{ProteinKey, PeptideKey}}. The input is really an edge list. 
-This also enforces equal length because unequal length inputs should be invalid. 
-""" 
-function infer_proteins(
+"""
+function _infer_proteins_single_group(
     proteins::Vector{ProteinKey}, 
     peptides::Vector{PeptideKey}
 )::InferenceResult
@@ -456,5 +405,129 @@ function infer_proteins(
     end
 
     return InferenceResult(peptide_to_protein)
+end
+
+"""
+    _group_by_population(proteins::Vector{ProteinKey}, peptides::Vector{PeptideKey})
+
+Internal helper to group protein-peptide pairs by (is_target, entrap_id).
+
+Returns a Dictionary mapping (Bool, UInt8) to (Vector{ProteinKey}, Vector{PeptideKey}).
+The grouping is based on protein.is_target and protein.entrap_id.
+"""
+function _group_by_population(
+    proteins::Vector{ProteinKey},
+    peptides::Vector{PeptideKey}
+)::Dictionary{Tuple{Bool, UInt8}, Tuple{Vector{ProteinKey}, Vector{PeptideKey}}}
+
+    groups = Dictionary{Tuple{Bool, UInt8}, Tuple{Vector{ProteinKey}, Vector{PeptideKey}}}()
+
+    for i in 1:length(proteins)
+        prot = proteins[i]
+        pep = peptides[i]
+
+        # Group key is (protein.is_target, protein.entrap_id)
+        # We use protein's status since that determines the grouping
+        group_key = (prot.is_target, prot.entrap_id)
+
+        if !haskey(groups, group_key)
+            insert!(groups, group_key, (ProteinKey[], PeptideKey[]))
+        end
+
+        push!(groups[group_key][1], prot)
+        push!(groups[group_key][2], pep)
+    end
+
+    return groups
+end
+
+"""
+    infer_proteins(proteins::Vector{ProteinKey}, peptides::Vector{PeptideKey})::InferenceResult
+
+Perform protein inference with automatic grouping by target/decoy status and entrapment groups.
+
+This function automatically groups input protein-peptide pairs by (protein.is_target, protein.entrap_id)
+and performs protein inference separately for each group. This ensures:
+- Target and decoy proteins are never merged together
+- Different entrapment groups are kept independent for proper FDR calibration
+- Correct parsimony-based inference within each population
+
+# Arguments
+- `proteins::Vector{ProteinKey}`: Protein identifiers for each peptide. Each ProteinKey can contain
+  multiple protein identifiers separated by semicolons in the name field, indicating that the peptide
+  maps to multiple proteins.
+- `peptides::Vector{PeptideKey}`: Peptide identifiers corresponding to the proteins vector.
+
+# Returns
+- `InferenceResult`: Contains a dictionary `peptide_to_protein` mapping unique peptides to their
+  assigned proteins. Shared peptides are excluded from the result (not usable for quantification).
+  Results from all groups are combined into a single dictionary.
+
+# Examples
+```julia
+using Pioneer
+
+# Example with targets and decoys
+proteins = [
+    ProteinKey("P1", true, UInt8(0)),   # Target
+    ProteinKey("P1", true, UInt8(0)),
+    ProteinKey("REV_P2", false, UInt8(0)),  # Decoy
+    ProteinKey("REV_P2", false, UInt8(0)),
+]
+peptides = [
+    PeptideKey("PEP1", true, UInt8(0)),
+    PeptideKey("PEP2", true, UInt8(0)),
+    PeptideKey("REV_PEP1", false, UInt8(0)),
+    PeptideKey("REV_PEP2", false, UInt8(0)),
+]
+
+result = infer_proteins(proteins, peptides)
+# Targets and decoys are processed separately, then combined
+# result.peptide_to_protein contains mappings from both groups
+```
+
+# Implementation Note
+Internally groups by (protein.is_target, protein.entrap_id) and calls
+`_infer_proteins_single_group()` for each group independently.
+"""
+function infer_proteins(
+    proteins::Vector{ProteinKey},
+    peptides::Vector{PeptideKey}
+)::InferenceResult
+    # Validate input lengths match
+    if length(proteins) != length(peptides)
+        throw(ArgumentError("proteins and peptides vectors must have the same length"))
+    end
+
+    # Handle empty input
+    if isempty(proteins)
+        return InferenceResult(Dictionary{PeptideKey, ProteinKey}())
+    end
+
+    # Step 1: Group by (is_target, entrap_id)
+    groups = _group_by_population(proteins, peptides)
+
+    # Step 2: Perform inference on each group
+    combined_result = Dictionary{PeptideKey, ProteinKey}()
+
+    for ((is_target, entrap_id), (group_proteins, group_peptides)) in pairs(groups)
+        # Perform inference on this group using internal function
+        group_result = _infer_proteins_single_group(group_proteins, group_peptides)
+
+        # Merge results into combined dictionary
+        for (pep, prot) in pairs(group_result.peptide_to_protein)
+            # Sanity check: ensure no conflicts (same peptide assigned to different proteins)
+            if haskey(combined_result, pep)
+                if combined_result[pep] != prot
+                    @warn "Peptide $(pep.sequence) assigned to multiple proteins across groups: " *
+                          "$(combined_result[pep].name) vs $(prot.name)"
+                end
+            else
+                insert!(combined_result, pep, prot)
+            end
+        end
+    end
+
+    return InferenceResult(combined_result)
 end
 

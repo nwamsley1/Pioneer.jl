@@ -667,4 +667,155 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         end
     end
 
+    @testset "Automatic Grouping by (is_target, entrap_id)" begin
+
+        @testset "Single group (backward compatibility)" begin
+            # All proteins have same (is_target=true, entrap_id=0)
+            # Should behave identically to direct _infer_proteins_single_group() call
+            proteins = [
+                ProteinKey("A", true, UInt8(0)),
+                ProteinKey("A", true, UInt8(0)),
+                ProteinKey("B", true, UInt8(0)),
+            ]
+            peptides = [
+                PeptideKey("pep1", true, UInt8(0)),
+                PeptideKey("pep2", true, UInt8(0)),
+                PeptideKey("pep3", true, UInt8(0)),
+            ]
+
+            result = infer_proteins(proteins, peptides)
+            @test length(result.peptide_to_protein) == 3
+            @test haskey(result.peptide_to_protein, peptides[1])
+            @test haskey(result.peptide_to_protein, peptides[2])
+            @test haskey(result.peptide_to_protein, peptides[3])
+        end
+
+        @testset "Target and decoy separation" begin
+            # Mix of targets (is_target=true) and decoys (is_target=false)
+            proteins = [
+                ProteinKey("P1", true, UInt8(0)),   # Target
+                ProteinKey("P1", true, UInt8(0)),
+                ProteinKey("REV_P2", false, UInt8(0)),  # Decoy
+                ProteinKey("REV_P2", false, UInt8(0)),
+            ]
+            peptides = [
+                PeptideKey("PEP1", true, UInt8(0)),
+                PeptideKey("PEP2", true, UInt8(0)),
+                PeptideKey("REV_PEP1", false, UInt8(0)),
+                PeptideKey("REV_PEP2", false, UInt8(0)),
+            ]
+
+            result = infer_proteins(proteins, peptides)
+
+            # All peptides should be present (unique within their groups)
+            @test length(result.peptide_to_protein) == 4
+
+            # Check target peptides map to target protein
+            @test result.peptide_to_protein[peptides[1]].is_target == true
+            @test result.peptide_to_protein[peptides[2]].is_target == true
+
+            # Check decoy peptides map to decoy protein
+            @test result.peptide_to_protein[peptides[3]].is_target == false
+            @test result.peptide_to_protein[peptides[4]].is_target == false
+        end
+
+        @testset "Multiple entrapment groups" begin
+            # Test with entrap_id 0, 1, 2
+            proteins = [
+                ProteinKey("P1", true, UInt8(0)),
+                ProteinKey("P2", true, UInt8(1)),
+                ProteinKey("P3", true, UInt8(2)),
+            ]
+            peptides = [
+                PeptideKey("PEP1", true, UInt8(0)),
+                PeptideKey("PEP2", true, UInt8(1)),
+                PeptideKey("PEP3", true, UInt8(2)),
+            ]
+
+            result = infer_proteins(proteins, peptides)
+
+            # All peptides should be present
+            @test length(result.peptide_to_protein) == 3
+
+            # Check each peptide maps to correct entrap group
+            @test result.peptide_to_protein[peptides[1]].entrap_id == UInt8(0)
+            @test result.peptide_to_protein[peptides[2]].entrap_id == UInt8(1)
+            @test result.peptide_to_protein[peptides[3]].entrap_id == UInt8(2)
+        end
+
+        @testset "Combined target/decoy and entrapment groups" begin
+            # Test all combinations: (true, 0), (false, 0), (true, 1), (false, 1)
+            proteins = [
+                ProteinKey("P1", true, UInt8(0)),
+                ProteinKey("P1", true, UInt8(0)),
+                ProteinKey("REV_P1", false, UInt8(0)),
+                ProteinKey("P2", true, UInt8(1)),
+                ProteinKey("REV_P2", false, UInt8(1)),
+            ]
+            peptides = [
+                PeptideKey("PEP1", true, UInt8(0)),
+                PeptideKey("PEP2", true, UInt8(0)),
+                PeptideKey("REV_PEP1", false, UInt8(0)),
+                PeptideKey("PEP3", true, UInt8(1)),
+                PeptideKey("REV_PEP2", false, UInt8(1)),
+            ]
+
+            result = infer_proteins(proteins, peptides)
+
+            # All peptides should be present
+            @test length(result.peptide_to_protein) == 5
+
+            # Verify correct grouping
+            @test result.peptide_to_protein[peptides[1]].is_target == true
+            @test result.peptide_to_protein[peptides[1]].entrap_id == UInt8(0)
+
+            @test result.peptide_to_protein[peptides[3]].is_target == false
+            @test result.peptide_to_protein[peptides[3]].entrap_id == UInt8(0)
+
+            @test result.peptide_to_protein[peptides[4]].is_target == true
+            @test result.peptide_to_protein[peptides[4]].entrap_id == UInt8(1)
+
+            @test result.peptide_to_protein[peptides[5]].is_target == false
+            @test result.peptide_to_protein[peptides[5]].entrap_id == UInt8(1)
+        end
+
+        @testset "Shared peptides within groups" begin
+            # Test that shared peptides are excluded within each group
+            proteins = [
+                ProteinKey("A", true, UInt8(0)),
+                ProteinKey("A;B", true, UInt8(0)),  # Shared
+                ProteinKey("B", true, UInt8(0)),
+                ProteinKey("REV_A", false, UInt8(0)),
+                ProteinKey("REV_A;REV_B", false, UInt8(0)),  # Shared decoy
+                ProteinKey("REV_B", false, UInt8(0)),
+            ]
+            peptides = [
+                PeptideKey("PEP1", true, UInt8(0)),
+                PeptideKey("PEP_SHARED", true, UInt8(0)),
+                PeptideKey("PEP2", true, UInt8(0)),
+                PeptideKey("REV_PEP1", false, UInt8(0)),
+                PeptideKey("REV_PEP_SHARED", false, UInt8(0)),
+                PeptideKey("REV_PEP2", false, UInt8(0)),
+            ]
+
+            result = infer_proteins(proteins, peptides)
+
+            # Only unique peptides should be present (shared ones excluded)
+            @test length(result.peptide_to_protein) == 4
+            @test haskey(result.peptide_to_protein, peptides[1])  # PEP1
+            @test !haskey(result.peptide_to_protein, peptides[2])  # PEP_SHARED (excluded)
+            @test haskey(result.peptide_to_protein, peptides[3])  # PEP2
+            @test haskey(result.peptide_to_protein, peptides[4])  # REV_PEP1
+            @test !haskey(result.peptide_to_protein, peptides[5])  # REV_PEP_SHARED (excluded)
+            @test haskey(result.peptide_to_protein, peptides[6])  # REV_PEP2
+        end
+
+        @testset "Empty input after grouping" begin
+            # Test with empty input
+            result = infer_proteins(ProteinKey[], PeptideKey[])
+            @test length(result.peptide_to_protein) == 0
+        end
+
+    end
+
 end
