@@ -91,6 +91,11 @@ function getIrtBins!(psms::AbstractDataFrame)
 end
 
 
+@inline function irt_residual(psms::AbstractDataFrame, idx::Integer)
+    return Float32(psms.irt_pred[idx] - psms.irt_obs[idx])
+end
+
+
 function assign_random_target_decoy_pairs!(psms::DataFrame)
     last_pair_id = zero(UInt32)
     psms[!,:pair_id] = zeros(UInt32, nrow(psms))  # Initialize pair_id column
@@ -411,6 +416,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                 best_prob_2                     = scores.best_prob_1,
                                 best_log2_weights_2             = scores.best_log2_weights_1,
                                 best_irts_2                     = scores.best_irts_1,
+                                best_irt_residual_2             = scores.best_irt_residual_1,
                                 best_weight_2                   = scores.best_weight_1,
                                 best_log2_intensity_explained_2 = scores.best_log2_intensity_explained_1,
                                 best_ms_file_idx_2              = scores.best_ms_file_idx_1,
@@ -419,6 +425,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                 best_prob_1                     = prob,
                                 best_log2_weights_1             = log2.(psms_subset.weights[i]),
                                 best_irts_1                     = psms_subset.irts[i],
+                                best_irt_residual_1             = irt_residual(psms_subset, i),
                                 best_weight_1                   = psms_subset.weight[i],
                                 best_log2_intensity_explained_1 = psms_subset.log2_intensity_explained[i],
                                 best_ms_file_idx_1              = psms_subset.ms_file_idx[i],
@@ -432,6 +439,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                 best_prob_2                     = prob,
                                 best_log2_weights_2             = log2.(psms_subset.weights[i]),
                                 best_irts_2                     = psms_subset.irts[i],
+                                best_irt_residual_2             = irt_residual(psms_subset, i),
                                 best_weight_2                   = psms_subset.weight[i],
                                 best_log2_intensity_explained_2 = psms_subset.log2_intensity_explained[i],
                                 best_ms_file_idx_2              = psms_subset.ms_file_idx[i],
@@ -459,6 +467,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                 best_log2_weights_2             = Vector{Float32}(),
                                 best_irts_1                     = psms_subset.irts[i],
                                 best_irts_2                     = Vector{Float32}(),
+                                best_irt_residual_1             = irt_residual(psms_subset, i),
+                                best_irt_residual_2             = zero(Float32),
                                 best_weight_1                   = psms_subset.weight[i],
                                 best_weight_2                   = zero(Float32),
                                 best_log2_intensity_explained_1 = psms_subset.log2_intensity_explained[i],
@@ -507,6 +517,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                         best_irts = Float32[]
                         best_weight = zero(Float32)
                         best_log2_ie = zero(Float32)
+                        best_residual = zero(Float32)
 
                         if (scores.best_ms_file_idx_1 != psms_subset.ms_file_idx[i]) &&
                            (!isempty(scores.best_log2_weights_1))
@@ -514,6 +525,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             best_irts                           = scores.best_irts_1
                             best_weight                         = scores.best_weight_1
                             best_log2_ie                        = scores.best_log2_intensity_explained_1
+                            best_residual                       = scores.best_irt_residual_1
                             psms_subset.MBR_max_pair_prob[i]    = scores.best_prob_1
                             MBR_is_best_decoy                   = scores.is_best_decoy_1
                         elseif (scores.best_ms_file_idx_2 != psms_subset.ms_file_idx[i]) &&
@@ -522,6 +534,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             best_irts                           = scores.best_irts_2
                             best_weight                         = scores.best_weight_2
                             best_log2_ie                        = scores.best_log2_intensity_explained_2
+                            best_residual                       = scores.best_irt_residual_2
                             psms_subset.MBR_max_pair_prob[i]    = scores.best_prob_2
                             MBR_is_best_decoy                   = scores.is_best_decoy_2
                         else
@@ -538,8 +551,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                         best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(psms_subset.weights[i]))
                         best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_irts, psms_subset.irts[i])
 
-                        best_irt_at_apex = best_irts[argmax(best_log2_weights)]
-                        psms_subset.MBR_best_irt_diff[i] = abs(best_irt_at_apex - psms_subset.irts[i][argmax(psms_subset.weights[i])])
+                        current_residual = irt_residual(psms_subset, i)
+                        psms_subset.MBR_best_irt_diff[i] = abs(best_residual - current_residual)
                         psms_subset.MBR_rv_coefficient[i] = MBR_rv_coefficient(best_log2_weights_padded, best_iRTs_padded, weights_padded, iRTs_padded)
                         psms_subset.MBR_log2_weight_ratio[i] = log2(psms_subset.weight[i] / best_weight)
                         psms_subset.MBR_log2_explained_ratio[i] = psms_subset.log2_intensity_explained[i] - best_log2_ie
@@ -647,6 +660,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                                 best_log2_weights_2::Vector{Float32},
                                                 best_irts_1::Vector{Float32},
                                                 best_irts_2::Vector{Float32},
+                                                best_irt_residual_1::Float32,
+                                                best_irt_residual_2::Float32,
                                                 best_weight_1::Float32,
                                                 best_weight_2::Float32,
                                                 best_log2_intensity_explained_1::Float32,
@@ -802,10 +817,11 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             best_iRTs = sub_psms.irts[best_idx]
             best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(sub_psms.weights[i]))
             best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_iRTs, sub_psms.irts[i])
-            
-            best_irt_at_apex = sub_psms.irts[best_idx][argmax(best_log2_weights)]
+
             sub_psms.MBR_max_pair_prob[i] = sub_psms.prob[best_idx]
-            sub_psms.MBR_best_irt_diff[i] = abs(best_irt_at_apex - sub_psms.irts[i][argmax(sub_psms.weights[i])])
+            best_residual = irt_residual(sub_psms, best_idx)
+            current_residual = irt_residual(sub_psms, i)
+            sub_psms.MBR_best_irt_diff[i] = abs(best_residual - current_residual)
             sub_psms.MBR_rv_coefficient[i] = MBR_rv_coefficient(best_log2_weights_padded, best_iRTs_padded, weights_padded, iRTs_padded)
             sub_psms.MBR_log2_weight_ratio[i] = log2(sub_psms.weight[i] / sub_psms.weight[best_idx])
             sub_psms.MBR_log2_explained_ratio[i] = sub_psms.log2_intensity_explained[i] - sub_psms.log2_intensity_explained[best_idx]
@@ -942,6 +958,8 @@ function reset_precursor_scores!(dict)
             best_log2_weights_2 = Vector{Float32}(),
             best_irts_1 = Vector{Float32}(),
             best_irts_2 = Vector{Float32}(),
+            best_irt_residual_1 = zero(Float32),
+            best_irt_residual_2 = zero(Float32),
             best_weight_1 = zero(Float32),
             best_weight_2 = zero(Float32),
             best_log2_intensity_explained_1 = zero(Float32),

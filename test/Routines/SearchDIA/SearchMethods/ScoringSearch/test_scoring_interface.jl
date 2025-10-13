@@ -25,6 +25,7 @@ using Pioneer: MBRFilterMethod, ThresholdFilter, ProbitFilter, LightGBMFilter
 using Pioneer: FilterResult, train_and_evaluate, apply_filtering
 using Pioneer: select_mbr_features, prepare_mbr_features, logodds
 using Pioneer: ProbitRegression, ModelPredict!
+using Pioneer: summarize_precursors!
 
 
 @testset "Scoring Interface Tests" begin
@@ -77,7 +78,40 @@ using Pioneer: ProbitRegression, ModelPredict!
         @test updated4.worst_prob_2 ≈ 0.75f0
         @test updated4.count_pairs == 4
     end
-    
+
+    @testset "MBR iRT Residual Difference" begin
+        residual_df = DataFrame(
+            pair_id = UInt32[1, 1],
+            isotopes_captured = Tuple{Int8, Int8}[(Int8(0), Int8(0)), (Int8(0), Int8(0))],
+            ms_file_idx = UInt32[1, 2],
+            prob = Float32[0.9, 0.8],
+            weights = [Float32[1, 2], Float32[1, 3]],
+            irts = [Float32[10, 11], Float32[10, 11.5]],
+            weight = Float32[3, 4],
+            log2_intensity_explained = Float32[1, 1.1],
+            q_value = Float64[0.001, 0.002],
+            MBR_num_runs = zeros(Int32, 2),
+            MBR_best_irt_diff = zeros(Float32, 2),
+            MBR_rv_coefficient = zeros(Float32, 2),
+            MBR_is_best_decoy = falses(2),
+            MBR_log2_weight_ratio = zeros(Float32, 2),
+            MBR_log2_explained_ratio = zeros(Float32, 2),
+            MBR_max_pair_prob = zeros(Float32, 2),
+            MBR_is_missing = falses(2),
+            decoy = falses(2),
+            irt_pred = Float32[50.0, 52.0],
+            irt_obs = Float32[49.5, 51.0],
+        )
+
+        residual1 = residual_df.irt_pred[1] - residual_df.irt_obs[1]
+        residual2 = residual_df.irt_pred[2] - residual_df.irt_obs[2]
+
+        summarize_precursors!(residual_df; q_cutoff = 0.01f0)
+
+        @test residual_df.MBR_best_irt_diff[1] ≈ abs(residual2 - residual1)
+        @test residual_df.MBR_best_irt_diff[2] ≈ abs(residual1 - residual2)
+    end
+
     @testset "MBR Filter Method Traits" begin
         # Test that the trait types can be instantiated
         threshold_method = ThresholdFilter()
