@@ -153,6 +153,43 @@ result = infer_proteins(proteins, peptides)
 display_inference_result(result, peptides)
 
 
+#=============================================================================
+Case 2: Differentiable Proteins (Unique + Shared Peptides)
+==============================================================================#
+Pioneer.PeptideKey[
+  Pioneer.PeptideKey("KESYSIYVYK", true, 0x00), 
+  Pioneer.PeptideKey("ESYSIYVYK", true, 0x00), 
+  Pioneer.PeptideKey("ETYSSYIYK", true, 0x00), 
+  Pioneer.PeptideKey("KESYSVYVYK", true, 0x00), 
+  Pioneer.PeptideKey("EIQTAVR", true, 0x00), 
+  Pioneer.PeptideKey("QVHPDTGISSK", true, 0x00), 
+  Pioneer.PeptideKey("ESYSIYIYK", true, 0x00), 
+  Pioneer.PeptideKey("AMGIMNSFVNDIFER", true, 0x00), 
+  Pioneer.PeptideKey("ESYSVYVYK", true, 0x00), 
+  Pioneer.PeptideKey("SMSILNSFVNDIFER", true, 0x00), 
+  Pioneer.PeptideKey("AMSIMNSFVTDIFER", true, 0x00)
+  ]
+
+Pioneer.ProteinKey[
+  Pioneer.ProteinKey("O60814", true, 0x00), 
+  Pioneer.ProteinKey("P33778", true, 0x00), 
+  Pioneer.ProteinKey("P02293", true, 0x00), 
+  Pioneer.ProteinKey("Q6DRA6", true, 0x00), 
+  Pioneer.ProteinKey("Q93079", true, 0x00), 
+  Pioneer.ProteinKey("Q99880", true, 0x00), 
+  Pioneer.ProteinKey("P58876", true, 0x00), 
+  Pioneer.ProteinKey("P23527", true, 0x00), 
+  Pioneer.ProteinKey("Q99879", true, 0x00), 
+  Pioneer.ProteinKey("Q5QNW6", true, 0x00), 
+  Pioneer.ProteinKey("P62807", true, 0x00), 
+  Pioneer.ProteinKey("P02294", true, 0x00), 
+  Pioneer.ProteinKey("P06899", true, 0x00), 
+  Pioneer.ProteinKey("Q99877", true, 0x00), 
+  Pioneer.ProteinKey("Q96A08", true, 0x00), 
+  Pioneer.ProteinKey("Q16778", true, 0x00), 
+  Pioneer.ProteinKey("Q6DN03", true, 0x00), 
+  Pioneer.ProteinKey("Q8N257", true, 0x00), 
+  Pioneer.ProteinKey("P57053", true, 0x00)]
 
 #=============================================================================
 Case 2: Differentiable Proteins (Unique + Shared Peptides)
@@ -521,4 +558,256 @@ Corresponds to:
   - Implementation in src/utils/proteinInference.jl (lines 107-380)
 """)
 
-println("\nAll examples completed successfully!")
+#=============================================================================
+Case: Real-World Integration Test Failure
+==============================================================================#
+println("\n" * "="^80)
+println("Real-World Case: Integration Test Failure (2025-10-13)")
+println("="^80)
+println("""
+Description:
+  - 19 proteins in a single connected component (simplified as A-S)
+  - 11 peptides with complex sharing patterns (p1-p11)
+  - Multiple proteins share identical peptide sets (requiring merge-first)
+  - Tests the sort() operation that triggered the original isless error
+
+Component Structure (Bipartite Graph):
+  Group 1 (9 proteins, 5 peptides): A,C,D,E,F,G,H,I,K share {p1,p2,p3,p4,p5}
+  Group 2 (4 proteins, 5 peptides): B,L,M,N share {p6,p2,p7,p4,p5}
+  Group 3 (2 proteins, 3 peptides): O,P (histones) share {p8,p9,p5}
+  Group 4 (2 proteins, 2 peptides): Q,R share {p6,p7}
+  Group 5 (1 protein, 4 peptides): S has {p2,p10,p11,p5}
+  Group 6 (1 protein, 4 peptides): J has unique pattern {p2,p12,p13,p5}
+
+Key Observations:
+  - p5 (EIQTAVR) is shared by most proteins → will be excluded
+  - p2 (QVHPDTGISSK) is shared by many → likely excluded
+  - Groups 1 and 2 will compete in greedy set cover
+  - Proteins within each group with identical peptide sets will be merged
+
+Expected Result:
+  - Proteins with identical remaining peptide sets should be merged
+  - Only unique peptides assigned to protein groups
+  - Highly shared peptides (p5, p2) excluded from results
+""")
+
+# Data from failing_component_2025-10-13T12-00-28.902.jl
+# Simplified protein/peptide names for readability:
+# Original → Simple:
+#   O60814→A, P33778→B, P02293→O, Q6DRA6→Q, Q93079→C, Q99880→D, P58876→E
+#   P23527→L, Q99879→F, Q5QNW6→G, P62807→H, P02294→P, P06899→M, Q99877→I
+#   Q96A08→S, Q16778→N, Q6DN03→R, Q8N257→J, P57053→K
+#   ESYSVYVYK→p1, QVHPDTGISSK→p2, KESYSVYVYK→p3, AMGIMNSFVNDIFER→p4, EIQTAVR→p5
+#   ESYSIYVYK→p6, KESYSIYVYK→p7, ETYSSYIYK→p8, SMSILNSFVNDIFER→p9
+#   ESYSIYIYK→p10, AMSIMNSFVTDIFER→p11
+
+#=
+  Proteins: A-S (19 proteins organized into 6 groups)
+  - Group 1: A,C,D,E,F,G,H,I,K → {p1,p2,p3,p4,p5}
+  - Group 2: B,L,M,N → {p6,p2,p7,p4,p5}
+  - Group 3: O,P (histones) → {p8,p9,p5}
+  - Group 4: Q,R → {p6,p7}
+  - Group 5: S → {p2,p10,p11,p5}
+  - Group 6: J → {p6,p2,p7,p4} (no p5)
+=#
+
+proteins_realworld = [
+    ProteinKey("A", true, UInt8(0)),  # A -> {p1,p2,p3,p4,p5} (Group 1)
+    ProteinKey("A", true, UInt8(0)),
+    ProteinKey("A", true, UInt8(0)),
+    ProteinKey("A", true, UInt8(0)),
+    ProteinKey("A", true, UInt8(0)),
+    ProteinKey("B", true, UInt8(0)),  # B -> {p6,p2,p7,p4,p5} (Group 2)
+    ProteinKey("B", true, UInt8(0)),
+    ProteinKey("B", true, UInt8(0)),
+    ProteinKey("B", true, UInt8(0)),
+    ProteinKey("B", true, UInt8(0)),
+    ProteinKey("O", true, UInt8(0)),  # O -> {p8,p9,p5} (Histone, Group 3)
+    ProteinKey("O", true, UInt8(0)),
+    ProteinKey("O", true, UInt8(0)),
+    ProteinKey("Q", true, UInt8(0)),  # Q -> {p6,p7} (Group 4)
+    ProteinKey("Q", true, UInt8(0)),
+    ProteinKey("C", true, UInt8(0)),  # C -> {p1,p2,p3,p4,p5} (Group 1)
+    ProteinKey("C", true, UInt8(0)),
+    ProteinKey("C", true, UInt8(0)),
+    ProteinKey("C", true, UInt8(0)),
+    ProteinKey("C", true, UInt8(0)),
+    ProteinKey("D", true, UInt8(0)),  # D -> {p1,p2,p3,p4,p5} (Group 1)
+    ProteinKey("D", true, UInt8(0)),
+    ProteinKey("D", true, UInt8(0)),
+    ProteinKey("D", true, UInt8(0)),
+    ProteinKey("D", true, UInt8(0)),
+    ProteinKey("E", true, UInt8(0)),  # E -> {p1,p2,p3,p4,p5} (Group 1)
+    ProteinKey("E", true, UInt8(0)),
+    ProteinKey("E", true, UInt8(0)),
+    ProteinKey("E", true, UInt8(0)),
+    ProteinKey("E", true, UInt8(0)),
+    ProteinKey("L", true, UInt8(0)),  # L -> {p6,p2,p7,p4,p5} (Group 2)
+    ProteinKey("L", true, UInt8(0)),
+    ProteinKey("L", true, UInt8(0)),
+    ProteinKey("L", true, UInt8(0)),
+    ProteinKey("L", true, UInt8(0)),
+    ProteinKey("F", true, UInt8(0)),  # F -> {p1,p2,p3,p4,p5} (Group 1)
+    ProteinKey("F", true, UInt8(0)),
+    ProteinKey("F", true, UInt8(0)),
+    ProteinKey("F", true, UInt8(0)),
+    ProteinKey("F", true, UInt8(0)),
+    ProteinKey("G", true, UInt8(0)),  # G -> {p1,p2,p3,p4,p5} (Group 1)
+    ProteinKey("G", true, UInt8(0)),
+    ProteinKey("G", true, UInt8(0)),
+    ProteinKey("G", true, UInt8(0)),
+    ProteinKey("G", true, UInt8(0)),
+    ProteinKey("H", true, UInt8(0)),  # H -> {p1,p2,p3,p4,p5} (Group 1)
+    ProteinKey("H", true, UInt8(0)),
+    ProteinKey("H", true, UInt8(0)),
+    ProteinKey("H", true, UInt8(0)),
+    ProteinKey("H", true, UInt8(0)),
+    ProteinKey("P", true, UInt8(0)),  # P -> {p8,p9,p5} (Histone, Group 3)
+    ProteinKey("P", true, UInt8(0)),
+    ProteinKey("P", true, UInt8(0)),
+    ProteinKey("M", true, UInt8(0)),  # M -> {p6,p2,p7,p4,p5} (Group 2)
+    ProteinKey("M", true, UInt8(0)),
+    ProteinKey("M", true, UInt8(0)),
+    ProteinKey("M", true, UInt8(0)),
+    ProteinKey("M", true, UInt8(0)),
+    ProteinKey("I", true, UInt8(0)),  # I -> {p1,p2,p3,p4,p5} (Group 1)
+    ProteinKey("I", true, UInt8(0)),
+    ProteinKey("I", true, UInt8(0)),
+    ProteinKey("I", true, UInt8(0)),
+    ProteinKey("I", true, UInt8(0)),
+    ProteinKey("S", true, UInt8(0)),  # S -> {p2,p10,p11,p5} (Group 5)
+    ProteinKey("S", true, UInt8(0)),
+    ProteinKey("S", true, UInt8(0)),
+    ProteinKey("S", true, UInt8(0)),
+    ProteinKey("N", true, UInt8(0)),  # N -> {p6,p2,p7,p4,p5} (Group 2)
+    ProteinKey("N", true, UInt8(0)),
+    ProteinKey("N", true, UInt8(0)),
+    ProteinKey("N", true, UInt8(0)),
+    ProteinKey("N", true, UInt8(0)),
+    ProteinKey("R", true, UInt8(0)),  # R -> {p6,p7} (Group 4)
+    ProteinKey("R", true, UInt8(0)),
+    ProteinKey("J", true, UInt8(0)),  # J -> {p6,p2,p7,p4} (Group 6, no p5!)
+    ProteinKey("J", true, UInt8(0)),
+    ProteinKey("J", true, UInt8(0)),
+    ProteinKey("J", true, UInt8(0)),
+    ProteinKey("K", true, UInt8(0)),  # K -> {p1,p2,p3,p4,p5} (Group 1)
+    ProteinKey("K", true, UInt8(0)),
+    ProteinKey("K", true, UInt8(0)),
+    ProteinKey("K", true, UInt8(0)),
+    ProteinKey("K", true, UInt8(0)),
+]
+
+peptides_realworld = [
+    PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR (highly shared!)
+    PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p8", true, UInt8(0)),  # ETYSSYIYK
+    PeptideKey("p9", true, UInt8(0)),  # SMSILNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+    PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+    PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p8", true, UInt8(0)),  # ETYSSYIYK
+    PeptideKey("p9", true, UInt8(0)),  # SMSILNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p10", true, UInt8(0)),  # ESYSIYIYK
+    PeptideKey("p11", true, UInt8(0)),  # AMSIMNSFVTDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+    PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+    PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+    PeptideKey("p6", true, UInt8(0)),  # ESYSIYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p7", true, UInt8(0)),  # KESYSIYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p1", true, UInt8(0)),  # ESYSVYVYK
+    PeptideKey("p2", true, UInt8(0)),  # QVHPDTGISSK
+    PeptideKey("p3", true, UInt8(0)),  # KESYSVYVYK
+    PeptideKey("p4", true, UInt8(0)),  # AMGIMNSFVNDIFER
+    PeptideKey("p5", true, UInt8(0)),  # EIQTAVR
+]
+
+println("\nRunning inference on real-world failing component...")
+result_realworld = infer_proteins(proteins_realworld, peptides_realworld)
+
+println("SUCCESS! The sort() operation now works with Base.isless defined.")
+println("\nResults summary:")
+println("  Total unique peptides in result: $(length(result_realworld.peptide_to_protein))")
+println("  (Many peptides excluded as shared - this is correct behavior)")
+
+# Show a few example assignments
+println("\nSample peptide assignments:")
+count = 0
+for (pep, prot) in pairs(result_realworld.peptide_to_protein)
+    #if count < 5
+        println("  $(pep.sequence) → $(prot.name)")
+        count += 1
+    #end
+end
+
+println("\nAnalysis:")
+println("  - Proteins in Group 1 (A,C,D,E,F,G,H,I,K) share identical peptide sets")
+println("  - They should be merged into a single protein group during inference")
+println("  - Peptide p5 (EIQTAVR) is shared by most proteins → excluded from result")
+println("  - Peptide p2 (QVHPDTGISSK) is also highly shared → likely excluded")
+println("  - The merge-first approach ensures proteins with identical peptides are combined")
+
+println("\n" * "="^80)
+println("All examples completed successfully!")
+println("="^80)

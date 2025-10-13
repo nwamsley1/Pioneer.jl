@@ -40,6 +40,11 @@ struct ProteinKey
     entrap_id::UInt8
 end
 
+# Comparison methods for ProteinKey (required for sorting)
+Base.isless(a::ProteinKey, b::ProteinKey) = (a.name, a.is_target, a.entrap_id) < (b.name, b.is_target, b.entrap_id)
+Base.:(==)(a::ProteinKey, b::ProteinKey) = a.name == b.name && a.is_target == b.is_target && a.entrap_id == b.entrap_id
+Base.hash(k::ProteinKey, h::UInt) = hash((k.name, k.is_target, k.entrap_id), h)
+
 """
     PeptideKey
 
@@ -55,6 +60,11 @@ struct PeptideKey
     is_target::Bool
     entrap_id::UInt8
 end
+
+# Comparison methods for PeptideKey (required for sorting)
+Base.isless(a::PeptideKey, b::PeptideKey) = (a.sequence, a.is_target, a.entrap_id) < (b.sequence, b.is_target, b.entrap_id)
+Base.:(==)(a::PeptideKey, b::PeptideKey) = a.sequence == b.sequence && a.is_target == b.is_target && a.entrap_id == b.entrap_id
+Base.hash(k::PeptideKey, h::UInt) = hash((k.sequence, k.is_target, k.entrap_id), h)
 
 """
     ProteinFeatures
