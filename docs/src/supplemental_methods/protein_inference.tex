@@ -1,0 +1,192 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{float}
+
+\begin{document}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Method - Protein Inference and Quantification
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Protein Inference and Quantification}\label{subsec:protein_inference}
+
+After precursor-level FDR control, Pioneer performs protein inference to group peptides into minimal protein sets. The algorithm returns only unique peptides assigned to proteins; shared peptides are excluded from the result to ensure unambiguous quantification. The protein inference algorithm operates on both target and decoy precursors to enable protein-level FDR calculation.
+
+\subsubsection{Input Selection for Protein Inference}
+
+Pioneer performs protein inference separately for each MS run on all precursors (both targets and decoys) passing both global and experiment-wide q-value thresholds from the two-stage FDR control described in Section~\ref{subsec2}. For each run $r \in \mathcal{R}$, let $\mathcal{P}_{\text{inference}}^{(r)}$ denote the set of precursors eligible for protein inference:
+\begin{equation}
+\mathcal{P}_{\text{inference}}^{(r)} = \{p : \text{global\_qval}_p \leq \alpha_g, \, \text{qval}_{p,r} \leq \alpha_e\}
+\end{equation}
+where $\alpha_g = 0.01$ is the global FDR threshold and $\alpha_e = 0.01$ is the experiment-wide FDR threshold. Both target precursors ($Y_p = 1$) and decoy precursors ($Y_p = 0$) passing these thresholds are included in $\mathcal{P}_{\text{inference}}^{(r)}$.
+
+\paragraph{Run-Specific Inference} Protein inference is performed independently for each run, as different precursors may be detected in different runs due to technical variation, sample complexity, or stochastic sampling effects. This run-specific approach ensures that protein groups accurately reflect the peptide evidence observed in each individual MS experiment.
+
+\paragraph{Rationale for Including Decoys} Decoy protein groups inferred from decoy precursors are necessary to calculate protein-level FDR and q-values using target-decoy competition. This follows the standard target-decoy paradigm where decoy protein groups serve as empirical null models for false positive protein identifications. Without decoy protein groups, protein-level FDR control would not be possible.
+
+\subsubsection{Parsimony-Based Protein Inference Algorithm}
+
+Pioneer implements a two-phase parsimony-based inference algorithm to identify a minimal set of protein groups that explains all observed peptides \cite{Nesvizhskii2005,Zhang2007}. The algorithm is applied independently to each run $r$, operating separately on target and decoy precursors to produce run-specific target and decoy protein groups. The algorithm proceeds in three main steps: (1) decompose the peptide-protein bipartite graph into independent connected components using depth-first search, (2) within each component, first select all proteins with unique peptide evidence, then apply greedy set cover to handle remaining ambiguous peptides, and (3) return only peptides that uniquely map to a single protein group in the minimal set. Shared peptides are excluded from the output to ensure unambiguous protein quantification.
+
+\paragraph{Population-Based Grouping} Before inference, peptide-protein associations are automatically partitioned into independent populations based on two criteria: (1) target vs. decoy status ($Y_p \in \{0,1\}$), and (2) entrapment group identifier ($e_p \in \{0, 1, 2, \ldots\}$). Each unique combination $(Y_p, e_p)$ defines a distinct population that is processed independently. This ensures target and decoy proteins are never merged together (maintaining target-decoy separation for FDR control), and different entrapment groups remain independent (enabling proper FDR calibration across entrapment populations). Inference is performed separately within each population, and results are combined after inference.
+
+\paragraph{Protein-Peptide Bipartite Graph} Let $\mathcal{A}$ denote the set of all protein accession numbers in the spectral library (as defined in Section~\ref{subsec2}). For each run $r$ and population $(Y, e)$, define the set of peptide-protein associations:
+\begin{equation}
+\mathcal{E}^{(r)}_{Y,e} = \{(p, a) : p \in \mathcal{P}_{\text{inference}}^{(r)}, \, Y_p = Y, \, e_p = e, \, a \in \mathcal{A}, \, \text{peptide } p \text{ maps to protein } a\}
+\end{equation}
+Each pair $(p, a) \in \mathcal{E}^{(r)}_{Y,e}$ represents an edge in a bipartite graph connecting observed peptide $p$ to library protein accession $a$ within population $(Y, e)$. The most common populations are target precursors with entrapment group 0 ($\mathcal{E}^{(r)}_{1,0}$) and decoy precursors with entrapment group 0 ($\mathcal{E}^{(r)}_{0,0}$), though additional entrapment groups may be present for specialized FDR calibration experiments.
+
+\paragraph{Algorithm Overview} Within each population $(Y, e)$, the inference algorithm decomposes the bipartite graph into disjoint connected components using depth-first search, ensuring peptides in different components share no common proteins. Within each component, the algorithm applies a two-phase approach: first automatically selecting all proteins with unique peptide evidence (satisfying the parsimony principle), then applying a merge-first greedy set cover strategy. At each iteration of the greedy phase, proteins with identical remaining peptide sets are first merged into protein groups (e.g., proteins B and C both covering only peptide 7 are merged into ``B;C''), then the protein or group covering the most remaining peptides is selected. This merge-first approach ensures indistinguishable proteins are treated as single entities and prevents arbitrary selection among equivalent proteins. After processing all populations, results are combined into a single mapping from unique peptides to their assigned protein groups.
+
+\begin{algorithm}[H]
+\caption{Protein Inference Phase 1: Graph Decomposition}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Edges $\mathcal{E}^{(r)}_{Y,e} = \{(p, a)\}$ for population $(Y, e)$, where $p$ is peptide, $a$ is protein
+\State \textbf{Output:} Connected components $C = \{(P_c, A_c)\}$ with bidirectional mappings $A[p]$ and $P[a]$
+\State \textbf{Note:} Applied independently for each population $(Y, e)$
+\State \textbf{Define:} $A[p] = \{a : (p, a) \in \mathcal{E}^{(r)}_{Y,e}\}$ (proteins containing peptide $p$)
+\State \hspace{2.3em} $P[a] = \{p : (p, a) \in \mathcal{E}^{(r)}_{Y,e}\}$ (peptides in protein $a$)
+\State
+\State \textit{// Build bidirectional mappings (lines 120-145 in implementation)}
+\For{$(p, a) \in \mathcal{E}^{(r)}_{Y,e}$}
+    \State $A[p] \gets A[p] \cup \{a\}$ \Comment{Proteins for each peptide}
+    \State $P[a] \gets P[a] \cup \{p\}$ \Comment{Peptides for each protein}
+\EndFor
+\State
+\State \textit{// Find connected components via depth-first search (lines 151-190)}
+\State $V \gets \emptyset$, $C \gets \emptyset$ \Comment{Visited peptides, components list}
+\For{each peptide $p$}
+    \If{$p \notin V$}
+        \State $(P_c, A_c) \gets \text{DFS}(p, A, P, V)$ \Comment{Discover component}
+        \State $V \gets V \cup P_c$ \Comment{Mark component peptides as visited}
+        \State $C \gets C \cup \{(P_c, A_c)\}$
+    \EndIf
+\EndFor
+\State
+\State \textbf{return} $C$, $A$, $P$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Protein Inference Phase 2: Component Processing with Merge-First Set Cover}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Components $C$, mappings $A[p]$ and $P[a]$ from Algorithm 1
+\State \textbf{Output:} $G[p] \to q$ where $q \subseteq \mathcal{A}$ is protein group (only unique peptides)
+\State
+\Function{MergeIndistinguishable}{$K$, $P$, $R$}
+    \State \textbf{Input:} Candidate proteins $K$, peptide mapping $P[a]$, remaining peptides $R$
+    \State \textbf{Output:} Updated $K$ with indistinguishable proteins merged
+    \State Group proteins by $P[a] \cap R$ (remaining peptide sets)
+    \State For each group with $|$group$| > 1$: merge into ``protein1;protein2;...''
+    \State \textbf{return} merged candidate set
+\EndFunction
+\State
+\State \textit{// Process each component independently (lines 196-378)}
+\For{$(P_c, A_c) \in C$}
+    \State
+    \State \textit{// Case 1: All proteins indistinguishable (lines 198-247)}
+    \If{$P[a] = P[a']$ for all $a, a' \in A_c$}
+        \For{$p \in P_c$}
+            \State $G[p] \gets A_c$ \Comment{All peptides unique to protein group}
+        \EndFor
+        \State \textbf{continue}
+    \EndIf
+    \State
+    \State \textit{// Case 2: Mixed peptide assignments (lines 250-377)}
+    \State $U \gets \{p \in P_c : |A[p] \cap A_c| = 1\}$ \Comment{Unique peptides}
+    \State
+    \State \textit{// Phase 1: Select all proteins with unique peptides (lines 299-310)}
+    \State $S \gets \{a \in A_c : P[a] \cap U \neq \emptyset\}$ \Comment{Necessary proteins}
+    \State $R \gets P_c \setminus \bigcup_{a \in S} P[a]$ \Comment{Remaining uncovered peptides}
+    \State
+    \State \textit{// Phase 2: Merge-first greedy set cover (lines 322-399)}
+    \State $K \gets A_c \setminus S$ \Comment{Candidate proteins}
+    \While{$R \neq \emptyset$ and $K \neq \emptyset$}
+        \State $K \gets \text{MergeIndistinguishable}(K, P, R)$ \Comment{Merge proteins with identical remaining peptides}
+        \State $a^* \gets \arg\max_{a \in K} |P[a] \cap R|$ \Comment{Select protein covering most peptides}
+        \If{$|P[a^*] \cap R| = 0$}
+            \State \textbf{break}
+        \EndIf
+        \State $S \gets S \cup \{a^*\}$ \Comment{Add to solution}
+        \State $R \gets R \setminus P[a^*]$ \Comment{Remove covered peptides}
+        \State $K \gets K \setminus \{a^*\}$ \Comment{Remove from candidates}
+    \EndWhile
+    \State
+    \State \textit{// Add only unique peptides to result (lines 365-377)}
+    \For{$p \in P_c$}
+        \State $S_p \gets A[p] \cap S$ \Comment{Necessary proteins for this peptide}
+        \If{$|S_p| = 1$}
+            \State $G[p] \gets S_p$ \Comment{Unique assignment}
+        \EndIf
+        \State \textit{// Note: Shared peptides ($|S_p| > 1$) are excluded from G}
+    \EndFor
+\EndFor
+\State
+\State \textbf{return} $G$
+\end{algorithmic}
+\end{algorithm}
+
+This two-phase approach ensures that proteins with unique peptide evidence are never excluded (satisfying the parsimony principle), while the merge-first greedy strategy efficiently handles ambiguous peptides by detecting and merging indistinguishable proteins at each iteration before selection. This prevents arbitrary tie-breaking and ensures that protein groups accurately reflect equivalent evidence across proteins.
+
+\paragraph{Protein Group Filtering} After protein inference, protein groups are filtered by the minimum number of peptides. For each protein $q \in S$ selected across all components, let $\mathcal{N}(q)$ denote its set of assigned peptides. Filter proteins by:
+
+\begin{equation}
+S_{\text{filtered}} = \{q \in S : |\mathcal{N}(q)| \geq n_{\text{min}}\}
+\end{equation}
+
+where $n_{\text{min}}$ is the minimum peptide threshold (default: 1). This filtering removes protein groups with insufficient peptide evidence before protein-level scoring and FDR control.
+
+\subsubsection{Protein Group Scoring and FDR Control}
+
+After protein inference and filtering, each protein group is scored based on its constituent precursors. Pioneer supports two scoring strategies:
+
+\paragraph{Simple Protein Scoring} Each protein group $q$ is scored using:
+\begin{equation}
+\text{score}(q) = \max_{p \in \mathcal{N}(q)} \text{global\_prob}_p
+\end{equation}
+where the maximum is taken over all peptides assigned to protein $q$.
+
+\paragraph{Machine Learning Protein Scoring} When enabled, Pioneer trains LightGBM models to discriminate target from decoy protein groups using features including:
+\begin{itemize}
+  \item Top-N precursor probabilities within the protein group
+  \item Number of unique peptides
+  \item Protein sequence coverage
+  \item Median precursor probability across runs
+\end{itemize}
+
+The ML approach provides improved discrimination for complex protein groups with many constituent peptides.
+
+\paragraph{Protein-Level Q-value Calculation} Protein groups are sorted by decreasing score and protein-level q-values are computed using target-decoy competition:
+
+Let $\pi$ be the permutation sorting protein groups by decreasing score. The protein-level q-value for the $k$-th ranked protein is:
+\begin{equation}
+\text{protein\_qval}_{\pi(k)} = \min_{j \geq k} \left\{ \frac{\sum_{l=1}^{j} (1 - Y_{\pi(l)})}{\sum_{l=1}^{j} Y_{\pi(l)}} \right\}
+\end{equation}
+where $Y_q = 1$ if protein $q$ is a target and $Y_q = 0$ if it is a decoy.
+
+Protein groups passing the protein-level FDR threshold (typically $\text{protein\_qval} \leq 0.01$) are retained for downstream quantification.
+
+\subsubsection{MaxLFQ Quantification}
+
+Pioneer implements the MaxLFQ algorithm \cite{Cox2014} for label-free protein quantification using integrated chromatographic peak areas from unique peptides. Only peptides present in the inference result $G$ are used for quantification, ensuring unambiguous intensity assignment to proteins.
+
+\paragraph{Quantification Input} For each protein $q$ passing protein-level FDR thresholds, let $\mathcal{N}_{\text{quant}}(q)$ be the set of unique peptides:
+\begin{equation}
+\mathcal{N}_{\text{quant}}(q) = \{p : G[p] = q\}
+\end{equation}
+where peptides are included only if they appear in the inference result $G$ (i.e., they are unique peptides assigned to the minimal protein set).
+
+For each peptide $p \in \mathcal{N}_{\text{quant}}(q)$ and run $r$, the integrated chromatographic peak area $A_{p,r}$ (computed as described in Section~\ref{subsec:chrom_integration}) serves as the quantification intensity.
+
+\paragraph{MaxLFQ Algorithm} The MaxLFQ algorithm computes protein-level abundances that maximize consistency of peptide ratios across runs. For protein $q$, the MaxLFQ intensities $\{I_{q,r}\}_{r \in \mathcal{R}}$ are computed by solving:
+
+\begin{equation}
+\min_{\{I_{q,r}\}_{r \in \mathcal{R}}} \sum_{r,r' \in \mathcal{R}} \sum_{p \in \mathcal{N}_{\text{quant}}(q)} w_{p,r,r'} \left( \log I_{q,r} - \log I_{q,r'} - \log \frac{A_{p,r}}{A_{p,r'}} \right)^2
+\end{equation}
+
+where $w_{p,r,r'} = 1$ if $A_{p,r} > 0$ and $A_{p,r'} > 0$ (peptide observed in both runs), and $w_{p,r,r'} = 0$ otherwise. This optimization finds protein abundances that best explain the observed peptide ratios while handling missing values.
+
+The resulting MaxLFQ intensities provide robust protein-level quantification that is insensitive to peptide-specific biases and handles missing values through ratio-based inference.
+
+\end{document}

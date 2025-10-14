@@ -133,23 +133,6 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
 
-      - uses: apple-actions/import-codesign-certs@v5
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != ''
-        with:
-          p12-file-base64:   ${{ secrets.MACOS_CERT_P12 }}
-          p12-password:      ${{ secrets.MACOS_CERT_PASSWORD }}
-          keychain-password: ${{ secrets.MACOS_CERT_PASSWORD }}
-          keychain:          signing_temp
-
-      - uses: apple-actions/import-codesign-certs@v5
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != ''
-        with:
-          p12-file-base64:   ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
-          p12-password:      ${{ secrets.MACOS_CERT_PASSWORD }}
-          keychain-password: ${{ secrets.MACOS_CERT_PASSWORD }}
-          keychain:          signing_temp
-          create-keychain:   false
-
       - name: Install dependencies
         run: |
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'

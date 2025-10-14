@@ -27,7 +27,7 @@ jobs:
 
       - uses: julia-actions/setup-julia@v2
         with:
-          version: '1'
+          version: '1.11'
 
       - name: Cache docs packages
         uses: actions/cache@v4

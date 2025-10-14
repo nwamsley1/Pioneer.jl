@@ -406,10 +406,10 @@ end
 Internal N-key implementation with dynamic type dispatch.
 """
 function _stream_sorted_merge_nkey_impl(
-    refs::Vector{<:FileReference}, 
+    refs::Vector{<:FileReference},
     output_path::String,
     sort_keys::NTuple{N,Symbol},
-    sort_types::NTuple{M,DataType},
+    sort_types::NTuple{M,Type},
     reverse_vec::Vector{Bool},
     batch_size::Int
 ) where {N, M}

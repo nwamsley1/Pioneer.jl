@@ -40,6 +40,11 @@ struct ProteinKey
     entrap_id::UInt8
 end
 
+# Comparison methods for ProteinKey (required for sorting)
+Base.isless(a::ProteinKey, b::ProteinKey) = (a.name, a.is_target, a.entrap_id) < (b.name, b.is_target, b.entrap_id)
+Base.:(==)(a::ProteinKey, b::ProteinKey) = a.name == b.name && a.is_target == b.is_target && a.entrap_id == b.entrap_id
+Base.hash(k::ProteinKey, h::UInt) = hash((k.name, k.is_target, k.entrap_id), h)
+
 """
     PeptideKey
 
@@ -55,6 +60,11 @@ struct PeptideKey
     is_target::Bool
     entrap_id::UInt8
 end
+
+# Comparison methods for PeptideKey (required for sorting)
+Base.isless(a::PeptideKey, b::PeptideKey) = (a.sequence, a.is_target, a.entrap_id) < (b.sequence, b.is_target, b.entrap_id)
+Base.:(==)(a::PeptideKey, b::PeptideKey) = a.sequence == b.sequence && a.is_target == b.is_target && a.entrap_id == b.entrap_id
+Base.hash(k::PeptideKey, h::UInt) = hash((k.sequence, k.is_target, k.entrap_id), h)
 
 """
     ProteinFeatures
@@ -102,12 +112,16 @@ end
 Result of protein inference for a single file.
 
 # Fields
-- `peptide_to_protein::Dictionary{PeptideKey, ProteinKey}`: Maps peptides to inferred proteins
-- `use_for_quant::Dictionary{PeptideKey, Bool}`: Whether peptide should be used for quantification
+- `peptide_to_protein::Dictionary{PeptideKey, ProteinKey}`: Maps unique peptides to inferred proteins.
+
+# Semantics
+Peptides present in `peptide_to_protein` are unique peptides assigned to the minimal protein set
+and should be used for quantification. Shared peptides are excluded from the result entirely
+(deleted after inference). For PSMs with peptides not in the result, use the original protein
+assignment but mark as `use_for_protein_quant = false`.
 """
 struct InferenceResult
     peptide_to_protein::Dictionary{PeptideKey, ProteinKey}
-    use_for_quant::Dictionary{PeptideKey, Bool}
 end
 
 """

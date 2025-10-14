@@ -1,97 +1,0 @@
-The latest version of Julia in the `release` channel is 1.11.7+0.aarch64.apple.darwin14. You currently have `1.11.3+0.aarch64.apple.darwin14` installed. Run:
-
-  juliaup update
-
-in your terminal shell to install Julia 1.11.7+0.aarch64.apple.darwin14 and update the `release` channel to that version.
-[ Info: lib_lightgbm found in system dirs!
-[ Info: Pioneer logging system initialized
-
-==========================================================================================
-Starting SearchDIA
-==========================================================================================
-[ Info: 
-Starting search at: 2025-09-24T22:28:04.721
-[ Info: Output directory: ./data/ecoli_test/ecoli_test_results
-[ Info: Loading Parameters...
-[ Info: Loading Spectral Library...
-[ Info: Initializing Search Context...
-[ Info: Executing Parameter Tuning...
-0.0%┣                                                ┫ 0/4 [00:00<00:00, -0s/it]
-[1A25.0%┣██████████▊                                ┫ 1/4 [00:12<Inf:Inf, InfGs/it]
-┌ Warning: Failed to create filtered spectra for MS data file: ecoli_filtered_01b_empty. Error type: MethodError. Using conservative defaults.
-┌ Warning: Parameter tuning failed for MS data file: ecoli_filtered_01b_empty. Error type: MethodError. Using conservative default parameters to continue analysis.
-┌ Warning: Processing failed with exception for MS data file: ecoli_filtered_01b_empty. Using conservative default parameters to continue analysis.
-[ Info: CONSERVATIVE_FALLBACK: No valid attempts, used defaults
-[1A50.0%┣███████████████████████▌                       ┫ 2/4 [00:12<00:24, 12s/it]
-┌ Warning: Failed to create filtered spectra for MS data file: ecoli_filtered_01c_sparse. Error type: MethodError. Using conservative defaults.
-┌ Warning: Parameter tuning failed for MS data file: ecoli_filtered_01c_sparse. Error type: MethodError. Using conservative default parameters to continue analysis.
-┌ Warning: Processing failed with exception for MS data file: ecoli_filtered_01c_sparse. Using conservative default parameters to continue analysis.
-[ Info: CONSERVATIVE_FALLBACK: No valid attempts, used defaults
-[1A100.0%┣███████████████████████████████████████████████┫ 4/4 [00:13<00:00, 4s/it]
-[1A100.0%┣███████████████████████████████████████████████┫ 4/4 [00:13<00:00, 4s/it]
-[ Info: Parameter Tuning Summary:
-  - Total files processed: 4
-  - Converged: 2
-  - Used fallback: 2
-[ Info: Executing NCE Tuning...
-0.0%┣                                                ┫ 0/4 [00:00<00:00, -0s/it]
-[1A100.0%┣█████████████████████████████████████████████┫ 4/4 [00:00<00:00, 205it/s]
-[1A100.0%┣█████████████████████████████████████████████┫ 4/4 [00:00<00:00, 200it/s]
-[ Info: Executing Quadrupole Tuning...
-0.0%┣                                                ┫ 0/4 [00:00<00:00, -0s/it]
-┌ Warning: Too few PSMs found for quad modeling. required_psms 2000.0 and total_psms 959 
-
-[1A25.0%┣██████████▊                                ┫ 1/4 [00:06<Inf:Inf, InfGs/it]
-┌ Warning: Too few PSMs found for quad modeling. required_psms 2000.0 and total_psms 995 
-
-[1A100.0%┣███████████████████████████████████████████████┫ 4/4 [00:06<00:00, 2s/it]
-[1A100.0%┣███████████████████████████████████████████████┫ 4/4 [00:06<00:00, 2s/it]
-[ Info: Executing First Pass Search...
-0.0%┣                                                ┫ 0/4 [00:00<00:00, -0s/it]
-[1A25.0%┣██████████▊                                ┫ 1/4 [00:06<Inf:Inf, InfGs/it]
-[1A100.0%┣███████████████████████████████████████████████┫ 4/4 [00:06<00:00, 2s/it]
-[1A100.0%┣███████████████████████████████████████████████┫ 4/4 [00:06<00:00, 2s/it]
-┌ Warning: Setting identity RT models for failed file: ecoli_filtered_01b_empty
-┌ Warning: Setting identity RT models for failed file: ecoli_filtered_01c_sparse
-┌ Error: Search failed with error: SystemError
-┌ Error: Stacktrace: Base.StackTraces.StackFrame[systemerror(p::String, errno::Int32; extrainfo::Nothing) at error.jl:176, kwcall(::@NamedTuple{extrainfo::Nothing}, ::typeof(systemerror), p::String, errno::Int32) at error.jl:176, kwcall(::@NamedTuple{extrainfo::Nothing}, ::typeof(systemerror), p::String) at error.jl:176, #systemerror#98 at error.jl:175 [inlined], systemerror at error.jl:175 [inlined], open(fname::String; lock::Bool, read::Bool, write::Nothing, create::Nothing, truncate::Nothing, append::Nothing) at iostream.jl:295, open at iostream.jl:277 [inlined], open(fname::String, mode::String; lock::Bool) at iostream.jl:358, open(fname::String, mode::String) at iostream.jl:357, open(::typeof(Arrow.tobytes), ::String, ::Vararg{String}; kwargs::Base.Pairs{Symbol, Union{}, Tuple{}, @NamedTuple{}}) at io.jl:408, open at io.jl:407 [inlined], tobytes at table.jl:29 [inlined], #Table#92 at table.jl:407 [inlined], Table at table.jl:407 [inlined], Table at table.jl:407 [inlined], makeRTIndices(temp_folder::String, psms_paths::Vector{String}, prec_to_irt::Dictionaries.Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}}, rt_to_irt_splines::Dict{Int64, Pioneer.RtConversionModel}; min_prob::Float32) at buildRTIndex.jl:80, makeRTIndices at buildRTIndex.jl:70 [inlined], create_rt_indices!(search_context::Pioneer.SearchContext{1, Pioneer.FragmentIndexLibrary, Pioneer.ArrowTableReference{4}}, results::Pioneer.FirstPassSearchResults, precursor_dict::Dictionaries.Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}, params::Pioneer.FirstPassSearchParameters{Pioneer.PartialPrecCapture}) at utils.jl:472, summarize_results!(results::Pioneer.FirstPassSearchResults, params::Pioneer.FirstPassSearchParameters{Pioneer.PartialPrecCapture}, search_context::Pioneer.SearchContext{1, Pioneer.FragmentIndexLibrary, Pioneer.ArrowTableReference{4}}) at FirstPassSearch.jl:594, execute_search(search_type::Pioneer.FirstPassSearch, search_context::Pioneer.SearchContext{1, Pioneer.FragmentIndexLibrary, Pioneer.ArrowTableReference{4}}, params::Pioneer.PioneerParameters) at SearchMethods.jl:96, macro expansion at timing.jl:581 [inlined], SearchDIA(params_path::String) at SearchDIA.jl:334, top-level scope at test_failed_indicators.jl:7, eval at boot.jl:430 [inlined], include_string(mapexpr::typeof(identity), mod::Module, code::String, filename::String) at loading.jl:2734, _include(mapexpr::Function, mod::Module, _path::String) at loading.jl:2794, include(mod::Module, _path::String) at Base.jl:557, exec_options(opts::Base.JLOptions) at client.jl:323, _start() at client.jl:531]
-┌ Warning: 12 warnings were generated during search - see /Users/nathanwamsley/Projects/Pioneer.jl/data/ecoli_test/ecoli_test_results/pioneer_warnings.log
-ERROR: LoadError: SystemError: opening file "": No such file or directory
-Stacktrace:
-  [1] systemerror(p::String, errno::Int32; extrainfo::Nothing)
-    @ Base ./error.jl:176
-  [2] systemerror
-    @ ./error.jl:175 [inlined]
-  [3] open(fname::String; lock::Bool, read::Bool, write::Nothing, create::Nothing, truncate::Nothing, append::Nothing)
-    @ Base ./iostream.jl:295
-  [4] open
-    @ ./iostream.jl:277 [inlined]
-  [5] open(fname::String, mode::String; lock::Bool)
-    @ Base ./iostream.jl:358
-  [6] open(fname::String, mode::String)
-    @ Base ./iostream.jl:357
-  [7] open(::typeof(Arrow.tobytes), ::String, ::Vararg{String}; kwargs::@Kwargs{})
-    @ Base ./io.jl:408
-  [8] open
-    @ ./io.jl:407 [inlined]
-  [9] tobytes
-    @ ~/.julia/packages/Arrow/owCB0/src/table.jl:29 [inlined]
- [10] Table (repeats 2 times)
-    @ ~/.julia/packages/Arrow/owCB0/src/table.jl:407 [inlined]
- [11] makeRTIndices(temp_folder::String, psms_paths::Vector{String}, prec_to_irt::Dictionaries.Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}}, rt_to_irt_splines::Dict{Int64, Pioneer.RtConversionModel}; min_prob::Float32)
-    @ Pioneer ~/Projects/Pioneer.jl/src/Routines/SearchDIA/CommonSearchUtils/buildRTIndex.jl:80
- [12] makeRTIndices
-    @ ~/Projects/Pioneer.jl/src/Routines/SearchDIA/CommonSearchUtils/buildRTIndex.jl:70 [inlined]
- [13] create_rt_indices!(search_context::Pioneer.SearchContext{1, Pioneer.FragmentIndexLibrary, Pioneer.ArrowTableReference{4}}, results::Pioneer.FirstPassSearchResults, precursor_dict::Dictionaries.Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}, params::Pioneer.FirstPassSearchParameters{Pioneer.PartialPrecCapture})
-    @ Pioneer ~/Projects/Pioneer.jl/src/Routines/SearchDIA/SearchMethods/FirstPassSearch/utils.jl:472
- [14] summarize_results!(results::Pioneer.FirstPassSearchResults, params::Pioneer.FirstPassSearchParameters{Pioneer.PartialPrecCapture}, search_context::Pioneer.SearchContext{1, Pioneer.FragmentIndexLibrary, Pioneer.ArrowTableReference{4}})
-    @ Pioneer ~/Projects/Pioneer.jl/src/Routines/SearchDIA/SearchMethods/FirstPassSearch/FirstPassSearch.jl:594
- [15] execute_search(search_type::Pioneer.FirstPassSearch, search_context::Pioneer.SearchContext{1, Pioneer.FragmentIndexLibrary, Pioneer.ArrowTableReference{4}}, params::Pioneer.PioneerParameters)
-    @ Pioneer ~/Projects/Pioneer.jl/src/Routines/SearchDIA/SearchMethods/SearchMethods.jl:96
- [16] macro expansion
-    @ ./timing.jl:581 [inlined]
- [17] SearchDIA(params_path::String)
-    @ Pioneer ~/Projects/Pioneer.jl/src/Routines/SearchDIA.jl:334
- [18] top-level scope
-    @ ~/Projects/Pioneer.jl/test_failed_indicators.jl:7
-in expression starting at /Users/nathanwamsley/Projects/Pioneer.jl/test_failed_indicators.jl:7
