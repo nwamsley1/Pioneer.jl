@@ -883,50 +883,11 @@ function get_training_data_for_iteration!(
             psms_train_itr.target[worst_idxs] .= false
         end
 
-        # Also train on top scoring MBR candidates if requested
-        if match_between_runs && last_iter
-            pass_mask = psms_train_itr.target .& (psms_train_itr.q_value .<= max_q_value_lightgbm_rescore)
-            if any(pass_mask)
-                # Determine prob threshold for precursors passing the q-value threshold
-                max_prob_threshold = minimum(psms_train_itr.prob[pass_mask])
-
-                # Hacky way to ensure anything passing the initial q-value threshold
-                # will pass the next q-value threshold
-                psms_train_itr.q_value[psms_train_itr.q_value .<= max_q_value_lightgbm_rescore] .= 0.0
-                psms_train_itr.q_value[psms_train_itr.q_value .> max_q_value_lightgbm_rescore]  .= 1.0
-
-                # Must have at least one precursor passing the q-value threshold,
-                # and the best precursor can't be a decoy
-                psms_train_mbr = subset(
-                    psms_train_itr,
-                    [:MBR_is_best_decoy, :MBR_max_pair_prob, :prob, :MBR_is_missing] => ByRow((d, mp, p, im) ->
-                        (!im && !d && mp >= max_prob_threshold && p < max_prob_threshold)
-                    );
-                    view = true
-                )
-
-                # Compute MBR q-values.
-                get_qvalues!(psms_train_mbr[!,:prob], psms_train_mbr[!,:target], psms_train_mbr[!,:q_value])
-
-                # Take all decoys and targets passing q_thresh (all 0's now) or mbr_q_thresh
-                psms_train_itr = subset(
-                    psms_train_itr,
-                    [:target, :q_value, :MBR_is_best_decoy, :MBR_is_missing] => ByRow((t, q, MBR_d, im) -> (!t) || (t && !im && !MBR_d && q <= max_q_value_mbr_itr))
-                )
-            else
-                # Fall back to the standard q-value filtering when no targets pass the threshold.
-                psms_train_itr = subset(
-                    psms_train_itr,
-                    [:target, :q_value] => ByRow((t,q) -> (!t) || (t && q <= max_q_value_lightgbm_rescore))
-                )
-            end
-        else
-            # Take all decoys and targets passing q_thresh
-            psms_train_itr = subset(
-                psms_train_itr,
-                [:target, :q_value] => ByRow((t,q) -> (!t) || (t && q <= max_q_value_lightgbm_rescore))
-            )
-        end
+        # Take all decoys and targets passing q_thresh
+        psms_train_itr = subset(
+            psms_train_itr,
+            [:target, :q_value] => ByRow((t,q) -> (!t) || (t && q <= max_q_value_lightgbm_rescore))
+        )
 
         return psms_train_itr
     end
