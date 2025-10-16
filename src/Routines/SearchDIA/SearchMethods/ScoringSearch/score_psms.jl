@@ -98,7 +98,7 @@ function score_precursor_isotope_traces(
 
         # Add quantile-binned features before training
         features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
-        n_quantile_bins = 100
+        n_quantile_bins = 25
         @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 

@@ -73,10 +73,11 @@ const ADVANCED_FEATURE_SET = [
     :err_norm,
     :poisson,
     :weight_qbin,      # Quantile-binned version of :weight
-    :log2_intensity_explained,
+    #:log2_intensity_explained,
     :tic_qbin,         # Quantile-binned version of :tic
     :num_scans,
     :smoothness,
+    #=
     :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
     #:ms1_irt_diff,
     #:weight_ms1,
@@ -92,6 +93,7 @@ const ADVANCED_FEATURE_SET = [
     :rt_max_intensity_ms1,
     :rt_diff_max_intensity_ms1,
     :ms1_features_missing,
+    =#
     :percent_theoretical_ignored,
     :scribe,
     :max_scribe
