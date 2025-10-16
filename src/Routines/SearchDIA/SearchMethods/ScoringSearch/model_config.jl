@@ -73,7 +73,7 @@ const ADVANCED_FEATURE_SET = [
     :err_norm_qbin,    # Quantile-binned version of :err_norm
     :poisson_qbin,     # Quantile-binned version of :poisson
     :weight_qbin,      # Quantile-binned version of :weight
-    #:log2_intensity_explained,
+    :log2_intensity_explained_qbin,  # Quantile-binned version of :log2_intensity_explained
     :tic_qbin,         # Quantile-binned version of :tic
     :num_scans,
     :smoothness,
@@ -114,7 +114,7 @@ const REDUCED_FEATURE_SET = [
     :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
     :max_matched_residual, :max_unmatched_residual, :max_gof,
     :fitted_spectral_contrast, :spectral_contrast, :max_matched_ratio,
-    :err_norm_qbin, :poisson_qbin, :weight_qbin, :log2_intensity_explained, :tic_qbin, :num_scans,
+    :err_norm_qbin, :poisson_qbin, :weight_qbin, :log2_intensity_explained_qbin, :tic_qbin, :num_scans,
     :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
     # MS1 features
     :weight_ms1,
