@@ -377,8 +377,8 @@ function add_quantile_binned_features!(df::DataFrame, features::Vector{Symbol}, 
         non_missing_data = col_data[non_missing_mask]
         quantiles = range(0, 1, length=n_bins+1)
 
-        try
-            bin_edges = StatsBase.quantile(non_missing_data, quantiles)
+        bin_edges = try
+            StatsBase.quantile(non_missing_data, quantiles)
         catch e
             @user_warn "Failed to compute quantiles for $feature: $e"
             continue
