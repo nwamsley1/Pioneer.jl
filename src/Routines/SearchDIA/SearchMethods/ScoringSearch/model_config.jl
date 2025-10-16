@@ -48,8 +48,8 @@ const ADVANCED_FEATURE_SET = [
     :sequence_length,
     :charge,
     :irt_pred_qbin,    # Quantile-binned version of :irt_pred
-    :irt_error,
-    :irt_diff,
+    :irt_error_qbin,   # Quantile-binned version of :irt_error
+    :irt_diff_qbin,    # Quantile-binned version of :irt_diff
     :max_y_ions,
     :y_ions_sum,
     :longest_y,
@@ -70,8 +70,8 @@ const ADVANCED_FEATURE_SET = [
     :fitted_spectral_contrast,
     :spectral_contrast,
     :max_matched_ratio,
-    :err_norm,
-    :poisson,
+    :err_norm_qbin,    # Quantile-binned version of :err_norm
+    :poisson_qbin,     # Quantile-binned version of :poisson
     :weight_qbin,      # Quantile-binned version of :weight
     #:log2_intensity_explained,
     :tic_qbin,         # Quantile-binned version of :tic
@@ -104,7 +104,7 @@ const REDUCED_FEATURE_SET = [
     # Core peptide properties
     :missed_cleavage, :Mox, :prec_mz_qbin, :sequence_length, :charge,
     # RT features
-    :irt_pred_qbin, :irt_error, :irt_diff,
+    :irt_pred_qbin, :irt_error_qbin, :irt_diff_qbin,
     :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
     #:ms1_irt_diff,
     # Spectral features
@@ -114,7 +114,7 @@ const REDUCED_FEATURE_SET = [
     :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
     :max_matched_residual, :max_unmatched_residual, :max_gof,
     :fitted_spectral_contrast, :spectral_contrast, :max_matched_ratio,
-    :err_norm, :poisson, :weight_qbin, :log2_intensity_explained, :tic_qbin, :num_scans,
+    :err_norm_qbin, :poisson_qbin, :weight_qbin, :log2_intensity_explained, :tic_qbin, :num_scans,
     :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
     # MS1 features
     :weight_ms1,
