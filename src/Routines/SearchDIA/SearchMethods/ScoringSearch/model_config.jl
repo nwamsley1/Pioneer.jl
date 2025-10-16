@@ -61,22 +61,22 @@ const ADVANCED_FEATURE_SET = [
     :best_rank_iso,
     :topn,
     :topn_iso,
-    :gof,
-    :max_fitted_manhattan_distance,
-    :max_fitted_spectral_contrast,
-    :max_matched_residual,
-    :max_unmatched_residual,
-    :max_gof,
-    :fitted_spectral_contrast,
-    :spectral_contrast,
-    :max_matched_ratio,
+    :gof_qbin,                           # Quantile-binned version of :gof
+    :max_fitted_manhattan_distance_qbin, # Quantile-binned version of :max_fitted_manhattan_distance
+    :max_fitted_spectral_contrast_qbin,  # Quantile-binned version of :max_fitted_spectral_contrast
+    :max_matched_residual_qbin,          # Quantile-binned version of :max_matched_residual
+    :max_unmatched_residual_qbin,        # Quantile-binned version of :max_unmatched_residual
+    :max_gof_qbin,                       # Quantile-binned version of :max_gof
+    :fitted_spectral_contrast_qbin,      # Quantile-binned version of :fitted_spectral_contrast
+    :spectral_contrast_qbin,             # Quantile-binned version of :spectral_contrast
+    :max_matched_ratio_qbin,             # Quantile-binned version of :max_matched_ratio
     :err_norm_qbin,    # Quantile-binned version of :err_norm
     :poisson_qbin,     # Quantile-binned version of :poisson
     :weight_qbin,      # Quantile-binned version of :weight
     :log2_intensity_explained_qbin,  # Quantile-binned version of :log2_intensity_explained
     :tic_qbin,         # Quantile-binned version of :tic
     :num_scans,
-    :smoothness,
+    :smoothness_qbin,  # Quantile-binned version of :smoothness
     #=
     :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
     #:ms1_irt_diff,
@@ -109,13 +109,13 @@ const REDUCED_FEATURE_SET = [
     #:ms1_irt_diff,
     # Spectral features
     :max_y_ions, :y_ions_sum, :longest_y, :y_count, :b_count, :isotope_count,
-    :total_ions, :best_rank, :best_rank_iso, :topn, :topn_iso, :gof,
+    :total_ions, :best_rank, :best_rank_iso, :topn, :topn_iso, :gof_qbin,
     # Quality metrics
-    :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
-    :max_matched_residual, :max_unmatched_residual, :max_gof,
-    :fitted_spectral_contrast, :spectral_contrast, :max_matched_ratio,
+    :max_fitted_manhattan_distance_qbin, :max_fitted_spectral_contrast_qbin,
+    :max_matched_residual_qbin, :max_unmatched_residual_qbin, :max_gof_qbin,
+    :fitted_spectral_contrast_qbin, :spectral_contrast_qbin, :max_matched_ratio_qbin,
     :err_norm_qbin, :poisson_qbin, :weight_qbin, :log2_intensity_explained_qbin, :tic_qbin, :num_scans,
-    :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
+    :smoothness_qbin, :percent_theoretical_ignored, :scribe, :max_scribe,
     # MS1 features
     :weight_ms1,
     :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
