@@ -420,7 +420,10 @@ function add_quantile_binned_features!(df::DataFrame, features::Vector{Symbol}, 
         binned_feature_name = Symbol(string(feature) * "_qbin")
         df[!, binned_feature_name] = binned_col
 
-        @user_info "Created quantile-binned feature $binned_feature_name with $n_bins bins"
+        # Diagnostic: report actual unique values
+        n_unique = length(unique(skipmissing(binned_col)))
+        eltype_str = has_missing ? "Union{Missing, $bin_type}" : "$bin_type"
+        @user_info "Created $binned_feature_name: $n_unique unique values (of $n_bins bins), type=$eltype_str"
     end
 
     return nothing
