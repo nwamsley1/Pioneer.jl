@@ -44,10 +44,10 @@ end
 const ADVANCED_FEATURE_SET = [
     :missed_cleavage,
     :Mox,
-    #:prec_mz,
+    :prec_mz_qbin,     # Quantile-binned version of :prec_mz
     :sequence_length,
     :charge,
-    #:irt_pred,
+    :irt_pred_qbin,    # Quantile-binned version of :irt_pred
     :irt_error,
     :irt_diff,
     :max_y_ions,
@@ -72,15 +72,15 @@ const ADVANCED_FEATURE_SET = [
     :max_matched_ratio,
     :err_norm,
     :poisson,
-    #:weight,
+    :weight_qbin,      # Quantile-binned version of :weight
     :log2_intensity_explained,
-    #:tic,
+    :tic_qbin,         # Quantile-binned version of :tic
     :num_scans,
     :smoothness,
     :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
     #:ms1_irt_diff,
     #:weight_ms1,
-    
+
     :gof_ms1,
     :max_matched_residual_ms1,
     :max_unmatched_residual_ms1,
@@ -100,9 +100,9 @@ const ADVANCED_FEATURE_SET = [
 
 const REDUCED_FEATURE_SET = [
     # Core peptide properties
-    :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
+    :missed_cleavage, :Mox, :prec_mz_qbin, :sequence_length, :charge,
     # RT features
-    :irt_pred, :irt_error, :irt_diff,
+    :irt_pred_qbin, :irt_error, :irt_diff,
     :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
     #:ms1_irt_diff,
     # Spectral features
@@ -112,14 +112,14 @@ const REDUCED_FEATURE_SET = [
     :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
     :max_matched_residual, :max_unmatched_residual, :max_gof,
     :fitted_spectral_contrast, :spectral_contrast, :max_matched_ratio,
-    :err_norm, :poisson, :weight, :log2_intensity_explained, :tic, :num_scans,
+    :err_norm, :poisson, :weight_qbin, :log2_intensity_explained, :tic_qbin, :num_scans,
     :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
     # MS1 features
-    :weight_ms1, 
+    :weight_ms1,
     :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
     :fitted_spectral_contrast_ms1, :error_ms1, :m0_error_ms1, :n_iso_ms1,
-    :big_iso_ms1, :rt_max_intensity_ms1, 
-    :rt_diff_max_intensity_ms1, 
+    :big_iso_ms1, :rt_max_intensity_ms1,
+    :rt_diff_max_intensity_ms1,
     :ms1_features_missing
     # MBR features added automatically if match_between_runs=true
 ]
@@ -317,4 +317,96 @@ function create_filtered_model_configurations(ms1_scoring::Bool = true)
     end
 
     return configs
+end
+
+"""
+    add_quantile_binned_features!(df::DataFrame, features::Vector{Symbol}, n_bins::Int=100)
+
+Creates quantile-binned versions of specified features.
+Adds new columns with suffix `_qbin` containing bin indices (1 to n_bins).
+
+This transformation discretizes continuous features into quantile bins, which can:
+- Reduce overfitting by limiting model complexity
+- Make models more robust to outliers
+- Improve generalization on small datasets
+- Reduce information leakage from high-precision numeric features
+
+# Arguments
+- `df`: DataFrame containing features to bin
+- `features`: Vector of feature column names to quantize
+- `n_bins`: Number of quantile bins (default: 100). Must be ≤ 255 for UInt8 storage.
+
+# Behavior
+- Missing values are preserved as missing in binned columns
+- Bins are numbered 1 to n_bins (not 0-indexed)
+- Uses UInt8 storage for n_bins ≤ 255, UInt16 otherwise
+- Bin edges are computed on non-missing data only
+
+# Example
+```julia
+add_quantile_binned_features!(psms, [:prec_mz, :irt_pred, :weight, :tic], 100)
+# Creates: :prec_mz_qbin, :irt_pred_qbin, :weight_qbin, :tic_qbin
+```
+
+# Notes
+- For n_bins=100, each bin contains ~1% of the data
+- Quantile binning adapts to the actual data distribution
+- More robust than fixed-width binning for skewed distributions
+"""
+function add_quantile_binned_features!(df::DataFrame, features::Vector{Symbol}, n_bins::Int=100)
+    if n_bins > 65535
+        error("n_bins must be ≤ 65535 (UInt16 limit)")
+    end
+
+    for feature in features
+        if !hasproperty(df, feature)
+            @user_warn "Feature $feature not found in DataFrame, skipping quantile binning"
+            continue
+        end
+
+        col_data = df[!, feature]
+
+        # Handle missing values
+        non_missing_mask = .!ismissing.(col_data)
+        if !any(non_missing_mask)
+            @user_warn "Feature $feature has all missing values, skipping quantile binning"
+            continue
+        end
+
+        # Calculate quantiles on non-missing data
+        non_missing_data = col_data[non_missing_mask]
+        quantiles = range(0, 1, length=n_bins+1)
+
+        try
+            bin_edges = quantile(non_missing_data, quantiles)
+        catch e
+            @user_warn "Failed to compute quantiles for $feature: $e"
+            continue
+        end
+
+        # Create binned column (UInt8 for n_bins ≤ 255, UInt16 otherwise)
+        bin_type = n_bins <= 255 ? UInt8 : UInt16
+        binned_col = Vector{Union{Missing, bin_type}}(missing, length(col_data))
+
+        # Assign bin indices (1 to n_bins)
+        for i in eachindex(col_data)
+            if non_missing_mask[i]
+                val = col_data[i]
+                # searchsortedfirst gives index in bin_edges, subtract 1 for bin index
+                bin_idx = searchsortedfirst(bin_edges, val) - 1
+                # Clamp to valid range [1, n_bins]
+                bin_idx = max(bin_idx, 1)
+                bin_idx = min(bin_idx, n_bins)
+                binned_col[i] = bin_type(bin_idx)
+            end
+        end
+
+        # Add binned column with _qbin suffix
+        binned_feature_name = Symbol(string(feature) * "_qbin")
+        df[!, binned_feature_name] = binned_col
+
+        @user_info "Created quantile-binned feature $binned_feature_name with $n_bins bins"
+    end
+
+    return nothing
 end

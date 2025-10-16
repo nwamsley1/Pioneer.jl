@@ -73,6 +73,13 @@ function score_precursor_isotope_traces(
         # Case 1: Out-of-memory processing with default LightGBM
         @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
         best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
+
+        # Add quantile-binned features before training
+        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
+        n_quantile_bins = 100
+        @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
+        add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
+
         # Use a ModelConfig (AdvancedLightGBM by default) for OOM path
         model_config = create_default_advanced_lightgbm_config(ms1_scoring)
         models = score_precursor_isotope_traces_out_of_memory!(
@@ -88,7 +95,13 @@ function score_precursor_isotope_traces(
     else
         # In-memory processing - load PSMs first
         best_psms = load_psms_for_lightgbm(second_pass_folder)
-        
+
+        # Add quantile-binned features before training
+        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
+        n_quantile_bins = 100
+        @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
+        add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
+
         if psms_count >= MAX_FOR_MODEL_SELECTION  # 100K
             # Case 2: In-memory with default/advanced LightGBM (no comparison)
             @user_info "Using in-memory advanced LightGBM for $psms_count PSMs (< $max_psms_in_memory but ≥ 100K)"
