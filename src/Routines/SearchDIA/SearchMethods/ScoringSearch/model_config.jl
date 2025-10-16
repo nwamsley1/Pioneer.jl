@@ -386,11 +386,26 @@ function add_quantile_binned_features!(df::DataFrame, features::Vector{Symbol}, 
 
         # Create binned column (UInt8 for n_bins ≤ 255, UInt16 otherwise)
         bin_type = n_bins <= 255 ? UInt8 : UInt16
-        binned_col = Vector{Union{Missing, bin_type}}(missing, length(col_data))
+        has_missing = any(ismissing.(col_data))
 
-        # Assign bin indices (1 to n_bins)
-        for i in eachindex(col_data)
-            if non_missing_mask[i]
+        if has_missing
+            # Preserve missing values in output
+            binned_col = Vector{Union{Missing, bin_type}}(missing, length(col_data))
+            for i in eachindex(col_data)
+                if non_missing_mask[i]
+                    val = col_data[i]
+                    # searchsortedfirst gives index in bin_edges, subtract 1 for bin index
+                    bin_idx = searchsortedfirst(bin_edges, val) - 1
+                    # Clamp to valid range [1, n_bins]
+                    bin_idx = max(bin_idx, 1)
+                    bin_idx = min(bin_idx, n_bins)
+                    binned_col[i] = bin_type(bin_idx)
+                end
+            end
+        else
+            # No missing values - create non-missing vector for ML compatibility
+            binned_col = Vector{bin_type}(undef, length(col_data))
+            for i in eachindex(col_data)
                 val = col_data[i]
                 # searchsortedfirst gives index in bin_edges, subtract 1 for bin index
                 bin_idx = searchsortedfirst(bin_edges, val) - 1
