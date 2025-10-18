@@ -260,8 +260,6 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                                               itr >= mbr_start_iter)
 
             train_feats = itr < mbr_start_iter ? non_mbr_features : features
-
-            println(itr, " ", size(psms_train_itr), "\n")
             
             # If saving requested and this is the final iteration, capture training data
             if save_training_df_path !== nothing
