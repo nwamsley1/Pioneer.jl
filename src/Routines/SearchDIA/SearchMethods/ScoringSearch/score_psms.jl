@@ -75,10 +75,8 @@ function score_precursor_isotope_traces(
         best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
 
         # Add quantile-binned features before training
-        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic, :err_norm, :poisson, :irt_error, :irt_diff, :log2_intensity_explained,
-                          :smoothness, :max_matched_ratio, :spectral_contrast, :fitted_spectral_contrast, :max_gof,
-                          :max_unmatched_residual, :max_matched_residual, :max_fitted_spectral_contrast, :max_fitted_manhattan_distance, :gof]
-        n_quantile_bins = 1
+        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
+        n_quantile_bins = 25
         @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
@@ -99,9 +97,7 @@ function score_precursor_isotope_traces(
         best_psms = load_psms_for_lightgbm(second_pass_folder)
 
         # Add quantile-binned features before training
-        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic, :err_norm, :poisson, :irt_error, :irt_diff, :log2_intensity_explained,
-                          :smoothness, :max_matched_ratio, :spectral_contrast, :fitted_spectral_contrast, :max_gof,
-                          :max_unmatched_residual, :max_matched_residual, :max_fitted_spectral_contrast, :max_fitted_manhattan_distance, :gof]
+        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
         n_quantile_bins = 25
         @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)

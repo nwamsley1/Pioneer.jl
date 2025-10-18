@@ -281,12 +281,14 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             fold_models[itr] = bst
 
             # Print feature importances for each iteration and fold
-            if true#print_importance
+            if print_importance
                 importances = lightgbm_feature_importances(bst)
                 if importances === nothing
                     @user_warn "LightGBM backend did not provide feature importances for iteration $(itr)."
                 else
                     feature_pairs = collect(zip(bst.features, importances))
+                    # Sort by importance in descending order
+                    sort!(feature_pairs, by=x->x[2], rev=true)
                     @user_info "Feature Importances - Fold $(test_fold_idx), Iteration $(itr) ($(length(feature_pairs)) features):"
                     for i in 1:10:length(feature_pairs)
                         chunk = feature_pairs[i:min(i+9, end)]
