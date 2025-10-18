@@ -1679,6 +1679,9 @@ function get_corresponding_psm_path(pg_ref::ProteinGroupFileReference)
     return replace(pg_path, "passing_proteins" => "scored_PSMs")
 end
 
+#=
+ORIGINAL PEPTIDE-BASED CV FOLD ASSIGNMENT - TEMPORARILY DISABLED
+===============================================================
 """
     build_protein_cv_fold_mapping(psm_paths::Vector{String}, precursors::LibraryPrecursors)
     -> Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}
@@ -1697,13 +1700,13 @@ Build a mapping from protein names to their CV fold assignments based on highest
 2. Determines cv_fold of highest-scoring peptide per protein
 3. Returns the protein_to_cv_fold mapping
 """
-function build_protein_cv_fold_mapping(
+function build_protein_cv_fold_mapping_ORIGINAL(
     psm_paths::Vector{String},
     precursors::LibraryPrecursors
 )
     # Create mapping: protein_name -> (best_score=score, cv_fold=fold)
     protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
-    
+
     # Process each PSM file
     for psm_path in psm_paths
         # Skip if PSM file doesn't exist
@@ -1711,37 +1714,37 @@ function build_protein_cv_fold_mapping(
             @user_warn "PSM file not found: $psm_path"
             continue
         end
-        
+
         # Load PSM data
         psms = DataFrame(Arrow.Table(psm_path))
-        
+
         # Verify required columns exist
         required_columns = [:inferred_protein_group, :prec_prob, :precursor_idx]
         missing_columns = [col for col in required_columns if !hasproperty(psms, col)]
         if !isempty(missing_columns)
             error("PSM file $psm_path is missing required columns: $missing_columns")
         end
-        
+
         # Filter for valid PSMs with protein group assignments
         psms = filter(row -> !ismissing(row.inferred_protein_group), psms)
-        
+
         # Skip if no valid PSMs
         if nrow(psms) == 0
             continue
         end
-        
+
         # Group by inferred_protein_group
         for group in groupby(psms, :inferred_protein_group)
             protein_name = first(group.inferred_protein_group)
-            
+
             # Find highest scoring PSM
             best_idx = argmax(group.prec_prob)
             best_score = group.prec_prob[best_idx]
             precursor_idx = group.precursor_idx[best_idx]
-            
+
             # Get cv_fold from library (more reliable than PSM file)
             cv_fold = getCvFold(precursors, precursor_idx)
-            
+
             # Update if this is the best score for this protein
             value = (best_score = best_score, cv_fold = cv_fold)
             if !haskey(protein_to_cv_fold, protein_name)
@@ -1751,7 +1754,102 @@ function build_protein_cv_fold_mapping(
             end
         end
     end
-    
+
+    return protein_to_cv_fold
+end
+=#
+
+"""
+    build_protein_cv_fold_mapping(psm_paths::Vector{String}, precursors::LibraryPrecursors)
+    -> Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}
+
+Build a mapping from protein names to CV fold assignments using RANDOM assignment.
+
+**TEMPORARY IMPLEMENTATION**: Replaces peptide-based assignment for testing.
+Each unique protein is randomly assigned to fold 0 or 1 with equal probability.
+
+# Arguments
+- `psm_paths`: Vector of paths to PSM files (used to discover proteins)
+- `precursors`: Library precursors (not used in random version, kept for signature compatibility)
+
+# Returns
+- Dictionary mapping protein_name to named tuple with:
+  - `best_score`: Set to 1.0f0 (dummy value, not used in CV)
+  - `cv_fold`: Randomly assigned to 0 or 1
+
+# Process
+1. Scans PSM files to collect all unique protein names
+2. Randomly assigns each protein to fold 0 or 1
+3. Uses fixed random seed (1234) for reproducibility
+
+# Notes
+- **This is a simplified replacement for the peptide-based assignment**
+- All instances of the same protein get the same CV fold
+- Random seed ensures reproducible results across runs
+"""
+function build_protein_cv_fold_mapping(
+    psm_paths::Vector{String},
+    precursors::LibraryPrecursors
+)
+    using Random
+
+    # Fixed seed for reproducibility
+    rng = MersenneTwister(1234)
+
+    # Create mapping: protein_name -> (best_score=1.0, cv_fold=random)
+    protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
+
+    # Collect all unique protein names across all PSM files
+    all_proteins = Set{String}()
+
+    for psm_path in psm_paths
+        # Skip if PSM file doesn't exist
+        if !isfile(psm_path)
+            @user_warn "PSM file not found: $psm_path"
+            continue
+        end
+
+        # Load PSM data
+        psms = DataFrame(Arrow.Table(psm_path))
+
+        # Verify required column exists
+        if !hasproperty(psms, :inferred_protein_group)
+            @user_warn "PSM file missing :inferred_protein_group column: $psm_path"
+            continue
+        end
+
+        # Filter for valid PSMs with protein group assignments
+        psms = filter(row -> !ismissing(row.inferred_protein_group), psms)
+
+        # Add unique proteins to the set
+        for protein_name in psms.inferred_protein_group
+            push!(all_proteins, protein_name)
+        end
+    end
+
+    # Convert to sorted vector for deterministic iteration
+    protein_names = sort(collect(all_proteins))
+
+    # Randomly assign each protein to fold 0 or 1
+    n_proteins = length(protein_names)
+
+    @user_info "Random CV fold assignment: assigning $n_proteins unique proteins to 2 folds"
+
+    for protein_name in protein_names
+        # Randomly choose fold 0 or 1
+        cv_fold = rand(rng, UInt8[0, 1])
+
+        # Create entry with dummy best_score
+        value = (best_score = 1.0f0, cv_fold = cv_fold)
+        insert!(protein_to_cv_fold, protein_name, value)
+    end
+
+    # Report fold distribution
+    fold_0_count = count(p -> p.cv_fold == 0, values(protein_to_cv_fold))
+    fold_1_count = count(p -> p.cv_fold == 1, values(protein_to_cv_fold))
+
+    @user_info "Random CV fold distribution: Fold 0: $fold_0_count proteins, Fold 1: $fold_1_count proteins"
+
     return protein_to_cv_fold
 end
 
@@ -1895,6 +1993,9 @@ function perform_probit_analysis_multifold(
     skip_scoring = false,
     ms1_scoring::Bool = true
 )
+
+    #skip_scoring = true 
+    #@user_info "Skipped scoring!!!"
     # 1. Detect unique CV folds from library
     unique_cv_folds = detect_unique_cv_folds(precursors)
     n_folds = length(unique_cv_folds)
@@ -1916,8 +2017,10 @@ function perform_probit_analysis_multifold(
     end
 
     # 4. Define features (same as original)
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps]
-
+    #feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides] #:any_common_peps]
+    feature_names = [:pg_score, 
+    #:peptide_coverage, :n_possible_peptides,
+    :any_common_peps]
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, all_protein_groups)
     remove_zero_variance_columns!(feature_names, all_protein_groups)
