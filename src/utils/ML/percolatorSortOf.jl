@@ -339,8 +339,12 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
         # Use the final MBR probabilities for all precursors
         psms[!, :prob] = MBR_estimates
+        # Store nonMBR estimates for later q-value recalculation
+        psms[!, :nonMBR_prob] = nonMBR_estimates
     else
         psms[!, :prob] = prob_test
+        # When MBR is disabled, nonMBR_prob equals the final prob
+        psms[!, :nonMBR_prob] = prob_test
     end
 
     return models

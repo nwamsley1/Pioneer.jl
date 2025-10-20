@@ -404,19 +404,26 @@ function summarize_results!(
 
         #@debug_l1 "Step 9 completed in $(round(step9_time, digits=2)) seconds"
 
-        #@debug_l1 "Step 10 Re-calculate Experiment-Wide Qvalue after filtering..."
+        #@debug_l1 "Step 10 Re-calculate Experiment-Wide Qvalue using nonMBR scores after filtering..."
         step10_time = @elapsed begin
-        #Files should already be sorted from step 8. Not strictly necessary? 
-        sort_file_by_keys!(passing_refs, :prec_prob, :target; reverse=[true,true])
+        # Sort by nonMBR_prob instead of prec_prob
+        sort_file_by_keys!(passing_refs, :nonMBR_prob, :target; reverse=[true,true])
 
-        stream_sorted_merge(passing_refs, results.merged_quant_path, :prec_prob, :target;
+        # Merge by nonMBR_prob
+        stream_sorted_merge(passing_refs, results.merged_quant_path, :nonMBR_prob, :target;
                             batch_size=10_000_000, reverse=[true,true])
 
-        qval_interp2 = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
+        # Calculate q-value spline using nonMBR_prob column
+        qval_interp2 = get_qvalue_spline(
+            results.merged_quant_path, :nonMBR_prob, false;
+            min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
+            fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+        )
         results.precursor_qval_interp[] = qval_interp2
-        
+
+        # Add qval column using nonMBR_prob as score
         recalculate_experiment_wide_qvalue = TransformPipeline() |>
-            add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[])
+            add_interpolated_column(:qval, :nonMBR_prob, results.precursor_qval_interp[])
 
         passing_refs = apply_pipeline_batch(
                 passing_refs,
