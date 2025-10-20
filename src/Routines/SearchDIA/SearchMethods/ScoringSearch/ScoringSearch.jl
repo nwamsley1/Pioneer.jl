@@ -384,7 +384,7 @@ function summarize_results!(
 
         # Step 9: Filter PSMs by q-value thresholds
         #@debug_l1 "Step 9: Filtering PSMs by q-value thresholds..."
-        step9_time = @elapsed begin            
+        step9_time = @elapsed begin
             qvalue_filter_pipeline = TransformPipeline() |>
                 add_interpolated_column(:global_qval, :global_prob, results.precursor_global_qval_interp[]) |>
                 add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
@@ -393,37 +393,43 @@ function summarize_results!(
                     (:global_qval, params.q_value_threshold),
                     (:qval, params.q_value_threshold)
                 ])
-                
-            
+
+
             passing_refs = apply_pipeline_batch(
                 filtered_refs,
                 qvalue_filter_pipeline,
                 passing_psms_folder
             )
+
+            # Replace MBR-enhanced prob with nonMBR_prob for Step 10 recalculation
+            swap_to_nonMBR_pipeline = TransformPipeline() |>
+                rename_column(:nonMBR_prob, :prob)
+
+            apply_pipeline!(passing_refs, swap_to_nonMBR_pipeline)
         end
 
         #@debug_l1 "Step 9 completed in $(round(step9_time, digits=2)) seconds"
 
         #@debug_l1 "Step 10 Re-calculate Experiment-Wide Qvalue using nonMBR scores after filtering..."
         step10_time = @elapsed begin
-        # Sort by nonMBR_prob instead of prec_prob
-        sort_file_by_keys!(passing_refs, :nonMBR_prob, :target; reverse=[true,true])
+        # Sort by prob (which now contains nonMBR scores)
+        sort_file_by_keys!(passing_refs, :prob, :target; reverse=[true,true])
 
-        # Merge by nonMBR_prob
-        stream_sorted_merge(passing_refs, results.merged_quant_path, :nonMBR_prob, :target;
+        # Merge by prob
+        stream_sorted_merge(passing_refs, results.merged_quant_path, :prob, :target;
                             batch_size=10_000_000, reverse=[true,true])
 
-        # Calculate q-value spline using nonMBR_prob column
+        # Calculate q-value spline using prob column (nonMBR scores)
         qval_interp2 = get_qvalue_spline(
-            results.merged_quant_path, :nonMBR_prob, false;
+            results.merged_quant_path, :prob, false;
             min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         )
         results.precursor_qval_interp[] = qval_interp2
 
-        # Add qval column using nonMBR_prob as score
+        # Add qval column using prob as score
         recalculate_experiment_wide_qvalue = TransformPipeline() |>
-            add_interpolated_column(:qval, :nonMBR_prob, results.precursor_qval_interp[])
+            add_interpolated_column(:qval, :prob, results.precursor_qval_interp[])
 
         passing_refs = apply_pipeline_batch(
                 passing_refs,

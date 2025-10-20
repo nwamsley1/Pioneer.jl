@@ -476,6 +476,7 @@ function get_quant_necessary_columns()
         :precursor_idx,
         :global_prob,
         :prec_prob,
+        :nonMBR_prob,
         :trace_prob,
         :global_qval,
         :run_specific_qval,
