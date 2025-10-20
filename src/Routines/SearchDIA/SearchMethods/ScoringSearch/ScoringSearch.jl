@@ -311,7 +311,16 @@ function summarize_results!(
                        
             transform!(groupby(merged_df, :precursor_idx),
                        :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
-                       
+
+            # Also create nonMBR_prec_prob for unbiased protein scoring
+            # This aggregates non-MBR-enhanced trace probabilities to precursor level
+            transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
+                       :prob => (p -> begin
+                           prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+                           prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                           Float32(prob)
+                       end) => :nonMBR_prec_prob)
+
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
             # Write updated data back to individual files
             for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
@@ -401,9 +410,13 @@ function summarize_results!(
                 passing_psms_folder
             )
 
-            # Replace MBR-enhanced prob with nonMBR_prob for Step 10 recalculation
+            # Replace MBR-enhanced scores with nonMBR scores for Step 10 recalculation
+            # This ensures all downstream statistics use non-MBR-enhanced probabilities
             swap_to_nonMBR_pipeline = TransformPipeline() |>
-                rename_column(:nonMBR_prob, :prob)
+                remove_columns(:prob) |>
+                remove_columns(:prec_prob) |>
+                rename_column(:nonMBR_prob, :prob) |>
+                rename_column(:nonMBR_prec_prob, :prec_prob)
 
             apply_pipeline!(passing_refs, swap_to_nonMBR_pipeline)
         end
@@ -412,24 +425,24 @@ function summarize_results!(
 
         #@debug_l1 "Step 10 Re-calculate Experiment-Wide Qvalue using nonMBR scores after filtering..."
         step10_time = @elapsed begin
-        # Sort by prob (which now contains nonMBR scores)
-        sort_file_by_keys!(passing_refs, :prob, :target; reverse=[true,true])
+        # Sort by prec_prob (which now contains nonMBR precursor scores)
+        sort_file_by_keys!(passing_refs, :prec_prob, :target; reverse=[true,true])
 
-        # Merge by prob
-        stream_sorted_merge(passing_refs, results.merged_quant_path, :prob, :target;
+        # Merge by prec_prob
+        stream_sorted_merge(passing_refs, results.merged_quant_path, :prec_prob, :target;
                             batch_size=10_000_000, reverse=[true,true])
 
-        # Calculate q-value spline using prob column (nonMBR scores)
+        # Calculate q-value spline using prec_prob column (nonMBR precursor scores)
         qval_interp2 = get_qvalue_spline(
-            results.merged_quant_path, :prob, false;
+            results.merged_quant_path, :prec_prob, false;
             min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         )
         results.precursor_qval_interp[] = qval_interp2
 
-        # Add qval column using prob as score
+        # Add qval column using prec_prob as score
         recalculate_experiment_wide_qvalue = TransformPipeline() |>
-            add_interpolated_column(:qval, :prob, results.precursor_qval_interp[])
+            add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[])
 
         passing_refs = apply_pipeline_batch(
                 passing_refs,
