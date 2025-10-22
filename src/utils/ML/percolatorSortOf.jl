@@ -180,10 +180,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     
     # Apply random target-decoy pairing before ML training
     assign_random_target_decoy_pairs!(psms)
-    
     #Faster if sorted first (handle missing pair_id values)
-    sort!(psms, [:pair_id, :isotopes_captured])
-
+    sort!(psms, [:pair_id, :isotopes_captured, :precursor_idx, :ms_file_idx])
     # Display target/decoy/entrapment counts for training dataset
     if verbose_logging
         n_targets = sum(psms.target)

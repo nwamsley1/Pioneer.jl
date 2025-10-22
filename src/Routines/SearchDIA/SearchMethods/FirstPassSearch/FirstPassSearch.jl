@@ -333,6 +333,7 @@ function process_file!(
         # Select scoring columns
         select!(psms, vcat(column_names, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target]))
+        sort!(psms, [:rt, :precursor_idx])
         # Score PSMs
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         try
@@ -363,7 +364,6 @@ function process_file!(
         select!(psms, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target])
         get_probs!(psms, psms[!,:score])
-        sort!(psms, :rt)
     end
 
     try

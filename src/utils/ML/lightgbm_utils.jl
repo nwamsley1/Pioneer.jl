@@ -82,6 +82,9 @@ function build_lightgbm_classifier(; num_iterations::Integer = 100,
         num_threads = Int(num_threads),
         num_class = 1,
         verbosity = Int(verbosity),
+        #seed = 1776, # potentialy needed for stable results
+        #deterministic = true, # potentialy needed for stable results
+        #force_row_wise = true # potentialy needed for stable results
     )
 end
 
