@@ -62,7 +62,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     max_MBR_false_transfer_rate::Float32
     q_value_threshold::Float32
     isotope_tracetype::I
-    
+
+    # Quantile binning parameter
+    n_quantile_bins::Int64
+
     # Model comparison parameters
     enable_model_comparison::Bool
     validation_split_ratio::Float64
@@ -101,7 +104,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Float32(global_params.scoring.q_value_threshold),
             Float32(global_params.scoring.q_value_threshold),
             isotope_trace_type,
-            
+
+            # Quantile binning parameter
+            Int64(ml_params.n_quantile_bins),
+
             # Model comparison parameters with defaults
             Bool(get(ml_params, :enable_model_comparison, true)),
             Float64(get(ml_params, :validation_split_ratio, 0.2)),
@@ -271,6 +277,7 @@ function summarize_results!(
                 params.max_q_value_mbr_itr,
                 params.min_PEP_neg_threshold_itr,
                 params.max_psms_in_memory,
+                params.n_quantile_bins,
                 params.q_value_threshold,
                 params.ms1_scoring
             )

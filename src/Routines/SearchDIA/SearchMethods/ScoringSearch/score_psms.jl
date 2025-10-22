@@ -50,6 +50,9 @@ Main entry point for PSM scoring with automatic model selection based on dataset
 - `max_q_value_mbr_itr`: Max q-value for MBR transfers retained during iterative training (ITR)
 - `min_PEP_neg_threshold_itr`: Min PEP threshold for relabeling weak targets as negatives during ITR
 - `max_psms_in_memory`: Maximum PSMs to keep in memory
+- `n_quantile_bins`: Number of quantile bins for feature discretization (1-65535)
+- `q_value_threshold`: Q-value threshold for model comparison (default: 0.01)
+- `ms1_scoring`: Whether to include MS1 scoring features (default: true)
 
 # Returns
 - Trained LightGBM models or nothing for probit regression
@@ -63,6 +66,7 @@ function score_precursor_isotope_traces(
     max_q_value_mbr_itr::Float32,
     min_PEP_neg_threshold_itr::Float32,
     max_psms_in_memory::Int64,
+    n_quantile_bins::Int64,
     q_value_threshold::Float32 = 0.01f0,  # Default to 1% if not specified
     ms1_scoring::Bool = true
 )
@@ -76,7 +80,6 @@ function score_precursor_isotope_traces(
 
         # Add quantile-binned features before training
         features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
-        n_quantile_bins = 25
         @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
@@ -98,7 +101,6 @@ function score_precursor_isotope_traces(
 
         # Add quantile-binned features before training
         features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
-        n_quantile_bins = 25
         @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
