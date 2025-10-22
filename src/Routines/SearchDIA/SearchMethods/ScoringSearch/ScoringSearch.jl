@@ -315,12 +315,12 @@ function summarize_results!(
             # Also create nonMBR_prec_prob for unbiased protein scoring
             # This aggregates non-MBR-enhanced trace probabilities to precursor level
             transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                       :prob => (p -> begin
+                       :nonMBR_prob => (p -> begin
                            prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
                            prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
                            Float32(prob)
                        end) => :nonMBR_prec_prob)
-
+        
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
             # Write updated data back to individual files
             for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
@@ -413,11 +413,10 @@ function summarize_results!(
             # Replace MBR-enhanced scores with nonMBR scores for Step 10 recalculation
             # This ensures all downstream statistics use non-MBR-enhanced probabilities
             swap_to_nonMBR_pipeline = TransformPipeline() |>
-                remove_columns(:prob) |>
+                remove_columns(:trace_prob) |>
                 remove_columns(:prec_prob) |>
-                rename_column(:nonMBR_prob, :prob) |>
+                rename_column(:nonMBR_prob, :trace_prob) |>
                 rename_column(:nonMBR_prec_prob, :prec_prob)
-
             apply_pipeline!(passing_refs, swap_to_nonMBR_pipeline)
         end
 

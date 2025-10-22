@@ -420,8 +420,12 @@ Feature Processing (Simplified)
 
 function select_mbr_features(df::DataFrame)
     # Core features for MBR filtering (including MS1-MS2 RT difference feature)
-    candidate_features = [:prob, :irt_error, :ms1_ms2_rt_diff, :MBR_max_pair_prob, :MBR_best_irt_diff,
-                         :MBR_rv_coefficient, :MBR_log2_weight_ratio, :MBR_log2_explained_ratio]#, :MBR_num_runs]
+    candidate_features = [
+                        :prob,
+                        :irt_error, :ms1_ms2_rt_diff, :MBR_max_pair_prob, :MBR_best_irt_diff,
+                        :MBR_rv_coefficient, :MBR_log2_weight_ratio, :MBR_log2_explained_ratio
+                        #, :MBR_num_runs
+                        ]
     
     # Filter to available columns
     available_features = Symbol[]
@@ -430,7 +434,6 @@ function select_mbr_features(df::DataFrame)
             push!(available_features, feature)
         end
     end
-    
     return available_features
 end
 
@@ -476,6 +479,8 @@ function get_quant_necessary_columns()
         :precursor_idx,
         :global_prob,
         :prec_prob,
+        #:first_pass_prob,
+        #:first_pass_prec_prob,
         :nonMBR_prob,
         :nonMBR_prec_prob,
         :trace_prob,

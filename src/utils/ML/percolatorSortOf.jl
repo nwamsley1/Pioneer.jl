@@ -200,6 +200,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
     prob_test   = zeros(Float32, nrow(psms))  # final CV predictions
     prob_train  = zeros(Float32, nrow(psms))  # temporary, used during training
+    #first_pass_estimates = zeros(Float32, nrow(psms)) # store first iteration estimates
     MBR_estimates = zeros(Float32, nrow(psms)) # optional MBR layer
     nonMBR_estimates  = zeros(Float32, nrow(psms)) # keep track of last nonMBR test scores
 
@@ -299,6 +300,10 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             prob_test[test_idx] = predict(bst, psms_test)
             psms_test[!,:prob] = prob_test[test_idx]
 
+            #if itr == 1
+            #    first_pass_estimates[test_idx] = prob_test[test_idx]
+            #end
+
             if itr == (mbr_start_iter - 1)
 			    nonMBR_estimates[test_idx] = prob_test[test_idx]
             end
@@ -341,10 +346,12 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         psms[!, :prob] = MBR_estimates
         # Store nonMBR estimates for later q-value recalculation
         psms[!, :nonMBR_prob] = nonMBR_estimates
+        #psms[!,:first_pass_prob] = first_pass_estimates
     else
         psms[!, :prob] = prob_test
         # When MBR is disabled, nonMBR_prob equals the final prob
         psms[!, :nonMBR_prob] = prob_test
+        #psms[!,:first_pass_prob] = first_pass_estimates
     end
 
     return models
@@ -863,8 +870,6 @@ function get_training_data_for_iteration!(
         sorted_targets = psms_train_itr.target[order]
         PEPs = Vector{Float32}(undef, length(order))
         get_PEP!(sorted_scores, sorted_targets, PEPs; doSort=false)
-        @user_info "min_PEP_neg_threshold_itr $min_PEP_neg_threshold_itr"
-        @user_warn "min_PEP_neg_threshold_itr  $min_PEP_neg_threshold_itr"
         idx_cutoff = findfirst(x -> x >= min_PEP_neg_threshold_itr, PEPs)
         if !isnothing(idx_cutoff)
             worst_idxs = order[idx_cutoff:end]
