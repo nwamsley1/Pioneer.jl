@@ -178,11 +178,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   show_progress::Bool = true,
                   verbose_logging::Bool = false)
     
-    save_training_df_path = "/Users/nathanwamsley/Desktop/xgboost_training_data.arrow"  # Set to `nothing` to disable saving
-
     # Apply random target-decoy pairing before ML training
     assign_random_target_decoy_pairs!(psms)
-    
     #Faster if sorted first (handle missing pair_id values)
     sort!(psms, [:pair_id, :isotopes_captured, :precursor_idx, :ms_file_idx])
     # Display target/decoy/entrapment counts for training dataset
@@ -201,6 +198,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
     prob_test   = zeros(Float32, nrow(psms))  # final CV predictions
     prob_train  = zeros(Float32, nrow(psms))  # temporary, used during training
+    #first_pass_estimates = zeros(Float32, nrow(psms)) # store first iteration estimates
     MBR_estimates = zeros(Float32, nrow(psms)) # optional MBR layer
     nonMBR_estimates  = zeros(Float32, nrow(psms)) # keep track of last nonMBR test scores
 
@@ -260,14 +258,6 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                                               itr >= mbr_start_iter)
 
             train_feats = itr < mbr_start_iter ? non_mbr_features : features
-            
-            # If saving requested and this is the final iteration, capture training data
-            if save_training_df_path !== nothing
-                final_itr = match_between_runs ? length(iter_scheme) : (length(iter_scheme) - 1)
-                if itr == 1
-                    push!(final_train_parts, DataFrame(psms_train_itr))
-                end
-            end
 
             bst = train_booster(psms_train_itr, train_feats, num_round;
                                feature_fraction=feature_fraction,
@@ -287,6 +277,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                     @user_warn "LightGBM backend did not provide feature importances for iteration $(itr)."
                 else
                     feature_pairs = collect(zip(bst.features, importances))
+                    # Sort by importance in descending order
+                    sort!(feature_pairs, by=x->x[2], rev=true)
                     @user_info "Feature Importances - Fold $(test_fold_idx), Iteration $(itr) ($(length(feature_pairs)) features):"
                     for i in 1:10:length(feature_pairs)
                         chunk = feature_pairs[i:min(i+9, end)]
@@ -305,6 +297,10 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             # **predict held-out fold**
             prob_test[test_idx] = predict(bst, psms_test)
             psms_test[!,:prob] = prob_test[test_idx]
+
+            #if itr == 1
+            #    first_pass_estimates[test_idx] = prob_test[test_idx]
+            #end
 
             if itr == (mbr_start_iter - 1)
 			    nonMBR_estimates[test_idx] = prob_test[test_idx]
@@ -346,18 +342,14 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
         # Use the final MBR probabilities for all precursors
         psms[!, :prob] = MBR_estimates
+        # Store nonMBR estimates for later q-value recalculation
+        psms[!, :nonMBR_prob] = nonMBR_estimates
+        #psms[!,:first_pass_prob] = first_pass_estimates
     else
         psms[!, :prob] = prob_test
-    end
-    
-    # Write concatenated final-iteration training DataFrame if requested
-    if save_training_df_path !== nothing && !isempty(final_train_parts)
-        try
-            mkpath(dirname(save_training_df_path))
-            writeArrow(save_training_df_path, vcat(final_train_parts...))
-        catch e
-            @user_warn "Failed to write final XGBoost training DataFrame: $(typeof(e)) — $(e)"
-        end
+        # When MBR is disabled, nonMBR_prob equals the final prob
+        psms[!, :nonMBR_prob] = prob_test
+        #psms[!,:first_pass_prob] = first_pass_estimates
     end
 
     return models
@@ -876,7 +868,6 @@ function get_training_data_for_iteration!(
         sorted_targets = psms_train_itr.target[order]
         PEPs = Vector{Float32}(undef, length(order))
         get_PEP!(sorted_scores, sorted_targets, PEPs; doSort=false)
-
         idx_cutoff = findfirst(x -> x >= min_PEP_neg_threshold_itr, PEPs)
         if !isnothing(idx_cutoff)
             worst_idxs = order[idx_cutoff:end]
