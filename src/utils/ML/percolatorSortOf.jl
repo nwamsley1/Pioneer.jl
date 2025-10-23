@@ -16,7 +16,29 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #############################################################################
-# Target-Decoy Pairing Implementation
+# Random Precursor Pairing Implementation
+#############################################################################
+#
+# PAIRING STRATEGY:
+# Precursors are randomly paired within iRT bins (size 1000) regardless of
+# target/decoy status. This allows:
+#   - Target-Target pairs
+#   - Target-Decoy pairs
+#   - Decoy-Decoy pairs
+#
+# ALGORITHM:
+# 1. Within each iRT bin, collect all unique precursor_idx values
+# 2. Randomly shuffle using fixed seed (PAIRING_RANDOM_SEED = 1844)
+# 3. Pair consecutive elements: (1,2), (3,4), (5,6), etc.
+# 4. Both members of a pair share the same pair_id
+# 5. If odd number of precursors, last one becomes singleton pair
+#
+# BENEFITS:
+# - Every precursor has a pair (except 0-1 singleton per bin)
+# - More diverse training data for ML models
+# - Simpler implementation than target-decoy constrained pairing
+# - ML models learn from all pairing types (T-T, T-D, D-D)
+#
 #############################################################################
 
 const PAIRING_RANDOM_SEED = 1844  # Fixed seed for reproducible pairing
@@ -115,48 +137,105 @@ function assignPairIds!(psms::AbstractDataFrame, last_pair_id::UInt32)
     return last_pair_id
 end
 
+"""
+    assign_pair_ids(target, decoy, precursor_idx, irt_bin_idx, last_pair_id)
+
+Randomly assign pair IDs to precursors within an iRT bin, allowing all pairing types.
+
+# Arguments
+- `target::AbstractVector{Bool}`: Target/decoy labels (used only for statistics)
+- `decoy::AbstractVector{Bool}`: Decoy flags (used only for statistics)
+- `precursor_idx::AbstractVector{UInt32}`: Unique precursor identifiers
+- `irt_bin_idx::AbstractVector{UInt32}`: iRT bin identifiers
+- `last_pair_id::UInt32`: Last assigned pair_id (for continuity across bins)
+
+# Returns
+- `pair_ids::Vector{UInt32}`: Pair ID for each row
+- `last_pair_id::UInt32`: Updated last pair_id value
+
+# Pairing Strategy
+Within each iRT bin, all unique precursors are randomly shuffled and paired
+consecutively: (1,2), (3,4), (5,6), etc. This creates:
+- **Target-Target pairs**: Both members are targets
+- **Target-Decoy pairs**: One target, one decoy
+- **Decoy-Decoy pairs**: Both members are decoys
+- **Singleton pairs**: If odd number, last precursor pairs with itself
+
+# Notes
+- Uses fixed random seed (`PAIRING_RANDOM_SEED`) for reproducibility
+- Both members of a pair receive the same `pair_id`
+- Pairing is independent of target/decoy status
+- Reports pairing statistics to @debug_l2 log level
+"""
 function assign_pair_ids(
     target::AbstractVector{Bool}, decoy::AbstractVector{Bool},
     precursor_idx::AbstractVector{UInt32}, irt_bin_idx::AbstractVector{UInt32},
     last_pair_id::UInt32
 )
-    targets = unique(precursor_idx[target])
-    decoys = unique(precursor_idx[decoy])
-    target_perm = randperm(MersenneTwister(PAIRING_RANDOM_SEED), length(targets))
-    precursor_idx_to_pair_id = Dict{UInt32,UInt32}()  # Map from precursor_idx to pair_id
-    pair_ids = similar(precursor_idx, UInt32)
+    # Get all unique precursors in this iRT bin (regardless of target/decoy status)
+    unique_precursors = unique(precursor_idx)
+    n_precursors = length(unique_precursors)
 
-    n_paired = min(length(targets), length(decoys))
-    n_unpaired_targets = max(0, length(targets) - length(decoys))
-    n_unpaired_decoys = max(0, length(decoys) - length(targets))
+    # Randomly shuffle all precursors using fixed seed for reproducibility
+    perm = randperm(MersenneTwister(PAIRING_RANDOM_SEED), n_precursors)
+    shuffled_precursors = unique_precursors[perm]
 
-    for i in range(1, min(length(targets), length(decoys)))
+    # Create mapping from precursor_idx to pair_id
+    precursor_idx_to_pair_id = Dict{UInt32, UInt32}()
+
+    # Pair consecutive elements: (1,2), (3,4), (5,6), etc.
+    n_pairs = n_precursors ÷ 2
+    for i in 1:n_pairs
         last_pair_id += one(UInt32)
-        precursor_idx_to_pair_id[targets[target_perm[i]]] = last_pair_id
-        precursor_idx_to_pair_id[decoys[i]] = last_pair_id
+        precursor_idx_to_pair_id[shuffled_precursors[2*i - 1]] = last_pair_id
+        precursor_idx_to_pair_id[shuffled_precursors[2*i]] = last_pair_id
     end
-    if length(decoys) < length(targets)
-        #@user_warn "Fewer decoy precursors ($(length(decoys))) than target precursors ($(length(targets))) in iRT bin $(first(irt_bin_idx)). Some targets will remain unpaired."
-        for i in range(length(decoys)+1, length(targets))
-            last_pair_id += one(UInt32)
-            precursor_idx_to_pair_id[targets[target_perm[i]]] = last_pair_id
-        end
-    elseif length(targets) < length(decoys)
-        @debug_l2 "Fewer target precursors ($(length(targets))) than decoy precursors ($(length(decoys))) in iRT bin $(first(irt_bin_idx)). Some decoys will remain unpaired."
-        for i in range(length(targets)+1, length(decoys))
-            last_pair_id += one(UInt32)
-            precursor_idx_to_pair_id[decoys[i]] = last_pair_id
+
+    # Handle odd number - last precursor gets singleton pair_id
+    if isodd(n_precursors)
+        last_pair_id += one(UInt32)
+        precursor_idx_to_pair_id[shuffled_precursors[end]] = last_pair_id
+    end
+
+    # Count pairing types for reporting
+    n_target_target = 0
+    n_target_decoy = 0
+    n_decoy_decoy = 0
+    n_singleton = isodd(n_precursors) ? 1 : 0
+
+    # Build target/decoy lookup for statistics
+    precursor_is_target = Dict{UInt32, Bool}()
+    for (i, pid) in enumerate(precursor_idx)
+        if !haskey(precursor_is_target, pid)
+            precursor_is_target[pid] = target[i]
         end
     end
 
-    # Report pairing stats for this bin
-    if n_paired > 0 || n_unpaired_targets > 0 || n_unpaired_decoys > 0
-        @debug_l2 "iRT bin $(first(irt_bin_idx)): Paired=$n_paired, Unpaired targets=$n_unpaired_targets, Unpaired decoys=$n_unpaired_decoys"
+    # Count pair types
+    for i in 1:n_pairs
+        p1 = shuffled_precursors[2*i - 1]
+        p2 = shuffled_precursors[2*i]
+        is_t1 = precursor_is_target[p1]
+        is_t2 = precursor_is_target[p2]
+
+        if is_t1 && is_t2
+            n_target_target += 1
+        elseif !is_t1 && !is_t2
+            n_decoy_decoy += 1
+        else
+            n_target_decoy += 1
+        end
     end
 
-    for (row_idx, precursor_idx) in enumerate(precursor_idx)
-        pair_ids[row_idx] = precursor_idx_to_pair_id[precursor_idx]
+    # Report pairing statistics for this bin
+    @debug_l2 "iRT bin $(first(irt_bin_idx)): $(n_pairs) pairs (T-T: $n_target_target, T-D: $n_target_decoy, D-D: $n_decoy_decoy), Singletons: $n_singleton"
+
+    # Map all rows to their pair_ids
+    pair_ids = similar(precursor_idx, UInt32)
+    for (row_idx, pid) in enumerate(precursor_idx)
+        pair_ids[row_idx] = precursor_idx_to_pair_id[pid]
     end
+
     return pair_ids, last_pair_id
 end
 

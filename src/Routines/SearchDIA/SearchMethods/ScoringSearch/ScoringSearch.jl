@@ -419,9 +419,10 @@ function summarize_results!(
 
             # Replace MBR-enhanced scores with nonMBR scores for Step 10 recalculation
             # This ensures all downstream statistics use non-MBR-enhanced probabilities
+            #
             swap_to_nonMBR_pipeline = TransformPipeline() |>
-                remove_columns(:trace_prob) |>
-                remove_columns(:prec_prob) |>
+                rename_column(:trace_prob, :MBR_trace_prob) |>
+                rename_column(:prec_prob, :MBR_prec_prob) |>
                 rename_column(:nonMBR_prob, :trace_prob) |>
                 rename_column(:nonMBR_prec_prob, :prec_prob)
             apply_pipeline!(passing_refs, swap_to_nonMBR_pipeline)
@@ -432,15 +433,15 @@ function summarize_results!(
         #@debug_l1 "Step 10 Re-calculate Experiment-Wide Qvalue using nonMBR scores after filtering..."
         step10_time = @elapsed begin
         # Sort by prec_prob (which now contains nonMBR precursor scores)
-        sort_file_by_keys!(passing_refs, :prec_prob, :target; reverse=[true,true])
+        sort_file_by_keys!(passing_refs, :MBR_prec_prob, :target; reverse=[true,true])
 
         # Merge by prec_prob
-        stream_sorted_merge(passing_refs, results.merged_quant_path, :prec_prob, :target;
+        stream_sorted_merge(passing_refs, results.merged_quant_path, :MBR_prec_prob, :target;
                             batch_size=10_000_000, reverse=[true,true])
 
         # Calculate q-value spline using prec_prob column (nonMBR precursor scores)
         qval_interp2 = get_qvalue_spline(
-            results.merged_quant_path, :prec_prob, false;
+            results.merged_quant_path, :MBR_prec_prob, false;
             min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         )
@@ -448,7 +449,7 @@ function summarize_results!(
 
         # Add qval column using prec_prob as score
         recalculate_experiment_wide_qvalue = TransformPipeline() |>
-            add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[])
+            add_interpolated_column(:qval, :MBR_prec_prob, results.precursor_qval_interp[])
 
         passing_refs = apply_pipeline_batch(
                 passing_refs,
