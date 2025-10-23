@@ -467,7 +467,7 @@ function summarize_results!(
         #@debug_l1 "Step 10: Re-calculate q-values using filtered data..."
         step10_time = @elapsed begin
             # Check if MBR columns exist (more robust than checking params flag)
-            sample_df = DataFrame(Arrow.Table(passing_refs[1].path))
+            sample_df = DataFrame(Arrow.Table(file_path(passing_refs[1])))
             has_mbr_cols = hasproperty(sample_df, :MBR_boosted_prec_prob)
 
             if has_mbr_cols
