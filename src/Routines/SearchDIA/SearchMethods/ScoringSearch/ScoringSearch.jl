@@ -275,21 +275,23 @@ end
 
 """
     get_protein_global_qval_dict(merged_path::String, params::ScoringSearchParameters)
-    -> Dict{Tuple{String,Bool,UInt8}, Float32}
+    -> (Dict{ProteinKey, Float32}, Dict{Tuple{String,Bool,UInt8}, Float32})
 
-Calculate global q-values at the protein group level and return as dictionary mapping.
+Calculate global q-values at the protein group level and return both dictionaries.
 
 Since global_pg_score is calculated per protein group (one value per (protein_name, target, entrap_id)
 across all files), each protein group should have exactly one global q-value. This function:
 1. Loads merged protein group data
 2. Reduces to one row per protein group
 3. Calculates q-values on the reduced dataset
-4. Returns Dict{(protein_name, target, entrap_id) => global_pg_qval}
+4. Returns TWO dictionaries:
+   - pg_name_to_global_pg_score: ProteinKey => global_pg_score (for Step 24)
+   - global_pg_score_to_qval_dict: Tuple => global_pg_qval (for Step 24)
 
 This approach is more accurate than spline interpolation since we have exact values for each protein group.
 """
 function get_protein_global_qval_dict(merged_path::String, params::ScoringSearchParameters)
-    # Load merged protein groups
+    # Load merged protein groups (already has global_pg_score column from Step 16)
     merged_table = Arrow.Table(merged_path)
     df = DataFrame(merged_table)
 
@@ -309,16 +311,25 @@ function get_protein_global_qval_dict(merged_path::String, params::ScoringSearch
     # Calculate q-values (no FDR scale factor for proteins)
     get_qvalues!(protein_group_df.global_pg_score, protein_group_df.target, qvals)
 
-    # Create dictionary mapping protein group key -> global_pg_qval
-    qval_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
+    # Build BOTH dictionaries in one pass (efficient!)
+    pg_name_to_global_pg_score = Dict{ProteinKey, Float32}()
+    global_pg_score_to_qval_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
+
     for i in 1:n
-        key = (protein_group_df.protein_name[i],
-               protein_group_df.target[i],
-               protein_group_df.entrap_id[i])
-        qval_dict[key] = qvals[i]
+        protein_name = protein_group_df.protein_name[i]
+        target = protein_group_df.target[i]
+        entrap_id = protein_group_df.entrap_id[i]
+
+        # Dictionary 1: ProteinKey -> global_pg_score (for Step 24)
+        key_struct = ProteinKey(protein_name, target, entrap_id)
+        pg_name_to_global_pg_score[key_struct] = protein_group_df.global_pg_score[i]
+
+        # Dictionary 2: Tuple -> global_pg_qval (for Step 24)
+        key_tuple = (protein_name, target, entrap_id)
+        global_pg_score_to_qval_dict[key_tuple] = qvals[i]
     end
 
-    return qval_dict
+    return pg_name_to_global_pg_score, global_pg_score_to_qval_dict
 end
 
 """
@@ -733,7 +744,35 @@ function summarize_results!(
 
         # Step 16: Calculate global protein scores
         step16_time = @elapsed begin
-            acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
+            # Add file_idx to each protein group file for tracking
+            for (idx, ref) in enumerate(pg_refs)
+                add_column_pipeline = TransformPipeline() |>
+                    ("add_file_idx" => (df -> begin
+                        df[!, :file_idx] = fill(Int64(idx), nrow(df))
+                        return df
+                    end))
+                apply_pipeline!(ref, add_column_pipeline)
+            end
+
+            # Merge all protein groups (like precursor Step 5)
+            sort_file_by_keys!(pg_refs, :protein_name, :target, :entrap_id)
+            merged_pg_temp_path = joinpath(temp_folder, "merged_pg_for_global_scores.arrow")
+            stream_sorted_merge(pg_refs, merged_pg_temp_path, :protein_name, :target, :entrap_id)
+
+            # Load merged data and calculate global_pg_score via transform!
+            merged_df = DataFrame(Arrow.Table(merged_pg_temp_path))
+            sqrt_n_runs = floor(Int, sqrt(length(pg_refs)))
+
+            # Add global_pg_score column using transform! (same as precursor approach)
+            transform!(groupby(merged_df, [:protein_name, :target, :entrap_id]),
+                       :pg_score => (scores -> logodds(scores, sqrt_n_runs)) => :global_pg_score)
+
+            # Write updated data back to individual files
+            for (idx, ref) in enumerate(pg_refs)
+                sub_df = merged_df[merged_df.file_idx .== idx, :]
+                select!(sub_df, Not(:file_idx))  # Remove temporary file_idx column
+                write_arrow_file(ref, sub_df)
+            end
         end
 
         # Step 17: Sort protein groups by global_pg_score
@@ -748,9 +787,13 @@ function summarize_results!(
                                batch_size=1000000, reverse=[true,true])
         end
 
-        # Step 19: Calculate global protein q-values
+        # Step 19: Calculate global protein q-values and build dictionaries
         step19_time = @elapsed begin
-            search_context.global_pg_score_to_qval_dict[] = get_protein_global_qval_dict(sorted_pg_scores_path, params)
+            pg_name_to_global_pg_score, global_pg_score_to_qval_dict =
+                get_protein_global_qval_dict(sorted_pg_scores_path, params)
+
+            search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
+            search_context.global_pg_score_to_qval_dict[] = global_pg_score_to_qval_dict
         end
 
         # Step 20: Sort protein groups by pg_score
@@ -802,7 +845,7 @@ function summarize_results!(
         step24_time = @elapsed begin
             update_psms_with_probit_scores_refs(
                 paired_files,
-                acc_to_max_pg_score,
+                search_context.pg_name_to_global_pg_score[],
                 search_context.pg_score_to_qval[],
                 search_context.global_pg_score_to_qval_dict[]
             )

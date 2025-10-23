@@ -821,7 +821,7 @@ end
 
 """
     update_psms_with_probit_scores_refs(paired_refs::Vector{PairedSearchFiles},
-                                       acc_to_max_pg_score::Dict{ProteinKey,Float32},
+                                       pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
                                        pg_score_to_qval::Interpolations.Extrapolation,
                                        global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32})
 
@@ -829,13 +829,13 @@ Update PSMs with probit-scored pg_score values and q-values using references.
 
 # Arguments
 - `paired_refs`: Paired PSM/protein group file references
-- `acc_to_max_pg_score`: Dictionary mapping protein keys to global scores
+- `pg_name_to_global_pg_score`: Dictionary mapping protein keys to global scores
 - `pg_score_to_qval`: Interpolation function for pg_score to q-value
 - `global_pg_score_to_qval_dict`: Dictionary mapping (protein_name, target, entrap_id) to global q-value
 """
 function update_psms_with_probit_scores_refs(
     paired_refs::Vector{PairedSearchFiles},
-    acc_to_max_pg_score::Dict{ProteinKey,Float32},
+    pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
     pg_score_to_qval::Interpolations.Extrapolation,
     global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
 )
@@ -933,10 +933,10 @@ function update_psms_with_probit_scores_refs(
                 probit_pg_scores[i] = scores_tuple[1]
                 pg_peps[i] = scores_tuple[2]
                 
-                if !haskey(acc_to_max_pg_score, key)
+                if !haskey(pg_name_to_global_pg_score, key)
                     throw("Missing global pg score lookup key!!!")
                 end
-                global_pg_scores[i] = acc_to_max_pg_score[key]
+                global_pg_scores[i] = pg_name_to_global_pg_score[key]
 
                 # Calculate q-values
                 pg_qvals[i] = pg_score_to_qval(probit_pg_scores[i])
