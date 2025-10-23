@@ -302,7 +302,7 @@ function get_protein_global_qval_dict(merged_path::String, params::ScoringSearch
     end
 
     # Sort by global_pg_score descending for q-value calculation
-    sort!(protein_group_df, :global_pg_score, rev=true)
+    sort!(protein_group_df, [:global_pg_score,:target], rev=[true,true])
 
     # Calculate q-values using standard FDR calculation
     n = nrow(protein_group_df)
