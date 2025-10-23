@@ -841,12 +841,12 @@ function update_mbr_features!(psms_train::AbstractDataFrame,
                               mbr_start_iter::Int,
                               max_q_value_lightgbm_rescore::Float32)
     if itr >= mbr_start_iter - 1
-        get_qvalues!(psms_test.prob, psms_test.target, psms_test.q_value)
+        get_qvalues!(psms_test.trace_prob, psms_test.target, psms_test.q_value)
         summarize_precursors!(psms_test, q_cutoff = max_q_value_lightgbm_rescore)
         summarize_precursors!(psms_train, q_cutoff = max_q_value_lightgbm_rescore)
     end
     if itr == mbr_start_iter - 1
-        prob_test[test_fold_idxs] = psms_test.prob
+        prob_test[test_fold_idxs] = psms_test.trace_prob
     end
 end
 
@@ -876,7 +876,7 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
         best_p = fill(-Inf, range_len)
         for (i, run) in enumerate(sub_psms.ms_file_idx)
             idx = Int(run) - offset + 1
-            p = sub_psms.prob[i]
+            p = sub_psms.trace_prob[i]
             if p > best_p[idx]
                 best_p[idx] = p
                 best_i[idx] = i
@@ -929,7 +929,7 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(sub_psms.weights[i]))
             best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_iRTs, sub_psms.irts[i])
 
-            sub_psms.MBR_max_pair_prob[i] = sub_psms.prob[best_idx]
+            sub_psms.MBR_max_pair_prob[i] = sub_psms.trace_prob[best_idx]
             best_residual = irt_residual(sub_psms, best_idx)
             current_residual = irt_residual(sub_psms, i)
             sub_psms.MBR_best_irt_diff[i] = abs(best_residual - current_residual)
@@ -982,8 +982,8 @@ function get_training_data_for_iteration!(
         psms_train_itr = copy(psms_train)
 
         # Convert the worst-scoring targets to negatives using PEP estimate
-        order = sortperm(psms_train_itr.prob, rev=true)
-        sorted_scores  = psms_train_itr.prob[order]
+        order = sortperm(psms_train_itr.trace_prob, rev=true)
+        sorted_scores  = psms_train_itr.trace_prob[order]
         sorted_targets = psms_train_itr.target[order]
         PEPs = Vector{Float32}(undef, length(order))
         get_PEP!(sorted_scores, sorted_targets, PEPs; doSort=false)
