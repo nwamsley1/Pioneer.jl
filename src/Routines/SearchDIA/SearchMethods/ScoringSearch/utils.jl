@@ -20,13 +20,13 @@ Trace Selection
 ==========================================================#
 
 """
-    get_best_traces(second_pass_psms_paths::Vector{String}, min_prob::Float32=0.75f0) 
+    get_best_traces(second_pass_psms_paths::Vector{String}, min_prob::Float32=0.75f0)
     -> Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}}
 
 Identify best scoring isotope traces for each precursor.
 
 # Process
-1. Accumulates scores across files
+1. Accumulates scores across files using MBR_boosted_trace_prob if available, otherwise trace_prob
 2. Selects highest scoring trace per precursor
 3. Returns set of best precursor-isotope combinations
 """
@@ -55,11 +55,15 @@ function get_best_traces(
         n_rows = length(psms_table[1])
         total_rows_processed += n_rows
         files_processed += 1
-        
+
+        # Use MBR_boosted_trace_prob if available, otherwise trace_prob
+        use_mbr_column = hasproperty(psms_table, :MBR_boosted_trace_prob)
+        score_column = use_mbr_column ? :MBR_boosted_trace_prob : :trace_prob
+
         for i in range(1, n_rows)
             psms_key = (precursor_idx = psms_table[:precursor_idx][i],  isotopes_captured = psms_table[:isotopes_captured][i])
 
-            row_score = psms_table[:trace_prob][i]
+            row_score = psms_table[score_column][i]
             if haskey(psms_trace_scores, psms_key)
                 psms_trace_scores[psms_key] = psms_trace_scores[psms_key] + row_score
             else
