@@ -235,7 +235,7 @@ end
 Counts the number of target PSMs passing the q-value threshold.
 
 # Arguments
-- `scored_psms`: DataFrame containing scored PSMs with :prob and :target columns
+- `scored_psms`: DataFrame containing scored PSMs with :trace_prob and :target columns
 - `qvalue_threshold`: Q-value threshold for counting (typically 0.01)
 
 # Returns
@@ -243,15 +243,15 @@ Counts the number of target PSMs passing the q-value threshold.
 """
 function count_passing_targets(scored_psms::DataFrame, qvalue_threshold::Float32)
     # Use existing q-value calculation logic
-    if :prob in propertynames(scored_psms) && :target in propertynames(scored_psms)
+    if :trace_prob in propertynames(scored_psms) && :target in propertynames(scored_psms)
         # Calculate q-values from probabilities
         qvals = Vector{Float32}(undef, nrow(scored_psms))
-        get_qvalues!(scored_psms.prob, scored_psms.target, qvals)
-        
+        get_qvalues!(scored_psms.trace_prob, scored_psms.target, qvals)
+
         # Count targets passing threshold
         return sum((scored_psms.target .== true) .& (qvals .<= qvalue_threshold))
     else
-        error("DataFrame must contain :prob and :target columns")
+        error("DataFrame must contain :trace_prob and :target columns")
     end
 end
 
@@ -547,7 +547,7 @@ No iterative refinement or max_prob updates - single pass training only.
 - `n_folds`: Number of cross-validation folds (default: 3)
 
 # Modifies
-- Adds columns to psms: `:prob`, `:q_value`, `:best_psm`, `:cv_fold`
+- Adds columns to psms: `:trace_prob`, `:q_value`, `:best_psm`, `:cv_fold`
 """
 function probit_regression_scoring_cv!(
     psms::DataFrame,
@@ -629,7 +629,7 @@ function probit_regression_scoring_cv!(
         
         if n_train_targets < 100 || n_train_decoys < 100
             @user_warn "Insufficient training data for fold $fold_idx (targets: $n_train_targets, decoys: $n_train_decoys)"
-            psms[test_mask, :prob] .= 0.5f0
+            psms[test_mask, :trace_prob] .= 0.5f0
             continue
         end
         
@@ -722,31 +722,31 @@ function probit_regression_scoring_cv!(
     end
     
     # Step 5: Assign probabilities to DataFrame (like LightGBM does at line 105 of percolatorSortOf.jl)
-    psms[!, :prob] = prob_estimates
-    
+    psms[!, :trace_prob] = prob_estimates
+
     # If MBR is enabled, create MBR columns (probit doesn't do separate MBR scoring)
     # This is needed for compatibility with apply_mbr_filter! in ScoringSearch
     if match_between_runs
-        psms[!, :MBR_prob] = copy(prob_estimates)
-        # MBR_is_best_decoy is required by apply_mbr_filter! 
+        psms[!, :MBR_boosted_trace_prob] = copy(prob_estimates)
+        # MBR_is_best_decoy is required by apply_mbr_filter!
         # For probit, we don't have MBR transfer info, so set conservatively
         psms[!, :MBR_is_best_decoy] = fill(missing, size(psms, 1))  # missing means not an MBR transfer
     end
-    
-    # Ensure prob column has proper type and no NaN/Inf values
+
+    # Ensure trace_prob column has proper type and no NaN/Inf values
     # Check for any NaN or Inf values and replace them
-    n_nan = sum(isnan.(psms.prob))
-    n_inf = sum(isinf.(psms.prob))
+    n_nan = sum(isnan.(psms.trace_prob))
+    n_inf = sum(isinf.(psms.trace_prob))
     if n_nan > 0 || n_inf > 0
         @user_warn "Found $n_nan NaN and $n_inf Inf values in probabilities, replacing with 0.5"
-        psms.prob[isnan.(psms.prob) .| isinf.(psms.prob)] .= 0.5f0
+        psms.trace_prob[isnan.(psms.trace_prob) .| isinf.(psms.trace_prob)] .= 0.5f0
     end
-    
+
     # Ensure values are in valid range but avoid values too close to 0 or 1
     # The downstream aggregation formula breaks with probabilities > 0.999999
     # Use more conservative clamping to ensure we stay below the threshold
     # Force Float32 to ensure proper clamping
-    psms.prob = Float32.(clamp.(psms.prob, Float32(1e-6), Float32(0.9999)))
+    psms.trace_prob = Float32.(clamp.(psms.trace_prob, Float32(1e-6), Float32(0.9999)))
     
     # Clean up columns added during probit regression that shouldn't be persisted
     if :intercept in propertynames(psms)

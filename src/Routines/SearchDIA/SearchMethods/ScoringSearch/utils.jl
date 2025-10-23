@@ -59,7 +59,7 @@ function get_best_traces(
         for i in range(1, n_rows)
             psms_key = (precursor_idx = psms_table[:precursor_idx][i],  isotopes_captured = psms_table[:isotopes_captured][i])
 
-            row_score = psms_table[:prob][i]
+            row_score = psms_table[:trace_prob][i]
             if haskey(psms_trace_scores, psms_key)
                 psms_trace_scores[psms_key] = psms_trace_scores[psms_key] + row_score
             else

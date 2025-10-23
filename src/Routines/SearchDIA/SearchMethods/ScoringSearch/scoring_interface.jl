@@ -696,7 +696,7 @@ end
 function add_trace_qvalues(fdr_scale_factor::Float32)
     op = function(df)
         qvals = Vector{Float32}(undef, nrow(df))
-        get_qvalues!(df.prob, df.target, qvals; fdr_scale_factor=fdr_scale_factor)
+        get_qvalues!(df.trace_prob, df.target, qvals; fdr_scale_factor=fdr_scale_factor)
         df[!, :trace_qval] = qvals
         return df
     end

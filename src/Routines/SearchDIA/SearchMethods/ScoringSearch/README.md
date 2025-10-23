@@ -226,10 +226,10 @@ Both LightGBM and Probit models produce standardized outputs:
 
 ```julia
 # Required columns for downstream processing
-psms[!, :prob]                    # Primary PSM probabilities
-psms[!, :MBR_prob]               # MBR probabilities (if applicable)
-psms[!, :MBR_is_best_decoy]      # MBR transfer metadata
-psms[!, :MBR_transfer_candidate] # MBR filtering flags
+psms[!, :trace_prob]                    # Primary PSM probabilities
+psms[!, :MBR_boosted_trace_prob]       # MBR probabilities (if applicable)
+psms[!, :MBR_is_best_decoy]            # MBR transfer metadata
+psms[!, :MBR_transfer_candidate]       # MBR filtering flags
 ```
 
 ### 23-Step ScoringSearch Pipeline Integration
