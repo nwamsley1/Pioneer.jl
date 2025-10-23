@@ -274,6 +274,54 @@ function get_protein_global_qval_spline(merged_path::String, params::ScoringSear
 end
 
 """
+    get_protein_global_qval_dict(merged_path::String, params::ScoringSearchParameters)
+    -> Dict{Tuple{String,Bool,UInt8}, Float32}
+
+Calculate global q-values at the protein group level and return as dictionary mapping.
+
+Since global_pg_score is calculated per protein group (one value per (protein_name, target, entrap_id)
+across all files), each protein group should have exactly one global q-value. This function:
+1. Loads merged protein group data
+2. Reduces to one row per protein group
+3. Calculates q-values on the reduced dataset
+4. Returns Dict{(protein_name, target, entrap_id) => global_pg_qval}
+
+This approach is more accurate than spline interpolation since we have exact values for each protein group.
+"""
+function get_protein_global_qval_dict(merged_path::String, params::ScoringSearchParameters)
+    # Load merged protein groups
+    merged_table = Arrow.Table(merged_path)
+    df = DataFrame(merged_table)
+
+    # Reduce to one row per protein group
+    # All rows for the same protein group should have the same global_pg_score
+    protein_group_df = combine(groupby(df, [:protein_name, :target, :entrap_id])) do group
+        (global_pg_score = first(group.global_pg_score),)
+    end
+
+    # Sort by global_pg_score descending for q-value calculation
+    sort!(protein_group_df, :global_pg_score, rev=true)
+
+    # Calculate q-values using standard FDR calculation
+    n = nrow(protein_group_df)
+    qvals = Vector{Float32}(undef, n)
+
+    # Calculate q-values (no FDR scale factor for proteins)
+    get_qvalues!(protein_group_df.global_pg_score, protein_group_df.target, qvals)
+
+    # Create dictionary mapping protein group key -> global_pg_qval
+    qval_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
+    for i in 1:n
+        key = (protein_group_df.protein_name[i],
+               protein_group_df.target[i],
+               protein_group_df.entrap_id[i])
+        qval_dict[key] = qvals[i]
+    end
+
+    return qval_dict
+end
+
+"""
 Create experiment-wide protein q-value spline (all protein groups).
 """
 function get_protein_qval_spline(merged_path::String, params::ScoringSearchParameters)
