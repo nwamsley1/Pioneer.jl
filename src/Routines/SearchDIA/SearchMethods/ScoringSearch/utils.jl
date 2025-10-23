@@ -767,9 +767,10 @@ function perform_protein_probit_regression(
     
     # Set protein group limit to 5x the precursor limit
     max_protein_groups_in_memory_limit = 5 * max_psms_in_memory
-    
-    if total_protein_groups > max_protein_groups_in_memory_limit
-        #Need to implement safety checks for minimal number of targets/decoys in each split 
+
+    # HARDCODED: Always use in-memory processing (OOM path disabled)
+    if false  # total_protein_groups > max_protein_groups_in_memory_limit
+        #Need to implement safety checks for minimal number of targets/decoys in each split (DISABLED) 
         
         # Check if we should skip scoring in OOM path
         # We need to load a sample to check targets/decoys
@@ -968,7 +969,10 @@ end
 
 
 
-
+# DISABLED: OOM protein probit function - only used when total_protein_groups > max_protein_groups_in_memory_limit
+# This function is commented out in favor of always using in-memory processing.
+# Preserved for potential future use if needed for extremely large datasets.
+#=
 """
     perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_groups::Int, 
                                max_protein_groups_in_memory::Int, qc_folder::String)
@@ -1075,6 +1079,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         end
     end
 end
+=#
 
 """
     perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String, 
