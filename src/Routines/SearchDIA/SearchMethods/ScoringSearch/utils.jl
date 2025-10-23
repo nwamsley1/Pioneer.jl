@@ -823,7 +823,7 @@ end
     update_psms_with_probit_scores_refs(paired_refs::Vector{PairedSearchFiles},
                                        acc_to_max_pg_score::Dict{ProteinKey,Float32},
                                        pg_score_to_qval::Interpolations.Extrapolation,
-                                       global_pg_score_to_qval::Interpolations.Extrapolation)
+                                       global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32})
 
 Update PSMs with probit-scored pg_score values and q-values using references.
 
@@ -831,13 +831,13 @@ Update PSMs with probit-scored pg_score values and q-values using references.
 - `paired_refs`: Paired PSM/protein group file references
 - `acc_to_max_pg_score`: Dictionary mapping protein keys to global scores
 - `pg_score_to_qval`: Interpolation function for pg_score to q-value
-- `global_pg_score_to_qval`: Interpolation function for global_pg_score to q-value
+- `global_pg_score_to_qval_dict`: Dictionary mapping (protein_name, target, entrap_id) to global q-value
 """
 function update_psms_with_probit_scores_refs(
     paired_refs::Vector{PairedSearchFiles},
     acc_to_max_pg_score::Dict{ProteinKey,Float32},
     pg_score_to_qval::Interpolations.Extrapolation,
-    global_pg_score_to_qval::Interpolations.Extrapolation
+    global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
 )
 
     total_psms_updated = 0
@@ -937,10 +937,12 @@ function update_psms_with_probit_scores_refs(
                     throw("Missing global pg score lookup key!!!")
                 end
                 global_pg_scores[i] = acc_to_max_pg_score[key]
-                
+
                 # Calculate q-values
                 pg_qvals[i] = pg_score_to_qval(probit_pg_scores[i])
-                global_pg_qvals[i] = global_pg_score_to_qval(global_pg_scores[i])
+                # Look up global q-value from dictionary using protein group key
+                dict_key = (key.name, key.is_target, key.entrap_id)
+                global_pg_qvals[i] = get(global_pg_score_to_qval_dict, dict_key, missing)
             end
             
             # Update columns

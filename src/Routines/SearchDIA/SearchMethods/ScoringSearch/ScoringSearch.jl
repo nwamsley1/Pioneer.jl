@@ -804,7 +804,7 @@ function summarize_results!(
                 paired_files,
                 acc_to_max_pg_score,
                 search_context.pg_score_to_qval[],
-                search_context.global_pg_score_to_qval[]
+                search_context.global_pg_score_to_qval_dict[]
             )
         end
         # Summary of all step times
