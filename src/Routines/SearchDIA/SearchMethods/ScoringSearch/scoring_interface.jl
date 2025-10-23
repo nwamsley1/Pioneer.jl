@@ -161,13 +161,21 @@ Train a filtering method and evaluate performance. Returns FilterResult with sco
 """
 function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
     # Handle empty candidate data
-    if isempty(candidate_data) || !hasproperty(candidate_data, :trace_prob)
+    if isempty(candidate_data)
+        return nothing
+    end
+
+    # Use MBR-boosted scores if available, otherwise base scores
+    score_column = hasproperty(candidate_data, :MBR_boosted_trace_prob) ?
+                   :MBR_boosted_trace_prob : :trace_prob
+
+    if !hasproperty(candidate_data, score_column)
         return nothing
     end
 
     # candidate_labels represents bad transfer flags
     τ = get_ftr_threshold(
-        candidate_data.trace_prob,
+        candidate_data[!, score_column],
         candidate_labels,
         params.max_MBR_false_transfer_rate
     )
@@ -176,10 +184,10 @@ function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, 
     if isinf(τ)
         n_passing = 0
     else
-        n_passing = sum(candidate_data.trace_prob .>= τ)
+        n_passing = sum(candidate_data[!, score_column] .>= τ)
     end
 
-    return FilterResult("Threshold", candidate_data.trace_prob, τ, n_passing)
+    return FilterResult("Threshold", candidate_data[!, score_column], τ, n_passing)
 end
 
 function train_and_evaluate(method::ProbitFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)

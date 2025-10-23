@@ -375,9 +375,8 @@ function summarize_results!(
         step5_time = @elapsed begin
             # Merge filtered (best-trace-only) PSMs for global probability calculations
             merged_best_traces_path = joinpath(temp_folder, "merged_best_traces.arrow")
-            sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true, true])
-            stream_sorted_merge(filtered_refs, merged_best_traces_path, :prec_prob, :target;
-                               reverse=[true, true])
+            sort_file_by_keys!(filtered_refs, :precursor_idx)
+            stream_sorted_merge(filtered_refs, merged_best_traces_path, :precursor_idx)
 
             merged_df = DataFrame(Arrow.Table(merged_best_traces_path))
             sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
@@ -401,13 +400,6 @@ function summarize_results!(
                 sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
                 write_arrow_file(ref, sub_df)
             end
-
-            # Sort files by global_prob for next step
-            if params.match_between_runs
-                sort_file_by_keys!(filtered_refs, :MBR_boosted_global_prob, :target; reverse=[true, true])
-            else
-                sort_file_by_keys!(filtered_refs, :global_prob, :target; reverse=[true, true])
-            end
         end
         #@debug_l1 "Step 5 completed in $(round(step5_time, digits=2)) seconds"
 
@@ -415,9 +407,11 @@ function summarize_results!(
         #@debug_l1 "Step 6: Merging PSM scores by global_prob..."
         step6_time = @elapsed begin
             if params.match_between_runs
+                sort_file_by_keys!(filtered_refs, :MBR_boosted_global_prob, :target; reverse=[true, true])
                 stream_sorted_merge(filtered_refs, results.merged_quant_path, :MBR_boosted_global_prob, :target;
                                    batch_size=10_000_000, reverse=[true,true])
             else
+                sort_file_by_keys!(filtered_refs, :global_prob, :target; reverse=[true, true])
                 stream_sorted_merge(filtered_refs, results.merged_quant_path, :global_prob, :target;
                                    batch_size=10_000_000, reverse=[true,true])
             end
