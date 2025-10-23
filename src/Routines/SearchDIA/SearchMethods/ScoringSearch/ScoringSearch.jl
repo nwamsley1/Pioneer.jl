@@ -36,7 +36,7 @@ Results container for scoring search.
 struct ScoringSearchResults <: SearchResults
     # Paths to results
     best_traces::Dict{Int64, Float32}
-    precursor_global_qval_interp::Base.Ref{Any} # Interpolation for global q-values
+    precursor_global_qval_dict::Base.Ref{Dict{UInt32, Float32}} # Dictionary mapping precursor_idx to global q-values
     precursor_qval_interp::Base.Ref{Any} # Interpolation for run-specific q-values
     precursor_pep_interp::Base.Ref{Any}  # Interpolation for experiment-wide PEPs
     pg_qval_interp::Base.Ref{Any}       # Protein group q-value interpolation
@@ -130,7 +130,7 @@ get_parameters(::ScoringSearch, params::Any) = ScoringSearchParameters(params)
 function init_search_results(::ScoringSearchParameters, search_context::SearchContext)
     return ScoringSearchResults(
         Dict{Int64, Float32}(),  # best_traces
-        Ref(undef),  # precursor_global_qval_interp
+        Ref(Dict{UInt32, Float32}()),  # precursor_global_qval_dict
         Ref(undef),  # precursor_qval_interp
         Ref(undef),  # precursor_pep_interp
         Ref(undef),  # pg_qval_interp
