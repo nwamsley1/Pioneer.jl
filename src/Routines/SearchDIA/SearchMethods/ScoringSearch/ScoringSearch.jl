@@ -568,6 +568,7 @@ function summarize_results!(
 
                 # Part B: Recalculate MBR_boosted_global_qval using MBR-boosted global_prob
                 # Merge passing PSMs to calculate global q-values at precursor level
+                #=
                 stream_sorted_merge(passing_refs, results.merged_quant_path, :precursor_idx;
                                     batch_size=10_000_000)
 
@@ -583,6 +584,7 @@ function summarize_results!(
                     recalculate_global_qvalue_pipeline,
                     passing_psms_folder
                 )
+                =#
             else
                 # Non-MBR mode: recalculate standard q-values
                 # Sort by prec_prob
@@ -609,6 +611,7 @@ function summarize_results!(
                     passing_psms_folder
                 )
 
+                #=
                 # Merge passing PSMs to calculate global q-values at precursor level
                 stream_sorted_merge(passing_refs, results.merged_quant_path, :precursor_idx;
                                     batch_size=10_000_000)
@@ -625,6 +628,7 @@ function summarize_results!(
                     recalculate_global_qvalue_pipeline,
                     passing_psms_folder
                 )
+                =#
             end
         end
         #@debug_l1 "Step 11 completed in $(round(step11_time, digits=2)) seconds"
