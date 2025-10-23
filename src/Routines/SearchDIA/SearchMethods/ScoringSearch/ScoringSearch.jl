@@ -750,7 +750,7 @@ function summarize_results!(
 
         # Step 19: Calculate global protein q-values
         step19_time = @elapsed begin
-            search_context.global_pg_score_to_qval[] = get_protein_global_qval_spline(sorted_pg_scores_path, params)
+            search_context.global_pg_score_to_qval_dict[] = get_protein_global_qval_dict(sorted_pg_scores_path, params)
         end
 
         # Step 20: Sort protein groups by pg_score
