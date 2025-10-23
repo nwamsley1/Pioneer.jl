@@ -385,8 +385,13 @@ function summarize_results!(
         # Step 5: Merge PSMs by global_prob for global q-values
         #@debug_l1 "Step 5: Merging PSM scores by global_prob..."
         step5_time = @elapsed begin
-            stream_sorted_merge(filtered_refs, results.merged_quant_path, :global_prob, :target;
-                               batch_size=10_000_000, reverse=[true,true])
+            if params.match_between_runs
+                stream_sorted_merge(filtered_refs, results.merged_quant_path, :MBR_boosted_global_prob, :target;
+                                   batch_size=10_000_000, reverse=[true,true])
+            else
+                stream_sorted_merge(filtered_refs, results.merged_quant_path, :global_prob, :target;
+                                   batch_size=10_000_000, reverse=[true,true])
+            end
         end
         #@debug_l1 "Step 5 completed in $(round(step5_time, digits=2)) seconds"
 
@@ -400,9 +405,15 @@ function summarize_results!(
         # Step 7: Merge PSMs by prec_prob for experiment-wide q-values
         #@debug_l1 "Step 7: Re-sorting and merging PSMs by prec_prob..."
         step7_time = @elapsed begin
-            sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true,true])
-            stream_sorted_merge(filtered_refs, results.merged_quant_path, :prec_prob, :target;
-                               batch_size=10_000_000, reverse=[true,true])
+            if params.match_between_runs
+                sort_file_by_keys!(filtered_refs, :MBR_boosted_prec_prob, :target; reverse=[true,true])
+                stream_sorted_merge(filtered_refs, results.merged_quant_path, :MBR_boosted_prec_prob, :target;
+                                   batch_size=10_000_000, reverse=[true,true])
+            else
+                sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true,true])
+                stream_sorted_merge(filtered_refs, results.merged_quant_path, :prec_prob, :target;
+                                   batch_size=10_000_000, reverse=[true,true])
+            end
         end
         #@debug_l1 "Step 7 completed in $(round(step7_time, digits=2)) seconds"
 
@@ -418,61 +429,64 @@ function summarize_results!(
         # Step 9: Filter PSMs by q-value thresholds
         #@debug_l1 "Step 9: Filtering PSMs by q-value thresholds..."
         step9_time = @elapsed begin
-            qvalue_filter_pipeline = TransformPipeline() |>
-                add_interpolated_column(:global_qval, :global_prob, results.precursor_global_qval_interp[]) |>
-                add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
-                add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
-                filter_by_multiple_thresholds([
-                    (:global_qval, params.q_value_threshold),
-                    (:qval, params.q_value_threshold)
-                ])
-
+            if params.match_between_runs
+                qvalue_filter_pipeline = TransformPipeline() |>
+                    add_interpolated_column(:MBR_boosted_global_qval, :MBR_boosted_global_prob, results.precursor_global_qval_interp[]) |>
+                    add_interpolated_column(:MBR_boosted_qval, :MBR_boosted_prec_prob, results.precursor_qval_interp[]) |>
+                    add_interpolated_column(:pep, :MBR_boosted_prec_prob, results.precursor_pep_interp[]) |>
+                    filter_by_multiple_thresholds([
+                        (:MBR_boosted_global_qval, params.q_value_threshold),
+                        (:MBR_boosted_qval, params.q_value_threshold)
+                    ])
+            else
+                qvalue_filter_pipeline = TransformPipeline() |>
+                    add_interpolated_column(:global_qval, :global_prob, results.precursor_global_qval_interp[]) |>
+                    add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
+                    add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
+                    filter_by_multiple_thresholds([
+                        (:global_qval, params.q_value_threshold),
+                        (:qval, params.q_value_threshold)
+                    ])
+            end
 
             passing_refs = apply_pipeline_batch(
                 filtered_refs,
                 qvalue_filter_pipeline,
                 passing_psms_folder
             )
-
-            # Replace MBR-enhanced scores with nonMBR scores for Step 10 recalculation
-            # This ensures all downstream statistics use non-MBR-enhanced probabilities
-            #
-            swap_to_nonMBR_pipeline = TransformPipeline() |>
-                rename_column(:trace_prob, :MBR_trace_prob) |>
-                rename_column(:prec_prob, :MBR_prec_prob) |>
-                rename_column(:nonMBR_prob, :trace_prob) |>
-                rename_column(:nonMBR_prec_prob, :prec_prob)
-            apply_pipeline!(passing_refs, swap_to_nonMBR_pipeline)
         end
 
         #@debug_l1 "Step 9 completed in $(round(step9_time, digits=2)) seconds"
 
-        #@debug_l1 "Step 10 Re-calculate Experiment-Wide Qvalue using nonMBR scores after filtering..."
+        #@debug_l1 "Step 10: Re-calculate q-values using non-MBR scores..."
         step10_time = @elapsed begin
-        # Sort by prec_prob (which now contains nonMBR precursor scores)
-        sort_file_by_keys!(passing_refs, :MBR_prec_prob, :target; reverse=[true,true])
+            if params.match_between_runs
+                # Sort by non-MBR prec_prob
+                sort_file_by_keys!(passing_refs, :prec_prob, :target; reverse=[true,true])
 
-        # Merge by prec_prob
-        stream_sorted_merge(passing_refs, results.merged_quant_path, :MBR_prec_prob, :target;
-                            batch_size=10_000_000, reverse=[true,true])
+                # Merge by non-MBR prec_prob
+                stream_sorted_merge(passing_refs, results.merged_quant_path, :prec_prob, :target;
+                                    batch_size=10_000_000, reverse=[true,true])
 
-        # Calculate q-value spline using prec_prob column (nonMBR precursor scores)
-        qval_interp2 = get_qvalue_spline(
-            results.merged_quant_path, :MBR_prec_prob, false;
-            min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
-            fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
-        )
-        results.precursor_qval_interp[] = qval_interp2
+                # Calculate q-value spline using non-MBR scores
+                qval_interp_nonMBR = get_qvalue_spline(
+                    results.merged_quant_path, :prec_prob, false;
+                    min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
+                    fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+                )
 
-        # Add qval column using prec_prob as score
-        recalculate_experiment_wide_qvalue = TransformPipeline() |>
-            add_interpolated_column(:qval, :MBR_prec_prob, results.precursor_qval_interp[])
+                # Add non-MBR qval column
+                recalculate_qvalue_pipeline = TransformPipeline() |>
+                    add_interpolated_column(:qval, :prec_prob, qval_interp_nonMBR)
 
-        passing_refs = apply_pipeline_batch(
-                passing_refs,
-                recalculate_experiment_wide_qvalue,
-                passing_psms_folder
-            )
+                passing_refs = apply_pipeline_batch(
+                    passing_refs,
+                    recalculate_qvalue_pipeline,
+                    passing_psms_folder
+                )
+            else
+                # No Step 10 needed when MBR is disabled
+            end
         end
         #@debug_l1 "Step 10 completed in $(round(step10_time, digits=2)) seconds"
 
