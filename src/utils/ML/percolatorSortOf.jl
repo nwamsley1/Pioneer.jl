@@ -423,12 +423,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         psms[!, :trace_prob] = nonMBR_estimates
         # Store MBR-enhanced trace probabilities
         psms[!, :MBR_boosted_trace_prob] = MBR_estimates
-        #psms[!,:first_pass_prob] = first_pass_estimates
     else
         # Only store base trace probabilities
         psms[!, :trace_prob] = prob_test
-        # Do NOT create MBR_boosted_trace_prob column
-        #psms[!,:first_pass_prob] = first_pass_estimates
     end
 
     return models

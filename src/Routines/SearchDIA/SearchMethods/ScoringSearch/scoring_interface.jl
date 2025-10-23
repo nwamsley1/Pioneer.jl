@@ -64,10 +64,11 @@ function apply_mbr_filter!(
     # 3) Apply filtering and get filtered probabilities
     filtered_probs = apply_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
 
-    # 4) Modify MBR_boosted_trace_prob column IN-PLACE
-    merged_df[!, :MBR_boosted_trace_prob] = filtered_probs
+    # 4) Modify both trace_prob and MBR_boosted_trace_prob columns IN-PLACE
+    merged_df[!, :MBR_boosted_trace_prob] = filtered_probs.MBR_boosted_trace_prob
+    merged_df[!, :trace_prob] = filtered_probs.trace_prob
 
-    # 5) No return value needed (modifies column in place)
+    # 5) No return value needed (modifies columns in place)
     return nothing
 end
 
@@ -92,7 +93,8 @@ function apply_mbr_filter!(
     # Handle case with no MBR candidates
     if n_candidates == 0
         @user_warn "No MBR transfer candidates found - returning original probabilities unchanged"
-        return merged_df.MBR_boosted_trace_prob
+        return (MBR_boosted_trace_prob = merged_df.MBR_boosted_trace_prob,
+                trace_prob = merged_df.trace_prob)
     end
 
     # Test all methods and store results
@@ -109,7 +111,8 @@ function apply_mbr_filter!(
     # Select best method (most candidates passing)
     if isempty(results)
         @user_warn "No MBR filtering methods succeeded - returning original probabilities unchanged"
-        return merged_df.MBR_boosted_trace_prob
+        return (MBR_boosted_trace_prob = merged_df.MBR_boosted_trace_prob,
+                trace_prob = merged_df.trace_prob)
     end
     
     best_result = results[argmax([r.n_passing for r in results])]
@@ -389,31 +392,36 @@ Filtering Application
 ==========================================================#
 
 """
-    apply_filtering(result, merged_df, candidate_mask, params) -> Vector{Float32}
+    apply_filtering(result, merged_df, candidate_mask, params) -> NamedTuple
 
 Apply the filtering result to the full dataframe.
+Returns a NamedTuple with both MBR_boosted_trace_prob and trace_prob filtered.
 """
 function apply_filtering(result::FilterResult, merged_df::DataFrame, candidate_mask::AbstractVector{Bool}, params)
-    filtered_probs = copy(merged_df.MBR_boosted_trace_prob)
+    filtered_MBR_boosted_trace_probs = copy(merged_df.MBR_boosted_trace_prob)
+    filtered_trace_probs = copy(merged_df.trace_prob)
     candidate_indices = findall(candidate_mask)
 
     if result.method_name == "Threshold"
         # Simple threshold on probability
         for idx in candidate_indices
             if merged_df.MBR_boosted_trace_prob[idx] < result.threshold
-                filtered_probs[idx] = 0.0f0
+                filtered_MBR_boosted_trace_probs[idx] = 0.0f0
+                filtered_trace_probs[idx] = 0.0f0
             end
         end
     else
         # ML-based filtering using scores
         for (i, idx) in enumerate(candidate_indices)
             if result.scores[i] < result.threshold  # Lower score = worse candidate (bad transfer)
-                filtered_probs[idx] = 0.0f0
+                filtered_MBR_boosted_trace_probs[idx] = 0.0f0
+                filtered_trace_probs[idx] = 0.0f0
             end
         end
     end
 
-    return filtered_probs
+    return (MBR_boosted_trace_prob = filtered_MBR_boosted_trace_probs,
+            trace_prob = filtered_trace_probs)
 end
 
 #==========================================================
