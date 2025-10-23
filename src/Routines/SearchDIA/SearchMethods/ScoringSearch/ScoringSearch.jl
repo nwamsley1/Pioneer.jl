@@ -473,7 +473,7 @@ function summarize_results!(
         # Step 7: Calculate global precursor q-values
         #@debug_l1 "Step 7: Calculating global precursor q-values..."
         step7_time = @elapsed begin
-            results.precursor_global_qval_interp[] = get_precursor_global_qval_spline(results.merged_quant_path, params, search_context)
+            results.precursor_global_qval_dict[] = get_precursor_global_qval_dict(results.merged_quant_path, params, search_context)
         end
         #@debug_l1 "Step 7 completed in $(round(step7_time, digits=2)) seconds"
 
