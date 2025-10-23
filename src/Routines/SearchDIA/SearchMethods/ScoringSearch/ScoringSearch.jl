@@ -187,6 +187,58 @@ function get_precursor_global_qval_spline(merged_path::String, params::ScoringSe
 end
 
 """
+    get_precursor_global_qval_dict(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
+    -> Dict{UInt32, Float32}
+
+Calculate global q-values at the precursor level and return as dictionary mapping.
+
+Since global_prob is calculated per precursor (one value per precursor_idx across all runs),
+each precursor should have exactly one global q-value. This function:
+1. Loads merged PSM data
+2. Reduces to one row per precursor_idx
+3. Calculates q-values on the reduced dataset
+4. Returns Dict{precursor_idx => global_qval}
+
+This approach is more accurate than spline interpolation since we have exact values for each precursor.
+"""
+function get_precursor_global_qval_dict(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
+    # Determine which score column to use
+    score_col = params.match_between_runs ? :MBR_boosted_global_prob : :global_prob
+
+    # Load merged PSMs
+    merged_table = Arrow.Table(merged_path)
+    df = DataFrame(merged_table)
+
+    # Reduce to one row per precursor
+    # All rows for the same precursor should have the same global_prob, so we just take the first
+    precursor_df = combine(groupby(df, :precursor_idx)) do group
+        (global_prob = first(group[!, score_col]),
+         target = first(group.target))
+    end
+
+    # Sort by global_prob descending for q-value calculation
+    sort!(precursor_df, :global_prob, rev=true)
+
+    # Calculate q-values using standard FDR calculation
+    n = nrow(precursor_df)
+    qvals = Vector{Float32}(undef, n)
+
+    # Use library FDR scale factor
+    fdr_scale = getLibraryFdrScaleFactor(search_context)
+
+    # Calculate q-values
+    get_qvalues!(precursor_df.global_prob, precursor_df.target, qvals; fdr_scale_factor=fdr_scale)
+
+    # Create dictionary mapping precursor_idx -> global_qval
+    qval_dict = Dict{UInt32, Float32}()
+    for i in 1:n
+        qval_dict[precursor_df.precursor_idx[i]] = qvals[i]
+    end
+
+    return qval_dict
+end
+
+"""
 Create experiment-wide precursor q-value spline (all precursors).
 """
 function get_precursor_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
