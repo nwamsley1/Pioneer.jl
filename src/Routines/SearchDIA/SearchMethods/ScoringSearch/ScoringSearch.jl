@@ -773,7 +773,7 @@ function summarize_results!(
         # Step 23: Add q-values and passing flags to protein groups
         step23_time = @elapsed begin
             protein_qval_pipeline = TransformPipeline() |>
-                add_interpolated_column(:global_pg_qval, :global_pg_score, search_context.global_pg_score_to_qval[]) |>
+                add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], search_context.global_pg_score_to_qval_dict[]) |>
                 add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
                 add_interpolated_column(:pg_pep, :pg_score, search_context.pg_score_to_pep[]) |> 
                 filter_by_multiple_thresholds([
