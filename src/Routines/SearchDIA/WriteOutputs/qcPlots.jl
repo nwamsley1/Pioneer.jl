@@ -54,6 +54,9 @@ function qcPlots(
     frag_err_dist_dict,
     valid_file_indices
 )
+    # Get conditional q-value column name based on MBR mode
+    qval_col = params_.global_settings.match_between_runs ? :MBR_boosted_qval : :qval
+
     short_fnames = shortenFileNames(parsed_fnames)
     #grouped_precursors = groupby(best_psms, :file_name)
     #grouped_protein_groups = groupby(protein_quant, :file_name)
@@ -64,7 +67,7 @@ function qcPlots(
     protein_groups_wide = Arrow.Table(protein_groups_wide_path)
     n_files = length(parsed_fnames)
     n_files_per_plot = Int64(params_.output[:plots_per_page])
-    #Number of QC plots to build 
+    #Number of QC plots to build
     n_qc_plots = Int64(round(n_files/n_files_per_plot, RoundUp))
     qc_plots = Plots.Plot[]
     ###############
@@ -181,7 +184,7 @@ function qcPlots(
         parsed_fnames,
         n_files_per_plot = n_files_per_plot,
         file_column = :file_name,
-        q_value_column = :qval,
+        q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
         q_value_threshold = params_.global_settings.scoring.q_value_threshold,
         qc_plot_folder = qc_plot_folder
     )
@@ -281,7 +284,7 @@ function qcPlots(
                                 parsed_fnames,
                                 n_files_per_plot=n_files_per_plot,
                                 file_column = :file_name,
-                                q_value_column = :qval,
+                                q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
                                 q_value_threshold = params_.global_settings.scoring.q_value_threshold,
                                 qc_plot_folder = qc_plot_folder)
     append!(qc_plots, id_plots)
@@ -367,7 +370,7 @@ function qcPlots(
         parsed_fnames,
         n_files_per_plot = n_files_per_plot,
         file_column = :file_name,
-        q_value_column = :qval,
+        q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
         q_value_threshold = params_.global_settings.scoring.q_value_threshold,
         qc_plot_folder = qc_plot_folder
     )
@@ -465,7 +468,7 @@ function qcPlots(
         parsed_fnames,
         n_files_per_plot = n_files_per_plot,
         file_column = :file_name,
-        q_value_column = :qval,
+        q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
         q_value_threshold = params_.global_settings.scoring.q_value_threshold,
         qc_plot_folder = qc_plot_folder
     )

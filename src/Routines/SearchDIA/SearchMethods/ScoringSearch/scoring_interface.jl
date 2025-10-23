@@ -477,15 +477,18 @@ end
 Get the standard columns needed for quantification analysis.
 """
 function get_quant_necessary_columns(match_between_runs::Bool)
+    # Get conditional q-value column names
+    qval_cols = get_qval_column_names(match_between_runs)
+
     base_cols = [
         :precursor_idx,
         :global_prob,
         :prec_prob,
         :trace_prob,
-        :global_qval,
+        qval_cols.global_qval,  # Conditional: :MBR_boosted_global_qval or :global_qval
         :run_specific_qval,
         :prec_mz,
-        :pep,
+        qval_cols.pep,  # Always :pep but included for consistency
         :weight,
         :target,
         :rt,
@@ -499,16 +502,60 @@ function get_quant_necessary_columns(match_between_runs::Bool)
     ]
 
     if match_between_runs
-        # Add MBR-specific columns
+        # Add MBR-specific columns including MBR_boosted_qval
         return vcat(base_cols, [
             :MBR_boosted_global_prob,
             :MBR_boosted_prec_prob,
             :MBR_boosted_trace_prob,
             :MBR_candidate,
-            :MBR_transfer_q_value
+            :MBR_transfer_q_value,
+            qval_cols.qval  # Add :MBR_boosted_qval
         ])
     else
-        return base_cols
+        # Add standard qval for non-MBR mode
+        return vcat(base_cols, [qval_cols.qval])  # Add :qval
+    end
+end
+
+"""
+    get_qval_column_names(match_between_runs::Bool) -> NamedTuple
+
+Returns the appropriate q-value column names based on whether MBR is enabled.
+
+# Arguments
+- `match_between_runs::Bool`: Whether match-between-runs (MBR) is enabled
+
+# Returns
+A NamedTuple with fields:
+- `qval::Symbol`: Precursor q-value column name
+- `global_qval::Symbol`: Global precursor q-value column name
+- `pep::Symbol`: PEP column name (always `:pep`)
+
+# Examples
+```julia
+qval_cols = get_qval_column_names(true)  # MBR enabled
+# Returns: (qval = :MBR_boosted_qval, global_qval = :MBR_boosted_global_qval, pep = :pep)
+
+qval_cols = get_qval_column_names(false)  # MBR disabled
+# Returns: (qval = :qval, global_qval = :global_qval, pep = :pep)
+
+# Usage:
+df_filtered = filter(row -> row[qval_cols.qval] < 0.01, df)
+```
+"""
+function get_qval_column_names(match_between_runs::Bool)
+    if match_between_runs
+        return (
+            qval = :MBR_boosted_qval,
+            global_qval = :MBR_boosted_global_qval,
+            pep = :pep
+        )
+    else
+        return (
+            qval = :qval,
+            global_qval = :global_qval,
+            pep = :pep
+        )
     end
 end
 

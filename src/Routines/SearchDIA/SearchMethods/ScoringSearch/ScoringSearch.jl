@@ -467,6 +467,7 @@ function summarize_results!(
         #@debug_l1 "Step 10: Re-calculate q-values using non-MBR scores..."
         step10_time = @elapsed begin
             if params.match_between_runs
+                # Part A: Recalculate MBR_boosted_qval using non-MBR prec_prob
                 # Sort by non-MBR prec_prob
                 sort_file_by_keys!(passing_refs, :prec_prob, :target; reverse=[true,true])
 
@@ -474,20 +475,46 @@ function summarize_results!(
                 stream_sorted_merge(passing_refs, results.merged_quant_path, :prec_prob, :target;
                                     batch_size=10_000_000, reverse=[true,true])
 
-                # Calculate q-value spline using non-MBR scores
+                # Calculate q-value spline using non-MBR precursor scores
                 qval_interp_nonMBR = get_qvalue_spline(
                     results.merged_quant_path, :prec_prob, false;
                     min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
                     fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
                 )
 
-                # Add non-MBR qval column
+                # Recalculate MBR_boosted_qval column with non-MBR scores
+                # (overwrites the MBR-boosted qval with unbiased qval for protein inference)
                 recalculate_qvalue_pipeline = TransformPipeline() |>
-                    add_interpolated_column(:qval, :prec_prob, qval_interp_nonMBR)
+                    add_interpolated_column(:MBR_boosted_qval, :prec_prob, qval_interp_nonMBR)
 
                 passing_refs = apply_pipeline_batch(
                     passing_refs,
                     recalculate_qvalue_pipeline,
+                    passing_psms_folder
+                )
+
+                # Part B: Recalculate MBR_boosted_global_qval using non-MBR global_prob
+                # Sort by non-MBR global_prob
+                sort_file_by_keys!(passing_refs, :global_prob, :target; reverse=[true,true])
+
+                # Merge by non-MBR global_prob
+                stream_sorted_merge(passing_refs, results.merged_quant_path, :global_prob, :target;
+                                    batch_size=10_000_000, reverse=[true,true])
+
+                # Calculate global q-value spline using non-MBR global scores
+                global_qval_interp_nonMBR = get_qvalue_spline(
+                    results.merged_quant_path, :global_prob, true;
+                    min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
+                    fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+                )
+
+                # Recalculate MBR_boosted_global_qval column with non-MBR scores
+                recalculate_global_qvalue_pipeline = TransformPipeline() |>
+                    add_interpolated_column(:MBR_boosted_global_qval, :global_prob, global_qval_interp_nonMBR)
+
+                passing_refs = apply_pipeline_batch(
+                    passing_refs,
+                    recalculate_global_qvalue_pipeline,
                     passing_psms_folder
                 )
             else
