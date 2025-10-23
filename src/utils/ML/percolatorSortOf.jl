@@ -466,24 +466,24 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             
         for file_path in file_paths
             psms_subset = DataFrame(Arrow.Table(file_path))
-            
-            probs = predict_cv_models(models, psms_subset, features)
-            
+
+            trace_probs = predict_cv_models(models, psms_subset, features)
+
             if match_between_runs && !is_last_iteration
-                #Update maximum probabilities for tracked precursors 
+                #Update maximum probabilities for tracked precursors
                 qvals = zeros(Float32, nrow(psms_subset))
-                get_qvalues!(probs, psms_subset.target, qvals)
+                get_qvalues!(trace_probs, psms_subset.target, qvals)
 
                 for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
-                    prob = probs[i]
+                    trace_prob = trace_probs[i]
                     key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
                     if haskey(prec_to_best_score_new, key)
                         scores = prec_to_best_score_new[key]
 
                         # Update running statistics with new probability
-                        updated_stats = update_pair_statistics(scores, prob)
+                        updated_stats = update_pair_statistics(scores, trace_prob)
 
-                        if prob > scores.best_prob_1
+                        if trace_prob > scores.best_prob_1
                            new_scores = merge(updated_stats, (
                                 # replace best_prob_2 with best_prob_1
                                 best_prob_2                     = scores.best_prob_1,
@@ -495,7 +495,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                 best_ms_file_idx_2              = scores.best_ms_file_idx_1,
                                 is_best_decoy_2                 = scores.is_best_decoy_1,
                                 # overwrite best_prob_1
-                                best_prob_1                     = prob,
+                                best_prob_1                     = trace_prob,
                                 best_log2_weights_1             = log2.(psms_subset.weights[i]),
                                 best_irts_1                     = psms_subset.irts[i],
                                 best_irt_residual_1             = irt_residual(psms_subset, i),
@@ -506,10 +506,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             ))
                             prec_to_best_score_new[key] = new_scores
 
-                        elseif prob > scores.best_prob_2
+                        elseif trace_prob > scores.best_prob_2
                             # overwrite best_prob_2
                             new_scores = merge(updated_stats, (
-                                best_prob_2                     = prob,
+                                best_prob_2                     = trace_prob,
                                 best_log2_weights_2             = log2.(psms_subset.weights[i]),
                                 best_irts_2                     = psms_subset.irts[i],
                                 best_irt_residual_2             = irt_residual(psms_subset, i),
@@ -530,11 +530,11 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
                     else
                         insert!(prec_to_best_score_new, key, (
-                                best_prob_1                     = prob,
+                                best_prob_1                     = trace_prob,
                                 best_prob_2                     = zero(Float32),
-                                worst_prob_1                    = prob,
+                                worst_prob_1                    = trace_prob,
                                 worst_prob_2                    = zero(Float32),
-                                mean_prob                       = prob,
+                                mean_prob                       = trace_prob,
                                 count_pairs                     = Int32(1),
                                 best_log2_weights_1             = log2.(psms_subset.weights[i]),
                                 best_log2_weights_2             = Vector{Float32}(),
@@ -561,29 +561,29 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
             if is_last_iteration
                 if match_between_runs
-                    update_mbr_probs!(psms_subset, probs, max_q_value_lightgbm_rescore)
+                    update_mbr_probs!(psms_subset, trace_probs, max_q_value_lightgbm_rescore)
                 else
-                    psms_subset.prob = probs
+                    psms_subset.trace_prob = trace_probs
                 end
 
             end
         end
     
 
-        # Compute probs and features for next round
+        # Compute trace_probs and features for next round
         for file_path in file_paths
             psms_subset = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-            probs = predict_cv_models(models, psms_subset, features)
+            trace_probs = predict_cv_models(models, psms_subset, features)
 
             # On last iteration with MBR, also get non-MBR predictions
-            non_mbr_probs = if is_last_iteration && match_between_runs && non_mbr_models !== nothing
+            non_mbr_trace_probs = if is_last_iteration && match_between_runs && non_mbr_models !== nothing
                 predict_cv_models(non_mbr_models, psms_subset, non_mbr_features)
             else
                 nothing
             end
 
             for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
-                psms_subset[i,:trace_prob] = probs[i]
+                psms_subset[i,:trace_prob] = trace_probs[i]
 
 
                 if match_between_runs && !is_last_iteration
@@ -641,24 +641,24 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 end
             end
 
-            # On last iteration with MBR: probs=MBR-boosted, non_mbr_probs=base
-            # Otherwise: probs=base, non_mbr_probs=nothing
-            mbr_probs_arg = if is_last_iteration && match_between_runs
-                probs  # MBR-boosted predictions
+            # On last iteration with MBR: trace_probs=MBR-boosted, non_mbr_trace_probs=base
+            # Otherwise: trace_probs=base, non_mbr_trace_probs=nothing
+            mbr_trace_probs_arg = if is_last_iteration && match_between_runs
+                trace_probs  # MBR-boosted predictions
             else
                 nothing
             end
-            probs_arg = if is_last_iteration && match_between_runs && non_mbr_probs !== nothing
-                non_mbr_probs  # Non-MBR predictions
+            trace_probs_arg = if is_last_iteration && match_between_runs && non_mbr_trace_probs !== nothing
+                non_mbr_trace_probs  # Non-MBR predictions
             else
-                probs  # Regular predictions
+                trace_probs  # Regular predictions
             end
 
             write_subset(
                 file_path,
                 psms_subset,
-                probs_arg,
-                mbr_probs_arg,
+                trace_probs_arg,
+                mbr_trace_probs_arg,
                 match_between_runs,
                 max_q_value_lightgbm_rescore;
                 dropVectors = is_last_iteration,
@@ -1053,18 +1053,18 @@ Return a vector of probabilities for `df` using the cross validation `models`.
 function predict_cv_models(models::Dictionary{UInt8,LightGBMModel},
                            df::AbstractDataFrame,
                            features::Vector{Symbol})
-    probs = zeros(Float32, nrow(df))
+    trace_probs = zeros(Float32, nrow(df))
     for (fold_idx, bst) in pairs(models)
         fold_rows = findall(==(fold_idx), df[!, :cv_fold])
         if !isempty(fold_rows)
-            probs[fold_rows] = lightgbm_predict(bst, df[fold_rows, :]; output_type=Float32)
+            trace_probs[fold_rows] = lightgbm_predict(bst, df[fold_rows, :]; output_type=Float32)
         end
     end
-    return probs
+    return trace_probs
 end
 
 """
-    update_mbr_probs!(df, probs, qval_thresh)
+    update_mbr_probs!(df, trace_probs, qval_thresh)
 
 Store final MBR probabilities and mark transfer candidates as those
 failing the pre-MBR q-value threshold but whose best matched pair passed
@@ -1072,23 +1072,23 @@ the corresponding probability cutoff.
 """
 function update_mbr_probs!(
     df::AbstractDataFrame,
-    probs::AbstractVector{Float32},
-    mbr_probs::AbstractVector{Float32},
+    trace_probs::AbstractVector{Float32},
+    mbr_trace_probs::AbstractVector{Float32},
     qval_thresh::Float32,
 )
-    prev_qvals = similar(probs)
-    get_qvalues!(probs, df.target, prev_qvals)
+    prev_qvals = similar(trace_probs)
+    get_qvalues!(trace_probs, df.target, prev_qvals)
     pass_mask = (prev_qvals .<= qval_thresh) .& df.target
-    prob_thresh = any(pass_mask) ? minimum(probs[pass_mask]) : typemax(Float32)
+    trace_prob_thresh = any(pass_mask) ? minimum(trace_probs[pass_mask]) : typemax(Float32)
     df[!, :MBR_transfer_candidate] = (prev_qvals .> qval_thresh) .&
-                                     (df.MBR_max_pair_prob .>= prob_thresh)
-    df[!, :trace_prob] = probs
-    df[!, :MBR_boosted_trace_prob] = mbr_probs
+                                     (df.MBR_max_pair_prob .>= trace_prob_thresh)
+    df[!, :trace_prob] = trace_probs
+    df[!, :MBR_boosted_trace_prob] = mbr_trace_probs
     return df
 end
 
 """
-    write_subset(file_path, df, probs, match_between_runs, qval_thresh; dropVectors=false)
+    write_subset(file_path, df, trace_probs, match_between_runs, qval_thresh; dropVectors=false)
 
 Write the updated subset to disk, optionally dropping vector columns.
 The `qval_thresh` argument is used to mark transfer candidates when
@@ -1097,25 +1097,25 @@ The `qval_thresh` argument is used to mark transfer candidates when
 function write_subset(
     file_path::String,
     df::DataFrame,
-    probs::AbstractVector{Float32},
-    mbr_probs::Union{AbstractVector{Float32}, Nothing},
+    trace_probs::AbstractVector{Float32},
+    mbr_trace_probs::Union{AbstractVector{Float32}, Nothing},
     match_between_runs::Bool,
     qval_thresh::Float32;
     dropVectors::Bool=false,
 )
     if dropVectors
         if match_between_runs
-            update_mbr_probs!(df, probs, mbr_probs, qval_thresh)
+            update_mbr_probs!(df, trace_probs, mbr_trace_probs, qval_thresh)
         else
-            df[!, :trace_prob] = probs
+            df[!, :trace_prob] = trace_probs
         end
         writeArrow(file_path, dropVectorColumns!(df))
     else
-        if match_between_runs && mbr_probs !== nothing
-            df[!, :trace_prob] = probs
-            df[!, :MBR_boosted_trace_prob] = mbr_probs
+        if match_between_runs && mbr_trace_probs !== nothing
+            df[!, :trace_prob] = trace_probs
+            df[!, :MBR_boosted_trace_prob] = mbr_trace_probs
         else
-            df[!, :trace_prob] = probs
+            df[!, :trace_prob] = trace_probs
         end
         writeArrow(file_path, convert_subarrays(df))
     end
@@ -1205,8 +1205,8 @@ function pad_rt_equal_length(x::AbstractVector, y::AbstractVector)
     end
 end
 
-function summarize_prob(probs::AbstractVector{Float32})
-    minimum(probs), maximum(probs), mean(probs)
+function summarize_prob(trace_probs::AbstractVector{Float32})
+    minimum(trace_probs), maximum(trace_probs), mean(trace_probs)
 end
 
 function convert_subarrays(df::DataFrame)
