@@ -44,12 +44,12 @@ end
 const ADVANCED_FEATURE_SET = [
     :missed_cleavage,
     :Mox,
-    :prec_mz_qbin,     # Quantile-binned version of :prec_mz
-    #:prec_mz,
+    #:prec_mz_qbin,     # Quantile-binned version of :prec_mz
+    :prec_mz,
     :sequence_length,
     :charge,
-    :irt_pred_qbin,    # Quantile-binned version of :irt_pred
-    #:irt_pred,
+    #:irt_pred_qbin,    # Quantile-binned version of :irt_pred
+    :irt_pred,
     :irt_error,
     :irt_diff,
     :max_y_ions,
@@ -74,11 +74,11 @@ const ADVANCED_FEATURE_SET = [
     :max_matched_ratio,
     :err_norm,
     :poisson,
-    :weight_qbin,      # Quantile-binned version of :weight
-    #:weight,
+    #:weight_qbin,      # Quantile-binned version of :weight
+    :weight,
     :log2_intensity_explained,
-    :tic_qbin,         # Quantile-binned version of :tic
-    #:tic,
+    #:tic_qbin,         # Quantile-binned version of :tic
+    :tic,
     :num_scans,
     :smoothness,
     
