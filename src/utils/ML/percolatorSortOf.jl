@@ -419,15 +419,15 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         psms[!, :MBR_transfer_candidate] .= .!pass_mask .&
                                             (psms.MBR_max_pair_prob .>= prob_thresh)
 
-        # Use the final MBR probabilities for all precursors
-        psms[!, :prob] = MBR_estimates
-        # Store nonMBR estimates for later q-value recalculation
-        psms[!, :nonMBR_prob] = nonMBR_estimates
+        # Store base trace probabilities (non-MBR)
+        psms[!, :trace_prob] = nonMBR_estimates
+        # Store MBR-enhanced trace probabilities
+        psms[!, :MBR_boosted_trace_prob] = MBR_estimates
         #psms[!,:first_pass_prob] = first_pass_estimates
     else
-        psms[!, :prob] = prob_test
-        # When MBR is disabled, nonMBR_prob equals the final prob
-        psms[!, :nonMBR_prob] = prob_test
+        # Only store base trace probabilities
+        psms[!, :trace_prob] = prob_test
+        # Do NOT create MBR_boosted_trace_prob column
         #psms[!,:first_pass_prob] = first_pass_estimates
     end
 
@@ -455,7 +455,9 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         prec_to_best_score_new::Dictionary,
         file_paths::Vector{String},
         models::Dictionary{UInt8,LightGBMModel},
+        non_mbr_models::Union{Dictionary{UInt8,LightGBMModel}, Nothing},
         features::Vector{Symbol},
+        non_mbr_features::Vector{Symbol},
         match_between_runs::Bool;
         is_last_iteration::Bool = false)
     
@@ -573,10 +575,17 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             psms_subset = DataFrame(Tables.columntable(Arrow.Table(file_path)))
             probs = predict_cv_models(models, psms_subset, features)
 
+            # On last iteration with MBR, also get non-MBR predictions
+            non_mbr_probs = if is_last_iteration && match_between_runs && non_mbr_models !== nothing
+                predict_cv_models(non_mbr_models, psms_subset, non_mbr_features)
+            else
+                nothing
+            end
+
             for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
                 psms_subset[i,:prob] = probs[i]
-                
-                    
+
+
                 if match_between_runs && !is_last_iteration
                     key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
                     if haskey(prec_to_best_score_new, key)
@@ -632,10 +641,24 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 end
             end
 
+            # On last iteration with MBR: probs=MBR-boosted, non_mbr_probs=base
+            # Otherwise: probs=base, non_mbr_probs=nothing
+            mbr_probs_arg = if is_last_iteration && match_between_runs
+                probs  # MBR-boosted predictions
+            else
+                nothing
+            end
+            probs_arg = if is_last_iteration && match_between_runs && non_mbr_probs !== nothing
+                non_mbr_probs  # Non-MBR predictions
+            else
+                probs  # Regular predictions
+            end
+
             write_subset(
                 file_path,
                 psms_subset,
-                probs,
+                probs_arg,
+                mbr_probs_arg,
                 match_between_runs,
                 max_q_value_lightgbm_rescore;
                 dropVectors = is_last_iteration,
@@ -748,11 +771,28 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         for test_fold_idx in unique_cv_folds
             insert!(models_for_iter, test_fold_idx, models[test_fold_idx][train_iter])
         end
+
+        # On last iteration with MBR, also get previous (non-MBR) models
+        non_mbr_models_for_iter = if (train_iter == length(iter_scheme)) && match_between_runs && (train_iter > 1)
+            non_mbr_models = Dictionary{UInt8,LightGBMModel}()
+            for test_fold_idx in unique_cv_folds
+                insert!(non_mbr_models, test_fold_idx, models[test_fold_idx][train_iter - 1])
+            end
+            non_mbr_models
+        else
+            nothing
+        end
+
+        # Determine which features to use
+        current_features = (train_iter == length(iter_scheme)) ? features : non_mbr_features
+
         prec_to_best_score = getBestScorePerPrec!(
             prec_to_best_score,
             file_paths,
             models_for_iter,
-            features,
+            non_mbr_models_for_iter,
+            current_features,
+            non_mbr_features,
             match_between_runs;
             is_last_iteration = (train_iter == length(iter_scheme))
         )
@@ -1033,15 +1073,17 @@ the corresponding probability cutoff.
 function update_mbr_probs!(
     df::AbstractDataFrame,
     probs::AbstractVector{Float32},
+    mbr_probs::AbstractVector{Float32},
     qval_thresh::Float32,
 )
-    prev_qvals = similar(df.prob)
-    get_qvalues!(df.prob, df.target, prev_qvals)
+    prev_qvals = similar(probs)
+    get_qvalues!(probs, df.target, prev_qvals)
     pass_mask = (prev_qvals .<= qval_thresh) .& df.target
-    prob_thresh = any(pass_mask) ? minimum(df.prob[pass_mask]) : typemax(Float32)
+    prob_thresh = any(pass_mask) ? minimum(probs[pass_mask]) : typemax(Float32)
     df[!, :MBR_transfer_candidate] = (prev_qvals .> qval_thresh) .&
                                      (df.MBR_max_pair_prob .>= prob_thresh)
-    df[!, :prob] = probs
+    df[!, :trace_prob] = probs
+    df[!, :MBR_boosted_trace_prob] = mbr_probs
     return df
 end
 
@@ -1056,19 +1098,25 @@ function write_subset(
     file_path::String,
     df::DataFrame,
     probs::AbstractVector{Float32},
+    mbr_probs::Union{AbstractVector{Float32}, Nothing},
     match_between_runs::Bool,
     qval_thresh::Float32;
     dropVectors::Bool=false,
 )
     if dropVectors
         if match_between_runs
-            update_mbr_probs!(df, probs, qval_thresh)
+            update_mbr_probs!(df, probs, mbr_probs, qval_thresh)
         else
-            df[!, :prob] = probs
+            df[!, :trace_prob] = probs
         end
         writeArrow(file_path, dropVectorColumns!(df))
     else
-        df[!, :prob] = probs
+        if match_between_runs && mbr_probs !== nothing
+            df[!, :trace_prob] = probs
+            df[!, :MBR_boosted_trace_prob] = mbr_probs
+        else
+            df[!, :trace_prob] = probs
+        end
         writeArrow(file_path, convert_subarrays(df))
     end
 end

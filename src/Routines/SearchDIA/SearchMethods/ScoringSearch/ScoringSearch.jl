@@ -294,41 +294,50 @@ function summarize_results!(
         step2_time = @elapsed begin
             # Merge all second pass PSMs for experiment-wide calculations
             merged_scores_path = joinpath(temp_folder, "merged_trace_scores.arrow")
-            sort_file_by_keys!(second_pass_refs, :prob, :target; reverse=[true, true])
-            stream_sorted_merge(second_pass_refs, merged_scores_path, :prob, :target;
+            sort_file_by_keys!(second_pass_refs, :trace_prob, :target; reverse=[true, true])
+            stream_sorted_merge(second_pass_refs, merged_scores_path, :trace_prob, :target;
                                reverse=[true, true])
 
             merged_df = DataFrame(Arrow.Table(merged_scores_path))
             sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
 
             if params.match_between_runs
-                prob_col = apply_mbr_filter!(
-                    merged_df,
-                    params
-                    )
-            else
-                prob_col = :prob
-            end
-            transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                       prob_col => (p -> begin
-                           prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                           prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
-                           Float32(prob)
-                       end) => :prec_prob)
-                       
-            transform!(groupby(merged_df, :precursor_idx),
-                       :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+                # Apply MBR filter to MBR_boosted_trace_prob column (modifies in place)
+                apply_mbr_filter!(merged_df, params)
 
-            # Also create nonMBR_prec_prob for unbiased protein scoring
-            # This aggregates non-MBR-enhanced trace probabilities to precursor level
-            transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                       :nonMBR_prob => (p -> begin
-                           prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                           prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
-                           Float32(prob)
-                       end) => :nonMBR_prec_prob)
-        
-            prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
+                # Aggregate MBR-boosted scores to precursor level
+                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
+                           :MBR_boosted_trace_prob => (p -> begin
+                               prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+                               prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                               Float32(prob)
+                           end) => :MBR_boosted_prec_prob)
+
+                transform!(groupby(merged_df, :precursor_idx),
+                           :MBR_boosted_prec_prob => (p -> logodds(p, sqrt_n_runs)) => :MBR_boosted_global_prob)
+
+                # Also aggregate non-MBR scores for protein inference (steps 11+)
+                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
+                           :trace_prob => (p -> begin
+                               prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+                               prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                               Float32(prob)
+                           end) => :prec_prob)
+
+                transform!(groupby(merged_df, :precursor_idx),
+                           :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+            else
+                # No MBR: only aggregate base probabilities
+                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
+                           :trace_prob => (p -> begin
+                               prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+                               prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                               Float32(prob)
+                           end) => :prec_prob)
+
+                transform!(groupby(merged_df, :precursor_idx),
+                           :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+            end
             # Write updated data back to individual files
             for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
                 sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
@@ -350,16 +359,24 @@ function summarize_results!(
         # Step 4: Process Quantification Results
         #@debug_l1 "Step 4: Processing quantification results..."
         step4_time = @elapsed begin
-            necessary_cols = get_quant_necessary_columns()
-            
-            quant_processing_pipeline = TransformPipeline() |>
-                add_best_trace_indicator(params.isotope_tracetype, best_traces) |>
-                rename_column(:prob, :trace_prob) |>
-                select_columns(vcat(necessary_cols, :best_trace)) |>
-                filter_rows(row -> row.best_trace; desc="keep_only_best_traces") |>
-                remove_columns(:best_trace) |>
-                sort_by([:global_prob, :target], rev=[true, true])
-            
+            necessary_cols = get_quant_necessary_columns(params.match_between_runs)
+
+            if params.match_between_runs
+                quant_processing_pipeline = TransformPipeline() |>
+                    add_best_trace_indicator(params.isotope_tracetype, best_traces) |>
+                    select_columns(vcat(necessary_cols, :best_trace)) |>
+                    filter_rows(row -> row.best_trace; desc="keep_only_best_traces") |>
+                    remove_columns(:best_trace) |>
+                    sort_by([:MBR_boosted_global_prob, :target], rev=[true, true])
+            else
+                quant_processing_pipeline = TransformPipeline() |>
+                    add_best_trace_indicator(params.isotope_tracetype, best_traces) |>
+                    select_columns(vcat(necessary_cols, :best_trace)) |>
+                    filter_rows(row -> row.best_trace; desc="keep_only_best_traces") |>
+                    remove_columns(:best_trace) |>
+                    sort_by([:global_prob, :target], rev=[true, true])
+            end
+
             apply_pipeline!(second_pass_refs, quant_processing_pipeline)
             filtered_refs = second_pass_refs
         end

@@ -51,7 +51,7 @@ function apply_mbr_filter!(
     merged_df::DataFrame,
     params
 )
-    # 1) identify transfer candidates
+    # 1) identify transfer candidates based on MBR_boosted_trace_prob
     candidate_mask = merged_df.MBR_transfer_candidate
     n_candidates = sum(candidate_mask)
 
@@ -61,12 +61,14 @@ function apply_mbr_filter!(
          (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, false)) # D->T
     )
 
-    # 3) Apply the main filtering function
+    # 3) Apply filtering and get filtered probabilities
     filtered_probs = apply_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
 
-    # 4) Add filtered probabilities as a new column and return column name
-    merged_df[!, :MBR_filtered_prob] = filtered_probs
-    return :MBR_filtered_prob
+    # 4) Modify MBR_boosted_trace_prob column IN-PLACE
+    merged_df[!, :MBR_boosted_trace_prob] = filtered_probs
+
+    # 5) No return value needed (modifies column in place)
+    return nothing
 end
 
 """
@@ -90,7 +92,7 @@ function apply_mbr_filter!(
     # Handle case with no MBR candidates
     if n_candidates == 0
         @user_warn "No MBR transfer candidates found - returning original probabilities unchanged"
-        return merged_df.prob
+        return merged_df.MBR_boosted_trace_prob
     end
 
     # Test all methods and store results
@@ -107,7 +109,7 @@ function apply_mbr_filter!(
     # Select best method (most candidates passing)
     if isempty(results)
         @user_warn "No MBR filtering methods succeeded - returning original probabilities unchanged"
-        return merged_df.prob
+        return merged_df.MBR_boosted_trace_prob
     end
     
     best_result = results[argmax([r.n_passing for r in results])]
@@ -392,13 +394,13 @@ Filtering Application
 Apply the filtering result to the full dataframe.
 """
 function apply_filtering(result::FilterResult, merged_df::DataFrame, candidate_mask::AbstractVector{Bool}, params)
-    filtered_probs = copy(merged_df.prob)
+    filtered_probs = copy(merged_df.MBR_boosted_trace_prob)
     candidate_indices = findall(candidate_mask)
-    
+
     if result.method_name == "Threshold"
         # Simple threshold on probability
         for idx in candidate_indices
-            if merged_df.prob[idx] < result.threshold
+            if merged_df.MBR_boosted_trace_prob[idx] < result.threshold
                 filtered_probs[idx] = 0.0f0
             end
         end
@@ -410,7 +412,7 @@ function apply_filtering(result::FilterResult, merged_df::DataFrame, candidate_m
             end
         end
     end
-    
+
     return filtered_probs
 end
 
@@ -474,22 +476,16 @@ end
 
 Get the standard columns needed for quantification analysis.
 """
-function get_quant_necessary_columns()
-    return [
+function get_quant_necessary_columns(match_between_runs::Bool)
+    base_cols = [
         :precursor_idx,
         :global_prob,
         :prec_prob,
-        #:first_pass_prob,
-        #:first_pass_prec_prob,
-        :nonMBR_prob,
-        :nonMBR_prec_prob,
         :trace_prob,
         :global_qval,
         :run_specific_qval,
         :prec_mz,
         :pep,
-        :MBR_candidate,
-        :MBR_transfer_q_value,
         :weight,
         :target,
         :rt,
@@ -501,6 +497,19 @@ function get_quant_necessary_columns()
         :entrapment_group_id,
         :ms_file_idx
     ]
+
+    if match_between_runs
+        # Add MBR-specific columns
+        return vcat(base_cols, [
+            :MBR_boosted_global_prob,
+            :MBR_boosted_prec_prob,
+            :MBR_boosted_trace_prob,
+            :MBR_candidate,
+            :MBR_transfer_q_value
+        ])
+    else
+        return base_cols
+    end
 end
 
 """
