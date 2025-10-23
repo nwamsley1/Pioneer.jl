@@ -159,6 +159,43 @@ function add_interpolated_column(new_col::Symbol, source_col::Symbol,
 end
 
 """
+    add_dict_column(new_col::Symbol, key_col::Symbol, lookup_dict::Dict{K,V}) where {K,V}
+
+Add a new column by looking up values in a dictionary based on a key column.
+Commonly used for adding precursor-level values (like global q-values) to PSM rows.
+
+# Arguments
+- `new_col`: Name of the new column to create
+- `key_col`: Name of the column containing keys for dictionary lookup
+- `lookup_dict`: Dictionary mapping keys to values
+
+# Example
+```julia
+pipeline = TransformPipeline() |>
+    add_dict_column(:global_qval, :precursor_idx, precursor_qval_dict)
+```
+"""
+function add_dict_column(new_col::Symbol, key_col::Symbol, lookup_dict::Dict{K,V}) where {K,V}
+    desc = "add_dict_column($new_col from $key_col)"
+    op = function(df)
+        # Extract key column
+        key_data = df[!, key_col]
+
+        # Pre-allocate result vector
+        result = Vector{Union{V, Missing}}(undef, length(key_data))
+
+        # Look up each key in dictionary
+        for i in eachindex(key_data)
+            result[i] = get(lookup_dict, key_data[i], missing)
+        end
+
+        df[!, new_col] = result
+        return df
+    end
+    return desc => op
+end
+
+"""
     filter_by_threshold(col::Symbol, threshold::Real; comparison::Symbol = :<=)
 
 Filter rows where column meets threshold condition.
