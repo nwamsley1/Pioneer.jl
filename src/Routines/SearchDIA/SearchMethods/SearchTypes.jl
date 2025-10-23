@@ -226,7 +226,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     irt_errors::Dict{Int64, Float32}
     irt_obs::Dict{UInt32, Float32}
     pg_score_to_qval::Ref{Any}
-    global_pg_score_to_qval::Ref{Any}
+    global_pg_score_to_qval_dict::Ref{Dict{Tuple{String,Bool,UInt8}, Float32}}
     pg_score_to_pep::Ref{Any}
     
     # Method results storage
@@ -269,7 +269,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Ref{Vector{String}}(),
             Dict{Int64, Float32}(),
             Dict{UInt32, Float32}(),
-            Ref{Any}(), Ref{Any}(), Ref{Any}(),
+            Ref{Any}(), Ref(Dict{Tuple{String,Bool,UInt8}, Float32}()), Ref{Any}(),
             Dict{Type{<:SearchMethod}, Any}(),  # Initialize method_results
             n_threads, n_precursors, buffer_size,
             0, 0, 1.0f0,  # Initialize library stats with defaults
