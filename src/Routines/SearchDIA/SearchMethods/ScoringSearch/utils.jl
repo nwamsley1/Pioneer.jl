@@ -1237,14 +1237,14 @@ end
 #
 #=
 Have N of these tables. Need to combine into one sorted Arrow table without loading all tables
-into memory at once. 
+into memory at once.
 julia> DataFrame(Arrow.Table(readdir(second_quant_folder, join = true)[1]))
 280488×11 DataFrame
-    Row │ precursor_idx  prob      weight         target  irt_obs    missed_cleavage  isotopes_captured  scan_idx  ms_file_idx  peak_area   new_best_scan 
-        │ UInt32         Float32   Float32        Bool    Float32    UInt8            Tuple{Int8, Int8}  UInt32    Int64        Float32     UInt32        
-────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-      1 │       1468734  0.808784    201.467        true   0.659221                1  (0, 3)                49270            1     6.03541          50180
-      2 │        262434  0.989585   2696.17         true   0.659221                0  (0, 3)                76753            1   121.201            76753
+    Row │ precursor_idx  trace_prob  weight         target  irt_obs    missed_cleavage  isotopes_captured  scan_idx  ms_file_idx  peak_area   new_best_scan
+        │ UInt32         Float32     Float32        Bool    Float32    UInt8            Tuple{Int8, Int8}  UInt32    Int64        Float32     UInt32
+────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+      1 │       1468734    0.808784    201.467        true   0.659221                1  (0, 3)                49270            1     6.03541          50180
+      2 │        262434    0.989585   2696.17         true   0.659221                0  (0, 3)                76753            1   121.201            76753
 =#
 
 getColNames(at::Arrow.Table) = keys(at)

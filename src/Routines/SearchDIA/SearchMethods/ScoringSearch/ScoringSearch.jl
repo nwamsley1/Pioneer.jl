@@ -314,9 +314,9 @@ function summarize_results!(
                 # Aggregate MBR-boosted scores to precursor level
                 transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                            :MBR_boosted_trace_prob => (p -> begin
-                               prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                               prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
-                               Float32(prob)
+                               trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+                               trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
+                               Float32(trace_prob)
                            end) => :MBR_boosted_prec_prob)
 
                 transform!(groupby(merged_df, :precursor_idx),
@@ -325,9 +325,9 @@ function summarize_results!(
                 # Also aggregate non-MBR scores for protein inference (steps 11+)
                 transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                            :trace_prob => (p -> begin
-                               prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                               prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
-                               Float32(prob)
+                               trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+                               trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
+                               Float32(trace_prob)
                            end) => :prec_prob)
 
                 transform!(groupby(merged_df, :precursor_idx),
@@ -336,9 +336,9 @@ function summarize_results!(
                 # No MBR: only aggregate base probabilities
                 transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                            :trace_prob => (p -> begin
-                               prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                               prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
-                               Float32(prob)
+                               trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+                               trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
+                               Float32(trace_prob)
                            end) => :prec_prob)
 
                 transform!(groupby(merged_df, :precursor_idx),
