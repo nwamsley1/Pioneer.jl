@@ -506,7 +506,7 @@ function summarize_results!(
         step10_time = @elapsed begin
             if params.match_between_runs
                 qvalue_filter_pipeline = TransformPipeline() |>
-                    add_interpolated_column(:MBR_boosted_global_qval, :MBR_boosted_global_prob, results.precursor_global_qval_interp[]) |>
+                    add_dict_column(:MBR_boosted_global_qval, :precursor_idx, results.precursor_global_qval_dict[]) |>
                     add_interpolated_column(:MBR_boosted_qval, :MBR_boosted_prec_prob, results.precursor_qval_interp[]) |>
                     add_interpolated_column(:pep, :MBR_boosted_prec_prob, results.precursor_pep_interp[]) |>
                     filter_by_multiple_thresholds([
@@ -515,7 +515,7 @@ function summarize_results!(
                     ])
             else
                 qvalue_filter_pipeline = TransformPipeline() |>
-                    add_interpolated_column(:global_qval, :global_prob, results.precursor_global_qval_interp[]) |>
+                    add_dict_column(:global_qval, :precursor_idx, results.precursor_global_qval_dict[]) |>
                     add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
                     add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
                     filter_by_multiple_thresholds([
