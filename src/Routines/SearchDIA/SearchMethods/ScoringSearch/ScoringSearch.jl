@@ -177,8 +177,10 @@ Q-value Spline Wrapper Functions
 Create global precursor q-value spline (unique precursors only).
 """
 function get_precursor_global_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
+    # Use MBR-boosted scores when MBR is enabled
+    score_col = params.match_between_runs ? :MBR_boosted_global_prob : :global_prob
     return get_qvalue_spline(
-        merged_path, :global_prob, true;
+        merged_path, score_col, true;
         min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
     )
@@ -188,8 +190,10 @@ end
 Create experiment-wide precursor q-value spline (all precursors).
 """
 function get_precursor_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
+    # Use MBR-boosted scores when MBR is enabled
+    score_col = params.match_between_runs ? :MBR_boosted_prec_prob : :prec_prob
     return get_qvalue_spline(
-        merged_path, :prec_prob, false;
+        merged_path, score_col, false;
         min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
     )
@@ -199,8 +203,10 @@ end
 Create experiment-wide precursor PEP interpolation (all precursors).
 """
 function get_precursor_pep_interpolation(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
+    # Use MBR-boosted scores when MBR is enabled
+    score_col = params.match_between_runs ? :MBR_boosted_prec_prob : :prec_prob
     return get_pep_interpolation(
-        merged_path, :prec_prob;
+        merged_path, score_col;
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
     )
 end
