@@ -370,12 +370,12 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             #predict_fold!(bst, psms_train, psms_test, train_feats)
             # **temporary predictions for training only**
             prob_train[train_idx] = predict(bst, psms_train)
-            psms_train[!,:prob] = prob_train[train_idx]
-            get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
+            psms_train[!,:trace_prob] = prob_train[train_idx]
+            get_qvalues!(psms_train.trace_prob, psms_train.target, psms_train.q_value)
 
             # **predict held-out fold**
             prob_test[test_idx] = predict(bst, psms_test)
-            psms_test[!,:prob] = prob_test[test_idx]
+            psms_test[!,:trace_prob] = prob_test[test_idx]
 
             #if itr == 1
             #    first_pass_estimates[test_idx] = prob_test[test_idx]
@@ -399,9 +399,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         end
         # Make predictions on hold out data.
         if match_between_runs
-            MBR_estimates[test_idx] = psms_test.prob
+            MBR_estimates[test_idx] = psms_test.trace_prob
         else
-            prob_test[test_idx] = psms_test.prob
+            prob_test[test_idx] = psms_test.trace_prob
         end
         # Store models for this fold
         models[test_fold_idx] = fold_models
@@ -583,7 +583,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             end
 
             for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
-                psms_subset[i,:prob] = probs[i]
+                psms_subset[i,:trace_prob] = probs[i]
 
 
                 if match_between_runs && !is_last_iteration
@@ -731,7 +731,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             end
 
             # Get probabilities for training sample so we can get q-values
-            psms_train[!,:prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
+            psms_train[!,:trace_prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
             
             if match_between_runs
                 summarize_precursors!(psms_train, q_cutoff = max_q_value_lightgbm_rescore)
@@ -828,9 +828,9 @@ end
 
 function predict_fold!(bst, psms_train::AbstractDataFrame,
                        psms_test::AbstractDataFrame, features)
-    psms_test[!, :prob] = lightgbm_predict(bst, psms_test; output_type=Float32)
-    psms_train[!, :prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
-    get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
+    psms_test[!, :trace_prob] = lightgbm_predict(bst, psms_test; output_type=Float32)
+    psms_train[!, :trace_prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
+    get_qvalues!(psms_train.trace_prob, psms_train.target, psms_train.q_value)
 end
 
 function update_mbr_features!(psms_train::AbstractDataFrame,
@@ -946,7 +946,7 @@ function initialize_prob_group_features!(
     match_between_runs::Bool
 )
     n = nrow(psms)
-    psms[!, :prob]      = zeros(Float32, n)
+    psms[!, :trace_prob]      = zeros(Float32, n)
     psms[!, :q_value]   = zeros(Float64, n)
 
     if match_between_runs

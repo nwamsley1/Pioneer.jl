@@ -307,7 +307,7 @@ function summarize_results!(
             merged_df = DataFrame(Arrow.Table(merged_scores_path))
             sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
 
-            if params.match_between_runs
+            if hasproperty(merged_df, :MBR_boosted_trace_prob)
                 # Apply MBR filter to MBR_boosted_trace_prob column (modifies in place)
                 apply_mbr_filter!(merged_df, params)
 

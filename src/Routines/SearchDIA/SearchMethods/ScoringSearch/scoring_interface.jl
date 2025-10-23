@@ -158,13 +158,13 @@ Train a filtering method and evaluate performance. Returns FilterResult with sco
 """
 function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
     # Handle empty candidate data
-    if isempty(candidate_data) || !hasproperty(candidate_data, :prob)
+    if isempty(candidate_data) || !hasproperty(candidate_data, :trace_prob)
         return nothing
     end
 
     # candidate_labels represents bad transfer flags
     τ = get_ftr_threshold(
-        candidate_data.prob,
+        candidate_data.trace_prob,
         candidate_labels,
         params.max_MBR_false_transfer_rate
     )
@@ -173,10 +173,10 @@ function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, 
     if isinf(τ)
         n_passing = 0
     else
-        n_passing = sum(candidate_data.prob .>= τ)
+        n_passing = sum(candidate_data.trace_prob .>= τ)
     end
 
-    return FilterResult("Threshold", candidate_data.prob, τ, n_passing)
+    return FilterResult("Threshold", candidate_data.trace_prob, τ, n_passing)
 end
 
 function train_and_evaluate(method::ProbitFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
@@ -423,7 +423,7 @@ Feature Processing (Simplified)
 function select_mbr_features(df::DataFrame)
     # Core features for MBR filtering (including MS1-MS2 RT difference feature)
     candidate_features = [
-                        :prob,
+                        :trace_prob,
                         :irt_error, :ms1_ms2_rt_diff, :MBR_max_pair_prob, :MBR_best_irt_diff,
                         :MBR_rv_coefficient, :MBR_log2_weight_ratio, :MBR_log2_explained_ratio
                         #, :MBR_num_runs
@@ -580,7 +580,7 @@ function add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::S
         else
             # Group-based operation for combined traces
             transform!(groupby(df, :precursor_idx),
-                      :prob => (p -> begin
+                      :trace_prob => (p -> begin
                           best_idx = argmax(p)
                           result = falses(length(p))
                           result[best_idx] = true
