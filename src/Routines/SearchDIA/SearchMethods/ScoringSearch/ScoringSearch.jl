@@ -567,23 +567,16 @@ function summarize_results!(
                 )
 
                 # Part B: Recalculate MBR_boosted_global_qval using MBR-boosted global_prob
-                # Sort by MBR-boosted global_prob
-                sort_file_by_keys!(passing_refs, :MBR_boosted_global_prob, :target; reverse=[true,true])
+                # Merge passing PSMs to calculate global q-values at precursor level
+                stream_sorted_merge(passing_refs, results.merged_quant_path, :precursor_idx;
+                                    batch_size=10_000_000)
 
-                # Merge by MBR-boosted global_prob
-                stream_sorted_merge(passing_refs, results.merged_quant_path, :MBR_boosted_global_prob, :target;
-                                    batch_size=10_000_000, reverse=[true,true])
+                # Calculate global q-value dictionary using MBR-boosted global scores
+                global_qval_dict = get_precursor_global_qval_dict(results.merged_quant_path, params, search_context)
 
-                # Calculate global q-value spline using MBR-boosted global scores
-                global_qval_interp = get_qvalue_spline(
-                    results.merged_quant_path, :MBR_boosted_global_prob, true;
-                    min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
-                    fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
-                )
-
-                # Recalculate MBR_boosted_global_qval column from MBR-boosted scores
+                # Recalculate MBR_boosted_global_qval column via dictionary lookup
                 recalculate_global_qvalue_pipeline = TransformPipeline() |>
-                    add_interpolated_column(:MBR_boosted_global_qval, :MBR_boosted_global_prob, global_qval_interp)
+                    add_dict_column(:MBR_boosted_global_qval, :precursor_idx, global_qval_dict)
 
                 passing_refs = apply_pipeline_batch(
                     passing_refs,
@@ -616,23 +609,16 @@ function summarize_results!(
                     passing_psms_folder
                 )
 
-                # Sort by global_prob
-                sort_file_by_keys!(passing_refs, :global_prob, :target; reverse=[true,true])
+                # Merge passing PSMs to calculate global q-values at precursor level
+                stream_sorted_merge(passing_refs, results.merged_quant_path, :precursor_idx;
+                                    batch_size=10_000_000)
 
-                # Merge by global_prob
-                stream_sorted_merge(passing_refs, results.merged_quant_path, :global_prob, :target;
-                                    batch_size=10_000_000, reverse=[true,true])
+                # Calculate global q-value dictionary
+                global_qval_dict = get_precursor_global_qval_dict(results.merged_quant_path, params, search_context)
 
-                # Calculate global q-value spline
-                global_qval_interp = get_qvalue_spline(
-                    results.merged_quant_path, :global_prob, true;
-                    min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
-                    fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
-                )
-
-                # Recalculate global_qval column
+                # Recalculate global_qval column via dictionary lookup
                 recalculate_global_qvalue_pipeline = TransformPipeline() |>
-                    add_interpolated_column(:global_qval, :global_prob, global_qval_interp)
+                    add_dict_column(:global_qval, :precursor_idx, global_qval_dict)
 
                 passing_refs = apply_pipeline_batch(
                     passing_refs,
