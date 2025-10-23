@@ -446,8 +446,10 @@ function perform_protein_inference_pipeline(
         # Write protein groups
         pg_filename = "protein_groups_$(lpad(idx, 3, '0')).arrow"
         pg_path = joinpath(output_folder, pg_filename)
-        
+
         if nrow(protein_groups_df) > 0
+            # Add file_idx for later merge/split operations
+            protein_groups_df[!, :file_idx] = fill(Int64(idx), nrow(protein_groups_df))
             writeArrow(pg_path, protein_groups_df)
             pg_ref = ProteinGroupFileReference(pg_path)
             push!(pg_refs, pg_ref)

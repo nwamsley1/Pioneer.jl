@@ -744,17 +744,8 @@ function summarize_results!(
 
         # Step 16: Calculate global protein scores
         step16_time = @elapsed begin
-            # Add file_idx to each protein group file for tracking
-            for (idx, ref) in enumerate(pg_refs)
-                add_column_pipeline = TransformPipeline() |>
-                    ("add_file_idx" => (df -> begin
-                        df[!, :file_idx] = fill(Int64(idx), nrow(df))
-                        return df
-                    end))
-                apply_pipeline!(ref, add_column_pipeline)
-            end
-
             # Merge all protein groups (like precursor Step 5)
+            # Note: file_idx already exists from Step 13 protein inference
             sort_file_by_keys!(pg_refs, :protein_name, :target, :entrap_id)
             merged_pg_temp_path = joinpath(temp_folder, "merged_pg_for_global_scores.arrow")
             stream_sorted_merge(pg_refs, merged_pg_temp_path, :protein_name, :target, :entrap_id)
@@ -770,7 +761,6 @@ function summarize_results!(
             # Write updated data back to individual files
             for (idx, ref) in enumerate(pg_refs)
                 sub_df = merged_df[merged_df.file_idx .== idx, :]
-                select!(sub_df, Not(:file_idx))  # Remove temporary file_idx column
                 write_arrow_file(ref, sub_df)
             end
         end
