@@ -432,6 +432,7 @@ end
 #==========================================================
 Protein group analysis
 ==========================================================#
+#=
 """
     getProteinGroupsDict(protein_inference_dict, psm_precursor_idx, psm_score, 
                         psm_is_target, psm_entrapment_id, precursors; min_peptides=2)
@@ -511,7 +512,7 @@ function getProteinGroupsDict(
     
     return protein_groups
 end
-
+=#
 
 """
     calculate_protein_features(builder::ProteinGroupBuilder, catalog::Dictionary{ProteinKey, Set{String}}) -> ProteinFeatures

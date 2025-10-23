@@ -251,6 +251,14 @@ function group_psms_by_protein(df::DataFrame)
         )
     end
 
+    # Determine which probability column to use for protein scoring
+    if hasproperty(df, :MBR_boosted_prec_prob)
+        @user_warn "Using MBR_boosted_prec_prob instead of prec_prob for protein group scoring"
+        prob_col = :MBR_boosted_prec_prob
+    else
+        prob_col = :prec_prob
+    end
+
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
     
@@ -261,7 +269,7 @@ function group_psms_by_protein(df::DataFrame)
         n_peptides = length(quant_peptides)
         
         # Calculate initial protein score (log-sum)
-        peptide_probs = gdf[gdf.use_for_protein_quant .== true, :prec_prob]
+        peptide_probs = gdf[gdf.use_for_protein_quant .== true, prob_col]
         if isempty(peptide_probs)
             pg_score = 0.0f0
         else
@@ -270,7 +278,7 @@ function group_psms_by_protein(df::DataFrame)
             for pep in quant_peptides
                 pep_mask = (gdf.sequence .== pep) .& (gdf.use_for_protein_quant .== true)
                 if any(pep_mask)
-                    push!(unique_pep_probs, maximum(gdf[pep_mask, :prec_prob]))
+                    push!(unique_pep_probs, maximum(gdf[pep_mask, prob_col]))
                 end
             end
             pg_score = -sum(log.(1.0f0 .- unique_pep_probs))
