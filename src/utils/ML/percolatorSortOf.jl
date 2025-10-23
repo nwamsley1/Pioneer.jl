@@ -431,6 +431,10 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     return models
 end
 
+# DISABLED: Out-of-memory processing - hardcoded to always use in-memory approach
+# This function is commented out in favor of always using in-memory processing.
+# Preserved for potential future use if needed for extremely large datasets.
+#=
 function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     file_paths::Vector{String},
                     features::Vector{Symbol},
@@ -798,6 +802,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
     return models
 end
+=#
 
 function train_booster(psms::AbstractDataFrame, features, num_round;
                        feature_fraction::Float64,
@@ -1010,7 +1015,8 @@ function dropVectorColumns!(df)
     # 2) Drop those columns in place
     select!(df, Not(to_drop))
 end
-
+# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
+#=
 """
     reset_precursor_scores!(dict)
 
@@ -1041,7 +1047,10 @@ function reset_precursor_scores!(dict)
     end
     return dict
 end
+=#
 
+# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
+#=
 """
     predict_cv_models(models, df, features)
 
@@ -1059,7 +1068,10 @@ function predict_cv_models(models::Dictionary{UInt8,LightGBMModel},
     end
     return trace_probs
 end
+=#
 
+# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
+#=
 """
     update_mbr_probs!(df, trace_probs, qval_thresh)
 
@@ -1083,7 +1095,10 @@ function update_mbr_probs!(
     df[!, :MBR_boosted_trace_prob] = mbr_trace_probs
     return df
 end
+=#
 
+# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
+#=
 """
     write_subset(file_path, df, trace_probs, match_between_runs, qval_thresh; dropVectors=false)
 
@@ -1117,6 +1132,7 @@ function write_subset(
         writeArrow(file_path, convert_subarrays(df))
     end
 end
+=#
 
 function MBR_rv_coefficient(weights_A::AbstractVector{<:Real},
     times_A::AbstractVector{<:Real},

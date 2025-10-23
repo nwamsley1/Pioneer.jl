@@ -72,9 +72,10 @@ function score_precursor_isotope_traces(
 )
     # Step 1: Count PSMs and determine processing approach
     psms_count = get_psms_count(file_paths)
-    
-    if psms_count >= max_psms_in_memory
-        # Case 1: Out-of-memory processing with default LightGBM
+
+    # HARDCODED: Always use in-memory processing (OOM path disabled)
+    if false  # psms_count >= max_psms_in_memory
+        # Case 1: Out-of-memory processing with default LightGBM (DISABLED)
         @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
         best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
 
@@ -760,7 +761,10 @@ function probit_regression_scoring_cv!(
     return nothing
 end
 
-
+# DISABLED: Out-of-memory processing - hardcoded to always use in-memory approach
+# This function is commented out in favor of always using in-memory processing.
+# Preserved for potential future use if needed for extremely large datasets.
+#=
 """
     score_precursor_isotope_traces_out_of_memory!(best_psms::DataFrame, file_paths::Vector{String},
                                   precursors::LibraryPrecursors) -> Dictionary{UInt8, LightGBMModel}
@@ -835,6 +839,7 @@ function score_precursor_isotope_traces_out_of_memory!(
                             print_importance = false);
     return models;#best_psms
 end
+=#
 
 """
     write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})
