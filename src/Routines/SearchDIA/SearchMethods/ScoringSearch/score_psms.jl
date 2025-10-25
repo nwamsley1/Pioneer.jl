@@ -50,7 +50,6 @@ Main entry point for PSM scoring with automatic model selection based on dataset
 - `max_q_value_mbr_itr`: Max q-value for MBR transfers retained during iterative training (ITR)
 - `min_PEP_neg_threshold_itr`: Min PEP threshold for relabeling weak targets as negatives during ITR
 - `max_psms_in_memory`: Maximum PSMs to keep in memory
-- `n_quantile_bins`: Number of quantile bins for feature discretization (1-65535)
 - `q_value_threshold`: Q-value threshold for model comparison (default: 0.01)
 - `ms1_scoring`: Whether to include MS1 scoring features (default: true)
 
@@ -66,7 +65,6 @@ function score_precursor_isotope_traces(
     max_q_value_mbr_itr::Float32,
     min_PEP_neg_threshold_itr::Float32,
     max_psms_in_memory::Int64,
-    n_quantile_bins::Int64,
     q_value_threshold::Float32 = 0.01f0,  # Default to 1% if not specified
     ms1_scoring::Bool = true
 )
@@ -78,11 +76,6 @@ function score_precursor_isotope_traces(
         # Case 1: Out-of-memory processing with default LightGBM (DISABLED)
         @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
         best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
-
-        # Add quantile-binned features before training
-        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
-        @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
-        add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
         # Use a ModelConfig (AdvancedLightGBM by default) for OOM path
         model_config = create_default_advanced_lightgbm_config(ms1_scoring)
@@ -99,11 +92,6 @@ function score_precursor_isotope_traces(
     else
         # In-memory processing - load PSMs first
         best_psms = load_psms_for_lightgbm(second_pass_folder)
-
-        # Add quantile-binned features before training
-        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
-        @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
-        add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
         if psms_count >= MAX_FOR_MODEL_SELECTION  # 100K
             # Case 2: In-memory with default/advanced LightGBM (no comparison)
@@ -360,16 +348,6 @@ function train_lightgbm_model_in_memory(
         ])
     end
 
-    # Diagnostic: Report which quantile-binned features are being used
-    qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
-    if !isempty(qbin_features)
-        @user_info "LightGBM using $(length(qbin_features)) quantile-binned features: $(join(string.(qbin_features), ", "))"
-        for qbin_feat in qbin_features
-            n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-            @user_info "  $qbin_feat: $n_unique unique values in training data"
-        end
-    end
-
     hp = model_config.hyperparams
     return sort_of_percolator_in_memory!(
         best_psms, features, match_between_runs;
@@ -407,17 +385,6 @@ function train_probit_model_in_memory(
     
     # Get features from config
     features = [f for f in model_config.features if hasproperty(best_psms, f)]
-
-    # Diagnostic: Report which quantile-binned features are being used
-    qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
-    if !isempty(qbin_features)
-        @user_info "Probit using $(length(qbin_features)) quantile-binned features: $(join(string.(qbin_features), ", "))"
-        for qbin_feat in qbin_features
-            n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-            col_type = eltype(best_psms[!, qbin_feat])
-            @user_info "  $qbin_feat: $n_unique unique values, type=$col_type"
-        end
-    end
 
     probit_regression_scoring_cv!(
         best_psms,
@@ -802,16 +769,6 @@ function score_precursor_isotope_traces_out_of_memory!(
             :MBR_log2_explained_ratio,
             :MBR_is_missing
             ])
-    end
-
-    # Diagnostic: Report which quantile-binned features are being used
-    qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
-    if !isempty(qbin_features)
-        @user_info "OOM LightGBM using $(length(qbin_features)) quantile-binned features: $(join(string.(qbin_features), ", "))"
-        for qbin_feat in qbin_features
-            n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-            @user_info "  $qbin_feat: $n_unique unique values in training sample"
-        end
     end
 
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]

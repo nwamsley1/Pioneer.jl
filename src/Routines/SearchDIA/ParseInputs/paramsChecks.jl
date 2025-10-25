@@ -278,15 +278,6 @@ function checkParams(json_path::String)
     check_param(ml_params, "min_PEP_neg_threshold_itr", Real)
     check_param(ml_params, "spline_points", Integer)
     check_param(ml_params, "interpolation_points", Integer)
-    check_param(ml_params, "n_quantile_bins", Integer)
-
-    # Validate n_quantile_bins bounds (UInt16 limit)
-    if ml_params["n_quantile_bins"] > 65535
-        throw(InvalidParametersError("n_quantile_bins must be ≤ 65535 (UInt16 limit), got $(ml_params["n_quantile_bins"])", ml_params))
-    end
-    if ml_params["n_quantile_bins"] < 1
-        throw(InvalidParametersError("n_quantile_bins must be ≥ 1, got $(ml_params["n_quantile_bins"])", ml_params))
-    end
 
     # Validate Protein Inference parameters
     output = params["proteinInference"]
