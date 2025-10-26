@@ -84,13 +84,16 @@ end
 ### Phase 2: Feature Engineering Pipeline
 
 #### Build Precursor-Level DataFrame
+**Design**: Accept a `score_column` parameter to handle both MBR and non-MBR cases uniformly.
+
 ```julia
 function build_precursor_features_df(
     merged_df::DataFrame,
     n_top_scores::Int,
-    sqrt_n_runs::Int
+    sqrt_n_runs::Int,
+    score_column::Symbol = :prec_prob  # Can be :prec_prob or :MBR_boosted_prec_prob
 )::DataFrame
-    # Use groupby to get all prec_prob values for each precursor
+    # Use groupby to get all score values for each precursor
     # This is similar to how current Step 5 works with transform!
     grouped = groupby(merged_df, :precursor_idx)
 
@@ -121,9 +124,9 @@ function build_precursor_features_df(
         precursor_features.target[idx] = first(group.target)
         precursor_features.cv_fold[idx] = first(group.cv_fold)
 
-        # Calculate features from prec_prob values
+        # Calculate features from score_column values (prec_prob or MBR_boosted_prec_prob)
         features = calculate_precursor_features(
-            group.prec_prob,
+            getproperty(group, score_column),
             n_top_scores,
             sqrt_n_runs
         )
@@ -298,6 +301,10 @@ end
 
 **Location**: `ScoringSearch.jl` lines 477-507
 
+**Design**: Separate paths for MBR on/off
+- When MBR is ON: ML for `MBR_boosted_global_prob`, logodds for `global_prob`
+- When MBR is OFF: ML for `global_prob`
+
 **Replace**:
 ```julia
 # Step 5: Calculate global probabilities from best traces
@@ -305,7 +312,7 @@ end
 
 **With**:
 ```julia
-# Step 5: Calculate global probabilities from best traces (ML or logodds)
+# Step 5: Calculate global probabilities from best traces using ML
 #@debug_l1 "Step 5: Calculating global probabilities from best traces..."
 step5_time = @elapsed begin
     # Merge filtered (best-trace-only) PSMs for global probability calculations
@@ -315,58 +322,101 @@ step5_time = @elapsed begin
 
     merged_df = DataFrame(Arrow.Table(merged_best_traces_path))
     sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
-    n_files = length(getFilePaths(getMSData(search_context)))
+    n_top_scores = min(params.n_top_scores_global_prob, length(valid_file_indices))
 
-    # Determine n_top_scores (can't exceed n_files)
-    n_top_scores = min(params.n_top_scores_global_prob, n_files)
-
-    # Build precursor-level features
-    precursor_features = build_precursor_features_df(
-        merged_df,
-        n_top_scores,
-        sqrt_n_runs
-    )
-
-    # Train ML models (one per CV fold)
-    model_fold_0, model_fold_1, feature_cols = train_global_prob_models(
-        precursor_features,
-        params
-    )
-
-    # Get ML predictions (out-of-fold)
-    ml_predictions = predict_global_probs_cv(
-        precursor_features,
-        model_fold_0,
-        model_fold_1,
-        feature_cols
-    )
-
-    # Select best method based on AUC
-    selected_method = select_best_global_prob_method(
-        precursor_features,
-        ml_predictions
-    )
-
-    # Create mapping: precursor_idx => global_prob
-    prec_to_global_prob = Dict{UInt32, Float32}()
-    for i in 1:nrow(precursor_features)
-        prec_idx = precursor_features.precursor_idx[i]
-        prec_to_global_prob[prec_idx] = selected_method == :ml ?
-            ml_predictions[i] :
-            precursor_features.logodds_score[i]
-    end
-
-    # Broadcast global_prob back to merged_df
-    merged_df[!, :global_prob] = [prec_to_global_prob[idx] for idx in merged_df.precursor_idx]
-
-    # Handle MBR case (if applicable)
     if hasproperty(merged_df, :MBR_boosted_prec_prob)
-        # Rebuild features using MBR_boosted_prec_prob
-        # (Similar pipeline but using MBR_boosted_prec_prob instead of prec_prob)
-        # ... [code for MBR variant]
-        # For now, keep simple logodds for MBR_boosted_global_prob
+        # MBR is ON: Use ML for MBR_boosted_global_prob, logodds for global_prob
+        @user_info "Step 5: MBR enabled - calculating MBR_boosted_global_prob with ML"
+
+        # Build features from MBR-boosted scores
+        precursor_features = build_precursor_features_df(
+            merged_df, n_top_scores, sqrt_n_runs, :MBR_boosted_prec_prob
+        )
+
+        # Train ML models
+        model_fold_0, model_fold_1, feature_cols = train_global_prob_models(
+            precursor_features, params
+        )
+
+        # Get predictions and select best method
+        ml_predictions = Vector{Float32}(undef, 0)
+        selected_method = :logodds  # Default fallback
+
+        if !isnothing(model_fold_0) && !isnothing(model_fold_1)
+            ml_predictions = predict_global_probs_cv(
+                precursor_features, model_fold_0, model_fold_1, feature_cols
+            )
+            selected_method = select_best_global_prob_method(
+                precursor_features, ml_predictions
+            )
+        else
+            @user_warn "ML model training failed - falling back to logodds"
+        end
+
+        # Use selected method for MBR_boosted_global_prob
+        if selected_method == :ml
+            precursor_features.MBR_boosted_global_prob = ml_predictions
+        else
+            precursor_features.MBR_boosted_global_prob = precursor_features.logodds_score
+        end
+
+        # Create mapping and broadcast MBR_boosted_global_prob
+        precursor_to_mbr_global_prob = Dict(
+            row.precursor_idx => row.MBR_boosted_global_prob
+            for row in eachrow(precursor_features)
+        )
+        merged_df.MBR_boosted_global_prob = [
+            precursor_to_mbr_global_prob[idx] for idx in merged_df.precursor_idx
+        ]
+
+        # Calculate standard global_prob using simple logodds on prec_prob
+        @user_info "  Calculating standard global_prob using logodds on prec_prob"
         transform!(groupby(merged_df, :precursor_idx),
-                   :MBR_boosted_prec_prob => (p -> logodds(p, sqrt_n_runs)) => :MBR_boosted_global_prob)
+                   :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+    else
+        # MBR is OFF: Use ML for global_prob
+        @user_info "Step 5: MBR disabled - calculating global_prob with ML"
+
+        # Build features from regular prec_prob
+        precursor_features = build_precursor_features_df(
+            merged_df, n_top_scores, sqrt_n_runs, :prec_prob
+        )
+
+        # Train ML models
+        model_fold_0, model_fold_1, feature_cols = train_global_prob_models(
+            precursor_features, params
+        )
+
+        # Get predictions and select best method
+        ml_predictions = Vector{Float32}(undef, 0)
+        selected_method = :logodds  # Default fallback
+
+        if !isnothing(model_fold_0) && !isnothing(model_fold_1)
+            ml_predictions = predict_global_probs_cv(
+                precursor_features, model_fold_0, model_fold_1, feature_cols
+            )
+            selected_method = select_best_global_prob_method(
+                precursor_features, ml_predictions
+            )
+        else
+            @user_warn "ML model training failed - falling back to logodds"
+        end
+
+        # Use selected method for global_prob
+        if selected_method == :ml
+            precursor_features.global_prob = ml_predictions
+        else
+            precursor_features.global_prob = precursor_features.logodds_score
+        end
+
+        # Create mapping and broadcast global_prob
+        precursor_to_global_prob = Dict(
+            row.precursor_idx => row.global_prob
+            for row in eachrow(precursor_features)
+        )
+        merged_df.global_prob = [
+            precursor_to_global_prob[idx] for idx in merged_df.precursor_idx
+        ]
     end
 
     # Write updated data back to individual files
@@ -511,11 +561,22 @@ SearchDIA("test/test_config/ecoli_test_params.json")
 - Consistent with user requirement
 
 ### MBR Handling
-**Decision**: Keep simple logodds for `MBR_boosted_global_prob` initially
+**Decision**: Separate paths for MBR on/off with different column outputs
+
+**When MBR is ON:**
+1. Train ML model using `MBR_boosted_prec_prob` → output `MBR_boosted_global_prob`
+2. Calculate `global_prob` from `prec_prob` using simple **logodds** (no ML)
+3. **Result**: Both columns (`MBR_boosted_global_prob` and `global_prob`)
+
+**When MBR is OFF:**
+1. Train ML model using `prec_prob` → output `global_prob`
+2. **Result**: Single column (`global_prob`)
+
 **Rationale**:
-- Focus on core implementation first
-- MBR path adds complexity (need to rebuild features with MBR-boosted scores)
-- Can extend to MBR in Phase 8 (future enhancement)
+- **Downstream compatibility**: Steps 6-10 expect `MBR_boosted_global_prob` when MBR is on
+- **Protein inference**: Always needs standard `global_prob` from non-MBR scores
+- **Correctness**: MBR-boosted scores get ML enhancement, while standard scores use simple logodds as baseline
+- **Flexibility**: When MBR is off, full ML power is applied to standard prec_prob
 
 ---
 
@@ -541,9 +602,8 @@ SearchDIA("test/test_config/ecoli_test_params.json")
 ## Future Enhancements (Out of Scope)
 
 1. **Iterative training** (like PSM scoring) - add negative mining
-2. **MBR support** - train separate models for MBR-boosted probabilities
-3. **Additional features**:
+2. **Additional features**:
    - RT variance across runs
    - Spectral angle variance
    - Mass error consistency
-5. **Hyperparameter tuning** - optimize LightGBM parameters via grid search
+3. **Hyperparameter tuning** - optimize LightGBM parameters via grid search

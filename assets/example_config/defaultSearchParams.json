@@ -149,7 +149,10 @@
             "validation_split_ratio": 0.2,
             "qvalue_threshold": 0.01,
             "min_psms_for_comparison": 1000,
-            "max_psms_for_comparison": 100000
+            "max_psms_for_comparison": 100000,
+            "global_prob_n_iterations": 2,
+            "global_prob_qvalue_threshold": 0.01,
+            "global_prob_min_PEP_threshold": 0.5
         }
     },
     "proteinInference": {

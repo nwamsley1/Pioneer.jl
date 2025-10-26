@@ -507,6 +507,7 @@ function get_quant_necessary_columns(match_between_runs::Bool)
         qval_cols.pep,  # Always :pep but included for consistency
         :weight,
         :target,
+        :cv_fold,  # Needed for ML global probability training (cross-validation folds from library)
         :rt,
         :irt_obs,
         :missed_cleavage,

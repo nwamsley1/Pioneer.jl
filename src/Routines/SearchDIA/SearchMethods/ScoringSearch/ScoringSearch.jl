@@ -26,8 +26,11 @@ struct ScoringSearch <: SearchMethod end
 # Note: FileReferences, SearchResultReferences, and FileOperations are already
 # included by importScripts.jl - no need to include them here
 
+# Include global probability ML functions
+include("global_prob_ml.jl")
+
 #==========================================================
-Type Definitions 
+Type Definitions
 ==========================================================#
 
 """
@@ -73,6 +76,11 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # MS1 scoring parameter
     ms1_scoring::Bool
 
+    # Global probability iterative training parameters
+    global_prob_n_iterations::Int
+    global_prob_qvalue_threshold::Float32
+    global_prob_min_PEP_threshold::Float32
+
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
         ml_params = params.optimization.machine_learning
@@ -110,7 +118,12 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Int64(get(ml_params, :max_psms_for_comparison, 100000)),
 
             # MS1 scoring parameter
-            Bool(global_params.ms1_scoring)
+            Bool(global_params.ms1_scoring),
+
+            # Global probability iteration parameters
+            Int(get(ml_params, :global_prob_n_iterations, 2)),
+            Float32(get(ml_params, :global_prob_qvalue_threshold, 0.01)),
+            Float32(get(ml_params, :global_prob_min_PEP_threshold, 0.5))
         )
     end
 end
@@ -474,7 +487,7 @@ function summarize_results!(
         end
         #@debug_l1 "Step 4 completed in $(round(step4_time, digits=2)) seconds"
 
-        # Step 5: Calculate global probabilities from best traces
+        # Step 5: Calculate global probabilities from best traces using ML
         #@debug_l1 "Step 5: Calculating global probabilities from best traces..."
         step5_time = @elapsed begin
             # Merge filtered (best-trace-only) PSMs for global probability calculations
@@ -486,17 +499,172 @@ function summarize_results!(
             sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
 
             if hasproperty(merged_df, :MBR_boosted_prec_prob)
-                # Calculate global probabilities from MBR-boosted precursor probabilities
-                transform!(groupby(merged_df, :precursor_idx),
-                           :MBR_boosted_prec_prob => (p -> logodds(p, sqrt_n_runs)) => :MBR_boosted_global_prob)
+                # MBR is ON: Use ML for MBR_boosted_global_prob, logodds for global_prob
+                @user_info "Step 5: MBR enabled - calculating MBR_boosted_global_prob with ML"
 
-                # Also calculate global probabilities from non-MBR precursor probabilities for protein inference
+                # Build features from MBR-boosted scores
+                precursor_features = build_precursor_features_df(
+                    merged_df, sqrt_n_runs, :MBR_boosted_prec_prob
+                )
+
+                # Train ML models with iterative refinement
+                model_fold_0, model_fold_1, feature_cols = train_global_prob_models(
+                    precursor_features,
+                    params,
+                    params.global_prob_n_iterations,
+                    params.global_prob_qvalue_threshold,
+                    params.global_prob_min_PEP_threshold
+                )
+
+                # Check for potential data leakage in features
+                @user_info "  Checking features for potential data leakage..."
+                for feature in feature_cols
+                    feat_vals = precursor_features[!, feature]
+                    target_feat = feat_vals[precursor_features.target]
+                    decoy_feat = feat_vals[.!precursor_features.target]
+
+                    # Check for perfect separation in any single feature
+                    if maximum(decoy_feat) < minimum(target_feat) || minimum(decoy_feat) > maximum(target_feat)
+                        @user_warn "    ⚠ Feature :$feature shows perfect separation!"
+                        @user_warn "      Decoy range: [$(minimum(decoy_feat)), $(maximum(decoy_feat))]"
+                        @user_warn "      Target range: [$(minimum(target_feat)), $(maximum(target_feat))]"
+                    end
+                end
+
+                # Get predictions and select best method
+                ml_predictions = Vector{Float32}(undef, 0)
+                selected_method = :logodds  # Default fallback
+
+                if !isnothing(model_fold_0) && !isnothing(model_fold_1)
+                    ml_predictions = predict_global_probs_cv(
+                        precursor_features, model_fold_0, model_fold_1, feature_cols
+                    )
+                    selected_method = select_best_global_prob_method(
+                        precursor_features, ml_predictions
+                    )
+
+                    # Diagnostic output for ML predictions
+                    @user_info "  ML Prediction Diagnostics:"
+                    @user_info "    All predictions - min: $(minimum(ml_predictions)), max: $(maximum(ml_predictions)), mean: $(round(mean(ml_predictions), digits=4))"
+
+                    # Split by target/decoy
+                    target_mask = precursor_features.target
+                    target_preds = ml_predictions[target_mask]
+                    decoy_preds = ml_predictions[.!target_mask]
+
+                    @user_info "    Target predictions (n=$(length(target_preds))) - min: $(minimum(target_preds)), max: $(maximum(target_preds)), mean: $(round(mean(target_preds), digits=4))"
+                    @user_info "    Decoy predictions (n=$(length(decoy_preds))) - min: $(minimum(decoy_preds)), max: $(maximum(decoy_preds)), mean: $(round(mean(decoy_preds), digits=4))"
+
+                    # Check for perfect separation
+                    if maximum(decoy_preds) < minimum(target_preds)
+                        @user_warn "  ⚠ Perfect separation detected! Max decoy pred ($(maximum(decoy_preds))) < Min target pred ($(minimum(target_preds)))"
+                        @user_warn "  This suggests potential data leakage in features"
+                    end
+                else
+                    @user_warn "ML model training failed - falling back to logodds"
+                end
+
+                # Use selected method for MBR_boosted_global_prob
+                if selected_method == :ml
+                    precursor_features.MBR_boosted_global_prob = ml_predictions
+                else
+                    precursor_features.MBR_boosted_global_prob = precursor_features.logodds_score
+                end
+
+                # Create mapping and broadcast MBR_boosted_global_prob
+                precursor_to_mbr_global_prob = Dict(
+                    row.precursor_idx => row.MBR_boosted_global_prob
+                    for row in eachrow(precursor_features)
+                )
+                merged_df.MBR_boosted_global_prob = [
+                    precursor_to_mbr_global_prob[idx] for idx in merged_df.precursor_idx
+                ]
+
+                # Calculate standard global_prob using simple logodds on prec_prob
+                @user_info "  Calculating standard global_prob using logodds on prec_prob"
                 transform!(groupby(merged_df, :precursor_idx),
                            :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
             else
-                # No MBR: only calculate global probabilities from base precursor probabilities
-                transform!(groupby(merged_df, :precursor_idx),
-                           :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+                # MBR is OFF: Use ML for global_prob
+                @user_info "Step 5: MBR disabled - calculating global_prob with ML"
+
+                # Build features from regular prec_prob
+                precursor_features = build_precursor_features_df(
+                    merged_df, sqrt_n_runs, :prec_prob
+                )
+
+                # Train ML models with iterative refinement
+                model_fold_0, model_fold_1, feature_cols = train_global_prob_models(
+                    precursor_features,
+                    params,
+                    params.global_prob_n_iterations,
+                    params.global_prob_qvalue_threshold,
+                    params.global_prob_min_PEP_threshold
+                )
+
+                # Check for potential data leakage in features
+                @user_info "  Checking features for potential data leakage..."
+                for feature in feature_cols
+                    feat_vals = precursor_features[!, feature]
+                    target_feat = feat_vals[precursor_features.target]
+                    decoy_feat = feat_vals[.!precursor_features.target]
+
+                    # Check for perfect separation in any single feature
+                    if maximum(decoy_feat) < minimum(target_feat) || minimum(decoy_feat) > maximum(target_feat)
+                        @user_warn "    ⚠ Feature :$feature shows perfect separation!"
+                        @user_warn "      Decoy range: [$(minimum(decoy_feat)), $(maximum(decoy_feat))]"
+                        @user_warn "      Target range: [$(minimum(target_feat)), $(maximum(target_feat))]"
+                    end
+                end
+
+                # Get predictions and select best method
+                ml_predictions = Vector{Float32}(undef, 0)
+                selected_method = :logodds  # Default fallback
+
+                if !isnothing(model_fold_0) && !isnothing(model_fold_1)
+                    ml_predictions = predict_global_probs_cv(
+                        precursor_features, model_fold_0, model_fold_1, feature_cols
+                    )
+                    selected_method = select_best_global_prob_method(
+                        precursor_features, ml_predictions
+                    )
+
+                    # Diagnostic output for ML predictions
+                    @user_info "  ML Prediction Diagnostics:"
+                    @user_info "    All predictions - min: $(minimum(ml_predictions)), max: $(maximum(ml_predictions)), mean: $(round(mean(ml_predictions), digits=4))"
+
+                    # Split by target/decoy
+                    target_mask = precursor_features.target
+                    target_preds = ml_predictions[target_mask]
+                    decoy_preds = ml_predictions[.!target_mask]
+
+                    @user_info "    Target predictions (n=$(length(target_preds))) - min: $(minimum(target_preds)), max: $(maximum(target_preds)), mean: $(round(mean(target_preds), digits=4))"
+                    @user_info "    Decoy predictions (n=$(length(decoy_preds))) - min: $(minimum(decoy_preds)), max: $(maximum(decoy_preds)), mean: $(round(mean(decoy_preds), digits=4))"
+
+                    # Check for perfect separation
+                    if maximum(decoy_preds) < minimum(target_preds)
+                        @user_warn "  ⚠ Perfect separation detected! Max decoy pred ($(maximum(decoy_preds))) < Min target pred ($(minimum(target_preds)))"
+                        @user_warn "  This suggests potential data leakage in features"
+                    end
+                else
+                    @user_warn "ML model training failed - falling back to logodds"
+                end
+
+                # Use selected method for global_prob
+                if selected_method == :ml
+                    precursor_features.global_prob = ml_predictions
+                else
+                    precursor_features.global_prob = precursor_features.logodds_score
+                end
+
+                # Create mapping and broadcast global_prob
+                precursor_to_global_prob = Dict(
+                    row.precursor_idx => row.global_prob
+                    for row in eachrow(precursor_features)
+                )
+                merged_df.global_prob = [
+                    precursor_to_global_prob[idx] for idx in merged_df.precursor_idx
+                ]
             end
 
             # Write updated data back to individual files

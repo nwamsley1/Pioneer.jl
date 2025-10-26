@@ -279,6 +279,24 @@ function checkParams(json_path::String)
     check_param(ml_params, "spline_points", Integer)
     check_param(ml_params, "interpolation_points", Integer)
 
+    # Validate global probability iteration parameters
+    check_param(ml_params, "global_prob_n_iterations", Integer)
+    check_param(ml_params, "global_prob_qvalue_threshold", Real)
+    check_param(ml_params, "global_prob_min_PEP_threshold", Real)
+
+    # Validate global probability iteration parameter ranges
+    if ml_params["global_prob_n_iterations"] < 1
+        error("optimization.machine_learning.global_prob_n_iterations must be at least 1 (got $(ml_params["global_prob_n_iterations"]))")
+    end
+
+    if ml_params["global_prob_qvalue_threshold"] <= 0 || ml_params["global_prob_qvalue_threshold"] > 1
+        error("optimization.machine_learning.global_prob_qvalue_threshold must be in (0, 1] (got $(ml_params["global_prob_qvalue_threshold"]))")
+    end
+
+    if ml_params["global_prob_min_PEP_threshold"] <= 0 || ml_params["global_prob_min_PEP_threshold"] > 1
+        error("optimization.machine_learning.global_prob_min_PEP_threshold must be in (0, 1] (got $(ml_params["global_prob_min_PEP_threshold"]))")
+    end
+
     # Validate Protein Inference parameters
     output = params["proteinInference"]
     check_param(output, "min_peptides", Integer)
