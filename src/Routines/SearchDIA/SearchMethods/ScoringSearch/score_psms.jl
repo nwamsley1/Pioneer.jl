@@ -81,7 +81,6 @@ function score_precursor_isotope_traces(
 
         # Add quantile-binned features before training
         features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
-        @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
         # Use a ModelConfig (AdvancedLightGBM by default) for OOM path
@@ -102,7 +101,6 @@ function score_precursor_isotope_traces(
 
         # Add quantile-binned features before training
         features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
-        @user_info "Creating quantile-binned features with $n_quantile_bins bins: $(join(string.(features_to_bin), ", "))"
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
         if psms_count >= MAX_FOR_MODEL_SELECTION  # 100K
@@ -363,10 +361,8 @@ function train_lightgbm_model_in_memory(
     # Diagnostic: Report which quantile-binned features are being used
     qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
     if !isempty(qbin_features)
-        @user_info "LightGBM using $(length(qbin_features)) quantile-binned features: $(join(string.(qbin_features), ", "))"
         for qbin_feat in qbin_features
             n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-            @user_info "  $qbin_feat: $n_unique unique values in training data"
         end
     end
 
@@ -411,11 +407,9 @@ function train_probit_model_in_memory(
     # Diagnostic: Report which quantile-binned features are being used
     qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
     if !isempty(qbin_features)
-        @user_info "Probit using $(length(qbin_features)) quantile-binned features: $(join(string.(qbin_features), ", "))"
         for qbin_feat in qbin_features
             n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
             col_type = eltype(best_psms[!, qbin_feat])
-            @user_info "  $qbin_feat: $n_unique unique values, type=$col_type"
         end
     end
 

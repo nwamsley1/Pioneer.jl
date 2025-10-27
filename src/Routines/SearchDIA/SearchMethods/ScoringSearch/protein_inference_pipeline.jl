@@ -253,7 +253,6 @@ function group_psms_by_protein(df::DataFrame)
 
     # Determine which probability column to use for protein scoring
     if hasproperty(df, :MBR_boosted_prec_prob)
-        @user_warn "Using MBR_boosted_prec_prob instead of prec_prob for protein group scoring"
         prob_col = :MBR_boosted_prec_prob
     else
         prob_col = :prec_prob
