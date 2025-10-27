@@ -1,12 +1,12 @@
 {
     "comment_paths": "=== File paths and output configuration - Edit these first ===",
     "fasta_paths": [
-        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
+        "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
     ],
     "fasta_names": [
         "MINIMAL_PROTEIN"
     ],
-    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output",
+    "out_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output",
     "lib_name": "minimal_mc1",
     "new_lib_name": "minimal_mc1",
     "out_name": "minimal_mc1.tsv",

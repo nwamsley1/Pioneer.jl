@@ -1,7 +1,7 @@
 {
     "comment_paths": "=== File paths - Edit these first ===",
     "fasta_paths": [
-        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/single_protein.fasta"
+        "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/single_protein.fasta"
     ],
     "fasta_names": [
         "SINGLE_PROTEIN"
@@ -18,9 +18,9 @@
     "fasta_header_regex_organisms": [
         " OS=([^ ]+.*?) [^ ]+="
     ],
-    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output",
-    "lib_name": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
-    "new_lib_name": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "out_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output",
+    "lib_name": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "new_lib_name": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
     "out_name": "test_lib.tsv",
     "comment_library": "=== Library settings ===",
     "library_params": {

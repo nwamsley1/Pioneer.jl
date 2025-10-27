@@ -3,8 +3,8 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-10-13T16:01:42.157
-Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_3/output/frag_mult_3.poin
+Starting library build at: 2025-10-27T09:55:31.226
+Output directory: /Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_3/output/frag_mult_3.poin
 
 Detecting fragment bounds...
 Fragment m/z range: FragBoundModel(ImmutablePolynomial(150.0f0), ImmutablePolynomial(2000.0f0))
@@ -38,38 +38,38 @@ Collision Energy Setup                   0.00         0.00         0.00         
 File Verification                        0.00         0.00         0.00         0.0         
 Directory Setup                          0.00         0.00         0.00         0.0         
 Model Validation                         0.00         0.00         0.00         0.0         
-Fragment Bound Detection                 0.00         0.00         0.00         0.0         
 Parameter Loading                        0.00         0.00         0.00         0.0         
-Chronologer Preparation                  0.62         0.01         0.00         0.0         
-Chronologer Output Processing            0.70         0.01         0.07         10.0        
-Fragment Prediction                      0.76         0.01         0.00         0.0         
-Index Building                           0.86         0.02         0.07         7.8         
-Retention Time Prediction                0.89         0.01         0.00         0.0         
-Prediction Processing                    1.25         0.02         0.07         5.3         
+Fragment Bound Detection                 0.00         0.00         0.00         0.0         
+Chronologer Preparation                  0.00         0.00         0.00         0.0         
+Index Building                           0.08         0.00         0.08         92.0        
+Chronologer Output Processing            0.08         0.00         0.08         96.6        
+Prediction Processing                    0.10         0.00         0.08         85.9        
+Retention Time Prediction                0.40         0.00         0.00         0.0         
+Fragment Prediction                      0.49         0.00         0.00         0.0         
 ------------------------------------------------------------------------------------------
-TOTAL                                    5.09         0.07         0.20         4.0         
+TOTAL                                    1.16         0.00         0.24         20.7        
 
 Performance Summary:
 ------------------------------------------------------------------------------------------
-Total Runtime: 0.08 minutes
-Total Garbage Collection Time: 0.2 seconds
+Total Runtime: 0.02 minutes
+Total Garbage Collection Time: 0.24 seconds
 Number of Steps: 12
-Average Step Runtime: 0.42 seconds
+Average Step Runtime: 0.1 seconds
 
 Memory Usage Summary:
 ------------------------------------------------------------------------------------------
-Total Memory Allocated: 0.07 GB
-Peak  Memory Usage: 3.88 GB
+Total Memory Allocated: 0.0 GB
+Peak  Memory Usage: 4.1 GB
 Total Available System Memory: 48.0 GB
 
 Process Information:
 ------------------------------------------------------------------------------------------
 Number of Threads: 10
-Julia Version: 1.11.7
-System: arm64-apple-darwin24.0.0
+Julia Version: 1.12.0
+System: arm64-apple-darwin22.4.0
 
 ==========================================================================================
 
-Library building completed at: 2025-10-13T16:01:47.254
+Library building completed at: 2025-10-27T09:55:32.388
 
-Library location: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_3/output/frag_mult_3.poin
+Library location: /Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_3/output/frag_mult_3.poin
