@@ -501,6 +501,9 @@ function process_initial_psms(
         getTICs(spectra)
     )
     
+    # Necessary for stability
+    sort!(psms, [:rt, :precursor_idx])
+    
     score_presearch!(psms)
     get_qvalues!(psms[!,:prob], psms[!,:target], psms[!,:q_value])
 

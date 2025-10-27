@@ -133,7 +133,8 @@ function writePrecursorCSV(
     long_precursors_path::String,
     file_names::Vector{String},
     normalized::Bool,
-    proteins::LibraryProteins;
+    proteins::LibraryProteins,
+    match_between_runs::Bool;
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
@@ -187,6 +188,10 @@ function writePrecursorCSV(
     if isfile(wide_precursors_arrow_path)
         safeRm(wide_precursors_arrow_path, nothing)
     end
+    # Get conditional q-value column names based on MBR mode
+    global_qval_col = match_between_runs ? :MBR_boosted_global_qval : :global_qval
+    qval_col = match_between_runs ? :MBR_boosted_qval : :qval
+
     wide_columns = ["species"
     "gene_names"
     "protein_names"
@@ -198,7 +203,7 @@ function writePrecursorCSV(
     "isotopic_mods"
     "prec_mz"
     "global_score"
-    "global_qval"
+    String(global_qval_col)  # Conditional: MBR_boosted_global_qval or global_qval
     "use_for_protein_quant"
     "precursor_idx"
     "target"
@@ -222,7 +227,7 @@ function writePrecursorCSV(
     push!(rename_pairs, :global_prob => :global_score)
     push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
     push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
-    
+
     # Apply all renames at once
     if !isempty(rename_pairs)
         rename!(precursors_long, rename_pairs)
@@ -244,8 +249,8 @@ function writePrecursorCSV(
         :missed_cleavage,
         :global_score,
         :score,
-        :global_qval,
-        :qval,
+        global_qval_col,  # Conditional: MBR_boosted_global_qval or global_qval
+        qval_col,         # Conditional: MBR_boosted_qval or qval
         :pep,
         :MBR_candidate,
         :MBR_transfer_q_value,

@@ -20,13 +20,13 @@ Trace Selection
 ==========================================================#
 
 """
-    get_best_traces(second_pass_psms_paths::Vector{String}, min_prob::Float32=0.75f0) 
+    get_best_traces(second_pass_psms_paths::Vector{String}, min_prob::Float32=0.75f0)
     -> Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}}
 
 Identify best scoring isotope traces for each precursor.
 
 # Process
-1. Accumulates scores across files
+1. Accumulates scores across files using MBR_boosted_trace_prob if available, otherwise trace_prob
 2. Selects highest scoring trace per precursor
 3. Returns set of best precursor-isotope combinations
 """
@@ -55,11 +55,15 @@ function get_best_traces(
         n_rows = length(psms_table[1])
         total_rows_processed += n_rows
         files_processed += 1
-        
+
+        # Use MBR_boosted_trace_prob if available, otherwise trace_prob
+        use_mbr_column = hasproperty(psms_table, :MBR_boosted_trace_prob)
+        score_column = use_mbr_column ? :MBR_boosted_trace_prob : :trace_prob
+
         for i in range(1, n_rows)
             psms_key = (precursor_idx = psms_table[:precursor_idx][i],  isotopes_captured = psms_table[:isotopes_captured][i])
 
-            row_score = psms_table[:prob][i]
+            row_score = psms_table[score_column][i]
             if haskey(psms_trace_scores, psms_key)
                 psms_trace_scores[psms_key] = psms_trace_scores[psms_key] + row_score
             else
@@ -428,6 +432,7 @@ end
 #==========================================================
 Protein group analysis
 ==========================================================#
+#=
 """
     getProteinGroupsDict(protein_inference_dict, psm_precursor_idx, psm_score, 
                         psm_is_target, psm_entrapment_id, precursors; min_peptides=2)
@@ -507,7 +512,7 @@ function getProteinGroupsDict(
     
     return protein_groups
 end
-
+=#
 
 """
     calculate_protein_features(builder::ProteinGroupBuilder, catalog::Dictionary{ProteinKey, Set{String}}) -> ProteinFeatures
@@ -763,9 +768,10 @@ function perform_protein_probit_regression(
     
     # Set protein group limit to 5x the precursor limit
     max_protein_groups_in_memory_limit = 5 * max_psms_in_memory
-    
-    if total_protein_groups > max_protein_groups_in_memory_limit
-        #Need to implement safety checks for minimal number of targets/decoys in each split 
+
+    # HARDCODED: Always use in-memory processing (OOM path disabled)
+    if false  # total_protein_groups > max_protein_groups_in_memory_limit
+        #Need to implement safety checks for minimal number of targets/decoys in each split (DISABLED) 
         
         # Check if we should skip scoring in OOM path
         # We need to load a sample to check targets/decoys
@@ -817,23 +823,23 @@ end
 
 """
     update_psms_with_probit_scores_refs(paired_refs::Vector{PairedSearchFiles},
-                                       acc_to_max_pg_score::Dict{ProteinKey,Float32},
+                                       pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
                                        pg_score_to_qval::Interpolations.Extrapolation,
-                                       global_pg_score_to_qval::Interpolations.Extrapolation)
+                                       global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32})
 
 Update PSMs with probit-scored pg_score values and q-values using references.
 
 # Arguments
 - `paired_refs`: Paired PSM/protein group file references
-- `acc_to_max_pg_score`: Dictionary mapping protein keys to global scores
+- `pg_name_to_global_pg_score`: Dictionary mapping protein keys to global scores
 - `pg_score_to_qval`: Interpolation function for pg_score to q-value
-- `global_pg_score_to_qval`: Interpolation function for global_pg_score to q-value
+- `global_pg_score_to_qval_dict`: Dictionary mapping (protein_name, target, entrap_id) to global q-value
 """
 function update_psms_with_probit_scores_refs(
     paired_refs::Vector{PairedSearchFiles},
-    acc_to_max_pg_score::Dict{ProteinKey,Float32},
+    pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
     pg_score_to_qval::Interpolations.Extrapolation,
-    global_pg_score_to_qval::Interpolations.Extrapolation
+    global_pg_score_to_qval_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
 )
 
     total_psms_updated = 0
@@ -929,14 +935,16 @@ function update_psms_with_probit_scores_refs(
                 probit_pg_scores[i] = scores_tuple[1]
                 pg_peps[i] = scores_tuple[2]
                 
-                if !haskey(acc_to_max_pg_score, key)
+                if !haskey(pg_name_to_global_pg_score, key)
                     throw("Missing global pg score lookup key!!!")
                 end
-                global_pg_scores[i] = acc_to_max_pg_score[key]
-                
+                global_pg_scores[i] = pg_name_to_global_pg_score[key]
+
                 # Calculate q-values
                 pg_qvals[i] = pg_score_to_qval(probit_pg_scores[i])
-                global_pg_qvals[i] = global_pg_score_to_qval(global_pg_scores[i])
+                # Look up global q-value from dictionary using protein group key
+                dict_key = (key.name, key.is_target, key.entrap_id)
+                global_pg_qvals[i] = get(global_pg_score_to_qval_dict, dict_key, missing)
             end
             
             # Update columns
@@ -962,7 +970,10 @@ end
 
 
 
-
+# DISABLED: OOM protein probit function - only used when total_protein_groups > max_protein_groups_in_memory_limit
+# This function is commented out in favor of always using in-memory processing.
+# Preserved for potential future use if needed for extremely large datasets.
+#=
 """
     perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_groups::Int, 
                                max_protein_groups_in_memory::Int, qc_folder::String)
@@ -1069,6 +1080,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         end
     end
 end
+=#
 
 """
     perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String, 
@@ -1111,30 +1123,11 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     # Fit probit model
     #β_fitted, X_mean, X_std = fit_probit_model(X, y)
     β_fitted = fit_probit_model(X, y)
-    # Report basic model statistics
-    # Create decision boundary plots
-    # TODO: Fix plotting type error
-    # plot_probit_decision_boundary(all_protein_groups, β_fitted, X_mean, X_std, feature_names, qc_folder)
-    
     # Re-process individual files if references are provided
     if !isempty(pg_refs)
         # Use the new apply_probit_scores! function with references
         apply_probit_scores!(pg_refs, β_fitted, feature_names)
     end
-    #=
-    if show_improvement && !isempty(pg_refs)
-        # Merge all protein group files to calculate improvement
-        pg_paths = [file_path(ref) for ref in pg_refs]
-        all_pgs = vcat([DataFrame(Arrow.Table(path)) for path in pg_paths]...)
-        old_qvalues = zeros(Float32, size(all_pgs, 1))
-        get_qvalues!(all_pgs[!,:old_pg_score], all_pgs[!,:target], old_qvalues)
-        old_passing = sum((old_qvalues .<= 0.01f0) .& all_pgs.target)
-        new_qvalues = zeros(Float32, size(all_pgs, 1))
-        get_qvalues!(all_pgs[!,:pg_score], all_pgs[!,:target], new_qvalues)
-        new_passing = sum((new_qvalues .<= 0.01f0) .& all_pgs.target)
-        percent_improv = 100.0*(new_passing - old_passing)/old_passing |> round 
-    end
-    =#
 end
 
 
@@ -1228,8 +1221,6 @@ function calculate_probit_scores(X::Matrix{Float64}, β::Vector{Float64}
     return prob_scores
 end
 
-
-
 """
     add_pep_column(new_col::Symbol, score_col::Symbol, target_col::Symbol;
                    doSort::Bool=false, fdr_scale_factor::Float32=1.0f0)
@@ -1258,14 +1249,14 @@ end
 #
 #=
 Have N of these tables. Need to combine into one sorted Arrow table without loading all tables
-into memory at once. 
+into memory at once.
 julia> DataFrame(Arrow.Table(readdir(second_quant_folder, join = true)[1]))
 280488×11 DataFrame
-    Row │ precursor_idx  prob      weight         target  irt_obs    missed_cleavage  isotopes_captured  scan_idx  ms_file_idx  peak_area   new_best_scan 
-        │ UInt32         Float32   Float32        Bool    Float32    UInt8            Tuple{Int8, Int8}  UInt32    Int64        Float32     UInt32        
-────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-      1 │       1468734  0.808784    201.467        true   0.659221                1  (0, 3)                49270            1     6.03541          50180
-      2 │        262434  0.989585   2696.17         true   0.659221                0  (0, 3)                76753            1   121.201            76753
+    Row │ precursor_idx  trace_prob  weight         target  irt_obs    missed_cleavage  isotopes_captured  scan_idx  ms_file_idx  peak_area   new_best_scan
+        │ UInt32         Float32     Float32        Bool    Float32    UInt8            Tuple{Int8, Int8}  UInt32    Int64        Float32     UInt32
+────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+      1 │       1468734    0.808784    201.467        true   0.659221                1  (0, 3)                49270            1     6.03541          50180
+      2 │        262434    0.989585   2696.17         true   0.659221                0  (0, 3)                76753            1   121.201            76753
 =#
 
 getColNames(at::Arrow.Table) = keys(at)
@@ -1701,9 +1692,10 @@ function build_protein_cv_fold_mapping(
     psm_paths::Vector{String},
     precursors::LibraryPrecursors
 )
+    @user_info "Building protein to CV fold mapping from PSM files"
     # Create mapping: protein_name -> (best_score=score, cv_fold=fold)
     protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
-    
+
     # Process each PSM file
     for psm_path in psm_paths
         # Skip if PSM file doesn't exist
@@ -1711,37 +1703,37 @@ function build_protein_cv_fold_mapping(
             @user_warn "PSM file not found: $psm_path"
             continue
         end
-        
+
         # Load PSM data
         psms = DataFrame(Arrow.Table(psm_path))
-        
+
         # Verify required columns exist
         required_columns = [:inferred_protein_group, :prec_prob, :precursor_idx]
         missing_columns = [col for col in required_columns if !hasproperty(psms, col)]
         if !isempty(missing_columns)
             error("PSM file $psm_path is missing required columns: $missing_columns")
         end
-        
+
         # Filter for valid PSMs with protein group assignments
         psms = filter(row -> !ismissing(row.inferred_protein_group), psms)
-        
+
         # Skip if no valid PSMs
         if nrow(psms) == 0
             continue
         end
-        
+
         # Group by inferred_protein_group
         for group in groupby(psms, :inferred_protein_group)
             protein_name = first(group.inferred_protein_group)
-            
+
             # Find highest scoring PSM
             best_idx = argmax(group.prec_prob)
             best_score = group.prec_prob[best_idx]
             precursor_idx = group.precursor_idx[best_idx]
-            
+
             # Get cv_fold from library (more reliable than PSM file)
             cv_fold = getCvFold(precursors, precursor_idx)
-            
+
             # Update if this is the best score for this protein
             value = (best_score = best_score, cv_fold = cv_fold)
             if !haskey(protein_to_cv_fold, protein_name)
@@ -1751,10 +1743,104 @@ function build_protein_cv_fold_mapping(
             end
         end
     end
-    
+
     return protein_to_cv_fold
 end
 
+#=
+"""
+    build_protein_cv_fold_mapping(psm_paths::Vector{String}, precursors::LibraryPrecursors)
+    -> Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}
+
+Build a mapping from protein names to CV fold assignments using RANDOM assignment.
+
+**TEMPORARY IMPLEMENTATION**: Replaces peptide-based assignment for testing.
+Each unique protein is randomly assigned to fold 0 or 1 with equal probability.
+
+# Arguments
+- `psm_paths`: Vector of paths to PSM files (used to discover proteins)
+- `precursors`: Library precursors (not used in random version, kept for signature compatibility)
+
+# Returns
+- Dictionary mapping protein_name to named tuple with:
+  - `best_score`: Set to 1.0f0 (dummy value, not used in CV)
+  - `cv_fold`: Randomly assigned to 0 or 1
+
+# Process
+1. Scans PSM files to collect all unique protein names
+2. Randomly assigns each protein to fold 0 or 1
+3. Uses fixed random seed (1234) for reproducibility
+
+# Notes
+- **This is a simplified replacement for the peptide-based assignment**
+- All instances of the same protein get the same CV fold
+- Random seed ensures reproducible results across runs
+"""
+function build_protein_cv_fold_mapping(
+    psm_paths::Vector{String},
+    precursors::LibraryPrecursors
+)
+
+    # Fixed seed for reproducibility
+    rng = MersenneTwister(1776)
+
+    # Create mapping: protein_name -> (best_score=1.0, cv_fold=random)
+    protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
+
+    # Collect all unique protein names across all PSM files
+    all_proteins = Set{String}()
+
+    for psm_path in psm_paths
+        # Skip if PSM file doesn't exist
+        if !isfile(psm_path)
+            @user_warn "PSM file not found: $psm_path"
+            continue
+        end
+
+        # Load PSM data
+        psms = DataFrame(Arrow.Table(psm_path))
+
+        # Verify required column exists
+        if !hasproperty(psms, :inferred_protein_group)
+            @user_warn "PSM file missing :inferred_protein_group column: $psm_path"
+            continue
+        end
+
+        # Filter for valid PSMs with protein group assignments
+        psms = filter(row -> !ismissing(row.inferred_protein_group), psms)
+
+        # Add unique proteins to the set
+        for protein_name in psms.inferred_protein_group
+            push!(all_proteins, protein_name)
+        end
+    end
+
+    # Convert to sorted vector for deterministic iteration
+    protein_names = sort(collect(all_proteins))
+
+    # Randomly assign each protein to fold 0 or 1
+    n_proteins = length(protein_names)
+
+    @user_info "Random CV fold assignment: assigning $n_proteins unique proteins to 2 folds"
+
+    for protein_name in protein_names
+        # Randomly choose fold 0 or 1
+        cv_fold = rand(rng, UInt8[0, 1])
+
+        # Create entry with dummy best_score
+        value = (best_score = 1.0f0, cv_fold = cv_fold)
+        insert!(protein_to_cv_fold, protein_name, value)
+    end
+
+    # Report fold distribution
+    fold_0_count = count(p -> p.cv_fold == 0, values(protein_to_cv_fold))
+    fold_1_count = count(p -> p.cv_fold == 1, values(protein_to_cv_fold))
+
+    @user_info "Random CV fold distribution: Fold 0: $fold_0_count proteins, Fold 1: $fold_1_count proteins"
+
+    return protein_to_cv_fold
+end
+=#
 """
     assign_protein_group_cv_folds!(all_protein_groups::DataFrame, 
                                   protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
@@ -1895,6 +1981,9 @@ function perform_probit_analysis_multifold(
     skip_scoring = false,
     ms1_scoring::Bool = true
 )
+
+    #skip_scoring = true 
+    #@user_info "Skipped scoring!!!"
     # 1. Detect unique CV folds from library
     unique_cv_folds = detect_unique_cv_folds(precursors)
     n_folds = length(unique_cv_folds)
@@ -1916,8 +2005,10 @@ function perform_probit_analysis_multifold(
     end
 
     # 4. Define features (same as original)
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps]
-
+    #feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides] #:any_common_peps]
+    feature_names = [:pg_score, 
+    #:peptide_coverage, :n_possible_peptides,
+    :any_common_peps]
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, all_protein_groups)
     remove_zero_variance_columns!(feature_names, all_protein_groups)
@@ -1940,7 +2031,7 @@ function perform_probit_analysis_multifold(
 
         for test_fold in unique_cv_folds
             # Get training data (all folds except test_fold)
-            train_mask = (all_protein_groups.cv_fold .!= test_fold) .& train_mask_FDR
+            train_mask = (all_protein_groups.cv_fold .!= test_fold) #.& train_mask_FDR
             
             # Check if we have sufficient data
             n_train_targets = sum(all_protein_groups[train_mask, :target])

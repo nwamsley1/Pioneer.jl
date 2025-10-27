@@ -115,13 +115,24 @@ function UniformSpline(
         return X
     end
 
+    # insure the input is sorted so the spline fitting is stable under
+    # different numbers of threads
+    if issorted(t)
+        sorted_t = t
+        sorted_u = u
+    else
+        perm = sortperm(t)
+        sorted_t = t[perm]
+        sorted_u = u[perm]
+    end
+
     spline_basis = getSplineBasis(degree)
-    _first = minimum(t)
-    _last = maximum(t) 
+    _first = minimum(sorted_t)
+    _last = maximum(sorted_t)
     bin_width = (_last - _first)/(n_knots - 1)
     knots = collect(LinRange(_first, _last, n_knots))
-    X = buildDesignMat(t, collect(knots), bin_width, spline_basis)
-    c = X\u 
+    X = buildDesignMat(sorted_t, collect(knots), bin_width, spline_basis)
+    c = X\sorted_u
     XPoly = buildPieceWise(knots, bin_width, spline_basis)
     piecewise_polynomials = XPoly*c
     n_coeffs = n_knots*(degree + 1)
