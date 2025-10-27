@@ -354,7 +354,9 @@ function check_and_store_convergence!(results, search_context, params, ms_file_i
     
     # Store RT model from final PSMs (should always have filtered PSMs at convergence)
     if !isempty(final_psms)
-        rt_model_data = fit_irt_model(params, final_psms)
+        # Limit to top 3 PSMs per precursor to avoid over-representation in RT model
+        rt_psms = filter_top_psms_per_precursor(final_psms, 3)
+        rt_model_data = fit_irt_model(params, rt_psms)
         set_rt_to_irt_model!(results, search_context, params, ms_file_idx, rt_model_data)
     else
         @user_warn "No PSMs available for RT model at convergence - this should not happen"
@@ -543,8 +545,10 @@ function run_single_phase(
             # Track best attempt even if not converged
             if psm_count > 0 && !isempty(psms_initial)
                 # Fit RT model for best attempt tracking (only if we have filtered PSMs)
-                rt_model_data = fit_irt_model(params, psms_initial)
-                
+                # Limit to top 3 PSMs per precursor to avoid over-representation in RT model
+                rt_psms = filter_top_psms_per_precursor(psms_initial, 3)
+                rt_model_data = fit_irt_model(params, rt_psms)
+
                 # Update best attempt with filtered PSM count
                 update_best_attempt!(
                     iteration_state, psm_count, mass_err_model, rt_model_data, ppm_errs,
@@ -624,7 +628,9 @@ function run_single_phase(
             # Track best attempt after each iteration
             if mass_err_model !== nothing && psm_count > 0 && !isempty(psms_adjusted)
                 # Fit RT model for best attempt tracking (only if we have filtered PSMs)
-                rt_model_data = fit_irt_model(params, psms_adjusted)
+                # Limit to top 3 PSMs per precursor to avoid over-representation in RT model
+                rt_psms = filter_top_psms_per_precursor(psms_adjusted, 3)
+                rt_model_data = fit_irt_model(params, rt_psms)
 
                 # Update best attempt with filtered PSM count
                 update_best_attempt!(

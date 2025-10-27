@@ -422,12 +422,15 @@ function LibrarySearchNceTuning(
                 end
             end
         end
-        vcat(skipmissing(fetch.(tasks))...)
+        # Ensure we always return a DataFrame, not Vector{Any}
+        fetched = collect(skipmissing(fetch.(tasks)))
+        isempty(fetched) ? DataFrame() : vcat(fetched...)
     end
 
     # filter out empty DFs (which are actually Vectors instead of DataFrames)
     nonempty_dfs = filter(df -> df isa DataFrame, all_results)
-    return vcat(nonempty_dfs...)
+    # Ensure we always return a DataFrame, not Vector{Any}
+    return isempty(nonempty_dfs) ? DataFrame() : vcat(nonempty_dfs...)
 end
 
 function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}

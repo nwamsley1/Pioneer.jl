@@ -199,6 +199,40 @@ end
 #==========================================================
 RT modeling
 ==========================================================#
+
+"""
+    filter_top_psms_per_precursor(psms::DataFrame, max_per_precursor::Int=3)
+
+Filter PSMs to keep only the top N PSMs per unique precursor_idx.
+Selects PSMs with highest probability scores to avoid over-representation
+of abundant precursors in RT model fitting.
+
+# Arguments
+- `psms`: DataFrame containing PSMs with precursor_idx and prob columns
+- `max_per_precursor`: Maximum number of PSMs to keep per precursor (default: 3)
+
+# Returns
+- Filtered DataFrame with at most max_per_precursor PSMs per precursor_idx
+"""
+function filter_top_psms_per_precursor(psms::DataFrame, max_per_precursor::Int=3)
+    if isempty(psms) || !("precursor_idx" in names(psms))
+        return psms
+    end
+
+    # Group by precursor_idx and keep top N by probability score
+    filtered_psms = combine(groupby(psms, :precursor_idx)) do group
+        n_to_keep = min(nrow(group), max_per_precursor)
+        if n_to_keep == nrow(group)
+            return group
+        end
+        # Sort by prob (descending) and take top N
+        sorted_indices = sortperm(group.prob, rev=true)
+        return group[sorted_indices[1:n_to_keep], :]
+    end
+
+    return filtered_psms
+end
+
 """
     fit_irt_model(params::P, psms::DataFrame) where {P<:ParameterTuningSearchParameters}
 
