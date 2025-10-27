@@ -3,8 +3,8 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-10-13T16:00:32.862
-Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc1.poin
+Starting library build at: 2025-10-27T09:55:01.231
+Output directory: /Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc1.poin
 
 Detecting fragment bounds...
 Fragment m/z range: FragBoundModel(ImmutablePolynomial(150.0f0), ImmutablePolynomial(2000.0f0))
@@ -36,40 +36,40 @@ Step                                     Time (s)     Memory (GB)  GC Time (s)  
 ------------------------------------------------------------------------------------------
 Collision Energy Setup                   0.00         0.00         0.00         0.0         
 Model Validation                         0.01         0.00         0.00         0.0         
-Parameter Loading                        0.02         0.00         0.00         0.0         
-Directory Setup                          0.06         0.00         0.00         0.0         
-File Verification                        0.07         0.01         0.00         0.0         
-Fragment Bound Detection                 0.41         0.03         0.00         0.0         
-Chronologer Output Processing            1.35         0.07         0.08         6.1         
-Fragment Prediction                      1.96         0.24         0.00         0.0         
-Retention Time Prediction                2.03         0.13         0.00         0.0         
-Chronologer Preparation                  2.52         0.13         0.00         0.0         
-Index Building                           4.81         0.82         0.10         2.0         
-Prediction Processing                    5.77         0.94         0.11         2.0         
+Parameter Loading                        0.03         0.00         0.00         0.0         
+Directory Setup                          0.05         0.00         0.00         0.0         
+File Verification                        0.06         0.01         0.00         0.0         
+Fragment Bound Detection                 0.49         0.06         0.00         0.0         
+Chronologer Output Processing            0.93         0.09         0.09         9.6         
+Retention Time Prediction                1.64         0.13         0.00         0.0         
+Fragment Prediction                      1.65         0.27         0.00         0.0         
+Chronologer Preparation                  1.87         0.23         0.05         2.5         
+Prediction Processing                    4.34         1.10         0.14         3.2         
+Index Building                           4.61         1.09         0.11         2.5         
 ------------------------------------------------------------------------------------------
-TOTAL                                    18.99        2.37         0.29         1.5         
+TOTAL                                    15.67        2.99         0.39         2.5         
 
 Performance Summary:
 ------------------------------------------------------------------------------------------
-Total Runtime: 0.32 minutes
-Total Garbage Collection Time: 0.29 seconds
+Total Runtime: 0.26 minutes
+Total Garbage Collection Time: 0.39 seconds
 Number of Steps: 12
-Average Step Runtime: 1.58 seconds
+Average Step Runtime: 1.31 seconds
 
 Memory Usage Summary:
 ------------------------------------------------------------------------------------------
-Total Memory Allocated: 2.37 GB
-Peak  Memory Usage: 3.86 GB
+Total Memory Allocated: 2.99 GB
+Peak  Memory Usage: 4.09 GB
 Total Available System Memory: 48.0 GB
 
 Process Information:
 ------------------------------------------------------------------------------------------
 Number of Threads: 10
-Julia Version: 1.11.7
-System: arm64-apple-darwin24.0.0
+Julia Version: 1.12.0
+System: arm64-apple-darwin22.4.0
 
 ==========================================================================================
 
-Library building completed at: 2025-10-13T16:00:52.022
+Library building completed at: 2025-10-27T09:55:17.066
 
-Library location: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc1.poin
+Library location: /Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc1.poin

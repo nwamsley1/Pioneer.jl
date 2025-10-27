@@ -1,12 +1,12 @@
 {
     "comment_paths": "=== File paths and output configuration - Edit these first ===",
     "fasta_paths": [
-        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
+        "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
     ],
     "fasta_names": [
         "MINIMAL_PROTEIN"
     ],
-    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_var_mods/max_4_mods/output",
+    "out_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_var_mods/max_4_mods/output",
     "lib_name": "var_mods_4",
     "new_lib_name": "var_mods_4",
     "out_name": "var_mods_4.tsv",

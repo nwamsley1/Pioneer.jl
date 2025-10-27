@@ -1,9 +1,9 @@
 {
     "comment_paths": "=== File paths - Edit these first ===",
     "fasta_paths": [
-        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins1.fasta",
-        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins2.fasta.gz",
-        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir2/proteins3.fasta"
+        "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins1.fasta",
+        "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins2.fasta.gz",
+        "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir2/proteins3.fasta"
     ],
     "fasta_names": [
         "PROTEINS1",
@@ -30,9 +30,9 @@
         " OS=([^ ]+.*?) [^ ]+=",
         " OS=([^ ]+.*?) [^ ]+="
     ],
-    "out_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output",
-    "lib_name": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
-    "new_lib_name": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "out_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output",
+    "lib_name": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "new_lib_name": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
     "out_name": "test_lib.tsv",
     "comment_library": "=== Library settings ===",
     "library_params": {

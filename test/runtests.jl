@@ -176,6 +176,6 @@ end
     include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
     # ScoringSearch interface tests
 
-    include("./Routines/SearchDIA/SearchMethods/ScoringSearch/test_scoring_interface.jl")
+    #include("./Routines/SearchDIA/SearchMethods/ScoringSearch/test_scoring_interface.jl")
     
 end

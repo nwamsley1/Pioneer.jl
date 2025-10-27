@@ -3,8 +3,8 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-10-13T16:01:59.826
-Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_prosit/output/prosit_test.poin
+Starting library build at: 2025-10-27T09:55:36.599
+Output directory: /Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_prosit/output/prosit_test.poin
 
 Detecting fragment bounds...
 Fragment m/z range: FragBoundModel(ImmutablePolynomial(150.0f0), ImmutablePolynomial(2000.0f0))
@@ -35,41 +35,41 @@ Detailed Step Analysis:
 Step                                     Time (s)     Memory (GB)  GC Time (s)  GC %        
 ------------------------------------------------------------------------------------------
 Collision Energy Setup                   0.00         0.00         0.00         0.0         
-Directory Setup                          0.00         0.00         0.00         0.0         
 File Verification                        0.00         0.00         0.00         0.0         
+Directory Setup                          0.00         0.00         0.00         0.0         
 Model Validation                         0.00         0.00         0.00         0.0         
 Parameter Loading                        0.00         0.00         0.00         0.0         
 Fragment Bound Detection                 0.00         0.00         0.00         0.0         
-Chronologer Preparation                  0.67         0.01         0.00         0.0         
-Chronologer Output Processing            0.67         0.01         0.07         10.4        
-Retention Time Prediction                0.89         0.01         0.00         0.0         
-Fragment Prediction                      1.13         0.06         0.00         0.0         
-Index Building                           1.24         0.04         0.07         5.7         
-Prediction Processing                    1.89         0.14         0.08         4.0         
+Chronologer Preparation                  0.01         0.00         0.00         0.0         
+Chronologer Output Processing            0.09         0.00         0.08         96.6        
+Index Building                           0.37         0.03         0.08         21.2        
+Retention Time Prediction                0.40         0.00         0.00         0.0         
+Prediction Processing                    0.76         0.14         0.08         10.6        
+Fragment Prediction                      0.95         0.07         0.00         0.0         
 ------------------------------------------------------------------------------------------
-TOTAL                                    6.47         0.27         0.21         3.3         
+TOTAL                                    2.58         0.25         0.24         9.4         
 
 Performance Summary:
 ------------------------------------------------------------------------------------------
-Total Runtime: 0.11 minutes
-Total Garbage Collection Time: 0.21 seconds
+Total Runtime: 0.04 minutes
+Total Garbage Collection Time: 0.24 seconds
 Number of Steps: 12
-Average Step Runtime: 0.54 seconds
+Average Step Runtime: 0.21 seconds
 
 Memory Usage Summary:
 ------------------------------------------------------------------------------------------
-Total Memory Allocated: 0.27 GB
-Peak  Memory Usage: 3.89 GB
+Total Memory Allocated: 0.25 GB
+Peak  Memory Usage: 4.12 GB
 Total Available System Memory: 48.0 GB
 
 Process Information:
 ------------------------------------------------------------------------------------------
 Number of Threads: 10
-Julia Version: 1.11.7
-System: arm64-apple-darwin24.0.0
+Julia Version: 1.12.0
+System: arm64-apple-darwin22.4.0
 
 ==========================================================================================
 
-Library building completed at: 2025-10-13T16:02:06.303
+Library building completed at: 2025-10-27T09:55:39.182
 
-Library location: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_prosit/output/prosit_test.poin
+Library location: /Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_prosit/output/prosit_test.poin

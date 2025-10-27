@@ -121,7 +121,7 @@ function sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...;
     
     if parallel && length(refs) > 1
         if show_progress
-            Threads.@threads for ref in ProgressBar(refs)
+            Threads.@threads for ref in refs
                 if exists(ref)
                     sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false)
                 end
@@ -136,7 +136,7 @@ function sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...;
     else
         # Sequential processing
         if show_progress
-            for ref in ProgressBar(refs)
+            for ref in refs
                 if exists(ref)
                     sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false)
                 end
