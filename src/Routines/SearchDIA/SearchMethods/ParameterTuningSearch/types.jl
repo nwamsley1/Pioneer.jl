@@ -152,7 +152,7 @@ mutable struct IterationState
     # Best attempt tracking (for fallback when convergence fails)
     best_psm_count::Int64
     best_mass_error_model::Union{Nothing, MassErrorModel}
-    best_rt_model::Union{Nothing, Tuple{SplineRtConversionModel, Vector{Float32}, Vector{Float32}, Float32}}
+    best_rt_model::Union{Nothing, Tuple{RtConversionModel, Vector{Float32}, Vector{Float32}, Float32}}
     best_ppm_errs::Union{Nothing, Vector{Float64}}
     best_phase::Int64
     best_score::UInt8

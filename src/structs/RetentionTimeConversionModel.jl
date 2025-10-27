@@ -34,6 +34,15 @@ struct SplineRtConversionModel <: RtConversionModel
 end
 (s::SplineRtConversionModel)(x::AbstractFloat) = s.model(x)
 
+struct LinearRtConversionModel <: RtConversionModel
+    slope::Float32
+    intercept::Float32
+end
+
+function (m::LinearRtConversionModel)(rt::AbstractFloat)
+    return m.intercept + m.slope * rt
+end
+
 struct IdentityModel <: RtConversionModel
     model::Function
     function IdentityModel()
