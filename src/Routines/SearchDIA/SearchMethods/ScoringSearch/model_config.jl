@@ -429,7 +429,6 @@ function add_quantile_binned_features!(df::DataFrame, features::Vector{Symbol}, 
         # Diagnostic: report actual unique values
         n_unique = length(unique(skipmissing(binned_col)))
         eltype_str = has_missing ? "Union{Missing, $bin_type}" : "$bin_type"
-        @user_info "Created $binned_feature_name: $n_unique unique values (of $n_bins bins), type=$eltype_str"
     end
 
     return nothing

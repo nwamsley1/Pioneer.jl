@@ -16,7 +16,29 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #############################################################################
-# Target-Decoy Pairing Implementation
+# Random Precursor Pairing Implementation
+#############################################################################
+#
+# PAIRING STRATEGY:
+# Precursors are randomly paired within iRT bins (size 1000) regardless of
+# target/decoy status. This allows:
+#   - Target-Target pairs
+#   - Target-Decoy pairs
+#   - Decoy-Decoy pairs
+#
+# ALGORITHM:
+# 1. Within each iRT bin, collect all unique precursor_idx values
+# 2. Randomly shuffle using fixed seed (PAIRING_RANDOM_SEED = 1844)
+# 3. Pair consecutive elements: (1,2), (3,4), (5,6), etc.
+# 4. Both members of a pair share the same pair_id
+# 5. If odd number of precursors, last one becomes singleton pair
+#
+# BENEFITS:
+# - Every precursor has a pair (except 0-1 singleton per bin)
+# - More diverse training data for ML models
+# - Simpler implementation than target-decoy constrained pairing
+# - ML models learn from all pairing types (T-T, T-D, D-D)
+#
 #############################################################################
 
 const PAIRING_RANDOM_SEED = 1844  # Fixed seed for reproducible pairing
@@ -115,48 +137,105 @@ function assignPairIds!(psms::AbstractDataFrame, last_pair_id::UInt32)
     return last_pair_id
 end
 
+"""
+    assign_pair_ids(target, decoy, precursor_idx, irt_bin_idx, last_pair_id)
+
+Randomly assign pair IDs to precursors within an iRT bin, allowing all pairing types.
+
+# Arguments
+- `target::AbstractVector{Bool}`: Target/decoy labels (used only for statistics)
+- `decoy::AbstractVector{Bool}`: Decoy flags (used only for statistics)
+- `precursor_idx::AbstractVector{UInt32}`: Unique precursor identifiers
+- `irt_bin_idx::AbstractVector{UInt32}`: iRT bin identifiers
+- `last_pair_id::UInt32`: Last assigned pair_id (for continuity across bins)
+
+# Returns
+- `pair_ids::Vector{UInt32}`: Pair ID for each row
+- `last_pair_id::UInt32`: Updated last pair_id value
+
+# Pairing Strategy
+Within each iRT bin, all unique precursors are randomly shuffled and paired
+consecutively: (1,2), (3,4), (5,6), etc. This creates:
+- **Target-Target pairs**: Both members are targets
+- **Target-Decoy pairs**: One target, one decoy
+- **Decoy-Decoy pairs**: Both members are decoys
+- **Singleton pairs**: If odd number, last precursor pairs with itself
+
+# Notes
+- Uses fixed random seed (`PAIRING_RANDOM_SEED`) for reproducibility
+- Both members of a pair receive the same `pair_id`
+- Pairing is independent of target/decoy status
+- Reports pairing statistics to @debug_l2 log level
+"""
 function assign_pair_ids(
     target::AbstractVector{Bool}, decoy::AbstractVector{Bool},
     precursor_idx::AbstractVector{UInt32}, irt_bin_idx::AbstractVector{UInt32},
     last_pair_id::UInt32
 )
-    targets = unique(precursor_idx[target])
-    decoys = unique(precursor_idx[decoy])
-    target_perm = randperm(MersenneTwister(PAIRING_RANDOM_SEED), length(targets))
-    precursor_idx_to_pair_id = Dict{UInt32,UInt32}()  # Map from precursor_idx to pair_id
-    pair_ids = similar(precursor_idx, UInt32)
+    # Get all unique precursors in this iRT bin (regardless of target/decoy status)
+    unique_precursors = unique(precursor_idx)
+    n_precursors = length(unique_precursors)
 
-    n_paired = min(length(targets), length(decoys))
-    n_unpaired_targets = max(0, length(targets) - length(decoys))
-    n_unpaired_decoys = max(0, length(decoys) - length(targets))
+    # Randomly shuffle all precursors using fixed seed for reproducibility
+    perm = randperm(MersenneTwister(PAIRING_RANDOM_SEED), n_precursors)
+    shuffled_precursors = unique_precursors[perm]
 
-    for i in range(1, min(length(targets), length(decoys)))
+    # Create mapping from precursor_idx to pair_id
+    precursor_idx_to_pair_id = Dict{UInt32, UInt32}()
+
+    # Pair consecutive elements: (1,2), (3,4), (5,6), etc.
+    n_pairs = n_precursors ÷ 2
+    for i in 1:n_pairs
         last_pair_id += one(UInt32)
-        precursor_idx_to_pair_id[targets[target_perm[i]]] = last_pair_id
-        precursor_idx_to_pair_id[decoys[i]] = last_pair_id
+        precursor_idx_to_pair_id[shuffled_precursors[2*i - 1]] = last_pair_id
+        precursor_idx_to_pair_id[shuffled_precursors[2*i]] = last_pair_id
     end
-    if length(decoys) < length(targets)
-        #@user_warn "Fewer decoy precursors ($(length(decoys))) than target precursors ($(length(targets))) in iRT bin $(first(irt_bin_idx)). Some targets will remain unpaired."
-        for i in range(length(decoys)+1, length(targets))
-            last_pair_id += one(UInt32)
-            precursor_idx_to_pair_id[targets[target_perm[i]]] = last_pair_id
-        end
-    elseif length(targets) < length(decoys)
-        @debug_l2 "Fewer target precursors ($(length(targets))) than decoy precursors ($(length(decoys))) in iRT bin $(first(irt_bin_idx)). Some decoys will remain unpaired."
-        for i in range(length(targets)+1, length(decoys))
-            last_pair_id += one(UInt32)
-            precursor_idx_to_pair_id[decoys[i]] = last_pair_id
+
+    # Handle odd number - last precursor gets singleton pair_id
+    if isodd(n_precursors)
+        last_pair_id += one(UInt32)
+        precursor_idx_to_pair_id[shuffled_precursors[end]] = last_pair_id
+    end
+
+    # Count pairing types for reporting
+    n_target_target = 0
+    n_target_decoy = 0
+    n_decoy_decoy = 0
+    n_singleton = isodd(n_precursors) ? 1 : 0
+
+    # Build target/decoy lookup for statistics
+    precursor_is_target = Dict{UInt32, Bool}()
+    for (i, pid) in enumerate(precursor_idx)
+        if !haskey(precursor_is_target, pid)
+            precursor_is_target[pid] = target[i]
         end
     end
 
-    # Report pairing stats for this bin
-    if n_paired > 0 || n_unpaired_targets > 0 || n_unpaired_decoys > 0
-        @debug_l2 "iRT bin $(first(irt_bin_idx)): Paired=$n_paired, Unpaired targets=$n_unpaired_targets, Unpaired decoys=$n_unpaired_decoys"
+    # Count pair types
+    for i in 1:n_pairs
+        p1 = shuffled_precursors[2*i - 1]
+        p2 = shuffled_precursors[2*i]
+        is_t1 = precursor_is_target[p1]
+        is_t2 = precursor_is_target[p2]
+
+        if is_t1 && is_t2
+            n_target_target += 1
+        elseif !is_t1 && !is_t2
+            n_decoy_decoy += 1
+        else
+            n_target_decoy += 1
+        end
     end
 
-    for (row_idx, precursor_idx) in enumerate(precursor_idx)
-        pair_ids[row_idx] = precursor_idx_to_pair_id[precursor_idx]
+    # Report pairing statistics for this bin
+    @debug_l2 "iRT bin $(first(irt_bin_idx)): $(n_pairs) pairs (T-T: $n_target_target, T-D: $n_target_decoy, D-D: $n_decoy_decoy), Singletons: $n_singleton"
+
+    # Map all rows to their pair_ids
+    pair_ids = similar(precursor_idx, UInt32)
+    for (row_idx, pid) in enumerate(precursor_idx)
+        pair_ids[row_idx] = precursor_idx_to_pair_id[pid]
     end
+
     return pair_ids, last_pair_id
 end
 
@@ -291,12 +370,12 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             #predict_fold!(bst, psms_train, psms_test, train_feats)
             # **temporary predictions for training only**
             prob_train[train_idx] = predict(bst, psms_train)
-            psms_train[!,:prob] = prob_train[train_idx]
-            get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
+            psms_train[!,:trace_prob] = prob_train[train_idx]
+            get_qvalues!(psms_train.trace_prob, psms_train.target, psms_train.q_value)
 
             # **predict held-out fold**
             prob_test[test_idx] = predict(bst, psms_test)
-            psms_test[!,:prob] = prob_test[test_idx]
+            psms_test[!,:trace_prob] = prob_test[test_idx]
 
             #if itr == 1
             #    first_pass_estimates[test_idx] = prob_test[test_idx]
@@ -320,9 +399,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         end
         # Make predictions on hold out data.
         if match_between_runs
-            MBR_estimates[test_idx] = psms_test.prob
+            MBR_estimates[test_idx] = psms_test.trace_prob
         else
-            prob_test[test_idx] = psms_test.prob
+            prob_test[test_idx] = psms_test.trace_prob
         end
         # Store models for this fold
         models[test_fold_idx] = fold_models
@@ -340,21 +419,22 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         psms[!, :MBR_transfer_candidate] .= .!pass_mask .&
                                             (psms.MBR_max_pair_prob .>= prob_thresh)
 
-        # Use the final MBR probabilities for all precursors
-        psms[!, :prob] = MBR_estimates
-        # Store nonMBR estimates for later q-value recalculation
-        psms[!, :nonMBR_prob] = nonMBR_estimates
-        #psms[!,:first_pass_prob] = first_pass_estimates
+        # Store base trace probabilities (non-MBR)
+        psms[!, :trace_prob] = nonMBR_estimates
+        # Store MBR-enhanced trace probabilities
+        psms[!, :MBR_boosted_trace_prob] = MBR_estimates
     else
-        psms[!, :prob] = prob_test
-        # When MBR is disabled, nonMBR_prob equals the final prob
-        psms[!, :nonMBR_prob] = prob_test
-        #psms[!,:first_pass_prob] = first_pass_estimates
+        # Only store base trace probabilities
+        psms[!, :trace_prob] = prob_test
     end
 
     return models
 end
 
+# DISABLED: Out-of-memory processing - hardcoded to always use in-memory approach
+# This function is commented out in favor of always using in-memory processing.
+# Preserved for potential future use if needed for extremely large datasets.
+#=
 function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     file_paths::Vector{String},
                     features::Vector{Symbol},
@@ -376,7 +456,9 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         prec_to_best_score_new::Dictionary,
         file_paths::Vector{String},
         models::Dictionary{UInt8,LightGBMModel},
+        non_mbr_models::Union{Dictionary{UInt8,LightGBMModel}, Nothing},
         features::Vector{Symbol},
+        non_mbr_features::Vector{Symbol},
         match_between_runs::Bool;
         is_last_iteration::Bool = false)
     
@@ -385,24 +467,24 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             
         for file_path in file_paths
             psms_subset = DataFrame(Arrow.Table(file_path))
-            
-            probs = predict_cv_models(models, psms_subset, features)
-            
+
+            trace_probs = predict_cv_models(models, psms_subset, features)
+
             if match_between_runs && !is_last_iteration
-                #Update maximum probabilities for tracked precursors 
+                #Update maximum probabilities for tracked precursors
                 qvals = zeros(Float32, nrow(psms_subset))
-                get_qvalues!(probs, psms_subset.target, qvals)
+                get_qvalues!(trace_probs, psms_subset.target, qvals)
 
                 for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
-                    prob = probs[i]
+                    trace_prob = trace_probs[i]
                     key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
                     if haskey(prec_to_best_score_new, key)
                         scores = prec_to_best_score_new[key]
 
                         # Update running statistics with new probability
-                        updated_stats = update_pair_statistics(scores, prob)
+                        updated_stats = update_pair_statistics(scores, trace_prob)
 
-                        if prob > scores.best_prob_1
+                        if trace_prob > scores.best_prob_1
                            new_scores = merge(updated_stats, (
                                 # replace best_prob_2 with best_prob_1
                                 best_prob_2                     = scores.best_prob_1,
@@ -414,7 +496,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                 best_ms_file_idx_2              = scores.best_ms_file_idx_1,
                                 is_best_decoy_2                 = scores.is_best_decoy_1,
                                 # overwrite best_prob_1
-                                best_prob_1                     = prob,
+                                best_prob_1                     = trace_prob,
                                 best_log2_weights_1             = log2.(psms_subset.weights[i]),
                                 best_irts_1                     = psms_subset.irts[i],
                                 best_irt_residual_1             = irt_residual(psms_subset, i),
@@ -425,10 +507,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             ))
                             prec_to_best_score_new[key] = new_scores
 
-                        elseif prob > scores.best_prob_2
+                        elseif trace_prob > scores.best_prob_2
                             # overwrite best_prob_2
                             new_scores = merge(updated_stats, (
-                                best_prob_2                     = prob,
+                                best_prob_2                     = trace_prob,
                                 best_log2_weights_2             = log2.(psms_subset.weights[i]),
                                 best_irts_2                     = psms_subset.irts[i],
                                 best_irt_residual_2             = irt_residual(psms_subset, i),
@@ -449,11 +531,11 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
                     else
                         insert!(prec_to_best_score_new, key, (
-                                best_prob_1                     = prob,
+                                best_prob_1                     = trace_prob,
                                 best_prob_2                     = zero(Float32),
-                                worst_prob_1                    = prob,
+                                worst_prob_1                    = trace_prob,
                                 worst_prob_2                    = zero(Float32),
-                                mean_prob                       = prob,
+                                mean_prob                       = trace_prob,
                                 count_pairs                     = Int32(1),
                                 best_log2_weights_1             = log2.(psms_subset.weights[i]),
                                 best_log2_weights_2             = Vector{Float32}(),
@@ -480,24 +562,31 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
             if is_last_iteration
                 if match_between_runs
-                    update_mbr_probs!(psms_subset, probs, max_q_value_lightgbm_rescore)
+                    update_mbr_probs!(psms_subset, trace_probs, max_q_value_lightgbm_rescore)
                 else
-                    psms_subset.prob = probs
+                    psms_subset.trace_prob = trace_probs
                 end
 
             end
         end
     
 
-        # Compute probs and features for next round
+        # Compute trace_probs and features for next round
         for file_path in file_paths
             psms_subset = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-            probs = predict_cv_models(models, psms_subset, features)
+            trace_probs = predict_cv_models(models, psms_subset, features)
+
+            # On last iteration with MBR, also get non-MBR predictions
+            non_mbr_trace_probs = if is_last_iteration && match_between_runs && non_mbr_models !== nothing
+                predict_cv_models(non_mbr_models, psms_subset, non_mbr_features)
+            else
+                nothing
+            end
 
             for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
-                psms_subset[i,:prob] = probs[i]
-                
-                    
+                psms_subset[i,:trace_prob] = trace_probs[i]
+
+
                 if match_between_runs && !is_last_iteration
                     key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
                     if haskey(prec_to_best_score_new, key)
@@ -553,10 +642,24 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 end
             end
 
+            # On last iteration with MBR: trace_probs=MBR-boosted, non_mbr_trace_probs=base
+            # Otherwise: trace_probs=base, non_mbr_trace_probs=nothing
+            mbr_trace_probs_arg = if is_last_iteration && match_between_runs
+                trace_probs  # MBR-boosted predictions
+            else
+                nothing
+            end
+            trace_probs_arg = if is_last_iteration && match_between_runs && non_mbr_trace_probs !== nothing
+                non_mbr_trace_probs  # Non-MBR predictions
+            else
+                trace_probs  # Regular predictions
+            end
+
             write_subset(
                 file_path,
                 psms_subset,
-                probs,
+                trace_probs_arg,
+                mbr_trace_probs_arg,
                 match_between_runs,
                 max_q_value_lightgbm_rescore;
                 dropVectors = is_last_iteration,
@@ -629,7 +732,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             end
 
             # Get probabilities for training sample so we can get q-values
-            psms_train[!,:prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
+            psms_train[!,:trace_prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
             
             if match_between_runs
                 summarize_precursors!(psms_train, q_cutoff = max_q_value_lightgbm_rescore)
@@ -669,11 +772,28 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         for test_fold_idx in unique_cv_folds
             insert!(models_for_iter, test_fold_idx, models[test_fold_idx][train_iter])
         end
+
+        # On last iteration with MBR, also get previous (non-MBR) models
+        non_mbr_models_for_iter = if (train_iter == length(iter_scheme)) && match_between_runs && (train_iter > 1)
+            non_mbr_models = Dictionary{UInt8,LightGBMModel}()
+            for test_fold_idx in unique_cv_folds
+                insert!(non_mbr_models, test_fold_idx, models[test_fold_idx][train_iter - 1])
+            end
+            non_mbr_models
+        else
+            nothing
+        end
+
+        # Determine which features to use
+        current_features = (train_iter == length(iter_scheme)) ? features : non_mbr_features
+
         prec_to_best_score = getBestScorePerPrec!(
             prec_to_best_score,
             file_paths,
             models_for_iter,
-            features,
+            non_mbr_models_for_iter,
+            current_features,
+            non_mbr_features,
             match_between_runs;
             is_last_iteration = (train_iter == length(iter_scheme))
         )
@@ -682,6 +802,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
     return models
 end
+=#
 
 function train_booster(psms::AbstractDataFrame, features, num_round;
                        feature_fraction::Float64,
@@ -709,9 +830,9 @@ end
 
 function predict_fold!(bst, psms_train::AbstractDataFrame,
                        psms_test::AbstractDataFrame, features)
-    psms_test[!, :prob] = lightgbm_predict(bst, psms_test; output_type=Float32)
-    psms_train[!, :prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
-    get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
+    psms_test[!, :trace_prob] = lightgbm_predict(bst, psms_test; output_type=Float32)
+    psms_train[!, :trace_prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
+    get_qvalues!(psms_train.trace_prob, psms_train.target, psms_train.q_value)
 end
 
 function update_mbr_features!(psms_train::AbstractDataFrame,
@@ -722,12 +843,12 @@ function update_mbr_features!(psms_train::AbstractDataFrame,
                               mbr_start_iter::Int,
                               max_q_value_lightgbm_rescore::Float32)
     if itr >= mbr_start_iter - 1
-        get_qvalues!(psms_test.prob, psms_test.target, psms_test.q_value)
+        get_qvalues!(psms_test.trace_prob, psms_test.target, psms_test.q_value)
         summarize_precursors!(psms_test, q_cutoff = max_q_value_lightgbm_rescore)
         summarize_precursors!(psms_train, q_cutoff = max_q_value_lightgbm_rescore)
     end
     if itr == mbr_start_iter - 1
-        prob_test[test_fold_idxs] = psms_test.prob
+        prob_test[test_fold_idxs] = psms_test.trace_prob
     end
 end
 
@@ -757,7 +878,7 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
         best_p = fill(-Inf, range_len)
         for (i, run) in enumerate(sub_psms.ms_file_idx)
             idx = Int(run) - offset + 1
-            p = sub_psms.prob[i]
+            p = sub_psms.trace_prob[i]
             if p > best_p[idx]
                 best_p[idx] = p
                 best_i[idx] = i
@@ -810,7 +931,7 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(sub_psms.weights[i]))
             best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_iRTs, sub_psms.irts[i])
 
-            sub_psms.MBR_max_pair_prob[i] = sub_psms.prob[best_idx]
+            sub_psms.MBR_max_pair_prob[i] = sub_psms.trace_prob[best_idx]
             best_residual = irt_residual(sub_psms, best_idx)
             current_residual = irt_residual(sub_psms, i)
             sub_psms.MBR_best_irt_diff[i] = abs(best_residual - current_residual)
@@ -827,7 +948,7 @@ function initialize_prob_group_features!(
     match_between_runs::Bool
 )
     n = nrow(psms)
-    psms[!, :prob]      = zeros(Float32, n)
+    psms[!, :trace_prob]      = zeros(Float32, n)
     psms[!, :q_value]   = zeros(Float64, n)
 
     if match_between_runs
@@ -863,8 +984,8 @@ function get_training_data_for_iteration!(
         psms_train_itr = copy(psms_train)
 
         # Convert the worst-scoring targets to negatives using PEP estimate
-        order = sortperm(psms_train_itr.prob, rev=true)
-        sorted_scores  = psms_train_itr.prob[order]
+        order = sortperm(psms_train_itr.trace_prob, rev=true)
+        sorted_scores  = psms_train_itr.trace_prob[order]
         sorted_targets = psms_train_itr.target[order]
         PEPs = Vector{Float32}(undef, length(order))
         get_PEP!(sorted_scores, sorted_targets, PEPs; doSort=false)
@@ -894,7 +1015,8 @@ function dropVectorColumns!(df)
     # 2) Drop those columns in place
     select!(df, Not(to_drop))
 end
-
+# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
+#=
 """
     reset_precursor_scores!(dict)
 
@@ -925,7 +1047,10 @@ function reset_precursor_scores!(dict)
     end
     return dict
 end
+=#
 
+# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
+#=
 """
     predict_cv_models(models, df, features)
 
@@ -934,18 +1059,21 @@ Return a vector of probabilities for `df` using the cross validation `models`.
 function predict_cv_models(models::Dictionary{UInt8,LightGBMModel},
                            df::AbstractDataFrame,
                            features::Vector{Symbol})
-    probs = zeros(Float32, nrow(df))
+    trace_probs = zeros(Float32, nrow(df))
     for (fold_idx, bst) in pairs(models)
         fold_rows = findall(==(fold_idx), df[!, :cv_fold])
         if !isempty(fold_rows)
-            probs[fold_rows] = lightgbm_predict(bst, df[fold_rows, :]; output_type=Float32)
+            trace_probs[fold_rows] = lightgbm_predict(bst, df[fold_rows, :]; output_type=Float32)
         end
     end
-    return probs
+    return trace_probs
 end
+=#
 
+# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
+#=
 """
-    update_mbr_probs!(df, probs, qval_thresh)
+    update_mbr_probs!(df, trace_probs, qval_thresh)
 
 Store final MBR probabilities and mark transfer candidates as those
 failing the pre-MBR q-value threshold but whose best matched pair passed
@@ -953,21 +1081,26 @@ the corresponding probability cutoff.
 """
 function update_mbr_probs!(
     df::AbstractDataFrame,
-    probs::AbstractVector{Float32},
+    trace_probs::AbstractVector{Float32},
+    mbr_trace_probs::AbstractVector{Float32},
     qval_thresh::Float32,
 )
-    prev_qvals = similar(df.prob)
-    get_qvalues!(df.prob, df.target, prev_qvals)
+    prev_qvals = similar(trace_probs)
+    get_qvalues!(trace_probs, df.target, prev_qvals)
     pass_mask = (prev_qvals .<= qval_thresh) .& df.target
-    prob_thresh = any(pass_mask) ? minimum(df.prob[pass_mask]) : typemax(Float32)
+    trace_prob_thresh = any(pass_mask) ? minimum(trace_probs[pass_mask]) : typemax(Float32)
     df[!, :MBR_transfer_candidate] = (prev_qvals .> qval_thresh) .&
-                                     (df.MBR_max_pair_prob .>= prob_thresh)
-    df[!, :prob] = probs
+                                     (df.MBR_max_pair_prob .>= trace_prob_thresh)
+    df[!, :trace_prob] = trace_probs
+    df[!, :MBR_boosted_trace_prob] = mbr_trace_probs
     return df
 end
+=#
 
+# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
+#=
 """
-    write_subset(file_path, df, probs, match_between_runs, qval_thresh; dropVectors=false)
+    write_subset(file_path, df, trace_probs, match_between_runs, qval_thresh; dropVectors=false)
 
 Write the updated subset to disk, optionally dropping vector columns.
 The `qval_thresh` argument is used to mark transfer candidates when
@@ -976,23 +1109,30 @@ The `qval_thresh` argument is used to mark transfer candidates when
 function write_subset(
     file_path::String,
     df::DataFrame,
-    probs::AbstractVector{Float32},
+    trace_probs::AbstractVector{Float32},
+    mbr_trace_probs::Union{AbstractVector{Float32}, Nothing},
     match_between_runs::Bool,
     qval_thresh::Float32;
     dropVectors::Bool=false,
 )
     if dropVectors
         if match_between_runs
-            update_mbr_probs!(df, probs, qval_thresh)
+            update_mbr_probs!(df, trace_probs, mbr_trace_probs, qval_thresh)
         else
-            df[!, :prob] = probs
+            df[!, :trace_prob] = trace_probs
         end
         writeArrow(file_path, dropVectorColumns!(df))
     else
-        df[!, :prob] = probs
+        if match_between_runs && mbr_trace_probs !== nothing
+            df[!, :trace_prob] = trace_probs
+            df[!, :MBR_boosted_trace_prob] = mbr_trace_probs
+        else
+            df[!, :trace_prob] = trace_probs
+        end
         writeArrow(file_path, convert_subarrays(df))
     end
 end
+=#
 
 function MBR_rv_coefficient(weights_A::AbstractVector{<:Real},
     times_A::AbstractVector{<:Real},
@@ -1078,8 +1218,8 @@ function pad_rt_equal_length(x::AbstractVector, y::AbstractVector)
     end
 end
 
-function summarize_prob(probs::AbstractVector{Float32})
-    minimum(probs), maximum(probs), mean(probs)
+function summarize_prob(trace_probs::AbstractVector{Float32})
+    minimum(trace_probs), maximum(trace_probs), mean(trace_probs)
 end
 
 function convert_subarrays(df::DataFrame)

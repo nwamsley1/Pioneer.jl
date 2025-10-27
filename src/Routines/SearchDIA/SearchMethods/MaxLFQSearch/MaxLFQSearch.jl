@@ -204,6 +204,7 @@ function summarize_results!(
             all_file_names,
             params.run_to_run_normalization,
             getProteins(getSpecLib(search_context)),
+            params.params.global_settings.match_between_runs,
             write_csv = params.write_csv
         )
 

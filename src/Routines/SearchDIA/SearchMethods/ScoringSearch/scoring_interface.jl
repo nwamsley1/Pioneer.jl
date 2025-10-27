@@ -51,7 +51,7 @@ function apply_mbr_filter!(
     merged_df::DataFrame,
     params
 )
-    # 1) identify transfer candidates
+    # 1) identify transfer candidates based on MBR_boosted_trace_prob
     candidate_mask = merged_df.MBR_transfer_candidate
     n_candidates = sum(candidate_mask)
 
@@ -61,12 +61,15 @@ function apply_mbr_filter!(
          (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, false)) # D->T
     )
 
-    # 3) Apply the main filtering function
+    # 3) Apply filtering and get filtered probabilities
     filtered_probs = apply_mbr_filter!(merged_df, candidate_mask, is_bad_transfer, params)
 
-    # 4) Add filtered probabilities as a new column and return column name
-    merged_df[!, :MBR_filtered_prob] = filtered_probs
-    return :MBR_filtered_prob
+    # 4) Modify both trace_prob and MBR_boosted_trace_prob columns IN-PLACE
+    merged_df[!, :MBR_boosted_trace_prob] = filtered_probs.MBR_boosted_trace_prob
+    merged_df[!, :trace_prob] = filtered_probs.trace_prob
+
+    # 5) No return value needed (modifies columns in place)
+    return nothing
 end
 
 """
@@ -90,7 +93,8 @@ function apply_mbr_filter!(
     # Handle case with no MBR candidates
     if n_candidates == 0
         @user_warn "No MBR transfer candidates found - returning original probabilities unchanged"
-        return merged_df.prob
+        return (MBR_boosted_trace_prob = merged_df.MBR_boosted_trace_prob,
+                trace_prob = merged_df.trace_prob)
     end
 
     # Test all methods and store results
@@ -107,7 +111,8 @@ function apply_mbr_filter!(
     # Select best method (most candidates passing)
     if isempty(results)
         @user_warn "No MBR filtering methods succeeded - returning original probabilities unchanged"
-        return merged_df.prob
+        return (MBR_boosted_trace_prob = merged_df.MBR_boosted_trace_prob,
+                trace_prob = merged_df.trace_prob)
     end
     
     best_result = results[argmax([r.n_passing for r in results])]
@@ -156,13 +161,21 @@ Train a filtering method and evaluate performance. Returns FilterResult with sco
 """
 function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
     # Handle empty candidate data
-    if isempty(candidate_data) || !hasproperty(candidate_data, :prob)
+    if isempty(candidate_data)
+        return nothing
+    end
+
+    # Use MBR-boosted scores if available, otherwise base scores
+    score_column = hasproperty(candidate_data, :MBR_boosted_trace_prob) ?
+                   :MBR_boosted_trace_prob : :trace_prob
+
+    if !hasproperty(candidate_data, score_column)
         return nothing
     end
 
     # candidate_labels represents bad transfer flags
     τ = get_ftr_threshold(
-        candidate_data.prob,
+        candidate_data[!, score_column],
         candidate_labels,
         params.max_MBR_false_transfer_rate
     )
@@ -171,10 +184,10 @@ function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, 
     if isinf(τ)
         n_passing = 0
     else
-        n_passing = sum(candidate_data.prob .>= τ)
+        n_passing = sum(candidate_data[!, score_column] .>= τ)
     end
 
-    return FilterResult("Threshold", candidate_data.prob, τ, n_passing)
+    return FilterResult("Threshold", candidate_data[!, score_column], τ, n_passing)
 end
 
 function train_and_evaluate(method::ProbitFilter, candidate_data::DataFrame, candidate_labels::AbstractVector{Bool}, params)
@@ -387,31 +400,36 @@ Filtering Application
 ==========================================================#
 
 """
-    apply_filtering(result, merged_df, candidate_mask, params) -> Vector{Float32}
+    apply_filtering(result, merged_df, candidate_mask, params) -> NamedTuple
 
 Apply the filtering result to the full dataframe.
+Returns a NamedTuple with both MBR_boosted_trace_prob and trace_prob filtered.
 """
 function apply_filtering(result::FilterResult, merged_df::DataFrame, candidate_mask::AbstractVector{Bool}, params)
-    filtered_probs = copy(merged_df.prob)
+    filtered_MBR_boosted_trace_probs = copy(merged_df.MBR_boosted_trace_prob)
+    filtered_trace_probs = copy(merged_df.trace_prob)
     candidate_indices = findall(candidate_mask)
-    
+
     if result.method_name == "Threshold"
         # Simple threshold on probability
         for idx in candidate_indices
-            if merged_df.prob[idx] < result.threshold
-                filtered_probs[idx] = 0.0f0
+            if merged_df.MBR_boosted_trace_prob[idx] < result.threshold
+                filtered_MBR_boosted_trace_probs[idx] = 0.0f0
+                filtered_trace_probs[idx] = 0.0f0
             end
         end
     else
         # ML-based filtering using scores
         for (i, idx) in enumerate(candidate_indices)
             if result.scores[i] < result.threshold  # Lower score = worse candidate (bad transfer)
-                filtered_probs[idx] = 0.0f0
+                filtered_MBR_boosted_trace_probs[idx] = 0.0f0
+                filtered_trace_probs[idx] = 0.0f0
             end
         end
     end
-    
-    return filtered_probs
+
+    return (MBR_boosted_trace_prob = filtered_MBR_boosted_trace_probs,
+            trace_prob = filtered_trace_probs)
 end
 
 #==========================================================
@@ -421,7 +439,7 @@ Feature Processing (Simplified)
 function select_mbr_features(df::DataFrame)
     # Core features for MBR filtering (including MS1-MS2 RT difference feature)
     candidate_features = [
-                        :prob,
+                        :trace_prob,
                         :irt_error, :ms1_ms2_rt_diff, :MBR_max_pair_prob, :MBR_best_irt_diff,
                         :MBR_rv_coefficient, :MBR_log2_weight_ratio, :MBR_log2_explained_ratio
                         #, :MBR_num_runs
@@ -474,22 +492,19 @@ end
 
 Get the standard columns needed for quantification analysis.
 """
-function get_quant_necessary_columns()
-    return [
+function get_quant_necessary_columns(match_between_runs::Bool)
+    # Get conditional q-value column names
+    qval_cols = get_qval_column_names(match_between_runs)
+
+    base_cols = [
         :precursor_idx,
         :global_prob,
         :prec_prob,
-        #:first_pass_prob,
-        #:first_pass_prec_prob,
-        :nonMBR_prob,
-        :nonMBR_prec_prob,
         :trace_prob,
-        :global_qval,
+        qval_cols.global_qval,  # Conditional: :MBR_boosted_global_qval or :global_qval
         :run_specific_qval,
         :prec_mz,
-        :pep,
-        :MBR_candidate,
-        :MBR_transfer_q_value,
+        qval_cols.pep,  # Always :pep but included for consistency
         :weight,
         :target,
         :rt,
@@ -501,6 +516,63 @@ function get_quant_necessary_columns()
         :entrapment_group_id,
         :ms_file_idx
     ]
+
+    if match_between_runs
+        # Add MBR-specific columns including MBR_boosted_qval
+        return vcat(base_cols, [
+            :MBR_boosted_global_prob,
+            :MBR_boosted_prec_prob,
+            :MBR_boosted_trace_prob,
+            :MBR_candidate,
+            :MBR_transfer_q_value,
+            qval_cols.qval  # Add :MBR_boosted_qval
+        ])
+    else
+        # Add standard qval for non-MBR mode
+        return vcat(base_cols, [qval_cols.qval])  # Add :qval
+    end
+end
+
+"""
+    get_qval_column_names(match_between_runs::Bool) -> NamedTuple
+
+Returns the appropriate q-value column names based on whether MBR is enabled.
+
+# Arguments
+- `match_between_runs::Bool`: Whether match-between-runs (MBR) is enabled
+
+# Returns
+A NamedTuple with fields:
+- `qval::Symbol`: Precursor q-value column name
+- `global_qval::Symbol`: Global precursor q-value column name
+- `pep::Symbol`: PEP column name (always `:pep`)
+
+# Examples
+```julia
+qval_cols = get_qval_column_names(true)  # MBR enabled
+# Returns: (qval = :MBR_boosted_qval, global_qval = :MBR_boosted_global_qval, pep = :pep)
+
+qval_cols = get_qval_column_names(false)  # MBR disabled
+# Returns: (qval = :qval, global_qval = :global_qval, pep = :pep)
+
+# Usage:
+df_filtered = filter(row -> row[qval_cols.qval] < 0.01, df)
+```
+"""
+function get_qval_column_names(match_between_runs::Bool)
+    if match_between_runs
+        return (
+            qval = :MBR_boosted_qval,
+            global_qval = :MBR_boosted_global_qval,
+            pep = :pep
+        )
+    else
+        return (
+            qval = :qval,
+            global_qval = :global_qval,
+            pep = :pep
+        )
+    end
 end
 
 """
@@ -524,7 +596,7 @@ function add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::S
         else
             # Group-based operation for combined traces
             transform!(groupby(df, :precursor_idx),
-                      :prob => (p -> begin
+                      :trace_prob => (p -> begin
                           best_idx = argmax(p)
                           result = falses(length(p))
                           result[best_idx] = true
@@ -640,7 +712,7 @@ end
 function add_trace_qvalues(fdr_scale_factor::Float32)
     op = function(df)
         qvals = Vector{Float32}(undef, nrow(df))
-        get_qvalues!(df.prob, df.target, qvals; fdr_scale_factor=fdr_scale_factor)
+        get_qvalues!(df.trace_prob, df.target, qvals; fdr_scale_factor=fdr_scale_factor)
         df[!, :trace_qval] = qvals
         return df
     end

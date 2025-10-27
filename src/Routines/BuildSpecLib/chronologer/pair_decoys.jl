@@ -212,8 +212,6 @@ function add_charge_specific_partner_columns!(df::DataFrame)
         lookup[key] = idx
     end
     
-    @user_info "Created lookup with $(length(lookup)) entries"
-    
     # Initialize pair_id vector (will be completely reassigned)
     new_pair_ids = Vector{Union{UInt32, Missing}}(missing, n)
     next_pair_id = UInt32(1)

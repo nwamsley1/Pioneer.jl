@@ -280,7 +280,7 @@ include("test/UnitTests/ScoringSearch/test_protein_inference.jl")
 ### Key Outputs to Verify
 
 **PSM Files**:
-- `prob`, `prec_prob`, `global_prob` - Model predictions and aggregated probabilities
+- `trace_prob`, `prec_prob`, `global_prob` - Model predictions and aggregated probabilities
 - `qval`, `global_qval`, `pep` - FDR estimates at different levels
 - `pg_score`, `global_pg_score` - Protein group scores propagated back
 - `inferred_protein_group` - Protein inference assignments

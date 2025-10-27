@@ -251,6 +251,13 @@ function group_psms_by_protein(df::DataFrame)
         )
     end
 
+    # Determine which probability column to use for protein scoring
+    if hasproperty(df, :MBR_boosted_prec_prob)
+        prob_col = :MBR_boosted_prec_prob
+    else
+        prob_col = :prec_prob
+    end
+
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
     
@@ -261,7 +268,7 @@ function group_psms_by_protein(df::DataFrame)
         n_peptides = length(quant_peptides)
         
         # Calculate initial protein score (log-sum)
-        peptide_probs = gdf[gdf.use_for_protein_quant .== true, :prec_prob]
+        peptide_probs = gdf[gdf.use_for_protein_quant .== true, prob_col]
         if isempty(peptide_probs)
             pg_score = 0.0f0
         else
@@ -270,7 +277,7 @@ function group_psms_by_protein(df::DataFrame)
             for pep in quant_peptides
                 pep_mask = (gdf.sequence .== pep) .& (gdf.use_for_protein_quant .== true)
                 if any(pep_mask)
-                    push!(unique_pep_probs, maximum(gdf[pep_mask, :prec_prob]))
+                    push!(unique_pep_probs, maximum(gdf[pep_mask, prob_col]))
                 end
             end
             pg_score = -sum(log.(1.0f0 .- unique_pep_probs))
@@ -446,8 +453,10 @@ function perform_protein_inference_pipeline(
         # Write protein groups
         pg_filename = "protein_groups_$(lpad(idx, 3, '0')).arrow"
         pg_path = joinpath(output_folder, pg_filename)
-        
+
         if nrow(protein_groups_df) > 0
+            # Add file_idx for later merge/split operations
+            protein_groups_df[!, :file_idx] = fill(Int64(idx), nrow(protein_groups_df))
             writeArrow(pg_path, protein_groups_df)
             pg_ref = ProteinGroupFileReference(pg_path)
             push!(pg_refs, pg_ref)
