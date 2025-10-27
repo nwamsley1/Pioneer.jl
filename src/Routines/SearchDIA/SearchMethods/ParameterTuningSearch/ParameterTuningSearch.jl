@@ -145,11 +145,11 @@ getDiagnostics(ptsr::ParameterTuningSearchResults) = ptsr.diagnostics
 getParameterHistory(ptsr::ParameterTuningSearchResults) = ptsr.parameter_history
 
 function set_rt_to_irt_model!(
-    ptsr::ParameterTuningSearchResults, 
+    ptsr::ParameterTuningSearchResults,
     search_context::SearchContext,
     params::P,
     ms_file_idx::Int64,
-    model::Tuple{SplineRtConversionModel, Vector{Float32}, Vector{Float32}, Float32}
+    model::Tuple{RtConversionModel, Vector{Float32}, Vector{Float32}, Float32}
 ) where {P<:ParameterTuningSearchParameters}
     
     ptsr.rt_to_irt_model[] = model[1]
@@ -891,12 +891,14 @@ function process_file!(
             
             # Apply best attempt models
             setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
-            
+
             if iteration_state.best_rt_model !== nothing
-                set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
+                @debug_l1 "Applying best RT model (type: $(typeof(iteration_state.best_rt_model[1])))"
+                set_rt_to_irt_model!(results, search_context, params, ms_file_idx,
                                     iteration_state.best_rt_model)
             else
                 # If no RT model, use identity
+                @debug_l1 "No RT model found, using IdentityModel"
                 setRtIrtMap!(search_context, IdentityModel(), ms_file_idx)
                 results.rt_to_irt_model[] = IdentityModel()
             end
@@ -915,12 +917,14 @@ function process_file!(
                     (getLeftTol(iteration_state.best_mass_error_model) * 1.5f0,
                      getRightTol(iteration_state.best_mass_error_model) * 1.5f0)
                 )
-                
+
                 # Apply expanded model and collect PSMs
+                @debug_l1 "Applying expanded tolerance model and collecting PSMs..."
                 setMassErrorModel!(search_context, ms_file_idx, expanded_model)
                 expanded_psms, expanded_ppm_errs = collect_psms_with_model(
                     filtered_spectra, search_context, params, ms_file_idx, spectra
                 )
+                @debug_l1 "PSM collection complete. Found $(size(expanded_psms, 1)) PSMs with expanded tolerance"
                 
                 if size(expanded_psms, 1) > iteration_state.best_psm_count
                     # Refit model with expanded PSMs
