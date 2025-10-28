@@ -452,7 +452,7 @@ function fit_irt_model(
         # 4. SELECT BETTER MODEL
         @debug_l1 "RT model comparison (n_psms=$n_psms): Linear AIC=$(round(linear_aic, digits=2)), Spline AIC=$(round(spline_aic, digits=2))"
 
-        if linear_aic < spline_aic || spline_model === nothing
+        if true#linear_aic < spline_aic || spline_model === nothing
             # LINEAR MODEL WINS
             @debug_l1 "Selected linear RT model (AIC: $(round(linear_aic, digits=2)) vs $(round(spline_aic, digits=2)))"
 

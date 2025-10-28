@@ -43,6 +43,9 @@ function (m::LinearRtConversionModel)(rt::AbstractFloat)
     return m.intercept + m.slope * rt
 end
 
+# Override getModel for LinearRtConversionModel since it doesn't wrap another model
+getModel(m::LinearRtConversionModel) = m
+
 struct IdentityModel <: RtConversionModel
     model::Function
     function IdentityModel()
