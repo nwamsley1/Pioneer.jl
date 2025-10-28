@@ -541,16 +541,17 @@ function fit_irt_model(
 
     else
         # STANDARD PATH: n_psms >= 1000, use spline only
+        # With abundant data, standard fitting is sufficient (no RANSAC/penalty needed)
         try
-            # Initial spline fit with difference penalty
+            # Initial spline fit without robustness features (fast standard fitting)
             rt_to_irt_map = UniformSplinePenalized(
                 psms[!,:irt_predicted],
                 psms[!,:rt],
                 getSplineDegree(params),
                 n_knots,
-                Float32(λ_penalty),
+                Float32(0.0),  # No penalty - abundant data doesn't need smoothing
                 2,
-                true
+                false  # No RANSAC - natural robustness from large sample
             )
 
             # Calculate residuals
@@ -571,14 +572,15 @@ function fit_irt_model(
             # Keep fixed knot count even after outlier removal
             n_knots_final = 5
 
+            # Final fit without robustness features (abundant clean data after outlier removal)
             final_model = SplineRtConversionModel(UniformSplinePenalized(
                 valid_psms[!,:irt_predicted],
                 valid_psms[!,:rt],
                 getSplineDegree(params),
                 n_knots_final,
-                Float32(λ_penalty),
+                Float32(0.0),  # No penalty - clean data after outlier removal
                 2,
-                true
+                false  # No RANSAC - already filtered outliers
             ))
 
             return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
