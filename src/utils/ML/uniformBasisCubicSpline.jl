@@ -532,6 +532,8 @@ function UniformSplinePenalized(
         # Solve: (X'X + λP)c = X'u
         c = (X'X + T(λ) * P) \ (X'sorted_u)
     end
+    # Ensure type consistency (linear solve may promote to higher precision)
+    c = convert(Vector{T}, c)
 
     # RANSAC robust fitting mode
     if use_ransac
@@ -546,7 +548,7 @@ function UniformSplinePenalized(
         sample_size = max(n_coeffs + 2, min(ransac_sample_size, div(n_data, 2)))
 
         # Step 1: Calculate adaptive threshold from initial fit
-        c_initial = c
+        c_initial = convert(Vector{T}, c)  # Ensure type consistency
         spline_initial = build_temp_spline_from_coeffs(
             c_initial, knots, bin_width, spline_basis,
             degree, _first, _last, n_knots
@@ -588,9 +590,10 @@ function UniformSplinePenalized(
                 continue
             end
 
-            # Build temporary spline
+            # Build temporary spline (ensure type consistency)
+            c_sample_converted = convert(Vector{T}, c_sample)
             spline_sample = build_temp_spline_from_coeffs(
-                c_sample, knots, bin_width, spline_basis,
+                c_sample_converted, knots, bin_width, spline_basis,
                 degree, _first, _last, n_knots
             )
 
@@ -623,6 +626,8 @@ function UniformSplinePenalized(
             else
                 (X_inliers'X_inliers + T(λ) * P) \ (X_inliers'u_inliers)
             end
+            # Ensure type consistency after refit
+            c = convert(Vector{T}, c)
         else
             # Not enough inliers, use best sample fit
             c = best_c
