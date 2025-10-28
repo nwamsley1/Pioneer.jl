@@ -228,9 +228,9 @@ function build_difference_matrix(n_coeffs::Int, order::Int=2)
 end
 
 """
-    UniformSplinePenalized(u, t, degree, n_knots, λ=0.1, order=2, robust_refit=true, outlier_percentile=0.90)
+    UniformSplinePenalized(u, t, degree, n_knots, λ=0.1, order=2)
 
-Fit uniform B-spline with difference penalty regularization and optional robust refitting.
+Fit uniform B-spline with difference penalty regularization (P-splines).
 
 This uses the P-spline approach (Eilers & Marx, 1996) which adds a penalty term
 to the least squares objective:
@@ -239,13 +239,6 @@ to the least squares objective:
 
 The penalty encourages smooth coefficient sequences, which may improve monotonicity
 by reducing oscillations caused by noise or outliers.
-
-When `robust_refit=true` (default), performs two-pass fitting:
-1. Initial fit using all PSMs
-2. Calculate residuals and mask top (1-outlier_percentile) with largest errors
-3. Refit using only low-residual PSMs
-
-This reduces outlier influence without discarding data.
 
 # Arguments
 - `u::Vector{T}`: Target values (iRT in RT alignment context)
@@ -259,31 +252,21 @@ This reduces outlier influence without discarding data.
   - λ large (1.0-10.0): Strong smoothing
 - `order::Int`: Order of difference penalty (default 2)
   - Order 2 is recommended (penalizes curvature changes)
-- `robust_refit::Bool`: Enable two-pass robust fitting (default true)
-- `outlier_percentile::T`: Percentile threshold for refitting (default 0.90)
-  - 0.95: Keep bottom 95% (mild outlier rejection)
-  - 0.90: Keep bottom 90% (moderate) [RECOMMENDED]
-  - 0.85: Keep bottom 85% (aggressive)
 
 # Returns
 - `UniformSpline{N, T}`: Fitted spline with difference penalty
 
 # Notes
-- Robust refitting adds minimal overhead (~2x slower, still very fast)
 - Does NOT guarantee monotonicity, but improves it significantly
-- All PSMs are evaluated on final spline (no data loss)
 - For 5 knots: 8 coefficients, penalty matrix is 6×8 (2nd order)
 
 # Example
 ```julia
-# Basic usage with defaults (penalty + robust fitting)
+# Basic usage with defaults
 spline = UniformSplinePenalized(irt, rt, 3, 5)
 
-# Disable robust refitting
-spline = UniformSplinePenalized(irt, rt, 3, 5, 0.1, 2, false)
-
-# More aggressive outlier rejection
-spline = UniformSplinePenalized(irt, rt, 3, 5, 0.1, 2, true, 0.85)
+# Custom penalty strength
+spline = UniformSplinePenalized(irt, rt, 3, 5, 0.5, 2)
 ```
 
 # References
@@ -295,9 +278,7 @@ function UniformSplinePenalized(
     degree::I,
     n_knots::I,
     λ::T = T(0.1),
-    order::Int = 2,
-    robust_refit::Bool = true,
-    outlier_percentile::T = T(0.90)
+    order::Int = 2
 ) where {I<:Integer, T<:AbstractFloat}
 
     # Input validation
@@ -400,42 +381,6 @@ function UniformSplinePenalized(
 
         # Solve: (X'X + λP)c = X'u
         c = (X'X + T(λ) * P) \ (X'sorted_u)
-    end
-
-    # Robust refitting: mask outliers and refit
-    if robust_refit && length(sorted_u) > 20  # Need enough points for meaningful masking
-        # Build temporary spline to calculate residuals
-        XPoly_temp = buildPieceWise(knots, bin_width, spline_basis)
-        piecewise_temp = XPoly_temp * c
-        n_total_temp = n_knots * (degree + 1)
-        coeffs_temp = SVector{n_total_temp}(vcat([poly.coeffs for poly in piecewise_temp]...))
-        spline_temp = UniformSpline{n_total_temp, T}(coeffs_temp, degree, _first, _last, bin_width)
-
-        # Calculate residuals
-        predicted = [spline_temp(ti) for ti in sorted_t]
-        residuals = abs.(sorted_u .- predicted)
-
-        # Find threshold: keep only PSMs below this percentile of residuals
-        threshold = quantile(residuals, outlier_percentile)
-
-        # Create mask for low-residual PSMs
-        mask = residuals .<= threshold
-        n_kept = sum(mask)
-
-        # Refit using only masked PSMs (if we have enough)
-        if n_kept >= 10
-            X_robust = X[mask, :]
-            u_robust = sorted_u[mask]
-
-            # Solve again with masked data
-            if λ == 0
-                c = X_robust \ u_robust
-            else
-                # Use same penalty matrix P (doesn't depend on data)
-                c = (X_robust'X_robust + T(λ) * P) \ (X_robust'u_robust)
-            end
-        end
-        # If not enough points after masking, keep original fit
     end
 
     # Build piecewise polynomials
