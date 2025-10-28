@@ -257,18 +257,8 @@ function fit_linear_irt_model(
     irt = psms[!, :irt_predicted]
     n = length(rt)
 
-    # Least squares: irt = intercept + slope * rt
-    # Normal equations: [n, Σrt; Σrt, Σrt²] * [intercept; slope] = [Σirt; Σ(rt*irt)]
-    sum_rt = sum(rt)
-    sum_rt2 = sum(rt .^ 2)
-    sum_irt = sum(irt)
-    sum_rt_irt = sum(rt .* irt)
-
-    # Solve 2x2 system
-    det = n * sum_rt2 - sum_rt^2
-
-    if abs(det) < 1e-10
-        # Degenerate case - all RTs identical
+    # Handle degenerate case - all RTs identical or insufficient variance
+    if std(rt) < 1e-10
         return (
             LinearRtConversionModel(0.0f0, Float32(mean(irt))),
             Float32(std(irt)),
@@ -276,17 +266,61 @@ function fit_linear_irt_model(
         )
     end
 
-    intercept = (sum_rt2 * sum_irt - sum_rt * sum_rt_irt) / det
-    slope = (n * sum_rt_irt - sum_rt * sum_irt) / det
+    try
+        # Create DataFrame for RobustModels (requires formula interface)
+        fit_data = DataFrame(
+            irt = Float64.(irt),  # Response variable
+            rt = Float64.(rt)      # Predictor variable
+        )
 
-    # Calculate residuals
-    predicted = intercept .+ slope .* rt
-    residuals = irt .- predicted
-    residual_std = Float32(std(residuals))
+        # Fit robust M-estimator with Tukey bisquare loss
+        # MEstimator provides robust parameter estimation via iteratively reweighted
+        # least squares, with better stability for small sample sizes than MM-estimator
+        robust_fit = rlm(@formula(irt ~ rt), fit_data, TauEstimator{TukeyLoss}())
 
-    model = LinearRtConversionModel(Float32(slope), Float32(intercept))
+        # Extract coefficients using coef() function
+        coeffs = coef(robust_fit)
+        intercept = coeffs[1]  # First coeff is intercept
+        slope = coeffs[2]      # Second coeff is slope for 'rt'
 
-    return (model, residual_std, 2)
+        # Calculate residuals
+        predicted = intercept .+ slope .* rt
+        residuals = irt .- predicted
+        residual_std = Float32(std(residuals))
+
+        model = LinearRtConversionModel(Float32(slope), Float32(intercept))
+
+        return (model, residual_std, 2)
+
+    catch e
+        # Fallback to OLS if robust regression fails
+        @warn "Robust regression failed: $e. Falling back to OLS."
+
+        # Simple least squares fallback
+        sum_rt = sum(rt)
+        sum_rt2 = sum(rt .^ 2)
+        sum_irt = sum(irt)
+        sum_rt_irt = sum(rt .* irt)
+
+        det = n * sum_rt2 - sum_rt^2
+        if abs(det) < 1e-10
+            return (
+                LinearRtConversionModel(0.0f0, Float32(mean(irt))),
+                Float32(std(irt)),
+                2
+            )
+        end
+
+        intercept = (sum_rt2 * sum_irt - sum_rt * sum_rt_irt) / det
+        slope = (n * sum_rt_irt - sum_rt * sum_irt) / det
+
+        predicted = intercept .+ slope .* rt
+        residuals = irt .- predicted
+        residual_std = Float32(std(residuals))
+
+        model = LinearRtConversionModel(Float32(slope), Float32(intercept))
+        return (model, residual_std, 2)
+    end
 end
 
 """
@@ -323,8 +357,9 @@ function calculate_aic(
 
     log_likelihood_term = n_observations * log(residual_variance)
     penalty_term = 2 * n_parameters
+    constant_term = n_observations * (1 + log(2 * Float32(π)))
 
-    return Float32(log_likelihood_term + penalty_term)
+    return Float32(log_likelihood_term + penalty_term + constant_term)
 end
 
 """
@@ -356,26 +391,50 @@ function fit_irt_model(
 
     n_psms = nrow(psms)
 
-    # Calculate maximum knots based on 5 PSMs per knot rule
-    max_knots_from_psms = max(2, floor(Int, n_psms / 5))  # Minimum 2 knots for spline
-    configured_knots = getSplineNKnots(params)
-    n_knots = min(configured_knots, max_knots_from_psms)
+    # Fixed knot count for consistency across all files
+    # This simplifies the model structure and prepares for monotonicity constraints
+    n_knots = 5
+    min_psms_for_spline = 300  # Minimum PSMs needed for spline fitting
 
-    # If we can't even support 2 knots, fall back to identity
-    if n_psms < 10  # Less than 2 knots * 5 PSMs per knot
+    # If we don't have enough PSMs for minimum knots, skip spline entirely
+    if n_psms < 10
+        # Too few PSMs even for linear model
         @debug_l2 "Too few PSMs ($n_psms) for RT alignment (need ≥10), using identity model"
         return (IdentityModel(), Float32[], Float32[], 0.0f0)
     end
 
-    # Log if we're using fewer knots than configured
-    if n_knots < configured_knots
-        @debug_l1 "Reducing RT spline knots from $configured_knots to $n_knots due to limited PSMs ($n_psms)"
+    # Determine if we should attempt spline fitting
+    use_spline = n_psms >= min_psms_for_spline
+
+    if !use_spline
+        @debug_l1 "Only $n_psms PSMs (need ≥$min_psms_for_spline for spline), will use linear model"
+    else
+        @debug_l2 "Using $n_knots knots for RT spline ($n_psms PSMs)"
     end
 
     # MODEL COMPARISON PATH: n_psms < 1000
     comparison_threshold = 1000
 
     if n_psms < comparison_threshold
+        # Check if we have enough PSMs for spline fitting
+        if !use_spline
+            # Insufficient PSMs for spline (< 300), use robust linear model only
+            @user_warn "Only $n_psms PSMs available (need ≥$min_psms_for_spline for spline), using robust linear model"
+            linear_model, linear_std, linear_n_params = fit_linear_irt_model(psms)
+
+            # Calculate MAD for linear model
+            predicted = [linear_model(rt) for rt in psms[!, :rt]]
+            residuals = psms[!, :irt_predicted] .- predicted
+            linear_mad = median(abs.(residuals .- median(residuals)))
+
+            return (
+                linear_model,
+                psms[!, :rt],
+                psms[!, :irt_predicted],
+                Float32(linear_mad)
+            )
+        end
+
         # Try both models and compare with AIC
 
         # 1. TRY SPLINE MODEL
@@ -402,9 +461,8 @@ function fit_irt_model(
                 (nothing, nothing, nothing, nothing, nothing, nothing, nothing)
             else
                 # Refit with valid PSMs
-                n_valid = nrow(valid_psms)
-                max_knots_final = max(2, floor(Int, n_valid / 5))
-                n_knots_final = min(n_knots, max_knots_final)
+                # Keep fixed knot count even after outlier removal
+                n_knots_final = 5
 
                 final_spline = UniformSpline(
                     valid_psms[!, :irt_predicted],
@@ -417,14 +475,14 @@ function fit_irt_model(
                 final_pred = [final_spline(rt) for rt in valid_psms[!, :rt]]
                 final_resid = valid_psms[!, :irt_predicted] .- final_pred
                 final_variance = var(final_resid)
-
+                @user_info "n_knots_final $n_knots_final"
                 (
                     SplineRtConversionModel(final_spline),
                     valid_psms[!, :rt],
                     valid_psms[!, :irt_predicted],
                     irt_mad,
                     nrow(valid_psms),
-                    n_knots_final * 4,  # 4 coefficients per knot for degree 3
+                    n_knots_final + 3,  # B-spline basis coefficients (degrees of freedom)
                     Float32(final_variance)
                 )
             end
@@ -452,7 +510,7 @@ function fit_irt_model(
         # 4. SELECT BETTER MODEL
         @debug_l1 "RT model comparison (n_psms=$n_psms): Linear AIC=$(round(linear_aic, digits=2)), Spline AIC=$(round(spline_aic, digits=2))"
 
-        if true#linear_aic < spline_aic || spline_model === nothing
+        if linear_aic < spline_aic || spline_model === nothing
             # LINEAR MODEL WINS
             @debug_l1 "Selected linear RT model (AIC: $(round(linear_aic, digits=2)) vs $(round(spline_aic, digits=2)))"
 
@@ -500,9 +558,8 @@ function fit_irt_model(
                 return (IdentityModel(), Float32[], Float32[], 0.0f0)
             end
 
-            # Recalculate knots for final fit if needed
-            max_knots_final = max(2, floor(Int, n_valid_psms / 5))
-            n_knots_final = min(n_knots, max_knots_final)
+            # Keep fixed knot count even after outlier removal
+            n_knots_final = 5
 
             final_model = SplineRtConversionModel(UniformSpline(
                 valid_psms[!,:irt_predicted],
@@ -1180,15 +1237,14 @@ function generate_best_iteration_rt_plot_in_memory(
     iteration_state::IterationState
 )
     # Check if we have RT data from best iteration
-    # First check results.rt/irt, then fall back to iteration_state.best_rt_model data
+    # First check results.rt/irt, then fall back to extracting from best_psms
     rt_data, irt_data = if length(results.rt) > 0 && length(results.irt) > 0
         (results.rt, results.irt)
-    elseif iteration_state.best_rt_model !== nothing
-        # Extract RT and iRT from the tuple stored in best_rt_model
-        # The tuple is (model, rt_data, irt_data, threshold)
-        model_tuple = iteration_state.best_rt_model
-        if length(model_tuple) >= 3
-            (model_tuple[2], model_tuple[3])
+    elseif iteration_state.best_psms !== nothing
+        # Extract RT and iRT directly from PSMs DataFrame
+        psms = iteration_state.best_psms
+        if nrow(psms) > 0 && hasproperty(psms, :rt) && hasproperty(psms, :irt_predicted)
+            (psms[!, :rt], psms[!, :irt_predicted])
         else
             (nothing, nothing)
         end
