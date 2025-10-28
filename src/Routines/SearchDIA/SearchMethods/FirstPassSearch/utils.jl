@@ -48,16 +48,16 @@ Adds essential columns to PSM DataFrame for scoring and analysis.
 - Analysis columns: target, spectrum_peak_count, err_norm
 """
 function add_main_search_columns!(psms::DataFrame, 
-                                rt_irt::UniformSpline,
+                                rt_irt::T,
                                 structural_mods::AbstractVector{Union{Missing, String}},
                                 prec_missed_cleavages::Arrow.Primitive{UInt8, Vector{UInt8}},
                                 prec_is_decoy::Arrow.BoolVector{Bool},
-                                prec_irt::Arrow.Primitive{T, Vector{T}},
+                                prec_irt::Arrow.Primitive{U, Vector{U}},
                                 prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}},
                                 scan_retention_time::AbstractVector{Float32},
                                 tic::AbstractVector{Float32},
                                 masses::AbstractArray;
-) where {T<:AbstractFloat}
+) where {T,U<:AbstractFloat}
     
     ###########################
     #Allocate new columns

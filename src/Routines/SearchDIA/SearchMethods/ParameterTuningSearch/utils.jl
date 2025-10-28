@@ -393,7 +393,8 @@ function fit_irt_model(
 
     # Fixed knot count for consistency across all files
     # This simplifies the model structure and prepares for monotonicity constraints
-    n_knots = 5
+    #n_knots = 5
+    n_knots = min(max(3, Int(floor(n_psms / 100))), getSplineNKnotw(params))  # Ensure at least 3 knots
     min_psms_for_spline = 0#300  # Minimum PSMs needed for spline fitting
 
     # If we don't have enough PSMs for minimum knots, skip spline entirely
@@ -414,7 +415,7 @@ function fit_irt_model(
 
     # MODEL COMPARISON PATH: n_psms < 1000
     comparison_threshold = 1000
-    λ_penalty = 1.0f0
+    λ_penalty = 0.1f0
     if n_psms < comparison_threshold
         # Check if we have enough PSMs for spline fitting
         if !use_spline
@@ -446,7 +447,8 @@ function fit_irt_model(
                 getSplineDegree(params),
                 n_knots,
                 Float32(λ_penalty),  # Moderate smoothing penalty
-                2  # 2nd order penalty
+                2,  # 2nd order penalty
+                true
             )
 
             # Calculate residuals
@@ -472,7 +474,8 @@ function fit_irt_model(
                     getSplineDegree(params),
                     n_knots_final,
                     Float32(λ_penalty),
-                    2
+                    2,
+                    true
                 )
 
                 # Calculate final residuals for AIC
@@ -546,7 +549,8 @@ function fit_irt_model(
                 getSplineDegree(params),
                 n_knots,
                 Float32(λ_penalty),
-                2
+                2,
+                true
             )
 
             # Calculate residuals
@@ -573,7 +577,8 @@ function fit_irt_model(
                 getSplineDegree(params),
                 n_knots_final,
                 Float32(λ_penalty),
-                2
+                2,
+                true
             ))
 
             return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
