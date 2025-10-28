@@ -439,12 +439,14 @@ function fit_irt_model(
 
         # 1. TRY SPLINE MODEL
         spline_result = try
-            # Fit initial spline
-            rt_to_irt_map = UniformSpline(
+            # Fit initial spline with difference penalty
+            rt_to_irt_map = UniformSplinePenalized(
                 psms[!, :irt_predicted],
                 psms[!, :rt],
                 getSplineDegree(params),
-                n_knots
+                n_knots,
+                Float32(0.1),  # Moderate smoothing penalty
+                2  # 2nd order penalty
             )
 
             # Calculate residuals
@@ -464,11 +466,13 @@ function fit_irt_model(
                 # Keep fixed knot count even after outlier removal
                 n_knots_final = 5
 
-                final_spline = UniformSpline(
+                final_spline = UniformSplinePenalized(
                     valid_psms[!, :irt_predicted],
                     valid_psms[!, :rt],
                     getSplineDegree(params),
-                    n_knots_final
+                    n_knots_final,
+                    Float32(0.1),
+                    2
                 )
 
                 # Calculate final residuals for AIC
@@ -535,12 +539,14 @@ function fit_irt_model(
     else
         # STANDARD PATH: n_psms >= 1000, use spline only
         try
-            # Initial spline fit with adaptive knots
-            rt_to_irt_map = UniformSpline(
+            # Initial spline fit with difference penalty
+            rt_to_irt_map = UniformSplinePenalized(
                 psms[!,:irt_predicted],
                 psms[!,:rt],
                 getSplineDegree(params),
-                n_knots
+                n_knots,
+                Float32(0.1),
+                2
             )
 
             # Calculate residuals
@@ -561,11 +567,13 @@ function fit_irt_model(
             # Keep fixed knot count even after outlier removal
             n_knots_final = 5
 
-            final_model = SplineRtConversionModel(UniformSpline(
+            final_model = SplineRtConversionModel(UniformSplinePenalized(
                 valid_psms[!,:irt_predicted],
                 valid_psms[!,:rt],
                 getSplineDegree(params),
-                n_knots_final
+                n_knots_final,
+                Float32(0.1),
+                2
             ))
 
             return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
