@@ -120,7 +120,6 @@ function checkParams(json_path::String)
 
         # Required fields
         check_param(iter_settings, "ms1_tol_ppm", Real)
-        check_param(iter_settings, "scan_scale_factor", Real)
 
         # init_mass_tol_ppm can be either Real (legacy) or Vector (new format)
         if !haskey(iter_settings, "init_mass_tol_ppm")
@@ -150,9 +149,6 @@ function checkParams(json_path::String)
         end
 
         # Validate remaining ranges
-        if iter_settings["scan_scale_factor"] < 1.0
-            error("iteration_settings.scan_scale_factor must be greater than or equal to 1.0")
-        end
         if iter_settings["ms1_tol_ppm"] <= 0.0
             error("iteration_settings.ms1_tol_ppm must be positive")
         end
@@ -164,15 +160,32 @@ function checkParams(json_path::String)
     else
         error("parameter_tuning.iteration_settings is required")
     end
-    if haskey(search_settings, "initial_scan_count")
-        check_param(search_settings, "initial_scan_count", Integer)
+
+    # Validate scan_counts (optional parameter with validation if present)
+    if haskey(search_settings, "scan_counts")
+        scan_counts = search_settings["scan_counts"]
+
+        # Must be a vector/array
+        if !(scan_counts isa Vector)
+            error("search_settings.scan_counts must be a vector/array, got $(typeof(scan_counts))")
+        end
+
+        # Must not be empty
+        if isempty(scan_counts)
+            error("search_settings.scan_counts must not be empty")
+        end
+
+        # All elements must be positive integers
+        if !all(x -> x isa Integer && x > 0, scan_counts)
+            error("search_settings.scan_counts must contain only positive integers")
+        end
+
+        # Must be sorted in ascending order
+        if !issorted(scan_counts)
+            error("search_settings.scan_counts must be in ascending order")
+        end
     end
-    # Check for both old and new parameter names for backward compatibility
-    if haskey(search_settings, "max_parameter_tuning_scans")
-        check_param(search_settings, "max_parameter_tuning_scans", Integer)
-    elseif haskey(search_settings, "expanded_scan_count")
-        check_param(search_settings, "expanded_scan_count", Integer)
-    end
+
     if haskey(search_settings, "max_frags_for_mass_err_estimation")
         check_param(search_settings, "max_frags_for_mass_err_estimation", Integer)
     end
