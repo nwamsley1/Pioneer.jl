@@ -896,6 +896,7 @@ function process_file!(
                 append!(results.ppm_errs, iteration_state.best_ppm_errs)
             end
             
+            #=
             # Test 1.5x tolerance expansion on best iteration (only if we have filtered_spectra)
             if filtered_spectra !== nothing
                 @debug_l1 "Testing 1.5x tolerance expansion on best iteration parameters..."
@@ -964,7 +965,7 @@ function process_file!(
                 # Could not test tolerance expansion - no filtered spectra available
                 @user_warn "Cannot test tolerance expansion - filtered spectra not available"
             end
-            
+            =#
             # Build detailed warning message
             left_tol = round(getLeftTol(iteration_state.best_mass_error_model), digits = 1)
             right_tol = round(getRightTol(iteration_state.best_mass_error_model), digits = 1)

@@ -59,7 +59,7 @@
         "iteration_settings": {
             "init_mass_tol_ppm": [20.0, 30.0],
             "ms1_tol_ppm": 20.0,
-            "scan_counts": [10000]
+            "scan_counts": [10000, 20000]
         }
     },
     "first_search": {
