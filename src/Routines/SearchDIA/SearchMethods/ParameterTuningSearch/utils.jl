@@ -234,116 +234,18 @@ function filter_top_psms_per_precursor(psms::DataFrame, max_per_precursor::Int=3
 end
 
 """
-    fit_linear_irt_model(psms::DataFrame)
-
-Fit simple linear model for RT alignment: irt_predicted = intercept + slope * rt
-
-Uses closed-form least squares solution via normal equations.
-
-# Arguments
-- `psms`: DataFrame with :rt and :irt_predicted columns
-
-# Returns
-Tuple containing:
-- `model`: LinearRtConversionModel with fitted parameters
-- `residual_std`: Standard deviation of residuals
-- `n_params`: Number of parameters (always 2)
-"""
-function fit_linear_irt_model(
-    psms::DataFrame
-)::Tuple{LinearRtConversionModel, Float32, Int}
-
-    rt = psms[!, :rt]
-    irt = psms[!, :irt_predicted]
-    n = length(rt)
-
-    # Handle degenerate case - all RTs identical or insufficient variance
-    if std(rt) < 1e-10
-        return (
-            LinearRtConversionModel(0.0f0, Float32(mean(irt))),
-            Float32(std(irt)),
-            2
-        )
-    end
-
-    try
-        # Create DataFrame for RobustModels (requires formula interface)
-        fit_data = DataFrame(
-            irt = Float64.(irt),  # Response variable
-            rt = Float64.(rt)      # Predictor variable
-        )
-
-        # Fit robust M-estimator with Tukey bisquare loss
-        # MEstimator provides robust parameter estimation via iteratively reweighted
-        # least squares, with better stability for small sample sizes than MM-estimator
-        robust_fit = rlm(@formula(irt ~ rt), fit_data, TauEstimator{TukeyLoss}())
-
-        # Extract coefficients using coef() function
-        coeffs = coef(robust_fit)
-        intercept = coeffs[1]  # First coeff is intercept
-        slope = coeffs[2]      # Second coeff is slope for 'rt'
-
-        # Calculate residuals
-        predicted = intercept .+ slope .* rt
-        residuals = irt .- predicted
-        residual_std = Float32(std(residuals))
-
-        model = LinearRtConversionModel(Float32(slope), Float32(intercept))
-
-        return (model, residual_std, 2)
-
-    catch e
-        # Fallback to OLS if robust regression fails
-        @warn "Robust regression failed: $e. Falling back to OLS."
-
-        # Simple least squares fallback
-        sum_rt = sum(rt)
-        sum_rt2 = sum(rt .^ 2)
-        sum_irt = sum(irt)
-        sum_rt_irt = sum(rt .* irt)
-
-        det = n * sum_rt2 - sum_rt^2
-        if abs(det) < 1e-10
-            return (
-                LinearRtConversionModel(0.0f0, Float32(mean(irt))),
-                Float32(std(irt)),
-                2
-            )
-        end
-
-        intercept = (sum_rt2 * sum_irt - sum_rt * sum_rt_irt) / det
-        slope = (n * sum_rt_irt - sum_rt * sum_irt) / det
-
-        predicted = intercept .+ slope .* rt
-        residuals = irt .- predicted
-        residual_std = Float32(std(residuals))
-
-        model = LinearRtConversionModel(Float32(slope), Float32(intercept))
-        return (model, residual_std, 2)
-    end
-end
-
-"""
     fit_irt_model(params::P, psms::DataFrame) where {P<:ParameterTuningSearchParameters}
 
-Fits retention time alignment model between library and empirical retention times.
-
-Uses RANSAC-based spline fitting for limited data (<ransac_threshold PSMs) and
-standard spline fitting for abundant data. Linear model used only as error fallback.
+Wrapper around shared fit_irt_model from rt_alignment_utils.jl.
+Adapts ParameterTuningSearchParameters to keyword arguments.
 
 # Arguments
 - `params`: Parameter tuning search parameters
 - `psms`: DataFrame containing PSMs with RT information
 
-# Process
-1. Determines fitting strategy based on PSM count and configuration
-2. Performs initial spline fit (with RANSAC if limited data)
-3. Removes outliers based on MAD threshold
-4. Refits spline model on cleaned data
-
 # Returns
 Tuple containing:
-- Final RT conversion model (SplineRtConversionModel or fallback)
+- Final RT conversion model (SplineRtConversionModel, LinearRtConversionModel, or IdentityModel)
 - Valid RT values
 - Valid iRT values
 - iRT median absolute deviation
@@ -353,124 +255,17 @@ function fit_irt_model(
     psms::DataFrame
 ) where {P<:ParameterTuningSearchParameters}
 
-    n_psms = nrow(psms)
-
-    # Extract configuration parameters
-    λ_penalty = Float32(getRtAlignmentLambdaPenalty(params))
-    ransac_threshold = getRtAlignmentRansacThreshold(params)
-    min_psms = getRtAlignmentMinPsms(params)
-
-    # Calculate adaptive knots: 1 per 100 PSMs, minimum 3
-    n_knots = min(max(3, Int(floor(n_psms / 100))), getSplineNKnots(params))
-
-    # Early exit for insufficient data
-    if n_psms < min_psms
-        @debug_l2 "Too few PSMs ($n_psms) for RT alignment (need ≥$min_psms), using identity model"
-        return (IdentityModel(), Float32[], Float32[], 0.0f0)
-    end
-
-    @debug_l2 "Using $n_knots knots for RT spline ($n_psms PSMs)"
-
-    # Single unified spline fitting path with conditional RANSAC
-    try
-        # Determine if we should use RANSAC based on PSM count
-        use_ransac = n_psms < ransac_threshold
-
-        @debug_l2 if use_ransac
-            "Limited data ($n_psms PSMs): Using RANSAC + penalty (λ=$λ_penalty)"
-        else
-            "Abundant data ($n_psms PSMs): Using standard fitting (λ=$λ_penalty)"
-        end
-
-        # Fit spline (with or without RANSAC)
-        rt_to_irt_map = if use_ransac
-            # Use RANSAC for robustness with limited data
-            fit_spline_with_ransac(
-                psms[!, :irt_predicted],
-                psms[!, :rt],
-                getSplineDegree(params),
-                n_knots,
-                λ_penalty,
-                2,  # 2nd order penalty
-                ransac_iterations=50,
-                ransac_sample_size=30,
-                ransac_threshold_factor=Float32(2.0)
-            )
-        else
-            # Standard P-spline fitting for abundant data
-            UniformSplinePenalized(
-                psms[!, :irt_predicted],
-                psms[!, :rt],
-                getSplineDegree(params),
-                n_knots,
-                λ_penalty,
-                2  # 2nd order penalty
-            )
-        end
-
-        # Calculate residuals
-        predicted_irt = [rt_to_irt_map(rt) for rt in psms[!, :rt]]
-        residuals = psms[!, :irt_predicted] .- predicted_irt
-
-        # Remove outliers
-        irt_mad = mad(residuals, normalize=false)::Float32
-        valid_mask = abs.(residuals) .< (irt_mad * getOutlierThreshold(params))
-        valid_psms = psms[valid_mask, :]
-
-        # Check if enough PSMs remain
-        if nrow(valid_psms) < min_psms
-            @debug_l2 "Too few PSMs after outlier removal ($(nrow(valid_psms))), using identity model"
-            return (IdentityModel(), Float32[], Float32[], 0.0f0)
-        end
-
-        # Refit with filtered PSMs (same method as initial fit)
-        n_knots_final = min(n_knots, max(3, Int(floor(nrow(valid_psms) / 100))))
-
-        final_map = if use_ransac
-            fit_spline_with_ransac(
-                valid_psms[!, :irt_predicted],
-                valid_psms[!, :rt],
-                getSplineDegree(params),
-                n_knots_final,
-                λ_penalty,
-                2,
-                ransac_iterations=50,
-                ransac_sample_size=30,
-                ransac_threshold_factor=Float32(2.0)
-            )
-        else
-            UniformSplinePenalized(
-                valid_psms[!, :irt_predicted],
-                valid_psms[!, :rt],
-                getSplineDegree(params),
-                n_knots_final,
-                λ_penalty,
-                2
-            )
-        end
-
-        final_model = SplineRtConversionModel(final_map)
-
-        return (final_model, valid_psms[!, :rt], valid_psms[!, :irt_predicted], irt_mad)
-
-    catch e
-        # Only fallback: use linear model on error
-        @user_warn "RT spline fitting failed ($e), falling back to linear model"
-
-        linear_model, linear_std, _ = fit_linear_irt_model(psms)
-
-        # Calculate MAD for linear model
-        predicted = [linear_model(rt) for rt in psms[!, :rt]]
-        residuals = psms[!, :irt_predicted] .- predicted
-        linear_mad = median(abs.(residuals .- median(residuals)))
-
-        return (
-            linear_model,
-            psms[!, :rt],
-            psms[!, :irt_predicted],
-            Float32(linear_mad)
-        )
-    end
+    # Call shared fit_irt_model from CommonSearchUtils/rt_alignment_utils.jl
+    # with extracted parameters
+    return Pioneer.fit_irt_model(
+        psms;
+        lambda_penalty = Float32(getRtAlignmentLambdaPenalty(params)),
+        ransac_threshold = getRtAlignmentRansacThreshold(params),
+        min_psms = getRtAlignmentMinPsms(params),
+        spline_degree = getSplineDegree(params),
+        max_knots = getSplineNKnots(params),
+        outlier_threshold = Float32(getOutlierThreshold(params))
+    )
 end
 
 """
