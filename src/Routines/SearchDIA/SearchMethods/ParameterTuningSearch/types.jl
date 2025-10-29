@@ -245,18 +245,7 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
         
         # Extract topn_peaks if present
         topn_peaks = hasproperty(search_params, :topn_peaks) ? Int64(search_params.topn_peaks) : nothing
-        # Extract scan counts vector
-        scan_counts = if hasproperty(search_params, :scan_counts)
-            Vector{Int64}(search_params.scan_counts)
-        else
-            Int64[10000]  # Simple default: single attempt with 10000 scans
-        end
 
-        # Validate scan counts
-        @assert !isempty(scan_counts) "scan_counts must not be empty"
-        @assert issorted(scan_counts) "scan_counts must be in ascending order"
-        @assert all(c -> c > 0, scan_counts) "All scan counts must be positive"
-        
         # Extract max fragments for mass error estimation
         max_frags_for_mass_err_estimation = hasproperty(search_params, :max_frags_for_mass_err_estimation) ? 
             UInt8(search_params.max_frags_for_mass_err_estimation) : UInt8(5)
@@ -288,6 +277,18 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
             mass_tol_per_iteration,
             Float32(iter.ms1_tol_ppm)
         )
+
+        # Extract scan counts vector (from iteration_settings)
+        scan_counts = if hasproperty(iter, :scan_counts)
+            Vector{Int64}(iter.scan_counts)
+        else
+            Int64[10000]  # Simple default: single attempt with 10000 scans
+        end
+
+        # Validate scan counts
+        @assert !isempty(scan_counts) "scan_counts must not be empty"
+        @assert issorted(scan_counts) "scan_counts must be in ascending order"
+        @assert all(c -> c > 0, scan_counts) "All scan counts must be positive"
 
         # Extract RT alignment parameters with fallbacks
         lambda_penalty = hasproperty(rt_params, :lambda_penalty) ?

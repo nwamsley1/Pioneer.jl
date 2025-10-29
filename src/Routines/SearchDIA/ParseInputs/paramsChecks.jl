@@ -157,33 +157,33 @@ function checkParams(json_path::String)
         if haskey(iter_settings, "iterations_per_phase") && iter_settings["iterations_per_phase"] <= 0
             error("iteration_settings.iterations_per_phase must be positive")
         end
+
+        # Validate scan_counts (optional parameter with validation if present)
+        if haskey(iter_settings, "scan_counts")
+            scan_counts = iter_settings["scan_counts"]
+
+            # Must be a vector/array
+            if !(scan_counts isa Vector)
+                error("iteration_settings.scan_counts must be a vector/array, got $(typeof(scan_counts))")
+            end
+
+            # Must not be empty
+            if isempty(scan_counts)
+                error("iteration_settings.scan_counts must not be empty")
+            end
+
+            # All elements must be positive integers
+            if !all(x -> x isa Integer && x > 0, scan_counts)
+                error("iteration_settings.scan_counts must contain only positive integers")
+            end
+
+            # Must be sorted in ascending order
+            if !issorted(scan_counts)
+                error("iteration_settings.scan_counts must be in ascending order")
+            end
+        end
     else
         error("parameter_tuning.iteration_settings is required")
-    end
-
-    # Validate scan_counts (optional parameter with validation if present)
-    if haskey(search_settings, "scan_counts")
-        scan_counts = search_settings["scan_counts"]
-
-        # Must be a vector/array
-        if !(scan_counts isa Vector)
-            error("search_settings.scan_counts must be a vector/array, got $(typeof(scan_counts))")
-        end
-
-        # Must not be empty
-        if isempty(scan_counts)
-            error("search_settings.scan_counts must not be empty")
-        end
-
-        # All elements must be positive integers
-        if !all(x -> x isa Integer && x > 0, scan_counts)
-            error("search_settings.scan_counts must contain only positive integers")
-        end
-
-        # Must be sorted in ascending order
-        if !issorted(scan_counts)
-            error("search_settings.scan_counts must be in ascending order")
-        end
     end
 
     if haskey(search_settings, "max_frags_for_mass_err_estimation")

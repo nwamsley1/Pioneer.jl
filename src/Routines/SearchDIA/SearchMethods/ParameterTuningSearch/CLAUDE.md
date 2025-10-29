@@ -185,9 +185,7 @@ The module implements a sophisticated convergence strategy that combines:
     },
     "iteration_settings": {
       "init_mass_tol_ppm": [20.0, 30.0],  // Explicit tolerances per iteration
-      "ms1_tol_ppm": 20.0
-    },
-    "search_settings": {
+      "ms1_tol_ppm": 20.0,
       "scan_counts": [500, 5000, 50000, 80000]  // Explicit scan counts to try
     }
   }
