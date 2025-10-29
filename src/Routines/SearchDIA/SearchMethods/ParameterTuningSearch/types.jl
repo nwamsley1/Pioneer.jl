@@ -110,19 +110,16 @@ Always uses 3 phases: zero bias, positive shift, negative shift.
 struct IterationSettings
     mass_tol_per_iteration::Vector{Float32} # Mass tolerance for each iteration [30.0, 45.0, 67.5]
     ms1_tol_ppm::Float32                     # MS1 precursor tolerance
-    scan_scale_factor::Float32               # Factor to scale scan count between attempts
 
     function IterationSettings(
         mass_tol_per_iter::Vector{Float32},
-        ms1_tol::Float32,
-        scan_scale_factor::Float32
+        ms1_tol::Float32
     )
         @assert !isempty(mass_tol_per_iter) "Must specify at least one mass tolerance"
         @assert all(tol -> tol > 0.0f0, mass_tol_per_iter) "All mass tolerances must be positive"
         @assert ms1_tol > 0.0f0 "MS1 tolerance must be positive"
-        @assert scan_scale_factor >= 1.0f0 "Scan scale factor must be >= 1"
 
-        new(mass_tol_per_iter, ms1_tol, scan_scale_factor)
+        new(mass_tol_per_iter, ms1_tol)
     end
 end
 
@@ -211,8 +208,7 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
     intensity_filter_quantile::Float32  # Quantile for filtering fragments by intensity in mass error model
     max_frag_rank::UInt8
     topn_peaks::Union{Nothing, Int64}
-    initial_scan_count::Int64
-    max_parameter_tuning_scans::Int64
+    scan_counts::Vector{Int64}
     # max_tol_ppm removed - calculated dynamically from iteration settings
     irt_tol::Float32
     spec_order::Set{Int64}
@@ -249,17 +245,17 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
         
         # Extract topn_peaks if present
         topn_peaks = hasproperty(search_params, :topn_peaks) ? Int64(search_params.topn_peaks) : nothing
-        # Extract scan count parameters
-        initial_scan_count = hasproperty(search_params, :initial_scan_count) ? Int64(search_params.initial_scan_count) : Int64(2500)
-        
-        # Check for new name first, then fall back to old name for backward compatibility
-        max_parameter_tuning_scans = if hasproperty(search_params, :max_parameter_tuning_scans)
-            Int64(search_params.max_parameter_tuning_scans)
-        elseif hasproperty(search_params, :expanded_scan_count)
-            Int64(search_params.expanded_scan_count)
+        # Extract scan counts vector
+        scan_counts = if hasproperty(search_params, :scan_counts)
+            Vector{Int64}(search_params.scan_counts)
         else
-            Int64(8000)  # Updated default from 10000 to 8000
+            Int64[10000]  # Simple default: single attempt with 10000 scans
         end
+
+        # Validate scan counts
+        @assert !isempty(scan_counts) "scan_counts must not be empty"
+        @assert issorted(scan_counts) "scan_counts must be in ascending order"
+        @assert all(c -> c > 0, scan_counts) "All scan counts must be positive"
         
         # Extract max fragments for mass error estimation
         max_frags_for_mass_err_estimation = hasproperty(search_params, :max_frags_for_mass_err_estimation) ? 
@@ -290,8 +286,7 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
 
         iteration_settings = IterationSettings(
             mass_tol_per_iteration,
-            Float32(iter.ms1_tol_ppm),
-            Float32(iter.scan_scale_factor)
+            Float32(iter.ms1_tol_ppm)
         )
 
         # Extract RT alignment parameters with fallbacks
@@ -339,8 +334,7 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
             intensity_filter_quantile,  # Fragment intensity filtering threshold
             UInt8(frag_params.max_rank),
             topn_peaks,
-            initial_scan_count,
-            max_parameter_tuning_scans,
+            scan_counts,
             # max_tol_ppm removed - calculated dynamically
             typemax(Float32), # irt_tol default
             Set{Int64}([2]), # spec_order default
@@ -363,8 +357,7 @@ end
 function getMaxTolerancePpm(params::ParameterTuningSearchParameters)
     return maximum(params.iteration_settings.mass_tol_per_iteration)
 end
-getInitialScanCount(params::ParameterTuningSearchParameters) = params.initial_scan_count
-getMaxParameterTuningScans(params::ParameterTuningSearchParameters) = params.max_parameter_tuning_scans
+getScanCounts(params::ParameterTuningSearchParameters) = params.scan_counts
 getTopNPeaks(params::ParameterTuningSearchParameters) = params.topn_peaks
 getMaxFragsForMassErrEstimation(params::ParameterTuningSearchParameters) = params.max_frags_for_mass_err_estimation
 getIntensityFilterQuantile(params::ParameterTuningSearchParameters) = params.intensity_filter_quantile

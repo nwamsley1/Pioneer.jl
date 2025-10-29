@@ -734,27 +734,25 @@ function process_file!(
     settings = getIterationSettings(params)
     
     # Get scan count parameters
-    scan_count = getInitialScanCount(params)
-    max_scans = getMaxParameterTuningScans(params)
-    scan_scale_factor = settings.scan_scale_factor
-    
+    scan_counts = getScanCounts(params)
+
     # Define filtered_spectra outside try block for use in fallback
     filtered_spectra = nothing
-    
+
     try
-        
+
         # Initialize models
         initialize_models!(search_context, ms_file_idx, params)
-        
-        # Create filtered spectra ONCE with initial scan count
+
+        # Create filtered spectra ONCE with first scan count
         try
             filtered_spectra = FilteredMassSpecData(
                 spectra,
-                max_scans = scan_count,
+                max_scans = scan_counts[1],
                 topn = something(getTopNPeaks(params), 200),
                 target_ms_order = UInt8(2)
             )
-            
+
             # Check if we have any usable scans
             if length(filtered_spectra) == 0
                 file_name = try
@@ -790,53 +788,30 @@ function process_file!(
                 throw(e)  # Re-throw to be caught by outer catch block
             end
         end
-        
-        # Track current scan count
-        current_scan_count = scan_count
-        attempt_count = 0
-        
-        # Main scan scaling loop
-        while true
-            attempt_count += 1
-            iteration_state.scan_attempt = attempt_count
-            
-            # Run all phases with current filtered_spectra
+
+        # Simple iteration through explicit scan counts
+        for (attempt_idx, target_scan_count) in enumerate(scan_counts)
+            iteration_state.scan_attempt = attempt_idx
+
+            # Run all phases with current scan count
             converged = run_all_phases_with_scan_count(
                 filtered_spectra, iteration_state, results,
                 params, search_context, ms_file_idx, spectra
             )
-            
+
             if converged
                 iteration_state.converged = true
                 break
             end
-            
-            # Check if we've reached or exceeded max scans
-            if current_scan_count >= max_scans
-                iteration_state.max_scan_count_reached = true
-                break
-            end
-            
-            # Calculate next scan count
-            next_scan_count = Int64(ceil(current_scan_count * scan_scale_factor))
-            
-            # Check if next iteration would exceed max
-            if next_scan_count > max_scans
-                if current_scan_count < max_scans
-                    # Do one final attempt with exactly max_scans
-                    additional_scans = max_scans - current_scan_count
-                    append!(filtered_spectra; max_additional_scans = additional_scans)
-                    current_scan_count = max_scans
-                    # Loop will continue for one more attempt
-                else
-                    # Already at max, break
-                    break
-                end
-            else
-                # Normal scaling - append more scans
-                additional_scans = next_scan_count - current_scan_count
+
+            # If not the last attempt, append more scans for next iteration
+            if attempt_idx < length(scan_counts)
+                next_scan_count = scan_counts[attempt_idx + 1]
+                additional_scans = next_scan_count - target_scan_count
                 append!(filtered_spectra; max_additional_scans = additional_scans)
-                current_scan_count = next_scan_count
+            else
+                # Reached last scan count without convergence
+                iteration_state.max_scan_count_reached = true
             end
         end
         #@debug_l1 "manual set mass err model . "

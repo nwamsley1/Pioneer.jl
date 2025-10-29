@@ -44,8 +44,7 @@
             "frag_err_quantile": 0.005,
             "max_q_value": 0.01,
             "topn_peaks": 200,
-            "initial_scan_count": 10000,
-            "max_parameter_tuning_scans": 40000,
+            "scan_counts": [500, 5000, 50000, 80000],
             "max_frags_for_mass_err_estimation": 12
         },
         "nce_tuning": {
@@ -60,8 +59,7 @@
         },
         "iteration_settings": {
             "init_mass_tol_ppm": [20.0, 30.0],
-            "ms1_tol_ppm": 20.0,
-            "scan_scale_factor": 4
+            "ms1_tol_ppm": 20.0
         }
     },
     "first_search": {
