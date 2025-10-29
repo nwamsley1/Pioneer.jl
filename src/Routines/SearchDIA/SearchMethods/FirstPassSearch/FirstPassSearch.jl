@@ -117,6 +117,8 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     max_prob_to_impute::Float32
     fwhm_nstd::Float32
     irt_nstd::Float32
+    plot_rt_alignment::Bool
+    use_robust_fitting::Bool
     prec_estimation::P
 
     function FirstPassSearchParameters(params::PioneerParameters)
@@ -170,6 +172,8 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Float32(irt_mapping_params.max_prob_to_impute_irt),  # Default max_prob_to_impute
             Float32(irt_mapping_params.fwhm_nstd),   # Default fwhm_nstd
             Float32(irt_mapping_params.irt_nstd),   # Default irt_nstd
+            Bool(hasproperty(irt_mapping_params, :plot_rt_alignment) ? irt_mapping_params.plot_rt_alignment : false),
+            Bool(hasproperty(irt_mapping_params, :use_robust_fitting) ? irt_mapping_params.use_robust_fitting : true),
             prec_estimation
         )
     end
