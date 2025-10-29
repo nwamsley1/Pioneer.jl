@@ -30,7 +30,7 @@
         "fragment_settings": {
             "min_count": 7,
             "max_rank": 25,
-            "min_score": [22, 17, 15],
+            "min_score": [22, 17],
             "min_spectral_contrast": 0.5,
             "relative_improvement_threshold": 1.25,
             "min_log2_ratio": 1.5,
@@ -39,7 +39,7 @@
             "intensity_filter_quantile": 0.50
         },
         "search_settings": {
-            "min_samples": 1000,
+            "min_samples": 1200,
             "max_presearch_iters": 10,
             "frag_err_quantile": 0.005,
             "max_q_value": 0.01,
@@ -59,7 +59,7 @@
         "iteration_settings": {
             "init_mass_tol_ppm": [20.0, 30.0],
             "ms1_tol_ppm": 20.0,
-            "scan_counts": [10000, 20000]
+            "scan_counts": [10000]
         }
     },
     "first_search": {
@@ -117,7 +117,7 @@
         "sigma_tolerance": 4,
         "min_probability": 0.95,
         "lambda_penalty": 0.1,
-        "ransac_threshold_psms": 1000,
+        "ransac_threshold_psms": 500,
         "min_psms_for_spline": 10
     },
     "optimization": {
