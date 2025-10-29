@@ -324,62 +324,26 @@ function fit_linear_irt_model(
 end
 
 """
-    calculate_aic(n_observations::Int, n_parameters::Int, residual_variance::Float32)
-
-Calculate Akaike Information Criterion (AIC) for model selection.
-
-AIC = n * log(σ²) + 2k
-
-where:
-- n = number of observations
-- σ² = residual variance (mean squared error)
-- k = number of parameters
-
-Lower AIC indicates better model (balances fit quality vs complexity).
-
-# Arguments
-- `n_observations`: Number of data points
-- `n_parameters`: Number of model parameters
-- `residual_variance`: Variance of residuals (MSE)
-
-# Returns
-AIC value (Float32). Lower values indicate better models.
-"""
-function calculate_aic(
-    n_observations::Int,
-    n_parameters::Int,
-    residual_variance::Float32
-)::Float32
-
-    if residual_variance <= 0
-        return Inf32
-    end
-
-    log_likelihood_term = n_observations * log(residual_variance)
-    penalty_term = 2 * n_parameters
-    constant_term = n_observations * (1 + log(2 * Float32(π)))
-
-    return Float32(log_likelihood_term + penalty_term + constant_term)
-end
-
-"""
     fit_irt_model(params::P, psms::DataFrame) where {P<:ParameterTuningSearchParameters}
 
 Fits retention time alignment model between library and empirical retention times.
+
+Uses RANSAC-based spline fitting for limited data (<ransac_threshold PSMs) and
+standard spline fitting for abundant data. Linear model used only as error fallback.
 
 # Arguments
 - `params`: Parameter tuning search parameters
 - `psms`: DataFrame containing PSMs with RT information
 
 # Process
-1. Performs initial spline fit between predicted and observed RTs
-2. Calculates residuals and median absolute deviation
+1. Determines fitting strategy based on PSM count and configuration
+2. Performs initial spline fit (with RANSAC if limited data)
 3. Removes outliers based on MAD threshold
 4. Refits spline model on cleaned data
 
 # Returns
 Tuple containing:
-- Final RT conversion model
+- Final RT conversion model (SplineRtConversionModel or fallback)
 - Valid RT values
 - Valid iRT values
 - iRT median absolute deviation
@@ -391,204 +355,121 @@ function fit_irt_model(
 
     n_psms = nrow(psms)
 
-    # Fixed knot count for consistency across all files
-    # This simplifies the model structure and prepares for monotonicity constraints
-    #n_knots = 5
-    n_knots = min(max(3, Int(floor(n_psms / 100))), getSplineNKnotw(params))  # Ensure at least 3 knots
-    min_psms_for_spline = 0#300  # Minimum PSMs needed for spline fitting
+    # Extract configuration parameters
+    λ_penalty = Float32(getRtAlignmentLambdaPenalty(params))
+    ransac_threshold = getRtAlignmentRansacThreshold(params)
+    min_psms = getRtAlignmentMinPsms(params)
 
-    # If we don't have enough PSMs for minimum knots, skip spline entirely
-    if n_psms < 10
-        # Too few PSMs even for linear model
-        @debug_l2 "Too few PSMs ($n_psms) for RT alignment (need ≥10), using identity model"
+    # Calculate adaptive knots: 1 per 100 PSMs, minimum 3
+    n_knots = min(max(3, Int(floor(n_psms / 100))), getSplineNKnots(params))
+
+    # Early exit for insufficient data
+    if n_psms < min_psms
+        @debug_l2 "Too few PSMs ($n_psms) for RT alignment (need ≥$min_psms), using identity model"
         return (IdentityModel(), Float32[], Float32[], 0.0f0)
     end
 
-    # Determine if we should attempt spline fitting
-    use_spline = n_psms >= min_psms_for_spline
+    @debug_l2 "Using $n_knots knots for RT spline ($n_psms PSMs)"
 
-    if !use_spline
-        @debug_l1 "Only $n_psms PSMs (need ≥$min_psms_for_spline for spline), will use linear model"
-    else
-        @debug_l2 "Using $n_knots knots for RT spline ($n_psms PSMs)"
-    end
+    # Single unified spline fitting path with conditional RANSAC
+    try
+        # Determine if we should use RANSAC based on PSM count
+        use_ransac = n_psms < ransac_threshold
 
-    # MODEL COMPARISON PATH: n_psms < 1000
-    comparison_threshold = 1000
-    λ_penalty = 0.1f0
-    if n_psms < comparison_threshold
-        # Check if we have enough PSMs for spline fitting
-        if !use_spline
-            # Insufficient PSMs for spline (< 300), use robust linear model only
-            @user_warn "Only $n_psms PSMs available (need ≥$min_psms_for_spline for spline), using robust linear model"
-            linear_model, linear_std, linear_n_params = fit_linear_irt_model(psms)
-
-            # Calculate MAD for linear model
-            predicted = [linear_model(rt) for rt in psms[!, :rt]]
-            residuals = psms[!, :irt_predicted] .- predicted
-            linear_mad = median(abs.(residuals .- median(residuals)))
-
-            return (
-                linear_model,
-                psms[!, :rt],
-                psms[!, :irt_predicted],
-                Float32(linear_mad)
-            )
+        @debug_l2 if use_ransac
+            "Limited data ($n_psms PSMs): Using RANSAC + penalty (λ=$λ_penalty)"
+        else
+            "Abundant data ($n_psms PSMs): Using standard fitting (λ=$λ_penalty)"
         end
 
-        # Try both models and compare with AIC
-
-        # 1. TRY SPLINE MODEL
-        spline_result = try
-            # Fit initial spline with difference penalty
-            rt_to_irt_map = UniformSplinePenalized(
+        # Fit spline (with or without RANSAC)
+        rt_to_irt_map = if use_ransac
+            # Use RANSAC for robustness with limited data
+            fit_spline_with_ransac(
                 psms[!, :irt_predicted],
                 psms[!, :rt],
                 getSplineDegree(params),
                 n_knots,
-                Float32(λ_penalty),  # Moderate smoothing penalty
+                λ_penalty,
                 2,  # 2nd order penalty
-                true
+                ransac_iterations=50,
+                ransac_sample_size=30,
+                ransac_threshold_factor=Float32(2.0)
             )
-
-            # Calculate residuals
-            predicted_irt = [rt_to_irt_map(rt) for rt in psms[!, :rt]]
-            residuals = psms[!, :irt_predicted] .- predicted_irt
-
-            # Remove outliers
-            irt_mad = mad(residuals, normalize=false)::Float32
-            valid_mask = abs.(residuals) .< (irt_mad * getOutlierThreshold(params))
-            valid_psms = psms[valid_mask, :]
-
-            # Check if enough PSMs remain
-            if nrow(valid_psms) < 10
-                (nothing, nothing, nothing, nothing, nothing, nothing, nothing)
-            else
-                # Refit with valid PSMs
-                # Keep fixed knot count even after outlier removal
-                n_knots_final = 5
-
-                final_spline = UniformSplinePenalized(
-                    valid_psms[!, :irt_predicted],
-                    valid_psms[!, :rt],
-                    getSplineDegree(params),
-                    n_knots_final,
-                    Float32(λ_penalty),
-                    2,
-                    true
-                )
-
-                # Calculate final residuals for AIC
-                final_pred = [final_spline(rt) for rt in valid_psms[!, :rt]]
-                final_resid = valid_psms[!, :irt_predicted] .- final_pred
-                final_variance = var(final_resid)
-                @user_info "n_knots_final $n_knots_final"
-                (
-                    SplineRtConversionModel(final_spline),
-                    valid_psms[!, :rt],
-                    valid_psms[!, :irt_predicted],
-                    irt_mad,
-                    nrow(valid_psms),
-                    n_knots_final + 3,  # B-spline basis coefficients (degrees of freedom)
-                    Float32(final_variance)
-                )
-            end
-        catch e
-            @debug_l1 "Spline fitting failed: $e"
-            (nothing, nothing, nothing, nothing, nothing, nothing, nothing)
-        end
-
-        spline_model, spline_rt, spline_irt, spline_mad,
-            spline_n_obs, spline_n_params, spline_variance = spline_result
-
-        # 2. FIT LINEAR MODEL (always succeeds)
-        linear_model, linear_std, linear_n_params = fit_linear_irt_model(psms)
-        linear_variance = linear_std^2
-
-        # 3. CALCULATE AIC FOR BOTH
-        spline_aic = if spline_model !== nothing
-            calculate_aic(spline_n_obs, spline_n_params, spline_variance)
         else
-            Inf32  # Failed to fit
-        end
-
-        linear_aic = calculate_aic(n_psms, linear_n_params, linear_variance)
-
-        # 4. SELECT BETTER MODEL
-        @debug_l1 "RT model comparison (n_psms=$n_psms): Linear AIC=$(round(linear_aic, digits=2)), Spline AIC=$(round(spline_aic, digits=2))"
-
-        if linear_aic < spline_aic || spline_model === nothing
-            # LINEAR MODEL WINS
-            @debug_l1 "Selected linear RT model (AIC: $(round(linear_aic, digits=2)) vs $(round(spline_aic, digits=2)))"
-
-            # Calculate MAD for linear model
-            predicted = [linear_model(rt) for rt in psms[!, :rt]]
-            residuals = psms[!, :irt_predicted] .- predicted
-            linear_mad = median(abs.(residuals .- median(residuals)))
-
-            return (
-                linear_model,
-                psms[!, :rt],
+            # Standard P-spline fitting for abundant data
+            UniformSplinePenalized(
                 psms[!, :irt_predicted],
-                Float32(linear_mad)
-            )
-        else
-            # SPLINE MODEL WINS
-            @debug_l1 "Selected spline RT model (AIC: $(round(spline_aic, digits=2)) vs $(round(linear_aic, digits=2)))"
-
-            return (spline_model, spline_rt, spline_irt, spline_mad)
-        end
-
-    else
-        # STANDARD PATH: n_psms >= 1000, use spline only
-        # With abundant data, standard fitting is sufficient (no RANSAC/penalty needed)
-        try
-            # Initial spline fit without robustness features (fast standard fitting)
-            rt_to_irt_map = UniformSplinePenalized(
-                psms[!,:irt_predicted],
-                psms[!,:rt],
+                psms[!, :rt],
                 getSplineDegree(params),
                 n_knots,
-                Float32(0.0),  # No penalty - abundant data doesn't need smoothing
-                2,
-                false  # No RANSAC - natural robustness from large sample
+                λ_penalty,
+                2  # 2nd order penalty
             )
+        end
 
-            # Calculate residuals
-            psms[!,:irt_observed] = rt_to_irt_map.(psms.rt::Vector{Float32})
-            residuals = psms[!,:irt_observed] .- psms[!,:irt_predicted]
-            irt_mad = mad(residuals, normalize=false)::Float32
+        # Calculate residuals
+        predicted_irt = [rt_to_irt_map(rt) for rt in psms[!, :rt]]
+        residuals = psms[!, :irt_predicted] .- predicted_irt
 
-            # Remove outliers and refit
-            valid_psms = psms[abs.(residuals) .< (irt_mad * getOutlierThreshold(params)), :]
+        # Remove outliers
+        irt_mad = mad(residuals, normalize=false)::Float32
+        valid_mask = abs.(residuals) .< (irt_mad * getOutlierThreshold(params))
+        valid_psms = psms[valid_mask, :]
 
-            # Check if we still have enough PSMs after outlier removal
-            n_valid_psms = nrow(valid_psms)
-            if n_valid_psms < 10
-                @debug_l2 "Too few PSMs after outlier removal ($n_valid_psms), using identity model"
-                return (IdentityModel(), Float32[], Float32[], 0.0f0)
-            end
-
-            # Keep fixed knot count even after outlier removal
-            n_knots_final = 5
-
-            # Final fit without robustness features (abundant clean data after outlier removal)
-            final_model = SplineRtConversionModel(UniformSplinePenalized(
-                valid_psms[!,:irt_predicted],
-                valid_psms[!,:rt],
-                getSplineDegree(params),
-                n_knots_final,
-                Float32(0.0),  # No penalty - clean data after outlier removal
-                2,
-                false  # No RANSAC - already filtered outliers
-            ))
-
-            return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
-
-        catch e
-            @debug_l1 "RT spline fitting failed, using identity model exception=$e"
+        # Check if enough PSMs remain
+        if nrow(valid_psms) < min_psms
+            @debug_l2 "Too few PSMs after outlier removal ($(nrow(valid_psms))), using identity model"
             return (IdentityModel(), Float32[], Float32[], 0.0f0)
         end
+
+        # Refit with filtered PSMs (same method as initial fit)
+        n_knots_final = min(n_knots, max(3, Int(floor(nrow(valid_psms) / 100))))
+
+        final_map = if use_ransac
+            fit_spline_with_ransac(
+                valid_psms[!, :irt_predicted],
+                valid_psms[!, :rt],
+                getSplineDegree(params),
+                n_knots_final,
+                λ_penalty,
+                2,
+                ransac_iterations=50,
+                ransac_sample_size=30,
+                ransac_threshold_factor=Float32(2.0)
+            )
+        else
+            UniformSplinePenalized(
+                valid_psms[!, :irt_predicted],
+                valid_psms[!, :rt],
+                getSplineDegree(params),
+                n_knots_final,
+                λ_penalty,
+                2
+            )
+        end
+
+        final_model = SplineRtConversionModel(final_map)
+
+        return (final_model, valid_psms[!, :rt], valid_psms[!, :irt_predicted], irt_mad)
+
+    catch e
+        # Only fallback: use linear model on error
+        @user_warn "RT spline fitting failed ($e), falling back to linear model"
+
+        linear_model, linear_std, _ = fit_linear_irt_model(psms)
+
+        # Calculate MAD for linear model
+        predicted = [linear_model(rt) for rt in psms[!, :rt]]
+        residuals = psms[!, :irt_predicted] .- predicted
+        linear_mad = median(abs.(residuals .- median(residuals)))
+
+        return (
+            linear_model,
+            psms[!, :rt],
+            psms[!, :irt_predicted],
+            Float32(linear_mad)
+        )
     end
 end
 
