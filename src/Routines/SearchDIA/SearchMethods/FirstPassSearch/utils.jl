@@ -48,16 +48,16 @@ Adds essential columns to PSM DataFrame for scoring and analysis.
 - Analysis columns: target, spectrum_peak_count, err_norm
 """
 function add_main_search_columns!(psms::DataFrame, 
-                                rt_irt::UniformSpline,
+                                rt_irt::T,
                                 structural_mods::AbstractVector{Union{Missing, String}},
                                 prec_missed_cleavages::Arrow.Primitive{UInt8, Vector{UInt8}},
                                 prec_is_decoy::Arrow.BoolVector{Bool},
-                                prec_irt::Arrow.Primitive{T, Vector{T}},
+                                prec_irt::Arrow.Primitive{U, Vector{U}},
                                 prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}},
                                 scan_retention_time::AbstractVector{Float32},
                                 tic::AbstractVector{Float32},
                                 masses::AbstractArray;
-) where {T<:AbstractFloat}
+) where {T,U<:AbstractFloat}
     
     ###########################
     #Allocate new columns
@@ -361,23 +361,75 @@ function map_retention_times!(
         psms = Arrow.Table(psms_path)
         best_hits = psms[:prob].>params.min_prob_for_irt_mapping#Map rts using only the best psms
         try#if sum(best_hits) > 100
-            best_rts = psms[:rt][best_hits]
-            best_irts = psms[:irt_predicted][best_hits]
-            irt_to_rt_spline = UniformSpline(
-                                        best_rts,
-                                        best_irts,
-                                        3, 
-                                        5
-            )
-            rt_to_irt_spline = UniformSpline(
-                best_irts,
-                best_rts,
-                3, 
-                5
-            )
-            #Build rt=>irt and irt=> rt mappings for the file and add to the dictionaries 
-            setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
-            setIrtRtMap!(search_context, SplineRtConversionModel(irt_to_rt_spline), ms_file_idx)
+            if params.use_robust_fitting
+                # Use robust fitting with RANSAC/penalty
+                best_psms_df = DataFrame(
+                    rt = psms[:rt][best_hits],
+                    irt_predicted = psms[:irt_predicted][best_hits]
+                )
+
+                # Fit RT to iRT model using shared robust fitting
+                rt_model, valid_rt, valid_irt, irt_mad = Pioneer.fit_irt_model(
+                    best_psms_df;
+                    lambda_penalty = Float32(0.1),  # Default penalty
+                    ransac_threshold = 1000,        # Default RANSAC threshold
+                    min_psms = 10,                  # Default minimum PSMs
+                    spline_degree = 3,              # Default spline degree
+                    max_knots = 7,                  # Default max knots
+                    outlier_threshold = Float32(5.0)  # Default outlier threshold
+                )
+
+                # Store RT to iRT model
+                setRtIrtMap!(search_context, rt_model, ms_file_idx)
+
+                # Fit inverse model (iRT to RT) - swap input/output
+                irt_to_rt_df = DataFrame(
+                    rt = valid_irt,           # Use iRT as input
+                    irt_predicted = valid_rt  # Use RT as output
+                )
+                irt_model, _, _, _ = Pioneer.fit_irt_model(
+                    irt_to_rt_df;
+                    lambda_penalty = Float32(0.1),
+                    ransac_threshold = 1000,
+                    min_psms = 10,
+                    spline_degree = 3,
+                    max_knots = 7,
+                    outlier_threshold = Float32(5.0)
+                )
+                setIrtRtMap!(search_context, irt_model, ms_file_idx)
+
+                # Optionally generate plots
+                if params.plot_rt_alignment
+                    plot_rt_alignment_firstpass(
+                        valid_rt,
+                        valid_irt,
+                        rt_model,
+                        ms_file_idx,
+                        getDataOutDir(search_context)
+                    )
+                end
+            else
+                # Use simple UniformSpline (legacy behavior)
+                best_rts = psms[:rt][best_hits]
+                best_irts = psms[:irt_predicted][best_hits]
+
+                irt_to_rt_spline = UniformSpline(
+                    best_rts,
+                    best_irts,
+                    3,
+                    5
+                )
+                rt_to_irt_spline = UniformSpline(
+                    best_irts,
+                    best_rts,
+                    3,
+                    5
+                )
+
+                #Build rt=>irt and irt=> rt mappings for the file and add to the dictionaries
+                setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
+                setIrtRtMap!(search_context, SplineRtConversionModel(irt_to_rt_spline), ms_file_idx)
+            end
         catch e
             # Get file name for debugging
             file_name = try
@@ -417,6 +469,60 @@ function map_retention_times!(
         end
     end
     
+    return nothing
+end
+
+"""
+    plot_rt_alignment_firstpass(rt, irt, rt_model, ms_file_idx, output_dir)
+
+Generate RT alignment diagnostic plot for FirstPassSearch.
+
+# Arguments
+- `rt`: Observed retention times
+- `irt`: Predicted indexed retention times
+- `rt_model`: Fitted RT conversion model
+- `ms_file_idx`: MS file index
+- `output_dir`: Output directory path
+
+Creates a scatter plot of RT vs iRT with the fitted model curve overlay.
+Saves to FirstPass RT alignment folder in QC plots directory.
+"""
+function plot_rt_alignment_firstpass(
+    rt::Vector{Float32},
+    irt::Vector{Float32},
+    rt_model::RtConversionModel,
+    ms_file_idx::Int,
+    output_dir::String
+)
+    n = length(rt)
+
+    # Create scatter plot
+    p = plot(
+        rt,
+        irt,
+        seriestype = :scatter,
+        title = "FirstPass RT Alignment (File $ms_file_idx)\nn = $n",
+        xlabel = "Observed RT (min)",
+        ylabel = "Predicted iRT",
+        label = nothing,
+        alpha = 0.3,
+        markersize = 2,
+        size = (800, 600)
+    )
+
+    # Add fitted model line
+    rt_range = LinRange(minimum(rt), maximum(rt), 100)
+    fitted_irt = [rt_model(r) for r in rt_range]
+    plot!(p, rt_range, fitted_irt, color = :red, linewidth = 2, label = nothing)
+
+    # Create output directory if needed
+    rt_plot_folder = joinpath(output_dir, "qc_plots", "rt_alignment_plots", "firstpass")
+    !isdir(rt_plot_folder) && mkpath(rt_plot_folder)
+
+    # Save plot
+    plot_path = joinpath(rt_plot_folder, "file_$(ms_file_idx)_rt_alignment.pdf")
+    savefig(p, plot_path)
+
     return nothing
 end
 

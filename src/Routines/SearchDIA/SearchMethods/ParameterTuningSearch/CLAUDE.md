@@ -184,14 +184,9 @@ The module implements a sophisticated convergence strategy that combines:
       "min_spectral_contrast": 0.5
     },
     "iteration_settings": {
-      "init_mass_tol_ppm": 5.0,
-      "mass_tolerance_scale_factor": 2.0,
-      "iterations_per_phase": 3,
-      "scan_scale_factor": 10.0
-    },
-    "search_settings": {
-      "initial_scan_count": 500,
-      "max_parameter_tuning_scans": 80000
+      "init_mass_tol_ppm": [20.0, 30.0],  // Explicit tolerances per iteration
+      "ms1_tol_ppm": 20.0,
+      "scan_counts": [500, 5000, 50000, 80000]  // Explicit scan counts to try
     }
   }
 }
