@@ -222,6 +222,10 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
     spline_fit_outlier_sd::Int64
     irt_tol_sd::Int64
     prec_estimation::P
+    # RT alignment parameters for spline fitting
+    lambda_penalty::Float32
+    ransac_threshold_psms::Int64
+    min_psms_for_spline::Int64
     iteration_settings::IterationSettings
 
     function ParameterTuningSearchParameters(params::PioneerParameters)
@@ -289,7 +293,15 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
             Float32(iter.ms1_tol_ppm),
             Float32(iter.scan_scale_factor)
         )
-        
+
+        # Extract RT alignment parameters with fallbacks
+        lambda_penalty = hasproperty(rt_params, :lambda_penalty) ?
+            Float32(rt_params.lambda_penalty) : Float32(0.1)
+        ransac_threshold_psms = hasproperty(rt_params, :ransac_threshold_psms) ?
+            Int64(rt_params.ransac_threshold_psms) : Int64(1000)
+        min_psms_for_spline = hasproperty(rt_params, :min_psms_for_spline) ?
+            Int64(rt_params.min_psms_for_spline) : Int64(10)
+
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
             # Core parameters
@@ -338,6 +350,9 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
             5,  # spline_fit_outlier_sd default
             Int64(rt_params.sigma_tolerance),
             prec_estimation,
+            lambda_penalty,
+            ransac_threshold_psms,
+            min_psms_for_spline,
             iteration_settings
         )
     end
@@ -358,6 +373,16 @@ getIterationSettings(params::ParameterTuningSearchParameters) = params.iteration
 # Get initial fragment tolerance (first iteration tolerance)
 getFragTolPpm(params::ParameterTuningSearchParameters) = getInitMassTolPpm(params.iteration_settings)
 getMs1TolPpm(params::ParameterTuningSearchParameters) = params.iteration_settings.ms1_tol_ppm
+
+# RT alignment parameter accessors
+getLambdaPenalty(params::ParameterTuningSearchParameters) = params.lambda_penalty
+getRansacThresholdPsms(params::ParameterTuningSearchParameters) = params.ransac_threshold_psms
+getMinPsmsForSpline(params::ParameterTuningSearchParameters) = params.min_psms_for_spline
+
+# RT alignment parameter accessors (used by fit_irt_model in utils.jl)
+getRtAlignmentLambdaPenalty(params::ParameterTuningSearchParameters) = params.lambda_penalty
+getRtAlignmentRansacThreshold(params::ParameterTuningSearchParameters) = params.ransac_threshold_psms
+getRtAlignmentMinPsms(params::ParameterTuningSearchParameters) = params.min_psms_for_spline
 
 # Override getMaxBestRank for ParameterTuningSearchParameters since it doesn't have max_best_rank field
 # This is for PSM filtering in LibrarySearch, not mass error estimation

@@ -115,7 +115,10 @@
         "n_bins": 200,
         "bandwidth": 0.25,
         "sigma_tolerance": 4,
-        "min_probability": 0.95
+        "min_probability": 0.95,
+        "lambda_penalty": 0.1,
+        "ransac_threshold_psms": 1000,
+        "min_psms_for_spline": 10
     },
     "optimization": {
         "deconvolution": {
