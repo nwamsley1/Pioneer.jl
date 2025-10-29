@@ -199,24 +199,53 @@ end
 #==========================================================
 RT modeling
 ==========================================================#
+
+"""
+    filter_top_psms_per_precursor(psms::DataFrame, max_per_precursor::Int=3)
+
+Filter PSMs to keep only the top N PSMs per unique precursor_idx.
+Selects PSMs with highest probability scores to avoid over-representation
+of abundant precursors in RT model fitting.
+
+# Arguments
+- `psms`: DataFrame containing PSMs with precursor_idx and prob columns
+- `max_per_precursor`: Maximum number of PSMs to keep per precursor (default: 3)
+
+# Returns
+- Filtered DataFrame with at most max_per_precursor PSMs per precursor_idx
+"""
+function filter_top_psms_per_precursor(psms::DataFrame, max_per_precursor::Int=3)
+    if isempty(psms) || !("precursor_idx" in names(psms))
+        return psms
+    end
+
+    # Group by precursor_idx and keep top N by probability score
+    filtered_psms = combine(groupby(psms, :precursor_idx)) do group
+        n_to_keep = min(nrow(group), max_per_precursor)
+        if n_to_keep == nrow(group)
+            return group
+        end
+        # Sort by prob (descending) and take top N
+        sorted_indices = sortperm(group.prob, rev=true)
+        return group[sorted_indices[1:n_to_keep], :]
+    end
+
+    return filtered_psms
+end
+
 """
     fit_irt_model(params::P, psms::DataFrame) where {P<:ParameterTuningSearchParameters}
 
-Fits retention time alignment model between library and empirical retention times.
+Wrapper around shared fit_irt_model from rt_alignment_utils.jl.
+Adapts ParameterTuningSearchParameters to keyword arguments.
 
 # Arguments
 - `params`: Parameter tuning search parameters
 - `psms`: DataFrame containing PSMs with RT information
 
-# Process
-1. Performs initial spline fit between predicted and observed RTs
-2. Calculates residuals and median absolute deviation
-3. Removes outliers based on MAD threshold
-4. Refits spline model on cleaned data
-
 # Returns
 Tuple containing:
-- Final RT conversion model
+- Final RT conversion model (SplineRtConversionModel, LinearRtConversionModel, or IdentityModel)
 - Valid RT values
 - Valid iRT values
 - iRT median absolute deviation
@@ -225,66 +254,18 @@ function fit_irt_model(
     params::P,
     psms::DataFrame
 ) where {P<:ParameterTuningSearchParameters}
-    
-    n_psms = nrow(psms)
-    
-    # Calculate maximum knots based on 5 PSMs per knot rule
-    max_knots_from_psms = max(2, floor(Int, n_psms / 5))  # Minimum 2 knots for spline
-    configured_knots = getSplineNKnots(params)
-    n_knots = min(configured_knots, max_knots_from_psms)
-    
-    # If we can't even support 2 knots, fall back to identity
-    if n_psms < 10  # Less than 2 knots * 5 PSMs per knot
-        @debug_l2 "Too few PSMs ($n_psms) for RT spline alignment (need ≥10), using identity model"
-        return (IdentityModel(), Float32[], Float32[], 0.0f0)
-    end
-    
-    # Log if we're using fewer knots than configured
-    if n_knots < configured_knots
-        @debug_l1 "Reducing RT spline knots from $configured_knots to $n_knots due to limited PSMs ($n_psms)"
-    end
-    
-    try
-        # Initial spline fit with adaptive knots
-        rt_to_irt_map = UniformSpline(
-            psms[!,:irt_predicted],
-            psms[!,:rt],
-            getSplineDegree(params),
-            n_knots
-        )
-        
-        # Calculate residuals
-        psms[!,:irt_observed] = rt_to_irt_map.(psms.rt::Vector{Float32})
-        residuals = psms[!,:irt_observed] .- psms[!,:irt_predicted]
-        irt_mad = mad(residuals, normalize=false)::Float32
-        
-        # Remove outliers and refit
-        valid_psms = psms[abs.(residuals) .< (irt_mad * getOutlierThreshold(params)), :]
-        
-        # Check if we still have enough PSMs after outlier removal
-        n_valid_psms = nrow(valid_psms)
-        if n_valid_psms < 10
-            @debug_l2 "Too few PSMs after outlier removal ($n_valid_psms), using identity model"
-            return (IdentityModel(), Float32[], Float32[], 0.0f0)
-        end
-        
-        # Recalculate knots for final fit if needed
-        max_knots_final = max(2, floor(Int, n_valid_psms / 5))
-        n_knots_final = min(n_knots, max_knots_final)
-        
-        final_model = SplineRtConversionModel(UniformSpline(
-            valid_psms[!,:irt_predicted],
-            valid_psms[!,:rt],
-            getSplineDegree(params),
-            n_knots_final
-        ))
-        
-        return (final_model, valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
-        
-    catch e
-        @debug_l1 "RT spline fitting failed, using identity model exception=$e"
-        return (IdentityModel(), Float32[], Float32[], 0.0f0)
-    end
+
+    # Call shared fit_irt_model from CommonSearchUtils/rt_alignment_utils.jl
+    # with extracted parameters
+    return Pioneer.fit_irt_model(
+        psms;
+        lambda_penalty = Float32(getRtAlignmentLambdaPenalty(params)),
+        ransac_threshold = getRtAlignmentRansacThreshold(params),
+        min_psms = getRtAlignmentMinPsms(params),
+        spline_degree = getSplineDegree(params),
+        max_knots = getSplineNKnots(params),
+        outlier_threshold = Float32(getOutlierThreshold(params))
+    )
 end
 
 """
@@ -947,15 +928,14 @@ function generate_best_iteration_rt_plot_in_memory(
     iteration_state::IterationState
 )
     # Check if we have RT data from best iteration
-    # First check results.rt/irt, then fall back to iteration_state.best_rt_model data
+    # First check results.rt/irt, then fall back to extracting from best_psms
     rt_data, irt_data = if length(results.rt) > 0 && length(results.irt) > 0
         (results.rt, results.irt)
-    elseif iteration_state.best_rt_model !== nothing
-        # Extract RT and iRT from the tuple stored in best_rt_model
-        # The tuple is (model, rt_data, irt_data, threshold)
-        model_tuple = iteration_state.best_rt_model
-        if length(model_tuple) >= 3
-            (model_tuple[2], model_tuple[3])
+    elseif iteration_state.best_psms !== nothing
+        # Extract RT and iRT directly from PSMs DataFrame
+        psms = iteration_state.best_psms
+        if nrow(psms) > 0 && hasproperty(psms, :rt) && hasproperty(psms, :irt_predicted)
+            (psms[!, :rt], psms[!, :irt_predicted])
         else
             (nothing, nothing)
         end

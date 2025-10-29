@@ -13,10 +13,14 @@
     "new_lib_name": "/path/to/output/library_name",
     "out_name": "library_name.tsv",
     
-    "comment_library": "=== Library settings ===",
+    "comment_library": "=== Library settings ===\n    Note: auto_detect_frag_bounds automatically detects m/z bounds from calibration_raw_file.\n    Set to false if you don't have a converted raw file - will use frag/prec m/z bounds below",
     "library_params": {
         "auto_detect_frag_bounds": true,
         "calibration_raw_file": "/path/to/calibration/file.arrow",
+        "frag_mz_min": 150.0,
+        "frag_mz_max": 2020.0,
+        "prec_mz_min": 390.0,
+        "prec_mz_max": 1010.0,
         "instrument_type": "NONE",
         "prediction_model": "altimeter"
     },
@@ -47,7 +51,14 @@
         "mass": [57.021464],
         "name": ["Unimod:4"]
     },
-    
+
+    "comment_collision_energy": "=== Collision energy settings ===",
+    "nce_params": {
+        "nce": 26.0,
+        "default_charge": 2,
+        "dynamic_nce": true
+    },
+
     "comment_processing": "=== Processing settings (usually no need to modify) ===",
     "isotope_mod_groups": [],
     "max_koina_requests": 24,

@@ -105,17 +105,18 @@ function reset_for_new_phase!(search_context, ms_file_idx, params, phase::Int64,
 end
 
 """
-    update_best_attempt!(iteration_state, psm_count, mass_err_model, rt_model_data, 
+    update_best_attempt!(iteration_state, psm_count, mass_err_model, best_psms,
                         ppm_errs, phase, score, iteration, scan_count)
 
 Update the best attempt tracking if the current attempt has more PSMs than the previous best.
+Stores the PSMs (not fitted RT model) for deferred fitting at the end.
 This allows us to use the best parameters as fallback when convergence fails.
 """
 function update_best_attempt!(
     iteration_state::IterationState,
     psm_count::Int64,
     mass_err_model::Union{Nothing, MassErrorModel},
-    rt_model_data::Union{Nothing, Tuple},
+    best_psms::Union{Nothing, DataFrame},
     ppm_errs::Union{Nothing, Vector{Float64}},
     phase::Int64,
     score::UInt8,
@@ -126,7 +127,7 @@ function update_best_attempt!(
     if psm_count > iteration_state.best_psm_count && mass_err_model !== nothing
         iteration_state.best_psm_count = psm_count
         iteration_state.best_mass_error_model = mass_err_model
-        iteration_state.best_rt_model = rt_model_data
+        iteration_state.best_psms = best_psms  # Store PSMs not fitted model
         iteration_state.best_ppm_errs = ppm_errs
         iteration_state.best_phase = phase
         iteration_state.best_score = score
@@ -145,11 +146,11 @@ getDiagnostics(ptsr::ParameterTuningSearchResults) = ptsr.diagnostics
 getParameterHistory(ptsr::ParameterTuningSearchResults) = ptsr.parameter_history
 
 function set_rt_to_irt_model!(
-    ptsr::ParameterTuningSearchResults, 
+    ptsr::ParameterTuningSearchResults,
     search_context::SearchContext,
     params::P,
     ms_file_idx::Int64,
-    model::Tuple{SplineRtConversionModel, Vector{Float32}, Vector{Float32}, Float32}
+    model::Tuple{RtConversionModel, Vector{Float32}, Vector{Float32}, Float32}
 ) where {P<:ParameterTuningSearchParameters}
     
     ptsr.rt_to_irt_model[] = model[1]
@@ -352,14 +353,28 @@ function check_and_store_convergence!(results, search_context, params, ms_file_i
         append!(results.ppm_errs, final_ppm_errs)
     end
     
-    # Store RT model from final PSMs (should always have filtered PSMs at convergence)
-    if !isempty(final_psms)
-        rt_model_data = fit_irt_model(params, final_psms)
-        set_rt_to_irt_model!(results, search_context, params, ms_file_idx, rt_model_data)
+    # Fit RT model exactly once using best available PSMs
+    # Priority: final_psms from convergence > best_psms from iterations > none
+    psms_for_rt_model = if !isempty(final_psms)
+        # Converged successfully - use final PSMs
+        @debug_l2 "Fitting RT model from converged final PSMs ($(nrow(final_psms)) PSMs)"
+        filter_top_psms_per_precursor(final_psms, 3)
+    elseif iteration_state.best_psms !== nothing
+        # Did not converge but have best attempt - use those PSMs
+        @user_warn "Using best attempt PSMs ($(iteration_state.best_psm_count) PSMs) for RT model fitting"
+        iteration_state.best_psms
     else
-        @user_warn "No PSMs available for RT model at convergence - this should not happen"
+        # No PSMs available at all - this is a failure case
+        @user_warn "No PSMs available for RT model fitting"
+        nothing
     end
-    
+
+    # Fit RT model if we have PSMs
+    if psms_for_rt_model !== nothing
+        rt_model_data = fit_irt_model(params, psms_for_rt_model)
+        set_rt_to_irt_model!(results, search_context, params, ms_file_idx, rt_model_data)
+    end
+
     return true
 end
 
@@ -542,12 +557,13 @@ function run_single_phase(
 
             # Track best attempt even if not converged
             if psm_count > 0 && !isempty(psms_initial)
-                # Fit RT model for best attempt tracking (only if we have filtered PSMs)
-                rt_model_data = fit_irt_model(params, psms_initial)
-                
-                # Update best attempt with filtered PSM count
+                # Store PSMs for deferred RT model fitting at end
+                # Limit to top 3 PSMs per precursor to avoid over-representation in RT model
+                rt_psms = filter_top_psms_per_precursor(psms_initial, 3)
+
+                # Update best attempt with PSMs (RT model will be fitted later)
                 update_best_attempt!(
-                    iteration_state, psm_count, mass_err_model, rt_model_data, ppm_errs,
+                    iteration_state, psm_count, mass_err_model, rt_psms, ppm_errs,
                     phase, min_score, 0, iteration_state.current_scan_count
                 )
             end
@@ -623,12 +639,13 @@ function run_single_phase(
 
             # Track best attempt after each iteration
             if mass_err_model !== nothing && psm_count > 0 && !isempty(psms_adjusted)
-                # Fit RT model for best attempt tracking (only if we have filtered PSMs)
-                rt_model_data = fit_irt_model(params, psms_adjusted)
+                # Store PSMs for deferred RT model fitting at end
+                # Limit to top 3 PSMs per precursor to avoid over-representation in RT model
+                rt_psms = filter_top_psms_per_precursor(psms_adjusted, 3)
 
-                # Update best attempt with filtered PSM count
+                # Update best attempt with PSMs (RT model will be fitted later)
                 update_best_attempt!(
-                    iteration_state, psm_count, mass_err_model, rt_model_data, ppm_errs,
+                    iteration_state, psm_count, mass_err_model, rt_psms, ppm_errs,
                     phase, min_score, iter, iteration_state.current_scan_count
                 )
             end
@@ -717,27 +734,25 @@ function process_file!(
     settings = getIterationSettings(params)
     
     # Get scan count parameters
-    scan_count = getInitialScanCount(params)
-    max_scans = getMaxParameterTuningScans(params)
-    scan_scale_factor = settings.scan_scale_factor
-    
+    scan_counts = getScanCounts(params)
+
     # Define filtered_spectra outside try block for use in fallback
     filtered_spectra = nothing
-    
+
     try
-        
+
         # Initialize models
         initialize_models!(search_context, ms_file_idx, params)
-        
-        # Create filtered spectra ONCE with initial scan count
+
+        # Create filtered spectra ONCE with first scan count
         try
             filtered_spectra = FilteredMassSpecData(
                 spectra,
-                max_scans = scan_count,
+                max_scans = scan_counts[1],
                 topn = something(getTopNPeaks(params), 200),
                 target_ms_order = UInt8(2)
             )
-            
+
             # Check if we have any usable scans
             if length(filtered_spectra) == 0
                 file_name = try
@@ -773,53 +788,30 @@ function process_file!(
                 throw(e)  # Re-throw to be caught by outer catch block
             end
         end
-        
-        # Track current scan count
-        current_scan_count = scan_count
-        attempt_count = 0
-        
-        # Main scan scaling loop
-        while true
-            attempt_count += 1
-            iteration_state.scan_attempt = attempt_count
-            
-            # Run all phases with current filtered_spectra
+
+        # Simple iteration through explicit scan counts
+        for (attempt_idx, target_scan_count) in enumerate(scan_counts)
+            iteration_state.scan_attempt = attempt_idx
+
+            # Run all phases with current scan count
             converged = run_all_phases_with_scan_count(
                 filtered_spectra, iteration_state, results,
                 params, search_context, ms_file_idx, spectra
             )
-            
+
             if converged
                 iteration_state.converged = true
                 break
             end
-            
-            # Check if we've reached or exceeded max scans
-            if current_scan_count >= max_scans
-                iteration_state.max_scan_count_reached = true
-                break
-            end
-            
-            # Calculate next scan count
-            next_scan_count = Int64(ceil(current_scan_count * scan_scale_factor))
-            
-            # Check if next iteration would exceed max
-            if next_scan_count > max_scans
-                if current_scan_count < max_scans
-                    # Do one final attempt with exactly max_scans
-                    additional_scans = max_scans - current_scan_count
-                    append!(filtered_spectra; max_additional_scans = additional_scans)
-                    current_scan_count = max_scans
-                    # Loop will continue for one more attempt
-                else
-                    # Already at max, break
-                    break
-                end
-            else
-                # Normal scaling - append more scans
-                additional_scans = next_scan_count - current_scan_count
+
+            # If not the last attempt, append more scans for next iteration
+            if attempt_idx < length(scan_counts)
+                next_scan_count = scan_counts[attempt_idx + 1]
+                additional_scans = next_scan_count - target_scan_count
                 append!(filtered_spectra; max_additional_scans = additional_scans)
-                current_scan_count = next_scan_count
+            else
+                # Reached last scan count without convergence
+                iteration_state.max_scan_count_reached = true
             end
         end
         #@debug_l1 "manual set mass err model . "
@@ -885,12 +877,15 @@ function process_file!(
             
             # Apply best attempt models
             setMassErrorModel!(search_context, ms_file_idx, iteration_state.best_mass_error_model)
-            
-            if iteration_state.best_rt_model !== nothing
-                set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
-                                    iteration_state.best_rt_model)
+
+            # Fit RT model from best PSMs (deferred fitting)
+            if iteration_state.best_psms !== nothing
+                @debug_l1 "Fitting RT model from best attempt PSMs ($(iteration_state.best_psm_count) PSMs)"
+                rt_model_data = fit_irt_model(params, iteration_state.best_psms)
+                set_rt_to_irt_model!(results, search_context, params, ms_file_idx, rt_model_data)
             else
-                # If no RT model, use identity
+                # If no PSMs available, use identity
+                @debug_l1 "No PSMs found for RT model, using IdentityModel"
                 setRtIrtMap!(search_context, IdentityModel(), ms_file_idx)
                 results.rt_to_irt_model[] = IdentityModel()
             end
@@ -901,6 +896,7 @@ function process_file!(
                 append!(results.ppm_errs, iteration_state.best_ppm_errs)
             end
             
+            #=
             # Test 1.5x tolerance expansion on best iteration (only if we have filtered_spectra)
             if filtered_spectra !== nothing
                 @debug_l1 "Testing 1.5x tolerance expansion on best iteration parameters..."
@@ -909,12 +905,14 @@ function process_file!(
                     (getLeftTol(iteration_state.best_mass_error_model) * 1.5f0,
                      getRightTol(iteration_state.best_mass_error_model) * 1.5f0)
                 )
-                
+
                 # Apply expanded model and collect PSMs
+                @debug_l1 "Applying expanded tolerance model and collecting PSMs..."
                 setMassErrorModel!(search_context, ms_file_idx, expanded_model)
                 expanded_psms, expanded_ppm_errs = collect_psms_with_model(
                     filtered_spectra, search_context, params, ms_file_idx, spectra
                 )
+                @debug_l1 "PSM collection complete. Found $(size(expanded_psms, 1)) PSMs with expanded tolerance"
                 
                 if size(expanded_psms, 1) > iteration_state.best_psm_count
                     # Refit model with expanded PSMs
@@ -967,7 +965,7 @@ function process_file!(
                 # Could not test tolerance expansion - no filtered spectra available
                 @user_warn "Cannot test tolerance expansion - filtered spectra not available"
             end
-            
+            =#
             # Build detailed warning message
             left_tol = round(getLeftTol(iteration_state.best_mass_error_model), digits = 1)
             right_tol = round(getRightTol(iteration_state.best_mass_error_model), digits = 1)
@@ -1050,7 +1048,7 @@ function process_search_results!(
             # If we have RT data, generate regular plot
             rt_plot = generate_rt_plot(results, parsed_fname)
             push!(results.rt_plots, rt_plot)  # Store for combined PDF
-        elseif iteration_state !== nothing && iteration_state.best_rt_model !== nothing
+        elseif iteration_state !== nothing && iteration_state.best_psms !== nothing
             # Use best iteration data if available
             rt_plot = generate_best_iteration_rt_plot_in_memory(results, parsed_fname, iteration_state)
             push!(results.rt_plots, rt_plot)
@@ -1058,7 +1056,7 @@ function process_search_results!(
             # Create a diagnostic plot showing fallback/borrowed status
             fallback_plot = generate_fallback_rt_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
             if fallback_plot !== nothing
-                push!(results.rt_plots, fallback_plot)  # Store for combined PDF
+                push!(results.rt_plots, rt_plot)  # Store for combined PDF
             end
         end
         
