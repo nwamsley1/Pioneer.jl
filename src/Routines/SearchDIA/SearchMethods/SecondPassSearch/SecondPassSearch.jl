@@ -59,6 +59,49 @@ const MS1_BASE_SCHEMA = [
 ]
 
 """
+    get_expected_column_order(psms::DataFrame) -> Vector{Symbol}
+
+Returns the expected column order for PSMs DataFrame with MS1 features.
+Ensures consistent Arrow schema across all files by enforcing deterministic column positions.
+
+# Column Ordering Strategy
+1. All non-MS1-related columns in their current order
+2. MS1 feature columns in MS1_BASE_SCHEMA order (with _ms1 suffix)
+3. MS1-derived computed columns (ms1_ms2_rt_diff, ms1_features_missing)
+
+# Rationale
+Arrow.jl requires not just matching column names and types, but also matching column **positions**
+across files. The leftjoin operation preserves the column order from the right DataFrame (ms1_psms),
+which can vary depending on what parseMs1Psms() returns. This function enforces a consistent order.
+
+# Performance
+Uses select!() for in-place reordering - only reorders column metadata pointers, does not copy data.
+Overhead: <1ms per file.
+"""
+function get_expected_column_order(psms::DataFrame)
+    all_cols = propertynames(psms)
+
+    # MS1 columns in schema order (with _ms1 suffix added)
+    ms1_cols_ordered = [Symbol(String(col_name) * "_ms1") for (col_name, _, _) in MS1_BASE_SCHEMA]
+
+    # MS1-derived computed columns
+    ms1_computed = [:ms1_ms2_rt_diff, :ms1_features_missing]
+
+    # All MS1-related columns
+    ms1_related = Set(vcat(ms1_cols_ordered, ms1_computed))
+
+    # Non-MS1 columns in their current order
+    non_ms1_cols = [c for c in all_cols if c ∉ ms1_related]
+
+    # Final order: non-MS1 columns, then MS1 columns in schema order, then computed columns
+    return vcat(
+        non_ms1_cols,
+        ms1_cols_ordered,
+        ms1_computed
+    )
+end
+
+"""
     SecondPassSearch
 
 Second pass search method using optimized parameters from initial searches.
@@ -514,6 +557,13 @@ function process_search_results!(
                           abs.(rt_to_irt_model.(psms[!,:rt]) .- rt_to_irt_model.(psms[!,:rt_ms1]))))
 
         psms[!, :ms1_features_missing] = miss_mask
+
+        # Critical: Enforce consistent MS1 column ordering for Arrow schema compatibility
+        # Arrow requires matching column positions across files, not just names/types.
+        # The leftjoin operation preserves input order from ms1_psms, which can vary.
+        expected_order = get_expected_column_order(psms)
+        select!(psms, expected_order)
+
         #Add additional features for final analysis
         add_features!(
             psms,

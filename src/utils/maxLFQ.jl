@@ -373,14 +373,12 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             q_value_threshold::Float32;
             batch_size = 100000)
     
-    # Always use lazy DataFrame loading (memory efficient)
-    prot = DataFrame(Arrow.Table(file_path(prot_ref)))
-    
-    # Check for missing values in key columns
-    n_missing_pg_qval = sum(ismissing.(prot.pg_qval))
-    n_missing_global_qval = sum(ismissing.(prot.qlobal_pg_qval))
-    n_not_for_quant = sum(.!prot.use_for_protein_quant)
- 
+    # Use eager DataFrame loading (allows editing for filtering)
+    prot = DataFrame(Tables.columntable(Arrow.Table(file_path(prot_ref))))
+
+    # Filter out rows with missing inferred_protein_group values
+    filter!(:inferred_protein_group => x -> !ismissing(x), prot)
+
     # Create pipeline operations for batch-wise application
     preprocessing_pipeline = TransformPipeline() |>
         filter_by_multiple_thresholds([
