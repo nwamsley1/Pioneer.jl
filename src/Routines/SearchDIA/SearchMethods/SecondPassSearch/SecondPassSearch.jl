@@ -15,6 +15,92 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+#==========================================================
+MS1 Feature Schema Definition
+==========================================================#
+"""
+Complete MS1 feature schema with column names (without _ms1 suffix), types,
+and sentinel values. These are the column names as they appear in ms1_psms
+before joining. The leftjoin operation will automatically add the _ms1 suffix.
+
+This ensures consistent Arrow schemas across all files, regardless of whether
+MS1 PSMs were found during search.
+
+Sentinel values indicate missing MS1 data:
+- Float types: -1.0 (no MS1 measurement)
+- UInt types: 0 (no MS1 data)
+- Bool: false (feature not present)
+
+Schema derived from Ms1ScoredPSM struct + parseMs1Psms additions.
+"""
+const MS1_BASE_SCHEMA = [
+    # From Ms1ScoredPSM struct (core MS1 scoring features)
+    (:m0, Bool, false),
+    (:n_iso, UInt8, UInt8(0)),
+    (:big_iso, UInt8, UInt8(0)),
+    (:m0_error, Float16, Float16(-1)),
+    (:error, Float16, Float16(-1)),
+    (:spectral_contrast, Float16, Float16(-1)),
+    (:fitted_spectral_contrast, Float16, Float16(-1)),
+    (:gof, Float16, Float16(-1)),
+    (:max_matched_residual, Float16, Float16(-1)),
+    (:max_unmatched_residual, Float16, Float16(-1)),
+    (:fitted_manhattan_distance, Float16, Float16(-1)),
+    (:matched_ratio, Float16, Float16(-1)),
+    (:weight, Float32, Float32(-1)),
+    (:ms_file_idx, UInt32, UInt32(0)),
+    (:scan_idx, UInt32, UInt32(0)),
+    # From parseMs1Psms (RT-related features)
+    (:rt, Float32, Float32(-1)),
+    (:rt_max_intensity, Float32, Float32(-1)),
+    (:rt_diff_max_intensity, Float32, Float32(-1)),
+    # From SecondPassSearch join (precursor pairing)
+    (:pair_idx, UInt32, UInt32(0)),
+]
+
+"""
+    get_expected_column_order(psms::DataFrame) -> Vector{Symbol}
+
+Returns the expected column order for PSMs DataFrame with MS1 features.
+Ensures consistent Arrow schema across all files by enforcing deterministic column positions.
+
+# Column Ordering Strategy
+1. All non-MS1-related columns in their current order
+2. MS1 feature columns in MS1_BASE_SCHEMA order (with _ms1 suffix)
+3. MS1-derived computed columns (ms1_ms2_rt_diff, ms1_features_missing)
+
+# Rationale
+Arrow.jl requires not just matching column names and types, but also matching column **positions**
+across files. The leftjoin operation preserves the column order from the right DataFrame (ms1_psms),
+which can vary depending on what parseMs1Psms() returns. This function enforces a consistent order.
+
+# Performance
+Uses select!() for in-place reordering - only reorders column metadata pointers, does not copy data.
+Overhead: <1ms per file.
+"""
+function get_expected_column_order(psms::DataFrame)
+    all_cols = propertynames(psms)
+
+    # MS1 columns in schema order (with _ms1 suffix added)
+    ms1_cols_ordered = [Symbol(String(col_name) * "_ms1") for (col_name, _, _) in MS1_BASE_SCHEMA]
+
+    # MS1-derived computed columns
+    ms1_computed = [:ms1_ms2_rt_diff, :ms1_features_missing]
+
+    # All MS1-related columns
+    ms1_related = Set(vcat(ms1_cols_ordered, ms1_computed))
+
+    # Non-MS1 columns in their current order
+    non_ms1_cols = [c for c in all_cols if c ∉ ms1_related]
+
+    # Final order: non-MS1 columns, then MS1 columns in schema order, then computed columns
+    return vcat(
+        non_ms1_cols,
+        ms1_cols_ordered,
+        ms1_computed
+    )
+end
+
 """
     SecondPassSearch
 
@@ -424,43 +510,60 @@ function process_search_results!(
         # Apply hybrid MS1 selection (RT proximity + max intensity features)
         ms1_psms = parseMs1Psms(ms1_psms, spectra, ms2_rt_lookup)
 
-        #Join MS1 PSMs to MS2 PSMs
+        # Standardize MS1 schema to ensure consistent Arrow output across all files
         if size(ms1_psms, 1) > 0
-            # Join with hybrid-selected MS1 PSMs
+            # Ensure ms1_psms has correct types for all columns in schema
+            for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
+                if hasproperty(ms1_psms, col_name)
+                    # Convert to correct type
+                    ms1_psms[!, col_name] = col_type.(ms1_psms[!, col_name])
+                else
+                    # Add missing column with sentinel values
+                    ms1_psms[!, col_name] = fill(sentinel_value, nrow(ms1_psms))
+                end
+            end
+
+            # Join - leftjoin automatically adds _ms1 suffix via renamecols
             psms = leftjoin(
                 psms,
                 ms1_psms,
                 on = :precursor_idx,
                 makeunique = true,
-                renamecols = "" => "_ms1",
+                renamecols = "" => "_ms1"
             )
-            ms1_cols = filter(col -> endswith(String(col), "_ms1"), names(psms))
-            miss_mask = ismissing.(psms[!, ms1_cols[1]])
-        else
-            ms1_cols = [
-                :rt_ms1, :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
-                :max_unmatched_residual_ms1, :fitted_spectral_contrast_ms1,
-                :error_ms1, :m0_error_ms1, :n_iso_ms1, :big_iso_ms1,
-                :rt_max_intensity_ms1, :rt_diff_max_intensity_ms1
-            ]
-            miss_mask = trues(size(psms, 1))
-            for col in ms1_cols
-                psms[!, col] = -1*ones(Float32, size(psms, 1))
+
+            # Fill missing values (precursors without MS1 match) with sentinels
+            for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
+                ms1_col = Symbol(String(col_name) * "_ms1")
+                psms[!, ms1_col] = coalesce.(psms[!, ms1_col], sentinel_value)
+                disallowmissing!(psms, ms1_col)
             end
+
+            # Track which PSMs have missing MS1 data
+            miss_mask = ismissing.(psms[!, Symbol(String(first(MS1_BASE_SCHEMA)[1]) * "_ms1")])
+        else
+            # No MS1 data - create all columns with _ms1 suffix using sentinels
+            for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
+                ms1_col = Symbol(String(col_name) * "_ms1")
+                psms[!, ms1_col] = fill(sentinel_value, nrow(psms))
+            end
+            miss_mask = trues(nrow(psms))
         end
 
-        for col in ms1_cols
-            psms[!, col] = coalesce.(psms[!, col], zero(nonmissingtype(eltype(psms[!, col]))))
-            disallowmissing!(psms, col)
-        end
-
-        # Calculate MS1-MS2 RT difference in iRT space
+        # Calculate MS1-MS2 RT difference in iRT space with explicit Float32 conversion
         rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
-        psms[!,:ms1_ms2_rt_diff] = ifelse.(psms[!,:rt_ms1] .== -1,
-                          -1,
-                          abs.(rt_to_irt_model.(psms[!,:rt]) .- rt_to_irt_model.(psms[!,:rt_ms1])))
+        psms[!,:ms1_ms2_rt_diff] = Float32.(ifelse.(psms[!,:rt_ms1] .== Float32(-1),
+                          Float32(-1),
+                          abs.(rt_to_irt_model.(psms[!,:rt]) .- rt_to_irt_model.(psms[!,:rt_ms1]))))
 
         psms[!, :ms1_features_missing] = miss_mask
+
+        # Critical: Enforce consistent MS1 column ordering for Arrow schema compatibility
+        # Arrow requires matching column positions across files, not just names/types.
+        # The leftjoin operation preserves input order from ms1_psms, which can vary.
+        expected_order = get_expected_column_order(psms)
+        select!(psms, expected_order)
+
         #Add additional features for final analysis
         add_features!(
             psms,

@@ -37,7 +37,8 @@ using Plots, Polynomials, ProgressBars, Printf
 using Tables
 using StatsPlots, SentinelArrays
 using Random
-using RobustModels
+import RobustModels: rlm, TauEstimator, TukeyLoss
+import StatsModels: @formula
 using StaticArrays, StatsBase, SpecialFunctions, Statistics, SparseArrays
 using LightGBM
 import MLJModelInterface: fit, predict

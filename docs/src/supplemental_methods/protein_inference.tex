@@ -139,33 +139,34 @@ where $n_{\text{min}}$ is the minimum peptide threshold (default: 1). This filte
 
 \subsubsection{Protein Group Scoring and FDR Control}
 
-After protein inference and filtering, each protein group is scored based on its constituent precursors. Pioneer supports two scoring strategies:
+After protein inference and filtering, each protein group is scored based on its constituent precursors using a three-stage approach:
 
-\paragraph{Simple Protein Scoring} Each protein group $q$ is scored using:
+\paragraph{Stage 1: Per-Run Log-Sum Scoring} For each MS run, each protein group $q$ is scored using a log-sum aggregation formula:
 \begin{equation}
-\text{score}(q) = \max_{p \in \mathcal{N}(q)} \text{global\_prob}_p
+\text{score}(q) = -\sum_{p \in \mathcal{N}(q)} \log(1 - \text{prob}_p)
 \end{equation}
-where the maximum is taken over all peptides assigned to protein $q$.
+where $\text{prob}_p$ is the maximum precursor probability for peptide, $p$, within that run. When match-between-runs (MBR) is enabled, protein scoring uses MBR-boosted precursor probabilities; otherwise standard precursor probabilities from the machine learning PSM scoring model are used.
 
-\paragraph{Machine Learning Protein Scoring} When enabled, Pioneer trains LightGBM models to discriminate target from decoy protein groups using features including:
+\paragraph{Stage 2: Probit Regression Refinement} Pioneer applies probit regression to refine the per-run protein group scores. The probit model uses the log-sum score as the primary feature, along with additional features including:
 \begin{itemize}
-  \item Top-N precursor probabilities within the protein group
-  \item Number of unique peptides
-  \item Protein sequence coverage
-  \item Median precursor probability across runs
+  \item Presence of common (fully tryptic, unmodified) peptides
+  \item Peptide coverage (fraction of possible peptides observed)
+  \item Number of possible peptides in the library
 \end{itemize}
 
-The ML approach provides improved discrimination for complex protein groups with many constituent peptides.
+The probit regression is trained using cross-validation folds to maintain consistency with the PSM-level scoring, with each protein assigned to the CV fold of its best-scoring constituent peptide. This refined score replaces the initial log-sum score in the protein group score column.
 
-\paragraph{Protein-Level Q-value Calculation} Protein groups are sorted by decreasing score and protein-level q-values are computed using target-decoy competition:
+\paragraph{Stage 3: Global Protein Group Scoring} After probit refinement, global protein group scores are calculated by aggregating the refined per-run scores across all runs using a log-odds combination formula, producing experiment-wide protein group confidence scores.
 
-Let $\pi$ be the permutation sorting protein groups by decreasing score. The protein-level q-value for the $k$-th ranked protein is:
+\paragraph{Protein-Level Q-value Calculation} Pioneer implements dual FDR control at the protein level, computing q-values at both per-run and global (experiment-wide) levels using target-decoy competition.
+
+For a given score type (per-run or global), let $\pi$ be the permutation sorting protein groups by decreasing score. The protein-level q-value for the $k$-th ranked protein is:
 \begin{equation}
 \text{protein\_qval}_{\pi(k)} = \min_{j \geq k} \left\{ \frac{\sum_{l=1}^{j} (1 - Y_{\pi(l)})}{\sum_{l=1}^{j} Y_{\pi(l)}} \right\}
 \end{equation}
 where $Y_q = 1$ if protein $q$ is a target and $Y_q = 0$ if it is a decoy.
 
-Protein groups passing the protein-level FDR threshold (typically $\text{protein\_qval} \leq 0.01$) are retained for downstream quantification.
+This calculation is performed twice: once using per-run protein group scores to compute per-run q-values, and once using global protein group scores to compute experiment-wide q-values. Protein groups must pass the FDR threshold (typically $\leq 0.01$) at both the per-run and global levels to be retained for downstream quantification.
 
 \subsubsection{MaxLFQ Quantification}
 
