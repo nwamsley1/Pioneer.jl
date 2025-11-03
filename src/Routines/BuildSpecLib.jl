@@ -67,21 +67,18 @@ function BuildSpecLib(params_path::String)
     params_timing = @timed begin
         params_string = read(params_path, String)
         params = check_params_bsp(params_string)
-        
-        # Create output directories
-        lib_out_dir = params["out_dir"]
-        mkpath(lib_out_dir)
-        
-        # Library directory (.poin extension)
-        lib_dir = joinpath(lib_out_dir, params["lib_name"] * ".poin")
+
+        # Get library directory (already has .poin extension added in check_params)
+        lib_dir = params["_lib_dir"]
         mkpath(lib_dir)
-        
+
         # Setup logging
         log_path = joinpath(lib_dir, "build_log.txt")
         params_out_path = joinpath(lib_dir, "config.json")
-        
-        write(params_out_path, params_string)
-        #dual_println("Saved parameter file to: ", params_out_path)
+
+        # Write complete merged parameters to config.json (not just user input)
+        params_json = JSON.json(params, 2)  # Pretty-print with 2-space indent
+        write(params_out_path, params_json)
         nothing
     end
     timings["Parameter Loading"] = params_timing

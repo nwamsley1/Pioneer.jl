@@ -447,13 +447,15 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs;
     end
     
     # Update values while maintaining structure
-    config["out_dir"] = out_dir
-    config["lib_name"] = lib_name
-    config["new_lib_name"] = lib_name
     config["fasta_paths"] = fasta_files
     config["fasta_names"] = fasta_names
-    config["out_name"] = basename(lib_name) * ".tsv"
-    
+
+    # Set library_path from out_dir and lib_name (replaces placeholder)
+    config["library_path"] = joinpath(out_dir, lib_name)
+
+    # Set calibration_raw_file to empty string (optional parameter)
+    config["calibration_raw_file"] = ""
+
     # Write output using the same formatting as template
     open(output_path, "w") do io
         JSON.print(io, config, 4)  # indent with 4 spaces for readability

@@ -1,28 +1,29 @@
 {
-    "comment_paths": "=== File paths - Edit these first ===",
+    "comment_output": "=== Output library path ===",
+    "library_path": "/path/to/output/my_library",
+
+    "comment_calibration": "=== Calibration file for automatic m/z bounds detection ===\n    Convert a representative RAW file to Arrow format, then provide path here.\n    Used to detect fragment and precursor m/z ranges for your instrument.",
+    "calibration_raw_file": "/path/to/calibration/file.arrow",
+
+    "comment_fasta": "=== FASTA files ===",
     "fasta_paths": [
         "/path/to/fasta/file.fasta"
     ],
     "fasta_names": ["HUMAN"],
+
+    "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
     "fasta_header_regex_accessions": ["^\\w+\\|(\\w+(?:-\\d+)?)\\|"],
     "fasta_header_regex_genes": [" GN=(\\S+)"],
     "fasta_header_regex_proteins": ["^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="],
     "fasta_header_regex_organisms": [" OS=([^ ]+.*?) [^ ]+="],
-    "out_dir": "/path/to/output/directory",
-    "lib_name": "/path/to/output/library_name",
-    "new_lib_name": "/path/to/output/library_name",
-    "out_name": "library_name.tsv",
-    
-    "comment_library": "=== Library settings ===\n    Note: auto_detect_frag_bounds automatically detects m/z bounds from calibration_raw_file.\n    Set to false if you don't have a converted raw file - will use frag/prec m/z bounds below",
+
+    "comment_library": "=== Library m/z bounds ===\n    Note: If auto_detect_frag_bounds=true (default), these bounds are automatically\n    detected from calibration_raw_file. Set to false to use manual bounds below.",
     "library_params": {
         "auto_detect_frag_bounds": true,
-        "calibration_raw_file": "/path/to/calibration/file.arrow",
         "frag_mz_min": 150.0,
         "frag_mz_max": 2020.0,
         "prec_mz_min": 390.0,
-        "prec_mz_max": 1010.0,
-        "instrument_type": "NONE",
-        "prediction_model": "altimeter"
+        "prec_mz_max": 1010.0
     },
 
     "comment_digestion": "=== Protein digestion settings ===",
@@ -33,14 +34,10 @@
         "max_charge": 3,
         "cleavage_regex": "[KR][^_|$]",
         "missed_cleavages": 1,
-        "max_var_mods": 1,
-        "add_decoys": true,
-        "entrapment_r": 0,
-        "decoy_method": "shuffle",
-        "entrapment_method": "shuffle"
+        "max_var_mods": 1
     },
-    
-    "comment_modifications": "=== Protein modifications ===",
+
+    "comment_modifications": "=== Modifications (variable and fixed, including PTMs and peptide-terminal labels) ===",
     "variable_mods": {
         "pattern": ["M"],
         "mass": [15.99491],
@@ -50,20 +47,5 @@
         "pattern": ["C"],
         "mass": [57.021464],
         "name": ["Unimod:4"]
-    },
-
-    "comment_collision_energy": "=== Collision energy settings ===",
-    "nce_params": {
-        "nce": 26.0,
-        "default_charge": 2,
-        "dynamic_nce": true
-    },
-
-    "comment_processing": "=== Processing settings (usually no need to modify) ===",
-    "isotope_mod_groups": [],
-    "max_koina_requests": 24,
-    "max_koina_batch": 1000,
-    "match_lib_build_batch": 100000,
-    "include_contaminants": true,
-    "predict_fragments": true
+    }
 }

@@ -34,10 +34,16 @@ function check_params_bsp(json_string::String)
     
     # Get appropriate defaults
     defaults = get_build_default_parameters(is_simplified)
-    
+
     # Merge user params over defaults
     params = merge_with_build_defaults(user_params, defaults)
-    
+
+    # Backward compatibility: Move calibration_raw_file from library_params to top level if needed
+    if !haskey(params, "calibration_raw_file") && haskey(params, "library_params") && haskey(params["library_params"], "calibration_raw_file")
+        params["calibration_raw_file"] = params["library_params"]["calibration_raw_file"]
+        delete!(params["library_params"], "calibration_raw_file")
+    end
+
     # Helper function to check if a key exists and has the correct type
     function check_param(dict, key, expected_type)
         if !haskey(dict, key)
@@ -48,9 +54,15 @@ function check_params_bsp(json_string::String)
     end
 
     # Check required top-level parameters
-    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "max_koina_requests", "max_koina_batch", "match_lib_build_batch", "fasta_paths", "fasta_names", "out_dir", "lib_name", "new_lib_name", "out_name", "predict_fragments", "include_contaminants"]
+    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "max_koina_requests", "max_koina_batch", "match_lib_build_batch", "fasta_paths", "fasta_names", "library_path", "predict_fragments", "include_contaminants"]
     for param in required_params
         check_param(params, param, param in ["predict_fragments", "include_contaminants"] ? Bool : Any)
+    end
+
+    # Check if calibration_raw_file is provided (optional but recommended)
+    if !haskey(params, "calibration_raw_file") || isempty(params["calibration_raw_file"])
+        @user_warn "No calibration_raw_file provided. Fragment m/z bounds will not be auto-detected from raw data."
+        params["calibration_raw_file"] = ""  # Set to empty string for consistency
     end
     
     # nce_params defaults now come from JSON file
@@ -150,11 +162,20 @@ function check_params_bsp(json_string::String)
     end
 
     # expand any home directories "~"
-    params["out_dir"] = expanduser(params["out_dir"])
-    # Only expand calibration_raw_file if it exists (optional parameter)
-    if haskey(params["library_params"], "calibration_raw_file")
-        params["library_params"]["calibration_raw_file"] = expanduser(params["library_params"]["calibration_raw_file"])
+    params["library_path"] = expanduser(params["library_path"])
+    if !isempty(params["calibration_raw_file"])
+        params["calibration_raw_file"] = expanduser(params["calibration_raw_file"])
     end
+
+    # Handle .poin extension - add if not present, don't duplicate if already there
+    if !endswith(params["library_path"], ".poin")
+        params["_lib_dir"] = params["library_path"] * ".poin"
+        params["_lib_name"] = basename(params["library_path"])
+    else
+        params["_lib_dir"] = params["library_path"]
+        params["_lib_name"] = basename(params["library_path"][1:end-5])  # Strip .poin
+    end
+
     for i in range(1,length(params["fasta_paths"]))
         params["fasta_paths"][i] = expanduser(params["fasta_paths"][i])
     end
