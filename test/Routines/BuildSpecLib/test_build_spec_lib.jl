@@ -56,7 +56,13 @@ function generate_build_params(
     
     # Remove calibration file requirement
     delete!(params["library_params"], "calibration_raw_file")
-    
+
+    # Remove top-level placeholder fields and their comment keys from template
+    delete!(params, "comment_output")
+    delete!(params, "library_path")
+    delete!(params, "comment_calibration")
+    delete!(params, "calibration_raw_file")
+
     # Set paths
     params["fasta_paths"] = [fasta_path]
     params["fasta_names"] = [uppercase(splitext(basename(fasta_path))[1])]
