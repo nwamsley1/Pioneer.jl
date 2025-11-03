@@ -27,7 +27,7 @@ function get_build_default_parameters(simplified::Bool = false)
     defaults = JSON.parsefile(json_path, dicttype=Dict{String,Any})
     
     # Remove user-specific sections that must be provided by user
-    user_specific_keys = ["fasta_paths", "fasta_names", "out_dir", "lib_name", "new_lib_name", "out_name"]
+    user_specific_keys = ["fasta_paths", "fasta_names", "library_path", "calibration_raw_file"]
     for key in user_specific_keys
         delete!(defaults, key)
     end
