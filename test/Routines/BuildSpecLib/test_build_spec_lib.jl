@@ -53,23 +53,16 @@ function generate_build_params(
     params["library_params"]["prec_mz_min"] = prec_mz_min
     params["library_params"]["prec_mz_max"] = prec_mz_max
     params["library_params"]["max_frag_rank"] = 50
-    
-    # Remove calibration file requirement
-    delete!(params["library_params"], "calibration_raw_file")
 
-    # Remove top-level placeholder fields and their comment keys from template
-    delete!(params, "comment_output")
-    delete!(params, "library_path")
-    delete!(params, "comment_calibration")
-    delete!(params, "calibration_raw_file")
+    # Set calibration_raw_file to empty for testing (will trigger warning but that's expected)
+    params["calibration_raw_file"] = ""
+
+    # Set library_path properly (replaces placeholder from template)
+    params["library_path"] = joinpath(output_dir, lib_name)
 
     # Set paths
     params["fasta_paths"] = [fasta_path]
     params["fasta_names"] = [uppercase(splitext(basename(fasta_path))[1])]
-    params["out_dir"] = output_dir
-    params["lib_name"] = lib_name
-    params["new_lib_name"] = lib_name
-    params["out_name"] = basename(lib_name) * ".tsv"
     
     # Set Koina parameters
     params["predict_fragments"] = predict_fragments

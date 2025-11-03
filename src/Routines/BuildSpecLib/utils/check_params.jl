@@ -44,16 +44,6 @@ function check_params_bsp(json_string::String)
         delete!(params["library_params"], "calibration_raw_file")
     end
 
-    # Backward compatibility: Convert old path parameters to new library_path format
-    if !haskey(params, "library_path") && haskey(params, "out_dir") && haskey(params, "lib_name")
-        params["library_path"] = joinpath(params["out_dir"], params["lib_name"])
-        # Delete old parameters
-        delete!(params, "out_dir")
-        delete!(params, "lib_name")
-        haskey(params, "new_lib_name") && delete!(params, "new_lib_name")
-        haskey(params, "out_name") && delete!(params, "out_name")
-    end
-
     # Helper function to check if a key exists and has the correct type
     function check_param(dict, key, expected_type)
         if !haskey(dict, key)
@@ -64,9 +54,15 @@ function check_params_bsp(json_string::String)
     end
 
     # Check required top-level parameters
-    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "max_koina_requests", "max_koina_batch", "match_lib_build_batch", "fasta_paths", "fasta_names", "library_path", "calibration_raw_file", "predict_fragments", "include_contaminants"]
+    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "max_koina_requests", "max_koina_batch", "match_lib_build_batch", "fasta_paths", "fasta_names", "library_path", "predict_fragments", "include_contaminants"]
     for param in required_params
         check_param(params, param, param in ["predict_fragments", "include_contaminants"] ? Bool : Any)
+    end
+
+    # Check if calibration_raw_file is provided (optional but recommended)
+    if !haskey(params, "calibration_raw_file") || isempty(params["calibration_raw_file"])
+        @user_warn "No calibration_raw_file provided. Fragment m/z bounds will not be auto-detected from raw data."
+        params["calibration_raw_file"] = ""  # Set to empty string for consistency
     end
     
     # nce_params defaults now come from JSON file
@@ -167,7 +163,9 @@ function check_params_bsp(json_string::String)
 
     # expand any home directories "~"
     params["library_path"] = expanduser(params["library_path"])
-    params["calibration_raw_file"] = expanduser(params["calibration_raw_file"])
+    if !isempty(params["calibration_raw_file"])
+        params["calibration_raw_file"] = expanduser(params["calibration_raw_file"])
+    end
 
     # Handle .poin extension - add if not present, don't duplicate if already there
     if !endswith(params["library_path"], ".poin")
