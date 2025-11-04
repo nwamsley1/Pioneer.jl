@@ -2,7 +2,8 @@
     "comment_output": "=== Output library path ===",
     "library_path": "/path/to/output/my_library",
 
-    "comment_calibration": "=== Calibration file for automatic m/z bounds detection ===\n    Convert a representative RAW file to Arrow format, then provide path here.\n    Used to detect fragment and precursor m/z ranges for your instrument.",
+    "comment_calibration": "=== Calibration file for automatic detection of fragment and precursor m/z ranges (optional) ===",
+    "comment_calibration": "=== Convert a representative RAW file to Arrow format and provide its path here ===",
     "calibration_raw_file": "/path/to/calibration/file.arrow",
 
     "comment_fasta": "=== FASTA files ===",
@@ -17,7 +18,8 @@
     "fasta_header_regex_proteins": ["^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="],
     "fasta_header_regex_organisms": [" OS=([^ ]+.*?) [^ ]+="],
 
-    "comment_library": "=== Library m/z bounds ===\n    Note: If auto_detect_frag_bounds=true (default), these bounds are automatically\n    detected from calibration_raw_file. Set to false to use manual bounds below.",
+    "comment_library": "=== Library m/z bounds ===",
+    "comment_library": "=== If auto_detect_frag_bounds=true, bounds are determined from the calibration_raw_file; otherwise manual values are used ===",
     "library_params": {
         "auto_detect_frag_bounds": true,
         "frag_mz_min": 150.0,
