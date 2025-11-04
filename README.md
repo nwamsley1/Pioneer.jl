@@ -37,7 +37,7 @@ On the first run macOS performs a Gatekeeper security check.
 A minimal end-to-end workflow is:
 
 ```bash
-pioneer params-predict lib_dir lib_name fasta_dir --params-path=predict_params.json
+pioneer params-predict lib_dir fasta_dir --params-path=predict_params.json
 pioneer predict predict_params.json
 pioneer convert-raw raw_dir
 pioneer params-search library.poin ms_data_dir results_dir --params-path=search_params.json
