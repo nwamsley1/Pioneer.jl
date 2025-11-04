@@ -1,16 +1,12 @@
 {
-    "comment_paths": "=== File paths and output configuration - Edit these first ===",
+    "comment_fasta": "=== FASTA files ===",
     "fasta_paths": [
         "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
     ],
     "fasta_names": [
         "MINIMAL_PROTEIN"
     ],
-    "out_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_3/output",
-    "lib_name": "frag_mult_3",
-    "new_lib_name": "frag_mult_3",
-    "out_name": "frag_mult_3.tsv",
-    "comment_fasta_regex": "=== FASTA header parsing regex patterns ===",
+    "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
     "fasta_header_regex_accessions": [
         "^>(\\S+)"
     ],
@@ -37,7 +33,7 @@
         "decoy_method": "shuffle",
         "entrapment_method": "shuffle"
     },
-    "comment_modifications": "=== Protein modifications ===",
+    "comment_modifications": "=== Modifications (variable and fixed, including PTMs and peptide-terminal labels) ===",
     "variable_mods": {
         "name": [],
         "pattern": [],
@@ -102,5 +98,9 @@
     "comment_processing": "=== Processing settings ===",
     "match_lib_build_batch": 100000,
     "include_contaminants": false,
-    "predict_fragments": true
+    "predict_fragments": true,
+    "out_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_3/output",
+    "lib_name": "frag_mult_3",
+    "new_lib_name": "frag_mult_3",
+    "out_name": "frag_mult_3.tsv"
 }
