@@ -399,8 +399,8 @@ function add_entrapment_indices!(df)
     # Check if decoy column exists (be robust about column names)
     has_decoy_col = hasproperty(df, :decoy)
     if !has_decoy_col
-        @user_warn "Decoy column not found - proceeding without decoy filtering"
-        @user_warn "Available columns: $(names(df))"
+        @debug_l2 "Decoy column not found - proceeding without decoy filtering"
+        @debug_l2 "Available columns: $(names(df))"
     end
     
     # Create mapping: entrapment_pair_id -> target row index
@@ -423,7 +423,10 @@ function add_entrapment_indices!(df)
         end
     end
     
-    @user_info "Found $(length(pair_to_target)) entrapment targets for index mapping"
+    # Only log if we found entrapment targets (i.e., entrapment is actually enabled)
+    if length(pair_to_target) > 0
+        @user_info "Found $(length(pair_to_target)) entrapment targets for index mapping"
+    end
     
     # Create the entrapment_target_idx column
     entrapment_target_idx = Vector{Union{UInt32, Missing}}(missing, n)
@@ -451,12 +454,15 @@ function add_entrapment_indices!(df)
     
     # Add the column to the DataFrame
     df[!, :entrapment_target_idx] = entrapment_target_idx
-    
-    @user_info "Entrapment pairing Stage 2 complete (entrapment_target_idx created):"
-    @user_info "  Mapped $n_mapped entries to target indices"
-    @user_info "  Max target index: $(isempty(pair_to_target) ? 0 : maximum(values(pair_to_target)))"
-    @user_info "  Table size: $n rows"
-    @user_info "  Decoy column used: $(has_decoy_col ? "✅ YES" : "❌ NO")"
-    
+
+    # Only report if we actually mapped entrapment entries
+    if n_mapped > 0
+        @user_info "Entrapment pairing Stage 2 complete (entrapment_target_idx created):"
+        @user_info "  Mapped $n_mapped entries to target indices"
+        @user_info "  Max target index: $(isempty(pair_to_target) ? 0 : maximum(values(pair_to_target)))"
+        @user_info "  Table size: $n rows"
+        @user_info "  Decoy column used: $(has_decoy_col ? "✅ YES" : "❌ NO")"
+    end
+
     return nothing
 end

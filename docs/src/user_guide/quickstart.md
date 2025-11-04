@@ -35,13 +35,13 @@ Subcommands include `search`, `predict`, `params-search`, `params-predict`, `con
 A minimal end-to-end workflow is:
 
 ```bash
-# Traditional approach with single FASTA directory
-pioneer params-predict lib_dir lib_name fasta_dir --params-path=predict_params.json
+# Generate library build parameters (library name derived from output path)
+pioneer params-predict lib_dir fasta_dir --params-path=predict_params.json
 
-# Or with new flexible FASTA input (mixing directories and files)
-# Note: CLI support for mixed inputs requires editing the JSON parameter file
-pioneer params-predict lib_dir lib_name fasta_dir --params-path=predict_params.json
-# Then edit predict_params.json to set fasta_paths to include specific files
+# Edit predict_params.json to customize:
+# - Digestion parameters (missed cleavages, modifications, etc.)
+# - For multiple FASTA sources, edit fasta_paths array to include directories and/or files
+# - Set calibration file if available for automatic m/z range detection
 
 pioneer predict predict_params.json
 pioneer convert-raw raw_dir
@@ -52,11 +52,15 @@ pioneer search search_params.json
 This sequence builds a predicted spectral library, converts vendor files to Arrow, generates search parameters, and searches the experiment.
 
 !!! tip "Advanced FASTA Input"
-    When using the Julia API directly, you can specify mixed FASTA sources:
+    The CLI takes a single path (file or directory). For multiple FASTA sources (directories and/or files),
+    edit the `fasta_paths` array in the generated JSON parameter file.
+
+    When using the Julia API directly, you can specify mixed sources at creation:
     ```julia
-    params = GetBuildLibParams(out_dir, lib_name, 
+    params = GetBuildLibParams(out_dir, lib_name,
         ["/path/to/uniprot/", "/custom/proteins.fasta"])
     ```
+    Note: CLI users don't specify `lib_name` - it's automatically derived from `out_dir`.
 
 `params-predict` and `params-search` create template JSON files. Edit these
 configurations to suit your experiment before running `predict` or `search`.
