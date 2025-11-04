@@ -323,8 +323,9 @@ function BuildSpecLib(params_path::String)
                 println("   After add_pair_indices!: max partner_idx = $max_partner (table size: $(nrow(precursors_table)))")
                 println("   Valid indices: $(max_partner <= nrow(precursors_table) ? "✅ YES" : "❌ NO")")
                 
-                # Add entrapment target indices if entrapment_pair_id column exists
-                if hasproperty(precursors_table, :entrapment_pair_id)
+                # Add entrapment target indices if entrapment_pair_id column exists AND entrapment is enabled
+                entrapment_r = get(params["fasta_digest_params"], "entrapment_r", 0)
+                if hasproperty(precursors_table, :entrapment_pair_id) && entrapment_r > 0
                     println("   Adding entrapment target indices...")
                     add_entrapment_indices!(precursors_table)
                     ent_col = precursors_table.entrapment_target_idx

@@ -65,11 +65,8 @@ function main_GetBuildLibParams(argv=ARGS)::Cint
         "out_dir"
             help = "Output directory for library"
             arg_type = String
-        "lib_name"
-            help = "Name of the library"
-            arg_type = String
-        "fasta_dir"
-            help = "Directory containing FASTA files"
+        "fasta_path"
+            help = "Directory containing FASTA files or path to a specific FASTA file"
             arg_type = String
         "--params-path"
             help = "Output path for generated parameters file"
@@ -80,15 +77,18 @@ function main_GetBuildLibParams(argv=ARGS)::Cint
             action = :store_true
     end
     parsed_args = parse_args(argv, settings; as_symbols = true)
-    
+
     # Determine template type (simplified is default)
     simplified = !parsed_args[:full]
-    
+
     params_path = parsed_args[:params_path]
     try
+        # Extract library name from output path
+        lib_name = basename(parsed_args[:out_dir])
+
         GetBuildLibParams(parsed_args[:out_dir],
-                          parsed_args[:lib_name],
-                          parsed_args[:fasta_dir];
+                          lib_name,
+                          parsed_args[:fasta_path];
                           params_path=params_path,
                           simplified=simplified)
     catch
