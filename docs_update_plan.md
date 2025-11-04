@@ -181,14 +181,17 @@ GetBuildLibParams
   - Verify example makes sense in context
   - Completed in commit 83d94f94
 
-- [ ] Update `docs/src/user_guide/quickstart.md`
+- [x] Update `docs/src/user_guide/quickstart.md`
   - Simplify command examples (lines 38-44)
   - Update "Advanced FASTA Input" tip box to clarify CLI vs Julia API (lines 54-59)
   - Remove confusing comments about "CLI support for mixed inputs"
+  - Completed in next commit
 
 ### Phase 3: Verification
-- [ ] Search `docs/src/user_guide/parameters.md` for any command syntax examples
-- [ ] Verify all documentation is consistent
+- [x] Search `docs/src/user_guide/parameters.md` for any command syntax examples
+  - No matches found - no changes needed
+- [x] Verify all documentation is consistent
+  - Grep searches confirm no remaining old syntax in .md or .bat files
 - [ ] Check for any other markdown files that might have examples
 
 ---
