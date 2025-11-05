@@ -83,10 +83,11 @@ function main_GetBuildLibParams(argv=ARGS)::Cint
 
     params_path = parsed_args[:params_path]
     try
-        # Extract library name from output path
+        # Extract library name and parent directory from output path
+        out_dir = dirname(parsed_args[:out_dir])
         lib_name = basename(parsed_args[:out_dir])
 
-        GetBuildLibParams(parsed_args[:out_dir],
+        GetBuildLibParams(out_dir,
                           lib_name,
                           parsed_args[:fasta_path];
                           params_path=params_path,

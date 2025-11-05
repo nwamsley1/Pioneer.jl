@@ -319,8 +319,11 @@ function add_entrapment_partner_columns!(df::DataFrame)
             target_lookup[key] = UInt32(idx)
         end
     end
-    
-    @user_info "Found $(length(target_lookup)) original targets for entrapment pairing"
+
+    # Only show message if there are actual entrapment variants
+    if any(df.entrapment_group_id .> 0)
+        @user_info "Found $(length(target_lookup)) original targets for entrapment pairing"
+    end
     
     # Track next pair ID
     next_pair_id = UInt32(1)
