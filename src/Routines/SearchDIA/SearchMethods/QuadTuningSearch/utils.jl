@@ -873,17 +873,20 @@ function perform_quad_transmission_search(
         residuals::Vector{Float32},
         scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}}  # Added this parameter
     )
+        nce_model = getNceModel(search_context, ms_file_idx)
+
         scan_idx ∉ scan_idxs && return
-        
+
         msn = getMsOrder(spectra, scan_idx)
         msn ∉ params.spec_order && return
-        
+
         # Select transitions
         ion_idx, _ = selectTransitions!(
             getIonTemplates(search_data),
             QuadEstimationTransitionSelection(),
             PartialPrecCapture(),
             getFragmentLookupTable(getSpecLib(search_context)),
+            nce_model,
             scan_idx_to_prec_idx[scan_idx],
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
             getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],

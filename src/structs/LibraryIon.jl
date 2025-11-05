@@ -454,16 +454,6 @@ getFrag(lfp::StandardFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.f
 getFragments(lfp::StandardFragmentLookup{<:AbstractFloat}) = lfp.frags
 getPrecFragRange(lfp::StandardFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} = range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
 
-function getSplineData(lfp::StandardFragmentLookup, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
-    return ConstantType()
-end
-
-function getSplineData(lfp::StandardFragmentLookup)
-    return ConstantType()
-end
-
-
-
 """
    abstract type NceModel{T<:AbstractFloat} end
 
@@ -478,6 +468,33 @@ All subtypes must implement:
 - Vector call operator: `(model::ConcreteModel)(x::AbstractVector, charge::AbstractVector)`
 """
 abstract type NceModel{T<:AbstractFloat} end
+
+function getSplineData(lfp::StandardFragmentLookup, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
+    return ConstantType()
+end
+
+function getSplineData(lfp::StandardFragmentLookup)
+    return ConstantType()
+end
+
+# Overloads that accept nce_model for API consistency (unused by StandardFragmentLookup)
+function getSplineData(
+    lfp::StandardFragmentLookup,
+    nce_model::NceModel{T},
+    prec_charge::UInt8,
+    prec_mz::T
+) where {T<:AbstractFloat}
+    return ConstantType()
+end
+
+function getSplineData(
+    lfp::StandardFragmentLookup,
+    nce_model::NceModel{T}
+) where {T<:AbstractFloat}
+    return ConstantType()
+end
+
+
 
 """
    PiecewiseNceModel{T<:AbstractFloat} <: NceModel{T}
@@ -551,7 +568,6 @@ struct SplineFragmentLookup{N,M,T<:AbstractFloat} <: LibraryFragmentLookup
     frags::Vector{SplineDetailedFrag{N,T}}
     prec_frag_ranges::Vector{UInt64}
     knots::NTuple{M, T}
-    nce_model::Base.Ref{<:NceModel{T}}
     degree::Int64
 end
 end
@@ -561,53 +577,36 @@ getFrag(lfp::SplineFragmentLookup, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::SplineFragmentLookup) = lfp.frags
 getPrecFragRange(lfp::SplineFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} = range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
 
-# Add a setter for the NCE model in SplineFragmentLookup
-function setNceModel!(lookup::SplineFragmentLookup{N,M,T}, new_nce_model::NceModel{T}) where {N,M,T<:AbstractFloat}
-    lookup.nce_model[] = new_nce_model
-end
 
-
-# Add a setter for the NCE model in SplineFragmentLookup
-function setNceModel!(lookup::StandardFragmentLookup, new_nce_model::NceModel{T}) where {T<:AbstractFloat}
-    return nothing
-end
-
-function getSplineData(lfp::SplineFragmentLookup{N,M,T}, prec_charge::UInt8, prec_mz::T) where {N,M,T<:AbstractFloat}
+# Version with precursor-specific NCE
+function getSplineData(
+    lfp::SplineFragmentLookup{N,M,T},
+    nce_model::NceModel{T},
+    prec_charge::UInt8,
+    prec_mz::T
+) where {N,M,T<:AbstractFloat}
     return SplineType(
         getKnots(lfp),
-        getNCE(lfp, prec_charge, prec_mz),
+        nce_model(prec_mz, prec_charge),  # Direct call to model
         getDegree(lfp)
     )
 end
 
-function getSplineData(lfp::SplineFragmentLookup{N,M,T}) where {N,M,T<:AbstractFloat}
+# Version with default NCE (for cases without specific precursor)
+function getSplineData(
+    lfp::SplineFragmentLookup{N,M,T},
+    nce_model::NceModel{T}
+) where {N,M,T<:AbstractFloat}
     return SplineType(
         getKnots(lfp),
-        getNCE(lfp),
+        nce_model(),  # Call with no arguments
         getDegree(lfp)
     )
 end
 
-function getNCE(lfp::SplineFragmentLookup, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
-    return lfp.nce_model[](prec_mz, prec_charge)
-end
-function getNCE(lfp::SplineFragmentLookup)
-    return lfp.nce_model[]()
-end
 getKnots(lfp::SplineFragmentLookup) = lfp.knots
 
-function updateNceModel(lookup::SplineFragmentLookup{N,M,T}, new_nce_model::NceModel{T}) where {N,M,T<:AbstractFloat}
-    SplineFragmentLookup{N,M,T}(
-        lookup.frags,  # This will share the reference to the original vector
-        lookup.prec_frag_ranges,
-        lookup.knots,
-        new_nce_model,
-        lookup.degree
-    )
-end
-#=
-    lft = updateNceModel(lft, nce_model_dict[ms_file_idx])
-=#
+# updateNceModel removed - NCE model is now passed as a parameter, not stored in the lookup
 """
     PrecursorBinItem{T<:AbstractFloat}
 

@@ -3,7 +3,7 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-10-27T09:55:01.231
+Starting library build at: 2025-11-05T11:17:02.580
 Output directory: /Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc1.poin
 
 Detecting fragment bounds...
@@ -19,57 +19,3 @@ Predicting retention times...
 Predicting fragment ion intensities...
 
 Building final library indices...
-
-==========================================================================================
-Library Building Performance Report
-==========================================================================================
-
-Detailed Step Analysis:
-------------------------------------------------------------------------------------------
-# Precursors # Fragments  # Targets    # Decoys     
-------------------------------------------------------------------------------------------
-        9.00       229.00         9.00         0.00 
-
-Detailed Step Analysis:
-------------------------------------------------------------------------------------------
-Step                                     Time (s)     Memory (GB)  GC Time (s)  GC %        
-------------------------------------------------------------------------------------------
-Collision Energy Setup                   0.00         0.00         0.00         0.0         
-Model Validation                         0.01         0.00         0.00         0.0         
-Parameter Loading                        0.03         0.00         0.00         0.0         
-Directory Setup                          0.05         0.00         0.00         0.0         
-File Verification                        0.06         0.01         0.00         0.0         
-Fragment Bound Detection                 0.49         0.06         0.00         0.0         
-Chronologer Output Processing            0.93         0.09         0.09         9.6         
-Retention Time Prediction                1.64         0.13         0.00         0.0         
-Fragment Prediction                      1.65         0.27         0.00         0.0         
-Chronologer Preparation                  1.87         0.23         0.05         2.5         
-Prediction Processing                    4.34         1.10         0.14         3.2         
-Index Building                           4.61         1.09         0.11         2.5         
-------------------------------------------------------------------------------------------
-TOTAL                                    15.67        2.99         0.39         2.5         
-
-Performance Summary:
-------------------------------------------------------------------------------------------
-Total Runtime: 0.26 minutes
-Total Garbage Collection Time: 0.39 seconds
-Number of Steps: 12
-Average Step Runtime: 1.31 seconds
-
-Memory Usage Summary:
-------------------------------------------------------------------------------------------
-Total Memory Allocated: 2.99 GB
-Peak  Memory Usage: 4.09 GB
-Total Available System Memory: 48.0 GB
-
-Process Information:
-------------------------------------------------------------------------------------------
-Number of Threads: 10
-Julia Version: 1.12.0
-System: arm64-apple-darwin22.4.0
-
-==========================================================================================
-
-Library building completed at: 2025-10-27T09:55:17.066
-
-Library location: /Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc1.poin

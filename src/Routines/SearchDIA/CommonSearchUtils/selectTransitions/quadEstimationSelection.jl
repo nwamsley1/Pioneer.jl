@@ -31,6 +31,7 @@ function _select_transitions_impl!(
     prec_estimation_type::PrecEstimation,
     transition_idx::Int64,
     lookup::LibraryFragmentLookup,
+    nce_model::NceModel{Float32},
     prec_idxs::AbstractVector{UInt32},
     prec_mzs::AbstractArray{Float32},
     prec_charges::AbstractArray{UInt8},
@@ -63,7 +64,7 @@ function _select_transitions_impl!(
                 isotopes,
                 iso_splines,
                 frag_mz_bounds,
-                getSplineData(lookup, prec_charge, prec_mz),
+                getSplineData(lookup, nce_model, prec_charge, prec_mz),
                 block_size
             )
         end
