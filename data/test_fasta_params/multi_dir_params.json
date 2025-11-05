@@ -1,5 +1,9 @@
 {
-    "comment_paths": "=== File paths - Edit these first ===",
+    "comment_output": "=== Output library path ===",
+    "library_path": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "comment_calibration": "=== Calibration file for automatic m/z bounds detection ===\n    Convert a representative RAW file to Arrow format, then provide path here.\n    Used to detect fragment and precursor m/z ranges for your instrument.",
+    "calibration_raw_file": "",
+    "comment_fasta": "=== FASTA files ===",
     "fasta_paths": [
         "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins1.fasta",
         "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins2.fasta.gz",
@@ -10,6 +14,7 @@
         "PROTEINS2",
         "PROTEINS3"
     ],
+    "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
     "fasta_header_regex_accessions": [
         "^\\w+\\|(\\w+(?:-\\d+)?)\\|",
         "^\\w+\\|(\\w+(?:-\\d+)?)\\|",
@@ -30,16 +35,13 @@
         " OS=([^ ]+.*?) [^ ]+=",
         " OS=([^ ]+.*?) [^ ]+="
     ],
-    "out_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output",
-    "lib_name": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
-    "new_lib_name": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
-    "out_name": "test_lib.tsv",
-    "comment_library": "=== Library settings ===",
+    "comment_library": "=== Library m/z bounds ===\n    Note: If auto_detect_frag_bounds=true (default), these bounds are automatically\n    detected from calibration_raw_file. Set to false to use manual bounds below.",
     "library_params": {
         "auto_detect_frag_bounds": true,
-        "calibration_raw_file": "/path/to/calibration/file.arrow",
-        "instrument_type": "NONE",
-        "prediction_model": "altimeter"
+        "frag_mz_min": 150.0,
+        "frag_mz_max": 2020.0,
+        "prec_mz_min": 390.0,
+        "prec_mz_max": 1010.0
     },
     "comment_digestion": "=== Protein digestion settings ===",
     "fasta_digest_params": {
@@ -49,13 +51,9 @@
         "max_charge": 3,
         "cleavage_regex": "[KR][^_|$]",
         "missed_cleavages": 1,
-        "max_var_mods": 1,
-        "add_decoys": true,
-        "entrapment_r": 0,
-        "decoy_method": "shuffle",
-        "entrapment_method": "shuffle"
+        "max_var_mods": 1
     },
-    "comment_modifications": "=== Protein modifications ===",
+    "comment_modifications": "=== Modifications (variable and fixed, including PTMs and peptide-terminal labels) ===",
     "variable_mods": {
         "pattern": [
             "M"
@@ -77,12 +75,5 @@
         "name": [
             "Unimod:4"
         ]
-    },
-    "comment_processing": "=== Processing settings (usually no need to modify) ===",
-    "isotope_mod_groups": [],
-    "max_koina_requests": 24,
-    "max_koina_batch": 1000,
-    "match_lib_build_batch": 100000,
-    "include_contaminants": true,
-    "predict_fragments": true
+    }
 }

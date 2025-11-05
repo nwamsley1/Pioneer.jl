@@ -96,7 +96,8 @@ function getPSMS(
     thread_task::Vector{Int64},
     precursors::LibraryPrecursors,
     ion_list::LibraryFragmentLookup,
-    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}}, 
+    nce_model::NceModel{Float32},
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
     precursors_passed_scoring::Vector{UInt32},
     search_data::S,
     params::P,
@@ -121,12 +122,13 @@ function getPSMS(
 
         # Ion Template Selection
         ion_idx, _ = selectTransitions!(
-            getIonTemplates(search_data), 
-            StandardTransitionSelection(), 
+            getIonTemplates(search_data),
+            StandardTransitionSelection(),
             getPrecEstimation(params),
             ion_list,
+            nce_model,
             scan_to_prec_idx[scan_idx], precursors_passed_scoring,
-            getMz(precursors), 
+            getMz(precursors),
             getCharge(precursors),
             getSulfurCount(precursors),
             getIrt(precursors),
@@ -135,7 +137,7 @@ function getPSMS(
             precursor_transmission, isotopes, getNFragIsotopes(params),
             getMaxFragRank(params),
             Float32(rt_to_irt_spline(getRetentionTime(spectra, scan_idx))),
-            Float32(irt_tol), 
+            Float32(irt_tol),
             (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
             isotope_err_bounds = getIsotopeErrBounds(params)
         )
@@ -219,12 +221,13 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
                     getMassErrorModel(search_context, ms_file_idx),
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
+                    getNceModelModel(search_context, ms_file_idx),
                     getIRTTol(search_parameters),
                 )...)
 end
 
 function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:SearchParameters}
-    
+
     return vcat(LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
@@ -235,6 +238,7 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
                     getMassErrorModel(search_context, ms_file_idx),
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
+                    getNceModelModel(search_context, ms_file_idx),
                     getIrtErrors(search_context)[ms_file_idx]
                 )...)
 end
@@ -270,10 +274,11 @@ function LibrarySearch(
     mem::M,
     rt_to_irt_spline::Any,
     params::P,
+    nce_model::NceModel{Float32},
     irt_tol::AbstractFloat) where {
-        M<:MassErrorModel, 
+        M<:MassErrorModel,
         Q<:QuadTransmissionModel,
-        S<:SearchDataStructures, 
+        S<:SearchDataStructures,
         P<:FragmentIndexSearchParameters}
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
@@ -307,6 +312,7 @@ function LibrarySearch(
                                 last(thread_task), #getRange(thread_task),
                                 getPrecursors(spec_lib),
                                 getFragmentLookupTable(spec_lib),
+                                nce_model,
                                 scan_to_prec_idx,
                                 precursors_passed_scoring[thread_id],
                                 search_data[thread_id],
@@ -383,14 +389,10 @@ function LibrarySearchNceTuning(
 
     # For each NCE value, run getPSMS using the same fragment index results
     all_results = map(nce_grid) do nce
-        # Update NCE model in fragment lookup table
+        # Create NCE model for this grid point
+        nce_model = PiecewiseNceModel(nce)
 
-        setNceModel!(
-            getFragmentLookupTable(spec_lib),
-            PiecewiseNceModel(nce)
-        )
-
-        # Run getPSMS with updated NCE model
+        # Run getPSMS with this NCE model
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn begin
                 thread_id = first(thread_task)
@@ -401,6 +403,7 @@ function LibrarySearchNceTuning(
                         last(thread_task),
                         getPrecursors(spec_lib),
                         getFragmentLookupTable(spec_lib),
+                        nce_model,
                         scan_to_prec_idx,
                         precursors_passed_scoring[thread_id],
                         search_data[thread_id],
