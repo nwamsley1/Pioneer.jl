@@ -502,11 +502,11 @@ function getRtIrtModel(s::SearchContext)
 end
 
 """
-   getNceModelModel(s::SearchContext, index::Integer)
+   getNceModel(s::SearchContext, index::Integer)
 
 Get NCE model for MS file index. Returns default 30 NCE model if not found.
 """
-function getNceModelModel(s::SearchContext, index::I) where {I<:Integer} 
+function getNceModel(s::SearchContext, index::I) where {I<:Integer} 
    if haskey(s.nce_model, index)
        return s.nce_model[index]
    else

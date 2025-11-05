@@ -167,7 +167,7 @@ function process_scans!(
     cycle_idx = 0
 
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
-    nce_model = getNceModelModel(search_context, ms_file_idx)
+    nce_model = getNceModel(search_context, ms_file_idx)
 
     for scan_idx in scan_range
         ((scan_idx < 1) || scan_idx > length(spectra)) && continue

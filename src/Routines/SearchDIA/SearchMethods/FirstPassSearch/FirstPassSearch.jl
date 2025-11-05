@@ -389,7 +389,7 @@ function process_file!(
                     (getMs1TolPpm(params), getMs1TolPpm(params))  # Use MS1 tolerance from JSON config
                     ),
                     params,
-                    getNceModelModel(search_context, ms_file_idx),
+                    getNceModel(search_context, ms_file_idx),
                     MS1CHROM()
                 )...
             )

@@ -801,7 +801,7 @@ function get_matched_fragments(
         getSearchData(search_context),
         getMassErrorModel(search_context, ms_file_idx),#getMassErrorModel(results),
         params,
-        getNceModelModel(search_context, ms_file_idx),
+        getNceModel(search_context, ms_file_idx),
         MS2CHROM()
     )...)
 end
@@ -824,7 +824,7 @@ function get_matched_precursors(
         getSearchData(search_context),
         getMs1MassErrorModel(results),
         params,
-        getNceModelModel(search_context, ms_file_idx),
+        getNceModel(search_context, ms_file_idx),
         MS1CHROM()
     )...)
 end

@@ -221,7 +221,7 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
                     getMassErrorModel(search_context, ms_file_idx),
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
-                    getNceModelModel(search_context, ms_file_idx),
+                    getNceModel(search_context, ms_file_idx),
                     getIRTTol(search_parameters),
                 )...)
 end
@@ -238,7 +238,7 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
                     getMassErrorModel(search_context, ms_file_idx),
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
-                    getNceModelModel(search_context, ms_file_idx),
+                    getNceModel(search_context, ms_file_idx),
                     getIrtErrors(search_context)[ms_file_idx]
                 )...)
 end

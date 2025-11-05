@@ -873,7 +873,7 @@ function perform_quad_transmission_search(
         residuals::Vector{Float32},
         scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}}  # Added this parameter
     )
-        nce_model = getNceModelModel(search_context, ms_file_idx)
+        nce_model = getNceModel(search_context, ms_file_idx)
 
         scan_idx ∉ scan_idxs && return
 
