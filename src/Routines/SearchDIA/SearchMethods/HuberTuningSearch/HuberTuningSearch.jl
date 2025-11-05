@@ -182,10 +182,6 @@ function process_file!(
         return 
     end
     try
-        setNceModel!(
-            getFragmentLookupTable(getSpecLib(search_context)), 
-            getNceModelModel(search_context, ms_file_idx)
-        )
         # Get PSMs to tune on
         best_psms = get_best_psms(search_context, params.q_value_threshold)
         file_psms = filter(row -> row.ms_file_idx == ms_file_idx, best_psms)

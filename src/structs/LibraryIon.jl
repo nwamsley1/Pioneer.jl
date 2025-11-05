@@ -454,6 +454,21 @@ getFrag(lfp::StandardFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.f
 getFragments(lfp::StandardFragmentLookup{<:AbstractFloat}) = lfp.frags
 getPrecFragRange(lfp::StandardFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} = range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
 
+"""
+   abstract type NceModel{T<:AbstractFloat} end
+
+Abstract type for normalized collision energy prediction models.
+
+# Type Parameters
+- `T`: Floating point precision type used by the model
+
+# Interface Requirements
+All subtypes must implement:
+- Call operator: `(model::ConcreteModel)(x::AbstractFloat, charge::Integer)`
+- Vector call operator: `(model::ConcreteModel)(x::AbstractVector, charge::AbstractVector)`
+"""
+abstract type NceModel{T<:AbstractFloat} end
+
 function getSplineData(lfp::StandardFragmentLookup, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
     return ConstantType()
 end
@@ -480,21 +495,6 @@ function getSplineData(
 end
 
 
-
-"""
-   abstract type NceModel{T<:AbstractFloat} end
-
-Abstract type for normalized collision energy prediction models.
-
-# Type Parameters
-- `T`: Floating point precision type used by the model
-
-# Interface Requirements
-All subtypes must implement:
-- Call operator: `(model::ConcreteModel)(x::AbstractFloat, charge::Integer)`
-- Vector call operator: `(model::ConcreteModel)(x::AbstractVector, charge::AbstractVector)`
-"""
-abstract type NceModel{T<:AbstractFloat} end
 
 """
    PiecewiseNceModel{T<:AbstractFloat} <: NceModel{T}

@@ -184,12 +184,6 @@ function process_file!(
     end
 
     try
-        # Set the NCE model from the search context for fragment matching
-        setNceModel!(
-            getFragmentLookupTable(getSpecLib(search_context)),
-            getNceModelModel(search_context, ms_file_idx)
-        )
-
         # Check if required files exist (not empty paths from failed files)
         rt_index_path = getRtIndex(getMSData(search_context), ms_file_idx)
         passing_psms_path = getPassingPsms(getMSData(search_context), ms_file_idx)

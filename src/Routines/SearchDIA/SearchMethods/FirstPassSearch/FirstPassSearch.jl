@@ -231,11 +231,6 @@ function process_file!(
         search_context::SearchContext,
         params::FirstPassSearchParameters,
         ms_file_idx::Int64)
-        setNceModel!(
-            getFragmentLookupTable(getSpecLib(search_context)), 
-            getNceModelModel(search_context, ms_file_idx)
-        )
-        
         return library_search(spectra, search_context, params, ms_file_idx)
     end
 
