@@ -933,14 +933,6 @@ function add_decoy_sequences_grouped(
             push!(sequences_set, decoy_sequence, c)
         end
 
-        # Optional per-group diagnostics (debug level)
-        if sample_logged < 5
-            trunc_seq = length(base_seq) > 18 ? (base_seq[1:18] * "…") : base_seq
-            trunc_decoy = length(decoy_sequence) > 18 ? (decoy_sequence[1:18] * "…") : decoy_sequence
-            @user_info "Decoy group: base_seq=$(trunc_seq), decoy=$(trunc_decoy), n_variants=$(length(idxs)), charges=$(collect(charges))"
-            sample_logged += 1
-        end
-
         # Build decoys for each variant in this group using the same mapping
         for idx in idxs
             target_entry = target_fasta_entries[idx]
