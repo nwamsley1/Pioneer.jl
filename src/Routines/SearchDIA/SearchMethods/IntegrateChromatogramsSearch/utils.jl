@@ -173,6 +173,10 @@ function extract_chromatograms(
 
     thread_tasks = partition_scans(spectra, Threads.nthreads(), ms_order_select = ms_order_select)
 
+    # Pre-create Sets for each thread to avoid concurrent DataFrame access
+    # This eliminates race conditions when multiple threads call passing_psms[!, :precursor_idx]
+    precursor_sets = [Set(passing_psms[!, :precursor_idx]) for _ in 1:Threads.nthreads()]
+
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
             thread_id = first(thread_task)
@@ -181,7 +185,7 @@ function extract_chromatograms(
             return build_chromatograms(
                 spectra,
                 last(thread_task),
-                Set(passing_psms[!, :precursor_idx]),
+                precursor_sets[thread_id],
                 rt_index,
                 search_context,
                 search_data,
@@ -235,6 +239,7 @@ function build_chromatograms(
     precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
     prec_temp_size = 0
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    nce_model = getNceModel(search_context, ms_file_idx)
     i = 1
     for scan_idx in scan_range
         ((scan_idx<1) | (scan_idx > length(spectra))) && continue
@@ -268,6 +273,7 @@ function build_chromatograms(
                 RTIndexedTransitionSelection(),
                 params.prec_estimation,
                 getFragmentLookupTable(getSpecLib(search_context)),
+                nce_model,
                 precs_temp,
                 getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
                 getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],

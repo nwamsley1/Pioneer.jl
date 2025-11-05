@@ -1,4 +1,8 @@
 {
+    "comment_output": "=== Output library path ===",
+    "library_path": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_var_mods/max_2_mods/output/var_mods_2",
+    "comment_calibration": "=== Calibration file for automatic m/z bounds detection ===",
+    "calibration_raw_file": "",
     "comment_fasta": "=== FASTA files ===",
     "fasta_paths": [
         "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
@@ -107,9 +111,5 @@
     "comment_processing": "=== Processing settings ===",
     "match_lib_build_batch": 100000,
     "include_contaminants": false,
-    "predict_fragments": true,
-    "out_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_var_mods/max_2_mods/output",
-    "lib_name": "var_mods_2",
-    "new_lib_name": "var_mods_2",
-    "out_name": "var_mods_2.tsv"
+    "predict_fragments": true
 }

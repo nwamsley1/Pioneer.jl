@@ -308,10 +308,6 @@ function process_file!(
     end
     
     try
-        setNceModel!(
-            getFragmentLookupTable(getSpecLib(search_context)), 
-            getNceModelModel(search_context, ms_file_idx)
-        )
         # Get RT index
         rt_index = buildRtIndex(
             DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx))),

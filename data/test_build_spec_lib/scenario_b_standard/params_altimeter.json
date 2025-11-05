@@ -1,4 +1,8 @@
 {
+    "comment_output": "=== Output library path ===",
+    "library_path": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_b_standard/output/standard_test",
+    "comment_calibration": "=== Calibration file for automatic m/z bounds detection ===",
+    "calibration_raw_file": "",
     "comment_fasta": "=== FASTA files ===",
     "fasta_paths": [
         "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/single_protein.fasta"
@@ -98,9 +102,5 @@
     "comment_processing": "=== Processing settings ===",
     "match_lib_build_batch": 100000,
     "include_contaminants": false,
-    "predict_fragments": true,
-    "out_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_b_standard/output",
-    "lib_name": "standard_test",
-    "new_lib_name": "standard_test",
-    "out_name": "standard_test.tsv"
+    "predict_fragments": true
 }

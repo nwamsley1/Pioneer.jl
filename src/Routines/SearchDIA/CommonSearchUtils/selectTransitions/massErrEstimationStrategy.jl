@@ -22,6 +22,7 @@ function _select_transitions_impl!(
     prec_estimation_type::PrecEstimation,
     transition_idx::Int64,
     library_fragment_lookup::L,  # Generic type parameter
+    nce_model::NceModel{Float32},
     scan_to_prec_idx::UnitRange{Int64},
     precursors_passed_scoring::Vector{UInt32};
     max_rank::Int64 = 5,
@@ -31,9 +32,10 @@ function _select_transitions_impl!(
         prec_idx = precursors_passed_scoring[i]
         for frag_idx in getPrecFragRange(library_fragment_lookup, prec_idx)
             transition_idx = process_fragment!(
-                transitions, 
+                transitions,
                 transition_idx,
                 library_fragment_lookup,
+                nce_model,
                 frag_idx,
                 max_rank,
                 block_size
@@ -48,13 +50,14 @@ function process_fragment!(
     transitions::Vector{DetailedFrag{Float32}},
     transition_idx::Int64,
     lookup::LibraryFragmentLookup,
+    nce_model::NceModel{Float32},
     frag_idx::Integer,
     max_rank::Int64,
     block_size::Int64)
     frag = getFrag(lookup, frag_idx)
     if getRank(frag) <= max_rank
         transition_idx += 1
-        transitions[transition_idx] = convert_to_detailed(frag, getSplineData(lookup))
+        transitions[transition_idx] = convert_to_detailed(frag, getSplineData(lookup, nce_model))
         ensureTransitionCapacity!(transitions, transition_idx, block_size)
     end
     return transition_idx

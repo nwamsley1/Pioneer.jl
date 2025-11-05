@@ -293,17 +293,7 @@ function process_file!(
                 rethrow(type_error)
             end
         end
-        
-        # Set NCE model if available from NCE tuning
-        try
-            nce_model = getNceModelModel(search_context, ms_file_idx)
-            setNceModel!(
-                getFragmentLookupTable(getSpecLib(search_context)),
-                nce_model
-            )
-            catch
-            # Continue without NCE model - library search will use defaults
-        end
+
         # Adjust arrays for isotope variants
         adjust_precursor_arrays!(search_context)
         
