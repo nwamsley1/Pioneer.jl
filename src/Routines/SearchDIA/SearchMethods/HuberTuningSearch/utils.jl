@@ -301,12 +301,14 @@ function select_transitions_for_huber!(
     irt_start::Int64, irt_stop::Int64, rt_index::Any,
     params::HuberTuningSearchParameters
 )
+    nce_model = getNceModelModel(search_context, ms_file_idx)
 
     return selectTransitions!(
         getIonTemplates(search_data),
         RTIndexedTransitionSelection(),
         params.prec_estimation,
         getFragmentLookupTable(getSpecLib(search_context)),
+        nce_model,
         getPrecIds(search_data),
         getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
         getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],

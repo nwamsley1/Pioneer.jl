@@ -167,6 +167,7 @@ function process_scans!(
     cycle_idx = 0
 
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    nce_model = getNceModelModel(search_context, ms_file_idx)
 
     for scan_idx in scan_range
         ((scan_idx < 1) || scan_idx > length(spectra)) && continue
@@ -198,6 +199,7 @@ function process_scans!(
                 RTIndexedTransitionSelection(),
                 params.prec_estimation,
                 getFragmentLookupTable(getSpecLib(search_context)),
+                nce_model,
                 getPrecIds(search_data),
                 getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
                 getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],

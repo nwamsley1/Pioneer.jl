@@ -453,14 +453,15 @@ function mass_error_search(
     spec_lib::SpectralLibrary,
     search_data::AbstractVector{S},
     mem::M,
-    params::P
+    params::P,
+    nce_model::NceModel{Float32}
 ) where {
-        M<:MassErrorModel, 
-        S<:SearchDataStructures, 
+        M<:MassErrorModel,
+        S<:SearchDataStructures,
         P<:SearchParameters
         }
-    return mass_error_search(spectra, scan_idxs, precursor_idxs, ms_file_idx, 
-                            spec_lib, search_data, mem, params, MS2CHROM())
+    return mass_error_search(spectra, scan_idxs, precursor_idxs, ms_file_idx,
+                            spec_lib, search_data, mem, params, nce_model, MS2CHROM())
 end
 
 function mass_error_search(
@@ -472,10 +473,11 @@ function mass_error_search(
     search_data::AbstractVector{S},
     mem::M,
     params::P,
+    nce_model::NceModel{Float32},
     ::MS2CHROM
 ) where {
-        M<:MassErrorModel, 
-        S<:SearchDataStructures, 
+        M<:MassErrorModel,
+        S<:SearchDataStructures,
         P<:SearchParameters
         }
 
@@ -483,7 +485,7 @@ function mass_error_search(
     sorted_indices = sortperm(scan_idxs)
     scan_idxs = scan_idxs[sorted_indices]
     precursor_idxs = precursor_idxs[sorted_indices]
-    
+
     scan_to_prec_idx = getScanToPrecIdx(scan_idxs, length(spectra))
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
@@ -504,6 +506,7 @@ function mass_error_search(
                     MassErrEstimationStrategy(),
                     getPrecEstimation(params),
                     getFragmentLookupTable(spec_lib),
+                    nce_model,
                     scan_to_prec_idx[scan_idx],
                     precursor_idxs,
                     max_rank = Int64(getMaxFragsForMassErrEstimation(params))  # Convert UInt8 to Int64 for compatibility
@@ -547,10 +550,11 @@ function mass_error_search(
     search_data::AbstractVector{S},
     mem::M,
     params::P,
+    nce_model::NceModel{Float32},
     ::MS1CHROM
 ) where {
-        M<:MassErrorModel, 
-        S<:SearchDataStructures, 
+        M<:MassErrorModel,
+        S<:SearchDataStructures,
         P<:SearchParameters
         }
 
@@ -797,6 +801,7 @@ function get_matched_fragments(
         getSearchData(search_context),
         getMassErrorModel(search_context, ms_file_idx),#getMassErrorModel(results),
         params,
+        getNceModelModel(search_context, ms_file_idx),
         MS2CHROM()
     )...)
 end
@@ -819,6 +824,7 @@ function get_matched_precursors(
         getSearchData(search_context),
         getMs1MassErrorModel(results),
         params,
+        getNceModelModel(search_context, ms_file_idx),
         MS1CHROM()
     )...)
 end

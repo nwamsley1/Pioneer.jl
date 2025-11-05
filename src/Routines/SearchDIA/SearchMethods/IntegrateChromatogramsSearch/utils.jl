@@ -239,6 +239,7 @@ function build_chromatograms(
     precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
     prec_temp_size = 0
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    nce_model = getNceModelModel(search_context, ms_file_idx)
     i = 1
     for scan_idx in scan_range
         ((scan_idx<1) | (scan_idx > length(spectra))) && continue
@@ -272,6 +273,7 @@ function build_chromatograms(
                 RTIndexedTransitionSelection(),
                 params.prec_estimation,
                 getFragmentLookupTable(getSpecLib(search_context)),
+                nce_model,
                 precs_temp,
                 getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
                 getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
