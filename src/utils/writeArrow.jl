@@ -15,6 +15,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# Thread-safe lock for garbage collection calls to prevent race conditions
+# when multiple threads call GC.gc() concurrently on Windows
+const GC_LOCK = ReentrantLock()
+
 #=
 function writeArrow(fpath::String, df::AbstractDataFrame)
     fpath = normpath(fpath)
@@ -46,8 +50,11 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
             for i in 1:max_retries
                 try
                     # Force garbage collection to release any file handles
-                    GC.gc()
-                    
+                    # Use lock to prevent concurrent GC calls from multiple threads
+                    lock(GC_LOCK) do
+                        GC.gc()
+                    end
+
                     # Try to delete using Julia's rm with force flag
                     rm(fpath, force=true)
                     break
