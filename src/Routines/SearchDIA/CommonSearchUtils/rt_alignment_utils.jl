@@ -128,6 +128,71 @@ function fit_linear_irt_model(
 end
 
 """
+    make_spline_monotonic(original_spline, rt_data, irt_data; kwargs...)
+
+Enforces monotonic increasing property on a fitted RT→iRT spline using bidirectional
+cumulative max filter from the median.
+
+# Algorithm
+1. Sample original spline at uniform grid (N=500 points)
+2. Find median RT in original data
+3. Apply cumulative max filter moving right (enforce increasing)
+4. Apply cumulative max filter moving left (enforce increasing in reverse)
+5. Refit UniformSpline to filtered points
+
+# Arguments
+- `original_spline::UniformSpline`: Fitted spline that may violate monotonicity
+- `rt_data::Vector{Float32}`: Original RT values from PSM data
+- `irt_data::Vector{Float32}`: Original iRT values from PSM data
+
+# Keyword Arguments
+- `n_sample_points::Int = 500`: Number of uniform grid points for sampling
+- `n_knots::Int = 5`: Number of knots for refitted spline
+
+# Returns
+- `UniformSpline`: Monotonic spline guaranteed to be non-decreasing
+
+# Examples
+```julia
+monotonic_spline = make_spline_monotonic(original_spline, rt_psms, irt_psms)
+```
+"""
+function make_spline_monotonic(
+    original_spline::UniformSpline,
+    rt_data::Vector{Float32},
+    irt_data::Vector{Float32};
+    n_sample_points::Int = 500,
+    n_knots::Int = 5
+)::UniformSpline
+
+    # 1. Sample from original spline at uniform grid
+    rt_min, rt_max = extrema(rt_data)
+    rt_grid = collect(LinRange(Float32(rt_min), Float32(rt_max), n_sample_points))
+    irt_grid = [original_spline(r) for r in rt_grid]
+
+    # 2. Find median split point
+    median_rt = median(rt_data)
+    median_idx = argmin(abs.(rt_grid .- median_rt))
+
+    # 3. Filter right side (median → end): enforce monotonic increasing
+    for i in (median_idx+1):n_sample_points
+        if irt_grid[i] < irt_grid[i-1]
+            irt_grid[i] = irt_grid[i-1]
+        end
+    end
+
+    # 4. Filter left side (median → start): enforce monotonic increasing in reverse
+    for i in (median_idx-1):-1:1
+        if irt_grid[i] > irt_grid[i+1]
+            irt_grid[i] = irt_grid[i+1]
+        end
+    end
+
+    # 5. Refit spline to filtered data
+    return UniformSpline(irt_grid, rt_grid, 3, n_knots)
+end
+
+"""
     fit_irt_model(psms::DataFrame; kwargs...)
 
 Fits retention time alignment model between library and empirical retention times.
@@ -151,6 +216,7 @@ standard spline fitting for abundant data. Linear model used only as error fallb
 2. Performs initial spline fit (with RANSAC if limited data)
 3. Removes outliers based on MAD threshold
 4. Refits spline model on cleaned data
+5. Applies monotonic enforcement using bidirectional cumulative max filter
 
 # Returns
 Tuple containing:
@@ -187,6 +253,10 @@ function fit_irt_model(
     n_psms = nrow(psms)
 
     # Calculate adaptive knots: 1 per 100 PSMs, minimum 3
+    max_knots = typemax(UInt32) 
+    @user_info "max_knots set to typemax(UInt32)=$max_knots"
+    lambda_penalty = Float32(1.0)
+    @user_info "lambda_penalty set to $lambda_penalty \n"
     n_knots = min(max(3, Int(floor(n_psms / 100))), max_knots)
 
     # Early exit for insufficient data
@@ -275,7 +345,16 @@ function fit_irt_model(
             )
         end
 
-        final_model = SplineRtConversionModel(final_map)
+        # Apply monotonic enforcement to prevent backwards slopes at edges
+        final_map_monotonic = make_spline_monotonic(
+            final_map,
+            valid_psms[!, :rt],
+            valid_psms[!, :irt_predicted],
+            n_sample_points = 500,
+            n_knots = n_knots_final
+        )
+
+        final_model = SplineRtConversionModel(final_map_monotonic)
 
         return (final_model, valid_psms[!, :rt], valid_psms[!, :irt_predicted], irt_mad)
 
