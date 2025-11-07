@@ -189,7 +189,15 @@ function make_spline_monotonic(
     end
 
     # 5. Refit spline to filtered data
-    return UniformSpline(irt_grid, rt_grid, 3, n_knots)
+    final_spline = UniformSpline(irt_grid, rt_grid, 3, n_knots)
+
+    # 6. Validate monotonicity (optional diagnostic)
+    violations = sum(diff(irt_grid) .< 0)
+    if violations > 0
+        @debug_l2 "Monotonic filter had $violations violations before refit (edge corrections applied)"
+    end
+
+    return final_spline
 end
 
 """
@@ -346,6 +354,7 @@ function fit_irt_model(
         end
 
         # Apply monotonic enforcement to prevent backwards slopes at edges
+        @debug_l2 "Applying monotonic enforcement with bidirectional cumulative max filter"
         final_map_monotonic = make_spline_monotonic(
             final_map,
             valid_psms[!, :rt],
@@ -353,6 +362,16 @@ function fit_irt_model(
             n_sample_points = 500,
             n_knots = n_knots_final
         )
+
+        # Validate final monotonicity
+        rt_test = LinRange(minimum(valid_psms[!, :rt]), maximum(valid_psms[!, :rt]), 1000)
+        irt_test = [final_map_monotonic(r) for r in rt_test]
+        final_violations = sum(diff(irt_test) .< 0)
+        if final_violations > 0
+            @user_warn "Monotonic spline still has $final_violations violations after enforcement - may need higher sample density"
+        else
+            @debug_l2 "Monotonic enforcement successful - no violations detected"
+        end
 
         final_model = SplineRtConversionModel(final_map_monotonic)
 
