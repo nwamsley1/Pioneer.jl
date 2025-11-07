@@ -16,6 +16,10 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # src/fasta/fasta_digest.jl
+
+# Set of valid amino acid characters for fast lookup (O(1) per character)
+const VALID_AAS = Set(['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L',
+                       'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y'])
 """
     digest_sequence(sequence::AbstractString, regex::Regex, max_length::Int, min_length::Int, missed_cleavages::Int)::Vector{String}
 
@@ -121,7 +125,7 @@ Enzymatically digest protein sequences from FASTA entries into peptides.
 # Details
 For each protein in the input FASTA entries:
 1. Digests the sequence using the specified enzyme pattern
-2. Filters out peptides containing unusual amino acids ([H, U, O, X, Z, B])
+2. Filters out peptides containing non-standard amino acids (only A,C,D,E,F,G,H,I,K,L,M,N,P,Q,R,S,T,V,W,Y are allowed)
 3. Creates a new FastaEntry for each valid peptide
 4. Assigns sequential base_pep_id values
 
@@ -174,7 +178,8 @@ function digest_fasta(fasta::Vector{FastaEntry},
         )
         for (peptide, start_idx) in zip(peptides, starts)
 
-            if (occursin("[H", peptide)) | (occursin("U", peptide)) | (occursin("O", peptide)) |  (occursin("X", peptide)) | occursin("Z", peptide) | occursin("B", peptide)
+            # Skip peptides containing non-standard amino acids
+            if !all(aa -> aa ∈ VALID_AAS, peptide)
                 continue
             end
 

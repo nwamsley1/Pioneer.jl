@@ -146,7 +146,7 @@ function prepare_koina_batch(model::SplineCoefficientModel,
                     "name" => "peptide_sequences",
                     "shape" => [nrow(batch_data), 1],
                     "datatype" => "BYTES",
-                    "data" => batch_data.koina_sequence
+                    "data" => strip.(batch_data.koina_sequence)
                 ),
                 Dict(
                     "name" => "precursor_charges",
@@ -158,7 +158,7 @@ function prepare_koina_batch(model::SplineCoefficientModel,
         )
         json_batches[i] = JSON.json(batch_dict)
     end
-    
+
     return json_batches
 end
 
