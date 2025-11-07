@@ -125,7 +125,7 @@ function BuildSpecLib(params_path::String)
         dual_println("\nDetecting fragment bounds...")
         bounds_timing = @timed begin
             # calibration_raw_file is optional - use empty string if not provided
-            calibration_file = get(_params.library_params, "calibration_raw_file", "")
+            calibration_file = get(_params, "calibration_raw_file", "")
             frag_bounds, prec_mz_min, prec_mz_max = get_fragment_bounds(
                 _params.library_params["auto_detect_frag_bounds"],
                 calibration_file,
@@ -168,7 +168,7 @@ function BuildSpecLib(params_path::String)
                 if occursin("unispec", prediction_model)
                     try
                         mz_to_ev_interp = get_mz_to_ev_interp(
-                            _params.library_params["calibration_raw_file"],
+                            _params.calibration_raw_file,
                             lib_dir
                         )
                         dual_println("Successfully created collision energy interpolator")
