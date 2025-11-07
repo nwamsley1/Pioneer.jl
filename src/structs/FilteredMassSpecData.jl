@@ -250,7 +250,7 @@ function FilteredMassSpecData(
     topn::Union{Nothing, Int} = nothing,
     min_intensity::Union{Nothing, AbstractFloat} = nothing,
     target_ms_order::Union{Nothing, UInt8} = UInt8(2),
-    n_rt_bins::Int = 15,
+    n_rt_bins::Int = 100,
     seed::Union{Nothing, Int} = nothing
 )
     # Determine float type from original data
