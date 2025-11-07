@@ -189,15 +189,17 @@ function make_spline_monotonic(
     end
 
     # 5. Refit spline to filtered data with penalty for smoothness
+    
     final_spline = UniformSplinePenalized(
         irt_grid,
         rt_grid,
         3,              # degree
         n_knots,
-        Float32(1.0),   # lambda penalty (matches current hardcoded value)
+        Float32(0.1),   # lambda penalty (matches current hardcoded value)
         2               # 2nd order penalty
     )
 
+    #final_spline = UniformSpline(irt_grid, rt_grid, 3, n_knots)
     # 6. Validate monotonicity (optional diagnostic)
     violations = sum(diff(irt_grid) .< 0)
     if violations > 0
@@ -270,7 +272,7 @@ function fit_irt_model(
     # Calculate adaptive knots: 1 per 100 PSMs, minimum 3
     max_knots = typemax(UInt32) 
     @user_info "max_knots set to typemax(UInt32)=$max_knots"
-    lambda_penalty = Float32(1.0)
+    lambda_penalty = Float32(0.1)
     @user_info "lambda_penalty set to $lambda_penalty \n"
     n_knots = min(max(3, Int(floor(n_psms / 100))), max_knots)
 
@@ -366,7 +368,7 @@ function fit_irt_model(
             final_map,
             valid_psms[!, :rt],
             valid_psms[!, :irt_predicted],
-            n_sample_points = 500,
+            n_sample_points = size(valid_psms, 1),
             n_knots = n_knots_final
         )
 
@@ -387,7 +389,7 @@ function fit_irt_model(
     catch e
         # Only fallback: use linear model on error
         @user_warn "RT spline fitting failed ($e), falling back to linear model"
-
+        throw(e)
         linear_model, linear_std, _ = fit_linear_irt_model(psms)
 
         # Calculate MAD for linear model
