@@ -238,7 +238,6 @@ function process_file!(
             ms_file_idx,
             MS2CHROM(),
         )
-        #sort!(chromatograms, :rt)
         #out_dir = getDataOutDir(search_context)
         #Arrow.write(joinpath(out_dir, "test_chroms_ms2.arrow"), chromatograms)
         #jldsave("/Users/nathanwamsley/Desktop/rt_index.jld2"; rt_index)
@@ -252,7 +251,8 @@ function process_file!(
                 ms_file_idx,
                 MS1CHROM(),
             )
-            sort!(ms1_chromatograms, :rt)
+            # MS1 always uses CombineTraces, so sort by [:precursor_idx, :rt]
+            sort!(ms1_chromatograms, [:precursor_idx, :rt])
             ms1_chromatograms[!,:precursor_fraction_transmitted] = ones(Float32, size(ms1_chromatograms, 1))
         end
         #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
@@ -271,6 +271,14 @@ function process_file!(
             getCenterMzs(spectra),
             getIsolationWidthMzs(spectra)
         )
+
+        # Pre-sort chromatograms to avoid concurrent sorting in threads
+        # Groups will inherit this ordering, eliminating need for per-group sorting
+        if seperateTraces(params.isotope_tracetype)
+            sort!(chromatograms, [:precursor_idx, :isotopes_captured, :rt])
+        else
+            sort!(chromatograms, [:precursor_idx, :rt])
+        end
 
         # Integrate chromatographic peaks for each precursor
         # Updates peak_area and new_best_scan in passing_psms
