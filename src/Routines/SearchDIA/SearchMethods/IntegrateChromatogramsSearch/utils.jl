@@ -83,7 +83,7 @@ function integrate_precursors(chromatograms::DataFrame,
                 prec_id = precursor_idx[i]
                 iso_set = isotopes_captured[i]
                 apex_scan = apex_scan_idx[i]
-                #grouped_chroms must be sorted by retention time 
+                # Note: grouped_chroms groups are already sorted by rt (pre-sorted before grouping)
                 if seperateTraces(isotope_trace_type)
                     (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys ? continue : nothing
                     chrom = grouped_chroms[(precursor_idx = prec_id, isotopes_captured = iso_set)]
@@ -92,7 +92,8 @@ function integrate_precursors(chromatograms::DataFrame,
                     chrom = grouped_chroms[(precursor_idx = prec_id,)]
                 end
 
-                sort!(chrom, :rt, alg = QuickSort)
+                # Note: No sorting needed - chromatograms are pre-sorted by [:precursor_idx, :rt]
+                # Groups from groupby() inherit this ordering
                 avg_cycle_time = (chrom.rt[end] - chrom.rt[1]) /  length(chrom.rt)
                 first_pos = findfirst(x->x>0.0, chrom[!,:intensity]) # start from first positive weight
                 last_pos = findlast(x->x>0.0, chrom[!,:intensity]) # end at last positive weight
