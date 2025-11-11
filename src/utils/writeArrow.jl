@@ -80,6 +80,7 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
                             sleep(0.1 * i)
                         end
                     end
+                    @user_info "Retry $i to delete $fpath failed \n"
                 end
             end
         end
