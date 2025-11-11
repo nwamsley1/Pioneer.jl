@@ -230,7 +230,9 @@ function build_chromatograms(
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
-    chromatograms = Vector{MS2ChromObject}(undef, 500000)  # Initial size
+    # Pre-allocate chromatograms with better size estimate (~100 points per scan average)
+    estimated_points = length(scan_range) * 100
+    chromatograms = Vector{MS2ChromObject}(undef, max(estimated_points, 10000))
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -330,7 +332,13 @@ function build_chromatograms(
                 new_entries = getIdToCol(search_data).size - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
                 resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
-                append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+                # Avoid list comprehension allocation - use direct resize and loop
+                psms = getUnscoredPsms(search_data)
+                old_length = length(psms)
+                resize!(psms, old_length + new_entries)
+                for i in (old_length + 1):length(psms)
+                    psms[i] = eltype(psms)()
+                end
             end
 
             # Initialize weights
@@ -361,7 +369,7 @@ function build_chromatograms(
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{MS2ChromObject}(undef, 500000))
+                    resize!(chromatograms, length(chromatograms) * 2)  # Exponential growth
                 end
 
                 if !iszero(getIdToCol(search_data)[precs_temp[j]])
@@ -392,7 +400,7 @@ function build_chromatograms(
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{MS2ChromObject}(undef, 500000))
+                    resize!(chromatograms, length(chromatograms) * 2)  # Exponential growth
                 end
 
                 chromatograms[rt_idx] = MS2ChromObject(
@@ -565,7 +573,13 @@ function build_chromatograms(
                 new_entries = getIdToCol(search_data).size - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
                 resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
-                append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+                # Avoid list comprehension allocation - use direct resize and loop
+                psms = getUnscoredPsms(search_data)
+                old_length = length(psms)
+                resize!(psms, old_length + new_entries)
+                for i in (old_length + 1):length(psms)
+                    psms[i] = eltype(psms)()
+                end
             end
 
             # Initialize weights
@@ -602,7 +616,7 @@ function build_chromatograms(
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
+                    resize!(chromatograms, length(chromatograms) * 2)  # Exponential growth
                 end
 
                 # Get weight from precursor_weights array (now contains distributed group coefficients)
@@ -637,7 +651,7 @@ function build_chromatograms(
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
+                    resize!(chromatograms, length(chromatograms) * 2)  # Exponential growth
                 end
                 chromatograms[rt_idx] = MS1ChromObject(
                     Float32(getRetentionTime(spectra, scan_idx)),
