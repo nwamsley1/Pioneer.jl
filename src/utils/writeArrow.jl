@@ -43,39 +43,44 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
         
         # Write to the temporary file
         Arrow.write(tpath, df)
-        
         # Try to delete the existing file with retries
         if isfile(fpath)
-            max_retries = 5
-            for i in 1:max_retries
-                try
-                    # Force garbage collection to release any file handles
-                    # Use lock to prevent concurrent GC calls from multiple threads
-                    lock(GC_LOCK) do
-                        GC.gc()
-                    end
-
-                    # Try to delete using Julia's rm with force flag
-                    rm(fpath, force=true)
-                    break
-                catch e
-                    if i == max_retries
-                        # If all retries failed, try Windows-specific deletion
-                        try
-                            run(`cmd /c del /f /q "$fpath"`)
-                        catch
-                            # If that also fails, rename the old file instead of deleting
-                            backup_path = fpath * ".backup_" * string(time_ns())
-                            try
-                                mv(fpath, backup_path, force=true)
-                            catch
-                                error("Unable to remove or rename existing file: $fpath")
-                            end
+            try
+                rm(fpath, force=true)
+            catch e 
+                @user_info "Initial deletion failed for $fpath, attempting retries. \n"
+                max_retries = 5
+                for i in 1:max_retries
+                    try
+                        # Force garbage collection to release any file handles
+                        # Use lock to prevent concurrent GC calls from multiple threads
+                        lock(GC_LOCK) do
+                            GC.gc()
                         end
-                    else
-                        # Wait a bit before retrying
-                        sleep(0.1 * i)
+
+                        # Try to delete using Julia's rm with force flag
+                        rm(fpath, force=true)
+                        break
+                    catch e
+                        if i == max_retries
+                            # If all retries failed, try Windows-specific deletion
+                            try
+                                run(`cmd /c del /f /q "$fpath"`)
+                            catch
+                                # If that also fails, rename the old file instead of deleting
+                                backup_path = fpath * ".backup_" * string(time_ns())
+                                try
+                                    mv(fpath, backup_path, force=true)
+                                catch
+                                    error("Unable to remove or rename existing file: $fpath")
+                                end
+                            end
+                        else
+                            # Wait a bit before retrying
+                            sleep(0.1 * i)
+                        end
                     end
+                    @user_info "Retry $i to delete $fpath failed \n"
                 end
             end
         end
