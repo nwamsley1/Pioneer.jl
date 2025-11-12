@@ -40,16 +40,34 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
     if Sys.iswindows()
         # Create a unique temporary file
         tpath = tempname() * ".arrow"
-        
         # Write to the temporary file
         Arrow.write(tpath, df)
         # Try to delete the existing file with retries
         if isfile(fpath)
             try
-                rm(fpath, force=true)
+                run(`cmd /c del /f /q "$fpath"`)#rm(fpath, force=true)
             catch e 
-                @user_info "Initial deletion failed for $fpath, attempting retries. \n"
-                max_retries = 5
+                #@user_info "Initial deletion failed for $fpath, attempting retries. \n"
+                @debug_l1 "Windows specifiec deletion failed for $fpath. \n"
+                # If that also fails, rename the old file instead of deleting
+                backup_path = fpath * ".backup_" * string(time_ns())
+                try
+                    mv(fpath, backup_path, force=true)
+                catch
+                    @debug_l1 "Renaming original failed for $fpath, attempting GC. \n"
+                    try
+                        lock(GC_LOCK) do
+                            GC.gc()
+                        end
+                        # Try to delete using Julia's rm with force flag
+                        rm(fpath, force=true)
+                        #break
+                    catch
+                        error("Unable to remove or rename existing file: $fpath")                            
+                    end
+                end
+                #max_retries = 5
+                #=
                 for i in 1:max_retries
                     try
                         # Force garbage collection to release any file handles
@@ -82,6 +100,7 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
                     end
                     @user_info "Retry $i to delete $fpath failed \n"
                 end
+                =#
             end
         end
         
