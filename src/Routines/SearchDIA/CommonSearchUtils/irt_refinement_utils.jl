@@ -104,9 +104,10 @@ function prepare_features_dataframe(sequences::Vector{String},
     n_aas = length(STANDARD_AAS)
 
     # Initialize feature matrix with pre-allocated arrays
+    # Convert to Float64 for GLM compatibility
     features = Dict{Symbol, Vector}()
-    features[:irt_predicted] = irt_predicted
-    features[:residual] = irt_residuals
+    features[:irt_predicted] = Float64.(irt_predicted)
+    features[:residual] = Float64.(irt_residuals)
 
     # Pre-allocate amino acid count columns
     aa_count_arrays = [zeros(Int, n) for _ in 1:n_aas]
@@ -215,8 +216,10 @@ function fit_irt_refinement_model(sequences::Vector{String},
     # Calculate training R²
     r2_train = Float32(r2(model))
 
-    # Predict on validation set
-    val_predictions = predict(model, val_df)
+    # Predict on validation set manually using coefficients
+    # Build design matrix for validation set
+    val_matrix = hcat(ones(n_val), val_df[:, :irt_predicted], Matrix(val_df[:, aa_terms]))
+    val_predictions = val_matrix * coef_values
 
     # Calculate validation R²
     val_residuals = val_df.residual

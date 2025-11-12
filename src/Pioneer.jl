@@ -48,7 +48,7 @@ using LaTeXStrings, Printf
 using Dates
 using InlineStrings
 using HTTP
-
+using GLM
 
 # Simple console logger - detailed logging handled by custom logging system
 global_logger(ConsoleLogger())

@@ -838,7 +838,7 @@ function add_features!(psms::DataFrame,
     precursor_sequence = getSequence(getPrecursors(getSpecLib(search_context)))#[:sequence],
     structural_mods = getStructuralMods(getPrecursors(getSpecLib(search_context)))#[:structural_mods],
     prec_mz = getMz(getPrecursors(getSpecLib(search_context)))#[:mz],
-    prec_irt = getIrt(getPrecursors(getSpecLib(search_context)))#[:irt],
+    # Note: iRT values come from SearchContext via getPredIrt() (may be refined, see lines 905, 909)
     prec_charge = getCharge(getPrecursors(getSpecLib(search_context)))#[:prec_charge],
     entrap_group_ids = getEntrapmentGroupId(getPrecursors(getSpecLib(search_context)))
     precursor_missed_cleavage = getMissedCleavages(getPrecursors(getSpecLib(search_context)))#[:missed_cleavages],

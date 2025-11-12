@@ -406,22 +406,33 @@ function map_retention_times!(
                         precursors = getPrecursors(getSpecLib(search_context))
                         sequences = String[getSequence(precursors)[idx] for idx in precursor_indices]
 
+                        # Convert observed RTs to iRT using the fitted model
+                        observed_rts = psms[:rt][best_hits]
+                        observed_irts = Float32[rt_model(Float32(rt)) for rt in observed_rts]
+
                         # Fit refinement model
                         refinement_model = fit_irt_refinement_model(
                             sequences,
                             Float32.(psms[:irt_predicted][best_hits]),
-                            Float32.(valid_irt),
+                            observed_irts,
                             ms_file_idx=ms_file_idx,
                             min_psms=20,
                             train_fraction=0.67
                         )
 
-                        # Apply refinement to ALL precursors if model improves predictions
+                        # Apply refinement to precursors observed in this file
                         if !isnothing(refinement_model) && refinement_model.use_refinement
-                            n_precursors = length(getSequence(precursors))
+                            # Get unique precursor IDs observed in this file's PSMs
+                            unique_precursor_ids = unique(psms[:precursor_idx])
+                            n_precursors = length(unique_precursor_ids)
                             aa_counts = zeros(Int, 20)  # Pre-allocated counts buffer
 
-                            for precursor_idx in 1:n_precursors
+                            @user_info "File $ms_file_idx: Applying iRT refinement to $n_precursors observed precursors..."
+
+                            # Use ProgressBar for user feedback
+                            progress = ProgressBar(total=n_precursors)
+
+                            for precursor_idx in unique_precursor_ids
                                 irt_original = Float32(getIrt(precursors)[precursor_idx])
                                 sequence = getSequence(precursors)[precursor_idx]
 
@@ -435,26 +446,18 @@ function map_retention_times!(
 
                                 # Update SearchContext pred_irt
                                 setPredIrt!(search_context, UInt32(precursor_idx), irt_refined)
+
+                                update(progress)  # Progress bar tick
                             end
 
-                            @debug_l1 "File $ms_file_idx: Applied iRT refinement to $n_precursors precursors"
+                            @user_info "File $ms_file_idx: Applied iRT refinement to $n_precursors precursors\n"
 
-                            # Add irt_refined column to PSM file for transparency
-                            psms_df = DataFrame(psms)
-                            psms_df[!, :irt_refined] = [
-                                apply_irt_refinement(
-                                    refinement_model,
-                                    aa_counts,
-                                    getSequence(precursors)[idx],
-                                    Float32(getIrt(precursors)[idx])
-                                )
-                                for idx in psms_df.precursor_idx
-                            ]
-
-                            # Re-write PSM file with irt_refined column
-                            writeArrow(psms_path, psms_df)
+                            # Note: irt_refined column NOT added to PSM files (would cause hang)
+                            # Refined iRT values stored in SearchContext and accessed via getPredIrt()
+                            # Downstream methods (SecondPass, Scoring, Chromatogram) use SearchContext
                         end
                     catch e
+                        throw(e)
                         @user_warn "iRT refinement failed for file $ms_file_idx: $e"
                     end
                 end
@@ -507,7 +510,7 @@ function map_retention_times!(
             end
             
             @user_warn "RT mapping failed for MS data file: $file_name ($n_good_psms good PSMs found, need >100 for spline). Using identity RT model."
-            
+
             # Use identity mapping as fallback - no RT to iRT conversion
             identity_model = IdentityModel()
             setRtIrtMap!(search_context, identity_model, ms_file_idx)

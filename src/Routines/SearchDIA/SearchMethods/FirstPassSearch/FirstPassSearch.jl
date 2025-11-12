@@ -562,48 +562,52 @@ function summarize_results!(
             max_q_val=params.max_q_val_for_irt
         )
     end
-    # Map retention times
+
+    # Map retention times (includes iRT refinement if enabled)
+    # Note: irt_obs uses lazy initialization - only observed/refined precursors stored
     map_retention_times!(search_context, results, params)
+    @user_info "✓ Completed map_retention_times!"
+
     # Process precursors
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
+    @user_info "✓ Completed get_best_precursors_accross_runs! ($(length(precursor_dict)) precursors)"
 
     if false==true#params.match_between_runs==true
         #######
         #Each target has a corresponding decoy and vice versa
-        #Add the complement targets/decoys to the precursor dict 
+        #Add the complement targets/decoys to the precursor dict
         #if the `sibling_peptide_scores` parameter is set to true
         #In the target/decoy scoring (see SearchMethods/ScoringSearch)
         #the maximum score for each target/decoy pair is shared accross runs
-        #in an iterative training scheme. 
+        #in an iterative training scheme.
         precursors = getPrecursors(getSpecLib(search_context))
         i = 1
         for (pid, val) in pairs(precursor_dict)
             i += 1
-            setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
+            # Note: getPredIrt uses lazy fallback to library iRT for unobserved precursors
             partner_pid = getPartnerPrecursorIdx(precursors)[pid]
             if ismissing(partner_pid)
                 continue
             end
 
             # If the partner needs to be added, then give it the irt of the currently identified precursor
-            # Otherwise if the partner was ID'ed, it should keep its original predicted iRT
+            # Use SearchContext value (which may be refined) instead of library iRT
             if !haskey(precursor_dict, partner_pid)
                 insert!(precursor_dict, partner_pid, val)
-                setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
-            else
-                setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[partner_pid])
+                setPredIrt!(search_context, partner_pid, getPredIrt(search_context, pid))
             end
-            
-        end
-    else
-        for (pid, val) in pairs(precursor_dict)
-            setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
+            # If partner was ID'ed, it already has correct iRT via lazy fallback or refinement
         end
     end
+    # Note: irt_obs contains only observed/refined precursors (~170k)
+    # Unobserved precursors use lazy fallback to library iRT in getPredIrt
 
     setPrecursorDict!(search_context, precursor_dict)
+    @user_info "Starting create_rt_indices! ..."
+
     # Calculate RT indices
     create_rt_indices!(search_context, results, precursor_dict, params)
+    @user_info "✓ Completed create_rt_indices!"
     
     # Merge mass error plots
     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
