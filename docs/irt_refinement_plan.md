@@ -51,6 +51,41 @@ For each PSM with precursor_idx `pid`:
 
 ---
 
+## Feature Toggle
+
+**Master Parameter**: `enable_irt_refinement` in `params.json`
+
+```json
+{
+  "first_pass_search": {
+    "enable_irt_refinement": false  // Set to true to enable refinement
+  }
+}
+```
+
+**Default**: `false` (conservative - maintains current behavior)
+
+**Behavior**:
+- **`false`** (disabled):
+  - FirstPassSearch uses library iRT predictions unchanged
+  - No model training, no SearchContext updates
+  - Zero performance overhead
+  - Identical to current Pioneer behavior
+
+- **`true`** (enabled):
+  - Train per-file linear models to predict iRT errors
+  - Update SearchContext `pred_irt` with refined predictions
+  - Add `irt_refined` column to FirstPass PSM files
+  - Downstream methods automatically benefit (no code changes needed)
+  - Small overhead: ~1-2 seconds per file
+
+**Recommendation**:
+- Start with `false` for initial runs
+- Enable (`true`) after validating improvement on a subset of your data
+- Compare search results with/without refinement to assess benefit for your specific dataset
+
+---
+
 ## Downstream Method Integration
 
 All downstream search methods automatically benefit from refined iRT predictions with **zero code changes** because they access iRT values through SearchContext:
@@ -457,6 +492,7 @@ function RT_iRT_Calibration!(
         # ... existing code to fit RT model (lines 355-383) ...
 
         # NEW: Fit iRT refinement model (after line 383)
+        # This entire block is skipped if enable_irt_refinement = false
         if params.enable_irt_refinement
             irt_refinement_model = fit_irt_refinement_model(
                 Arrow.Table(psms_path),
@@ -558,12 +594,12 @@ end
 
 **File**: `src/structs/PioneerParameters.jl`
 
-Add to `FirstPassSearchParameters` section:
+Add to `FirstPassSearchParameters` section in `params.json`:
 
 ```json
 {
   "first_pass_search": {
-    "enable_irt_refinement": true,
+    "enable_irt_refinement": false,
     "irt_refinement_min_psms_per_feature": 20,
     "irt_refinement_train_fraction": 0.667,
     "irt_refinement_seed": 42
@@ -571,17 +607,44 @@ Add to `FirstPassSearchParameters` section:
 }
 ```
 
+**Parameter Descriptions**:
+
+- **`enable_irt_refinement`** (Boolean, default: `false`):
+  - **Master toggle** for iRT refinement feature
+  - `false`: Use library iRT predictions as-is (current behavior)
+  - `true`: Train per-file correction models and update predictions
+  - **Recommendation**: Start with `false`, enable after validating on your data
+
+- **`irt_refinement_min_psms_per_feature`** (Integer, default: `20`):
+  - Minimum PSMs per feature required for model training
+  - Total minimum PSMs = 20 × 21 features = 420 PSMs
+  - Increase for stricter requirements, decrease for small datasets
+
+- **`irt_refinement_train_fraction`** (Float, default: `0.667`):
+  - Fraction of PSMs used for training (remaining used for validation)
+  - 0.667 = 2/3 train, 1/3 validation
+
+- **`irt_refinement_seed`** (Integer, default: `42`):
+  - Random seed for train/validation split (for reproducibility)
+
 **Julia struct** (in parameters file):
 
 ```julia
 struct FirstPassSearchParameters
     # ... existing fields ...
-    enable_irt_refinement::Bool
-    irt_refinement_min_psms_per_feature::Int
-    irt_refinement_train_fraction::Float64
-    irt_refinement_seed::Int
+    enable_irt_refinement::Bool               # Master toggle
+    irt_refinement_min_psms_per_feature::Int  # Minimum data requirement
+    irt_refinement_train_fraction::Float64    # Train/val split ratio
+    irt_refinement_seed::Int                  # Reproducibility seed
 end
 ```
+
+**Behavior When Disabled** (`enable_irt_refinement = false`):
+- FirstPassSearch skips all refinement logic
+- SearchContext `pred_irt` uses library iRT values unchanged
+- No `irt_refined` column added to PSM files
+- Downstream methods use original library predictions
+- Zero performance overhead
 
 ### Step 5: No Downstream Method Changes Required
 
