@@ -84,6 +84,25 @@ For each PSM with precursor_idx `pid`:
 - Enable (`true`) after validating improvement on a subset of your data
 - Compare search results with/without refinement to assess benefit for your specific dataset
 
+### Example Console Output
+
+When **enabled** and refinement **improves** MAE:
+```
+[ Info: File 1 iRT Refinement ENABLED: Training R²=0.4523, Validation R²=0.4312,
+        MAE: 2.3421 → 2.1847 (Δ=0.1574, 6.72% improvement)
+```
+
+When **enabled** but refinement **doesn't improve** MAE:
+```
+[ Info: File 3 iRT Refinement DISABLED: MAE: 1.8932 → 1.9124 (Δ=-0.0192, -1.01%)
+        - No improvement, using library iRT
+```
+
+When **disabled** (`enable_irt_refinement = false`):
+```
+(No output - refinement is skipped entirely)
+```
+
 ---
 
 ## Downstream Method Integration
@@ -375,12 +394,22 @@ function fit_irt_refinement_model(
     # Decision: use refinement if it improves validation MAE
     use_refinement = mae_refined < mae_original
 
-    @user_info "File $ms_file_idx iRT Refinement:" *
-              " Training R²=$(round(r2_train, digits=4))," *
-              " Validation R²=$(round(r2_val, digits=4))," *
-              " MAE Original=$(round(mae_original, digits=4))," *
-              " MAE Refined=$(round(mae_refined, digits=4))," *
-              " Use=$(use_refinement)\n"
+    # Calculate improvement metrics
+    mae_improvement = mae_original - mae_refined
+    mae_improvement_pct = (mae_improvement / mae_original) * 100.0
+
+    if use_refinement
+        @user_info "File $ms_file_idx iRT Refinement ENABLED:" *
+                  " Training R²=$(round(r2_train, digits=4))," *
+                  " Validation R²=$(round(r2_val, digits=4))," *
+                  " MAE: $(round(mae_original, digits=4)) → $(round(mae_refined, digits=4))" *
+                  " (Δ=$(round(mae_improvement, digits=4)), $(round(mae_improvement_pct, digits=2))% improvement)\n"
+    else
+        @user_info "File $ms_file_idx iRT Refinement DISABLED:" *
+                  " MAE: $(round(mae_original, digits=4)) → $(round(mae_refined, digits=4))" *
+                  " (Δ=$(round(mae_improvement, digits=4)), $(round(mae_improvement_pct, digits=2))%)" *
+                  " - No improvement, using library iRT\n"
+    end
 
     # If refinement improves MAE, retrain on FULL dataset for final model
     if use_refinement
@@ -955,11 +984,26 @@ When enabled, FirstPass PSM files include an additional column:
 
 ## Diagnostics
 
-Check console output for refinement statistics per file:
+Check console output for refinement statistics per file showing MAE improvement:
+
+**When refinement improves predictions** (enabled):
 ```
-File 1 iRT Refinement: Training R²=0.4523, Validation R²=0.4312,
-MAE Original=2.34, MAE Refined=2.18, Use=true
+[ Info: File 1 iRT Refinement ENABLED: Training R²=0.4523, Validation R²=0.4312,
+        MAE: 2.3421 → 2.1847 (Δ=0.1574, 6.72% improvement)
 ```
+
+**When refinement doesn't help** (automatically disabled):
+```
+[ Info: File 3 iRT Refinement DISABLED: MAE: 1.8932 → 1.9124 (Δ=-0.0192, -1.01%)
+        - No improvement, using library iRT
+```
+
+The output clearly shows:
+- **Original MAE** (library iRT predictions)
+- **Refined MAE** (after correction model)
+- **Absolute improvement** (Δ)
+- **Percent improvement** (%)
+- **Decision** (ENABLED or DISABLED for this file)
 ```
 
 ### Developer Documentation
