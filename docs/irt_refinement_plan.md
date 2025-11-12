@@ -37,10 +37,46 @@ For each PSM with precursor_idx `pid`:
   - Where: `irt_refined = irt_predicted - predicted_irt_err`
 - **Decision**: Use refined iRT only if `MAE_refined < MAE_original`
 
-### 5. Application
-- Apply model to **all precursors** in library (not just observed PSMs)
-- Update FirstPass PSM files with `irt_refined` column
-- Store per-file correction models in SearchContext for downstream use
+### 5. Final Model Retraining
+- **If validation shows improvement**: Retrain model on **full dataset** (train + validation combined)
+  - Validation model used only to decide whether refinement helps
+  - Final model uses all available data for best parameter estimates
+  - This is standard ML best practice: validation for decision, all data for final model
+
+### 6. Application
+- Apply **retrained** model to **all precursors** in library (not just observed PSMs)
+- Update **SearchContext pred_irt** dictionary with refined values for all precursors
+- Add **irt_refined column** to FirstPass PSM files (for transparency/debugging)
+- Downstream methods automatically use refined iRT via existing `getPredIrt()` calls
+
+---
+
+## Downstream Method Integration
+
+All downstream search methods automatically benefit from refined iRT predictions with **zero code changes** because they access iRT values through SearchContext:
+
+### SecondPassSearch
+**File**: `src/Routines/SearchDIA/SearchMethods/SecondPassSearch/utils.jl`
+**How it uses iRT**:
+- RT window selection for precursor candidates
+- Builds RT index using `getPredIrt(search_context, precursor_idx)`
+- **Automatically uses refined iRT** if FirstPassSearch updated SearchContext
+
+### ScoringSearch
+**File**: `src/Routines/SearchDIA/SearchMethods/ScoringSearch/`
+**How it uses iRT**:
+- RT-based scoring features (e.g., RT deviation from expected)
+- Accesses via `getPredIrt(search_context, precursor_idx)`
+- **Automatically uses refined iRT** for better RT deviation estimates
+
+### IntegrateChromatogramsSearch
+**File**: `src/Routines/SearchDIA/SearchMethods/IntegrateChromatogramsSearch/`
+**How it uses iRT**:
+- Defines RT windows for extracting ion chromatograms (XICs)
+- Converts predicted iRT → empirical RT via `getIrtRtMap(search_context, file_idx)`
+- **Automatically uses refined iRT** for more accurate XIC extraction windows
+
+**Key Point**: No modifications needed to downstream methods. They already use SearchContext accessor methods that will return refined values after FirstPassSearch updates `pred_irt`.
 
 ---
 
@@ -311,6 +347,35 @@ function fit_irt_refinement_model(
               " MAE Refined=$(round(mae_refined, digits=4))," *
               " Use=$(use_refinement)\n"
 
+    # If refinement improves MAE, retrain on FULL dataset for final model
+    if use_refinement
+        @debug_l1 "File $ms_file_idx: Retraining on full dataset (train + validation)"
+
+        # Retrain on combined train + validation data
+        final_model = lm(formula, features_df)
+
+        # Extract coefficients from retrained model
+        final_coef_names = coefnames(final_model)
+        final_coef_values = coef(final_model)
+
+        final_coefficients = Dict{Symbol, Float64}()
+        final_intercept = final_coef_values[1]
+        final_irt_coef = 0.0
+
+        for (i, name) in enumerate(final_coef_names[2:end])
+            if name == "irt_predicted"
+                final_irt_coef = final_coef_values[i+1]
+            else
+                final_coefficients[Symbol(name)] = final_coef_values[i+1]
+            end
+        end
+
+        # Use retrained coefficients for final model
+        coefficients = final_coefficients
+        intercept = final_intercept
+        irt_coef = final_irt_coef
+    end
+
     return IrtRefinementModel(
         coefficients,
         irt_coef,
@@ -407,18 +472,45 @@ function RT_iRT_Calibration!(
             if !isnothing(irt_refinement_model) && irt_refinement_model.use_refinement
                 setIrtRefinementModel!(search_context, irt_refinement_model, ms_file_idx)
 
-                # Apply refinement to PSMs and update file
-                psms_table = Arrow.Table(psms_path)
+                # Get precursors and sequences
                 precursors = getPrecursors(getSpecLib(search_context))
-                irt_refined = apply_irt_refinement!(
-                    psms_table,
-                    irt_refinement_model,
-                    precursors
-                )
+                sequences = getSequence(precursors)
 
-                # Add irt_refined column to PSM file
+                # Apply refinement to ALL precursors in library
+                # Update SearchContext pred_irt dictionary
+                for precursor_idx in 1:length(sequences)
+                    irt_original = getIrt(precursors)[precursor_idx]
+                    sequence = sequences[precursor_idx]
+
+                    # Calculate predicted error from model
+                    predicted_err = irt_refinement_model.intercept
+                    predicted_err += irt_refinement_model.irt_coef * irt_original
+
+                    for aa_char in sequence
+                        col_name = Symbol("count_", aa_char)
+                        if haskey(irt_refinement_model.coefficients, col_name)
+                            predicted_err += irt_refinement_model.coefficients[col_name]
+                        end
+                    end
+
+                    # Refined iRT = original - predicted_error
+                    irt_refined = Float32(irt_original - predicted_err)
+
+                    # Update SearchContext (downstream methods will use this)
+                    setPredIrt!(search_context, UInt32(precursor_idx), irt_refined)
+                end
+
+                # Also add irt_refined column to PSM file (for transparency/debugging)
+                psms_table = Arrow.Table(psms_path)
+                irt_refined_psms = Vector{Float32}(undef, length(psms_table[:precursor_idx]))
+
+                for (i, pid) in enumerate(psms_table[:precursor_idx])
+                    # Get refined value from SearchContext
+                    irt_refined_psms[i] = getPredIrt(search_context, pid)
+                end
+
                 psms_df = DataFrame(psms_table)
-                psms_df[!, :irt_refined] = irt_refined
+                psms_df[!, :irt_refined] = irt_refined_psms
                 writeArrow(psms_path, psms_df)
             end
         end
@@ -491,29 +583,15 @@ struct FirstPassSearchParameters
 end
 ```
 
-### Step 5: Update Downstream Methods
+### Step 5: No Downstream Method Changes Required
 
-Downstream search methods (SecondPassSearch, ScoringSearch, etc.) should use `irt_refined` column from FirstPass PSMs when available:
+**Automatic Integration**: Downstream search methods (SecondPassSearch, ScoringSearch, IntegrateChromatogramsSearch) automatically use refined iRT predictions with **zero code changes** because:
 
-**File**: `src/Routines/SearchDIA/SearchMethods/SecondPassSearch/utils.jl`
+1. They access iRT via `getPredIrt(search_context, precursor_idx)`
+2. FirstPassSearch updates SearchContext `pred_irt` dictionary with refined values
+3. Downstream methods transparently benefit from improved predictions
 
-Modify precursor candidate selection to prefer `irt_refined` over `irt_predicted`:
-
-```julia
-function build_rt_index_for_second_pass(...)
-    # Check if irt_refined column exists
-    has_refined_irt = :irt_refined in propertynames(passing_psms)
-
-    irt_values = if has_refined_irt
-        @debug_l1 "Using refined iRT predictions for RT index"
-        passing_psms[:irt_refined]
-    else
-        passing_psms[:irt_predicted]
-    end
-
-    # ... rest of indexing logic ...
-end
-```
+**Verification**: The `irt_refined` column in FirstPass PSM files allows verification that refinement is being applied correctly, but downstream methods don't read from PSM files - they use SearchContext exclusively.
 
 ---
 
@@ -527,9 +605,13 @@ src/Routines/SearchDIA/
 ├── SearchMethods/
 │   ├── FirstPassSearch/
 │   │   ├── FirstPassSearch.jl
-│   │   └── utils.jl                     # MODIFY: Add refinement call
+│   │   └── utils.jl                     # MODIFY: Add refinement call + SearchContext update
 │   ├── SecondPassSearch/
-│   │   └── utils.jl                     # MODIFY: Use refined iRT
+│   │   └── utils.jl                     # NO CHANGES: automatically uses refined iRT
+│   ├── ScoringSearch/
+│   │   └── ...                          # NO CHANGES: automatically uses refined iRT
+│   ├── IntegrateChromatogramsSearch/
+│   │   └── ...                          # NO CHANGES: automatically uses refined iRT
 │   └── ...
 └── ...
 
@@ -894,20 +976,26 @@ Combine multiple models:
 - [ ] Add `IrtRefinementModel` struct
 - [ ] Implement `count_amino_acids`
 - [ ] Implement `prepare_irt_refinement_features`
-- [ ] Implement `fit_irt_refinement_model`
+- [ ] Implement `fit_irt_refinement_model` with:
+  - [ ] Train/validation split
+  - [ ] Validation-based decision
+  - [ ] **Retrain on full dataset** if validation succeeds
 - [ ] Implement `apply_irt_refinement!`
-- [ ] Modify `FirstPassSearch/utils.jl` to call refinement
+- [ ] Modify `FirstPassSearch/utils.jl` to:
+  - [ ] Call refinement function
+  - [ ] **Update SearchContext pred_irt** for ALL precursors
+  - [ ] Add irt_refined column to PSM files
 - [ ] Add SearchContext support (getter/setter methods)
 - [ ] Add configuration parameters
 - [ ] Write unit tests
 - [ ] Write integration test
 - [ ] Update documentation
 
-### Phase 2: Downstream Integration (Follow-up PR)
-- [ ] Modify SecondPassSearch to use `irt_refined`
-- [ ] Modify ScoringSearch to use `irt_refined`
-- [ ] Add end-to-end benchmarking script
+### Phase 2: Validation & Benchmarking (Follow-up PR)
+- [ ] End-to-end testing on diverse datasets
+- [ ] Compare search results with/without refinement
 - [ ] Performance profiling
+- [ ] Verify downstream methods automatically use refined iRT
 
 ### Phase 3: Enhancements (Future PRs)
 - [ ] Add modification features
@@ -932,9 +1020,11 @@ Combine multiple models:
 
 ### Resolved:
 1. ✅ **File-specific vs global**: Per-file independent
-2. ✅ **Storage location**: Add `irt_refined` to FirstPass PSMs
+2. ✅ **Storage location**: Update SearchContext pred_irt AND add `irt_refined` column to FirstPass PSMs
 3. ✅ **Minimum PSMs**: 20 per feature (420 total), validate on holdout
 4. ✅ **Diagnostics**: Minimal logging only
+5. ✅ **Final model**: Retrain on full dataset (train + validation) after validation confirms improvement
+6. ✅ **Downstream integration**: Automatic via SearchContext - no code changes needed
 
 ### Open:
 - None currently
