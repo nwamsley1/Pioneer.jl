@@ -24,7 +24,8 @@
     "first_search": {
         "fragment_settings": {
             "min_score": 15
-        }
+        },
+        "enable_irt_refinement": false
     },
     "acquisition": {
         "nce": 26,

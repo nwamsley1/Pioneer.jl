@@ -85,7 +85,8 @@
             "irt_nstd": 4,
             "plot_rt_alignment": false,
             "use_robust_fitting": true
-        }
+        },
+        "enable_irt_refinement": false
     },
     "quant_search": {
         "fragment_settings": {
