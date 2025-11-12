@@ -61,9 +61,11 @@ function safe_replace_file(temp_path::String, target_path::String, file_handle)
             for i in 1:max_retries
                 try
                     # Try to delete using Julia's rm with force flag
-                    rm(target_path, force=true)
+                    run(`cmd /c del /f /q "$fpath"`)
+                    #rm(target_path, force=true)
                     break
                 catch
+                    @user_info "safe_replace failed on try i=$i"
                     if i == max_retries
                         # If all retries failed, try Windows-specific deletion
                         try

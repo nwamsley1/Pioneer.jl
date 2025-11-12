@@ -239,7 +239,7 @@ function fit_irt_model(
         residuals = psms[!, :irt_predicted] .- predicted_irt
 
         # Remove outliers
-        irt_mad = mad(residuals, normalize=false)::Float32
+        irt_mad = mad(residuals, normalize=true)::Float32
         valid_mask = abs.(residuals) .< (irt_mad * outlier_threshold)
         valid_psms = psms[valid_mask, :]
 
