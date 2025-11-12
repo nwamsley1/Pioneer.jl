@@ -82,24 +82,24 @@ end
 """
     prepare_features_dataframe(sequences::Vector{String},
                                irt_predicted::Vector{Float32},
-                               irt_residuals::Vector{Float32}) -> DataFrame
+                               irt_errors::Vector{Float32}) -> DataFrame
 
 Prepare feature matrix for iRT refinement model training.
 
 # Arguments
 - `sequences` - Peptide sequences
 - `irt_predicted` - Library iRT predictions
-- `irt_residuals` - Observed residuals (irt_observed - irt_predicted)
+- `irt_errors` - Prediction errors (irt_predicted - irt_observed)
 
 # Returns
 DataFrame with columns:
 - `irt_predicted` - Library iRT values
 - `count_A`, `count_C`, ... - Counts for each of 20 standard amino acids
-- `residual` - Target variable (iRT error to predict)
+- `error` - Target variable (iRT error to predict)
 """
 function prepare_features_dataframe(sequences::Vector{String},
                                    irt_predicted::Vector{Float32},
-                                   irt_residuals::Vector{Float32})
+                                   irt_errors::Vector{Float32})
     n = length(sequences)
     n_aas = length(STANDARD_AAS)
 
@@ -107,7 +107,7 @@ function prepare_features_dataframe(sequences::Vector{String},
     # Convert to Float64 for GLM compatibility
     features = Dict{Symbol, Vector}()
     features[:irt_predicted] = Float64.(irt_predicted)
-    features[:residual] = Float64.(irt_residuals)
+    features[:error] = Float64.(irt_errors)
 
     # Pre-allocate amino acid count columns
     aa_count_arrays = [zeros(Int, n) for _ in 1:n_aas]
@@ -138,7 +138,10 @@ end
                             min_psms::Int=20,
                             train_fraction::Float64=0.67) -> Union{IrtRefinementModel, Nothing}
 
-Train a linear regression model to predict iRT residuals based on amino acid composition.
+Train a linear regression model to predict library iRT prediction errors based on amino acid composition.
+
+Model predicts: error = irt_predicted - irt_observed (positive when library overestimates)
+Corrected iRT = irt_predicted - predicted_error
 
 # Workflow
 1. Filter to sequences with sufficient PSMs (min_psms)
@@ -173,11 +176,11 @@ function fit_irt_refinement_model(sequences::Vector{String},
         return nothing
     end
 
-    # Calculate residuals
-    irt_residuals = irt_observed .- irt_predicted
+    # Calculate errors (library - observed; positive when library overestimates)
+    irt_errors = irt_predicted .- irt_observed
 
     # Prepare features
-    features_df = prepare_features_dataframe(sequences, irt_predicted, irt_residuals)
+    features_df = prepare_features_dataframe(sequences, irt_predicted, irt_errors)
 
     # Train/validation split
     n_train = round(Int, n * train_fraction)
@@ -198,7 +201,7 @@ function fit_irt_refinement_model(sequences::Vector{String},
 
     # Build formula (all 20 amino acids + irt_predicted)
     aa_terms = [Symbol("count_", aa) for aa in STANDARD_AAS]
-    formula_str = "residual ~ irt_predicted + " * join(string.(aa_terms), " + ")
+    formula_str = "error ~ irt_predicted + " * join(string.(aa_terms), " + ")
     formula = @eval @formula($(Meta.parse(formula_str)))
 
     # Train model on training set
@@ -222,14 +225,14 @@ function fit_irt_refinement_model(sequences::Vector{String},
     val_predictions = val_matrix * coef_values
 
     # Calculate validation R²
-    val_residuals = val_df.residual
-    ss_res = sum((val_residuals .- val_predictions).^2)
-    ss_tot = sum((val_residuals .- mean(val_residuals)).^2)
+    val_errors = val_df.error
+    ss_res = sum((val_errors .- val_predictions).^2)
+    ss_tot = sum((val_errors .- mean(val_errors)).^2)
     r2_val = Float32(1 - ss_res / ss_tot)
 
     # Calculate MAEs
-    mae_original = Float32(mean(abs.(val_residuals)))
-    mae_refined = Float32(mean(abs.(val_residuals .- val_predictions)))
+    mae_original = Float32(mean(abs.(val_errors)))
+    mae_refined = Float32(mean(abs.(val_errors .- val_predictions)))
 
     # Decision: use refinement if it improves validation MAE
     use_refinement = mae_refined < mae_original
