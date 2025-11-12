@@ -398,6 +398,67 @@ function map_retention_times!(
                 )
                 setIrtRtMap!(search_context, irt_model, ms_file_idx)
 
+                # iRT refinement (if enabled)
+                if params.enable_irt_refinement
+                    try
+                        # Get sequences for high-quality PSMs
+                        precursor_indices = psms[:precursor_idx][best_hits]
+                        precursors = getPrecursors(getSpecLib(search_context))
+                        sequences = String[getSequence(precursors)[idx] for idx in precursor_indices]
+
+                        # Fit refinement model
+                        refinement_model = fit_irt_refinement_model(
+                            sequences,
+                            Float32.(psms[:irt_predicted][best_hits]),
+                            Float32.(valid_irt),
+                            ms_file_idx=ms_file_idx,
+                            min_psms=20,
+                            train_fraction=0.67
+                        )
+
+                        # Apply refinement to ALL precursors if model improves predictions
+                        if !isnothing(refinement_model) && refinement_model.use_refinement
+                            n_precursors = length(getSequence(precursors))
+                            aa_counts = zeros(Int, 20)  # Pre-allocated counts buffer
+
+                            for precursor_idx in 1:n_precursors
+                                irt_original = Float32(getIrt(precursors)[precursor_idx])
+                                sequence = getSequence(precursors)[precursor_idx]
+
+                                # Apply refinement
+                                irt_refined = apply_irt_refinement(
+                                    refinement_model,
+                                    aa_counts,
+                                    sequence,
+                                    irt_original
+                                )
+
+                                # Update SearchContext pred_irt
+                                setPredIrt!(search_context, UInt32(precursor_idx), irt_refined)
+                            end
+
+                            @debug_l1 "File $ms_file_idx: Applied iRT refinement to $n_precursors precursors"
+
+                            # Add irt_refined column to PSM file for transparency
+                            psms_df = DataFrame(psms)
+                            psms_df[!, :irt_refined] = [
+                                apply_irt_refinement(
+                                    refinement_model,
+                                    aa_counts,
+                                    getSequence(precursors)[idx],
+                                    Float32(getIrt(precursors)[idx])
+                                )
+                                for idx in psms_df.precursor_idx
+                            ]
+
+                            # Re-write PSM file with irt_refined column
+                            writeArrow(psms_path, psms_df)
+                        end
+                    catch e
+                        @user_warn "iRT refinement failed for file $ms_file_idx: $e"
+                    end
+                end
+
                 # Optionally generate plots
                 if params.plot_rt_alignment
                     plot_rt_alignment_firstpass(

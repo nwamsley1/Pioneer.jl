@@ -121,6 +121,9 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     use_robust_fitting::Bool
     prec_estimation::P
 
+    # iRT refinement parameters
+    enable_irt_refinement::Bool
+
     function FirstPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -174,7 +177,9 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Float32(irt_mapping_params.irt_nstd),   # Default irt_nstd
             Bool(hasproperty(irt_mapping_params, :plot_rt_alignment) ? irt_mapping_params.plot_rt_alignment : false),
             Bool(hasproperty(irt_mapping_params, :use_robust_fitting) ? irt_mapping_params.use_robust_fitting : true),
-            prec_estimation
+            prec_estimation,
+
+            Bool(hasproperty(first_params, :enable_irt_refinement) ? first_params.enable_irt_refinement : false)
         )
     end
 end
