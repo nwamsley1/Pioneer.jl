@@ -572,36 +572,6 @@ function summarize_results!(
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
     @user_info "✓ Completed get_best_precursors_accross_runs! ($(length(precursor_dict)) precursors)"
 
-    if false==true#params.match_between_runs==true
-        #######
-        #Each target has a corresponding decoy and vice versa
-        #Add the complement targets/decoys to the precursor dict
-        #if the `sibling_peptide_scores` parameter is set to true
-        #In the target/decoy scoring (see SearchMethods/ScoringSearch)
-        #the maximum score for each target/decoy pair is shared accross runs
-        #in an iterative training scheme.
-        precursors = getPrecursors(getSpecLib(search_context))
-        i = 1
-        for (pid, val) in pairs(precursor_dict)
-            i += 1
-            # Note: getPredIrt uses lazy fallback to library iRT for unobserved precursors
-            partner_pid = getPartnerPrecursorIdx(precursors)[pid]
-            if ismissing(partner_pid)
-                continue
-            end
-
-            # If the partner needs to be added, then give it the irt of the currently identified precursor
-            # Use SearchContext value (which may be refined) instead of library iRT
-            if !haskey(precursor_dict, partner_pid)
-                insert!(precursor_dict, partner_pid, val)
-                setPredIrt!(search_context, partner_pid, getPredIrt(search_context, pid))
-            end
-            # If partner was ID'ed, it already has correct iRT via lazy fallback or refinement
-        end
-    end
-    # Note: irt_obs contains only observed/refined precursors (~170k)
-    # Unobserved precursors use lazy fallback to library iRT in getPredIrt
-
     setPrecursorDict!(search_context, precursor_dict)
     @user_info "Starting create_rt_indices! ..."
 
