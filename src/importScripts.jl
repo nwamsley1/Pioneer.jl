@@ -168,13 +168,7 @@ function importScripts()
     # Include iRT refinement utilities FIRST (defines IrtRefinementModel)
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "irt_refinement_utils.jl"))
 
-    # Include SearchTypes SECOND (defines SearchContext, uses IrtRefinementModel)
-    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
-
-    # Include FileOperations THIRD (uses both IrtRefinementModel and SearchContext)
-    safe_include!(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
-
-    # PSMs
+    # Include PSMs SECOND (defines SimpleScoredPSM, ComplexScoredPSM, etc.)
     include_files!(
         joinpath(package_root, "src", "Routines", "SearchDIA", "PSMs"),
         [
@@ -184,6 +178,12 @@ function importScripts()
             "ScoredPSMs.jl"
         ]
     )
+
+    # Include SearchTypes THIRD (uses SimpleScoredPSM + IrtRefinementModel, defines SearchContext)
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
+
+    # Include FileOperations FOURTH (uses SearchContext + IrtRefinementModel)
+    safe_include!(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
 
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "selectTransitions", "selectTransitions.jl"))
 
