@@ -165,6 +165,9 @@ function importScripts()
         ]
     )
 
+    # Include iRT refinement utilities BEFORE FileOperations and SearchTypes (both use IrtRefinementModel)
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "irt_refinement_utils.jl"))
+
     # Include new FileOperations module from utils (after writeArrow is loaded)
     safe_include!(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
 
@@ -178,10 +181,6 @@ function importScripts()
             "ScoredPSMs.jl"
         ]
     )
-
-
-    # Include iRT refinement utilities BEFORE SearchTypes (which uses IrtRefinementModel)
-    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "irt_refinement_utils.jl"))
 
     #Search Method
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
