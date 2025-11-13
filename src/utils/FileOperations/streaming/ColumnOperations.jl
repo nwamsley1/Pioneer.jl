@@ -310,7 +310,7 @@ function add_irt_refined_column!(
         @user_info "Adding :irt_refined column using refinement model..."
 
         # Function takes DataFrame batch, returns Vector{Float32}
-        (df_batch::DataFrame)::Vector{Float32} -> begin
+        (df_batch::DataFrame) -> begin
             irt_refined = Vector{Float32}(undef, nrow(df_batch))
 
             # Parallel computation within batch using callable model (ZERO allocations per call!)
@@ -330,7 +330,7 @@ function add_irt_refined_column!(
         @user_info "Adding :irt_refined column (no refinement, using library iRT)..."
 
         # Function just copies existing column
-        (df_batch::DataFrame)::Vector{Float32} -> Float32.(df_batch.irt_predicted)
+        (df_batch::DataFrame) -> Float32.(df_batch.irt_predicted)
     end
 
     # Use existing FileOperations infrastructure!
