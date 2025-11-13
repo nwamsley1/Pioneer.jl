@@ -420,42 +420,17 @@ function map_retention_times!(
                             train_fraction=0.67
                         )
 
-                        # Apply refinement to precursors observed in this file
-                        if !isnothing(refinement_model) && refinement_model.use_refinement
-                            # Get unique precursor IDs observed in this file's PSMs
-                            unique_precursor_ids = unique(psms[:precursor_idx])
-                            n_precursors = length(unique_precursor_ids)
-                            aa_counts = zeros(Int, 20)  # Pre-allocated counts buffer
+                        # Store model in SearchContext (for SecondPass)
+                        setIrtRefinementModel!(search_context, ms_file_idx, refinement_model)
 
-                            @user_info "File $ms_file_idx: Applying iRT refinement to $n_precursors observed precursors..."
+                        # Add :irt_refined column to PSMs file using FileOperations infrastructure
+                        psms_path = all_psms_paths[ms_file_idx]
+                        add_irt_refined_column!(psms_path, refinement_model, search_context)
 
-                            # Use ProgressBar for user feedback
-                            progress = ProgressBar(total=n_precursors)
-
-                            for precursor_idx in unique_precursor_ids
-                                irt_original = Float32(getIrt(precursors)[precursor_idx])
-                                sequence = getSequence(precursors)[precursor_idx]
-
-                                # Apply refinement
-                                irt_refined = apply_irt_refinement(
-                                    refinement_model,
-                                    aa_counts,
-                                    sequence,
-                                    irt_original
-                                )
-
-                                # Update SearchContext pred_irt
-                                setPredIrt!(search_context, UInt32(precursor_idx), irt_refined)
-
-                                update(progress)  # Progress bar tick
-                            end
-
-                            @user_info "File $ms_file_idx: Applied iRT refinement to $n_precursors precursors\n"
-
-                            # Note: irt_refined column NOT added to PSM files (would cause hang)
-                            # Refined iRT values stored in SearchContext and accessed via getPredIrt()
-                            # Downstream methods (SecondPass, Scoring, Chromatogram) use SearchContext
-                        end
+                        # Note: iRT refinement model stored in SearchContext for SecondPass
+                        # Refined iRT added as :irt_refined column to PSMs file for efficient access
+                        # Column used by get_best_precursors_across_runs for precursor_dict calculations
+                        # Model used by SecondPass via getPredIrt() for precursors not in FirstPass
                     catch e
                         throw(e)
                         @user_warn "iRT refinement failed for file $ms_file_idx: $e"
@@ -667,6 +642,7 @@ function create_rt_indices!(
         valid_psm_paths,
         prec_to_irt,
         valid_rt_models,
+        search_context,  # NEW - provides access to refinement models
         min_prob=params.max_prob_to_impute
     )
 

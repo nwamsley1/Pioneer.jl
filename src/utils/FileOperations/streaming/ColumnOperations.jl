@@ -232,10 +232,10 @@ function update_column_in_file!(ref::FileReference,
 end
 
 """
-    add_column_and_sort!(ref::FileReference, col_name::Symbol, 
-                        compute_fn::Function, sort_keys::Symbol...; 
+    add_column_and_sort!(ref::FileReference, col_name::Symbol,
+                        compute_fn::Function, sort_keys::Symbol...;
                         reverse::Bool=false) -> FileReference
-    
+
 Add a column and immediately sort by specified keys.
 """
 function add_column_and_sort!(ref::FileReference, col_name::Symbol,
@@ -243,10 +243,103 @@ function add_column_and_sort!(ref::FileReference, col_name::Symbol,
                              reverse::Bool=false)
     # Add column
     add_column_to_file!(ref, col_name, compute_fn)
-    
+
     # Sort by keys
     sort_file_by_keys!(ref, sort_keys...; reverse=reverse)
-    
+
     return ref
+end
+
+#==========================================================
+Specialized iRT Refinement Column Addition
+==========================================================#
+
+"""
+    add_irt_refined_column!(
+        psms_path::String,
+        model::Union{IrtRefinementModel, Nothing},
+        search_context::SearchContext;
+        batch_size::Int=100_000
+    )
+
+Add :irt_refined column to PSMs Arrow file using file-specific iRT refinement model.
+
+This is a specialized wrapper around `add_column_to_file!` for iRT refinement.
+Memory-efficient: Uses batch processing for large files.
+
+# Algorithm
+1. Create FileReference for PSMs file
+2. Define compute function that applies refinement model
+3. Use add_column_to_file! infrastructure for batch processing
+4. Column written back with Windows-safe file replacement
+
+# Arguments
+- `psms_path`: Path to PSMs Arrow file
+- `model`: iRT refinement model (if nothing, uses library iRT from :irt_predicted)
+- `search_context`: SearchContext for accessing spectral library
+- `batch_size`: Rows per batch for streaming (default 100k)
+
+# Notes
+**Memory**: For now, this may materialize the DataFrame during processing.
+Future optimization: Investigate Arrow-native column addition without DataFrame conversion.
+See: https://github.com/apache/arrow-julia/issues for potential improvements.
+
+# Examples
+```julia
+# Add refined iRT column
+add_irt_refined_column!(psms_path, refinement_model, search_context)
+
+# With custom batch size for very large files
+add_irt_refined_column!(psms_path, refinement_model, search_context, batch_size=50_000)
+```
+"""
+function add_irt_refined_column!(
+    psms_path::String,
+    model::Union{IrtRefinementModel, Nothing},
+    search_context::SearchContext;
+    batch_size::Int=100_000
+)
+    # Create FileReference (needed for add_column_to_file!)
+    ref = create_reference(psms_path, FileReference)
+
+    # Get precursors from library (shared across batches)
+    precursors = getPrecursors(getSpecLib(search_context))
+
+    # Define compute function that will be called per batch
+    compute_fn = if !isnothing(model) && model.use_refinement
+        @user_info "Adding :irt_refined column using refinement model..."
+
+        # Function takes DataFrame batch, returns Vector{Float32}
+        function (df_batch::DataFrame)::Vector{Float32}
+            irt_refined = Vector{Float32}(undef, nrow(df_batch))
+
+            # Parallel computation within batch using callable model (ZERO allocations per call!)
+            Threads.@threads for i in 1:nrow(df_batch)
+                row = df_batch[i, :]
+                sequence = getSequence(precursors)[row.precursor_idx]
+                library_irt = row.irt_predicted
+
+                # Use callable model - zero allocations!
+                irt_refined[i] = model(sequence, library_irt)
+            end
+
+            return irt_refined
+        end
+    else
+        # No refinement - use library iRT (irt_predicted column)
+        @user_info "Adding :irt_refined column (no refinement, using library iRT)..."
+
+        # Function just copies existing column
+        function (df_batch::DataFrame)::Vector{Float32}
+            return Float32.(df_batch.irt_predicted)
+        end
+    end
+
+    # Use existing FileOperations infrastructure!
+    add_column_to_file!(ref, :irt_refined, compute_fn, batch_size=batch_size)
+
+    @user_info "Successfully added :irt_refined column to PSMs file"
+
+    return nothing
 end
 

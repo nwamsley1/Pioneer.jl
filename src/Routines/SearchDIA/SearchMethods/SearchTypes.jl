@@ -224,7 +224,8 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     precursor_dict::Base.Ref{Dictionary}
     rt_index_paths::Base.Ref{Vector{String}}
     irt_errors::Dict{Int64, Float32}
-    irt_obs::Dict{UInt32, Float32}
+    irt_refinement_models::Dict{Int64, Union{IrtRefinementModel, Nothing}}  # File-specific iRT refinement models
+    irt_obs::Dict{UInt32, Float32}  # DEPRECATED - will be removed after testing
     pg_score_to_qval::Ref{Any}
     pg_name_to_global_pg_score::Ref{Dict{ProteinKey, Float32}}
     global_pg_score_to_qval_dict::Ref{Dict{Tuple{String,Bool,UInt8}, Float32}}
@@ -268,8 +269,9 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, RtConversionModel}(), 
             Ref{Dictionary}(), 
             Ref{Vector{String}}(),
-            Dict{Int64, Float32}(),
-            Dict{UInt32, Float32}(),
+            Dict{Int64, Float32}(),  # irt_errors
+            Dict{Int64, Union{IrtRefinementModel, Nothing}}(),  # irt_refinement_models
+            Dict{UInt32, Float32}(),  # irt_obs (DEPRECATED)
             Ref{Any}(), Ref(Dict{ProteinKey, Float32}()), Ref(Dict{Tuple{String,Bool,UInt8}, Float32}()), Ref{Any}(),
             Dict{Type{<:SearchMethod}, Any}(),  # Initialize method_results
             n_threads, n_precursors, buffer_size,
@@ -421,26 +423,76 @@ getRtIrtMap(s::SearchContext) = s.rt_irt_map
 getPrecursorDict(s::SearchContext) = s.precursor_dict[]
 getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
-getPredIrt(s::SearchContext) = s.irt_obs
 
-function getPredIrt(s::SearchContext, prec_idx::Int64)::Float32
-    return getPredIrt(s, UInt32(prec_idx))
+"""
+    getIrtRefinementModel(s::SearchContext, ms_file_idx::Int) -> Union{IrtRefinementModel, Nothing}
+
+Get the iRT refinement model for a specific MS file.
+Returns `nothing` if no model exists (refinement disabled or failed for this file).
+"""
+function getIrtRefinementModel(s::SearchContext, ms_file_idx::Int)::Union{IrtRefinementModel, Nothing}
+    return get(s.irt_refinement_models, ms_file_idx, nothing)
 end
 
-function getPredIrt(s::SearchContext, prec_idx::UInt32)::Float32
-    # Check if refined/observed iRT exists in irt_obs (lazy initialization)
-    irt = get(s.irt_obs, prec_idx, nothing)
+"""
+    setIrtRefinementModel!(s::SearchContext, ms_file_idx::Int, model::Union{IrtRefinementModel, Nothing})
 
-    # Lazy fallback to library iRT if not found
-    if isnothing(irt)
-        return getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
+Store the iRT refinement model for a specific MS file.
+"""
+function setIrtRefinementModel!(s::SearchContext, ms_file_idx::Int, model::Union{IrtRefinementModel, Nothing})
+    s.irt_refinement_models[ms_file_idx] = model
+end
+
+"""
+    getPredIrt(s::SearchContext, prec_idx::UInt32, ms_file_idx::Int) -> Float32
+
+Get predicted iRT for a precursor, using file-specific refinement if available.
+
+**Used by SecondPassSearch** for precursors NOT in FirstPass.
+FirstPass precursors get refined iRT from :irt_refined column in PSMs files.
+
+# Algorithm
+1. Check if file-specific refinement model exists
+2. If yes: Calculate refined iRT on-the-fly using model
+3. If no: Return library iRT
+
+# Arguments
+- `s`: SearchContext containing refinement models
+- `prec_idx`: Precursor index
+- `ms_file_idx`: MS file index for file-specific refinement
+
+# Returns
+Refined iRT (if model available) or library iRT (fallback)
+"""
+function getPredIrt(s::SearchContext, prec_idx::UInt32, ms_file_idx::Int)::Float32
+    # Get file-specific refinement model
+    model = getIrtRefinementModel(s, ms_file_idx)
+
+    # Get library iRT (always needed)
+    library_irt = getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
+
+    # Apply refinement if model exists (model handles use_refinement check)
+    if !isnothing(model)
+        # Get precursor sequence
+        sequence = getSequence(getPrecursors(getSpecLib(s)))[prec_idx]
+
+        # Use callable model - ZERO allocations!
+        return model(sequence, library_irt)
+    else
+        # No model: return library iRT
+        return library_irt
     end
-
-    return irt
 end
+
+# Convenience overload for Int64 precursor indices
+function getPredIrt(s::SearchContext, prec_idx::Int64, ms_file_idx::Int)::Float32
+    return getPredIrt(s, UInt32(prec_idx), ms_file_idx)
+end
+
 getHuberDelta(s::SearchContext) = s.huber_delta[]
-setPredIrt!(s::SearchContext, prec_idx::Int64, irt::Float32) = s.irt_obs[prec_idx] = irt
-setPredIrt!(s::SearchContext, prec_idx::UInt32, irt::Float32) = s.irt_obs[prec_idx] = irt
+# DEPRECATED: These setters are no longer needed with column-based approach
+# setPredIrt!(s::SearchContext, prec_idx::Int64, irt::Float32) = s.irt_obs[prec_idx] = irt
+# setPredIrt!(s::SearchContext, prec_idx::UInt32, irt::Float32) = s.irt_obs[prec_idx] = irt
 getLibraryTargetCount(s::SearchContext) = s.n_library_targets
 getLibraryDecoyCount(s::SearchContext) = s.n_library_decoys
 getLibraryFdrScaleFactor(s::SearchContext) = s.library_fdr_scale_factor

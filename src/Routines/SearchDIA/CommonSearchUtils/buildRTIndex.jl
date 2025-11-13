@@ -67,10 +67,30 @@ buildRtIndex(PSMs::DataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRtIndex(P
 buildRtIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRtIndex(PSMs[:,:irt], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
 
 
+"""
+    makeRTIndices(temp_folder, psms_paths, prec_to_irt, rt_to_irt_splines, search_context; min_prob=0.5)
+
+Create RT indices for efficient chromatographic window searches using refined iRT values.
+
+# Important Notes
+- `prec_to_irt` contains file-specific refined iRT values from precursor_dict (not library iRT!)
+- For observed precursors: Uses best_irt from precursor_dict (refined via iRT refinement models)
+- For unobserved precursors: Could use getPredIrt(search_context, prec_idx, ms_file_idx) if needed
+- Currently only observed precursors (in prec_to_irt) are indexed
+
+# Arguments
+- `temp_folder`: Directory for RT index files
+- `psms_paths`: Paths to PSMs Arrow files per MS file
+- `prec_to_irt`: Dictionary mapping precursor_idx → (refined_irt, mz) from precursor_dict
+- `rt_to_irt_splines`: RT→iRT conversion models per file
+- `search_context`: SearchContext (for potential future use with getPredIrt)
+- `min_prob`: Minimum probability threshold for using empirical RT vs imputed
+"""
 function makeRTIndices(temp_folder::String,
-                       psms_paths::Vector{String}, 
+                       psms_paths::Vector{String},
                        prec_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}},
-                       rt_to_irt_splines::Any;
+                       rt_to_irt_splines::Any,
+                       search_context::SearchContext;
                        min_prob::AbstractFloat = 0.5)
 
     #Maps filepath to a retentionTimeIndex (see buildrtIndex.jl)

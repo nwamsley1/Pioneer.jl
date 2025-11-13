@@ -838,7 +838,9 @@ function add_features!(psms::DataFrame,
     precursor_sequence = getSequence(getPrecursors(getSpecLib(search_context)))#[:sequence],
     structural_mods = getStructuralMods(getPrecursors(getSpecLib(search_context)))#[:structural_mods],
     prec_mz = getMz(getPrecursors(getSpecLib(search_context)))#[:mz],
-    # Note: iRT values come from SearchContext via getPredIrt() (may be refined, see lines 905, 909)
+    # Note: iRT values from SearchContext via getPredIrt(ctx, prec_idx, ms_file_idx)
+    # Uses file-specific refinement models for precursors NOT in FirstPass
+    # FirstPass precursors have refined iRT in :irt_refined column (used by precursor_dict)
     prec_charge = getCharge(getPrecursors(getSpecLib(search_context)))#[:prec_charge],
     entrap_group_ids = getEntrapmentGroupId(getPrecursors(getSpecLib(search_context)))
     precursor_missed_cleavage = getMissedCleavages(getPrecursors(getSpecLib(search_context)))#[:missed_cleavages],
@@ -902,11 +904,11 @@ function add_features!(psms::DataFrame,
                 prec_idx = precursor_idx[i]
                 entrap_group_id[i] = entrap_group_ids[prec_idx]
                 irt_obs[i] = rt_to_irt_interp(rt[i])
-                irt_pred[i] = getPredIrt(search_context, prec_idx)#prec_irt[prec_idx]
+                irt_pred[i] = getPredIrt(search_context, prec_idx, ms_file_idx)  # File-specific refinement
                 #irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[prec_idx]))
                 irt_diff[i] = abs(irt_obs[i] - prec_id_to_irt[prec_idx].best_irt)
                 if !ms1_missing[i]
-                    ms1_irt_diff[i] = abs(rt_to_irt_interp(ms1_rt[i]) - getPredIrt(search_context, prec_idx))
+                    ms1_irt_diff[i] = abs(rt_to_irt_interp(ms1_rt[i]) - getPredIrt(search_context, prec_idx, ms_file_idx))  # File-specific refinement
                 else
                     ms1_irt_diff[i] = 0f0
                 end

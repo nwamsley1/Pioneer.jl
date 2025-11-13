@@ -54,21 +54,20 @@ function get_best_precursors_accross_runs(
                          )
 
     function readPSMs!(
-        prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
+        prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32,
                                                     best_ms_file_idx::UInt32,
                                                     best_scan_idx::UInt32,
-                                                    best_irt::Float32, 
-                                                    mean_irt::Union{Missing, Float32}, 
-                                                    var_irt::Union{Missing, Float32}, 
-                                                    n::Union{Missing, UInt16}, 
+                                                    best_irt::Float32,
+                                                    mean_irt::Union{Missing, Float32},
+                                                    var_irt::Union{Missing, Float32},
+                                                    n::Union{Missing, UInt16},
                                                     mz::Float32}},
         precursor_idxs::AbstractVector{UInt32},
         q_values::AbstractVector{Float16},
         probs::AbstractVector{Float32},
-        rts::AbstractVector{Float32},
+        irt_refined::AbstractVector{Float32},
         scan_idxs::AbstractVector{UInt32},
         ms_file_idxs::AbstractVector{UInt32},
-        rt_irt::RtConversionModel,
         max_q_val::Float32)
 
         for row in eachindex(precursor_idxs)
@@ -76,7 +75,7 @@ function get_best_precursors_accross_runs(
             q_value = q_values[row]
             precursor_idx = precursor_idxs[row]
             prob = probs[row]
-            irt =  rt_irt(rts[row])
+            irt = irt_refined[row]  # Use refined iRT from column!
             scan_idx = UInt32(scan_idxs[row])
             ms_file_idx = UInt32(ms_file_idxs[row])
 
@@ -128,18 +127,17 @@ function get_best_precursors_accross_runs(
         end
     end
     function getVariance!(
-        prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
+        prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32,
                                                     best_ms_file_idx::UInt32,
                                                     best_scan_idx::UInt32,
-                                                    best_irt::Float32, 
-                                                    mean_irt::Union{Missing, Float32}, 
-                                                    var_irt::Union{Missing, Float32}, 
-                                                    n::Union{Missing, UInt16}, 
+                                                    best_irt::Float32,
+                                                    mean_irt::Union{Missing, Float32},
+                                                    var_irt::Union{Missing, Float32},
+                                                    n::Union{Missing, UInt16},
                                                     mz::Float32}},
         precursor_idxs::AbstractVector{UInt32},
         q_values::AbstractVector{Float16},
-        rts::AbstractVector{Float32},
-        rt_irt::RtConversionModel,
+        irt_refined::AbstractVector{Float32},
         max_q_val::Float32)
         for row in eachindex(precursor_idxs)
             # Skip PSMs that don't pass q-value threshold
@@ -147,7 +145,7 @@ function get_best_precursors_accross_runs(
 
             # Get precursor info
             precursor_idx = precursor_idxs[row]
-            irt =  rt_irt(rts[row])
+            irt = irt_refined[row]  # Use refined iRT from column!
 
             if q_value > max_q_val
                 continue
@@ -204,10 +202,9 @@ function get_best_precursors_accross_runs(
             psms[:precursor_idx],
             psms[:q_value],
             psms[:prob],
-            psms[:rt],
+            psms[:irt_refined],
             psms[:scan_idx],
             psms[:ms_file_idx],
-            rt_irt[file_idx],
             max_q_val
         )
     end
@@ -244,13 +241,12 @@ function get_best_precursors_accross_runs(
             continue  # Skip files without RT models (already warned in first pass)
         end
         
-        #One row for each precursor 
+        #One row for each precursor
         getVariance!(
             prec_to_best_prob,
             psms[:precursor_idx],
             psms[:q_value],
-            psms[:rt],
-            rt_irt[file_idx],
+            psms[:irt_refined],
             max_q_val
         )
     end 
