@@ -179,8 +179,11 @@ function importScripts()
         ]
     )
 
-        
-    #Search Method 
+
+    # Include iRT refinement utilities BEFORE SearchTypes (which uses IrtRefinementModel)
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "irt_refinement_utils.jl"))
+
+    #Search Method
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
 
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "selectTransitions", "selectTransitions.jl"))

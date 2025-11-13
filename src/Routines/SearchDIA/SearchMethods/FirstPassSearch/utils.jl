@@ -637,12 +637,12 @@ function create_rt_indices!(
     valid_rt_models = Dict(i => all_rt_models[idx] for (i, idx) in enumerate(valid_indices))
 
     # Make RT indices only for valid files
+    # Note: prec_to_irt contains refined iRT values from precursor_dict (not library iRT!)
     rt_index_paths = makeRTIndices(
         rt_indices_folder,
         valid_psm_paths,
         prec_to_irt,
         valid_rt_models,
-        search_context,  # NEW - provides access to refinement models
         min_prob=params.max_prob_to_impute
     )
 
