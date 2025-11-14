@@ -144,9 +144,9 @@ After `get_best_precursors_accross_runs!()` call (line 563), before `setPrecurso
         spec_lib::SpectralLibrary,
         decoy_fraction::Float64,
         random_seed::Union{Int, Nothing} = nothing
-    ) -> (n_targets_retained::Int64, n_decoys_retained::Int64)
+    ) -> Nothing
 
-Randomly removes a fraction of decoys from the precursor dictionary.
+Randomly removes a fraction of decoys from the precursor dictionary in-place.
 
 # Arguments
 - `precursor_dict`: Dictionary mapping precursor IDs to best PSM info
@@ -154,21 +154,18 @@ Randomly removes a fraction of decoys from the precursor dictionary.
 - `decoy_fraction`: Fraction of decoys to RETAIN (0.0 < fraction ≤ 1.0)
 - `random_seed`: Optional seed for reproducible decoy selection
 
-# Returns
-- Tuple of (n_targets_retained, n_decoys_retained) after purging
-
 # Algorithm
 1. Separate precursor IDs into targets and decoys using library is_decoy flags
 2. Calculate number of decoys to keep: ceil(n_decoys * decoy_fraction)
 3. Randomly select decoys to keep
 4. Remove non-selected decoys from dictionary in-place
-5. Return final counts for FDR scale factor update
 
 # Notes
 - Modifies precursor_dict in-place
 - All targets are always retained
 - Selection is random within decoys
 - Reproducible if random_seed provided
+- FDR scale factor should be updated as: new_factor = old_factor * (1/decoy_fraction)
 """
 function purge_decoys_from_precursor_dict!(
     precursor_dict::Dictionary{UInt32, <:NamedTuple},
@@ -178,29 +175,21 @@ function purge_decoys_from_precursor_dict!(
 )
     # Early return if no purging needed
     if decoy_fraction >= 1.0
-        # Count targets and decoys for return values
-        is_decoy = getIsDecoy(getPrecursors(spec_lib))
-        n_targets = sum(!is_decoy[pid] for pid in keys(precursor_dict))
-        n_decoys = sum(is_decoy[pid] for pid in keys(precursor_dict))
-        return (n_targets, n_decoys)
+        return nothing
     end
 
     # Get is_decoy flags from library
     is_decoy = getIsDecoy(getPrecursors(spec_lib))
 
     # Separate precursor IDs into targets and decoys
-    target_pids = UInt32[]
     decoy_pids = UInt32[]
 
     for pid in keys(precursor_dict)
         if is_decoy[pid]
             push!(decoy_pids, pid)
-        else
-            push!(target_pids, pid)
         end
     end
 
-    n_targets = length(target_pids)
     n_decoys_original = length(decoy_pids)
 
     # Calculate how many decoys to keep
@@ -210,7 +199,7 @@ function purge_decoys_from_precursor_dict!(
 
     # If keeping all decoys, return early
     if n_decoys_to_keep >= n_decoys_original
-        return (n_targets, n_decoys_original)
+        return nothing
     end
 
     # Create RNG for reproducible selection
@@ -218,7 +207,6 @@ function purge_decoys_from_precursor_dict!(
 
     # Randomly select decoys to keep
     shuffle!(rng, decoy_pids)
-    decoys_to_keep = Set(decoy_pids[1:n_decoys_to_keep])
     decoys_to_remove = decoy_pids[(n_decoys_to_keep+1):end]
 
     # Remove non-selected decoys from dictionary
@@ -229,7 +217,7 @@ function purge_decoys_from_precursor_dict!(
     n_decoys_removed = n_decoys_original - n_decoys_to_keep
     @user_info "Removed $n_decoys_removed decoys from precursor dictionary"
 
-    return (n_targets, n_decoys_to_keep)
+    return nothing
 end
 ```
 
@@ -243,6 +231,24 @@ end
 #### Location
 After `purge_decoys_from_precursor_dict!()` call, before `setPrecursorDict!()`
 
+#### Mathematical Basis
+When we keep fraction `f` of decoys (e.g., f = 0.1 for 10%):
+
+**Original:**
+- scale_factor = n_targets / n_decoys_original
+
+**After purging:**
+- n_decoys_retained = n_decoys_original × f
+- new_scale_factor = n_targets / n_decoys_retained
+- new_scale_factor = n_targets / (n_decoys_original × f)
+- **new_scale_factor = (n_targets / n_decoys_original) × (1/f)**
+- **new_scale_factor = original_scale_factor × (1/f)**
+
+**Example:** If f = 0.1 (keep 10% of decoys) and original scale_factor = 1.0:
+- new_scale_factor = 1.0 × (1/0.1) = **10.0**
+
+This is mathematically equivalent to recounting, but much simpler!
+
 #### Implementation
 ```julia
 # In summarizeResults! function, after line 563
@@ -254,21 +260,24 @@ runtime_decoy_fraction = get(getParams(search_context), "runtime_decoy_fraction"
 if runtime_decoy_fraction < 1.0
     random_seed = get(getParams(search_context), "runtime_decoy_random_seed", nothing)
 
-    n_targets_retained, n_decoys_retained = purge_decoys_from_precursor_dict!(
+    # Store original FDR scale factor for logging
+    original_fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+
+    # Purge decoys from precursor_dict (modifies in-place)
+    purge_decoys_from_precursor_dict!(
         precursor_dict,
         getSpecLib(search_context),
         runtime_decoy_fraction,
         random_seed
     )
 
-    # Update FDR scale factor in SearchContext
-    new_fdr_scale_factor = Float32(n_targets_retained / max(n_decoys_retained, 1))
+    # Update FDR scale factor by multiplying by (1 / fraction)
+    # This is mathematically equivalent to: new_factor = n_targets / n_decoys_retained
+    # But much simpler since we don't need to count!
+    new_fdr_scale_factor = original_fdr_scale_factor * Float32(1.0 / runtime_decoy_fraction)
     search_context.library_fdr_scale_factor = new_fdr_scale_factor
-    search_context.n_library_targets = n_targets_retained
-    search_context.n_library_decoys = n_decoys_retained
 
-    @user_info "Updated FDR scale factor from $(getLibraryFdrScaleFactor(search_context)) to $new_fdr_scale_factor"
-    @user_info "Effective library composition: $n_targets_retained targets, $n_decoys_retained decoys"
+    @user_info "Updated FDR scale factor: $(round(original_fdr_scale_factor, digits=3)) → $(round(new_fdr_scale_factor, digits=3)) (×$(round(1.0/runtime_decoy_fraction, digits=1)))"
 end
 
 setPrecursorDict!(search_context, precursor_dict)
@@ -337,9 +346,11 @@ end
 **Test FDR Scale Factor Update:**
 ```julia
 @testset "FDR scale factor after purging" begin
-    # Verify correct calculation
-    # Test with various fractions
-    # Ensure scale factor > 1.0 after purging
+    # Verify multiplication: new_factor = old_factor * (1/fraction)
+    # Test with various fractions (0.1, 0.5, 1.0)
+    # Example: old=1.0, fraction=0.1 → new should be 10.0
+    # Ensure scale factor increases when fraction < 1.0
+    # Ensure scale factor unchanged when fraction = 1.0
 end
 ```
 
