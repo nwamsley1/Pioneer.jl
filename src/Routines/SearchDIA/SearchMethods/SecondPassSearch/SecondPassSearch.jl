@@ -188,6 +188,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     # Collect MS1 data?
     ms1_scoring::Bool
 
+    # Separate target/decoy search mode?
+    separate_target_decoy_search::Bool
+
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -234,6 +237,10 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
         end
 
         ms1_scoring = Bool(global_params.ms1_scoring)
+
+        # Extract separate_target_decoy_search parameter with default to false
+        separate_target_decoy_search = get(quant_params, :separate_target_decoy_search, false)
+
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -241,7 +248,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             UInt8(frag_params.max_rank),
             Set{Int64}([2]),
             Bool(global_params.match_between_runs),
-            
+
             Float32(deconv_params.ms2.lambda),
             reg_type,
             Int64(deconv_params.newton_iters),
@@ -261,11 +268,12 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Float32(frag_params.min_log2_ratio),
             (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
             Int64(frag_params.max_rank),
-            
+
             isotope_trace_type,
             prec_estimation,
 
-            ms1_scoring
+            ms1_scoring,
+            Bool(separate_target_decoy_search)
         )
     end
 end
@@ -308,21 +316,93 @@ function process_file!(
     end
     
     try
-        # Get RT index
-        rt_index = buildRtIndex(
-            DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx))),
-            bin_rt_size = 0.1)
+        # Load RT index DataFrame
+        rt_df_full = DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx)))
 
-        # Perform second pass search
-        psms = perform_second_pass_search(
-            spectra,
-            rt_index,
-            search_context,
-            params,
-            ms_file_idx,
-            MS2CHROM()
-        )
+        # Perform second pass search - mode depends on parameter
+        if params.separate_target_decoy_search
+            @user_info "SecondPassSearch (file $ms_file_idx): Using separate target/decoy search mode\n"
+
+            # Get precursor decoy status
+            precursors = getPrecursors(getSpecLib(search_context))
+            is_decoy = getIsDecoy(precursors)
+
+            # Create targets-only rt_index
+            @user_info "  Building targets-only rt_index...\n"
+            targets_mask = .!is_decoy[rt_df_full[!, :precursor_idx]]
+            rt_df_targets = rt_df_full[targets_mask, :]
+            rt_index_targets = buildRtIndex(rt_df_targets, bin_rt_size = 0.1)
+            @user_info "  Targets-only rt_index: $(length(rt_df_targets[!, :precursor_idx])) precursors\n"
+
+            # First search: targets only
+            @user_info "  Performing targets-only search...\n"
+            psms_targets = perform_second_pass_search(
+                spectra,
+                rt_index_targets,
+                search_context,
+                params,
+                ms_file_idx,
+                MS2CHROM()
+            )
+            @user_info "  Targets-only search: $(size(psms_targets, 1)) PSMs\n"
+
+            # Create full rt_index (targets + decoys)
+            @user_info "  Building full rt_index (targets + decoys)...\n"
+            rt_index_full = buildRtIndex(rt_df_full, bin_rt_size = 0.1)
+            @user_info "  Full rt_index: $(length(rt_df_full[!, :precursor_idx])) precursors\n"
+
+            # Second search: all precursors
+            @user_info "  Performing full search (targets + decoys)...\n"
+            psms_all = perform_second_pass_search(
+                spectra,
+                rt_index_full,
+                search_context,
+                params,
+                ms_file_idx,
+                MS2CHROM()
+            )
+            @user_info "  Full search: $(size(psms_all, 1)) PSMs\n"
+
+            # Filter to keep only decoys from second search
+            @user_info "  Filtering decoys from full search...\n"
+            if size(psms_all, 1) > 0
+                decoy_mask = [is_decoy[pid] for pid in psms_all[!, :precursor_idx]]
+                psms_decoys = psms_all[decoy_mask, :]
+            else
+                psms_decoys = psms_all
+            end
+            @user_info "  Decoys from full search: $(size(psms_decoys, 1)) PSMs\n"
+
+            # Concatenate targets and decoys
+            @user_info "  Concatenating targets and decoys...\n"
+            if isempty(psms_targets)
+                psms = psms_decoys
+                @user_info "  Final PSMs: $(size(psms, 1)) (decoys only)\n"
+            elseif isempty(psms_decoys)
+                psms = psms_targets
+                @user_info "  Final PSMs: $(size(psms, 1)) (targets only)\n"
+            else
+                psms = vcat(psms_targets, psms_decoys)
+                sort!(psms, :scan_idx)
+                @user_info "  Final PSMs: $(size(psms, 1)) ($(size(psms_targets, 1)) targets + $(size(psms_decoys, 1)) decoys)\n"
+            end
+        else
+            @user_info "SecondPassSearch (file $ms_file_idx): Using standard combined search mode\n"
+
+            # Standard mode: single search with all precursors
+            rt_index = buildRtIndex(rt_df_full, bin_rt_size = 0.1)
+            psms = perform_second_pass_search(
+                spectra,
+                rt_index,
+                search_context,
+                params,
+                ms_file_idx,
+                MS2CHROM()
+            )
+            @user_info "  Standard search: $(size(psms, 1)) PSMs\n"
+        end
         if params.ms1_scoring
+            @user_info "MS1 Scoring enabled, preparing isotope calculations...\n"
             precursors_passing = unique(psms[!,:precursor_idx])
 
             # Check if we have any passing precursors for MS1 scoring
@@ -333,18 +413,90 @@ function process_file!(
                 pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
                 pmz = [getMz(precursors)[pid] for pid in precursors_passing]
                 isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
-                precursors_passing = Set(precursors_passing)
-                # Perform MS1 search (diagnostic timing)
-                ms1_psms = perform_second_pass_search(
-                    spectra,
-                    rt_index,
-                    search_context,
-                    params,
-                    ms_file_idx,
-                    precursors_passing,
-                    isotopes_dict,
-                    MS1CHROM()
-                )
+                precursors_passing_set = Set(precursors_passing)
+
+                # Perform MS1 search - mode depends on parameter
+                if params.separate_target_decoy_search
+                    @user_info "  MS1: Using separate target/decoy search mode\n"
+
+                    is_decoy = getIsDecoy(precursors)
+
+                    # Create targets-only rt_index for MS1
+                    @user_info "  MS1: Building targets-only rt_index...\n"
+                    targets_mask_ms1 = .!is_decoy[rt_df_full[!, :precursor_idx]]
+                    rt_df_targets_ms1 = rt_df_full[targets_mask_ms1, :]
+                    rt_index_targets_ms1 = buildRtIndex(rt_df_targets_ms1, bin_rt_size = 0.1)
+
+                    # First MS1 search: targets only
+                    @user_info "  MS1: Performing targets-only search...\n"
+                    ms1_psms_targets = perform_second_pass_search(
+                        spectra,
+                        rt_index_targets_ms1,
+                        search_context,
+                        params,
+                        ms_file_idx,
+                        precursors_passing_set,
+                        isotopes_dict,
+                        MS1CHROM()
+                    )
+                    @user_info "  MS1 targets-only: $(size(ms1_psms_targets, 1)) PSMs\n"
+
+                    # Create full rt_index for MS1
+                    @user_info "  MS1: Building full rt_index...\n"
+                    rt_index_full_ms1 = buildRtIndex(rt_df_full, bin_rt_size = 0.1)
+
+                    # Second MS1 search: all precursors
+                    @user_info "  MS1: Performing full search...\n"
+                    ms1_psms_all = perform_second_pass_search(
+                        spectra,
+                        rt_index_full_ms1,
+                        search_context,
+                        params,
+                        ms_file_idx,
+                        precursors_passing_set,
+                        isotopes_dict,
+                        MS1CHROM()
+                    )
+                    @user_info "  MS1 full search: $(size(ms1_psms_all, 1)) PSMs\n"
+
+                    # Filter to keep only decoys from second MS1 search
+                    @user_info "  MS1: Filtering decoys...\n"
+                    if size(ms1_psms_all, 1) > 0
+                        decoy_mask_ms1 = [is_decoy[pid] for pid in ms1_psms_all[!, :precursor_idx]]
+                        ms1_psms_decoys = ms1_psms_all[decoy_mask_ms1, :]
+                    else
+                        ms1_psms_decoys = ms1_psms_all
+                    end
+                    @user_info "  MS1 decoys: $(size(ms1_psms_decoys, 1)) PSMs\n"
+
+                    # Concatenate MS1 targets and decoys
+                    if isempty(ms1_psms_targets)
+                        ms1_psms = ms1_psms_decoys
+                    elseif isempty(ms1_psms_decoys)
+                        ms1_psms = ms1_psms_targets
+                    else
+                        ms1_psms = vcat(ms1_psms_targets, ms1_psms_decoys)
+                    end
+                    @user_info "  MS1 combined: $(size(ms1_psms, 1)) PSMs\n"
+                else
+                    @user_info "  MS1: Using standard combined search mode\n"
+
+                    # Standard MS1 search
+                    rt_index_ms1 = buildRtIndex(rt_df_full, bin_rt_size = 0.1)
+                    ms1_psms = perform_second_pass_search(
+                        spectra,
+                        rt_index_ms1,
+                        search_context,
+                        params,
+                        ms_file_idx,
+                        precursors_passing_set,
+                        isotopes_dict,
+                        MS1CHROM()
+                    )
+                    @user_info "  MS1 standard search: $(size(ms1_psms, 1)) PSMs\n"
+                end
+
+                # Add partner precursors (same for both modes)
                 pair_idx = getPairIdx(precursors);
                 is_decoy = getIsDecoy(precursors);
                 partner_idx = getPartnerPrecursorIdx(precursors);
@@ -360,9 +512,10 @@ function process_file!(
                 end
                 filter!(x->!iszero(x.precursor_idx), ms1_psms_partner);
                 ms1_psms = vcat([ms1_psms, ms1_psms_partner]...)
+                @user_info "  MS1 with partners: $(size(ms1_psms, 1)) PSMs\n"
             else
                 # No passing precursors for MS1 scoring
-                @debug_l2 "No passing precursors found for MS1 scoring in file $ms_file_idx. Skipping MS1 isotope calculations."
+                @user_info "  No passing precursors found for MS1 scoring, skipping\n"
                 ms1_psms = DataFrame()
             end
             #rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
