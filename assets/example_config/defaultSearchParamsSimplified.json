@@ -21,6 +21,9 @@
         "match_between_runs": true,
         "ms1_quant": false
     },
+    "quant_search": {
+        "separate_target_decoy_search": false
+    },
     "first_search": {
         "fragment_settings": {
             "min_score": 15

@@ -88,6 +88,7 @@
         }
     },
     "quant_search": {
+        "separate_target_decoy_search": false,
         "fragment_settings": {
             "min_count": 3,
             "min_y_count": 2,

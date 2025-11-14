@@ -11,6 +11,63 @@ This approach separates target and decoy searches to prevent targets and decoys 
 
 ## Implementation Details
 
+### Parameter Configuration
+
+**New Parameter**: `separate_target_decoy_search` (boolean)
+- **Location**: `quant_search` section in parameter JSON files
+- **Default**: `false` (maintains current behavior)
+- **Purpose**: Toggles between single-search (current) and dual-search (new) modes
+
+**Files to Update**:
+1. `assets/example_config/defaultSearchParams.json` - Add to `quant_search` section
+2. `assets/example_config/defaultSearchParamsSimplified.json` - Add to top-level or minimal config
+
+**Parameter Definition**:
+```json
+"quant_search": {
+    "separate_target_decoy_search": false,
+    "fragment_settings": {
+        ...
+    }
+}
+```
+
+**Code Changes for Parameter**:
+1. Add field to `SecondPassSearchParameters` struct (line 152):
+   ```julia
+   struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentIndexSearchParameters
+       # ... existing fields ...
+       ms1_scoring::Bool
+       separate_target_decoy_search::Bool  # NEW FIELD
+   ```
+
+2. Extract parameter in constructor (line 191):
+   ```julia
+   function SecondPassSearchParameters(params::PioneerParameters)
+       # ... existing extraction ...
+       ms1_scoring = Bool(global_params.ms1_scoring)
+
+       # NEW: Extract separate_target_decoy_search parameter with default
+       separate_target_decoy_search = get(quant_params, :separate_target_decoy_search, false)
+
+       new{typeof(prec_estimation), typeof(isotope_trace_type)}(
+           # ... existing parameters ...
+           ms1_scoring,
+           Bool(separate_target_decoy_search)  # NEW PARAMETER
+       )
+   end
+   ```
+
+**User Information Messages**:
+Add informative logging in `process_file!` to indicate which mode is active:
+```julia
+if params.separate_target_decoy_search
+    @user_info "SecondPassSearch: Using separate target/decoy search mode (experimental)"
+else
+    @user_info "SecondPassSearch: Using standard combined search mode"
+end
+```
+
 ### Location
 **File**: `src/Routines/SearchDIA/SearchMethods/SecondPassSearch/SecondPassSearch.jl`
 **Function**: `process_file!` (lines 297-402)
@@ -29,33 +86,56 @@ psms = perform_second_pass_search(
 
 ### Proposed Flow
 ```julia
+# Log which mode is being used
+if params.separate_target_decoy_search
+    @user_info "SecondPassSearch (file $ms_file_idx): Using separate target/decoy search mode"
+else
+    @user_info "SecondPassSearch (file $ms_file_idx): Using standard combined search mode"
+end
+
 # 1. Load the full rt_index Arrow table
 rt_df_full = DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx)))
 
-# 2. Create targets-only rt_index
-is_decoy = getIsDecoy(getPrecursors(getSpecLib(search_context)))
-targets_mask = .!is_decoy[rt_df_full[!, :precursor_idx]]
-rt_df_targets = rt_df_full[targets_mask, :]
-rt_index_targets = buildRtIndex(rt_df_targets, bin_rt_size = 0.1)
+if params.separate_target_decoy_search
+    # DUAL SEARCH MODE (NEW)
 
-# 3. First search: targets only
-psms_targets = perform_second_pass_search(
-    spectra, rt_index_targets, search_context, params, ms_file_idx, MS2CHROM())
+    # 2. Create targets-only rt_index
+    is_decoy = getIsDecoy(getPrecursors(getSpecLib(search_context)))
+    targets_mask = .!is_decoy[rt_df_full[!, :precursor_idx]]
+    rt_df_targets = rt_df_full[targets_mask, :]
+    rt_index_targets = buildRtIndex(rt_df_targets, bin_rt_size = 0.1)
 
-# 4. Create full rt_index (targets + decoys)
-rt_index_full = buildRtIndex(rt_df_full, bin_rt_size = 0.1)
+    # 3. First search: targets only
+    psms_targets = perform_second_pass_search(
+        spectra, rt_index_targets, search_context, params, ms_file_idx, MS2CHROM())
 
-# 5. Second search: all precursors
-psms_all = perform_second_pass_search(
-    spectra, rt_index_full, search_context, params, ms_file_idx, MS2CHROM())
+    # 4. Create full rt_index (targets + decoys)
+    rt_index_full = buildRtIndex(rt_df_full, bin_rt_size = 0.1)
 
-# 6. Filter to keep only decoys from second search
-is_decoy_lookup = getIsDecoy(getPrecursors(getSpecLib(search_context)))
-decoy_mask = [is_decoy_lookup[pid] for pid in psms_all[!, :precursor_idx]]
-psms_decoys = psms_all[decoy_mask, :]
+    # 5. Second search: all precursors
+    psms_all = perform_second_pass_search(
+        spectra, rt_index_full, search_context, params, ms_file_idx, MS2CHROM())
 
-# 7. Concatenate targets and decoys
-psms = vcat(psms_targets, psms_decoys)
+    # 6. Filter to keep only decoys from second search
+    is_decoy_lookup = getIsDecoy(getPrecursors(getSpecLib(search_context)))
+    decoy_mask = [is_decoy_lookup[pid] for pid in psms_all[!, :precursor_idx]]
+    psms_decoys = psms_all[decoy_mask, :]
+
+    # 7. Concatenate targets and decoys
+    if isempty(psms_targets)
+        psms = psms_decoys
+    elseif isempty(psms_decoys)
+        psms = psms_targets
+    else
+        psms = vcat(psms_targets, psms_decoys)
+        sort!(psms, :scan_idx)  # Ensure proper ordering
+    end
+else
+    # STANDARD SEARCH MODE (CURRENT BEHAVIOR)
+    rt_index = buildRtIndex(rt_df_full, bin_rt_size = 0.1)
+    psms = perform_second_pass_search(
+        spectra, rt_index, search_context, params, ms_file_idx, MS2CHROM())
+end
 ```
 
 ### MS1 Search Handling
@@ -208,8 +288,25 @@ If issues arise:
 - Run normal search but filter out mixed target/decoy scans
 - **Rejected**: Would lose too many PSMs
 
+## Implementation Status
+
+### Completed
+- ✅ Parameter configuration added to both JSON files
+- ✅ Plan includes user information logging
+- ✅ Default value set to `false` (maintains current behavior)
+- ✅ Conditional logic designed to support both modes
+
+### Remaining
+- ⬜ Add field to `SecondPassSearchParameters` struct
+- ⬜ Update parameter extraction in constructor
+- ⬜ Implement conditional dual-search logic in `process_file!`
+- ⬜ Add user info logging statements
+- ⬜ Handle MS1 search mode similarly
+- ⬜ Test with small dataset
+- ⬜ Validate FDR statistics
+
 ## Questions for User
-1. Should this be made optional via parameters (e.g., `separate_target_decoy_search = true`)?
+1. ✅ ~~Should this be made optional via parameters?~~ → Yes, added `separate_target_decoy_search` parameter
 2. Are there specific QC metrics to monitor beyond standard FDR curves?
 3. Is the ~2x runtime increase for SecondPassSearch acceptable?
 4. Should we implement any optimizations to reduce memory usage?
