@@ -84,6 +84,14 @@ function apply_mbr_filter!(
     is_bad_transfer::AbstractVector{Bool},
     params
 )
+    # Calculate FTR scale factor for runtime decoy purging correction
+    runtime_decoy_fraction = hasproperty(params, :runtime_decoy_fraction) ? params.runtime_decoy_fraction : 1.0
+    ftr_scale_factor = Float64(1.0 / runtime_decoy_fraction)
+
+    if ftr_scale_factor > 1.0
+        @user_info "FTR Correction: Applying scale factor $(round(ftr_scale_factor, digits=2))× (runtime_decoy_fraction = $runtime_decoy_fraction)"
+    end
+
     # Extract candidate data once
     candidate_data = merged_df[candidate_mask, :]
     candidate_labels = is_bad_transfer[candidate_mask]
@@ -130,7 +138,8 @@ function apply_mbr_filter!(
         # Use is_bad_transfer as numerator flag; denominator counts all candidates at threshold
         candidate_qvals = Vector{Float32}(undef, length(scores))
         # get_ftr! expects placeholders for targets; it accumulates total candidates internally
-        get_ftr!(scores, trues(length(scores)), candidate_labels, candidate_qvals)
+        # ftr_scale_factor was calculated earlier in this function
+        get_ftr!(scores, trues(length(scores)), candidate_labels, candidate_qvals; ftr_scale_factor=ftr_scale_factor)
 
         # Map back to full dataframe rows (only when candidates exist)
         full_qvals = Vector{Union{Missing, Float32}}(missing, nrow(merged_df))
@@ -174,10 +183,15 @@ function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, 
     end
 
     # candidate_labels represents bad transfer flags
+    # Calculate FTR scale factor for runtime decoy purging correction
+    runtime_decoy_fraction = hasproperty(params, :runtime_decoy_fraction) ? params.runtime_decoy_fraction : 1.0
+    ftr_scale_factor = Float64(1.0 / runtime_decoy_fraction)
+
     τ = get_ftr_threshold(
         candidate_data[!, score_column],
         candidate_labels,
-        params.max_MBR_false_transfer_rate
+        params.max_MBR_false_transfer_rate;
+        ftr_scale_factor=ftr_scale_factor
     )
 
     # Handle edge case where threshold is infinite (no valid threshold found)
@@ -214,9 +228,13 @@ function train_and_evaluate(method::ProbitFilter, candidate_data::DataFrame, can
         
         # Cross-validation training using DataFrame
         scores = run_cv_training(method, feature_data, candidate_labels, candidate_data.cv_fold, params)
-        
+
         # Calibrate threshold
-        τ = calibrate_ml_threshold(scores, candidate_labels, Float64(params.max_MBR_false_transfer_rate))
+        # Calculate FTR scale factor for runtime decoy purging correction
+        runtime_decoy_fraction = hasproperty(params, :runtime_decoy_fraction) ? params.runtime_decoy_fraction : 1.0
+        ftr_scale_factor = Float64(1.0 / runtime_decoy_fraction)
+
+        τ = calibrate_ml_threshold(scores, candidate_labels, Float64(params.max_MBR_false_transfer_rate); ftr_scale_factor=ftr_scale_factor)
         n_passing = sum(scores .>= τ)  # Higher score = better for probit
         
         
@@ -254,7 +272,11 @@ function train_and_evaluate(method::LightGBMFilter, candidate_data::DataFrame, c
         scores = run_cv_training(method, feature_data, candidate_labels, candidate_data.cv_fold, params)
 
         # Calibrate threshold
-        τ = calibrate_ml_threshold(scores, candidate_labels, Float64(params.max_MBR_false_transfer_rate))
+        # Calculate FTR scale factor for runtime decoy purging correction
+        runtime_decoy_fraction = hasproperty(params, :runtime_decoy_fraction) ? params.runtime_decoy_fraction : 1.0
+        ftr_scale_factor = Float64(1.0 / runtime_decoy_fraction)
+
+        τ = calibrate_ml_threshold(scores, candidate_labels, Float64(params.max_MBR_false_transfer_rate); ftr_scale_factor=ftr_scale_factor)
         n_passing = sum(scores .>= τ)  # Higher score = better for LightGBM
 
 
@@ -481,9 +503,9 @@ function prepare_mbr_features(df::DataFrame)
     return X, feature_names
 end
 
-function calibrate_ml_threshold(scores::AbstractVector, is_bad_transfer::AbstractVector{Bool}, target_ftr::Float64)
+function calibrate_ml_threshold(scores::AbstractVector, is_bad_transfer::AbstractVector{Bool}, target_ftr::Float64; ftr_scale_factor::Float64 = 1.0)
     """Find score threshold that achieves target FTR."""
-    return get_ftr_threshold(scores, is_bad_transfer, target_ftr)
+    return get_ftr_threshold(scores, is_bad_transfer, target_ftr; ftr_scale_factor=ftr_scale_factor)
 end
 
 

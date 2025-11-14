@@ -76,6 +76,9 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # MS1 scoring parameter
     ms1_scoring::Bool
 
+    # Runtime decoy purging parameter
+    runtime_decoy_fraction::Float64
+
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
         ml_params = params.optimization.machine_learning
@@ -116,7 +119,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Int64(get(ml_params, :max_psms_for_comparison, 100000)),
 
             # MS1 scoring parameter
-            Bool(global_params.ms1_scoring)
+            Bool(global_params.ms1_scoring),
+
+            # Runtime decoy purging parameter
+            Float64(get(global_params, :runtime_decoy_fraction, 1.0))
         )
     end
 end
