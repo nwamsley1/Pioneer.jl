@@ -119,6 +119,11 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     irt_nstd::Float32
     plot_rt_alignment::Bool
     use_robust_fitting::Bool
+
+    # Runtime decoy purging parameters
+    runtime_decoy_fraction::Float64
+    runtime_decoy_random_seed::Union{Int, Nothing}
+
     prec_estimation::P
 
     function FirstPassSearchParameters(params::PioneerParameters)
@@ -129,6 +134,11 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         score_params = first_params.scoring_settings
         rt_params = params.rt_alignment
         irt_mapping_params = first_params.irt_mapping
+
+        # Extract runtime decoy purging parameters from global settings
+        runtime_decoy_fraction = Float64(get(global_params, :runtime_decoy_fraction, 1.0))
+        runtime_decoy_random_seed = get(global_params, :runtime_decoy_random_seed, nothing)
+
         # Convert isotope error bounds
         isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
         # Determine precursor estimation strategy
@@ -174,6 +184,11 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Float32(irt_mapping_params.irt_nstd),   # Default irt_nstd
             Bool(hasproperty(irt_mapping_params, :plot_rt_alignment) ? irt_mapping_params.plot_rt_alignment : false),
             Bool(hasproperty(irt_mapping_params, :use_robust_fitting) ? irt_mapping_params.use_robust_fitting : true),
+
+            # Runtime decoy purging parameters
+            runtime_decoy_fraction,
+            runtime_decoy_random_seed,
+
             prec_estimation
         )
     end
@@ -679,15 +694,14 @@ function summarize_results!(
     end
 
     # Runtime decoy purging (if enabled)
-    pioneer_params = getParams(search_context)
-    runtime_decoy_fraction = get(pioneer_params.global, "runtime_decoy_fraction", 1.0)
+    runtime_decoy_fraction = params.runtime_decoy_fraction
 
     if runtime_decoy_fraction < 1.0
         @user_info "═══════════════════════════════════════════════════════════"
         @user_info "Runtime Decoy Purging Enabled (fraction: $runtime_decoy_fraction)"
         @user_info "Precursors in dict before purging: $(length(precursor_dict))"
 
-        runtime_decoy_random_seed = get(pioneer_params.global, "runtime_decoy_random_seed", nothing)
+        runtime_decoy_random_seed = params.runtime_decoy_random_seed
 
         # Store original FDR scale factor for logging
         original_fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
