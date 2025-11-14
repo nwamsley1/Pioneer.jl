@@ -67,6 +67,27 @@ function checkParams(json_path::String)
     check_param(global_params, "ms1_quant", Bool)
     check_param(global_params, "match_between_runs", Bool)
 
+    # Validate runtime_decoy_fraction
+    if haskey(global_params, "runtime_decoy_fraction")
+        check_param(global_params, "runtime_decoy_fraction", Real)
+        if global_params["runtime_decoy_fraction"] <= 0.0 || global_params["runtime_decoy_fraction"] > 1.0
+            error("global.runtime_decoy_fraction must be in range (0.0, 1.0], got $(global_params["runtime_decoy_fraction"])")
+        end
+    end
+
+    # Validate runtime_decoy_random_seed (optional, can be nothing/null or positive integer)
+    if haskey(global_params, "runtime_decoy_random_seed")
+        seed = global_params["runtime_decoy_random_seed"]
+        if !isnothing(seed)
+            if !(seed isa Integer)
+                error("global.runtime_decoy_random_seed must be an integer or null, got $(typeof(seed))")
+            end
+            if seed <= 0
+                error("global.runtime_decoy_random_seed must be positive when specified, got $seed")
+            end
+        end
+    end
+
     # Validate parameter tuning parameters
     tuning_params = params["parameter_tuning"]
     check_param(tuning_params, "fragment_settings", Dict)

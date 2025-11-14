@@ -21,10 +21,12 @@
         "huber_override": {
             "override_huber_delta_fit": false,
             "huber_delta": 1055
-        }, 
+        },
         "ms1_scoring": true,
         "ms1_quant": false,
-		"match_between_runs": true
+		"match_between_runs": true,
+        "runtime_decoy_fraction": 1.0,
+        "runtime_decoy_random_seed": null
     },
     "parameter_tuning": {
         "fragment_settings": {

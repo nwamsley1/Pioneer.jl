@@ -518,6 +518,88 @@ function reset_results!(results::FirstPassSearchResults)
 end
 
 """
+    purge_decoys_from_precursor_dict!(
+        precursor_dict::Dictionary{UInt32, NamedTuple},
+        spec_lib::SpectralLibrary,
+        decoy_fraction::Float64,
+        random_seed::Union{Int, Nothing} = nothing
+    ) -> Nothing
+
+Randomly removes a fraction of decoys from the precursor dictionary in-place.
+
+# Arguments
+- `precursor_dict`: Dictionary mapping precursor IDs to best PSM info
+- `spec_lib`: Spectral library containing precursor metadata (is_decoy flags)
+- `decoy_fraction`: Fraction of decoys to RETAIN (0.0 < fraction ≤ 1.0)
+- `random_seed`: Optional seed for reproducible decoy selection
+
+# Algorithm
+1. Separate precursor IDs into targets and decoys using library is_decoy flags
+2. Calculate number of decoys to keep: ceil(n_decoys * decoy_fraction)
+3. Randomly select decoys to keep
+4. Remove non-selected decoys from dictionary in-place
+
+# Notes
+- Modifies precursor_dict in-place
+- All targets are always retained
+- Selection is random within decoys
+- Reproducible if random_seed provided
+- FDR scale factor should be updated as: new_factor = old_factor * (1/decoy_fraction)
+"""
+function purge_decoys_from_precursor_dict!(
+    precursor_dict::Dictionary{UInt32, <:NamedTuple},
+    spec_lib::SpectralLibrary,
+    decoy_fraction::Float64,
+    random_seed::Union{Int, Nothing} = nothing
+)
+    # Early return if no purging needed
+    if decoy_fraction >= 1.0
+        return nothing
+    end
+
+    # Get is_decoy flags from library
+    is_decoy = getIsDecoy(getPrecursors(spec_lib))
+
+    # Separate precursor IDs into decoys only
+    decoy_pids = UInt32[]
+
+    for pid in keys(precursor_dict)
+        if is_decoy[pid]
+            push!(decoy_pids, pid)
+        end
+    end
+
+    n_decoys_original = length(decoy_pids)
+
+    # Calculate how many decoys to keep
+    n_decoys_to_keep = ceil(Int, n_decoys_original * decoy_fraction)
+
+    @user_info "Purging decoys: keeping $n_decoys_to_keep out of $n_decoys_original decoys ($(round(decoy_fraction * 100, digits=1))%)"
+
+    # If keeping all decoys, return early
+    if n_decoys_to_keep >= n_decoys_original
+        return nothing
+    end
+
+    # Create RNG for reproducible selection
+    rng = isnothing(random_seed) ? Random.GLOBAL_RNG : Random.MersenneTwister(random_seed)
+
+    # Randomly select decoys to keep
+    shuffle!(rng, decoy_pids)
+    decoys_to_remove = decoy_pids[(n_decoys_to_keep+1):end]
+
+    # Remove non-selected decoys from dictionary
+    for pid in decoys_to_remove
+        delete!(precursor_dict, pid)
+    end
+
+    n_decoys_removed = n_decoys_original - n_decoys_to_keep
+    @user_info "Removed $n_decoys_removed decoys from precursor dictionary"
+
+    return nothing
+end
+
+"""
 Summarize results across all files.
 """
 function summarize_results!(
@@ -594,6 +676,33 @@ function summarize_results!(
         for (pid, val) in pairs(precursor_dict)
             setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
         end
+    end
+
+    # Runtime decoy purging (if enabled)
+    pioneer_params = getParams(search_context)
+    runtime_decoy_fraction = get(pioneer_params.global, "runtime_decoy_fraction", 1.0)
+
+    if runtime_decoy_fraction < 1.0
+        runtime_decoy_random_seed = get(pioneer_params.global, "runtime_decoy_random_seed", nothing)
+
+        # Store original FDR scale factor for logging
+        original_fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+
+        # Purge decoys from precursor_dict (modifies in-place)
+        purge_decoys_from_precursor_dict!(
+            precursor_dict,
+            getSpecLib(search_context),
+            Float64(runtime_decoy_fraction),
+            runtime_decoy_random_seed
+        )
+
+        # Update FDR scale factor by multiplying by (1 / fraction)
+        # This is mathematically equivalent to: new_factor = n_targets / n_decoys_retained
+        # But much simpler since we don't need to count!
+        new_fdr_scale_factor = original_fdr_scale_factor * Float32(1.0 / runtime_decoy_fraction)
+        search_context.library_fdr_scale_factor = new_fdr_scale_factor
+
+        @user_info "Updated FDR scale factor: $(round(original_fdr_scale_factor, digits=3)) → $(round(new_fdr_scale_factor, digits=3)) (×$(round(1.0/runtime_decoy_fraction, digits=1)))"
     end
 
     setPrecursorDict!(search_context, precursor_dict)
