@@ -562,6 +562,13 @@ function summarize_results!(
     # Process precursors
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
 
+    # Report target/decoy counts in precursor_dict
+    precursors = getPrecursors(getSpecLib(search_context))
+    is_decoy = getIsDecoy(precursors)
+    n_targets = count(pid -> !is_decoy[pid], keys(precursor_dict))
+    n_decoys = count(pid -> is_decoy[pid], keys(precursor_dict))
+    @user_info "FirstPassSearch: Precursor dictionary contains $n_targets targets and $n_decoys decoys (total: $(length(precursor_dict)))\n"
+
     if false==true#params.match_between_runs==true
         #######
         #Each target has a corresponding decoy and vice versa
