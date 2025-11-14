@@ -336,14 +336,14 @@ function process_file!(
 
             # First search: targets only
             @user_info "  Performing targets-only search...\n"
-            psms_targets = perform_second_pass_search(
+            psms_targets = copy(perform_second_pass_search(
                 spectra,
                 rt_index_targets,
                 search_context,
                 params,
                 ms_file_idx,
                 MS2CHROM()
-            )
+            ))
             @user_info "  Targets-only search: $(size(psms_targets, 1)) PSMs\n"
 
             # Create full rt_index (targets + decoys)
@@ -353,14 +353,14 @@ function process_file!(
 
             # Second search: all precursors
             @user_info "  Performing full search (targets + decoys)...\n"
-            psms_all = perform_second_pass_search(
+            psms_all = copy(perform_second_pass_search(
                 spectra,
                 rt_index_full,
                 search_context,
                 params,
                 ms_file_idx,
                 MS2CHROM()
-            )
+            ))
             @user_info "  Full search: $(size(psms_all, 1)) PSMs\n"
 
             # Filter to keep only decoys from second search
@@ -391,14 +391,14 @@ function process_file!(
 
             # Standard mode: single search with all precursors
             rt_index = buildRtIndex(rt_df_full, bin_rt_size = 0.1)
-            psms = perform_second_pass_search(
+            psms = copy(perform_second_pass_search(
                 spectra,
                 rt_index,
                 search_context,
                 params,
                 ms_file_idx,
                 MS2CHROM()
-            )
+            ))
             @user_info "  Standard search: $(size(psms, 1)) PSMs\n"
         end
         if params.ms1_scoring
