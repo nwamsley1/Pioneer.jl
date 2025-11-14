@@ -683,6 +683,10 @@ function summarize_results!(
     runtime_decoy_fraction = get(pioneer_params.global, "runtime_decoy_fraction", 1.0)
 
     if runtime_decoy_fraction < 1.0
+        @user_info "═══════════════════════════════════════════════════════════"
+        @user_info "Runtime Decoy Purging Enabled (fraction: $runtime_decoy_fraction)"
+        @user_info "Precursors in dict before purging: $(length(precursor_dict))"
+
         runtime_decoy_random_seed = get(pioneer_params.global, "runtime_decoy_random_seed", nothing)
 
         # Store original FDR scale factor for logging
@@ -702,7 +706,10 @@ function summarize_results!(
         new_fdr_scale_factor = original_fdr_scale_factor * Float32(1.0 / runtime_decoy_fraction)
         search_context.library_fdr_scale_factor = new_fdr_scale_factor
 
+        @user_info "Precursors in dict after purging: $(length(precursor_dict))"
         @user_info "Updated FDR scale factor: $(round(original_fdr_scale_factor, digits=3)) → $(round(new_fdr_scale_factor, digits=3)) (×$(round(1.0/runtime_decoy_fraction, digits=1)))"
+        @user_info "Runtime Decoy Purging Complete"
+        @user_info "═══════════════════════════════════════════════════════════"
     end
 
     setPrecursorDict!(search_context, precursor_dict)
