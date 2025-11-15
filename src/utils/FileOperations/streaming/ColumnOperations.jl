@@ -61,7 +61,7 @@ function safe_replace_file(temp_path::String, target_path::String, file_handle)
             for i in 1:max_retries
                 try
                     # Try to delete using Julia's rm with force flag
-                    run(`cmd /c del /f /q "$fpath"`)
+                    run(`cmd /c del /f /q "$target_path"`)
                     #rm(target_path, force=true)
                     break
                 catch
@@ -133,33 +133,14 @@ function add_column_to_file!(ref::FileReference,
     
     # Create temporary output file
     temp_path = file_path(ref) * ".tmp"
-    
-    # For small files or if partitioner has issues, process entire file at once
+
+    # Process entire file in memory
+    # Note: batch_size parameter kept for API compatibility but not used
+    # For truly large files, implement proper Arrow-native streaming in the future
     tbl = Arrow.Table(file_path(ref))
-    
-    # Check if file is small enough to process at once
-    if row_count(ref) <= batch_size
-        # Process entire file at once
-        df_batch = DataFrame(Tables.columntable(tbl))
-        df_batch[!, col_name] = compute_fn(df_batch)
-        writeArrow(temp_path, df_batch)
-    else
-        # Stream through file for larger files
-        partitions = Tables.partitioner(tbl, batch_size)
-        
-        first_write = true
-        for partition in partitions
-            df_batch = DataFrame(Tables.columntable(partition))
-            df_batch[!, col_name] = compute_fn(df_batch)
-            
-            if first_write
-                writeArrow(temp_path, df_batch)
-                first_write = false
-            else
-                Arrow.append(temp_path, df_batch)
-            end
-        end
-    end
+    df = DataFrame(Tables.columntable(tbl))
+    df[!, col_name] = compute_fn(df)
+    writeArrow(temp_path, df)
     
     # Replace original file using Windows-safe method
     safe_replace_file(temp_path, file_path(ref), tbl)
@@ -192,33 +173,13 @@ function update_column_in_file!(ref::FileReference,
     
     # Create temporary output file
     temp_path = file_path(ref) * ".tmp"
-    
-    # For small files or if partitioner has issues, process entire file at once
+
+    # Process entire file in memory
+    # Note: batch_size parameter kept for API compatibility but not used
     tbl = Arrow.Table(file_path(ref))
-    
-    # Check if file is small enough to process at once
-    if row_count(ref) <= batch_size
-        # Process entire file at once
-        df_batch = DataFrame(Tables.columntable(tbl))
-        df_batch[!, col_name] = update_fn(df_batch[!, col_name])
-        writeArrow(temp_path, df_batch)
-    else
-        # Stream through file for larger files
-        partitions = Tables.partitioner(tbl, batch_size)
-        
-        first_write = true
-        for partition in partitions
-            df_batch = DataFrame(Tables.columntable(partition))
-            df_batch[!, col_name] = update_fn(df_batch[!, col_name])
-            
-            if first_write
-                writeArrow(temp_path, df_batch)
-                first_write = false
-            else
-                Arrow.append(temp_path, df_batch)
-            end
-        end
-    end
+    df = DataFrame(Tables.columntable(tbl))
+    df[!, col_name] = update_fn(df[!, col_name])
+    writeArrow(temp_path, df)
     
     # Replace original file using Windows-safe method
     safe_replace_file(temp_path, file_path(ref), tbl)
@@ -264,25 +225,14 @@ Specialized iRT Refinement Column Addition
 
 Add :irt_refined column to PSMs Arrow file using file-specific iRT refinement model.
 
-This is a specialized wrapper around `add_column_to_file!` for iRT refinement.
+Uses `apply_irt_refinement()` function with Vector-based aa_coefficients model.
 Memory-efficient: Uses batch processing for large files.
-
-# Algorithm
-1. Create FileReference for PSMs file
-2. Define compute function that applies refinement model
-3. Use add_column_to_file! infrastructure for batch processing
-4. Column written back with Windows-safe file replacement
 
 # Arguments
 - `psms_path`: Path to PSMs Arrow file
 - `model`: iRT refinement model (if nothing, uses library iRT from :irt_predicted)
 - `search_context`: SearchContext for accessing spectral library
 - `batch_size`: Rows per batch for streaming (default 100k)
-
-# Notes
-**Memory**: For now, this may materialize the DataFrame during processing.
-Future optimization: Investigate Arrow-native column addition without DataFrame conversion.
-See: https://github.com/apache/arrow-julia/issues for potential improvements.
 
 # Examples
 ```julia
@@ -300,7 +250,7 @@ function add_irt_refined_column!(
     batch_size::Int=100_000
 )
     # Create FileReference (needed for add_column_to_file!)
-    ref = create_reference(psms_path, FileReference)
+    ref = create_reference(psms_path, PSMFileReference)
 
     # Get precursors from library (shared across batches)
     precursors = getPrecursors(getSpecLib(search_context))
@@ -313,13 +263,13 @@ function add_irt_refined_column!(
         (df_batch::DataFrame) -> begin
             irt_refined = Vector{Float32}(undef, nrow(df_batch))
 
-            # Parallel computation within batch using callable model (ZERO allocations per call!)
-            Threads.@threads for i in 1:nrow(df_batch)
+            # Sequential computation using callable model interface
+            for i in 1:nrow(df_batch)
                 row = df_batch[i, :]
                 sequence = getSequence(precursors)[row.precursor_idx]
                 library_irt = row.irt_predicted
 
-                # Use callable model - zero allocations!
+                # Use callable model interface (zero allocations!)
                 irt_refined[i] = model(sequence, library_irt)
             end
 
@@ -334,10 +284,8 @@ function add_irt_refined_column!(
     end
 
     # Use existing FileOperations infrastructure!
-    add_column_to_file!(ref, :irt_refined, compute_fn, batch_size=batch_size)
-
+    add_column_to_file!(ref, :irt_refined, compute_fn; batch_size=batch_size)
     @user_info "Successfully added :irt_refined column to PSMs file"
 
     return nothing
 end
-

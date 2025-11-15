@@ -225,7 +225,6 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     rt_index_paths::Base.Ref{Vector{String}}
     irt_errors::Dict{Int64, Float32}
     irt_refinement_models::Dict{Int64, Union{IrtRefinementModel, Nothing}}  # File-specific iRT refinement models
-    irt_obs::Dict{UInt32, Float32}  # DEPRECATED - will be removed after testing
     pg_score_to_qval::Ref{Any}
     pg_name_to_global_pg_score::Ref{Dict{ProteinKey, Float32}}
     global_pg_score_to_qval_dict::Ref{Dict{Tuple{String,Bool,UInt8}, Float32}}
@@ -271,7 +270,6 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Ref{Vector{String}}(),
             Dict{Int64, Float32}(),  # irt_errors
             Dict{Int64, Union{IrtRefinementModel, Nothing}}(),  # irt_refinement_models
-            Dict{UInt32, Float32}(),  # irt_obs (DEPRECATED)
             Ref{Any}(), Ref(Dict{ProteinKey, Float32}()), Ref(Dict{Tuple{String,Bool,UInt8}, Float32}()), Ref{Any}(),
             Dict{Type{<:SearchMethod}, Any}(),  # Initialize method_results
             n_threads, n_precursors, buffer_size,
@@ -490,9 +488,7 @@ function getPredIrt(s::SearchContext, prec_idx::Int64, ms_file_idx::Int)::Float3
 end
 
 getHuberDelta(s::SearchContext) = s.huber_delta[]
-# DEPRECATED: These setters are no longer needed with column-based approach
-# setPredIrt!(s::SearchContext, prec_idx::Int64, irt::Float32) = s.irt_obs[prec_idx] = irt
-# setPredIrt!(s::SearchContext, prec_idx::UInt32, irt::Float32) = s.irt_obs[prec_idx] = irt
+
 getLibraryTargetCount(s::SearchContext) = s.n_library_targets
 getLibraryDecoyCount(s::SearchContext) = s.n_library_decoys
 getLibraryFdrScaleFactor(s::SearchContext) = s.library_fdr_scale_factor

@@ -368,8 +368,9 @@ function map_retention_times!(
                     irt_predicted = psms[:irt_predicted][best_hits]
                 )
 
-                # Fit RT to iRT model using shared robust fitting
-                rt_model, valid_rt, valid_irt, irt_mad = Pioneer.fit_irt_model(
+                # Fit PRELIMINARY RT to iRT model (for refinement training)
+                # Will be replaced with refined model if refinement is successful
+                rt_model_prelim, valid_rt_prelim, valid_irt_prelim, irt_mad = Pioneer.fit_irt_model(
                     best_psms_df;
                     lambda_penalty = Float32(0.1),  # Default penalty
                     ransac_threshold = 1000,        # Default RANSAC threshold
@@ -379,16 +380,16 @@ function map_retention_times!(
                     outlier_threshold = Float32(5.0)  # Default outlier threshold
                 )
 
-                # Store RT to iRT model
-                setRtIrtMap!(search_context, rt_model, ms_file_idx)
+                # Don't store preliminary models yet if refinement is enabled
+                # They will be replaced with refined models if refinement succeeds
 
-                # Fit inverse model (iRT to RT) - swap input/output
-                irt_to_rt_df = DataFrame(
-                    rt = valid_irt,           # Use iRT as input
-                    irt_predicted = valid_rt  # Use RT as output
+                # Fit PRELIMINARY inverse model (iRT to RT)
+                irt_to_rt_df_prelim = DataFrame(
+                    rt = valid_irt_prelim,           # Use iRT as input
+                    irt_predicted = valid_rt_prelim  # Use RT as output
                 )
-                irt_model, _, _, _ = Pioneer.fit_irt_model(
-                    irt_to_rt_df;
+                irt_model_prelim, _, _, _ = Pioneer.fit_irt_model(
+                    irt_to_rt_df_prelim;
                     lambda_penalty = Float32(0.1),
                     ransac_threshold = 1000,
                     min_psms = 10,
@@ -396,7 +397,6 @@ function map_retention_times!(
                     max_knots = 7,
                     outlier_threshold = Float32(5.0)
                 )
-                setIrtRtMap!(search_context, irt_model, ms_file_idx)
 
                 # iRT refinement (if enabled)
                 if params.enable_irt_refinement
@@ -406,43 +406,105 @@ function map_retention_times!(
                         precursors = getPrecursors(getSpecLib(search_context))
                         sequences = String[getSequence(precursors)[idx] for idx in precursor_indices]
 
-                        # Convert observed RTs to iRT using the fitted model
+                        # Convert observed RTs to iRT using PRELIMINARY model
                         observed_rts = psms[:rt][best_hits]
-                        observed_irts = Float32[rt_model(Float32(rt)) for rt in observed_rts]
+                        observed_irts = Float32[rt_model_prelim(Float32(rt)) for rt in observed_rts]
 
-                        # Fit refinement model
+                        # Step 1: Fit file-specific refinement model
                         refinement_model = fit_irt_refinement_model(
                             sequences,
-                            Float32.(psms[:irt_predicted][best_hits]),
-                            observed_irts,
+                            Float32.(psms[:irt_predicted][best_hits]),  # library iRTs
+                            observed_irts,                               # RT converted to iRT
                             ms_file_idx=ms_file_idx,
                             min_psms=20,
                             train_fraction=0.67
                         )
 
-                        # Store model in SearchContext (for SecondPass)
+                        # Store model in SearchContext for SecondPass (via getPredIrt)
                         setIrtRefinementModel!(search_context, ms_file_idx, refinement_model)
 
-                        # Add :irt_refined column to PSMs file using FileOperations infrastructure
+                        # Step 2: Refit RT models with refined iRT (if refinement successful)
+                        if !isnothing(refinement_model) && refinement_model.use_refinement
+                            @user_info "File $ms_file_idx: Refitting RT conversion models with refined iRT..."
+
+                            # Calculate refined iRT for training PSMs using callable model
+                            refined_irts_training = Vector{Float32}(undef, length(sequences))
+
+                            for (i, seq) in enumerate(sequences)
+                                library_irt = psms[:irt_predicted][best_hits][i]
+                                # Use callable model interface (zero allocations!)
+                                refined_irts_training[i] = refinement_model(seq, library_irt)
+                            end
+
+                            # Refit RT → iRT model using REFINED iRT
+                            refined_psms_df = DataFrame(
+                                rt = psms[:rt][best_hits],
+                                irt_predicted = refined_irts_training
+                            )
+
+                            rt_model_refined, valid_rt_refined, valid_irt_refined, _ = Pioneer.fit_irt_model(
+                                refined_psms_df;
+                                lambda_penalty = Float32(0.1),
+                                ransac_threshold = 1000,
+                                min_psms = 10,
+                                spline_degree = 3,
+                                max_knots = 7,
+                                outlier_threshold = Float32(5.0)
+                            )
+
+                            # Refit iRT → RT model using REFINED iRT
+                            irt_to_rt_df_refined = DataFrame(
+                                rt = valid_irt_refined,           # Refined iRT as input
+                                irt_predicted = valid_rt_refined  # RT as output
+                            )
+
+                            irt_model_refined, _, _, _ = Pioneer.fit_irt_model(
+                                irt_to_rt_df_refined;
+                                lambda_penalty = Float32(0.1),
+                                ransac_threshold = 1000,
+                                min_psms = 10,
+                                spline_degree = 3,
+                                max_knots = 7,
+                                outlier_threshold = Float32(5.0)
+                            )
+
+                            # Store REFINED RT models (replacing preliminary models)
+                            setRtIrtMap!(search_context, rt_model_refined, ms_file_idx)
+                            setIrtRtMap!(search_context, irt_model_refined, ms_file_idx)
+
+                            @user_info "File $ms_file_idx: RT conversion models refitted with refined iRT"
+                        else
+                            # Refinement not successful - store preliminary models
+                            setRtIrtMap!(search_context, rt_model_prelim, ms_file_idx)
+                            setIrtRtMap!(search_context, irt_model_prelim, ms_file_idx)
+                        end
+
+                        # Step 3: Add :irt_refined column to PSMs file
+                        # This column is used by:
+                        # 1. plot_irt_comparison() to visualize refinement performance
+                        # 2. get_best_precursors_across_runs() for precursor_dict building
+                        # Note: SecondPass uses getPredIrt() which computes from model (not this column)
                         psms_path = all_psms_paths[ms_file_idx]
                         add_irt_refined_column!(psms_path, refinement_model, search_context)
-
-                        # Note: iRT refinement model stored in SearchContext for SecondPass
-                        # Refined iRT added as :irt_refined column to PSMs file for efficient access
-                        # Column used by get_best_precursors_across_runs for precursor_dict calculations
-                        # Model used by SecondPass via getPredIrt() for precursors not in FirstPass
                     catch e
-                        throw(e)
                         @user_warn "iRT refinement failed for file $ms_file_idx: $e"
+                        # Store preliminary models (refinement failed)
+                        setRtIrtMap!(search_context, rt_model_prelim, ms_file_idx)
+                        setIrtRtMap!(search_context, irt_model_prelim, ms_file_idx)
                     end
+                else
+                    # Refinement not enabled - store preliminary models
+                    setRtIrtMap!(search_context, rt_model_prelim, ms_file_idx)
+                    setIrtRtMap!(search_context, irt_model_prelim, ms_file_idx)
                 end
 
                 # Optionally generate plots
+                # Use preliminary models for plotting (before refinement)
                 if params.plot_rt_alignment
                     plot_rt_alignment_firstpass(
-                        valid_rt,
-                        valid_irt,
-                        rt_model,
+                        valid_rt_prelim,
+                        valid_irt_prelim,
+                        rt_model_prelim,
                         ms_file_idx,
                         getDataOutDir(search_context)
                     )
@@ -776,5 +838,302 @@ function mass_err_ms1(ppm_errs::Vector{Float32},
     ), pmp_errs_corrected
 end
 
+"""
+    calculate_irt_error_stats(irt_predicted::Vector{Float64},
+                               irt_refined::Vector{Float64},
+                               irt_observed::Vector{Float64})
+
+Calculate error statistics for library and refined iRT predictions.
+
+# Returns
+NamedTuple with:
+- library_errors, refined_errors: Error vectors
+- library_mae, library_std, library_mean, library_median, library_correlation
+- refined_mae, refined_std, refined_mean, refined_median, refined_correlation
+- mae_improvement, mae_improvement_pct
+"""
+function calculate_irt_error_stats(irt_predicted::Vector{Float64},
+                                   irt_refined::Vector{Float64},
+                                   irt_observed::Vector{Float64})
+    # Calculate error distributions (prediction - observed)
+    library_errors = irt_predicted .- irt_observed
+    refined_errors = irt_refined .- irt_observed
+
+    # Error statistics
+    library_mae = mean(abs.(library_errors))
+    library_std = std(library_errors)
+    library_median = median(library_errors)
+    library_mean = mean(library_errors)
+
+    refined_mae = mean(abs.(refined_errors))
+    refined_std = std(refined_errors)
+    refined_median = median(refined_errors)
+    refined_mean = mean(refined_errors)
+
+    # Improvement metrics
+    mae_improvement = library_mae - refined_mae
+    mae_improvement_pct = (mae_improvement / library_mae) * 100.0
+
+    # Correlation between predictions and observed
+    library_correlation = cor(irt_predicted, irt_observed)
+    refined_correlation = cor(irt_refined, irt_observed)
+
+    return (
+        library_errors = library_errors,
+        refined_errors = refined_errors,
+        library_mae = library_mae,
+        library_std = library_std,
+        library_mean = library_mean,
+        library_median = library_median,
+        library_correlation = library_correlation,
+        refined_mae = refined_mae,
+        refined_std = refined_std,
+        refined_mean = refined_mean,
+        refined_median = refined_median,
+        refined_correlation = refined_correlation,
+        mae_improvement = mae_improvement,
+        mae_improvement_pct = mae_improvement_pct
+    )
+end
+
+"""
+    plot_irt_comparison(psms_paths::Vector{String},
+                        rt_irt_models::Dict{Int64, RtConversionModel},
+                        output_folder::String,
+                        min_prob_for_irt_mapping::Float32)
+
+Create comparison plots and statistics for refined iRT (from column) vs observed iRT (from RT conversion).
+
+Generates two sets of overlaid histograms for each file:
+1. High-quality PSMs (prob > min_prob_for_irt_mapping) - matches training data
+2. All PSMs - shows performance on full dataset
+
+# Arguments
+- `psms_paths`: Paths to PSM Arrow files
+- `rt_irt_models`: Dictionary mapping file index → RT→iRT conversion model
+- `output_folder`: Base output directory for plots
+- `min_prob_for_irt_mapping`: Probability threshold for filtering (matches training)
+
+# Output
+- PDFs saved to: `{output_folder}/irt_comparison/file_{idx}_irt_comparison_{filtered|all}.pdf`
+- Console output: Statistical summary table for both filtered and all PSMs
+"""
+function plot_irt_comparison(
+    psms_paths::Vector{String},
+    rt_irt_models::Dict{Int64, RtConversionModel},
+    output_folder::String,
+    min_prob_for_irt_mapping::Float32
+)
+    # Create output directory
+    comparison_dir = joinpath(output_folder, "irt_comparison")
+    mkpath(comparison_dir)
+
+    @user_info "Creating iRT comparison plots for $(length(psms_paths)) files..."
+
+    # Summary statistics table
+    println()
+    println("="^100)
+    println("iRT Comparison: Refined (Column) vs Observed (RT Conversion)")
+    println("="^100)
+    println()
+
+    for (file_num, psms_path) in enumerate(psms_paths)
+        # Load PSM data
+        if !isfile(psms_path)
+            @user_warn "PSM file not found: $psms_path, skipping"
+            continue
+        end
+
+        psms = Arrow.Table(psms_path)
+
+        # Get file index
+        if isempty(psms[:ms_file_idx])
+            @user_warn "Empty PSM file: $psms_path, skipping"
+            continue
+        end
+        file_idx = first(psms[:ms_file_idx])
+
+        # Get RT→iRT model
+        if !haskey(rt_irt_models, file_idx)
+            @user_warn "No RT→iRT model for file $file_idx, skipping"
+            continue
+        end
+        rt_to_irt = rt_irt_models[file_idx]
+
+        @user_info "  Reading iRT values from PSM file $(basename(psms_path)):"
+        @user_info "    - :irt_refined (refined iRT from model)"
+        @user_info "    - :irt_predicted (library iRT)"
+        @user_info "    - RT → observed iRT (via RT conversion model)"
+
+        # Extract ALL data
+        irt_refined_all = Float64.(psms[:irt_refined])
+        irt_predicted_all = Float64.(psms[:irt_predicted])  # Library iRT
+        rts_all = Float64.(psms[:rt])
+        probs_all = Float64.(psms[:prob])
+
+        # Calculate observed iRT for all
+        irt_observed_all = [rt_to_irt(rt) for rt in rts_all]
+
+        # Filter for high-quality PSMs (matching training data)
+        high_quality_mask = probs_all .> min_prob_for_irt_mapping
+        n_high_quality = sum(high_quality_mask)
+
+        irt_refined_filtered = irt_refined_all[high_quality_mask]
+        irt_predicted_filtered = irt_predicted_all[high_quality_mask]
+        irt_observed_filtered = irt_observed_all[high_quality_mask]
+
+        # Calculate statistics for both datasets
+        stats_all = calculate_irt_error_stats(irt_predicted_all, irt_refined_all, irt_observed_all)
+        stats_filtered = calculate_irt_error_stats(irt_predicted_filtered, irt_refined_filtered, irt_observed_filtered)
+
+        # Print statistics
+        println("File $file_num (ms_file_idx=$file_idx): $(basename(psms_path))")
+        println()
+        println("  HIGH-QUALITY PSMs (prob > $(round(min_prob_for_irt_mapping, digits=3))) - N = $n_high_quality")
+        println("  " * "-"^90)
+        println("    Library iRT Error (before refinement):")
+        println("      MAE:    $(round(stats_filtered.library_mae, digits=4))")
+        println("      Mean:   $(round(stats_filtered.library_mean, digits=4))")
+        println("      Std:    $(round(stats_filtered.library_std, digits=4))")
+        println("      Median: $(round(stats_filtered.library_median, digits=4))")
+        println("      Correlation: $(round(stats_filtered.library_correlation, digits=4))")
+        println()
+        println("    Refined iRT Error (after refinement):")
+        println("      MAE:    $(round(stats_filtered.refined_mae, digits=4))")
+        println("      Mean:   $(round(stats_filtered.refined_mean, digits=4))")
+        println("      Std:    $(round(stats_filtered.refined_std, digits=4))")
+        println("      Median: $(round(stats_filtered.refined_median, digits=4))")
+        println("      Correlation: $(round(stats_filtered.refined_correlation, digits=4))")
+        println()
+        println("    Improvement:")
+        println("      ΔMAE:   $(round(stats_filtered.mae_improvement, digits=4)) ($(round(stats_filtered.mae_improvement_pct, digits=2))%)")
+        println("      Δσ:     $(round(stats_filtered.library_std - stats_filtered.refined_std, digits=4))")
+        println()
+        println("  ALL PSMs - N = $(length(irt_refined_all))")
+        println("  " * "-"^90)
+        println("    Library iRT Error (before refinement):")
+        println("      MAE:    $(round(stats_all.library_mae, digits=4))")
+        println("      Mean:   $(round(stats_all.library_mean, digits=4))")
+        println("      Std:    $(round(stats_all.library_std, digits=4))")
+        println("      Median: $(round(stats_all.library_median, digits=4))")
+        println("      Correlation: $(round(stats_all.library_correlation, digits=4))")
+        println()
+        println("    Refined iRT Error (after refinement):")
+        println("      MAE:    $(round(stats_all.refined_mae, digits=4))")
+        println("      Mean:   $(round(stats_all.refined_mean, digits=4))")
+        println("      Std:    $(round(stats_all.refined_std, digits=4))")
+        println("      Median: $(round(stats_all.refined_median, digits=4))")
+        println("      Correlation: $(round(stats_all.refined_correlation, digits=4))")
+        println()
+        println("    Improvement:")
+        println("      ΔMAE:   $(round(stats_all.mae_improvement, digits=4)) ($(round(stats_all.mae_improvement_pct, digits=2))%)")
+        println("      Δσ:     $(round(stats_all.library_std - stats_all.refined_std, digits=4))")
+        println()
+        println("-"^100)
+        println()
+
+        # Create plots for both filtered and all PSMs
+        #using Plots
+
+        # Plot 1: HIGH-QUALITY PSMs (filtered)
+        all_errors_filtered = vcat(stats_filtered.library_errors, stats_filtered.refined_errors)
+        max_abs_error_filtered = maximum(abs.(all_errors_filtered))
+        bins_range_filtered = (-max_abs_error_filtered, max_abs_error_filtered)
+        n_bins = 50
+        bin_edges_filtered = range(bins_range_filtered[1], bins_range_filtered[2], length=n_bins+1)
+
+        p_filtered = histogram(
+            stats_filtered.library_errors,
+            bins=bin_edges_filtered,
+            alpha=0.6,
+            label="Library iRT Error (before refinement)",
+            color=:red,
+            xlabel="iRT Error (Predicted - Observed)",
+            ylabel="Count",
+            title="File $file_num: HIGH-QUALITY PSMs (prob > $(round(min_prob_for_irt_mapping, digits=3)))",
+            legend=:topright,
+            size=(800, 600)
+        )
+
+        histogram!(
+            p_filtered,
+            stats_filtered.refined_errors,
+            bins=bin_edges_filtered,
+            alpha=0.6,
+            label="Refined iRT Error (after refinement)",
+            color=:blue
+        )
+
+        vline!(p_filtered, [0], color=:black, linestyle=:dash, linewidth=2, label="Perfect prediction")
+
+        stats_text_filtered = "N = $n_high_quality\n" *
+                             "Library:  MAE=$(round(stats_filtered.library_mae, digits=3)), σ=$(round(stats_filtered.library_std, digits=3))\n" *
+                             "Refined:  MAE=$(round(stats_filtered.refined_mae, digits=3)), σ=$(round(stats_filtered.refined_std, digits=3))\n" *
+                             "Improvement: ΔMAE=$(round(stats_filtered.mae_improvement, digits=3)) ($(round(stats_filtered.mae_improvement_pct, digits=1))%)"
+
+        annotate!(
+            p_filtered,
+            bins_range_filtered[1] + 0.02 * (bins_range_filtered[2] - bins_range_filtered[1]),
+            ylims(p_filtered)[2] * 0.95,
+            text(stats_text_filtered, :left, 8, :monospace)
+        )
+
+        output_path_filtered = joinpath(comparison_dir, "file_$(file_num)_irt_comparison_filtered.pdf")
+        savefig(p_filtered, output_path_filtered)
+        @user_info "  Saved filtered plot: $output_path_filtered"
+
+        # Plot 2: ALL PSMs
+        all_errors_all = vcat(stats_all.library_errors, stats_all.refined_errors)
+        max_abs_error_all = maximum(abs.(all_errors_all))
+        bins_range_all = (-max_abs_error_all, max_abs_error_all)
+        bin_edges_all = range(bins_range_all[1], bins_range_all[2], length=n_bins+1)
+
+        p_all = histogram(
+            stats_all.library_errors,
+            bins=bin_edges_all,
+            alpha=0.6,
+            label="Library iRT Error (before refinement)",
+            color=:red,
+            xlabel="iRT Error (Predicted - Observed)",
+            ylabel="Count",
+            title="File $file_num: ALL PSMs",
+            legend=:topright,
+            size=(800, 600)
+        )
+
+        histogram!(
+            p_all,
+            stats_all.refined_errors,
+            bins=bin_edges_all,
+            alpha=0.6,
+            label="Refined iRT Error (after refinement)",
+            color=:blue
+        )
+
+        vline!(p_all, [0], color=:black, linestyle=:dash, linewidth=2, label="Perfect prediction")
+
+        stats_text_all = "N = $(length(irt_refined_all))\n" *
+                        "Library:  MAE=$(round(stats_all.library_mae, digits=3)), σ=$(round(stats_all.library_std, digits=3))\n" *
+                        "Refined:  MAE=$(round(stats_all.refined_mae, digits=3)), σ=$(round(stats_all.refined_std, digits=3))\n" *
+                        "Improvement: ΔMAE=$(round(stats_all.mae_improvement, digits=3)) ($(round(stats_all.mae_improvement_pct, digits=1))%)"
+
+        annotate!(
+            p_all,
+            bins_range_all[1] + 0.02 * (bins_range_all[2] - bins_range_all[1]),
+            ylims(p_all)[2] * 0.95,
+            text(stats_text_all, :left, 8, :monospace)
+        )
+
+        output_path_all = joinpath(comparison_dir, "file_$(file_num)_irt_comparison_all.pdf")
+        savefig(p_all, output_path_all)
+        @user_info "  Saved all PSMs plot: $output_path_all"
+    end
+
+    println("="^100)
+    println()
+    @user_info "✓ iRT comparison plots complete - saved to: $comparison_dir"
+
+    return nothing
+end
 
 
