@@ -568,6 +568,19 @@ function summarize_results!(
     map_retention_times!(search_context, results, params)
     @user_info "✓ Completed map_retention_times!"
 
+    # Create iRT comparison plots (refined vs observed)
+    @user_info "Creating iRT comparison plots..."
+    valid_indices = get_valid_file_indices(search_context)
+    all_psms_paths = getFirstPassPsms(getMSData(search_context))
+    valid_psms_paths = [all_psms_paths[i] for i in valid_indices]
+    all_rt_irt = getRtIrtModel(search_context)
+    valid_rt_irt = Dict{Int64, RtConversionModel}(i => all_rt_irt[i] for i in valid_indices if haskey(all_rt_irt, i))
+
+    if !isempty(valid_psms_paths)
+        plot_irt_comparison(valid_psms_paths, valid_rt_irt, getDataOutDir(search_context), params.min_prob_for_irt_mapping)
+    end
+    @user_info "✓ Completed iRT comparison plots!"
+
     # Process precursors
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
     @user_info "✓ Completed get_best_precursors_accross_runs! ($(length(precursor_dict)) precursors)"
