@@ -64,7 +64,7 @@ function build_lightgbm_classifier(; num_iterations::Integer = 100,
                                     num_threads::Integer = Threads.nthreads(),
                                     metric = ["binary_logloss"],
                                     objective::AbstractString = "binary",
-                                    is_unbalance = true,
+                                    is_unbalance = false,
                                     verbosity::Integer = -1)
     return LightGBM.LGBMClassification(
         objective = objective,
