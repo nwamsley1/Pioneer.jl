@@ -391,6 +391,7 @@ function train_lightgbm_model_df(feature_data::DataFrame, y::AbstractVector{Bool
         bagging_freq = 1,
         min_data_in_leaf = 1,      # matches EvoTrees min_child_weight
         min_gain_to_split = 1.0,   # matches EvoTrees gamma
+        is_unbalance = true
     )
     return fit_lightgbm_model(classifier, feature_data, labels; positive_label=true)
 end
