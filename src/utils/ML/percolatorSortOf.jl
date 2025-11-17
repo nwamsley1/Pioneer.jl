@@ -823,6 +823,7 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
         bagging_freq = bagging_fraction < 1 ? 1 : 0,
         min_data_in_leaf = min_data_in_leaf,
         min_gain_to_split = min_gain_to_split,
+        is_unbalance = true
     )
     feature_frame = psms[:, features]
     return fit_lightgbm_model(classifier, feature_frame, psms.target; positive_label=true)
