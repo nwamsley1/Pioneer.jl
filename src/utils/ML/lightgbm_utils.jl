@@ -64,6 +64,7 @@ function build_lightgbm_classifier(; num_iterations::Integer = 100,
                                     num_threads::Integer = Threads.nthreads(),
                                     metric = ["binary_logloss"],
                                     objective::AbstractString = "binary",
+                                    is_unbalance = false,
                                     verbosity::Integer = -1)
     return LightGBM.LGBMClassification(
         objective = objective,
@@ -82,6 +83,7 @@ function build_lightgbm_classifier(; num_iterations::Integer = 100,
         num_threads = Int(num_threads),
         num_class = 1,
         verbosity = Int(verbosity),
+        is_unbalance = is_unbalance,
         #seed = 1776, # potentialy needed for stable results
         #deterministic = true, # potentialy needed for stable results
         #force_row_wise = true # potentialy needed for stable results
