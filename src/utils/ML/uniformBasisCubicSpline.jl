@@ -666,6 +666,21 @@ function UniformSplinePenalized(
     XPoly = buildPieceWise(knots, bin_width, spline_basis)
     piecewise_polynomials = XPoly * c
     n_total_coeffs = n_knots * (degree + 1)
+
+    # DEBUG: Check polynomial coefficient counts
+    poly_coeff_lengths = [length(poly.coeffs) for poly in piecewise_polynomials]
+    expected_length = degree + 1
+    problematic_polys = findall(x -> x != expected_length, poly_coeff_lengths)
+    if !isempty(problematic_polys)
+        @warn "UniformSplinePenalized: Some polynomials have incorrect coefficient counts!"
+        @warn "  n_knots: $n_knots, degree: $degree"
+        @warn "  Expected coeffs per poly: $expected_length"
+        @warn "  Actual coefficient counts: $poly_coeff_lengths"
+        @warn "  Problematic polynomial indices: $problematic_polys"
+        @warn "  Total coeffs expected: $n_total_coeffs"
+        @warn "  Total coeffs actual: $(sum(poly_coeff_lengths))"
+    end
+
     coeffs = SVector{n_total_coeffs}(vcat([poly.coeffs for poly in piecewise_polynomials]...))
 
     return UniformSpline{n_total_coeffs, T}(

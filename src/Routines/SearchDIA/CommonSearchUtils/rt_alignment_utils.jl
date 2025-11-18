@@ -161,18 +161,29 @@ function make_spline_monotonic(
     original_spline::UniformSpline,
     rt_data::Vector{Float32},
     irt_data::Vector{Float32};
-    n_sample_points::Int = 500,
     n_knots::Int = 5
 )::UniformSpline
 
+    # DEBUG: Log input parameters
+    @user_info "=== make_spline_monotonic DEBUG ==="
+    @user_info "  Input array lengths: rt_data=$(length(rt_data)), irt_data=$(length(irt_data))"
+    @user_info "  n_knots parameter: $n_knots"
+
     # 1. Sample from original spline at uniform grid
     rt_min, rt_max = extrema(rt_data)
+    n_sample_points = length(rt_data) - 1
+    @user_info "  Computed n_sample_points: $n_sample_points (length(rt_data) - 1)"
+    @user_info "  RT range: [$rt_min, $rt_max]"
+
     rt_grid = collect(LinRange(Float32(rt_min), Float32(rt_max), n_sample_points))
     irt_grid = [original_spline(r) for r in rt_grid]
+
+    @user_info "  Grid lengths: rt_grid=$(length(rt_grid)), irt_grid=$(length(irt_grid))"
 
     # 2. Find median split point
     median_rt = median(rt_data)
     median_idx = argmin(abs.(rt_grid .- median_rt))
+    @user_info "  Median RT: $median_rt, median_idx: $median_idx"
 
     # 3. Filter right side (median → end): enforce monotonic increasing
     for i in (median_idx+1):n_sample_points
@@ -189,13 +200,24 @@ function make_spline_monotonic(
     end
 
     # 5. Refit spline to filtered data with penalty for smoothness
-    
+    @user_info "  After filtering - Grid lengths: rt_grid=$(length(rt_grid)), irt_grid=$(length(irt_grid))"
+    @user_info "  Calling UniformSplinePenalized with:"
+    @user_info "    irt_grid length: $(length(irt_grid))"
+    @user_info "    rt_grid length: $(length(rt_grid))"
+    @user_info "    degree: 3"
+    @user_info "    n_knots: $n_knots"
+    @user_info "    lambda: 1.0"
+    @user_info "    penalty_order: 2"
+    @user_info "  irt_grid range: [$(minimum(irt_grid)), $(maximum(irt_grid))]"
+    @user_info "  rt_grid range: [$(minimum(rt_grid)), $(maximum(rt_grid))]"
+
+    # Let errors propagate to outer try-catch in fit_irt_model
     final_spline = UniformSplinePenalized(
         irt_grid,
         rt_grid,
         3,              # degree
         n_knots,
-        Float32(0.1),   # lambda penalty (matches current hardcoded value)
+        Float32(1.0),   # lambda penalty (matches current hardcoded value)
         2               # 2nd order penalty
     )
 
@@ -203,7 +225,7 @@ function make_spline_monotonic(
     # 6. Validate monotonicity (optional diagnostic)
     violations = sum(diff(irt_grid) .< 0)
     if violations > 0
-        @debug_l2 "Monotonic filter had $violations violations before refit (edge corrections applied)"
+        @user_info "Monotonic filter had $violations violations before refit (edge corrections applied)"
     end
 
     return final_spline
@@ -261,7 +283,7 @@ function fit_irt_model(
     psms::DataFrame;
     lambda_penalty::Float32 = Float32(0.1),
     ransac_threshold::Int = 1000,
-    min_psms::Int = 10,
+    min_psms::Int = 30,
     spline_degree::Int = 3,
     max_knots::Int = 7,
     outlier_threshold::Float32 = Float32(5.0)
@@ -270,26 +292,46 @@ function fit_irt_model(
     n_psms = nrow(psms)
 
     # Calculate adaptive knots: 1 per 100 PSMs, minimum 3
-    max_knots = typemax(UInt32) 
-    @user_info "max_knots set to typemax(UInt32)=$max_knots"
+    @user_info "max_knots set to: $max_knots"
+    @user_info "min_psms set to: $min_psms"
     lambda_penalty = Float32(0.1)
     @user_info "lambda_penalty set to $lambda_penalty \n"
-    n_knots = min(max(3, Int(floor(n_psms / 100))), max_knots)
-
+    min_knots = max(min(10, n_psms ÷ 20), 3) # At least 3 knots, up to 1 per 20 PSMs, capped at 10
+    n_knots = min(max(min_knots, Int(floor(n_psms / 100))), max_knots)
+    @user_info "n_knots set to: $n_knots \n n_psms: $n_psms \n"
     # Early exit for insufficient data
     if n_psms < min_psms
-        @debug_l2 "Too few PSMs ($n_psms) for RT alignment (need ≥$min_psms), using identity model"
+        @user_info "Too few PSMs ($n_psms) for RT alignment (need ≥$min_psms), using identity model"
         return (IdentityModel(), Float32[], Float32[], 0.0f0)
     end
 
-    @debug_l2 "Using $n_knots knots for RT spline ($n_psms PSMs)"
+    @user_info "Using $n_knots knots for RT spline ($n_psms PSMs)"
+
+    # For small datasets (< 100 PSMs), use simple linear model instead of splines
+    # Linear models are more robust and appropriate for sparse data
+    if n_psms < 30
+        @user_info "Small dataset ($n_psms PSMs < 100): Using linear model instead of spline"
+        linear_model, linear_std, _ = fit_linear_irt_model(psms)
+
+        # Calculate MAD for consistency with spline path
+        predicted = [linear_model(rt) for rt in psms[!, :rt]]
+        residuals = psms[!, :irt_predicted] .- predicted
+        linear_mad = median(abs.(residuals .- median(residuals)))
+
+        return (
+            linear_model,
+            psms[!, :rt],
+            psms[!, :irt_predicted],
+            Float32(linear_mad)
+        )
+    end
 
     # Single unified spline fitting path with conditional RANSAC
     try
         # Determine if we should use RANSAC based on PSM count
         use_ransac = n_psms < ransac_threshold
 
-        @debug_l2 if use_ransac
+        @user_info if use_ransac
             "Limited data ($n_psms PSMs): Using RANSAC + penalty (λ=$lambda_penalty)"
         else
             "Abundant data ($n_psms PSMs): Using standard fitting (λ=$lambda_penalty)"
@@ -327,69 +369,60 @@ function fit_irt_model(
 
         # Remove outliers
         irt_mad = mad(residuals, normalize=false)::Float32
-        valid_mask = abs.(residuals) .< (irt_mad * outlier_threshold)
-        valid_psms = psms[valid_mask, :]
 
-        # Check if enough PSMs remain
-        if nrow(valid_psms) < min_psms
-            @debug_l2 "Too few PSMs after outlier removal ($(nrow(valid_psms))), using identity model"
-            return (IdentityModel(), Float32[], Float32[], 0.0f0)
-        end
+        outlier_limit = outlier_threshold * irt_mad
+        inlier_mask = abs.(residuals) .<= outlier_limit
+        valid_psms = psms[inlier_mask, :]
 
-        # Refit with filtered PSMs (same method as initial fit)
-        n_knots_final = min(n_knots, max(3, Int(floor(nrow(valid_psms) / 100))))
-
-        final_map = if use_ransac
+        rt_to_irt_map = if use_ransac
+            # Use RANSAC for robustness with limited data
             fit_spline_with_ransac(
                 valid_psms[!, :irt_predicted],
                 valid_psms[!, :rt],
                 spline_degree,
-                n_knots_final,
+                n_knots,
                 lambda_penalty,
-                2,
+                2,  # 2nd order penalty
                 ransac_iterations=50,
                 ransac_sample_size=30,
                 ransac_threshold_factor=Float32(2.0)
             )
         else
+            # Standard P-spline fitting for abundant data
             UniformSplinePenalized(
                 valid_psms[!, :irt_predicted],
                 valid_psms[!, :rt],
                 spline_degree,
-                n_knots_final,
+                n_knots,
                 lambda_penalty,
-                2
+                2  # 2nd order penalty
             )
         end
 
         # Apply monotonic enforcement to prevent backwards slopes at edges
-        @debug_l2 "Applying monotonic enforcement with bidirectional cumulative max filter"
+        @user_info "Applying monotonic enforcement with bidirectional cumulative max filter"
+        @user_info "DEBUG: Before calling make_spline_monotonic:"
+        @user_info "  valid_psms rows: $(nrow(valid_psms))"
+        @user_info "  valid_psms[!, :rt] length: $(length(valid_psms[!, :rt]))"
+        @user_info "  valid_psms[!, :irt_predicted] length: $(length(valid_psms[!, :irt_predicted]))"
+        @user_info "  n_knots: $n_knots"
         final_map_monotonic = make_spline_monotonic(
-            final_map,
+            rt_to_irt_map,
             valid_psms[!, :rt],
             valid_psms[!, :irt_predicted],
-            n_sample_points = size(valid_psms, 1),
-            n_knots = n_knots_final
+            n_knots = n_knots
         )
-
-        # Validate final monotonicity
-        rt_test = LinRange(minimum(valid_psms[!, :rt]), maximum(valid_psms[!, :rt]), 1000)
-        irt_test = [final_map_monotonic(r) for r in rt_test]
-        final_violations = sum(diff(irt_test) .< 0)
-        if final_violations > 0
-            @user_warn "Monotonic spline still has $final_violations violations after enforcement - may need higher sample density"
-        else
-            @debug_l2 "Monotonic enforcement successful - no violations detected"
-        end
-
         final_model = SplineRtConversionModel(final_map_monotonic)
-
-        return (final_model, valid_psms[!, :rt], valid_psms[!, :irt_predicted], irt_mad)
+        return (final_model, psms[!, :rt], psms[!, :irt_predicted], irt_mad)
 
     catch e
-        # Only fallback: use linear model on error
-        @user_warn "RT spline fitting failed ($e), falling back to linear model"
-        throw(e)
+        # Unexpected failure during spline fitting - fall back to linear model
+        @user_warn "RT spline fitting failed unexpectedly ($e), falling back to linear model \n"
+        @user_warn "Full stack trace:"
+        for (exc, bt) in Base.catch_stack()
+            showerror(stderr, exc, bt)
+            println(stderr)
+        end
         linear_model, linear_std, _ = fit_linear_irt_model(psms)
 
         # Calculate MAD for linear model
