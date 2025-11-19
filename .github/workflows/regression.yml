@@ -1,0 +1,37 @@
+name: Regression Tests (self-hosted)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  regression:
+    name: Julia ${{ matrix.version }} regression sweep
+    runs-on: [self-hosted, pioneer-regression]
+    strategy:
+      matrix:
+        version: ['1.11']
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+          arch: x64
+
+      - name: Instantiate project
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build()'
+
+      - name: Run SearchDIA for all parameter files
+        run: |
+          julia --project=. -e '
+            using Pioneer
+            param_dir = "C:/pioneer-runner/params"
+            for path in readdir(param_dir; join=true)
+              endswith(path, ".json") || continue
+              @info "Running SearchDIA" path
+              SearchDIA(path)
+            end
+          '
