@@ -1,6 +1,7 @@
-name: Regression Tests (self-hosted)
+name: Regression Tests
 
 on:
+  push:
   workflow_dispatch:
 
 jobs:
