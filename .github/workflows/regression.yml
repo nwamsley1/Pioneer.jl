@@ -29,7 +29,7 @@ jobs:
         run: |
           julia --project=. -e '
             using Pioneer
-            param_dir = "C:\\pioneer-runner\\params"
+            param_dir = raw"C:\pioneer-runner\params"
             for path in readdir(param_dir; join=true)
               endswith(path, ".json") || continue
               @info "Running SearchDIA" path
