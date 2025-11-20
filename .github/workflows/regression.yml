@@ -27,4 +27,3 @@ jobs:
 
       - name: Run SearchDIA for all parameter files
         run: julia --project=. test/run_regressions.jl
-          '
