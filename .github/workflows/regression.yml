@@ -26,5 +26,5 @@ jobs:
         run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build()'
 
       - name: Run SearchDIA for all parameter files
-        run: julia --project=. ci/run_regressions.jl
+        run: julia --project=. test/run_regressions.jl
           '
