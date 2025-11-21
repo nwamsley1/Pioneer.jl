@@ -832,7 +832,7 @@ function add_features!(psms::DataFrame,
                                     masses::AbstractArray,
                                     ms_file_idx::Integer,
                                     rt_to_irt_interp::RtConversionModel,
-                                    prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}
+                                    prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_refined_irt::Float32, mean_refined_irt::Union{Missing, Float32}, var_refined_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}
                                     )
 
     precursor_sequence = getSequence(getPrecursors(getSpecLib(search_context)))#[:sequence],
@@ -904,7 +904,7 @@ function add_features!(psms::DataFrame,
                 irt_obs[i] = rt_to_irt_interp(rt[i])
                 irt_pred[i] = getPredIrt(search_context, prec_idx)#prec_irt[prec_idx]
                 #irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[prec_idx]))
-                irt_diff[i] = abs(irt_obs[i] - prec_id_to_irt[prec_idx].best_irt)
+                irt_diff[i] = abs(irt_obs[i] - prec_id_to_irt[prec_idx].best_refined_irt)
                 if !ms1_missing[i]
                     ms1_irt_diff[i] = abs(rt_to_irt_interp(ms1_rt[i]) - getPredIrt(search_context, prec_idx))
                 else

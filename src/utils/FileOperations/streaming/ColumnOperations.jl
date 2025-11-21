@@ -134,43 +134,48 @@ function add_column_to_file!(ref::FileReference,
     # Create temporary output file
     temp_path = file_path(ref) * ".tmp"
     
-    # For small files or if partitioner has issues, process entire file at once
-    tbl = Arrow.Table(file_path(ref))
-    
+    # Load entire file and process at once
+    # TODO: Batching logic commented out due to Arrow.append requiring stream format
+    # If memory becomes an issue, we could implement proper stream format handling
+    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    df[!, col_name] = compute_fn(df)
+    writeArrow(temp_path, df)
+
+    #= BATCHING LOGIC (commented out for future use):
+    n_rows = nrow(df)
     # Check if file is small enough to process at once
-    if row_count(ref) <= batch_size
+    if n_rows <= batch_size
         # Process entire file at once
-        df_batch = DataFrame(Tables.columntable(tbl))
-        df_batch[!, col_name] = compute_fn(df_batch)
-        writeArrow(temp_path, df_batch)
+        df[!, col_name] = compute_fn(df)
+        writeArrow(temp_path, df)
     else
-        # Stream through file for larger files
-        partitions = Tables.partitioner(tbl, batch_size)
-        
+        # Manually batch the DataFrame for larger files
         first_write = true
-        for partition in partitions
-            df_batch = DataFrame(Tables.columntable(partition))
+        for start_idx in 1:batch_size:n_rows
+            end_idx = min(start_idx + batch_size - 1, n_rows)
+            df_batch = df[start_idx:end_idx, :]
             df_batch[!, col_name] = compute_fn(df_batch)
-            
+
             if first_write
                 writeArrow(temp_path, df_batch)
                 first_write = false
             else
-                Arrow.append(temp_path, df_batch)
+                Arrow.append(temp_path, df_batch)  # Requires stream format
             end
         end
     end
-    
+    =#
+
     # Replace original file using Windows-safe method
-    safe_replace_file(temp_path, file_path(ref), tbl)
-    
+    safe_replace_file(temp_path, file_path(ref), df)
+
     # Update reference metadata
     # We need to re-read the file to update schema
     new_ref = create_reference(file_path(ref), typeof(ref))
     ref.schema = schema(new_ref)
     ref.row_count = row_count(new_ref)
     ref.sorted_by = ()  # Adding column may invalidate sort
-    
+
     return ref
 end
 
@@ -193,35 +198,40 @@ function update_column_in_file!(ref::FileReference,
     # Create temporary output file
     temp_path = file_path(ref) * ".tmp"
     
-    # For small files or if partitioner has issues, process entire file at once
-    tbl = Arrow.Table(file_path(ref))
-    
+    # Load entire file and process at once
+    # TODO: Batching logic commented out due to Arrow.append requiring stream format
+    # If memory becomes an issue, we could implement proper stream format handling
+    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    df[!, col_name] = update_fn(df[!, col_name])
+    writeArrow(temp_path, df)
+
+    #= BATCHING LOGIC (commented out for future use):
+    n_rows = nrow(df)
     # Check if file is small enough to process at once
-    if row_count(ref) <= batch_size
+    if n_rows <= batch_size
         # Process entire file at once
-        df_batch = DataFrame(Tables.columntable(tbl))
-        df_batch[!, col_name] = update_fn(df_batch[!, col_name])
-        writeArrow(temp_path, df_batch)
+        df[!, col_name] = update_fn(df[!, col_name])
+        writeArrow(temp_path, df)
     else
-        # Stream through file for larger files
-        partitions = Tables.partitioner(tbl, batch_size)
-        
+        # Manually batch the DataFrame for larger files
         first_write = true
-        for partition in partitions
-            df_batch = DataFrame(Tables.columntable(partition))
+        for start_idx in 1:batch_size:n_rows
+            end_idx = min(start_idx + batch_size - 1, n_rows)
+            df_batch = df[start_idx:end_idx, :]
             df_batch[!, col_name] = update_fn(df_batch[!, col_name])
-            
+
             if first_write
                 writeArrow(temp_path, df_batch)
                 first_write = false
             else
-                Arrow.append(temp_path, df_batch)
+                Arrow.append(temp_path, df_batch)  # Requires stream format
             end
         end
     end
-    
+    =#
+
     # Replace original file using Windows-safe method
-    safe_replace_file(temp_path, file_path(ref), tbl)
+    safe_replace_file(temp_path, file_path(ref), df)
     
     # Sort order may be affected if we updated a sort key
     if col_name in sorted_by(ref)

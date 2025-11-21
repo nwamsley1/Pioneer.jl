@@ -590,6 +590,7 @@ function process_search_results!(
             setSecondPassPsms!(getMSData(search_context), ms_file_idx, "")
         end
     catch e
+        throw(e)
         # Mark file as failed and handle gracefully
         file_name = try
             getMassSpecData(search_context).file_id_to_name[ms_file_idx]
@@ -601,10 +602,33 @@ function process_search_results!(
         markFileFailed!(search_context, ms_file_idx, reason)
         # Also mark in ArrowTableReference for downstream methods
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
-        @user_warn "Second pass search failed for MS data file: $file_name. Error type: $(typeof(e)). Creating empty results to continue pipeline."
+
+        # Log detailed error information with immediate flush
+        @user_error "Second pass search failed for MS data file: $file_name"
+        flush(stdout); flush(stderr)
+        @user_error "Actual error: $(typeof(e)): $e"
+        flush(stdout); flush(stderr)
+        bt = catch_backtrace()
+        @user_error sprint(showerror, e, bt)
+        flush(stdout); flush(stderr)
+
+        # Print to console directly as backup
+        println(stderr, "\n=== DETAILED ERROR ===")
+        println(stderr, "File: $file_name")
+        println(stderr, "Error type: $(typeof(e))")
+        println(stderr, "Error message: $e")
+        println(stderr, "\nStacktrace:")
+        showerror(stderr, e, bt)
+        println(stderr, "\n=== END ERROR ===\n")
+        flush(stderr)
+
+        @user_warn "Creating empty results to continue pipeline."
 
         # Set empty path for failed file
         setSecondPassPsms!(getMSData(search_context), ms_file_idx, "")
+
+        # TEMPORARY: Rethrow to expose error during debugging
+        rethrow(e)
 
         # Don't rethrow - continue with next file
     end

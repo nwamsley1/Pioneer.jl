@@ -221,6 +221,9 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     # Results and paths
     irt_rt_map::Dict{Int64, RtConversionModel}
     rt_irt_map::Dict{Int64, RtConversionModel}
+    rt_to_refined_irt_map::Dict{Int64, RtConversionModel}
+    refined_irt_to_rt_map::Dict{Int64, RtConversionModel}
+    irt_refinement_models::Dict{Int64, Union{IrtRefinementModel, Nothing}}
     precursor_dict::Base.Ref{Dictionary}
     rt_index_paths::Base.Ref{Vector{String}}
     irt_errors::Dict{Int64, Float32}
@@ -264,8 +267,11 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, MassErrorModel}(),
             Dict{Int64, MassErrorModel}(),
             Dict{Int64, NceModel}(), Ref(100000.0f0), 10.0f0,
-            Dict{Int64, RtConversionModel}(), 
-            Dict{Int64, RtConversionModel}(), 
+            Dict{Int64, RtConversionModel}(),
+            Dict{Int64, RtConversionModel}(),
+            Dict{Int64, RtConversionModel}(),
+            Dict{Int64, RtConversionModel}(),
+            Dict{Int64, Union{IrtRefinementModel, Nothing}}(),
             Ref{Dictionary}(), 
             Ref{Vector{String}}(),
             Dict{Int64, Float32}(),
@@ -522,7 +528,58 @@ end
 function setRtIrtMap!(s::SearchContext, rcm::RtConversionModel, index::I) where {I<:Integer}
     s.rt_irt_map[index] = rcm
 end
-function setPrecursorDict!(s::SearchContext, dict::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}})
+
+"""
+    getRtToRefinedIrtMap(s::SearchContext)
+
+Get dictionary of RT → refined_iRT conversion models for all files.
+"""
+getRtToRefinedIrtMap(s::SearchContext) = s.rt_to_refined_irt_map
+
+"""
+    getRefinedIrtToRtMap(s::SearchContext)
+
+Get dictionary of refined_iRT → RT conversion models for all files.
+"""
+getRefinedIrtToRtMap(s::SearchContext) = s.refined_irt_to_rt_map
+
+"""
+    setRtToRefinedIrtMap!(s::SearchContext, rcm::RtConversionModel, index::Integer)
+
+Store RT → refined_iRT conversion model for MS file index.
+"""
+function setRtToRefinedIrtMap!(s::SearchContext, rcm::RtConversionModel, index::I) where {I<:Integer}
+    s.rt_to_refined_irt_map[index] = rcm
+end
+
+"""
+    setRefinedIrtToRtMap!(s::SearchContext, rcm::RtConversionModel, index::Integer)
+
+Store refined_iRT → RT conversion model for MS file index.
+"""
+function setRefinedIrtToRtMap!(s::SearchContext, rcm::RtConversionModel, index::I) where {I<:Integer}
+    s.refined_irt_to_rt_map[index] = rcm
+end
+
+"""
+    getIrtRefinementModel(s::SearchContext, index::Integer)
+
+Get iRT refinement model for MS file index. Returns nothing if not found.
+"""
+function getIrtRefinementModel(s::SearchContext, index::I) where {I<:Integer}
+    return get(s.irt_refinement_models, index, nothing)
+end
+
+"""
+    setIrtRefinementModel!(s::SearchContext, model::Union{IrtRefinementModel, Nothing}, index::Integer)
+
+Store iRT refinement model for MS file index.
+"""
+function setIrtRefinementModel!(s::SearchContext, model::Union{IrtRefinementModel, Nothing}, index::I) where {I<:Integer}
+    s.irt_refinement_models[index] = model
+end
+
+function setPrecursorDict!(s::SearchContext, dict::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_refined_irt::Float32, mean_refined_irt::Union{Missing, Float32}, var_refined_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}})
     s.precursor_dict[] = dict
 end
 setRtIndexPaths!(s::SearchContext, paths::Vector{String}) = (s.rt_index_paths[] = paths)

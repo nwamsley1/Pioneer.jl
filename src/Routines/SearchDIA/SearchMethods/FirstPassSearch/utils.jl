@@ -348,46 +348,53 @@ function map_retention_times!(
     params::FirstPassSearchParameters
 )
 
-    # Only process valid (non-failed) files
     valid_files = get_valid_file_indices(search_context)
     all_psms_paths = getFirstPassPsms(getMSData(search_context))
 
+    # Get sequences from spectral library (needed for refinement)
+    precursors = getPrecursors(getSpecLib(search_context))
+    sequences = getSequence(precursors)
+
     for ms_file_idx in valid_files
-        # Skip files that have been marked as failed
         if is_file_failed(search_context, ms_file_idx)
             continue
         end
+
         psms_path = all_psms_paths[ms_file_idx]
         psms = Arrow.Table(psms_path)
-        best_hits = psms[:prob].>params.min_prob_for_irt_mapping#Map rts using only the best psms
-        try#if sum(best_hits) > 100
+        best_hits = psms[:prob].>params.min_prob_for_irt_mapping
+
+        @user_info "File $ms_file_idx: Fitting RT alignment models..."
+
+        try
             if params.use_robust_fitting
-                # Use robust fitting with RANSAC/penalty
+                # === STEP 1: Fit RT → library_iRT spline ===
+                @user_info "  Step 1: Fitting RT → library_iRT spline..."
                 best_psms_df = DataFrame(
                     rt = psms[:rt][best_hits],
                     irt_predicted = psms[:irt_predicted][best_hits]
                 )
 
-                # Fit RT to iRT model using shared robust fitting
-                rt_model, valid_rt, valid_irt, irt_mad = Pioneer.fit_irt_model(
+                rt_to_library_irt, valid_rt, valid_library_irt, irt_mad = Pioneer.fit_irt_model(
                     best_psms_df;
-                    lambda_penalty = Float32(0.1),  # Default penalty
-                    ransac_threshold = 1000,        # Default RANSAC threshold
-                    min_psms = 10,                  # Default minimum PSMs
-                    spline_degree = 3,              # Default spline degree
-                    max_knots = 7,                  # Default max knots
-                    outlier_threshold = Float32(5.0)  # Default outlier threshold
+                    lambda_penalty = Float32(0.1),
+                    ransac_threshold = 1000,
+                    min_psms = 10,
+                    spline_degree = 3,
+                    max_knots = 7,
+                    outlier_threshold = Float32(5.0)
                 )
 
-                # Store RT to iRT model
-                setRtIrtMap!(search_context, rt_model, ms_file_idx)
+                # Store in rt_irt_map (RT → library_irt)
+                setRtIrtMap!(search_context, rt_to_library_irt, ms_file_idx)
 
-                # Fit inverse model (iRT to RT) - swap input/output
+                # === STEP 2: Fit library_iRT → RT inverse spline ===
+                @user_info "  Step 2: Fitting library_iRT → RT inverse spline..."
                 irt_to_rt_df = DataFrame(
-                    rt = valid_irt,           # Use iRT as input
-                    irt_predicted = valid_rt  # Use RT as output
+                    rt = valid_library_irt,
+                    irt_predicted = valid_rt
                 )
-                irt_model, _, _, _ = Pioneer.fit_irt_model(
+                library_irt_to_rt, _, _, _ = Pioneer.fit_irt_model(
                     irt_to_rt_df;
                     lambda_penalty = Float32(0.1),
                     ransac_threshold = 1000,
@@ -396,64 +403,141 @@ function map_retention_times!(
                     max_knots = 7,
                     outlier_threshold = Float32(5.0)
                 )
-                setIrtRtMap!(search_context, irt_model, ms_file_idx)
+                # Store in irt_rt_map (library_irt → RT)
+                setIrtRtMap!(search_context, library_irt_to_rt, ms_file_idx)
 
-                # Optionally generate plots
+                # === STEP 3: Train iRT refinement model ===
+                @user_info "  Step 3: Training iRT refinement model..."
+
+                # Calculate observed_irt for best PSMs using library spline
+                observed_irt = [rt_to_library_irt(rt) for rt in Float32.(psms[:rt][best_hits])]
+
+                # Get sequences for best PSMs
+                best_sequences = [sequences[idx] for idx in psms[:precursor_idx][best_hits]]
+
+                # Train refinement model
+                refinement_model = fit_irt_refinement_model(
+                    best_sequences,
+                    Float32.(psms[:irt_predicted][best_hits]),
+                    observed_irt,
+                    ms_file_idx=ms_file_idx,
+                    min_psms=20,
+                    train_fraction=0.67
+                )
+
+                # Store refinement model
+                setIrtRefinementModel!(search_context, refinement_model, ms_file_idx)
+
+                # === STEP 4: Fit RT → refined_iRT spline (if refinement succeeds) ===
+                if !isnothing(refinement_model) && refinement_model.use_refinement
+                    @user_info "  Step 4: Fitting RT → refined_iRT spline..."
+
+                    # Apply refinement model to get refined_irt for best PSMs
+                    refined_irt_values = [refinement_model(seq, lib_irt)
+                                         for (seq, lib_irt) in zip(best_sequences,
+                                                                    Float32.(psms[:irt_predicted][best_hits]))]
+
+                    # Fit RT → refined_iRT spline
+                    refined_psms_df = DataFrame(
+                        rt = Float32.(psms[:rt][best_hits]),
+                        irt_predicted = refined_irt_values
+                    )
+
+                    rt_to_refined_irt, valid_rt_refined, valid_refined_irt, _ = Pioneer.fit_irt_model(
+                        refined_psms_df;
+                        lambda_penalty = Float32(0.1),
+                        ransac_threshold = 1000,
+                        min_psms = 10,
+                        spline_degree = 3,
+                        max_knots = 7,
+                        outlier_threshold = Float32(5.0)
+                    )
+
+                    # Store in rt_to_refined_irt_map (NEW FIELD - DO NOT overwrite rt_irt_map!)
+                    setRtToRefinedIrtMap!(search_context, rt_to_refined_irt, ms_file_idx)
+
+                    # === STEP 5: Fit refined_iRT → RT inverse spline ===
+                    @user_info "  Step 5: Fitting refined_iRT → RT inverse spline..."
+                    refined_irt_to_rt_df = DataFrame(
+                        rt = valid_refined_irt,
+                        irt_predicted = valid_rt_refined
+                    )
+                    refined_irt_to_rt, _, _, _ = Pioneer.fit_irt_model(
+                        refined_irt_to_rt_df;
+                        lambda_penalty = Float32(0.1),
+                        ransac_threshold = 1000,
+                        min_psms = 10,
+                        spline_degree = 3,
+                        max_knots = 7,
+                        outlier_threshold = Float32(5.0)
+                    )
+                    # Store in refined_irt_to_rt_map (NEW FIELD)
+                    setRefinedIrtToRtMap!(search_context, refined_irt_to_rt, ms_file_idx)
+                else
+                    @user_info "  No refinement applied, RT → refined_iRT splines not created"
+                    # Store identity models for refined splines (fallback)
+                    setRtToRefinedIrtMap!(search_context, IdentityModel(), ms_file_idx)
+                    setRefinedIrtToRtMap!(search_context, IdentityModel(), ms_file_idx)
+                end
+
+                # === STEP 6: Add :refined_irt column to PSMs file ===
+                @user_info "  Step 6: Adding :refined_irt column to PSMs table..."
+                add_refined_irt_column!(psms_path, refinement_model, search_context)
+
+                # Generate plots if requested
                 if params.plot_rt_alignment
                     plot_rt_alignment_firstpass(
-                        valid_rt,
-                        valid_irt,
-                        rt_model,
-                        ms_file_idx,
-                        getDataOutDir(search_context)
+                        valid_rt, valid_library_irt, rt_to_library_irt, ms_file_idx, getDataOutDir(search_context)
                     )
                 end
+
             else
-                # Use simple UniformSpline (legacy behavior)
+                # Legacy path (no robust fitting)
                 best_rts = psms[:rt][best_hits]
                 best_irts = psms[:irt_predicted][best_hits]
 
-                irt_to_rt_spline = UniformSpline(
-                    best_rts,
-                    best_irts,
-                    3,
-                    5
-                )
-                rt_to_irt_spline = UniformSpline(
-                    best_irts,
-                    best_rts,
-                    3,
-                    5
-                )
+                irt_to_rt_spline = UniformSpline(best_rts, best_irts, 3, 5)
+                rt_to_irt_spline = UniformSpline(best_irts, best_rts, 3, 5)
 
-                #Build rt=>irt and irt=> rt mappings for the file and add to the dictionaries
                 setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
                 setIrtRtMap!(search_context, SplineRtConversionModel(irt_to_rt_spline), ms_file_idx)
+                setRtToRefinedIrtMap!(search_context, IdentityModel(), ms_file_idx)
+                setRefinedIrtToRtMap!(search_context, IdentityModel(), ms_file_idx)
+                setIrtRefinementModel!(search_context, nothing, ms_file_idx)
+
+                # Add refined_irt column (copy of irt_predicted since no refinement)
+                add_refined_irt_column!(psms_path, nothing, search_context)
             end
+
         catch e
-            # Get file name for debugging
             file_name = try
                 getFileIdToName(getMSData(search_context), ms_file_idx)
             catch
                 "file_$ms_file_idx"
             end
-            
-            # Safely compute PSM count to avoid excessive output
+
             n_good_psms = try
                 sum(best_hits)
             catch
-                0  # Default to 0 if calculation fails
+                0
             end
-            
-            @user_warn "RT mapping failed for MS data file: $file_name ($n_good_psms good PSMs found, need >100 for spline). Using identity RT model."
-            
-            # Use identity mapping as fallback - no RT to iRT conversion
+
+            @user_error "RT mapping failed for MS data file: $file_name ($n_good_psms good PSMs found, need >100 for spline)"
+            @user_error "Actual error: $(typeof(e)): $e"
+            bt = catch_backtrace()
+            @user_error sprint(showerror, e, bt)
+            @user_warn "Using identity RT model as fallback"
+
+            # Set identity models for all spline types
             identity_model = IdentityModel()
             setRtIrtMap!(search_context, identity_model, ms_file_idx)
             setIrtRtMap!(search_context, identity_model, ms_file_idx)
+            setRtToRefinedIrtMap!(search_context, identity_model, ms_file_idx)
+            setRefinedIrtToRtMap!(search_context, identity_model, ms_file_idx)
+            setIrtRefinementModel!(search_context, nothing, ms_file_idx)
         end
     end
-    
+
     # Set identity models for failed files
     ms_data = getMassSpecData(search_context)
     for failed_idx in 1:length(ms_data.file_paths)
@@ -466,9 +550,12 @@ function map_retention_times!(
             @user_warn "Setting identity RT models for failed file: $file_name"
             setRtIrtMap!(search_context, IdentityModel(), failed_idx)
             setIrtRtMap!(search_context, IdentityModel(), failed_idx)
+            setRtToRefinedIrtMap!(search_context, IdentityModel(), failed_idx)
+            setRefinedIrtToRtMap!(search_context, IdentityModel(), failed_idx)
+            setIrtRefinementModel!(search_context, nothing, failed_idx)
         end
     end
-    
+
     return nothing
 end
 
@@ -527,9 +614,9 @@ function plot_rt_alignment_firstpass(
 end
 
 
-PrecToIrtType = Dictionary{UInt32, 
+PrecToIrtType = Dictionary{UInt32,
     NamedTuple{
-        (:best_prob, :best_ms_file_idx, :best_scan_idx, :best_irt, :mean_irt, :var_irt, :n, :mz), 
+        (:best_prob, :best_ms_file_idx, :best_scan_idx, :best_refined_irt, :mean_refined_irt, :var_refined_irt, :n, :mz),
         Tuple{Float32, UInt32, UInt32, Float32, Union{Missing, Float32}, Union{Missing, Float32}, Union{Missing, UInt16}, Float32}
     }
 }
@@ -543,12 +630,12 @@ Creates retention time indices for improved search efficiency.
 # Arguments
 - `search_context`: Search context containing MS data
 - `results`: FirstPassSearch results
-- `precursor_dict`: Dictionary mapping precursors to iRT data
+- `precursor_dict`: Dictionary mapping precursors to refined iRT data
 - `params`: Search parameters
 
 # Process
 1. Calculates iRT errors using peak width and variation
-2. Creates precursor to iRT mapping
+2. Creates precursor to refined iRT mapping
 3. Generates RT indices for each MS file
 4. Stores indices in search context
 """
@@ -566,8 +653,8 @@ function create_rt_indices!(
 
     setIrtErrors!(search_context, irt_errs)
 
-    # Create precursor to iRT mapping
-    prec_to_irt = map(x -> (irt=x[:best_irt], mz=x[:mz]), 
+    # Create precursor to refined iRT mapping
+    prec_to_irt = map(x -> (irt=x[:best_refined_irt], mz=x[:mz]),
                       precursor_dict)
 
     # Set up indices folder
@@ -576,7 +663,7 @@ function create_rt_indices!(
 
     # Get PSM paths and RT models
     all_psm_paths = getFirstPassPsms(getMSData(search_context))
-    all_rt_models = getRtIrtMap(search_context)
+    all_rt_models = getRtToRefinedIrtMap(search_context)
 
     # Filter to get valid file indices and their paths
     valid_indexed_data = []
@@ -618,17 +705,17 @@ end
 """
     get_irt_errs(fwhms::Dictionary, prec_to_irt::Dictionary, params::FirstPassSearchParameters)
 
-Calculates iRT error tolerances based on peak widths and cross-run variation.
+Calculates refined iRT error tolerances based on peak widths and cross-run variation.
 
 # Arguments
 - `fwhms`: Dictionary of FWHM statistics per file
-- `prec_to_irt`: Dictionary of precursor iRT data
+- `prec_to_irt`: Dictionary of precursor refined iRT data
 - `params`: Parameters including FWHM and iRT standard deviation multipliers
 
 # Returns
-Dictionary mapping file indices to iRT tolerances, combining:
+Dictionary mapping file indices to refined iRT tolerances, combining:
 - Peak width variation (FWHM + n*MAD)
-- Cross-run iRT variation
+- Cross-run refined iRT variation
 """
 function get_irt_errs(
     fwhms::Dictionary{Int64, 
@@ -636,14 +723,14 @@ function get_irt_errs(
                             median_fwhm::Float32,
                             mad_fwhm::Float32
                         }},
-    prec_to_irt::Dictionary{UInt32, 
-    @NamedTuple{best_prob::Float32, 
-                best_ms_file_idx::UInt32, 
-                best_scan_idx::UInt32, 
-                best_irt::Float32, 
-                mean_irt::Union{Missing, Float32}, 
-                var_irt::Union{Missing, Float32}, 
-                n::Union{Missing, UInt16}, 
+    prec_to_irt::Dictionary{UInt32,
+    @NamedTuple{best_prob::Float32,
+                best_ms_file_idx::UInt32,
+                best_scan_idx::UInt32,
+                best_refined_irt::Float32,
+                mean_refined_irt::Union{Missing, Float32},
+                var_refined_irt::Union{Missing, Float32},
+                n::Union{Missing, UInt16},
                 mz::Float32}}
     ,
     params::FirstPassSearchParameters
@@ -656,12 +743,12 @@ function get_irt_errs(
     #Get variance in irt of apex accross runs. Only consider precursor identified below q-value threshold
     #in more than two runs .
     irt_std = nothing
-    variance_  = collect(skipmissing(map(x-> (x[:n] > 2) ? sqrt(x[:var_irt]/(x[:n] - 1)) : missing, prec_to_irt)))
+    variance_  = collect(skipmissing(map(x-> (x[:n] > 2) ? sqrt(x[:var_refined_irt]/(x[:n] - 1)) : missing, prec_to_irt)))
     if !iszero(length(variance_))
         irt_std = median(variance_)
     else
-        #This could happen if only two files are being searched 
-        variance_  = collect(skipmissing(map(x-> (x[:n] == 2) ? sqrt(x[:var_irt]) : missing, prec_to_irt)))
+        #This could happen if only two files are being searched
+        variance_  = collect(skipmissing(map(x-> (x[:n] == 2) ? sqrt(x[:var_refined_irt]) : missing, prec_to_irt)))
         if iszero(length(variance_)) #only searching one file so 
             irt_std = 0.0f0
         else

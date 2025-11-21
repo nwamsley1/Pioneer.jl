@@ -68,31 +68,31 @@ buildRtIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRtInde
 
 
 function makeRTIndices(temp_folder::String,
-                       psms_paths::Vector{String}, 
+                       psms_paths::Vector{String},
                        prec_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}},
-                       rt_to_irt_splines::Any;
+                       rt_to_refined_irt_splines::Any;
                        min_prob::AbstractFloat = 0.5)
 
-    #Maps filepath to a retentionTimeIndex (see buildrtIndex.jl)
+    # Maps filepath to a retentionTimeIndex (see buildrtIndex.jl)
     rt_index_paths = Vector{String}(undef, length(psms_paths))
-    #Fill retention time index for each file.
+    # Fill retention time index for each file
     for (key, psms_path) in enumerate(psms_paths)
         psms = Arrow.Table(psms_path)
-        rt_to_irt = rt_to_irt_splines[key]
-        #Impute empirical irt value for psms with probability lower than the threshold
+        rt_to_refined_irt = rt_to_refined_irt_splines[key]
+        # Impute empirical refined iRT value for psms with probability lower than the threshold
         irts = zeros(Float32, length(prec_to_irt))
         mzs = zeros(Float32, length(prec_to_irt))
         prec_ids = zeros(UInt32, length(prec_to_irt))
-        #map observec precursors to irt and probability score
+        # Map observed precursors to refined iRT and probability score
         prec_set = Dict(zip(
             psms[:precursor_idx],
-            map(x->(irt=first(x),prob=last(x)), zip(rt_to_irt.(psms[:rt]), psms[:prob]))
+            map(x->(irt=first(x),prob=last(x)), zip(rt_to_refined_irt.(psms[:rt]), psms[:prob]))
         ))
 
         Threads.@threads for (i, (prec_id, irt_mz)) in collect(enumerate(pairs(prec_to_irt)))
             prec_ids[i] = prec_id
             irt, mz = irt_mz::@NamedTuple{irt::Float32, mz::Float32}
-            #Don't impute irt, use empirical
+            # Don't impute refined iRT, use empirical
             if haskey(prec_set, prec_id)
                 _irt_, prob = prec_set[prec_id]
                 if (prob >= min_prob)
@@ -100,10 +100,10 @@ function makeRTIndices(temp_folder::String,
                     continue
                 end
             end
-            #Impute irt from the best observed psm for the precursor accross the experiment 
+            # Impute refined iRT from the best observed psm for the precursor across the experiment
             irts[i], mzs[i] = irt,mz
         end
-        #Build rt index 
+        # Build RT index using refined iRT values
         rt_df = DataFrame(Dict(:irt => irts,
                                 :prec_mz => mzs,
                                 :precursor_idx => prec_ids))
