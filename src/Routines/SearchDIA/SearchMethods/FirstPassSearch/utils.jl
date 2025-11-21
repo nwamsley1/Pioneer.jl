@@ -95,6 +95,7 @@ function add_main_search_columns!(psms::DataFrame,
                 Mox[i] = countMOX(coalesce(structural_mods[prec_idx], ""))::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
                 irt_pred[i] = Float32(prec_irt[prec_idx]);
                 rt[i] = Float32(scan_retention_time[scan_idx[i]]);
+                # Note: Using library iRT here since refinement happens after FirstPassSearch completes
                 irt[i] = rt_irt(rt[i])
                 TIC[i] = Float16(log2(tic[scan_idx[i]]));
                 charge[i] = UInt8(prec_charge[prec_idx]);

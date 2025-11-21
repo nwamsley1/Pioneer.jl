@@ -220,12 +220,14 @@ function process_scans_for_huber!(
         
         msn = getMsOrder(spectra, scan_idx)
         msn ∉ params.spec_order && continue
-        
-        # Calculate RT window
-        irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-        irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-        irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
-        
+
+
+        # Calculate RT window using refined iRT
+        refined_irt = getRtToRefinedIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+        irt_start_new = max(searchsortedfirst(rt_index.rt_bins, refined_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+        irt_stop_new = min(searchsortedlast(rt_index.rt_bins, refined_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+
+
         # Check for m/z change
         prec_mz_string_new = string(getCenterMz(spectra, scan_idx))
         prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
