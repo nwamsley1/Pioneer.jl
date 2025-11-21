@@ -48,8 +48,8 @@ const ADVANCED_FEATURE_SET = [
     #:prec_mz,
     :sequence_length,
     :charge,
-    :irt_pred_qbin,    # Quantile-binned version of :irt_pred
-    #:irt_pred,
+    :refined_irt_pred_qbin,    # Quantile-binned version of :refined_irt_pred
+    #:refined_irt_pred,
     :irt_error,
     :irt_diff,
     :max_y_ions,
@@ -350,8 +350,8 @@ This transformation discretizes continuous features into quantile bins, which ca
 
 # Example
 ```julia
-add_quantile_binned_features!(psms, [:prec_mz, :irt_pred, :weight, :tic], 100)
-# Creates: :prec_mz_qbin, :irt_pred_qbin, :weight_qbin, :tic_qbin
+add_quantile_binned_features!(psms, [:prec_mz, :refined_irt_pred, :weight, :tic], 100)
+# Creates: :prec_mz_qbin, :refined_irt_pred_qbin, :weight_qbin, :tic_qbin
 ```
 
 # Notes

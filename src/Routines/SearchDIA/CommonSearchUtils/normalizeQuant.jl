@@ -25,12 +25,12 @@ function getQuantSplines(psms_paths::Vector{String},
         psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
         N_sample = min(N, size(psms, 1))
         #psms = psms[psms[!,:species].=="HUMAN",:]
-        sort!(psms, :irt_obs, alg = QuickSort)
-        if minimum(psms[!,:irt_obs])<min_rt
-            min_rt = minimum(psms[!,:irt_obs])
+        sort!(psms, :refined_irt_obs, alg = QuickSort)
+        if minimum(psms[!,:refined_irt_obs])<min_rt
+            min_rt = minimum(psms[!,:refined_irt_obs])
         end
-        if maximum(psms[!,:irt_obs])>max_rt
-            max_rt = maximum(psms[!,:irt_obs])
+        if maximum(psms[!,:refined_irt_obs])>max_rt
+            max_rt = maximum(psms[!,:refined_irt_obs])
         end
         nprecs = size(psms, 1)
         bin_size = nprecs÷N_sample
@@ -39,7 +39,7 @@ function getQuantSplines(psms_paths::Vector{String},
         for bin_idx in range(1, N_sample)
             bin_start = (bin_idx - 1)*bin_size + 1
             bin_stop = bin_idx*bin_size
-            median_rts[bin_idx] = median(@view(psms[bin_start:bin_stop,:irt_obs]));
+            median_rts[bin_idx] = median(@view(psms[bin_start:bin_stop,:refined_irt_obs]));
             median_quant[bin_idx] =log2(median(@view(psms[bin_start:bin_stop,quant_col_name])));
         end
         
@@ -95,7 +95,7 @@ function applyNormalization!(
         norm_quant_col = Symbol(string(quant_col)*"_normalized")
         correction_spline = corrections[fpath]
         for i in range(1, size(psms, 1))
-            hc = correction_spline(psms[i,:irt_obs])
+            hc = correction_spline(psms[i,:refined_irt_obs])
             psms[i,norm_quant_col] = 2^(log2(max(psms[i,quant_col], 0.0)) - hc)
         end
         writeArrow(fpath, psms)

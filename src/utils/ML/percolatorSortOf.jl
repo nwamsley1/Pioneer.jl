@@ -108,20 +108,20 @@ end
 
 
 function getIrtBins!(psms::AbstractDataFrame)
-    psms[!, :irt_bin_idx] = getIrtBins(psms.irt_pred)
+    psms[!, :irt_bin_idx] = getIrtBins(psms.refined_irt_pred)
     return psms
 end
 
 
 @inline function irt_residual(psms::AbstractDataFrame, idx::Integer)
-    return Float32(psms.irt_pred[idx] - psms.irt_obs[idx])
+    return Float32(psms.refined_irt_pred[idx] - psms.refined_irt_obs[idx])
 end
 
 
 function assign_random_target_decoy_pairs!(psms::DataFrame)
     last_pair_id = zero(UInt32)
     psms[!,:pair_id] = zeros(UInt32, nrow(psms))  # Initialize pair_id column
-    psms[!,:irt_bin_idx] = getIrtBins(psms.irt_pred)  # Ensure irt_bin_idx column exists
+    psms[!,:irt_bin_idx] = getIrtBins(psms.refined_irt_pred)  # Ensure irt_bin_idx column exists
 
     irt_bin_groups = groupby(psms, :irt_bin_idx)
     for (irt_bin_idx, sub_psms) in pairs(irt_bin_groups)
