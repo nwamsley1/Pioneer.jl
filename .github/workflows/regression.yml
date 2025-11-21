@@ -27,15 +27,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: x64
-
-      - name: Ensure gzip is available (Windows cache requirement)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          if (-not (Get-Command gzip -ErrorAction SilentlyContinue)) {
-            choco install -y gzip
-          }
-
+          
       - name: Cache Julia depot
         uses: actions/cache@v4
         with:
