@@ -1,7 +1,7 @@
 # Comprehensive Retention Time Handling Analysis
 ## refine_library_irt Branch vs develop Branch
 
-**Date**: 2025-01-21
+**Date**: 2025-01-21 (Analysis) | 2025-01-21 (Bug Fix)
 **Branch**: `refine_library_irt`
 **Analysis Goal**: Identify why iRT refinement (50% MAE reduction) is not producing more identifications
 
@@ -9,15 +9,17 @@
 
 ## Executive Summary
 
-### Critical Bug Found ❌
+### Critical Bug Fixed ✅
 
 **Location**: `src/Routines/SearchDIA/SearchMethods/FirstPassSearch/getBestPrecursorsAccrossRuns.jl` lines 108 & 111
 
-**Impact**: RT indices are built using **incorrect refined iRT values** (most recent PSM instead of best PSM), preventing identification improvements despite successful iRT refinement.
+**Status**: **FIXED** in commit `37fd89e0` (2025-01-21)
 
-**Severity**: HIGH - This bug exists in both `refine_library_irt` and `develop` branches, affecting all Pioneer searches.
+**Impact**: RT indices were being built using **incorrect refined iRT values** (most recent PSM instead of best PSM), preventing identification improvements despite successful iRT refinement.
 
-**Fix**: Two one-line changes (details in Section 1)
+**Severity**: HIGH - This bug existed in both `refine_library_irt` and `develop` branches, affecting all Pioneer searches.
+
+**Fix**: Two one-line changes implemented (details in Section 1.3)
 
 ---
 
@@ -34,9 +36,11 @@
 
 ## 1. Critical Bug: getBestPrecursorsAccrossRuns.jl
 
-### 1.1 Bug Description
+### 1.1 Bug Description ✅ FIXED
 
-The `readPSMs!()` function in `getBestPrecursorsAccrossRuns.jl` (lines 74-129) processes PSMs from multiple files to identify the best match for each precursor across all runs. The bug occurs when updating an existing precursor entry.
+**Status**: Fixed in commit `37fd89e0` on 2025-01-21
+
+The `readPSMs!()` function in `getBestPrecursorsAccrossRuns.jl` (lines 74-129) processes PSMs from multiple files to identify the best match for each precursor across all runs. The bug occurred when updating an existing precursor entry.
 
 **Correct behavior** (lines 97-102):
 ```julia
@@ -49,7 +53,7 @@ if (best_prob < prob)
 end
 ```
 
-**Incorrect behavior** (lines 107-115):
+**Previous incorrect behavior** (lines 107-115, BEFORE FIX):
 ```julia
 # Store updated values back to dictionary
 prec_to_best_prob[precursor_idx] = (
@@ -63,10 +67,10 @@ prec_to_best_prob[precursor_idx] = (
     mz = mz)                               # ✅ Correct
 ```
 
-**What should happen**:
-- Lines 97-102 update local variables `best_prob` and `best_refined_irt` when a better PSM is found
-- Lines 107-115 should store these **updated local variables** back to the dictionary
-- Instead, they store the **current loop iteration values** (`prob` and `refined_irt`)
+**What was wrong**:
+- Lines 97-102 updated local variables `best_prob` and `best_refined_irt` when a better PSM was found
+- Lines 107-115 should have stored these **updated local variables** back to the dictionary
+- Instead, they stored the **current loop iteration values** (`prob` and `refined_irt`), discarding the best match logic
 
 ### 1.2 Impact Analysis
 
@@ -91,11 +95,13 @@ prec_to_best_prob[precursor_idx] = (
 3. **Bug affects both prob and refined_irt** - exactly the values used for RT indexing
 4. **Bug present in develop branch too** - long-standing issue (uses `best_irt = irt` on line 104)
 
-### 1.3 Fix Required
+### 1.3 Fix Implemented ✅
+
+**Status**: Fixed in commit `37fd89e0` on 2025-01-21
 
 **File**: `src/Routines/SearchDIA/SearchMethods/FirstPassSearch/getBestPrecursorsAccrossRuns.jl`
 
-**Line 108** - Fix best_prob:
+**Line 108** - Fixed best_prob:
 ```julia
 # BEFORE (WRONG):
 best_prob = prob,
@@ -104,7 +110,7 @@ best_prob = prob,
 best_prob = best_prob,
 ```
 
-**Line 111** - Fix best_refined_irt:
+**Line 111** - Fixed best_refined_irt:
 ```julia
 # BEFORE (WRONG):
 best_refined_irt = refined_irt,
@@ -113,9 +119,15 @@ best_refined_irt = refined_irt,
 best_refined_irt = best_refined_irt,
 ```
 
-### 1.4 Validation Test Needed
+**Commit details**:
+- Commit: `37fd89e0`
+- Message: "fix: Store best PSM values instead of current values in getBestPrecursorsAccrossRuns"
+- Changes: 2 lines (1 file)
+- Branch: `refine_library_irt`
 
-After fix, verify:
+### 1.4 Validation Testing (PENDING)
+
+To validate the fix works correctly, verify:
 1. `best_refined_irt` matches the refined iRT from the highest probability PSM
 2. `best_prob` matches the highest probability across all files
 3. Cross-run variance (`var_refined_irt`) is calculated correctly
@@ -596,12 +608,13 @@ end
    - Never overwrites library iRT values
    - Maintains separate `rt_irt_map` (library) and `rt_to_refined_irt_map` (refined)
 
-### 5.2 ❌ Critical Bug
+### 5.2 ✅ Critical Bug (FIXED)
 
 **getBestPrecursorsAccrossRuns.jl** lines 108, 111
-- Stores current PSM values instead of best PSM values
-- Affects both `best_prob` and `best_refined_irt`
-- Impact: RT indices built with wrong refined iRT values
+- **Status**: Fixed in commit `37fd89e0` on 2025-01-21
+- **Issue**: Was storing current PSM values instead of best PSM values
+- **Affected**: Both `best_prob` and `best_refined_irt`
+- **Impact**: RT indices were being built with wrong refined iRT values
 
 ### 5.3 ⚠️ Areas Needing Improvement
 
@@ -614,14 +627,16 @@ end
 
 ## 6. Recommended Fix Plan
 
-### Phase 1: Fix Critical Bug (IMMEDIATE)
+### Phase 1: Fix Critical Bug ✅ COMPLETE
 
 **Priority**: CRITICAL
-**Estimated time**: 30 minutes
-**Testing**: Required before merge
+**Status**: **COMPLETED** on 2025-01-21 (commit `37fd89e0`)
+**Time taken**: ~30 minutes
+**Testing**: Integration testing pending
 
-#### 1.1 Code Fix
+#### 1.1 Code Fix ✅ COMPLETE
 **File**: `src/Routines/SearchDIA/SearchMethods/FirstPassSearch/getBestPrecursorsAccrossRuns.jl`
+**Commit**: `37fd89e0`
 
 **Line 108**:
 ```julia
@@ -641,7 +656,7 @@ best_refined_irt = refined_irt,
 best_refined_irt = best_refined_irt,
 ```
 
-#### 1.2 Validation Test
+#### 1.2 Validation Test (RECOMMENDED)
 Add test to verify correct behavior:
 ```julia
 # Pseudo-code test
@@ -652,9 +667,9 @@ prec_to_best = Dictionary{UInt32, NamedTuple}()
 # Assert: prec_to_best[prec_id].best_refined_irt == 100
 ```
 
-#### 1.3 Integration Test
-Run on small dataset:
-1. Verify identification rates improve in SecondPassSearch
+#### 1.3 Integration Test (PENDING)
+Run on small dataset to verify:
+1. Identification rates improve in SecondPassSearch
 2. Check that `best_refined_irt` values are consistent across files
 3. Confirm RT window widths are reasonable
 
@@ -803,6 +818,8 @@ Add section to user manual explaining:
 
 ### This Branch (refine_library_irt)
 ```
+37fd89e0 fix: Store best PSM values instead of current values in getBestPrecursorsAccrossRuns ✅ CRITICAL BUG FIX
+6511aaa5 docs: Add comprehensive RT handling analysis for refine_library_irt branch
 e5608e3a fix: Update DataFrame column references from :irt_pred/:irt_obs to :refined_irt_pred/:refined_irt_obs
 de0138ed refactor: Implement refined iRT model usage throughout search pipeline
 b451cfd4 docs: Add plan for fixing rt_to_irt vs rt_to_refined_irt usage
@@ -842,6 +859,34 @@ f5dfbaae speed up getBestPrecursorsAccrossRuns
 - [ ] Documentation updated
 - [ ] Code review completed
 - [ ] Benchmark results show improvement
+
+---
+
+## Status Update
+
+**Date**: 2025-01-21
+**Current Status**: Critical bug fixed, awaiting integration testing
+
+### Completed
+- ✅ Critical bug analysis (Section 1)
+- ✅ Bug fix implementation (commit `37fd89e0`)
+- ✅ Documentation update (this file)
+- ✅ Code pushed to remote branch `refine_library_irt`
+
+### Pending
+- ⏳ Integration testing on real dataset
+- ⏳ Validation that identification rates improve
+- ⏳ Phase 2 observability improvements (optional)
+
+### Expected Outcome
+With the bug fix in place, RT indices now use refined iRT values from the highest probability PSM (correct) instead of the most recently processed PSM (bug). This should allow the iRT refinement improvements (50% MAE reduction) to translate into significantly increased identifications in SecondPassSearch and subsequent search methods.
+
+### Next Steps
+1. Run full pipeline on test dataset (e.g., PIONEER benchmark data)
+2. Monitor identification rates: FirstPassSearch → SecondPassSearch improvement
+3. Verify RT window widths are reasonable (not too narrow)
+4. If results are positive, proceed with Phase 2 observability improvements
+5. Create pull request to merge into `develop` branch
 
 ---
 
