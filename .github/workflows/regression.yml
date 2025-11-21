@@ -27,18 +27,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: x64
-          
-      - name: Cache Julia depot
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.julia/artifacts
-            ~/.julia/compiled
-            ~/.julia/packages
-            ~/.julia/registries
-          key: ${{ runner.os }}-julia-${{ matrix.version }}-${{ hashFiles('Project.toml', 'Manifest.toml') }}
-          restore-keys: ${{ runner.os }}-julia-${{ matrix.version }}-
-
+    
       - name: Instantiate project
         run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build()'
 
