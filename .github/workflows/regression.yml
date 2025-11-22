@@ -34,7 +34,7 @@ jobs:
       - name: Run SearchDIA for all parameter files
         env:
             PIONEER_PARAMS_DIR: ${{ github.workspace }}/pioneer-regression-configs/params
-        run: julia --project=. test/run_regressions.jl
+        run: julia --threads auto --project=. test/run_regressions.jl
 
       - name: Summarize regression results
-        run: julia --project=. dev/regression_metrics.jl C:/pioneer-runner/results
+        run: julia --threads auto --project=. dev/regression_metrics.jl C:/pioneer-runner/results
