@@ -43,7 +43,9 @@ function compute_wide_metrics(
     table_label::AbstractString = "wide_table",
 )
     quant_syms = Symbol.(quant_col_names)
-    existing_quant_cols = [c for c in quant_syms if c in names(df)]
+    df_names = names(df)
+    df_name_syms = Symbol.(df_names)
+    existing_quant_cols = df_names[[i for (i, n) in pairs(df_name_syms) if n in quant_syms]]
     runs = length(existing_quant_cols)
     @info "Quantification columns present" table=table_label runs=runs columns=existing_quant_cols
     if runs == 0
