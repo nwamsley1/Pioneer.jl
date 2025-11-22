@@ -21,7 +21,7 @@ function quant_column_names_from_proteins(df::DataFrame)
     if anchor_idx !== nothing
         quant_start = anchor_idx + 1
         quant_start > ncol(df) && return Symbol[]
-        return collect(col_names[quant_start:end])
+        return Symbol.(col_names[quant_start:end])
     end
 
     numeric_flags = [is_numeric_column(df[:, c]) for c in col_names]
@@ -29,23 +29,24 @@ function quant_column_names_from_proteins(df::DataFrame)
 
     last_non_numeric = findlast(!, numeric_flags)
     if last_non_numeric === nothing
-        return collect(col_names)
+        return Symbol.(col_names)
     end
 
     quant_start = last_non_numeric + 1
     quant_start > ncol(df) && return Symbol[]
-    collect(col_names[quant_start:end])
+    Symbol.(col_names[quant_start:end])
 end
 
-function compute_wide_metrics(df::DataFrame, quant_col_names::Vector{Symbol})
-    existing_quant_cols = [c for c in quant_col_names if c in names(df)]
+function compute_wide_metrics(df::DataFrame, quant_col_names::AbstractVector{<:Union{Symbol, String}})
+    quant_syms = Symbol.(quant_col_names)
+    existing_quant_cols = [c for c in quant_syms if c in names(df)]
     runs = length(existing_quant_cols)
     if runs == 0
         return (; runs = 0, complete_rows = 0, non_missing_values = 0, data_completeness = nothing)
     end
 
-    if runs < length(quant_col_names)
-        missing_cols = setdiff(quant_col_names, existing_quant_cols)
+    if runs < length(quant_syms)
+        missing_cols = setdiff(quant_syms, existing_quant_cols)
         @warn "Missing quantification columns in dataset" missing_cols=missing_cols
     end
 
