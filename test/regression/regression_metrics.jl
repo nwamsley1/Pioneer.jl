@@ -37,10 +37,15 @@ function quant_column_names_from_proteins(df::DataFrame)
     Symbol.(col_names[quant_start:end])
 end
 
-function compute_wide_metrics(df::DataFrame, quant_col_names::AbstractVector{<:Union{Symbol, String}})
+function compute_wide_metrics(
+    df::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}};
+    table_label::AbstractString = "wide_table",
+)
     quant_syms = Symbol.(quant_col_names)
     existing_quant_cols = [c for c in quant_syms if c in names(df)]
     runs = length(existing_quant_cols)
+    @info "Quantification columns present" table=table_label runs=runs columns=existing_quant_cols
     if runs == 0
         return (; runs = 0, complete_rows = 0, data_completeness = 0.0)
     end
@@ -82,9 +87,14 @@ function compute_dataset_metrics(dataset_dir::AbstractString, dataset_name::Abst
     protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.tsv"))
 
     quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
+    @info "Detected quantification columns" dataset=dataset_name quant_columns=quant_col_names
 
-    precursor_wide_metrics = compute_wide_metrics(precursors_wide, quant_col_names)
-    protein_wide_metrics = compute_wide_metrics(protein_groups_wide, quant_col_names)
+    precursor_wide_metrics = compute_wide_metrics(
+        precursors_wide, quant_col_names; table_label = "precursors_wide"
+    )
+    protein_wide_metrics = compute_wide_metrics(
+        protein_groups_wide, quant_col_names; table_label = "protein_groups_wide"
+    )
 
     return Dict(
         "dataset" => dataset_name,
