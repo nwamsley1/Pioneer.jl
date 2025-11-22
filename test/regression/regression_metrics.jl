@@ -47,7 +47,6 @@ function compute_wide_metrics(
     df_name_syms = Symbol.(df_names)
     existing_quant_cols = df_names[[i for (i, n) in pairs(df_name_syms) if n in quant_syms]]
     runs = length(existing_quant_cols)
-    @info "Quantification columns present" table=table_label runs=runs columns=existing_quant_cols
     if runs == 0
         return (; runs = 0, complete_rows = 0, data_completeness = 0.0)
     end
@@ -79,7 +78,7 @@ function compute_dataset_metrics(dataset_dir::AbstractString, dataset_name::Abst
 
     missing_files = filter(f -> !isfile(joinpath(dataset_dir, f)), required_files)
     if !isempty(missing_files)
-        @warn "Skipping dataset due to missing outputs" dataset=dataset_name missing_files=missing_files
+        @warn "Skipping dataset $dataset_name: missing required outputs" missing_files=missing_files
         return nothing
     end
 
@@ -89,7 +88,6 @@ function compute_dataset_metrics(dataset_dir::AbstractString, dataset_name::Abst
     protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.tsv"))
 
     quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
-    @info "Detected quantification columns" dataset=dataset_name quant_columns=quant_col_names
 
     precursor_wide_metrics = compute_wide_metrics(
         precursors_wide, quant_col_names; table_label = "precursors_wide"
@@ -126,7 +124,6 @@ function main()
 
     for dataset_name in dataset_dirs
         dataset_dir = joinpath(results_dir, dataset_name)
-        @info "Processing dataset" dataset=dataset_name
         metrics = compute_dataset_metrics(dataset_dir, dataset_name)
         metrics === nothing && continue
 
