@@ -16,7 +16,7 @@ end
 
 function quant_column_names_from_proteins(df::DataFrame)
     col_names = names(df)
-    anchor_idx = findfirst(==(:global_qval), col_names)
+    anchor_idx = findfirst(name -> lowercase(String(name)) == "global_qval", col_names)
 
     if anchor_idx !== nothing
         quant_start = anchor_idx + 1
@@ -42,13 +42,15 @@ function compute_wide_metrics(df::DataFrame, quant_col_names::AbstractVector{<:U
     existing_quant_cols = [c for c in quant_syms if c in names(df)]
     runs = length(existing_quant_cols)
     if runs == 0
-        return (; runs = 0, complete_rows = 0, non_missing_values = 0, data_completeness = nothing)
+        return (; runs = 0, complete_rows = 0, data_completeness = 0.0)
     end
 
-    if runs < length(quant_syms)
+    if length(existing_quant_cols) < length(quant_syms)
         missing_cols = setdiff(quant_syms, existing_quant_cols)
         @warn "Missing quantification columns in dataset" missing_cols=missing_cols
     end
+
+    isempty(existing_quant_cols) && return (; runs, complete_rows = 0, data_completeness = 0.0)
 
     quant_data = df[:, existing_quant_cols]
     quant_matrix = Matrix(quant_data)
@@ -57,7 +59,7 @@ function compute_wide_metrics(df::DataFrame, quant_col_names::AbstractVector{<:U
     non_missing_values = count(!ismissing, quant_matrix)
     total_cells = nrow(df) * runs
 
-    (; runs, complete_rows, non_missing_values, data_completeness = total_cells > 0 ? non_missing_values / total_cells : nothing)
+    (; runs, complete_rows, data_completeness = total_cells > 0 ? non_missing_values / total_cells : 0.0)
 end
 
 function compute_dataset_metrics(dataset_dir::AbstractString, dataset_name::AbstractString)
@@ -91,7 +93,6 @@ function compute_dataset_metrics(dataset_dir::AbstractString, dataset_name::Abst
             "unique" => nrow(precursors_wide),
             "runs" => precursor_wide_metrics.runs,
             "complete_rows" => precursor_wide_metrics.complete_rows,
-            "non_missing_values" => precursor_wide_metrics.non_missing_values,
             "data_completeness" => precursor_wide_metrics.data_completeness,
         ),
         "protein_groups" => Dict(
@@ -99,7 +100,6 @@ function compute_dataset_metrics(dataset_dir::AbstractString, dataset_name::Abst
             "unique" => nrow(protein_groups_wide),
             "runs" => protein_wide_metrics.runs,
             "complete_rows" => protein_wide_metrics.complete_rows,
-            "non_missing_values" => protein_wide_metrics.non_missing_values,
             "data_completeness" => protein_wide_metrics.data_completeness,
         ),
     )
