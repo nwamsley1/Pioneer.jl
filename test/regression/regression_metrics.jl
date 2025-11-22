@@ -120,7 +120,7 @@ function main()
 
         output_path = joinpath(dataset_dir, "metrics_$(dataset_name).json")
         open(output_path, "w") do io
-            JSON.print(io, metrics; indent=2)
+            JSON.print(io, metrics)
         end
     end
 end
