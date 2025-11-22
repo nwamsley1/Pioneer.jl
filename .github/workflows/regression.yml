@@ -35,3 +35,11 @@ jobs:
         env:
             PIONEER_PARAMS_DIR: ${{ github.workspace }}/pioneer-regression-configs/params
         run: julia --project=. test/run_regressions.jl
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Summarize regression results
+        run: Rscript ../pioneer-regression-configs/scripts/regression_metrics.R C:/pioneer-runner/results
