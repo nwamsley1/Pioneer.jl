@@ -14,8 +14,17 @@ is_numeric_column(col) = begin
     return T <: Number
 end
 
-function trailing_numeric_columns(df::DataFrame)
-    numeric_flags = [is_numeric_column(df[:, c]) for c in names(df)]
+function quant_columns(df::DataFrame)
+    col_names = names(df)
+    anchor_idx = findfirst(==("global_qval"), col_names)
+
+    if anchor_idx !== nothing
+        quant_start = anchor_idx + 1
+        quant_start > ncol(df) && return Int[]
+        return collect(quant_start:ncol(df))
+    end
+
+    numeric_flags = [is_numeric_column(df[:, c]) for c in col_names]
     any(numeric_flags) || return Int[]
 
     last_non_numeric = findlast(!, numeric_flags)
@@ -29,7 +38,7 @@ function trailing_numeric_columns(df::DataFrame)
 end
 
 function compute_wide_metrics(df::DataFrame)
-    quant_cols = trailing_numeric_columns(df)
+    quant_cols = quant_columns(df)
     runs = length(quant_cols)
     if runs == 0
         return (; runs = 0, complete_rows = 0, non_missing_values = 0, data_completeness = nothing)
