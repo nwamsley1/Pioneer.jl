@@ -6,7 +6,7 @@ using JSON
 
 function read_required_table(path::AbstractString)
     isfile(path) || error("Required file not found: $path")
-    CSV.read(path, DataFrame; delim='\t', missingstring=["", "NA"], ignorerepeated=true)
+    CSV.read(path, DataFrame; delim='\t', missingstring=["", "NA"], ignorerepeated=false)
 end
 
 is_numeric_column(col) = begin
