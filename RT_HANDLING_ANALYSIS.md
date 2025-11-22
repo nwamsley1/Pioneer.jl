@@ -21,6 +21,25 @@
 
 **Fix**: Two one-line changes implemented (details in Section 1.3)
 
+### New Critical Bug Discovered 🔴
+
+**Location**: `src/Routines/SearchDIA/CommonSearchUtils/buildRTIndex.jl` (makeRTIndices function)
+
+**Status**: **IDENTIFIED** (2025-01-21) - awaiting fix
+
+**Discovery**: After fixing the first bug, testing revealed that iRT refinement doesn't improve IDs despite 50% MAE reduction. Investigation revealed a second critical bug in RT index imputation logic.
+
+**Problem**: When imputing refined iRT for precursors not observed in a file, the code uses `best_refined_irt` from a **different** file (File A) that has a **different** refinement model, instead of calculating file-specific refined iRT using the **current** file's (File B) refinement model.
+
+**Impact**:
+- Systematic cross-file model mismatch in RT indices
+- Prevents refinement from improving identifications
+- Can make refined iRT **worse** than library iRT (explaining why refinement hurts IDs)
+
+**Fix**: Use file-specific refinement model to calculate refined iRT for imputed precursors (details in Section 7)
+
+**Priority**: **CRITICAL** - This is likely the primary reason iRT refinement isn't helping
+
 ---
 
 ## Table of Contents
@@ -31,6 +50,7 @@
 4. [Additional Potential Issues](#4-additional-potential-issues)
 5. [Implementation Correctness Review](#5-implementation-correctness-review)
 6. [Recommended Fix Plan](#6-recommended-fix-plan)
+7. [Critical Imputation Bug Discovery](#7-critical-imputation-bug-discovery-2025-01-21-)
 
 ---
 
@@ -789,6 +809,208 @@ Add section to user manual explaining:
 
 ---
 
+## 7. Critical Imputation Bug Discovery (2025-01-21) 🔴
+
+### 7.1 The Discovery
+
+After fixing the critical bug in `getBestPrecursorsAccrossRuns.jl` (commit `37fd89e0`), testing revealed:
+
+- ✅ **Bug fix works**: Significant increase in identifications on both branches
+- ✅ **Same improvement on develop**: Bug fix on `develop` branch (library iRT only) gives **equal** ID boost
+- ❌ **Refinement doesn't help**: Same number of IDs on `develop` vs `refine_library_irt` branch
+- ⚠️ **Refinement might hurt**: Slightly **fewer** IDs with refinement compared to library iRT alone
+
+**Key Insight**: The refinement model is working (50% MAE reduction validated), but something in the pipeline is preventing this improvement from translating into better identifications.
+
+### 7.2 Root Cause Identified: Wrong Refinement Model for Imputation
+
+**Location**: `makeRTIndices()` in `src/Routines/SearchDIA/CommonSearchUtils/buildRTIndex.jl` lines 88-105
+
+**Current imputation logic** (INCORRECT):
+```julia
+for (i, (prec_id, irt_mz)) in collect(enumerate(pairs(prec_to_irt)))
+    prec_ids[i] = prec_id
+    irt, mz = irt_mz::@NamedTuple{irt::Float32, mz::Float32}
+
+    # High-confidence empirical matches
+    if haskey(prec_set, prec_id)
+        _irt_, prob = prec_set[prec_id]
+        if (prob >= min_prob)
+            irts[i] = _irt_  # Empirical refined iRT from THIS file ✅
+            continue
+        end
+    end
+
+    # IMPUTATION: Precursor not observed (or low confidence) in this file
+    # ❌ BUG: Uses best_refined_irt from prec_to_irt dictionary
+    irts[i] = irt  # irt = best_refined_irt from DIFFERENT file!
+    mzs[i] = mz
+end
+```
+
+Where `prec_to_irt` comes from (FirstPassSearch/utils.jl line 658):
+```julia
+# Maps each precursor to its best_refined_irt across ALL files
+prec_to_irt = map(x -> (irt=x[:best_refined_irt], mz=x[:mz]), precursor_dict)
+```
+
+**The problem**:
+
+1. `best_refined_irt` is the observed refined iRT from **File A** (whichever file had the best probability match for this precursor)
+2. That refined iRT was calculated using **File A's refinement model**: `refinement_model_A(sequence, library_irt)`
+3. We're now imputing it for **File B**, which has **different RT behavior** and a **different refinement model**: `refinement_model_B`
+4. **File A's refined iRT doesn't account for File B's RT characteristics!**
+
+### 7.3 Concrete Example
+
+```julia
+# Precursor 12345, sequence "PEPTIDE", library_irt = 45.0
+
+# File A (best match, prob=0.95):
+refinement_model_A(sequence="PEPTIDE", library_irt=45.0) = 50.0
+# Observed refined_irt_A = 50.0
+# This becomes best_refined_irt = 50.0
+
+# File B (not observed or low prob):
+# Current (WRONG): Use best_refined_irt = 50.0 from File A
+irts[i] = 50.0  # ❌ Wrong! Uses File A's model for File B!
+
+# Correct: Calculate using File B's model
+refinement_model_B(sequence="PEPTIDE", library_irt=45.0) = 48.0  # Different!
+irts[i] = 48.0  # ✅ Correct! File-specific prediction
+```
+
+**Why this causes problems**:
+- File A and File B have different RT calibration, drift, or instrument characteristics
+- Refinement models learn file-specific AA composition effects
+- Using File A's refined iRT for File B creates **systematic errors**
+- These errors can be **worse than using library iRT** (which is at least consistent across files)
+
+### 7.4 Correct Solution ✅
+
+**What we should do**:
+```julia
+# In makeRTIndices(), when building RT index for a specific file:
+function makeRTIndices(
+    temp_folder::String,
+    psms_paths::Vector{String},
+    prec_to_irt::Dictionary,  # Contains library iRT now, not best_refined_irt
+    rt_to_refined_irt_splines::Any,
+    refinement_models::Dict{Int, IrtRefinementModel},  # NEW: Pass refinement models
+    precursors::PrecursorLibrary;  # NEW: Need access to sequences
+    min_prob::AbstractFloat = 0.5
+)
+    for (key, psms_path) in enumerate(psms_paths)
+        rt_to_refined_irt = rt_to_refined_irt_splines[key]
+        refinement_model = refinement_models[key]  # Get THIS file's model
+
+        for (i, (prec_id, irt_mz)) in enumerate(pairs(prec_to_irt)))
+            # High-confidence: use empirical refined iRT
+            if haskey(prec_set, prec_id) && prob >= min_prob
+                irts[i] = rt_to_refined_irt(scan_rt)  # Empirical ✅
+                continue
+            end
+
+            # IMPUTATION: Calculate file-specific refined iRT prediction
+            library_irt = irt_mz.irt  # Now contains library iRT
+            sequence = precursors[prec_id].sequence
+
+            # Use THIS file's refinement model
+            if !isnothing(refinement_model) && refinement_model.use_refinement
+                irts[i] = refinement_model(sequence, library_irt)  # ✅ File-specific!
+            else
+                irts[i] = library_irt  # Fallback to library iRT
+            end
+            mzs[i] = mz
+        end
+    end
+end
+```
+
+**Why this works**:
+1. **File-specific**: Uses File B's refinement model for File B's RT index
+2. **Consistent**: Same refinement approach as empirical matches
+3. **Available**: All inputs already exist (library iRT, refinement model, sequence)
+4. **Better**: Eliminates cross-file model mismatch
+
+### 7.5 Implementation Changes Required
+
+**Three files need modification**:
+
+1. **FirstPassSearch/utils.jl** line 658:
+```julia
+# BEFORE:
+prec_to_irt = map(x -> (irt=x[:best_refined_irt], mz=x[:mz]), precursor_dict)
+
+# AFTER:
+# Pass library iRT instead of best_refined_irt
+prec_to_irt = map(x -> (irt=x[:library_irt], mz=x[:mz]), precursor_dict)
+# OR keep both:
+prec_to_irt = map(x -> (library_irt=x[:library_irt], best_refined_irt=x[:best_refined_irt], mz=x[:mz]), precursor_dict)
+```
+
+2. **FirstPassSearch/utils.jl** line 689 (create_rt_indices!):
+```julia
+# BEFORE:
+rt_index_paths = makeRTIndices(
+    rt_indices_folder,
+    valid_psm_paths,
+    prec_to_irt,
+    valid_rt_models,
+    min_prob=params.max_prob_to_impute
+)
+
+# AFTER:
+rt_index_paths = makeRTIndices(
+    rt_indices_folder,
+    valid_psm_paths,
+    prec_to_irt,  # Now contains library_irt
+    valid_rt_models,
+    getRefinementModels(search_context),  # NEW: Pass refinement models
+    getPrecursors(search_context),  # NEW: Pass precursor library
+    min_prob=params.max_prob_to_impute
+)
+```
+
+3. **buildRTIndex.jl** lines 69-113:
+```julia
+# Update function signature and implementation as shown in Section 7.4
+```
+
+### 7.6 Expected Impact
+
+This fix should:
+
+1. ✅ **Eliminate cross-file model mismatch**: Each file uses its own refinement model
+2. ✅ **Provide file-specific refined iRT for ALL precursors**: Not just empirical matches
+3. ✅ **Allow refinement to improve IDs as expected**: Remove systematic imputation errors
+4. ✅ **Quick win**: Simple fix, high probability of success
+
+**Priority**: **CRITICAL - Test this BEFORE other hypotheses**
+
+**Estimated time**: 1-2 hours (implementation + testing)
+
+**Success criteria**:
+- Refined branch shows 10-30% more IDs than library branch
+- Improvement scales with refinement MAE improvement
+- Cross-run variance actually decreases (not increases)
+
+### 7.7 Why This Bug Wasn't Obvious
+
+This bug was subtle because:
+
+1. The code "works" - doesn't crash, produces refined iRT values
+2. Refinement MAE validation shows improvement (within same file)
+3. Bug only manifests when comparing cross-file imputation quality
+4. Effect depends on how different refinement models are across files
+5. If files have similar RT behavior, bug impact is small
+
+**User question that revealed it**: "Why are we imputing from best_refined_irt when we have the refinement model for this file?"
+
+This question correctly identified that we should be **calculating** file-specific refined iRT, not **borrowing** another file's refined iRT.
+
+---
+
 ## Appendix A: Key Files Reference
 
 ### Core RT Conversion
@@ -864,29 +1086,57 @@ f5dfbaae speed up getBestPrecursorsAccrossRuns
 
 ## Status Update
 
-**Date**: 2025-01-21
-**Current Status**: Critical bug fixed, awaiting integration testing
+**Date**: 2025-01-21 (Latest update)
+**Current Status**: First bug fixed, second critical bug discovered
 
 ### Completed
-- ✅ Critical bug analysis (Section 1)
-- ✅ Bug fix implementation (commit `37fd89e0`)
-- ✅ Documentation update (this file)
+- ✅ First critical bug analysis (Section 1)
+- ✅ First bug fix implementation (commit `37fd89e0`)
+- ✅ Integration testing revealed refinement doesn't improve IDs
+- ✅ Second critical bug identified (Section 7 - RT index imputation)
+- ✅ Documentation updates (this file + IRT_REFINEMENT_INVESTIGATION_PLAN.md)
 - ✅ Code pushed to remote branch `refine_library_irt`
 
-### Pending
-- ⏳ Integration testing on real dataset
-- ⏳ Validation that identification rates improve
-- ⏳ Phase 2 observability improvements (optional)
+### Current Findings
+- ✅ **First bug fix works**: Significant ID improvement on both branches
+- ❌ **Refinement doesn't help**: Same IDs on develop (library iRT) vs refine_library_irt (refined iRT)
+- 🔴 **New bug discovered**: RT index imputation uses wrong refinement model (cross-file mismatch)
 
-### Expected Outcome
-With the bug fix in place, RT indices now use refined iRT values from the highest probability PSM (correct) instead of the most recently processed PSM (bug). This should allow the iRT refinement improvements (50% MAE reduction) to translate into significantly increased identifications in SecondPassSearch and subsequent search methods.
+### Pending (HIGH PRIORITY)
+- 🔴 **CRITICAL**: Fix RT index imputation bug (Section 7.5)
+  - Estimated time: 1-2 hours
+  - Expected impact: Allow refinement to improve IDs as expected
+  - Priority: Test this BEFORE other hypotheses
+- ⏳ Integration testing after imputation fix
+- ⏳ Validation that refinement improves IDs (10-30% expected)
+- ⏳ Phase 2 observability improvements (if needed)
 
-### Next Steps
-1. Run full pipeline on test dataset (e.g., PIONEER benchmark data)
-2. Monitor identification rates: FirstPassSearch → SecondPassSearch improvement
-3. Verify RT window widths are reasonable (not too narrow)
-4. If results are positive, proceed with Phase 2 observability improvements
+### Root Cause Analysis
+**Why refinement doesn't improve IDs despite 50% MAE reduction:**
+
+The imputation bug causes systematic cross-file model mismatch:
+1. Precursor observed in File A with prob=0.95 → refined_irt_A = model_A(seq, lib_irt) = 50.0
+2. Precursor NOT observed in File B → **uses refined_irt_A = 50.0** ❌ WRONG!
+3. **Should calculate**: refined_irt_B = model_B(seq, lib_irt) = 48.0 ✅ CORRECT
+
+**Impact**: File B's RT index uses File A's refined iRT (wrong model), creating systematic errors that can be **worse than library iRT** (explaining why refinement hurts IDs).
+
+### Next Steps (Updated)
+1. **IMMEDIATE**: Implement imputation fix (Section 7.5)
+   - Modify `makeRTIndices()` to use file-specific refinement models
+   - Pass refinement models and precursor library to function
+   - Calculate refined iRT predictions instead of borrowing from other files
+2. Run full pipeline on test dataset
+3. Validate that refinement now improves IDs (expect 10-30% improvement)
+4. If successful, consider Phase 2 logging for monitoring
 5. Create pull request to merge into `develop` branch
+
+### Expected Outcome (After Imputation Fix)
+With both bugs fixed:
+- RT indices use correct refined iRT values (best PSM, not most recent) ✅
+- RT indices use file-specific refined iRT (File B's model for File B, not File A's) ✅
+- Refinement improvements (50% MAE reduction) should translate to 10-30% more IDs
+- Improvement should scale with refinement MAE quality per file
 
 ---
 
