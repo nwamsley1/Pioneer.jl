@@ -46,6 +46,19 @@ function compute_wide_metrics(df::DataFrame)
 end
 
 function compute_dataset_metrics(dataset_dir::AbstractString, dataset_name::AbstractString)
+    required_files = [
+        "precursors_long.tsv",
+        "precursors_wide.tsv",
+        "protein_groups_long.tsv",
+        "protein_groups_wide.tsv",
+    ]
+
+    missing_files = filter(f -> !isfile(joinpath(dataset_dir, f)), required_files)
+    if !isempty(missing_files)
+        @warn "Skipping dataset due to missing outputs" dataset=dataset_name missing_files=missing_files
+        return nothing
+    end
+
     precursors_long = read_required_table(joinpath(dataset_dir, "precursors_long.tsv"))
     precursors_wide = read_required_table(joinpath(dataset_dir, "precursors_wide.tsv"))
     protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.tsv"))
@@ -86,6 +99,8 @@ function main()
         dataset_dir = joinpath(results_dir, dataset_name)
         @info "Processing dataset" dataset=dataset_name
         metrics = compute_dataset_metrics(dataset_dir, dataset_name)
+        metrics === nothing && continue
+
         output_path = joinpath(dataset_dir, "metrics_$(dataset_name).json")
         open(output_path, "w") do io
             JSON.print(io, metrics; indent=2)
