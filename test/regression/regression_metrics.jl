@@ -14,37 +14,42 @@ is_numeric_column(col) = begin
     return T <: Number
 end
 
-function quant_columns(df::DataFrame)
+function quant_column_names_from_proteins(df::DataFrame)
     col_names = names(df)
-    anchor_idx = findfirst(==("global_qval"), col_names)
+    anchor_idx = findfirst(==(:global_qval), col_names)
 
     if anchor_idx !== nothing
         quant_start = anchor_idx + 1
-        quant_start > ncol(df) && return Int[]
-        return collect(quant_start:ncol(df))
+        quant_start > ncol(df) && return Symbol[]
+        return collect(col_names[quant_start:end])
     end
 
     numeric_flags = [is_numeric_column(df[:, c]) for c in col_names]
-    any(numeric_flags) || return Int[]
+    any(numeric_flags) || return Symbol[]
 
     last_non_numeric = findlast(!, numeric_flags)
     if last_non_numeric === nothing
-        return collect(1:ncol(df))
+        return collect(col_names)
     end
 
     quant_start = last_non_numeric + 1
-    quant_start > ncol(df) && return Int[]
-    collect(quant_start:ncol(df))
+    quant_start > ncol(df) && return Symbol[]
+    collect(col_names[quant_start:end])
 end
 
-function compute_wide_metrics(df::DataFrame)
-    quant_cols = quant_columns(df)
-    runs = length(quant_cols)
+function compute_wide_metrics(df::DataFrame, quant_col_names::Vector{Symbol})
+    existing_quant_cols = [c for c in quant_col_names if c in names(df)]
+    runs = length(existing_quant_cols)
     if runs == 0
         return (; runs = 0, complete_rows = 0, non_missing_values = 0, data_completeness = nothing)
     end
 
-    quant_data = df[:, quant_cols]
+    if runs < length(quant_col_names)
+        missing_cols = setdiff(quant_col_names, existing_quant_cols)
+        @warn "Missing quantification columns in dataset" missing_cols=missing_cols
+    end
+
+    quant_data = df[:, existing_quant_cols]
     quant_matrix = Matrix(quant_data)
 
     complete_rows = sum(all(!ismissing, row) for row in eachrow(quant_matrix))
@@ -73,8 +78,10 @@ function compute_dataset_metrics(dataset_dir::AbstractString, dataset_name::Abst
     protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.tsv"))
     protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.tsv"))
 
-    precursor_wide_metrics = compute_wide_metrics(precursors_wide)
-    protein_wide_metrics = compute_wide_metrics(protein_groups_wide)
+    quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
+
+    precursor_wide_metrics = compute_wide_metrics(precursors_wide, quant_col_names)
+    protein_wide_metrics = compute_wide_metrics(protein_groups_wide, quant_col_names)
 
     return Dict(
         "dataset" => dataset_name,
