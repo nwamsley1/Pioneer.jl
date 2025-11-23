@@ -233,7 +233,7 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
     entrapment_module === nothing && return nothing
 
     if !isdefined(entrapment_module, :run_efdr_analysis) ||
-       !isdefined(entrapment_module, :un_protein_efdr_analysis)
+       !isdefined(entrapment_module, :run_protein_efdr_analysis)
         @warn "Entrapment analyses module missing required analysis functions" repo_path=repo_path
         return nothing
     end
@@ -258,7 +258,7 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
     mkpath(output_dir)
 
     efdr_fn = getproperty(entrapment_module, :run_efdr_analysis)
-    protein_fn = getproperty(entrapment_module, :un_protein_efdr_analysis)
+    protein_fn = getproperty(entrapment_module, :run_protein_efdr_analysis)
 
     precursor_result = try
         Base.invokelatest(
