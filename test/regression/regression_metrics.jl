@@ -3,6 +3,7 @@
 using CSV
 using DataFrames
 using JSON
+using Pkg
 using Statistics
 
 const DEFAULT_METRIC_GROUPS = ["identification", "CV", "eFDR"]
@@ -138,15 +139,22 @@ function load_entrapment_module(repo_path::AbstractString)
         return nothing
     end
 
-    # Temporarily add the repository to LOAD_PATH to make the module discoverable.
+    project_path = Base.active_project()
+    project_reset = project_path === nothing ? () -> Pkg.activate(; io=devnull) : () -> Pkg.activate(project_path; io=devnull)
+
+    # Temporarily add the repository to LOAD_PATH to make the module discoverable and
+    # activate its environment so dependencies are available without polluting the
+    # main project environment.
     pushfirst!(Base.LOAD_PATH, repo_path)
     try
+        Pkg.activate(repo_path; io=devnull)
         return Base.require(Symbol("EntrapmentAnalyses"))
     catch err
         @warn "Unable to load EntrapmentAnalyses module" repo_path=repo_path error=err
         return nothing
     finally
         deleteat!(Base.LOAD_PATH, findfirst(== (repo_path), Base.LOAD_PATH))
+        project_reset()
     end
 end
 
