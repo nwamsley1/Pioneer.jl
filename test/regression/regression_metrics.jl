@@ -315,8 +315,9 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
 
         table = Arrow.Table(path; convert=false)
         df = DataFrame(table)
-        if !(qval_col in names(df)) || !(efdr_col in names(df))
-            @warn "Missing entrapment summary columns" path=path qval_col=qval_col efdr_col=efdr_col available_columns=join(string.(names(df)), ", ")
+        cols = Symbol.(names(df))
+        if !(qval_col in cols) || !(efdr_col in cols)
+            @warn "Missing entrapment summary columns" path=path qval_col=qval_col efdr_col=efdr_col available_columns=join(string.(cols), ", ")
             return nothing
         end
 
