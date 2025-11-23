@@ -154,7 +154,8 @@ function load_entrapment_module(repo_path::AbstractString)
         @warn "Unable to load EntrapmentAnalyses module" repo_path=repo_path error=err
         return nothing
     finally
-        Base.LOAD_PATH[:] = original_load_path
+        empty!(Base.LOAD_PATH)
+        append!(Base.LOAD_PATH, original_load_path)
         if original_project === nothing
             Pkg.activate(; io=devnull)
         else
