@@ -122,7 +122,7 @@ function load_dataset_config(dataset_dir::AbstractString)
 end
 
 function spectral_library_path_from_config(config::Dict, dataset_dir::AbstractString)
-    candidate_keys = ["library_path", "_lib_dir", "spectral_library", "speclib_path"]
+    candidate_keys = ["library", "library_path", "_lib_dir", "spectral_library", "speclib_path"]
     for key in candidate_keys
         lib_path = get(config, key, nothing)
         lib_path === nothing && continue
