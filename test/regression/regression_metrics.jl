@@ -149,7 +149,7 @@ function load_entrapment_module(repo_path::AbstractString)
     pushfirst!(Base.LOAD_PATH, repo_path)
     try
         Pkg.activate(repo_path; io=devnull)
-        return Base.require(Symbol("EntrapmentAnalyses"))
+        return Base.require(Main, Symbol("EntrapmentAnalyses"))
     catch err
         @warn "Unable to load EntrapmentAnalyses module" repo_path=repo_path error=err
         return nothing
