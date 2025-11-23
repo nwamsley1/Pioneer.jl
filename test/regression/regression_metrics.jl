@@ -340,31 +340,6 @@ function normalize_metric_groups(groups)
     String[]
 end
 
-function discover_results_from_params(params_dir::AbstractString)
-    !isdir(params_dir) && return String[]
-
-    discovered = String[]
-    for param_path in readdir(params_dir; join=true)
-        endswith(param_path, ".json") || continue
-        try
-            params = JSON.parsefile(param_path)
-            results_path = get(get(params, "paths", Dict()), "results", nothing)
-            results_path === nothing && continue
-
-            results_abs = isabspath(results_path) ? results_path : normpath(joinpath(dirname(param_path), results_path))
-            if isdir(results_abs)
-                push!(discovered, results_abs)
-            else
-                @warn "Results directory from params does not exist" param_file=param_path results_path=results_abs
-            end
-        catch err
-            @warn "Failed to parse parameters while discovering results" param_file=param_path error=err
-        end
-    end
-
-    unique(discovered)
-end
-
 function dataset_dirs_from_root(root::AbstractString)
     !isdir(root) && return String[]
     filter(readdir(root; join=true)) do path
@@ -372,31 +347,26 @@ function dataset_dirs_from_root(root::AbstractString)
     end
 end
 
-function candidate_results_roots()
-    preferred = [
-        get(ENV, "PIONEER_RESULTS_DIR", ""),
-        length(ARGS) >= 1 ? ARGS[1] : "",
-        joinpath(pwd(), "results"),
-        joinpath(pwd(), "..", "results", "current"),
-        joinpath(pwd(), "..", "..", "results", "current"),
-    ]
+function resolve_results_root()
+    env_root = get(ENV, "PIONEER_RESULTS_DIR", "")
+    arg_root = length(ARGS) >= 1 ? ARGS[1] : ""
 
-    unique(filter(!isempty, preferred))
+    if !isempty(env_root)
+        return env_root
+    elseif !isempty(arg_root)
+        return arg_root
+    end
+
+    error("Results directory is not specified; set PIONEER_RESULTS_DIR or pass a path argument")
 end
 
 function main()
-    results_dir = nothing
-    dataset_dirs = String[]
+    results_dir = resolve_results_root()
+    isdir(results_dir) || error("Results directory does not exist: $results_dir")
+    dataset_dirs = dataset_dirs_from_root(results_dir)
+    isempty(dataset_dirs) && error("No dataset directories found in $results_dir")
 
-    for candidate_root in candidate_results_roots()
-        candidate_dirs = dataset_dirs_from_root(candidate_root)
-        if !isempty(candidate_dirs)
-            results_dir = candidate_root
-            dataset_dirs = candidate_dirs
-            @info "Using regression results directory" results_dir=results_dir
-            break
-        end
-    end
+    @info "Using regression results directory" results_dir=results_dir
 
     metrics_config_path = get(
         ENV,
@@ -408,18 +378,6 @@ function main()
     else
         @info "No metrics_config.json found; using default metric groups" metrics_config_path=metrics_config_path
         Dict{String, Any}()
-    end
-
-    if isempty(dataset_dirs)
-        params_dir = get(
-            ENV,
-            "PIONEER_PARAMS_DIR",
-            joinpath(@__DIR__, "..", "pioneer-regression-configs", "params"),
-        )
-        dataset_dirs = discover_results_from_params(params_dir)
-        isempty(dataset_dirs) && error(
-            "No dataset directories found; checked $(candidate_results_roots()) and parameter outputs in $params_dir",
-        )
     end
 
     dataset_dirs = filter(dataset_dirs) do path
