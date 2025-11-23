@@ -5,7 +5,7 @@ using DataFrames
 using JSON
 using Statistics
 
-const DEFAULT_METRIC_GROUPS = ["identification", "CV"]
+const DEFAULT_METRIC_GROUPS = ["identification", "CV", "eFDR"]
 
 function read_required_table(path::AbstractString)
     isfile(path) || error("Required file not found: $path")
@@ -105,6 +105,114 @@ function compute_cv_metrics(
     (; runs, rows_evaluated, mean_cv)
 end
 
+function load_dataset_config(dataset_dir::AbstractString)
+    config_path = joinpath(dataset_dir, "config.json")
+    if !isfile(config_path)
+        @warn "Skipping entrapment metrics; missing dataset config" dataset_dir=dataset_dir
+        return nothing
+    end
+
+    try
+        return JSON.parsefile(config_path)
+    catch err
+        @warn "Failed to parse dataset config; skipping entrapment metrics" config_path=config_path error=err
+        return nothing
+    end
+end
+
+function spectral_library_path_from_config(config::Dict, dataset_dir::AbstractString)
+    candidate_keys = ["library_path", "_lib_dir", "spectral_library", "speclib_path"]
+    for key in candidate_keys
+        lib_path = get(config, key, nothing)
+        lib_path === nothing && continue
+        return isabspath(lib_path) ? lib_path : normpath(joinpath(dataset_dir, lib_path))
+    end
+
+    @warn "No spectral library path found in dataset config" dataset_dir=dataset_dir
+    nothing
+end
+
+function load_entrapment_module(repo_path::AbstractString)
+    if !isdir(repo_path)
+        @warn "Entrapment analyses repository not found" repo_path=repo_path
+        return nothing
+    end
+
+    # Temporarily add the repository to LOAD_PATH to make the module discoverable.
+    pushfirst!(Base.LOAD_PATH, repo_path)
+    try
+        return Base.require(Symbol("EntrapmentAnalyses"))
+    catch err
+        @warn "Unable to load EntrapmentAnalyses module" repo_path=repo_path error=err
+        return nothing
+    finally
+        deleteat!(Base.LOAD_PATH, findfirst(== (repo_path), Base.LOAD_PATH))
+    end
+end
+
+function try_run_both_analyses(run_fn, dataset_dir::AbstractString, lib_path::AbstractString, output_dir::AbstractString)
+    attempts = [
+        () -> run_fn(dataset_dir, lib_path; output_dir=output_dir),
+        () -> run_fn(dataset_dir, lib_path, output_dir),
+        () -> run_fn(dataset_dir; spectral_library_path=lib_path, output_dir=output_dir),
+        () -> run_fn(dataset_dir, output_dir, lib_path),
+        () -> run_fn(dataset_dir, lib_path),
+    ]
+
+    for attempt in attempts
+        try
+            return attempt()
+        catch err
+            err isa MethodError || err isa UndefKeywordError || begin
+                @warn "Entrapment analysis run failed" error=err
+                return nothing
+            end
+        end
+    end
+
+    @warn "Unable to call run_both_analyses with available signatures"
+    nothing
+end
+
+function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::AbstractString)
+    config = load_dataset_config(dataset_dir)
+    config === nothing && return nothing
+
+    lib_path = spectral_library_path_from_config(config, dataset_dir)
+    lib_path === nothing && return nothing
+
+    repo_path = get(ENV, "ENTRAPMENT_ANALYSES_PATH", joinpath(@__DIR__, "..", "..", "EntrapmentAnalyses.jl"))
+    module = load_entrapment_module(repo_path)
+    module === nothing && return nothing
+
+    if !isdefined(module, :run_both_analyses)
+        @warn "Entrapment analyses module missing run_both_analyses" repo_path=repo_path
+        return nothing
+    end
+
+    output_dir = joinpath(dataset_dir, "entrapment_analyses")
+    mkpath(output_dir)
+
+    run_fn = getproperty(module, :run_both_analyses)
+    result = try_run_both_analyses(run_fn, dataset_dir, lib_path, output_dir)
+
+    metrics = Dict(
+        "dataset" => dataset_name,
+        "spectral_library" => lib_path,
+        "output_dir" => output_dir,
+    )
+
+    if result !== nothing
+        try
+            metrics["results"] = JSON.lower(result)
+        catch err
+            @warn "Unable to serialize entrapment analysis result" error=err
+        end
+    end
+
+    metrics
+end
+
 function compute_dataset_metrics(
     dataset_dir::AbstractString,
     dataset_name::AbstractString;
@@ -161,6 +269,8 @@ function compute_dataset_metrics(
         "unique" => nrow(protein_groups_wide),
     )
 
+    entrapment_metrics = nothing
+
     if precursor_wide_metrics !== nothing
         merge!(precursors_metrics, Dict(
             "runs" => precursor_wide_metrics.runs,
@@ -193,14 +303,24 @@ function compute_dataset_metrics(
         ))
     end
 
+    if "efdr" in requested_groups
+        entrapment_metrics = compute_entrapment_metrics(dataset_dir, dataset_name)
+    end
+
     # Placeholder for future metric groups (e.g., FTR, entrapment, fold-change, KEAP1)
     # that can reuse the requested_groups set to decide whether to run expensive calculations.
 
-    return Dict(
+    metrics = Dict(
         "dataset" => dataset_name,
         "precursors" => precursors_metrics,
         "protein_groups" => protein_metrics,
     )
+
+    if entrapment_metrics !== nothing
+        metrics["entrapment"] = entrapment_metrics
+    end
+
+    return metrics
 end
 
 function normalize_metric_groups(groups)
