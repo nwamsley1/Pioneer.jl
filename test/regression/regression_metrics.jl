@@ -168,7 +168,7 @@ function protein_score_pairs(path::AbstractString)
         return [(:qlobal_pg_qval, :pg_qval)]
     end
 
-    @warn "No compatible protein score/q-value columns found for entrapment analysis" path=path
+    @warn "No compatible protein score/q-value columns found for entrapment analysis" path=path available_columns=collect(cols)
     nothing
 end
 
