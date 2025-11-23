@@ -135,7 +135,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
+          julia --threads auto --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
@@ -144,7 +144,7 @@ jobs:
 
       - name: Compile application
         run: |
-          julia --project=. -e '
+          julia --threads auto --project=. -e '
             using PackageCompiler;
             create_app(
               ".",
