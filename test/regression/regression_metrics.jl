@@ -340,9 +340,44 @@ function normalize_metric_groups(groups)
     String[]
 end
 
+function discover_results_from_params(params_dir::AbstractString)
+    !isdir(params_dir) && return String[]
+
+    discovered = String[]
+    for param_path in readdir(params_dir; join=true)
+        endswith(param_path, ".json") || continue
+        try
+            params = JSON.parsefile(param_path)
+            results_path = get(get(params, "paths", Dict()), "results", nothing)
+            results_path === nothing && continue
+
+            results_abs = isabspath(results_path) ? results_path : normpath(joinpath(dirname(param_path), results_path))
+            if isdir(results_abs)
+                push!(discovered, results_abs)
+            else
+                @warn "Results directory from params does not exist" param_file=param_path results_path=results_abs
+            end
+        catch err
+            @warn "Failed to parse parameters while discovering results" param_file=param_path error=err
+        end
+    end
+
+    unique(discovered)
+end
+
+function dataset_dirs_from_root(root::AbstractString)
+    !isdir(root) && return String[]
+    filter(readdir(root; join=true)) do path
+        isdir(path)
+    end
+end
+
 function main()
-    results_dir = length(ARGS) >= 1 ? ARGS[1] : joinpath(pwd(), "results")
-    isdir(results_dir) || error("Results directory does not exist: $results_dir")
+    results_dir = get(
+        ENV,
+        "PIONEER_RESULTS_DIR",
+        length(ARGS) >= 1 ? ARGS[1] : joinpath(pwd(), "results"),
+    )
 
     metrics_config_path = get(
         ENV,
@@ -356,13 +391,25 @@ function main()
         Dict{String, Any}()
     end
 
-    dataset_dirs = filter(name -> isdir(joinpath(results_dir, name)), readdir(results_dir))
-    isempty(dataset_dirs) && error("No dataset directories found in $results_dir")
+    dataset_dirs = dataset_dirs_from_root(results_dir)
 
-    dataset_dirs = filter(dataset_dirs) do name
-        groups = normalize_metric_groups(get(metric_group_config, name, DEFAULT_METRIC_GROUPS))
+    if isempty(dataset_dirs)
+        params_dir = get(
+            ENV,
+            "PIONEER_PARAMS_DIR",
+            joinpath(@__DIR__, "..", "pioneer-regression-configs", "params"),
+        )
+        dataset_dirs = discover_results_from_params(params_dir)
+        isempty(dataset_dirs) && error(
+            "No dataset directories found; checked $results_dir and parameter outputs in $params_dir",
+        )
+    end
+
+    dataset_dirs = filter(dataset_dirs) do path
+        dataset_name = basename(path)
+        groups = normalize_metric_groups(get(metric_group_config, dataset_name, DEFAULT_METRIC_GROUPS))
         if isempty(groups)
-            @info "Skipping dataset without requested metrics" dataset=name
+            @info "Skipping dataset without requested metrics" dataset=dataset_name
             return false
         end
         return true
@@ -370,8 +417,8 @@ function main()
 
     isempty(dataset_dirs) && error("No dataset directories remain after filtering")
 
-    for dataset_name in dataset_dirs
-        dataset_dir = joinpath(results_dir, dataset_name)
+    for dataset_dir in dataset_dirs
+        dataset_name = basename(dataset_dir)
 
         metric_groups = normalize_metric_groups(
             get(metric_group_config, dataset_name, DEFAULT_METRIC_GROUPS),
