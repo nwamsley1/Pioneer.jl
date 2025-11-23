@@ -210,7 +210,7 @@ function main()
     metrics_config_path = get(
         ENV,
         "PIONEER_METRICS_CONFIG",
-        joinpath(@__DIR__, "..", "..", "..", "..", "pioneer-regression-configs", "metrics_config.json"),
+        joinpath(@__DIR__, "..", "..", "pioneer-regression-configs", "metrics_config.json"),
     )
     metric_group_config = if isfile(metrics_config_path)
         JSON.parsefile(metrics_config_path)
