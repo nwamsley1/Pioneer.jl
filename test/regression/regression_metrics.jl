@@ -164,30 +164,6 @@ function load_entrapment_module(repo_path::AbstractString)
     end
 end
 
-function try_run_both_analyses(run_fn, dataset_dir::AbstractString, lib_path::AbstractString, output_dir::AbstractString)
-    attempts = [
-        () -> run_fn(dataset_dir, lib_path; output_dir=output_dir),
-        () -> run_fn(dataset_dir, lib_path, output_dir),
-        () -> run_fn(dataset_dir; spectral_library_path=lib_path, output_dir=output_dir),
-        () -> run_fn(dataset_dir, output_dir, lib_path),
-        () -> run_fn(dataset_dir, lib_path),
-    ]
-
-    for attempt in attempts
-        try
-            return attempt()
-        catch err
-            err isa MethodError || err isa UndefKeywordError || begin
-                @warn "Entrapment analysis run failed" error=err
-                return nothing
-            end
-        end
-    end
-
-    @warn "Unable to call run_both_analyses with available signatures"
-    nothing
-end
-
 function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::AbstractString)
     config = load_dataset_config(dataset_dir)
     config === nothing && return nothing
@@ -204,11 +180,24 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
         return nothing
     end
 
+    precursor_results_path = joinpath(dataset_dir, "precursors_long.arrow")
+    protein_results_path = joinpath(dataset_dir, "protein_groups_long.arrow")
+    if !isfile(precursor_results_path) || !isfile(protein_results_path)
+        @warn "Skipping entrapment metrics; missing required arrow outputs" precursor_results_path=precursor_results_path protein_results_path=protein_results_path
+        return nothing
+    end
+
     output_dir = joinpath(dataset_dir, "entrapment_analyses")
     mkpath(output_dir)
 
     run_fn = getproperty(entrapment_module, :run_both_analyses)
-    result = try_run_both_analyses(run_fn, dataset_dir, lib_path, output_dir)
+    result = try
+        run_fn(; precursor_results_path, library_precursors_path=lib_path, protein_results_path, output_dir,
+               r_lib=1.0, paired_stride=1, plot_formats=[:png, :pdf], verbose=true, use_fast_paired=true)
+    catch err
+        @warn "Entrapment analysis run failed" error=err
+        return nothing
+    end
 
     metrics = Dict(
         "dataset" => dataset_name,
