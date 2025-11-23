@@ -190,10 +190,10 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
     lib_path === nothing && return nothing
 
     repo_path = get(ENV, "ENTRAPMENT_ANALYSES_PATH", joinpath(@__DIR__, "..", "..", "EntrapmentAnalyses.jl"))
-    module = load_entrapment_module(repo_path)
-    module === nothing && return nothing
+    entrapment_module = load_entrapment_module(repo_path)
+    entrapment_module === nothing && return nothing
 
-    if !isdefined(module, :run_both_analyses)
+    if !isdefined(entrapment_module, :run_both_analyses)
         @warn "Entrapment analyses module missing run_both_analyses" repo_path=repo_path
         return nothing
     end
@@ -201,7 +201,7 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
     output_dir = joinpath(dataset_dir, "entrapment_analyses")
     mkpath(output_dir)
 
-    run_fn = getproperty(module, :run_both_analyses)
+    run_fn = getproperty(entrapment_module, :run_both_analyses)
     result = try_run_both_analyses(run_fn, dataset_dir, lib_path, output_dir)
 
     metrics = Dict(
