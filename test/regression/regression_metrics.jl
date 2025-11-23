@@ -422,10 +422,12 @@ function compute_dataset_metrics(
     requested_groups = Set(lowercase.(metric_groups))
     need_identification = "identification" in requested_groups
     need_cv = "cv" in requested_groups
-    need_tsv_metrics = need_identification || need_cv
+    need_keap1 = "keap1" in requested_groups
+    need_tsv_metrics = need_identification || need_cv || need_keap1
 
     precursors_metrics = nothing
     protein_metrics = nothing
+    keap1_metrics = nothing
 
     if need_tsv_metrics
         required_files = [
@@ -446,7 +448,7 @@ function compute_dataset_metrics(
         protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.tsv"))
         protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.tsv"))
 
-        quant_col_names = nothing
+        quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
         precursor_wide_metrics = nothing
         protein_wide_metrics = nothing
         precursor_cv_metrics = nothing
@@ -468,7 +470,6 @@ function compute_dataset_metrics(
         end
 
         if need_cv
-            quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
             precursor_wide_metrics = compute_wide_metrics(
                 precursors_wide, quant_col_names; table_label = "precursors_wide"
             )
@@ -514,6 +515,13 @@ function compute_dataset_metrics(
                 "mean_cv" => protein_cv_metrics.mean_cv,
             ))
         end
+
+        if need_keap1
+            keap1_metrics = Dict(
+                "runs_with_keap1" => runs_with_gene_names(protein_groups_wide, quant_col_names, "KEAP1"),
+                "runs_with_nfe2l2" => runs_with_gene_names(protein_groups_wide, quant_col_names, "NFE2L2"),
+            )
+        end
     end
 
     entrapment_metrics = if "efdr" in requested_groups
@@ -529,6 +537,10 @@ function compute_dataset_metrics(
     end
 
     if protein_metrics !== nothing && !isempty(protein_metrics)
+        if keap1_metrics !== nothing
+            merge!(protein_metrics, keap1_metrics)
+        end
+
         metrics["protein_groups"] = protein_metrics
     end
 
@@ -546,6 +558,43 @@ function normalize_metric_groups(groups)
 
     @warn "Invalid metric groups entry; falling back to empty list" groups_type=typeof(groups)
     String[]
+end
+
+function metric_preferences(config::Dict, dataset_name::AbstractString)
+    entry = get(config, dataset_name, DEFAULT_METRIC_GROUPS)
+
+    if entry isa AbstractDict
+        groups = normalize_metric_groups(get(entry, "groups", DEFAULT_METRIC_GROUPS))
+        return (; groups)
+    end
+
+    groups = normalize_metric_groups(entry)
+    (; groups)
+end
+
+function runs_with_gene_names(
+    protein_groups_wide::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    gene_term::AbstractString,
+)
+    gene_col = :gene_names
+    if gene_col ∉ names(protein_groups_wide)
+        @warn "Protein groups table missing gene_names column; skipping gene-based metrics" table=String(gene_col)
+        return 0
+    end
+
+    quant_columns = select_quant_columns(protein_groups_wide, quant_col_names)
+    isempty(quant_columns) && return 0
+
+    gene_matches = map(protein_groups_wide[:, gene_col]) do val
+        val === missing && return false
+        occursin(gene_term, String(val))
+    end
+
+    matched_rows = findall(identity, gene_matches)
+    isempty(matched_rows) && return 0
+
+    count(col -> any(!ismissing, protein_groups_wide[matched_rows, col]), quant_columns)
 end
 
 function dataset_dirs_from_root(root::AbstractString)
@@ -590,8 +639,8 @@ function main()
 
     dataset_dirs = filter(dataset_dirs) do path
         dataset_name = basename(path)
-        groups = normalize_metric_groups(get(metric_group_config, dataset_name, DEFAULT_METRIC_GROUPS))
-        if isempty(groups)
+        preferences = metric_preferences(metric_group_config, dataset_name)
+        if isempty(preferences.groups)
             @info "Skipping dataset without requested metrics" dataset=dataset_name
             return false
         end
@@ -603,9 +652,9 @@ function main()
     for dataset_dir in dataset_dirs
         dataset_name = basename(dataset_dir)
 
-        metric_groups = normalize_metric_groups(
-            get(metric_group_config, dataset_name, DEFAULT_METRIC_GROUPS),
-        )
+        preferences = metric_preferences(metric_group_config, dataset_name)
+
+        metric_groups = preferences.groups
         metrics = compute_dataset_metrics(dataset_dir, dataset_name; metric_groups)
         metrics === nothing && continue
 
