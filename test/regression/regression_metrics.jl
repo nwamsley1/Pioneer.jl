@@ -266,7 +266,7 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
         return nothing
     end
 
-    output_dir = joinpath(dataset_dir, "entrapment_analyses")
+    output_dir = joinpath(dataset_dir, "entrapment_analysis")
     mkpath(output_dir)
 
     efdr_fn = getproperty(entrapment_module, :run_efdr_analysis)
@@ -299,18 +299,89 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
         nothing
     end
 
+    if precursor_result !== nothing
+        @info "Precursor entrapment analysis completed"
+    end
+
+    if protein_result !== nothing
+        @info "Protein entrapment analysis completed"
+    end
+
+    function summary_from_arrow(path::AbstractString, qval_col::Symbol, efdr_col::Symbol)
+        if !isfile(path)
+            @warn "Expected entrapment output missing" path=path
+            return nothing
+        end
+
+        table = Arrow.Table(path; convert=false)
+        df = DataFrame(table)
+        if !(qval_col in names(df)) || !(efdr_col in names(df))
+            @warn "Missing entrapment summary columns" path=path qval_col=qval_col efdr_col=efdr_col available_columns=names(df)
+            return nothing
+        end
+
+        if nrow(df) == 0
+            @warn "Entrapment output is empty" path=path
+            return nothing
+        end
+
+        sort!(df, qval_col)
+        qval_value = last(df[:, qval_col])
+        efdr_value = last(df[:, efdr_col])
+
+        return Dict(
+            "qval" => qval_value,
+            "paired_efdr" => efdr_value,
+            "difference" => efdr_value - qval_value,
+        )
+    end
+
+    summaries = Dict{String, Any}()
+
+    precursor_summary = summary_from_arrow(
+        joinpath(output_dir, "prec_results_with_efdr.arrow"),
+        :MBR_boosted_qval,
+        :MBR_boosted_prec_prob_paired_efdr,
+    )
+    if precursor_summary !== nothing
+        summaries["precursors"] = precursor_summary
+    end
+
+    global_precursor_summary = summary_from_arrow(
+        joinpath(output_dir, "global_results_with_efdr.arrow"),
+        :MBR_boosted_global_qval,
+        :MBR_boosted_global_prob_paired_edfr,
+    )
+    if global_precursor_summary !== nothing
+        summaries["global_precursors"] = global_precursor_summary
+    end
+
+    protein_summary = summary_from_arrow(
+        joinpath(output_dir, "protein_results_with_efdr.arrow"),
+        :qval,
+        :pg_score_paired_efdr,
+    )
+    if protein_summary !== nothing
+        summaries["proteins"] = protein_summary
+    end
+
+    global_protein_summary = summary_from_arrow(
+        joinpath(output_dir, "global_protein_results_with_efdr.arrow"),
+        :global_qval,
+        :global_pg_score_paired_efdr,
+    )
+    if global_protein_summary !== nothing
+        summaries["global_proteins"] = global_protein_summary
+    end
+
     metrics = Dict(
         "dataset" => dataset_name,
         "spectral_library" => lib_path,
         "output_dir" => output_dir,
     )
 
-    if precursor_result !== nothing
-        @info "Precursor entrapment analysis result" result=precursor_result
-    end
-
-    if protein_result !== nothing
-        @info "Protein entrapment analysis result" result=protein_result
+    if !isempty(summaries)
+        metrics["summaries"] = summaries
     end
 
     metrics
