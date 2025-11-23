@@ -279,6 +279,7 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
             lib_path;
             output_dir = output_dir,
             score_qval_pairs = precursor_pairs,
+            plot_formats = [:png],
         )
     catch err
         @warn "Precursor entrapment analysis run failed" error=err
@@ -291,6 +292,7 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
             protein_results_path;
             output_dir = output_dir,
             score_qval_pairs = protein_pairs,
+            plot_formats = [:png],
         )
     catch err
         @warn "Protein entrapment analysis run failed" error=err
