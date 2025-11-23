@@ -153,7 +153,7 @@ function load_entrapment_module(repo_path::AbstractString)
         @warn "Unable to load EntrapmentAnalyses module" repo_path=repo_path error=err
         return nothing
     finally
-        deleteat!(Base.LOAD_PATH, findfirst(== (repo_path), Base.LOAD_PATH))
+        deleteat!(Base.LOAD_PATH, findfirst(==(repo_path), Base.LOAD_PATH))
         project_reset()
     end
 end
