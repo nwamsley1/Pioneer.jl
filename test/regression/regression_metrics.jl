@@ -124,12 +124,9 @@ end
 function spectral_library_path_from_config(config::Dict, dataset_dir::AbstractString)
     paths_section = get(config, "paths", nothing)
     if paths_section isa AbstractDict
-        library_entry = get(paths_section, "library", nothing)
-        if library_entry isa AbstractDict
-            lib_path = get(library_entry, "value", nothing)
-            if lib_path !== nothing
-                return isabspath(lib_path) ? lib_path : normpath(joinpath(dataset_dir, lib_path))
-            end
+        lib_path = get(paths_section, "library", nothing)
+        if lib_path isa AbstractString
+            return isabspath(lib_path) ? lib_path : normpath(joinpath(dataset_dir, lib_path))
         end
     end
 
