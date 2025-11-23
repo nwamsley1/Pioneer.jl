@@ -27,7 +27,6 @@ jobs:
         with:
           repository: nwamsley1/PioneerEntrapment.jl
           path: PioneerEntrapment.jl
-          ref: feature/option-2-implementation
 
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2

@@ -1,5 +1,6 @@
 #!/usr/bin/env julia
 
+using Arrow
 using CSV
 using DataFrames
 using JSON
@@ -135,6 +136,42 @@ function spectral_library_path_from_config(config::Dict, dataset_dir::AbstractSt
     nothing
 end
 
+function arrow_column_names(path::AbstractString)
+    try
+        table = Arrow.Table(path; convert=false)
+        return Set(Symbol.(propertynames(table)))
+    catch err
+        @warn "Failed to read Arrow schema for score selection" path=path error=err
+        return nothing
+    end
+end
+
+function precursor_score_pairs(path::AbstractString)
+    cols = arrow_column_names(path)
+    cols === nothing && return nothing
+
+    if (:MBR_boosted_global_qval in cols) && (:MBR_boosted_qval in cols)
+        return [(:MBR_boosted_global_qval, :MBR_boosted_qval)]
+    elseif (:global_qval in cols) && (:qval in cols)
+        return [(:global_qval, :qval)]
+    end
+
+    @warn "No compatible precursor score/q-value columns found for entrapment analysis" path=path
+    nothing
+end
+
+function protein_score_pairs(path::AbstractString)
+    cols = arrow_column_names(path)
+    cols === nothing && return nothing
+
+    if (:qlobal_pg_qval in cols) && (:pg_qval in cols)
+        return [(:qlobal_pg_qval, :pg_qval)]
+    end
+
+    @warn "No compatible protein score/q-value columns found for entrapment analysis" path=path
+    nothing
+end
+
 function entrapment_module_name(repo_path::AbstractString)
     project_path = joinpath(repo_path, "Project.toml")
     if isfile(project_path)
@@ -149,7 +186,7 @@ function entrapment_module_name(repo_path::AbstractString)
         end
     end
 
-    return "EntrapmentAnalyses"
+    return "PioneerEntrapment"
 end
 
 function load_entrapment_module(repo_path::AbstractString)
@@ -195,8 +232,9 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
     entrapment_module = load_entrapment_module(repo_path)
     entrapment_module === nothing && return nothing
 
-    if !isdefined(entrapment_module, :run_both_analyses)
-        @warn "Entrapment analyses module missing run_both_analyses" repo_path=repo_path
+    if !isdefined(entrapment_module, :run_efdr_analysis) ||
+       !isdefined(entrapment_module, :un_protein_efdr_analysis)
+        @warn "Entrapment analyses module missing required analysis functions" repo_path=repo_path
         return nothing
     end
 
@@ -209,21 +247,42 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
         return nothing
     end
 
+    precursor_pairs = precursor_score_pairs(precursor_results_path)
+    protein_pairs = protein_score_pairs(protein_results_path)
+
+    if precursor_pairs === nothing || protein_pairs === nothing
+        return nothing
+    end
+
     output_dir = joinpath(dataset_dir, "entrapment_analyses")
     mkpath(output_dir)
 
-    run_fn = getproperty(entrapment_module, :run_both_analyses)
-    result = try
+    efdr_fn = getproperty(entrapment_module, :run_efdr_analysis)
+    protein_fn = getproperty(entrapment_module, :un_protein_efdr_analysis)
+
+    precursor_result = try
         Base.invokelatest(
-            run_fn;
-            precursor_results_path = precursor_results_path,
-            library_precursors_path = lib_path,
-            protein_results_path = protein_results_path,
+            efdr_fn,
+            precursor_results_path,
+            lib_path;
             output_dir = output_dir,
+            score_qval_pairs = precursor_pairs,
         )
     catch err
-        @warn "Entrapment analysis run failed" error=err
-        return nothing
+        @warn "Precursor entrapment analysis run failed" error=err
+        nothing
+    end
+
+    protein_result = try
+        Base.invokelatest(
+            protein_fn,
+            protein_results_path;
+            output_dir = output_dir,
+            score_qval_pairs = protein_pairs,
+        )
+    catch err
+        @warn "Protein entrapment analysis run failed" error=err
+        nothing
     end
 
     metrics = Dict(
@@ -232,11 +291,19 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
         "output_dir" => output_dir,
     )
 
-    if result !== nothing
+    if precursor_result !== nothing
         try
-            metrics["results"] = JSON.lower(result)
+            metrics["precursor_results"] = JSON.lower(precursor_result)
         catch err
-            @warn "Unable to serialize entrapment analysis result" error=err
+            @warn "Unable to serialize precursor entrapment analysis result" error=err
+        end
+    end
+
+    if protein_result !== nothing
+        try
+            metrics["protein_results"] = JSON.lower(protein_result)
+        catch err
+            @warn "Unable to serialize protein entrapment analysis result" error=err
         end
     end
 
