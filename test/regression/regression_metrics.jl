@@ -407,8 +407,6 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
 
     metrics = Dict{String, Any}(
         "dataset" => dataset_name,
-        "spectral_library" => lib_path,
-        "output_dir" => output_dir,
     )
 
     if !isempty(summaries)
