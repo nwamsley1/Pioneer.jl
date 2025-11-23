@@ -405,7 +405,7 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
         summaries["global_proteins"] = global_protein_summary
     end
 
-    metrics = Dict(
+    metrics = Dict{String, Any}(
         "dataset" => dataset_name,
         "spectral_library" => lib_path,
         "output_dir" => output_dir,
