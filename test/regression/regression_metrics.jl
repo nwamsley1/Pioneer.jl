@@ -152,7 +152,7 @@ function precursor_score_pairs(path::AbstractString)
 
     required_pairs = [
         (:global_prob, :MBR_boosted_global_qval),
-        (:prob, :MBR_boosted_qval),
+        (:prec_prob, :MBR_boosted_qval),
     ]
 
     available_pairs = [pair for pair in required_pairs if all(col -> col in cols, pair)]
