@@ -140,23 +140,26 @@ function load_entrapment_module(repo_path::AbstractString)
         return nothing
     end
 
-    project_path = Base.active_project()
-    project_reset = project_path === nothing ? () -> Pkg.activate(; io=devnull) : () -> Pkg.activate(project_path; io=devnull)
+    original_project = Base.active_project()
+    original_load_path = copy(Base.LOAD_PATH)
+    temp_env = mktempdir()
 
-    # Temporarily add the repository to LOAD_PATH to make the module discoverable and
-    # activate its environment so dependencies are available without polluting the
-    # main project environment.
-    pushfirst!(Base.LOAD_PATH, repo_path)
     try
-        Pkg.activate(repo_path; io=devnull)
+        Pkg.activate(temp_env; io=devnull)
+        Pkg.develop(; path=repo_path, io=devnull)
         Pkg.instantiate(; io=devnull)
+        pushfirst!(Base.LOAD_PATH, temp_env)
         return Base.require(Main, Symbol("EntrapmentAnalyses"))
     catch err
         @warn "Unable to load EntrapmentAnalyses module" repo_path=repo_path error=err
         return nothing
     finally
-        deleteat!(Base.LOAD_PATH, findfirst(==(repo_path), Base.LOAD_PATH))
-        project_reset()
+        Base.LOAD_PATH[:] = original_load_path
+        if original_project === nothing
+            Pkg.activate(; io=devnull)
+        else
+            Pkg.activate(original_project; io=devnull)
+        end
     end
 end
 
