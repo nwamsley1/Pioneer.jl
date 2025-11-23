@@ -306,19 +306,11 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
     )
 
     if precursor_result !== nothing
-        try
-            metrics["precursor_results"] = JSON.lower(precursor_result)
-        catch err
-            @warn "Unable to serialize precursor entrapment analysis result" error=err
-        end
+        @info "Precursor entrapment analysis result" result=precursor_result
     end
 
     if protein_result !== nothing
-        try
-            metrics["protein_results"] = JSON.lower(protein_result)
-        catch err
-            @warn "Unable to serialize protein entrapment analysis result" error=err
-        end
+        @info "Protein entrapment analysis result" result=protein_result
     end
 
     metrics
