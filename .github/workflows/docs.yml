@@ -38,14 +38,14 @@ jobs:
           key: docs-${{ runner.os }}-${{ hashFiles('docs/Project.toml','docs/Manifest.toml') }}
 
       - name: Configure doc environment
-        shell: julia --project=docs --color=yes {0}
+        shell: julia --threads auto --project=docs --color=yes {0}
         run: |
           using Pkg
           Pkg.develop(path=pwd())
           Pkg.instantiate()
 
       - name: Build docs
-        run: julia --project=docs docs/make.jl
+        run: julia --threads auto --project=docs docs/make.jl
 
       - name: Deploy docs
         if: github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')
@@ -55,7 +55,7 @@ jobs:
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
 
       - name: Run doctests
-        shell: julia --project=docs --color=yes {0}
+        shell: julia --threads auto --project=docs --color=yes {0}
         run: |
           using Documenter: DocMeta, doctest
           using Pioneer
