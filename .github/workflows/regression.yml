@@ -45,4 +45,5 @@ jobs:
       - name: Summarize regression results
         env:
           ENTRAPMENT_ANALYSES_PATH: ${{ github.workspace }}/EntrapmentAnalyses.jl
+          PIONEER_RESULTS_DIR: ${{ github.workspace }}/../../results/current
         run: julia --threads auto --project=. test/regression/regression_metrics.jl

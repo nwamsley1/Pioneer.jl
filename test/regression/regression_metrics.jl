@@ -372,12 +372,31 @@ function dataset_dirs_from_root(root::AbstractString)
     end
 end
 
+function candidate_results_roots()
+    preferred = [
+        get(ENV, "PIONEER_RESULTS_DIR", ""),
+        length(ARGS) >= 1 ? ARGS[1] : "",
+        joinpath(pwd(), "results"),
+        joinpath(pwd(), "..", "results", "current"),
+        joinpath(pwd(), "..", "..", "results", "current"),
+    ]
+
+    unique(filter(!isempty, preferred))
+end
+
 function main()
-    results_dir = get(
-        ENV,
-        "PIONEER_RESULTS_DIR",
-        length(ARGS) >= 1 ? ARGS[1] : joinpath(pwd(), "results"),
-    )
+    results_dir = nothing
+    dataset_dirs = String[]
+
+    for candidate_root in candidate_results_roots()
+        candidate_dirs = dataset_dirs_from_root(candidate_root)
+        if !isempty(candidate_dirs)
+            results_dir = candidate_root
+            dataset_dirs = candidate_dirs
+            @info "Using regression results directory" results_dir=results_dir
+            break
+        end
+    end
 
     metrics_config_path = get(
         ENV,
@@ -391,8 +410,6 @@ function main()
         Dict{String, Any}()
     end
 
-    dataset_dirs = dataset_dirs_from_root(results_dir)
-
     if isempty(dataset_dirs)
         params_dir = get(
             ENV,
@@ -401,7 +418,7 @@ function main()
         )
         dataset_dirs = discover_results_from_params(params_dir)
         isempty(dataset_dirs) && error(
-            "No dataset directories found; checked $results_dir and parameter outputs in $params_dir",
+            "No dataset directories found; checked $(candidate_results_roots()) and parameter outputs in $params_dir",
         )
     end
 
