@@ -352,6 +352,14 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
         qval_value = qvals[best_index]
         efdr_value = efdrs[best_index]
 
+        if !(qval_value isa Real) || !(efdr_value isa Real)
+            @warn "Entrapment summary values are non-numeric" path=path qval_value=qval_value efdr_value=efdr_value
+            return nothing
+        end
+
+        qval_value = Float64(qval_value)
+        efdr_value = Float64(efdr_value)
+
         return Dict(
             "qval" => qval_value,
             "paired_efdr" => efdr_value,
@@ -373,7 +381,7 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
     global_precursor_summary = summary_from_arrow(
         joinpath(output_dir, "global_results_with_efdr.arrow"),
         :MBR_boosted_global_qval,
-        :MBR_boosted_global_prob_paired_edfr,
+        :MBR_boosted_global_prob_paired_efdr,
     )
     if global_precursor_summary !== nothing
         summaries["global_precursors"] = global_precursor_summary
