@@ -34,6 +34,9 @@ jobs:
           version: ${{ matrix.version }}
           arch: x64
 
+      - name: Instantiate EntrapmentAnalyses project
+        run: julia --threads auto --project=EntrapmentAnalyses.jl -e 'using Pkg; Pkg.instantiate()'
+
       - name: Instantiate project
         run: julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build()'
 
