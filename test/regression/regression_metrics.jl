@@ -326,9 +326,31 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
             return nothing
         end
 
-        sort!(df, qval_col)
-        qval_value = last(df[:, qval_col])
-        efdr_value = last(df[:, efdr_col])
+        qvals = collect(df[:, qval_col])
+        efdrs = collect(df[:, efdr_col])
+
+        best_index = nothing
+        best_qval = nothing
+        for i in eachindex(qvals)
+            qval = qvals[i]
+            efdr = efdrs[i]
+            if qval === missing || efdr === missing
+                continue
+            end
+
+            if best_index === nothing || qval > best_qval
+                best_index = i
+                best_qval = qval
+            end
+        end
+
+        if best_index === nothing
+            @warn "Entrapment output only contains missing values" path=path qval_col=qval_col efdr_col=efdr_col
+            return nothing
+        end
+
+        qval_value = qvals[best_index]
+        efdr_value = efdrs[best_index]
 
         return Dict(
             "qval" => qval_value,
