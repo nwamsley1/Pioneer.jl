@@ -122,11 +122,15 @@ function load_dataset_config(dataset_dir::AbstractString)
 end
 
 function spectral_library_path_from_config(config::Dict, dataset_dir::AbstractString)
-    candidate_keys = ["library", "library_path", "_lib_dir", "spectral_library", "speclib_path"]
-    for key in candidate_keys
-        lib_path = get(config, key, nothing)
-        lib_path === nothing && continue
-        return isabspath(lib_path) ? lib_path : normpath(joinpath(dataset_dir, lib_path))
+    paths_section = get(config, "paths", nothing)
+    if paths_section isa AbstractDict
+        library_entry = get(paths_section, "library", nothing)
+        if library_entry isa AbstractDict
+            lib_path = get(library_entry, "value", nothing)
+            if lib_path !== nothing
+                return isabspath(lib_path) ? lib_path : normpath(joinpath(dataset_dir, lib_path))
+            end
+        end
     end
 
     @warn "No spectral library path found in dataset config" dataset_dir=dataset_dir
