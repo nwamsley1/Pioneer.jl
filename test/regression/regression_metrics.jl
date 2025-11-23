@@ -5,6 +5,7 @@ using DataFrames
 using JSON
 using Pkg
 using Statistics
+using TOML
 
 const DEFAULT_METRIC_GROUPS = ["identification", "CV", "eFDR"]
 
@@ -134,6 +135,23 @@ function spectral_library_path_from_config(config::Dict, dataset_dir::AbstractSt
     nothing
 end
 
+function entrapment_module_name(repo_path::AbstractString)
+    project_path = joinpath(repo_path, "Project.toml")
+    if isfile(project_path)
+        try
+            project = TOML.parsefile(project_path)
+            name = get(project, "name", nothing)
+            if name isa AbstractString
+                return name
+            end
+        catch err
+            @warn "Failed to parse Project.toml for entrapment module name" project_path=project_path error=err
+        end
+    end
+
+    return "EntrapmentAnalyses"
+end
+
 function load_entrapment_module(repo_path::AbstractString)
     if !isdir(repo_path)
         @warn "Entrapment analyses repository not found" repo_path=repo_path
@@ -144,14 +162,16 @@ function load_entrapment_module(repo_path::AbstractString)
     original_load_path = copy(Base.LOAD_PATH)
     temp_env = mktempdir()
 
+    module_name = "EntrapmentAnalyses"
     try
         Pkg.activate(temp_env; io=devnull)
         Pkg.develop(; path=repo_path, io=devnull)
         Pkg.instantiate(; io=devnull)
         pushfirst!(Base.LOAD_PATH, temp_env)
-        return Base.require(Main, Symbol("EntrapmentAnalyses"))
+        module_name = entrapment_module_name(repo_path)
+        return Base.require(Main, Symbol(module_name))
     catch err
-        @warn "Unable to load EntrapmentAnalyses module" repo_path=repo_path error=err
+        @warn "Unable to load entrapment module" repo_path=repo_path module_name=module_name error=err
         return nothing
     finally
         empty!(Base.LOAD_PATH)
@@ -171,27 +191,36 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
     lib_path = spectral_library_path_from_config(config, dataset_dir)
     lib_path === nothing && return nothing
 
-    repo_path = get(ENV, "ENTRAPMENT_ANALYSES_PATH", joinpath(@__DIR__, "..", "..", "EntrapmentAnalyses.jl"))
+    repo_path = get(ENV, "ENTRAPMENT_ANALYSES_PATH", joinpath(@__DIR__, "..", "..", "PioneerEntrapment.jl"))
     entrapment_module = load_entrapment_module(repo_path)
     entrapment_module === nothing && return nothing
 
-    if !isdefined(entrapment_module, :run_efdr_analysis)
-        @warn "Entrapment analyses module missing run_efdr_analysis" repo_path=repo_path
+    if !isdefined(entrapment_module, :run_both_analyses)
+        @warn "Entrapment analyses module missing run_both_analyses" repo_path=repo_path
         return nothing
     end
 
     precursor_results_path = joinpath(dataset_dir, "precursors_long.arrow")
-    if !isfile(precursor_results_path)
-        @warn "Skipping entrapment metrics; missing required arrow outputs" precursor_results_path=precursor_results_path
+    protein_results_path = joinpath(dataset_dir, "protein_groups_long.arrow")
+
+    missing_arrows = filter(x -> !isfile(x), [precursor_results_path, protein_results_path])
+    if !isempty(missing_arrows)
+        @warn "Skipping entrapment metrics; missing required arrow outputs" missing_arrows=missing_arrows
         return nothing
     end
 
     output_dir = joinpath(dataset_dir, "entrapment_analyses")
     mkpath(output_dir)
 
-    run_fn = getproperty(entrapment_module, :run_efdr_analysis)
+    run_fn = getproperty(entrapment_module, :run_both_analyses)
     result = try
-        Base.invokelatest(run_fn, [precursor_results_path], lib_path; output_dir = output_dir)
+        Base.invokelatest(
+            run_fn;
+            precursor_results_path = precursor_results_path,
+            library_precursors_path = lib_path,
+            protein_results_path = protein_results_path,
+            output_dir = output_dir,
+        )
     catch err
         @warn "Entrapment analysis run failed" error=err
         return nothing

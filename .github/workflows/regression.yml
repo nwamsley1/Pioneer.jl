@@ -25,8 +25,8 @@ jobs:
       - name: Checkout Entrapment analyses utilities
         uses: actions/checkout@v5
         with:
-          repository: nwamsley1/EntrapmentAnalyses.jl
-          path: EntrapmentAnalyses.jl
+          repository: nwamsley1/PioneerEntrapment.jl
+          path: PioneerEntrapment.jl
 
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
@@ -34,8 +34,8 @@ jobs:
           version: ${{ matrix.version }}
           arch: x64
 
-      - name: Instantiate EntrapmentAnalyses project
-        run: julia --threads auto --project=EntrapmentAnalyses.jl -e 'using Pkg; Pkg.instantiate()'
+      - name: Instantiate PioneerEntrapment project
+        run: julia --threads auto --project=PioneerEntrapment.jl -e 'using Pkg; Pkg.instantiate()'
 
       - name: Instantiate project
         run: julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build()'
@@ -47,6 +47,6 @@ jobs:
 
       - name: Summarize regression results
         env:
-          ENTRAPMENT_ANALYSES_PATH: ${{ github.workspace }}/EntrapmentAnalyses.jl
+          ENTRAPMENT_ANALYSES_PATH: ${{ github.workspace }}/PioneerEntrapment.jl
           PIONEER_RESULTS_DIR: C:/pioneer-runner/results/current
         run: julia --threads auto --project=. test/regression/regression_metrics.jl
