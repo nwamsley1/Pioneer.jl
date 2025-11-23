@@ -164,8 +164,8 @@ function protein_score_pairs(path::AbstractString)
     cols = arrow_column_names(path)
     cols === nothing && return nothing
 
-    if (:global_qval in cols) && (:qval in cols)
-        return [(:global_qval, :qval)]
+    if (:global_pg_score in cols) && (:global_qval in cols)
+        return [(:global_pg_score, :global_qval)]
     end
 
     @warn "No compatible protein score/q-value columns found for entrapment analysis" path=path available_columns=collect(cols)
