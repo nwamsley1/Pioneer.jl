@@ -191,7 +191,7 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
 
     run_fn = getproperty(entrapment_module, :run_efdr_analysis)
     result = try
-        run_fn([precursor_results_path], lib_path; output_dir)
+        Base.invokelatest(run_fn, [precursor_results_path], lib_path; output_dir = output_dir)
     catch err
         @warn "Entrapment analysis run failed" error=err
         return nothing
