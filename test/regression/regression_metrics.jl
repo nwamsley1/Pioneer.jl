@@ -157,7 +157,8 @@ function precursor_score_pairs(path::AbstractString)
 
     available_pairs = [pair for pair in required_pairs if all(col -> col in cols, pair)]
     if isempty(available_pairs)
-        @warn "No compatible precursor score/q-value columns found for entrapment analysis" path=path available_columns=collect(cols)
+        missing_columns_by_pair = Dict(pair => [col for col in pair if col ∉ cols] for pair in required_pairs)
+        @warn "No compatible precursor score/q-value columns found for entrapment analysis" path=path missing_columns_by_pair=missing_columns_by_pair available_columns=join(string.(collect(cols)), ", ")
         return nothing
     end
 
@@ -175,7 +176,8 @@ function protein_score_pairs(path::AbstractString)
 
     available_pairs = [pair for pair in required_pairs if all(col -> col in cols, pair)]
     if isempty(available_pairs)
-        @warn "No compatible protein score/q-value columns found for entrapment analysis" path=path available_columns=collect(cols)
+        missing_columns_by_pair = Dict(pair => [col for col in pair if col ∉ cols] for pair in required_pairs)
+        @warn "No compatible protein score/q-value columns found for entrapment analysis" path=path missing_columns_by_pair=missing_columns_by_pair available_columns=join(string.(collect(cols)), ", ")
         return nothing
     end
 
