@@ -405,9 +405,7 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
         summaries["global_proteins"] = global_protein_summary
     end
 
-    metrics = Dict{String, Any}(
-        "dataset" => dataset_name,
-    )
+    metrics = Dict{String, Any}()
 
     if !isempty(summaries)
         metrics["summaries"] = summaries
@@ -524,9 +522,7 @@ function compute_dataset_metrics(
         nothing
     end
 
-    metrics = Dict{String, Any}(
-        "dataset" => dataset_name,
-    )
+    metrics = Dict{String, Any}()
 
     if precursors_metrics !== nothing && !isempty(precursors_metrics)
         metrics["precursors"] = precursors_metrics
