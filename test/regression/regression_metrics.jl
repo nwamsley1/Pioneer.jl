@@ -424,102 +424,119 @@ function compute_dataset_metrics(
     metric_groups::AbstractVector{<:AbstractString} = DEFAULT_METRIC_GROUPS,
 )
     requested_groups = Set(lowercase.(metric_groups))
-    required_files = [
-        "precursors_long.tsv",
-        "precursors_wide.tsv",
-        "protein_groups_long.tsv",
-        "protein_groups_wide.tsv",
-    ]
+    need_identification = "identification" in requested_groups
+    need_cv = "cv" in requested_groups
+    need_tsv_metrics = need_identification || need_cv
 
-    missing_files = filter(f -> !isfile(joinpath(dataset_dir, f)), required_files)
-    if !isempty(missing_files)
-        @warn "Skipping dataset $dataset_name: missing required outputs" missing_files=missing_files
-        return nothing
-    end
+    precursors_metrics = nothing
+    protein_metrics = nothing
 
-    precursors_long = read_required_table(joinpath(dataset_dir, "precursors_long.tsv"))
-    precursors_wide = read_required_table(joinpath(dataset_dir, "precursors_wide.tsv"))
-    protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.tsv"))
-    protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.tsv"))
+    if need_tsv_metrics
+        required_files = [
+            "precursors_long.tsv",
+            "precursors_wide.tsv",
+            "protein_groups_long.tsv",
+            "protein_groups_wide.tsv",
+        ]
 
-    quant_col_names = nothing
-    precursor_wide_metrics = nothing
-    protein_wide_metrics = nothing
-    precursor_cv_metrics = nothing
-    protein_cv_metrics = nothing
+        missing_files = filter(f -> !isfile(joinpath(dataset_dir, f)), required_files)
+        if !isempty(missing_files)
+            @warn "Skipping dataset $dataset_name: missing required outputs" missing_files=missing_files
+            return nothing
+        end
 
-    if "cv" in requested_groups
-        quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
-        precursor_wide_metrics = compute_wide_metrics(
-            precursors_wide, quant_col_names; table_label = "precursors_wide"
-        )
-        protein_wide_metrics = compute_wide_metrics(
-            protein_groups_wide, quant_col_names; table_label = "protein_groups_wide"
-        )
-        precursor_cv_metrics = compute_cv_metrics(
-            precursors_wide, quant_col_names; table_label = "precursors_wide"
-        )
-        protein_cv_metrics = compute_cv_metrics(
-            protein_groups_wide, quant_col_names; table_label = "protein_groups_wide"
-        )
-    end
+        precursors_long = read_required_table(joinpath(dataset_dir, "precursors_long.tsv"))
+        precursors_wide = read_required_table(joinpath(dataset_dir, "precursors_wide.tsv"))
+        protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.tsv"))
+        protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.tsv"))
 
-    precursors_metrics = Dict{String, Any}(
-        "total" => nrow(precursors_long),
-        "unique" => nrow(precursors_wide),
-    )
+        quant_col_names = nothing
+        precursor_wide_metrics = nothing
+        protein_wide_metrics = nothing
+        precursor_cv_metrics = nothing
+        protein_cv_metrics = nothing
 
-    protein_metrics = Dict{String, Any}(
-        "total" => nrow(protein_groups_long),
-        "unique" => nrow(protein_groups_wide),
-    )
+        precursors_metrics = Dict{String, Any}()
+        protein_metrics = Dict{String, Any}()
 
-    entrapment_metrics = nothing
-
-    if precursor_wide_metrics !== nothing
-        merge!(precursors_metrics, Dict(
-            "runs" => precursor_wide_metrics.runs,
-            "complete_rows" => precursor_wide_metrics.complete_rows,
-            "data_completeness" => precursor_wide_metrics.data_completeness,
+        if need_identification
+            merge!(precursors_metrics, Dict(
+                "total" => nrow(precursors_long),
+                "unique" => nrow(precursors_wide),
             ))
-    end
 
-    if protein_wide_metrics !== nothing
-        merge!(protein_metrics, Dict(
-            "runs" => protein_wide_metrics.runs,
-            "complete_rows" => protein_wide_metrics.complete_rows,
-            "data_completeness" => protein_wide_metrics.data_completeness,
+            merge!(protein_metrics, Dict(
+                "total" => nrow(protein_groups_long),
+                "unique" => nrow(protein_groups_wide),
             ))
+        end
+
+        if need_cv
+            quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
+            precursor_wide_metrics = compute_wide_metrics(
+                precursors_wide, quant_col_names; table_label = "precursors_wide"
+            )
+            protein_wide_metrics = compute_wide_metrics(
+                protein_groups_wide, quant_col_names; table_label = "protein_groups_wide"
+            )
+            precursor_cv_metrics = compute_cv_metrics(
+                precursors_wide, quant_col_names; table_label = "precursors_wide"
+            )
+            protein_cv_metrics = compute_cv_metrics(
+                protein_groups_wide, quant_col_names; table_label = "protein_groups_wide"
+            )
+        end
+
+        if precursor_wide_metrics !== nothing
+            merge!(precursors_metrics, Dict(
+                "runs" => precursor_wide_metrics.runs,
+                "complete_rows" => precursor_wide_metrics.complete_rows,
+                "data_completeness" => precursor_wide_metrics.data_completeness,
+                ))
+        end
+
+        if protein_wide_metrics !== nothing
+            merge!(protein_metrics, Dict(
+                "runs" => protein_wide_metrics.runs,
+                "complete_rows" => protein_wide_metrics.complete_rows,
+                "data_completeness" => protein_wide_metrics.data_completeness,
+                ))
+        end
+
+        if precursor_cv_metrics !== nothing
+            merge!(precursors_metrics, Dict(
+                "cv_runs" => precursor_cv_metrics.runs,
+                "rows_with_complete_values" => precursor_cv_metrics.rows_evaluated,
+                "mean_cv" => precursor_cv_metrics.mean_cv,
+            ))
+        end
+
+        if protein_cv_metrics !== nothing
+            merge!(protein_metrics, Dict(
+                "cv_runs" => protein_cv_metrics.runs,
+                "rows_with_complete_values" => protein_cv_metrics.rows_evaluated,
+                "mean_cv" => protein_cv_metrics.mean_cv,
+            ))
+        end
     end
 
-    if precursor_cv_metrics !== nothing
-        merge!(precursors_metrics, Dict(
-            "cv_runs" => precursor_cv_metrics.runs,
-            "rows_with_complete_values" => precursor_cv_metrics.rows_evaluated,
-            "mean_cv" => precursor_cv_metrics.mean_cv,
-        ))
+    entrapment_metrics = if "efdr" in requested_groups
+        compute_entrapment_metrics(dataset_dir, dataset_name)
+    else
+        nothing
     end
-
-    if protein_cv_metrics !== nothing
-        merge!(protein_metrics, Dict(
-            "cv_runs" => protein_cv_metrics.runs,
-            "rows_with_complete_values" => protein_cv_metrics.rows_evaluated,
-            "mean_cv" => protein_cv_metrics.mean_cv,
-        ))
-    end
-
-    if "efdr" in requested_groups
-        entrapment_metrics = compute_entrapment_metrics(dataset_dir, dataset_name)
-    end
-
-    # Placeholder for future metric groups (e.g., FTR, entrapment, fold-change, KEAP1)
-    # that can reuse the requested_groups set to decide whether to run expensive calculations.
 
     metrics = Dict(
         "dataset" => dataset_name,
-        "precursors" => precursors_metrics,
-        "protein_groups" => protein_metrics,
     )
+
+    if precursors_metrics !== nothing && !isempty(precursors_metrics)
+        metrics["precursors"] = precursors_metrics
+    end
+
+    if protein_metrics !== nothing && !isempty(protein_metrics)
+        metrics["protein_groups"] = protein_metrics
+    end
 
     if entrapment_metrics !== nothing
         metrics["entrapment"] = entrapment_metrics
