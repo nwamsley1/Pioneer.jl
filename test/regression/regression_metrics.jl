@@ -151,8 +151,8 @@ function precursor_score_pairs(path::AbstractString)
     cols === nothing && return nothing
 
     required_pairs = [
-        (:global_score, :MBR_boosted_global_qval),
-        (:score, :MBR_boosted_qval),
+        (:global_prob, :MBR_boosted_global_qval),
+        (:prob, :MBR_boosted_qval),
     ]
 
     available_pairs = [pair for pair in required_pairs if all(col -> col in cols, pair)]
