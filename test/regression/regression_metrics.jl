@@ -156,7 +156,7 @@ function precursor_score_pairs(path::AbstractString)
         return [(:global_qval, :qval)]
     end
 
-    @warn "No compatible precursor score/q-value columns found for entrapment analysis" path=path
+    @warn "No compatible precursor score/q-value columns found for entrapment analysis" path=path available_columns=collect(cols)
     nothing
 end
 
