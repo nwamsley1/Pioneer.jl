@@ -175,25 +175,23 @@ function compute_entrapment_metrics(dataset_dir::AbstractString, dataset_name::A
     entrapment_module = load_entrapment_module(repo_path)
     entrapment_module === nothing && return nothing
 
-    if !isdefined(entrapment_module, :run_both_analyses)
-        @warn "Entrapment analyses module missing run_both_analyses" repo_path=repo_path
+    if !isdefined(entrapment_module, :run_efdr_analysis)
+        @warn "Entrapment analyses module missing run_efdr_analysis" repo_path=repo_path
         return nothing
     end
 
     precursor_results_path = joinpath(dataset_dir, "precursors_long.arrow")
-    protein_results_path = joinpath(dataset_dir, "protein_groups_long.arrow")
-    if !isfile(precursor_results_path) || !isfile(protein_results_path)
-        @warn "Skipping entrapment metrics; missing required arrow outputs" precursor_results_path=precursor_results_path protein_results_path=protein_results_path
+    if !isfile(precursor_results_path)
+        @warn "Skipping entrapment metrics; missing required arrow outputs" precursor_results_path=precursor_results_path
         return nothing
     end
 
     output_dir = joinpath(dataset_dir, "entrapment_analyses")
     mkpath(output_dir)
 
-    run_fn = getproperty(entrapment_module, :run_both_analyses)
+    run_fn = getproperty(entrapment_module, :run_efdr_analysis)
     result = try
-        run_fn(; precursor_results_path, library_precursors_path=lib_path, protein_results_path, output_dir,
-               r_lib=1.0, paired_stride=1, plot_formats=[:png, :pdf], verbose=true, use_fast_paired=true)
+        run_fn([precursor_results_path], lib_path; output_dir)
     catch err
         @warn "Entrapment analysis run failed" error=err
         return nothing
