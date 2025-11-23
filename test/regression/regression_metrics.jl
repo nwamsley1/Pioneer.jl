@@ -150,26 +150,36 @@ function precursor_score_pairs(path::AbstractString)
     cols = arrow_column_names(path)
     cols === nothing && return nothing
 
-    if (:MBR_boosted_global_qval in cols) && (:MBR_boosted_qval in cols)
-        return [(:MBR_boosted_global_qval, :MBR_boosted_qval)]
-    elseif (:global_qval in cols) && (:qval in cols)
-        return [(:global_qval, :qval)]
+    required_pairs = [
+        (:global_score, :MBR_boosted_global_qval),
+        (:score, :MBR_boosted_qval),
+    ]
+
+    available_pairs = [pair for pair in required_pairs if all(col -> col in cols, pair)]
+    if isempty(available_pairs)
+        @warn "No compatible precursor score/q-value columns found for entrapment analysis" path=path available_columns=collect(cols)
+        return nothing
     end
 
-    @warn "No compatible precursor score/q-value columns found for entrapment analysis" path=path available_columns=collect(cols)
-    nothing
+    available_pairs
 end
 
 function protein_score_pairs(path::AbstractString)
     cols = arrow_column_names(path)
     cols === nothing && return nothing
 
-    if (:global_qval in cols) && (:qval in cols)
-        return [(:global_qval, :qval)]
+    required_pairs = [
+        (:global_pg_score, :global_qval),
+        (:pg_score, :qval),
+    ]
+
+    available_pairs = [pair for pair in required_pairs if all(col -> col in cols, pair)]
+    if isempty(available_pairs)
+        @warn "No compatible protein score/q-value columns found for entrapment analysis" path=path available_columns=collect(cols)
+        return nothing
     end
 
-    @warn "No compatible protein score/q-value columns found for entrapment analysis" path=path available_columns=collect(cols)
-    nothing
+    available_pairs
 end
 
 function entrapment_module_name(repo_path::AbstractString)
