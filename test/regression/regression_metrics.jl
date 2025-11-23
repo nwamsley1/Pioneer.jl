@@ -3,6 +3,9 @@
 using CSV
 using DataFrames
 using JSON
+using Statistics
+
+const DEFAULT_METRIC_GROUPS = ["identification", "CV"]
 
 function read_required_table(path::AbstractString)
     isfile(path) || error("Required file not found: $path")
@@ -37,26 +40,28 @@ function quant_column_names_from_proteins(df::DataFrame)
     Symbol.(col_names[quant_start:end])
 end
 
+function select_quant_columns(df::DataFrame, quant_col_names)
+    quant_syms = Symbol.(quant_col_names)
+    df_names = names(df)
+    df_name_syms = Symbol.(df_names)
+    df_names[[i for (i, n) in pairs(df_name_syms) if n in quant_syms]]
+end
+
 function compute_wide_metrics(
     df::DataFrame,
     quant_col_names::AbstractVector{<:Union{Symbol, String}};
     table_label::AbstractString = "wide_table",
 )
-    quant_syms = Symbol.(quant_col_names)
-    df_names = names(df)
-    df_name_syms = Symbol.(df_names)
-    existing_quant_cols = df_names[[i for (i, n) in pairs(df_name_syms) if n in quant_syms]]
+    existing_quant_cols = select_quant_columns(df, quant_col_names)
     runs = length(existing_quant_cols)
     if runs == 0
         return (; runs = 0, complete_rows = 0, data_completeness = 0.0)
     end
 
-    if length(existing_quant_cols) < length(quant_syms)
-        missing_cols = setdiff(quant_syms, existing_quant_cols)
+    if length(existing_quant_cols) < length(quant_col_names)
+        missing_cols = setdiff(Symbol.(quant_col_names), Symbol.(existing_quant_cols))
         @warn "Missing quantification columns in dataset" missing_cols=missing_cols
     end
-
-    isempty(existing_quant_cols) && return (; runs, complete_rows = 0, data_completeness = 0.0)
 
     quant_data = df[:, existing_quant_cols]
     quant_matrix = Matrix(quant_data)
@@ -68,7 +73,44 @@ function compute_wide_metrics(
     (; runs, complete_rows, data_completeness = total_cells > 0 ? non_missing_values / total_cells : 0.0)
 end
 
-function compute_dataset_metrics(dataset_dir::AbstractString, dataset_name::AbstractString)
+function compute_cv_metrics(
+    df::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}};
+    table_label::AbstractString = "wide_table",
+)
+    existing_quant_cols = select_quant_columns(df, quant_col_names)
+    runs = length(existing_quant_cols)
+    if runs == 0
+        return (; runs = 0, rows_evaluated = 0, mean_cv = 0.0)
+    end
+
+    quant_data = df[:, existing_quant_cols]
+    quant_matrix = Matrix(quant_data)
+    complete_mask = [all(!ismissing, row) for row in eachrow(quant_matrix)]
+    rows_evaluated = count(complete_mask)
+    if rows_evaluated == 0
+        return (; runs, rows_evaluated, mean_cv = 0.0)
+    end
+
+    quant_complete = quant_matrix[complete_mask, :]
+    cvs = Float64[]
+    for row in eachrow(quant_complete)
+        mean_val = mean(row)
+        if mean_val != 0
+            push!(cvs, std(row) / mean_val)
+        end
+    end
+
+    mean_cv = isempty(cvs) ? 0.0 : mean(cvs)
+    (; runs, rows_evaluated, mean_cv)
+end
+
+function compute_dataset_metrics(
+    dataset_dir::AbstractString,
+    dataset_name::AbstractString;
+    metric_groups::AbstractVector{<:AbstractString} = DEFAULT_METRIC_GROUPS,
+)
+    requested_groups = Set(lowercase.(metric_groups))
     required_files = [
         "precursors_long.tsv",
         "precursors_wide.tsv",
@@ -87,31 +129,77 @@ function compute_dataset_metrics(dataset_dir::AbstractString, dataset_name::Abst
     protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.tsv"))
     protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.tsv"))
 
-    quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
+    quant_col_names = nothing
+    precursor_wide_metrics = nothing
+    protein_wide_metrics = nothing
+    precursor_cv_metrics = nothing
+    protein_cv_metrics = nothing
 
-    precursor_wide_metrics = compute_wide_metrics(
-        precursors_wide, quant_col_names; table_label = "precursors_wide"
-    )
-    protein_wide_metrics = compute_wide_metrics(
-        protein_groups_wide, quant_col_names; table_label = "protein_groups_wide"
+    if "cv" in requested_groups
+        quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
+        precursor_wide_metrics = compute_wide_metrics(
+            precursors_wide, quant_col_names; table_label = "precursors_wide"
+        )
+        protein_wide_metrics = compute_wide_metrics(
+            protein_groups_wide, quant_col_names; table_label = "protein_groups_wide"
+        )
+        precursor_cv_metrics = compute_cv_metrics(
+            precursors_wide, quant_col_names; table_label = "precursors_wide"
+        )
+        protein_cv_metrics = compute_cv_metrics(
+            protein_groups_wide, quant_col_names; table_label = "protein_groups_wide"
+        )
+    end
+
+    precursors_metrics = Dict{String, Any}(
+        "total" => nrow(precursors_long),
+        "unique" => nrow(precursors_wide),
     )
 
-    return Dict(
-        "dataset" => dataset_name,
-        "precursors" => Dict(
-            "total" => nrow(precursors_long),
-            "unique" => nrow(precursors_wide),
+    protein_metrics = Dict{String, Any}(
+        "total" => nrow(protein_groups_long),
+        "unique" => nrow(protein_groups_wide),
+    )
+
+    if precursor_wide_metrics !== nothing
+        merge!(precursors_metrics, Dict(
             "runs" => precursor_wide_metrics.runs,
             "complete_rows" => precursor_wide_metrics.complete_rows,
             "data_completeness" => precursor_wide_metrics.data_completeness,
-        ),
-        "protein_groups" => Dict(
-            "total" => nrow(protein_groups_long),
-            "unique" => nrow(protein_groups_wide),
+            ))
+    end
+
+    if protein_wide_metrics !== nothing
+        merge!(protein_metrics, Dict(
             "runs" => protein_wide_metrics.runs,
             "complete_rows" => protein_wide_metrics.complete_rows,
             "data_completeness" => protein_wide_metrics.data_completeness,
-        ),
+            ))
+    end
+
+    if precursor_cv_metrics !== nothing
+        merge!(precursors_metrics, Dict(
+            "cv_runs" => precursor_cv_metrics.runs,
+            "rows_with_complete_values" => precursor_cv_metrics.rows_evaluated,
+            "mean_cv" => precursor_cv_metrics.mean_cv,
+        ))
+    end
+
+    if protein_cv_metrics !== nothing
+        merge!(protein_metrics, Dict(
+            "cv_runs" => protein_cv_metrics.runs,
+            "rows_with_complete_values" => protein_cv_metrics.rows_evaluated,
+            "mean_cv" => protein_cv_metrics.mean_cv,
+        ))
+    end
+
+    # Placeholder for future metric groups (e.g., FTR, entrapment, fold-change, KEAP1)
+    # that can reuse the requested_groups set to decide whether to run expensive calculations.
+
+    return Dict(
+        "dataset" => dataset_name,
+        "precursors" => precursors_metrics,
+        "protein_groups" => protein_metrics,
     )
 end
 
@@ -119,12 +207,37 @@ function main()
     results_dir = length(ARGS) >= 1 ? ARGS[1] : joinpath(pwd(), "results")
     isdir(results_dir) || error("Results directory does not exist: $results_dir")
 
+    metrics_config_path = get(
+        ENV,
+        "PIONEER_METRICS_CONFIG",
+        joinpath(@__DIR__, "..", "..", "..", "pioneer-regression-configs", "metric_configs.json"),
+    )
+    metric_group_config = if isfile(metrics_config_path)
+        JSON.parsefile(metrics_config_path)
+    else
+        @info "No metrics_config.json found; using default metric groups" metrics_config_path=metrics_config_path
+        Dict{String, Any}()
+    end
+
     dataset_dirs = filter(name -> isdir(joinpath(results_dir, name)), readdir(results_dir))
     isempty(dataset_dirs) && error("No dataset directories found in $results_dir")
 
+    dataset_dirs = filter(dataset_dirs) do name
+        groups = get(metric_group_config, name, DEFAULT_METRIC_GROUPS)
+        if isempty(groups)
+            @info "Skipping dataset without requested metrics" dataset=name
+            return false
+        end
+        return true
+    end
+
+    isempty(dataset_dirs) && error("No dataset directories remain after filtering")
+
     for dataset_name in dataset_dirs
         dataset_dir = joinpath(results_dir, dataset_name)
-        metrics = compute_dataset_metrics(dataset_dir, dataset_name)
+
+        metric_groups = get(metric_group_config, dataset_name, DEFAULT_METRIC_GROUPS)
+        metrics = compute_dataset_metrics(dataset_dir, dataset_name; metric_groups)
         metrics === nothing && continue
 
         output_path = joinpath(dataset_dir, "metrics_$(dataset_name).json")
