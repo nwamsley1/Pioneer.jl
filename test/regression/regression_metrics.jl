@@ -526,7 +526,7 @@ function compute_dataset_metrics(
         nothing
     end
 
-    metrics = Dict(
+    metrics = Dict{String, Any}(
         "dataset" => dataset_name,
     )
 
