@@ -203,6 +203,15 @@ function compute_dataset_metrics(
     )
 end
 
+function normalize_metric_groups(groups)
+    if groups isa AbstractVector
+        return [String(g) for g in groups]
+    end
+
+    @warn "Invalid metric groups entry; falling back to empty list" groups_type=typeof(groups)
+    String[]
+end
+
 function main()
     results_dir = length(ARGS) >= 1 ? ARGS[1] : joinpath(pwd(), "results")
     isdir(results_dir) || error("Results directory does not exist: $results_dir")
@@ -223,7 +232,7 @@ function main()
     isempty(dataset_dirs) && error("No dataset directories found in $results_dir")
 
     dataset_dirs = filter(dataset_dirs) do name
-        groups = get(metric_group_config, name, DEFAULT_METRIC_GROUPS)
+        groups = normalize_metric_groups(get(metric_group_config, name, DEFAULT_METRIC_GROUPS))
         if isempty(groups)
             @info "Skipping dataset without requested metrics" dataset=name
             return false
@@ -236,7 +245,9 @@ function main()
     for dataset_name in dataset_dirs
         dataset_dir = joinpath(results_dir, dataset_name)
 
-        metric_groups = get(metric_group_config, dataset_name, DEFAULT_METRIC_GROUPS)
+        metric_groups = normalize_metric_groups(
+            get(metric_group_config, dataset_name, DEFAULT_METRIC_GROUPS),
+        )
         metrics = compute_dataset_metrics(dataset_dir, dataset_name; metric_groups)
         metrics === nothing && continue
 
