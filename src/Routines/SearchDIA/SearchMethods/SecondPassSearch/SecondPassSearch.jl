@@ -567,6 +567,7 @@ function process_search_results!(
             getTICs(spectra),
             getMzArrays(spectra),
             ms_file_idx,
+            getRtIrtModel(search_context, ms_file_idx),
             getRtToRefinedIrtModel(search_context, ms_file_idx),
             getPrecursorDict(search_context)
         )

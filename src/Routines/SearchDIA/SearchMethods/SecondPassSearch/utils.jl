@@ -816,21 +816,27 @@ end
 
 
 """
-    add_features!(psms::DataFrame, search_context::SearchContext, ...)
+    add_features!(psms::DataFrame, search_context::SearchContext, tic, masses, ms_file_idx,
+                  rt_to_irt_interp, rt_to_refined_irt_interp, prec_id_to_irt)
 
 Add feature columns to PSMs for scoring and analysis.
 
+# Arguments
+- `rt_to_irt_interp`: Library iRT model (RT → library iRT, used for targeting)
+- `rt_to_refined_irt_interp`: Refined iRT model (RT → refined iRT, used for features)
+
 # Added Features
-- RT and iRT metrics
+- RT and iRT metrics (both library and refined)
 - Sequence properties
 - Intensity metrics
 - Spectrum characteristics
 """
-function add_features!(psms::DataFrame, 
+function add_features!(psms::DataFrame,
                         search_context::SearchContext,
                                     tic::AbstractVector{Float32},
                                     masses::AbstractArray,
                                     ms_file_idx::Integer,
+                                    rt_to_irt_interp::RtConversionModel,
                                     rt_to_refined_irt_interp::RtConversionModel,
                                     prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_library_irt::Float32, mean_library_irt::Union{Missing, Float32}, var_library_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}
                                     )
@@ -851,8 +857,10 @@ function add_features!(psms::DataFrame,
     N = size(psms, 1)
     irt_diff = zeros(Float32, N)
     refined_irt_obs = zeros(Float32, N)
+    irt_obs = zeros(Float32, N)
     ms1_irt_diff = zeros(Float32, N)
     refined_irt_pred = zeros(Float32, N)
+    irt_pred = zeros(Float32, N)
     irt_error = zeros(Float32, N)
     pair_idxs = zeros(UInt32, N)
     entrap_group_id = zeros(UInt8, N)
@@ -906,17 +914,21 @@ function add_features!(psms::DataFrame,
 
                 # Calculate observed refined iRT from scan RT
                 refined_irt_obs[i] = rt_to_refined_irt_interp(rt[i])
+                irt_obs[i] = rt_to_irt_interp(rt[i])
 
+                
+                irt_pred[i] = getPredIrt(search_context, prec_idx)#prec_irt[prec_idx]
                 # Calculate predicted refined iRT using refinement model + library iRT
                 library_irt = getPredIrt(search_context, prec_idx)
                 refined_irt_pred[i] = if !isnothing(refinement_model) && refinement_model.use_refinement
                     refinement_model(precursor_sequence[prec_idx], library_irt)
                 else
+                    throw("Not supposed to happen atm...")
                     library_irt
                 end
 
                 # Difference between observed and best library iRT from other runs
-                irt_diff[i] = abs(refined_irt_obs[i] - prec_id_to_irt[prec_idx].best_library_irt)
+                irt_diff[i] = abs(irt_obs[i] - prec_id_to_irt[prec_idx].best_library_irt)
 
                 # MS1-level iRT difference
                 if !ms1_missing[i]
