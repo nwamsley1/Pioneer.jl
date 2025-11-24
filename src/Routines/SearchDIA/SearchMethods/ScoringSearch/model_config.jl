@@ -49,9 +49,13 @@ const ADVANCED_FEATURE_SET = [
     :sequence_length,
     :charge,
     :refined_irt_pred_qbin,    # Quantile-binned version of :refined_irt_pred
+    :irt_pred_qbin,            # Quantile-binned version of :irt_pred (library iRT)
     #:refined_irt_pred,
-    :irt_error,
-    :irt_diff,
+    #:irt_pred,
+    :refined_irt_error,        # abs(refined_irt_obs - refined_irt_pred)
+    :refined_irt_diff,         # abs(refined_irt_obs - best_refined_irt)
+    :irt_error,                # abs(irt_obs - irt_pred)
+    :irt_diff,                 # abs(irt_obs - best_library_irt)
     :max_y_ions,
     :y_ions_sum,
     :longest_y,

@@ -80,7 +80,7 @@ function score_precursor_isotope_traces(
         best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
 
         # Add quantile-binned features before training
-        features_to_bin = [:prec_mz, :refined_irt_pred, :weight, :tic]
+        features_to_bin = [:prec_mz, :refined_irt_pred, :irt_pred, :weight, :tic]
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
         # Use a ModelConfig (AdvancedLightGBM by default) for OOM path
@@ -100,7 +100,7 @@ function score_precursor_isotope_traces(
         best_psms = load_psms_for_lightgbm(second_pass_folder)
 
         # Add quantile-binned features before training
-        features_to_bin = [:prec_mz, :refined_irt_pred, :weight, :tic]
+        features_to_bin = [:prec_mz, :refined_irt_pred, :irt_pred, :weight, :tic]
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
         if psms_count >= MAX_FOR_MODEL_SELECTION  # 100K

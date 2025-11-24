@@ -856,12 +856,14 @@ function add_features!(psms::DataFrame,
     #Allocate new columns
     N = size(psms, 1)
     irt_diff = zeros(Float32, N)
+    refined_irt_diff = zeros(Float32, N)
     refined_irt_obs = zeros(Float32, N)
     irt_obs = zeros(Float32, N)
     ms1_irt_diff = zeros(Float32, N)
     refined_irt_pred = zeros(Float32, N)
     irt_pred = zeros(Float32, N)
     irt_error = zeros(Float32, N)
+    refined_irt_error = zeros(Float32, N)
     pair_idxs = zeros(UInt32, N)
     entrap_group_id = zeros(UInt8, N)
     #psms[!,:missed_cleavage] .= zero(UInt8);
@@ -928,6 +930,9 @@ function add_features!(psms::DataFrame,
                 end
 
                 # Difference between observed and best library iRT from other runs
+                refined_irt_diff[i] = abs(refined_irt_obs[i] - 
+                refinement_model(precursor_sequence[prec_idx], prec_id_to_irt[prec_idx].best_library_irt))
+                
                 irt_diff[i] = abs(irt_obs[i] - prec_id_to_irt[prec_idx].best_library_irt)
 
                 # MS1-level iRT difference
@@ -939,7 +944,8 @@ function add_features!(psms::DataFrame,
                 end
 
                 # Error between observed and predicted refined iRT
-                irt_error[i] = abs(refined_irt_obs[i] - refined_irt_pred[i])
+                refined_irt_error[i] = abs(refined_irt_obs[i] - refined_irt_pred[i])
+                irt_error[i] = abs(irt_obs[i] - irt_pred[i])
 
                 missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
                 #sequence[i] = precursor_sequence[prec_idx]
@@ -960,6 +966,10 @@ function add_features!(psms::DataFrame,
     fetch.(tasks)
     psms[!,:refined_irt_obs] = refined_irt_obs
     psms[!,:refined_irt_pred] = refined_irt_pred
+    psms[!,:refined_irt_diff] = refined_irt_diff
+    psms[!,:refined_irt_error] = refined_irt_error
+    psms[!,:irt_obs] = irt_obs
+    psms[!,:irt_pred] = irt_pred
     psms[!,:irt_diff] = irt_diff
     psms[!,:irt_error] = irt_error
     psms[!,:ms1_irt_diff] = ms1_irt_diff
