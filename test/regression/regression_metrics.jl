@@ -577,12 +577,14 @@ function runs_with_gene_names(
     quant_col_names::AbstractVector{<:Union{Symbol, String}},
     gene_term::AbstractString,
 )
-    gene_col = :gene_names
-    if gene_col ∉ names(protein_groups_wide)
+    gene_col_index = findfirst(name -> String(name) == "gene_names", names(protein_groups_wide))
+    if gene_col_index === nothing
         available_columns = join(string.(names(protein_groups_wide)), ", ")
-        @warn "Protein groups table missing gene_names column; skipping gene-based metrics" table=String(gene_col) available_columns=available_columns
+        @warn "Protein groups table missing gene_names column; skipping gene-based metrics" table="gene_names" available_columns=available_columns
         return 0
     end
+
+    gene_col = names(protein_groups_wide)[gene_col_index]
 
     quant_columns = select_quant_columns(protein_groups_wide, quant_col_names)
     isempty(quant_columns) && return 0
