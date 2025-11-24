@@ -579,7 +579,8 @@ function runs_with_gene_names(
 )
     gene_col = :gene_names
     if gene_col ∉ names(protein_groups_wide)
-        @warn "Protein groups table missing gene_names column; skipping gene-based metrics" table=String(gene_col)
+        available_columns = join(string.(names(protein_groups_wide)), ", ")
+        @warn "Protein groups table missing gene_names column; skipping gene-based metrics" table=String(gene_col) available_columns=available_columns
         return 0
     end
 
