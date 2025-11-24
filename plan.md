@@ -1,405 +1,606 @@
-# Plan: Fix rt_to_irt vs rt_to_refined_irt Usage Throughout Pipeline
+# Plan: Use Library iRT for RT Indexing and Targeting, Refined iRT for Features Only
 
-## Problem Statement
+## Executive Summary
 
-After implementing iRT refinement, we have **TWO sets of RT↔iRT conversion models**, but many parts of the code are using the **wrong ones**:
+**Objective**: Modify the pipeline to use library iRT (file-independent) for RT index construction and RT window calculations, while continuing to use refined iRT (file-specific, sequence-specific) only for PSM scoring features.
 
-1. **Library iRT models** (`rt_irt_map`, `irt_rt_map`): RT ↔ library_iRT (from spectral library)
-2. **Refined iRT models** (`rt_to_refined_irt_map`, `refined_irt_to_rt_map`): RT ↔ refined_iRT (library adjusted by refinement)
+**Rationale**: This approach completely avoids the imputation bug discovered in RT_HANDLING_ANALYSIS.md Section 7. By using library iRT for targeting, we eliminate the cross-file model mismatch issue where File A's refined iRT (calculated with model_A) was incorrectly used for File B's RT index. Refined iRT will still provide value where it matters most: in the ML scoring features that discriminate true from false PSMs.
 
-### Critical Understanding
+**Expected Outcome**:
+- Eliminates imputation bug without complex implementation
+- Maintains benefit of refined iRT in ML scoring features
+- Simpler and more robust than calculating file-specific refined iRT during imputation
 
-**Refined iRT is FILE-SPECIFIC and must be calculated on-the-fly:**
-- **Observed refined iRT** = `rt_to_refined_irt_map[file_idx](scan_rt)` - converts scan RT to refined iRT space
-- **Predicted refined iRT** = `refinement_model[file_idx](sequence, library_irt)` - applies sequence-specific correction to library iRT
+## Current State vs Desired State
 
-**Cannot store a single "refined iRT" value per precursor globally** because:
-- Each MS file has its own refinement model
-- Same precursor has different refined iRT in different files
-- Must be computed per-file using file-specific models
+### Current Implementation (refine_library_irt branch)
 
-### Current Issues Identified
+**RT Index Construction:**
+- `get_best_precursors_accross_runs()` → returns `best_refined_irt` for each precursor
+- `makeRTIndices()` → uses `best_refined_irt` to build RT indices
+- **Problem**: For imputed precursors (not observed in file), uses `best_refined_irt` from different file's model
 
-1. **getRtIrtModel() returns LIBRARY iRT models** everywhere:
-   - SecondPassSearch (6+ locations)
-   - HuberTuningSearch (1 location)
-   - IntegrateChromatogramsSearch (2 locations)
-   - **Should use refined iRT models** after FirstPassSearch
+**RT Window Calculations:**
+- SecondPassSearch/utils.jl:181, 386 → uses `getRtToRefinedIrtModel()`
+- HuberTuningSearch/utils.jl:226 → uses `getRtToRefinedIrtModel()`
+- IntegrateChromatogramsSearch/utils.jl:254, 491 → uses `getRtToRefinedIrtModel()`
 
-2. **No getter for refined models by file index**
-   - Have: `getRtToRefinedIrtMap(s)` → returns whole dict
-   - Need: `getRtToRefinedIrtModel(s, index)` → returns model for specific file
+**Feature Calculations:**
+- SecondPassSearch/utils.jl:908-930 → calculates refined iRT on-the-fly using file-specific model
+- Uses both refinement model and RT-to-refined_iRT conversion
+- **This works correctly** - no changes needed
 
-3. **getPredIrt/setPredIrt are effectively obsolete**
-   - Currently store library iRT values per precursor
-   - Only used in 2 places (SecondPassSearch/utils.jl lines 905, 909)
-   - Should be replaced with direct library iRT access: `getIrt(precursors)[prec_idx]`
-   - Or kept as-is since they return library iRT (which is correct)
+### Desired Implementation
 
-4. **FirstPassSearch.jl stores library iRT in irt_obs**
-   - Lines 577, 587, 589, 595 set library iRT values
-   - This is actually **CORRECT** - irt_obs should store library iRT
-   - getPredIrt returns library iRT (which is what SecondPassSearch needs for the refinement calculation)
+**RT Index Construction:**
+- `get_best_precursors_accross_runs()` → return `best_library_irt` (from library, file-independent)
+- `makeRTIndices()` → use `best_library_irt` to build RT indices
+- **Benefit**: No imputation bug - library iRT is the same across all files
 
-## Solution Approach
+**RT Window Calculations:**
+- All locations → use `getRtIrtModel()` instead of `getRtToRefinedIrtModel()`
+- **Benefit**: Consistent library iRT-based targeting across files
 
-**Add `getRtToRefinedIrtModel()` with fallback** + Update all post-FirstPassSearch code to use refined RT→iRT models
+**Feature Calculations:**
+- **NO CHANGES** - keep current refined iRT feature calculation
+- **Benefit**: ML models still get improved refined iRT features for discrimination
 
-**DO NOT change irt_obs or getPredIrt/setPredIrt** - they correctly store/return library iRT
+## Detailed Implementation Plan
 
-**Files to modify:** 6 files (not 7), ~15 locations (not 20)
+### Phase 1: Modify RT Index Construction
 
----
+#### File 1: `src/Routines/SearchDIA/SearchMethods/FirstPassSearch/getBestPrecursorsAccrossRuns.jl`
 
-## Implementation Steps
+**Current Behavior:**
+- Lines 79, 150: `refined_irt = rt_to_refined_irt(rts[row])`
+- Lines 108, 111: Stores `best_refined_irt`
+- Lines 38, 143: Returns NamedTuple with `best_refined_irt` field
 
-### Part 1: Add getRtToRefinedIrtModel() Getters
+**Required Changes:**
 
-**File:** SearchTypes.jl
-**Location:** After line 508
-
-**Add these two functions:**
-
+**Change 1: Update function signature (lines 18-22)**
 ```julia
-"""
-    getRtToRefinedIrtModel(s::SearchContext, index::Integer)
+# Current:
+function get_best_precursors_accross_runs(
+    psms_paths::Vector{String},
+    prec_mzs::AbstractVector{Float32},
+    rt_to_refined_irt::Dict{Int64, RtConversionModel};
+    max_q_val::Float32=0.01f0)
 
-Get RT → refined_iRT model for file index.
-Falls back to library iRT if refined unavailable.
-Returns identity model if neither exists.
-
-# Usage
-observed_refined_irt = getRtToRefinedIrtModel(context, file_idx)(scan_rt)
-"""
-function getRtToRefinedIrtModel(s::SearchContext, index::I) where {I<:Integer}
-    if haskey(s.rt_to_refined_irt_map, index)
-        return s.rt_to_refined_irt_map[index]
-    elseif haskey(s.rt_irt_map, index)
-        @debug "Refined iRT model not found for file $index, falling back to library iRT model"
-        return s.rt_irt_map[index]
-    else
-        return IdentityModel()
-    end
-end
-
-"""
-    getRefinedIrtToRtModel(s::SearchContext, index::Integer)
-
-Get refined_iRT → RT model for file index.
-Falls back to library iRT if refined unavailable.
-Returns identity model if neither exists.
-
-# Usage
-predicted_rt = getRefinedIrtToRtModel(context, file_idx)(refined_irt)
-"""
-function getRefinedIrtToRtModel(s::SearchContext, index::I) where {I<:Integer}
-    if haskey(s.refined_irt_to_rt_map, index)
-        return s.refined_irt_to_rt_map[index]
-    elseif haskey(s.irt_rt_map, index)
-        @debug "Refined iRT model not found for file $index, falling back to library iRT model"
-        return s.irt_rt_map[index]
-    else
-        return IdentityModel()
-    end
-end
+# Change to:
+function get_best_precursors_accross_runs(
+    psms_paths::Vector{String},
+    prec_mzs::AbstractVector{Float32},
+    rt_to_library_irt::Dict{Int64, RtConversionModel};
+    max_q_val::Float32=0.01f0)
 ```
 
----
-
-### Part 2: Update SecondPassSearch
-
-**File:** SecondPassSearch/SecondPassSearch.jl
-
-**Line 495:**
+**Change 2: Update documentation (lines 19-42)**
 ```julia
-# FROM: getRtIrtModel(search_context, ms_file_idx)
-# TO:   getRtToRefinedIrtModel(search_context, ms_file_idx)
+# Change line 30 from:
+- `rt_to_refined_irt`: Dictionary mapping file indices to RT→refined_iRT conversion models
+
+# To:
+- `rt_to_library_irt`: Dictionary mapping file indices to RT→library_iRT conversion models
+
+# Change line 38 from:
+- `best_refined_irt`: Refined iRT value of best match
+
+# To:
+- `best_library_irt`: Library iRT value of best match
+
+# Change lines 39-40 from:
+- `mean_refined_irt`: Mean refined iRT across qualifying matches
+- `var_refined_irt`: Variance in refined iRT across qualifying matches
+
+# To:
+- `mean_library_irt`: Mean library iRT across qualifying matches
+- `var_library_irt`: Variance in library iRT across qualifying matches
+
+# Change line 45 from:
+1. First pass: Collects best matches and calculates mean refined iRT for each precursor
+
+# To:
+1. First pass: Collects best matches and calculates mean library iRT for each precursor
+
+# Change line 47 from:
+3. Second pass: Calculates refined iRT variance for remaining precursors
+
+# To:
+3. Second pass: Calculates library iRT variance for remaining precursors
 ```
 
-**Lines 550-553:**
+**Change 3: Update `process_first_pass!` function signature (line 52)**
 ```julia
-# FROM:
-rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
-psms[!,:ms1_ms2_rt_diff] = Float32.(ifelse.(psms[!,:rt_ms1] .== Float32(-1),
-                      Float32(-1),
-                      abs.(rt_to_irt_model.(psms[!,:rt]) .- rt_to_irt_model.(psms[!,:rt_ms1]))))
+# Current (line 52):
+function process_first_pass!(...)
 
-# TO:
-rt_to_refined_irt_model = getRtToRefinedIrtModel(search_context, ms_file_idx)
-psms[!,:ms1_ms2_rt_diff] = Float32.(ifelse.(psms[!,:rt_ms1] .== Float32(-1),
-                      Float32(-1),
-                      abs.(rt_to_refined_irt_model.(psms[!,:rt]) .- rt_to_refined_irt_model.(psms[!,:rt_ms1]))))
+# Find parameter on line 71:
+rt_to_refined_irt::RtConversionModel,
+
+# Change to:
+rt_to_library_irt::RtConversionModel,
 ```
 
-**Line 570:**
+**Change 4: Update RT conversion in `process_first_pass!` (line 79)**
 ```julia
-# FROM: getRtIrtModel(search_context, ms_file_idx),
-# TO:   getRtToRefinedIrtModel(search_context, ms_file_idx),
+# Current:
+refined_irt = rt_to_refined_irt(rts[row])
+
+# Change to:
+library_irt = rt_to_library_irt(rts[row])
 ```
 
-**File:** SecondPassSearch/utils.jl
-
-**Lines 181-183:**
+**Change 5: Update variable tracking (lines 82-91)**
 ```julia
-# FROM:
-irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+# Current (line 82):
+best_refined_irt = refined_irt
 
-# TO:
+# Change to:
+best_library_irt = library_irt
+
+# Current (line 84):
+sum_irt += refined_irt
+
+# Change to:
+sum_irt += library_irt
+
+# Current (line 87):
+if refined_irt < best_refined_irt
+    best_refined_irt = refined_irt
+
+# Change to:
+if library_irt < best_library_irt
+    best_library_irt = library_irt
+```
+
+**Change 6: Update NamedTuple structure (lines 108-115)**
+```julia
+# Current:
+prec_to_best_prob[precursor_idx] = (
+    best_prob = best_prob,
+    best_ms_file_idx = file_idx,
+    best_scan_idx = scan_idxs[row],
+    best_refined_irt = best_refined_irt,
+    mean_refined_irt = sum_irt,
+    var_refined_irt = missing,
+    n = n,
+    mz = mz
+)
+
+# Change to:
+prec_to_best_prob[precursor_idx] = (
+    best_prob = best_prob,
+    best_ms_file_idx = file_idx,
+    best_scan_idx = scan_idxs[row],
+    best_library_irt = best_library_irt,
+    mean_library_irt = sum_irt,
+    var_library_irt = missing,
+    n = n,
+    mz = mz
+)
+```
+
+**Change 7: Update `process_second_pass!` function signature (line 142)**
+```julia
+# Find parameter on line 142:
+rt_to_refined_irt::RtConversionModel,
+
+# Change to:
+rt_to_library_irt::RtConversionModel,
+```
+
+**Change 8: Update RT conversion in `process_second_pass!` (line 150)**
+```julia
+# Current:
+refined_irt = rt_to_refined_irt(rts[row])
+
+# Change to:
+library_irt = rt_to_library_irt(rts[row])
+```
+
+**Change 9: Update variance calculation (line 156)**
+```julia
+# Current:
+var_irt += (refined_irt - mean_irt)^2
+
+# Change to:
+var_irt += (library_irt - mean_irt)^2
+```
+
+**Change 10: Update NamedTuple merge (line 163)**
+```julia
+# Current:
+var_refined_irt = var_irt
+
+# Change to:
+var_library_irt = var_irt
+```
+
+**Change 11: Update call sites (lines 195, 210, 243, 253)**
+```julia
+# Line 195 - check condition:
+if !haskey(rt_to_refined_irt, file_idx)
+
+# Change to:
+if !haskey(rt_to_library_irt, file_idx)
+
+# Lines 210, 253 - function calls:
+rt_to_refined_irt[file_idx],
+
+# Change to:
+rt_to_library_irt[file_idx],
+```
+
+#### File 2: `src/Routines/SearchDIA/SearchMethods/FirstPassSearch/utils.jl`
+
+**Location:** Lines 650-703 (`summarize_first_pass_results!` function)
+
+**Change 1: Update precursor dictionary mapping (line 658)**
+```julia
+# Current:
+prec_to_irt = map(x -> (irt=x[:best_refined_irt], mz=x[:mz]),
+                  precursor_dict)
+
+# Change to:
+prec_to_irt = map(x -> (irt=x[:best_library_irt], mz=x[:mz]),
+                  precursor_dict)
+```
+
+**Change 2: Update RT model retrieval (line 667)**
+```julia
+# Current:
+all_rt_models = getRtToRefinedIrtMap(search_context)
+
+# Change to:
+all_rt_models = getRtIrtMap(search_context)
+```
+
+**Change 3: Find and update call to `get_best_precursors_accross_runs`**
+- Need to search FirstPassSearch.jl for where this function is called
+- Change parameter from `getRtToRefinedIrtMap(search_context)` to `getRtIrtMap(search_context)`
+
+#### File 3: Find call site in FirstPassSearch.jl
+
+**Search for:** Call to `get_best_precursors_accross_runs`
+**Expected location:** FirstPassSearch/FirstPassSearch.jl
+
+**Required change:**
+```julia
+# Current (expected):
+precursor_dict = get_best_precursors_accross_runs(
+    psm_paths,
+    prec_mzs,
+    getRtToRefinedIrtMap(search_context),  # ❌
+    max_q_val=params.irt_rt_recal_max_q_val
+)
+
+# Change to:
+precursor_dict = get_best_precursors_accross_runs(
+    psm_paths,
+    prec_mzs,
+    getRtIrtMap(search_context),  # ✅ Use library iRT models
+    max_q_val=params.irt_rt_recal_max_q_val
+)
+```
+
+#### File 4: `src/Routines/SearchDIA/CommonSearchUtils/buildRTIndex.jl`
+
+**Location:** Lines 70-119 (`makeRTIndices` function)
+
+**Change 1: Update function signature (line 70-74)**
+```julia
+# Current:
+function makeRTIndices(temp_folder::String,
+                       psms_paths::Vector{String},
+                       prec_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}},
+                       rt_to_refined_irt_splines::Any;
+                       min_prob::AbstractFloat = 0.5)
+
+# Change to:
+function makeRTIndices(temp_folder::String,
+                       psms_paths::Vector{String},
+                       prec_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}},
+                       rt_to_library_irt_splines::Any;
+                       min_prob::AbstractFloat = 0.5)
+```
+
+**Change 2: Update variable name (line 81)**
+```julia
+# Current:
+rt_to_refined_irt = rt_to_refined_irt_splines[key]
+
+# Change to:
+rt_to_library_irt = rt_to_library_irt_splines[key]
+```
+
+**Change 3: Update RT conversion (line 89)**
+```julia
+# Current:
+map(x->(irt=first(x),prob=last(x)), zip(rt_to_refined_irt.(psms[:rt]), psms[:prob]))
+
+# Change to:
+map(x->(irt=first(x),prob=last(x)), zip(rt_to_library_irt.(psms[:rt]), psms[:prob]))
+```
+
+**Change 4: Update comments**
+```julia
+# Line 82:
+# Current: # Impute empirical refined iRT value for psms with probability lower than the threshold
+# Change to: # Impute empirical library iRT value for psms with probability lower than the threshold
+
+# Line 95:
+# Current: # Don't impute refined iRT, use empirical
+# Change to: # Don't impute library iRT, use empirical
+
+# Line 103:
+# Current: # Impute refined iRT from the best observed psm for the precursor across the experiment
+# Change to: # Impute library iRT from the best observed psm for the precursor across the experiment
+
+# Line 106:
+# Current: # Build RT index using refined iRT values
+# Change to: # Build RT index using library iRT values
+```
+
+### Phase 2: Modify RT Window Calculations
+
+#### File 5: `src/Routines/SearchDIA/SearchMethods/SecondPassSearch/utils.jl`
+
+**Location 1: Lines 180-183 (MS2 processing in `processChunk!` function)**
+```julia
+# Current:
 refined_irt = getRtToRefinedIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
 irt_start_new = max(searchsortedfirst(rt_index.rt_bins, refined_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
 irt_stop_new = min(searchsortedlast(rt_index.rt_bins, refined_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+
+# Change to:
+library_irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+irt_start_new = max(searchsortedfirst(rt_index.rt_bins, library_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+irt_stop_new = min(searchsortedlast(rt_index.rt_bins, library_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 ```
 
-**Also update line 190:**
+**Location 2: Lines 385-388 (MS1 processing)**
 ```julia
-# FROM: if (irt_start_new != irt_start) || (irt_stop_new != irt_stop) ||
-# TO:   if (irt_start_new != irt_start) || (irt_stop_new != irt_stop) ||
-# (no change needed - uses irt_start/irt_stop which are different variables)
-```
-
-**Lines 386-388:**
-```julia
-# FROM:
-irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-irt_start = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-irt_stop = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
-
-# TO:
+# Current:
 refined_irt = getRtToRefinedIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
 irt_start = max(searchsortedfirst(rt_index.rt_bins, refined_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
 irt_stop = min(searchsortedlast(rt_index.rt_bins, refined_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+
+# Change to:
+library_irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+irt_start = max(searchsortedfirst(rt_index.rt_bins, library_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+irt_stop = min(searchsortedlast(rt_index.rt_bins, library_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 ```
 
-**Line 834** (parameter name for clarity):
+**IMPORTANT NOTE:** Lines 834-971 (feature calculation code) remain UNCHANGED. This code already correctly:
+- Uses `rt_to_refined_irt_interp` to convert RT to refined iRT (line 908)
+- Uses refinement model to calculate predicted refined iRT (lines 912-916)
+- Calculates refined iRT-based features (lines 919-930)
+
+#### File 6: `src/Routines/SearchDIA/SearchMethods/HuberTuningSearch/utils.jl`
+
+**Location:** Line 226 (in `processChunk!` function)
+
 ```julia
-# FROM: rt_to_irt_interp::RtConversionModel,
-# TO:   rt_to_refined_irt_interp::RtConversionModel,
-```
-
-**Lines 904, 909** (update variable name):
-```julia
-# FROM: rt_to_irt_interp
-# TO:   rt_to_refined_irt_interp
-```
-
-Note: Detailed changes for computing refined iRT predictions are shown in the "Detailed SecondPassSearch/utils.jl Changes" section below.
-
-**Line 1020** (parameter name):
-```julia
-# FROM: rt_to_irt_interp::RtConversionModel
-# TO:   rt_to_refined_irt_interp::RtConversionModel
-```
-
-**Line 1072:**
-```julia
-# FROM: irts = rt_to_irt_interp.(psms.rt)
-# TO:   irts = rt_to_refined_irt_interp.(psms.rt)
-```
-
----
-
-### Part 3: Update HuberTuningSearch
-
-**File:** HuberTuningSearch/utils.jl
-
-**Lines 225-227:**
-```julia
-# FROM:
-irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
-
-# TO:
+# Current:
 refined_irt = getRtToRefinedIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+
+# Change to:
+library_irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+```
+
+**Also update subsequent usage** (lines 227-228):
+```julia
+# Current:
 irt_start_new = max(searchsortedfirst(rt_index.rt_bins, refined_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
 irt_stop_new = min(searchsortedlast(rt_index.rt_bins, refined_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+
+# Change to:
+irt_start_new = max(searchsortedfirst(rt_index.rt_bins, library_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+irt_stop_new = min(searchsortedlast(rt_index.rt_bins, library_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 ```
 
-**Also update line 234:**
+#### File 7: `src/Routines/SearchDIA/SearchMethods/IntegrateChromatogramsSearch/utils.jl`
+
+**Location 1: Line 254 (in first function)**
 ```julia
-# FROM: if (irt_start_new != irt_start) || (irt_stop_new != irt_stop) || (prec_mz_string_new != prec_mz_string)
-# TO:   if (irt_start_new != irt_start) || (irt_stop_new != irt_stop) || (prec_mz_string_new != prec_mz_string)
-# (no change needed - uses irt_start/irt_stop which are different variables)
-```
-
----
-
-### Part 4: Update IntegrateChromatogramsSearch
-
-**File:** IntegrateChromatogramsSearch/utils.jl
-
-**Lines 254-256:**
-```julia
-# FROM:
-irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
-
-# TO:
+# Current:
 refined_irt = getRtToRefinedIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+
+# Change to:
+library_irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+```
+
+**Update subsequent usage** (lines 255-256):
+```julia
+# Current:
 irt_start_new = max(searchsortedfirst(rt_index.rt_bins, refined_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
 irt_stop_new = min(searchsortedlast(rt_index.rt_bins, refined_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+
+# Change to:
+irt_start_new = max(searchsortedfirst(rt_index.rt_bins, library_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+irt_stop_new = min(searchsortedlast(rt_index.rt_bins, library_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 ```
 
-**Also update line 263:**
+**Location 2: Line 491 (in second function)**
 ```julia
-# FROM: if (irt_start_new != irt_start) || (irt_stop_new != irt_stop) || (prec_mz_string_new != prec_mz_string)
-# TO:   if (irt_start_new != irt_start) || (irt_stop_new != irt_stop) || (prec_mz_string_new != prec_mz_string)
-# (no change needed - uses irt_start/irt_stop which are different variables)
-```
-
-**Lines 491-493:**
-```julia
-# FROM:
-irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-irt_start = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-irt_stop = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
-
-# TO:
+# Current:
 refined_irt = getRtToRefinedIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+
+# Change to:
+library_irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+```
+
+**Update subsequent usage** (lines 492-493):
+```julia
+# Current:
 irt_start = max(searchsortedfirst(rt_index.rt_bins, refined_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
 irt_stop = min(searchsortedlast(rt_index.rt_bins, refined_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+
+# Change to:
+irt_start = max(searchsortedfirst(rt_index.rt_bins, library_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+irt_stop = min(searchsortedlast(rt_index.rt_bins, library_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 ```
 
----
+### Phase 3: Update Documentation
 
-### Part 5: Keep FirstPassSearch as-is
+#### Update RT_HANDLING_ANALYSIS.md
 
-**File:** FirstPassSearch/FirstPassSearch.jl
-**Lines 575-597** - NO CHANGES
+Add new section at the end:
 
-**Why:** This code stores library iRT values in irt_obs, which is correct. getPredIrt/setPredIrt deal with library iRT, which is the base value needed for refinement.
+```markdown
+## Section 8: Alternative Solution - Library iRT for Targeting
 
-**File:** FirstPassSearch/utils.jl
-**Line 98:** `irt[i] = rt_irt(rt[i])`
+### 8.1 Decision: Use Library iRT for RT Indexing
 
-**Add clarifying comment:**
-```julia
-# Line 98:
-# Note: Using library iRT here since refinement happens after FirstPassSearch completes
-irt[i] = rt_irt(rt[i])
+**Date**: [Current date]
+
+After discovering the imputation bug (Section 7), we chose an alternative solution:
+- **Use library iRT** for RT index construction and RT window targeting
+- **Keep refined iRT** for PSM scoring features only
+
+### 8.2 Rationale
+
+**Advantages:**
+1. **Eliminates imputation bug**: Library iRT is file-independent
+2. **Simpler implementation**: No need to pass refinement models to makeRTIndices
+3. **Maintains ML benefit**: Refined iRT still improves scoring/discrimination
+4. **More robust**: Library iRT more stable for targeting
+
+**Trade-offs:**
+1. **RT windows** based on library iRT (potentially wider)
+2. **iRT error tolerances** already account for cross-file variation
+3. **No loss in feature quality**: Features still use refined iRT
+
+### 8.3 Implementation Changes
+
+**Modified 7 files:**
+1. FirstPassSearch/getBestPrecursorsAccrossRuns.jl - Use library iRT models
+2. FirstPassSearch/utils.jl - Pass library iRT to makeRTIndices
+3. FirstPassSearch/FirstPassSearch.jl - Pass library iRT models
+4. buildRTIndex.jl - Accept library iRT models
+5. SecondPassSearch/utils.jl - Use library iRT for RT windows
+6. HuberTuningSearch/utils.jl - Use library iRT for RT windows
+7. IntegrateChromatogramsSearch/utils.jl - Use library iRT for RT windows
+
+**Key insight**: Separation of concerns
+- Library iRT: stable, file-independent, good for targeting
+- Refined iRT: file-specific, sequence-specific, good for discrimination
+
+### 8.4 Testing Results
+
+[To be filled in after implementation and testing]
+
+### 8.5 Comparison with Develop Branch
+
+[To be filled in with ID counts and performance metrics]
 ```
 
----
+### Phase 4: Validation and Testing
 
-## Detailed SecondPassSearch/utils.jl Changes
+#### Step 1: Code Compilation Check
+```bash
+cd /Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl
+julia --project=. -e 'using Pkg; Pkg.instantiate(); using Pioneer'
+```
+**Expected**: No errors, clean compilation
 
-**Location:** add_features! function
-
-**Lines 853, 855** (variable allocation):
-```julia
-# FROM:
-irt_obs = zeros(Float32, N)
-irt_pred = zeros(Float32, N)
-
-# TO:
-refined_irt_obs = zeros(Float32, N)
-refined_irt_pred = zeros(Float32, N)
+#### Step 2: Syntax Validation
+After making changes to each file, check for syntax errors:
+```bash
+julia --project=. -e 'include("src/Routines/SearchDIA/SearchMethods/FirstPassSearch/getBestPrecursorsAccrossRuns.jl")'
 ```
 
-**Before line 895** (after line 894, before tasks_per_thread):
-```julia
-# Get refinement model for this file (will be used in parallel loop)
-refinement_model = getIrtRefinementModel(search_context, ms_file_idx)
+#### Step 3: Unit Tests
+```bash
+julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-**Lines 904-913** (inside the parallel loop):
+#### Step 4: Integration Test
+Run full pipeline on test dataset
 
-**CURRENT CODE:**
-```julia
-irt_obs[i] = rt_to_irt_interp(rt[i])
-irt_pred[i] = getPredIrt(search_context, prec_idx)
-#irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[prec_idx]))
-irt_diff[i] = abs(irt_obs[i] - prec_id_to_irt[prec_idx].best_refined_irt)
-if !ms1_missing[i]
-    ms1_irt_diff[i] = abs(rt_to_irt_interp(ms1_rt[i]) - getPredIrt(search_context, prec_idx))
-else
-    ms1_irt_diff[i] = 0f0
-end
-irt_error[i] = abs(irt_obs[i] - irt_pred[i])
-```
+#### Verification Checklist
+- [ ] No compilation errors
+- [ ] Unit tests pass
+- [ ] RT indices built successfully
+- [ ] PSMs contain refined_irt_pred and refined_irt_obs columns (unchanged)
+- [ ] Library iRT used for RT windows (check with debug logging)
+- [ ] ID counts equal or exceed develop branch
 
-**CHANGED CODE:**
-```julia
-# Calculate observed refined iRT from scan RT
-refined_irt_obs[i] = rt_to_refined_irt_interp(rt[i])
+## Files Modified Summary
 
-# Calculate predicted refined iRT using refinement model + library iRT
-library_irt = getPredIrt(search_context, prec_idx)
-refined_irt_pred[i] = if !isnothing(refinement_model) && refinement_model.use_refinement
-    refinement_model(precursor_sequence[prec_idx], library_irt)
-else
-    library_irt
-end
+| File | Location | Change Description | Lines Changed |
+|------|----------|-------------------|---------------|
+| FirstPassSearch/getBestPrecursorsAccrossRuns.jl | Throughout | Rename refined_irt → library_irt, update NamedTuple fields | ~40 |
+| FirstPassSearch/utils.jl | Lines 658, 667 | Use library iRT models and mapping | ~2 |
+| FirstPassSearch/FirstPassSearch.jl | Call to get_best_precursors | Pass library iRT models | ~1 |
+| CommonSearchUtils/buildRTIndex.jl | Lines 70-119 | Use library iRT splines, update comments | ~10 |
+| SecondPassSearch/utils.jl | Lines 181, 386 | Use library iRT for RT windows (2 locations) | ~6 |
+| HuberTuningSearch/utils.jl | Line 226-228 | Use library iRT for RT windows | ~3 |
+| IntegrateChromatogramsSearch/utils.jl | Lines 254-256, 491-493 | Use library iRT for RT windows (2 locations) | ~6 |
+| RT_HANDLING_ANALYSIS.md | End of file | Add Section 8 documenting alternative approach | ~30 |
 
-# Difference between observed and best refined iRT from other runs
-irt_diff[i] = abs(refined_irt_obs[i] - prec_id_to_irt[prec_idx].best_refined_irt)
+**Total:** 8 files, ~98 lines changed
 
-# MS1-level iRT difference
-if !ms1_missing[i]
-    ms1_refined_irt_obs = rt_to_refined_irt_interp(ms1_rt[i])
-    ms1_irt_diff[i] = abs(ms1_refined_irt_obs - refined_irt_pred[i])
-else
-    ms1_irt_diff[i] = 0f0
-end
+## Risk Assessment
 
-# Error between observed and predicted refined iRT
-irt_error[i] = abs(refined_irt_obs[i] - refined_irt_pred[i])
-```
+**Low Risk:**
+- RT window calculations: Simple function swap (getRtToRefinedIrtModel → getRtIrtModel)
+- Feature calculations: No changes
 
-**Lines 932-933** (DataFrame column assignment):
-```julia
-# FROM:
-psms[!,:irt_obs] = irt_obs
-psms[!,:irt_pred] = irt_pred
+**Medium Risk:**
+- RT index construction: More extensive renaming in data structures
+- Need to ensure all references to best_refined_irt are updated
 
-# TO:
-psms[!,:refined_irt_obs] = refined_irt_obs
-psms[!,:refined_irt_pred] = refined_irt_pred
-```
+**Mitigation:**
+- Changes are type-safe (Julia will catch mismatches)
+- Localized to specific functions
+- Integration tests will verify end-to-end
 
----
+## Timeline Estimate
 
-## Summary Table
+- **Phase 1** (RT Index): 1.5-2 hours
+- **Phase 2** (RT Windows): 30-45 minutes
+- **Phase 3** (Documentation): 15-30 minutes
+- **Phase 4** (Testing): 1-2 hours
+- **Total**: 3.25-5.25 hours
 
-| File | Lines | Change | Count |
-|------|-------|--------|-------|
-| SearchTypes.jl | 508+ | Add getRtToRefinedIrtModel/getRefinedIrtToRtModel | +2 functions |
-| FirstPassSearch/utils.jl | 98 | Add comment only | 0 code changes |
-| SecondPassSearch.jl | 495, 550-553, 570 | getRtIrtModel → getRtToRefinedIrtModel + rt_to_irt_model → rt_to_refined_irt_model | 3 calls + 1 var |
-| SecondPassSearch/utils.jl | 181-183, 386-388 | getRtIrtModel → getRtToRefinedIrtModel + irt → refined_irt | 2 calls + 6 var uses |
-| SecondPassSearch/utils.jl | 834, 1020 | Rename rt_to_irt_interp → rt_to_refined_irt_interp (params) | 2 params |
-| SecondPassSearch/utils.jl | 894+ | Add refinement_model lookup before loop | +1 line |
-| SecondPassSearch/utils.jl | 904-913 | Compute refined iRT predictions in loop | ~15 lines |
-| SecondPassSearch/utils.jl | 1072 | Rename rt_to_irt_interp → rt_to_refined_irt_interp (usage) | 1 line |
-| HuberTuningSearch/utils.jl | 225-227 | getRtIrtModel → getRtToRefinedIrtModel + irt → refined_irt | 1 call + 3 var uses |
-| IntegrateChromatogramsSearch/utils.jl | 254-256, 491-493 | getRtIrtModel → getRtToRefinedIrtModel + irt → refined_irt | 2 calls + 6 var uses |
+## Expected Outcomes
 
-**Total:** 6 files, 2 new functions, 8 function call updates, ~22 variable renames, 1 major loop rewrite
+### Immediate
+- Clean compilation
+- RT indices built with library iRT
+- RT windows calculated using library iRT
+- Features still use refined iRT
 
----
+### Performance
+- ID counts match or exceed develop branch (with bug fix)
+- Refined iRT improves IDs by 10-30% through better ML discrimination
+- No imputation artifacts
 
-## Expected Impact
+### Long-term
+- Simpler, more maintainable codebase
+- Clear separation of concerns
+- More robust across diverse datasets
 
-1. **More accurate iRT-based features** in SecondPassSearch with clear naming:
-   - `refined_irt_obs` = observed refined iRT (using rt_to_refined_irt model)
-   - `refined_irt_pred` = predicted refined iRT (using refinement model + library iRT)
-   - `irt_error` = |refined_irt_obs - refined_irt_pred| in refined iRT space
-   - `irt_diff` = |refined_irt_obs - best_refined_irt_from_other_runs|
-   - `ms1_irt_diff` = MS1-level refined iRT error
+## Questions for User Confirmation
 
-2. **Improved downstream searches** use refined iRT:
-   - HuberTuningSearch
-   - IntegrateChromatogramsSearch
+1. **Approach Approval**: Does this alternative approach (library iRT for targeting, refined iRT for features) make sense?
 
-3. **Clearer code** with explicit getRtToRefinedIrtModel() calls
+2. **Testing Dataset**: What dataset should be used for integration testing?
 
-4. **Potential ID increase** from more accurate iRT features
+3. **Success Criteria**: What ID count improvement would validate this approach?
 
-5. **getPredIrt/setPredIrt remain unchanged** - correctly return library iRT
+4. **Comparison**: Should we compare against develop branch only, or also document the imputation bug version?
 
-6. **irt_obs remains unchanged** - correctly stores library iRT
+## Next Steps After Approval
 
-7. **Fallback safety** if refined model unavailable (uses library iRT)
+1. Implement Phase 1 (RT index construction)
+2. Syntax check after Phase 1
+3. Implement Phase 2 (RT window calculations)
+4. Update documentation (Phase 3)
+5. Run compilation check
+6. Run unit tests
+7. Run integration test
+8. Commit with detailed message
+9. Report results

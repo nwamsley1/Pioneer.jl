@@ -177,10 +177,10 @@ function process_scans!(
         end
         msn ∉ params.spec_order && continue
 
-        # Calculate RT window using refined iRT
-        refined_irt = getRtToRefinedIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-        irt_start_new = max(searchsortedfirst(rt_index.rt_bins, refined_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-        irt_stop_new = min(searchsortedlast(rt_index.rt_bins, refined_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+        # Calculate RT window using library iRT
+        library_irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+        irt_start_new = max(searchsortedfirst(rt_index.rt_bins, library_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+        irt_stop_new = min(searchsortedlast(rt_index.rt_bins, library_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         # Check for m/z change
         prec_mz_string_new = string(getCenterMz(spectra, scan_idx))
@@ -382,10 +382,10 @@ function process_scans!(
             continue
         end
 
-        # Calculate RT window using refined iRT
-        refined_irt = getRtToRefinedIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-        irt_start = max(searchsortedfirst(rt_index.rt_bins, refined_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-        irt_stop = min(searchsortedlast(rt_index.rt_bins, refined_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+        # Calculate RT window using library iRT
+        library_irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+        irt_start = max(searchsortedfirst(rt_index.rt_bins, library_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+        irt_stop = min(searchsortedlast(rt_index.rt_bins, library_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         # Update transitions if window changed
         # reset per-scan counters
@@ -832,7 +832,7 @@ function add_features!(psms::DataFrame,
                                     masses::AbstractArray,
                                     ms_file_idx::Integer,
                                     rt_to_refined_irt_interp::RtConversionModel,
-                                    prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_refined_irt::Float32, mean_refined_irt::Union{Missing, Float32}, var_refined_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}
+                                    prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_library_irt::Float32, mean_library_irt::Union{Missing, Float32}, var_library_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}
                                     )
 
     precursor_sequence = getSequence(getPrecursors(getSpecLib(search_context)))#[:sequence],
@@ -915,8 +915,8 @@ function add_features!(psms::DataFrame,
                     library_irt
                 end
 
-                # Difference between observed and best refined iRT from other runs
-                irt_diff[i] = abs(refined_irt_obs[i] - prec_id_to_irt[prec_idx].best_refined_irt)
+                # Difference between observed and best library iRT from other runs
+                irt_diff[i] = abs(refined_irt_obs[i] - prec_id_to_irt[prec_idx].best_library_irt)
 
                 # MS1-level iRT difference
                 if !ms1_missing[i]

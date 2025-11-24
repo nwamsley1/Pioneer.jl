@@ -250,10 +250,10 @@ function build_chromatograms(
         msn = getMsOrder(spectra, scan_idx)
         msn ∉ params.spec_order && continue
 
-        # Calculate RT window using refined iRT
-        refined_irt = getRtToRefinedIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-        irt_start_new = max(searchsortedfirst(rt_index.rt_bins, refined_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-        irt_stop_new = min(searchsortedlast(rt_index.rt_bins, refined_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+        # Calculate RT window using library iRT
+        library_irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+        irt_start_new = max(searchsortedfirst(rt_index.rt_bins, library_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+        irt_stop_new = min(searchsortedlast(rt_index.rt_bins, library_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         # Check for m/z change
         prec_mz_string_new = string(getCenterMz(spectra, scan_idx))
@@ -487,10 +487,10 @@ function build_chromatograms(
             continue
         end
         iso_count = Dictionary{UInt32, @NamedTuple{matched_mono::Bool, iso_count::UInt8}}()
-        # Calculate RT window using refined iRT
-        refined_irt = getRtToRefinedIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-        irt_start = max(searchsortedfirst(rt_index.rt_bins, refined_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-        irt_stop = min(searchsortedlast(rt_index.rt_bins, refined_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+        # Calculate RT window using library iRT
+        library_irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+        irt_start = max(searchsortedfirst(rt_index.rt_bins, library_irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+        irt_stop = min(searchsortedlast(rt_index.rt_bins, library_irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         # Update transitions if window changed
         prec_temp_size = 0

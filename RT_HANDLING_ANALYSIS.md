@@ -1140,4 +1140,131 @@ With both bugs fixed:
 
 ---
 
+## Section 8: Alternative Solution - Library iRT for Targeting
+
+### 8.1 Decision: Use Library iRT for RT Indexing
+
+**Date**: November 24, 2025
+
+After discovering the imputation bug (Section 7), we chose an alternative solution:
+- **Use library iRT** for RT index construction and RT window targeting
+- **Keep refined iRT** for PSM scoring features only
+
+### 8.2 Rationale
+
+**Advantages:**
+1. **Eliminates imputation bug**: Library iRT is file-independent - no cross-file model mismatch
+2. **Simpler implementation**: No need to pass refinement models to makeRTIndices
+3. **Maintains ML benefit**: Refined iRT still improves scoring/discrimination
+4. **More robust**: Library iRT more stable for targeting across diverse datasets
+
+**Trade-offs:**
+1. **RT windows** based on library iRT (potentially wider than refined iRT windows)
+2. **iRT error tolerances** already account for cross-file variation
+3. **No loss in feature quality**: Features still use refined iRT for ML discrimination
+
+### 8.3 Implementation Changes
+
+**Modified 7 files** (~98 lines total):
+
+1. **FirstPassSearch/getBestPrecursorsAccrossRuns.jl** (~40 lines)
+   - Changed `rt_to_refined_irt` → `rt_to_library_irt` throughout
+   - Updated NamedTuple fields: `best_refined_irt` → `best_library_irt`
+   - Updated all documentation and comments
+
+2. **FirstPassSearch/utils.jl** (~2 lines)
+   - Line 658: Use `best_library_irt` from precursor dictionary
+   - Line 667: Use `getRtIrtMap()` instead of `getRtToRefinedIrtMap()`
+
+3. **FirstPassSearch/FirstPassSearch.jl** (~1 line)
+   - Line 549: Update empty dictionary return type with library iRT field names
+
+4. **CommonSearchUtils/buildRTIndex.jl** (~10 lines)
+   - Function parameter: `rt_to_refined_irt_splines` → `rt_to_library_irt_splines`
+   - Variable usage: `rt_to_refined_irt` → `rt_to_library_irt`
+   - Updated comments to reference library iRT
+
+5. **SecondPassSearch/utils.jl** (~6 lines)
+   - Lines 181, 386: Use `getRtIrtModel()` for RT windows (2 locations)
+   - Changed variable names: `refined_irt` → `library_irt`
+   - **IMPORTANT**: Feature calculation code (lines 834-971) remains UNCHANGED
+
+6. **HuberTuningSearch/utils.jl** (~3 lines)
+   - Line 226: Use `getRtIrtModel()` for RT windows
+
+7. **IntegrateChromatogramsSearch/utils.jl** (~6 lines)
+   - Lines 254, 491: Use `getRtIrtModel()` for RT windows (2 locations)
+
+### 8.4 Key Insight: Separation of Concerns
+
+This implementation creates a clear separation:
+- **Library iRT**: Stable, file-independent, used for **targeting** (RT windows, RT indices)
+- **Refined iRT**: File-specific, sequence-specific, used for **discrimination** (ML features)
+
+The refined iRT models (trained per-file with amino acid composition) still provide value where it matters most: in the scoring features that help the ML model distinguish true from false PSMs. The features `:refined_irt_pred`, `:refined_irt_obs`, `:irt_error`, and `:irt_diff` continue to use file-specific refined iRT calculations.
+
+### 8.5 Testing Plan
+
+1. **Syntax Check**: Verify clean compilation
+2. **Unit Tests**: Run existing test suite
+3. **Integration Test**: Full pipeline on test dataset
+4. **Validation Checks**:
+   - RT indices built successfully with library iRT
+   - PSMs contain refined_irt_pred and refined_irt_obs columns
+   - Library iRT used for RT windows (verify with debug output)
+   - ID counts match or exceed develop branch
+
+### 8.6 Expected Results
+
+**Immediate:**
+- Clean pipeline execution
+- RT indices use library iRT (no imputation issues)
+- RT windows calculated with library iRT
+- Features still use refined iRT (unchanged)
+
+**Performance:**
+- ID counts should match or exceed develop branch (with getBestPrecursorsAccrossRuns bug fix)
+- Refined iRT should improve IDs through better ML discrimination
+- Expected improvement: 10-30% over develop branch (via feature quality, not targeting)
+
+**Long-term:**
+- Simpler, more maintainable codebase
+- More robust across diverse datasets
+- Clear architectural separation (targeting vs discrimination)
+
+### 8.7 Status Update
+
+**Completed (November 24, 2025):**
+- ✅ Created detailed implementation plan (plan.md)
+- ✅ Phase 1: Modified RT index construction (4 files)
+- ✅ Phase 2: Modified RT window calculations (3 files)
+- ✅ Phase 3: Updated documentation (this section)
+- ✅ Code committed to `refine_library_irt` branch
+
+**Pending:**
+- ⏳ Syntax and compilation check
+- ⏳ Integration testing on full dataset
+- ⏳ Performance comparison vs develop branch
+- ⏳ Validation of refined iRT feature impact on IDs
+
+### 8.8 Comparison with Section 7 Solution
+
+| Aspect | Section 7 (Imputation Fix) | Section 8 (Library iRT) |
+|--------|---------------------------|-------------------------|
+| **Targeting** | Refined iRT (file-specific) | Library iRT (file-independent) |
+| **Features** | Refined iRT | Refined iRT (same) |
+| **Complexity** | Pass models to makeRTIndices | Simple function swaps |
+| **Imputation** | Calculate file-specific refined iRT | No imputation needed |
+| **RT Windows** | File-specific refined iRT | Library iRT (slightly wider) |
+| **Implementation** | ~20 lines, 3 files | ~98 lines, 7 files |
+| **Robustness** | Depends on refinement quality | Independent of refinement |
+
+**Decision Rationale**: Section 8 approach chosen for:
+- Simpler and more robust
+- Eliminates imputation bug entirely
+- Maintains ML benefit through features
+- Better architectural separation
+
+---
+
 **End of Analysis**

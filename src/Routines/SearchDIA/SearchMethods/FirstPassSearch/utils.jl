@@ -617,7 +617,7 @@ end
 
 PrecToIrtType = Dictionary{UInt32,
     NamedTuple{
-        (:best_prob, :best_ms_file_idx, :best_scan_idx, :best_refined_irt, :mean_refined_irt, :var_refined_irt, :n, :mz),
+        (:best_prob, :best_ms_file_idx, :best_scan_idx, :best_library_irt, :mean_library_irt, :var_library_irt, :n, :mz),
         Tuple{Float32, UInt32, UInt32, Float32, Union{Missing, Float32}, Union{Missing, Float32}, Union{Missing, UInt16}, Float32}
     }
 }
@@ -654,8 +654,8 @@ function create_rt_indices!(
 
     setIrtErrors!(search_context, irt_errs)
 
-    # Create precursor to refined iRT mapping
-    prec_to_irt = map(x -> (irt=x[:best_refined_irt], mz=x[:mz]),
+    # Create precursor to library iRT mapping
+    prec_to_irt = map(x -> (irt=x[:best_library_irt], mz=x[:mz]),
                       precursor_dict)
 
     # Set up indices folder
@@ -664,7 +664,7 @@ function create_rt_indices!(
 
     # Get PSM paths and RT models
     all_psm_paths = getFirstPassPsms(getMSData(search_context))
-    all_rt_models = getRtToRefinedIrtMap(search_context)
+    all_rt_models = getRtIrtMap(search_context)
 
     # Filter to get valid file indices and their paths
     valid_indexed_data = []
@@ -728,28 +728,28 @@ function get_irt_errs(
     @NamedTuple{best_prob::Float32,
                 best_ms_file_idx::UInt32,
                 best_scan_idx::UInt32,
-                best_refined_irt::Float32,
-                mean_refined_irt::Union{Missing, Float32},
-                var_refined_irt::Union{Missing, Float32},
+                best_library_irt::Float32,
+                mean_library_irt::Union{Missing, Float32},
+                var_library_irt::Union{Missing, Float32},
                 n::Union{Missing, UInt16},
                 mz::Float32}}
     ,
     params::FirstPassSearchParameters
 )
     #Get upper bound on peak fwhm. Use median + n*standard_deviation
-    #estimate standard deviation by the median absolute deviation. 
-    #n is a user-defined paramter. 
+    #estimate standard deviation by the median absolute deviation.
+    #n is a user-defined paramter.
     fwhms = map(x->x[:median_fwhm] + params.fwhm_nstd*x[:mad_fwhm],
     fwhms)
     #Get variance in irt of apex accross runs. Only consider precursor identified below q-value threshold
     #in more than two runs .
     irt_std = nothing
-    variance_  = collect(skipmissing(map(x-> (x[:n] > 2) ? sqrt(x[:var_refined_irt]/(x[:n] - 1)) : missing, prec_to_irt)))
+    variance_  = collect(skipmissing(map(x-> (x[:n] > 2) ? sqrt(x[:var_library_irt]/(x[:n] - 1)) : missing, prec_to_irt)))
     if !iszero(length(variance_))
         irt_std = median(variance_)
     else
         #This could happen if only two files are being searched
-        variance_  = collect(skipmissing(map(x-> (x[:n] == 2) ? sqrt(x[:var_refined_irt]) : missing, prec_to_irt)))
+        variance_  = collect(skipmissing(map(x-> (x[:n] == 2) ? sqrt(x[:var_library_irt]) : missing, prec_to_irt)))
         if iszero(length(variance_)) #only searching one file so 
             irt_std = 0.0f0
         else
