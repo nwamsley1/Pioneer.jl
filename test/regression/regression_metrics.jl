@@ -418,6 +418,7 @@ function compute_dataset_metrics(
     dataset_dir::AbstractString,
     dataset_name::AbstractString;
     metric_groups::AbstractVector{<:AbstractString} = DEFAULT_METRIC_GROUPS,
+    experimental_design::Dict{String, Any} = Dict{String, Any}(),
 )
     requested_groups = Set(lowercase.(metric_groups))
     need_identification = "identification" in requested_groups
@@ -427,7 +428,8 @@ function compute_dataset_metrics(
 
     precursors_metrics = nothing
     protein_metrics = nothing
-    keap1_metrics = nothing
+    keap1_precursor_metrics = nothing
+    keap1_protein_metrics = nothing
 
     if need_tsv_metrics
         required_files = [
@@ -517,9 +519,48 @@ function compute_dataset_metrics(
         end
 
         if need_keap1
-            keap1_metrics = Dict(
+            labels_for_runs = experimental_design_for_dataset(experimental_design, dataset_name)
+            keap1_precursor_metrics = gene_counts_metrics_by_run(
+                precursors_wide,
+                quant_col_names,
+                labels_for_runs,
+                "precursors",
+                "KEAP1",
+            )
+            merge!(
+                keap1_precursor_metrics,
+                gene_counts_metrics_by_run(
+                    precursors_wide,
+                    quant_col_names,
+                    labels_for_runs,
+                    "precursors",
+                    "NFE2L2",
+                ),
+            )
+
+            keap1_protein_metrics = Dict(
                 "runs_with_keap1" => runs_with_gene_names(protein_groups_wide, quant_col_names, "KEAP1"),
                 "runs_with_nfe2l2" => runs_with_gene_names(protein_groups_wide, quant_col_names, "NFE2L2"),
+            )
+            merge!(
+                keap1_protein_metrics,
+                gene_counts_metrics_by_run(
+                    protein_groups_wide,
+                    quant_col_names,
+                    labels_for_runs,
+                    "protein_groups",
+                    "KEAP1",
+                ),
+            )
+            merge!(
+                keap1_protein_metrics,
+                gene_counts_metrics_by_run(
+                    protein_groups_wide,
+                    quant_col_names,
+                    labels_for_runs,
+                    "protein_groups",
+                    "NFE2L2",
+                ),
             )
         end
     end
@@ -532,16 +573,24 @@ function compute_dataset_metrics(
 
     metrics = Dict{String, Any}()
 
-    if precursors_metrics !== nothing && !isempty(precursors_metrics)
-        metrics["precursors"] = precursors_metrics
-    end
-
-    if protein_metrics !== nothing && !isempty(protein_metrics)
-        if keap1_metrics !== nothing
-            merge!(protein_metrics, keap1_metrics)
+    if precursors_metrics !== nothing
+        if keap1_precursor_metrics !== nothing
+            merge!(precursors_metrics, keap1_precursor_metrics)
         end
 
-        metrics["protein_groups"] = protein_metrics
+        if !isempty(precursors_metrics)
+            metrics["precursors"] = precursors_metrics
+        end
+    end
+
+    if protein_metrics !== nothing
+        if keap1_protein_metrics !== nothing
+            merge!(protein_metrics, keap1_protein_metrics)
+        end
+
+        if !isempty(protein_metrics)
+            metrics["protein_groups"] = protein_metrics
+        end
     end
 
     if entrapment_metrics !== nothing
@@ -572,19 +621,104 @@ function metric_preferences(config::Dict, dataset_name::AbstractString)
     (; groups)
 end
 
+function load_experimental_design(path::AbstractString)
+    if !isfile(path)
+        @info "No experimental design file found; using run names as labels" experimental_design_path=path
+        return Dict{String, Any}()
+    end
+
+    try
+        design = JSON.parsefile(path)
+        if design isa AbstractDict
+            return design
+        end
+
+        @warn "Experimental design file is not a dictionary; ignoring" experimental_design_path=path
+        return Dict{String, Any}()
+    catch err
+        @warn "Failed to parse experimental design file; ignoring" experimental_design_path=path error=err
+        return Dict{String, Any}()
+    end
+end
+
+function normalize_metric_label(label::AbstractString)
+    replace(strip(label), r"\s+" => "_")
+end
+
+function experimental_design_for_dataset(
+    experimental_design::Dict{String, Any},
+    dataset_name::AbstractString,
+)
+    entry = get(experimental_design, dataset_name, nothing)
+    if entry isa AbstractDict
+        runs = get(entry, "runs", nothing)
+        if runs isa AbstractDict
+            return Dict(String(k) => String(v) for (k, v) in runs)
+        end
+    end
+
+    Dict{String, String}()
+end
+
+function gene_names_column(df::DataFrame; table_label::AbstractString = "table")
+    gene_col_index = findfirst(name -> String(name) == "gene_names", names(df))
+    if gene_col_index === nothing
+        available_columns = join(string.(names(df)), ", ")
+        @warn "Table missing gene_names column; skipping gene-based metrics" table=table_label available_columns=available_columns
+        return nothing
+    end
+
+    names(df)[gene_col_index]
+end
+
+function gene_counts_by_run(
+    wide_df::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    gene_term::AbstractString,
+; table_label::AbstractString = "table")
+    gene_col = gene_names_column(wide_df; table_label = table_label)
+    gene_col === nothing && return Dict{Symbol, Int}()
+
+    quant_columns = select_quant_columns(wide_df, quant_col_names)
+    isempty(quant_columns) && return Dict{Symbol, Int}()
+
+    gene_matches = map(wide_df[:, gene_col]) do val
+        val === missing && return false
+        occursin(gene_term, String(val))
+    end
+
+    matched_rows = findall(identity, gene_matches)
+    isempty(matched_rows) && return Dict{Symbol, Int}()
+
+    Dict(col => count(!ismissing, wide_df[matched_rows, col]) for col in quant_columns)
+end
+
+function gene_counts_metrics_by_run(
+    wide_df::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    labels_for_runs::Dict{String, String},
+    level::AbstractString,
+    gene_term::AbstractString,
+)
+    counts = gene_counts_by_run(wide_df, quant_col_names, gene_term; table_label = level)
+    metrics = Dict{String, Int}()
+
+    for (col, count) in counts
+        label = get(labels_for_runs, String(col), String(col))
+        metric_name = string(gene_term, "_", level, "_in_", normalize_metric_label(label))
+        metrics[metric_name] = count
+    end
+
+    metrics
+end
+
 function runs_with_gene_names(
     protein_groups_wide::DataFrame,
     quant_col_names::AbstractVector{<:Union{Symbol, String}},
     gene_term::AbstractString,
 )
-    gene_col_index = findfirst(name -> String(name) == "gene_names", names(protein_groups_wide))
-    if gene_col_index === nothing
-        available_columns = join(string.(names(protein_groups_wide)), ", ")
-        @warn "Protein groups table missing gene_names column; skipping gene-based metrics" table="gene_names" available_columns=available_columns
-        return 0
-    end
-
-    gene_col = names(protein_groups_wide)[gene_col_index]
+    gene_col = gene_names_column(protein_groups_wide; table_label = "protein_groups_wide")
+    gene_col === nothing && return 0
 
     quant_columns = select_quant_columns(protein_groups_wide, quant_col_names)
     isempty(quant_columns) && return 0
@@ -640,6 +774,13 @@ function main()
         Dict{String, Any}()
     end
 
+    experimental_design_path = get(
+        ENV,
+        "PIONEER_EXPERIMENTAL_DESIGN",
+        joinpath(@__DIR__, "..", "..", "pioneer-regression-configs", "experimental_design.json"),
+    )
+    experimental_design = load_experimental_design(experimental_design_path)
+
     dataset_dirs = filter(dataset_dirs) do path
         dataset_name = basename(path)
         preferences = metric_preferences(metric_group_config, dataset_name)
@@ -658,7 +799,12 @@ function main()
         preferences = metric_preferences(metric_group_config, dataset_name)
 
         metric_groups = preferences.groups
-        metrics = compute_dataset_metrics(dataset_dir, dataset_name; metric_groups)
+        metrics = compute_dataset_metrics(
+            dataset_dir,
+            dataset_name;
+            metric_groups = metric_groups,
+            experimental_design = experimental_design,
+        )
         metrics === nothing && continue
 
         output_path = joinpath(dataset_dir, "metrics_$(dataset_name).json")
