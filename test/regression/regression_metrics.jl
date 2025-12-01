@@ -538,19 +538,12 @@ function compute_dataset_metrics(
                 ),
             )
 
-            keap1_protein_metrics = Dict(
-                "runs_with_keap1" => runs_with_gene_names(protein_groups_wide, quant_col_names, "KEAP1"),
-                "runs_with_nfe2l2" => runs_with_gene_names(protein_groups_wide, quant_col_names, "NFE2L2"),
-            )
-            merge!(
-                keap1_protein_metrics,
-                gene_counts_metrics_by_run(
-                    protein_groups_wide,
-                    quant_col_names,
-                    labels_for_runs,
-                    "protein_groups",
-                    "KEAP1",
-                ),
+            keap1_protein_metrics = gene_counts_metrics_by_run(
+                protein_groups_wide,
+                quant_col_names,
+                labels_for_runs,
+                "protein_groups",
+                "KEAP1",
             )
             merge!(
                 keap1_protein_metrics,
@@ -710,28 +703,6 @@ function gene_counts_metrics_by_run(
     end
 
     metrics
-end
-
-function runs_with_gene_names(
-    protein_groups_wide::DataFrame,
-    quant_col_names::AbstractVector{<:Union{Symbol, String}},
-    gene_term::AbstractString,
-)
-    gene_col = gene_names_column(protein_groups_wide; table_label = "protein_groups_wide")
-    gene_col === nothing && return 0
-
-    quant_columns = select_quant_columns(protein_groups_wide, quant_col_names)
-    isempty(quant_columns) && return 0
-
-    gene_matches = map(protein_groups_wide[:, gene_col]) do val
-        val === missing && return false
-        occursin(gene_term, String(val))
-    end
-
-    matched_rows = findall(identity, gene_matches)
-    isempty(matched_rows) && return 0
-
-    count(col -> any(!ismissing, protein_groups_wide[matched_rows, col]), quant_columns)
 end
 
 function dataset_dirs_from_root(root::AbstractString)
