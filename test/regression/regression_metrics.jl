@@ -435,7 +435,7 @@ function compute_dataset_metrics(
     ftr_metrics = nothing
 
     if need_tsv_metrics
-        required_files = if need_identification || need_cv || need_keap1
+        required_files = if need_identification || need_cv || need_keap1 || need_ftr
             [
                 "precursors_long.tsv",
                 "precursors_wide.tsv",
@@ -456,7 +456,7 @@ function compute_dataset_metrics(
         precursors_wide = nothing
         protein_groups_long = nothing
 
-        if need_identification || need_cv || need_keap1
+        if need_identification || need_cv || need_keap1 || need_ftr
             precursors_long = read_required_table(joinpath(dataset_dir, "precursors_long.tsv"))
             precursors_wide = read_required_table(joinpath(dataset_dir, "precursors_wide.tsv"))
             protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.tsv"))
@@ -464,7 +464,11 @@ function compute_dataset_metrics(
 
         protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.tsv"))
 
-        quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
+        quant_col_names = if precursors_wide !== nothing
+            quant_column_names_from_proteins(precursors_wide)
+        else
+            quant_column_names_from_proteins(protein_groups_wide)
+        end
         precursor_wide_metrics = nothing
         protein_wide_metrics = nothing
         precursor_cv_metrics = nothing
@@ -574,7 +578,7 @@ function compute_dataset_metrics(
         if need_ftr
             ftr_metrics = compute_ftr_metrics(
                 dataset_name,
-                protein_groups_wide,
+                precursors_wide,
                 quant_col_names,
                 experimental_design,
                 dataset_paths,
@@ -859,15 +863,8 @@ function count_species_ids(
     matching_indices = findall(identity, matches)
     isempty(matching_indices) && return 0
 
-    count = 0
-    for idx in matching_indices
-        row_values = df[idx, run_columns]
-        if any(!ismissing, row_values)
-            count += 1
-        end
-    end
-
-    count
+    quant_matrix = Matrix(df[matching_indices, run_columns])
+    count(!ismissing, quant_matrix)
 end
 
 function count_yeast_ids(
@@ -911,7 +908,7 @@ end
 
 function compute_ftr_metrics(
     dataset_name::AbstractString,
-    protein_groups_wide::DataFrame,
+    precursors_wide::DataFrame,
     quant_col_names::AbstractVector{<:Union{Symbol, String}},
     experimental_design::Dict{String, Any},
     dataset_paths::Dict{String, String},
@@ -924,30 +921,30 @@ function compute_ftr_metrics(
 
     mbr_name, mbr_path, nombr_name, nombr_path = paired_paths
 
-    protein_groups_mbr = if dataset_name == mbr_name
-        protein_groups_wide
+    precursors_mbr = if dataset_name == mbr_name
+        precursors_wide
     else
-        tsv_path = joinpath(mbr_path, "protein_groups_wide.tsv")
+        tsv_path = joinpath(mbr_path, "precursors_wide.tsv")
         isfile(tsv_path) || begin
-            @warn "Missing protein groups for MBR dataset; skipping FTR metrics" dataset=mbr_name path=tsv_path
+            @warn "Missing precursors for MBR dataset; skipping FTR metrics" dataset=mbr_name path=tsv_path
             return nothing
         end
         read_required_table(tsv_path)
     end
 
-    protein_groups_no_mbr = if dataset_name == nombr_name
-        protein_groups_wide
+    precursors_no_mbr = if dataset_name == nombr_name
+        precursors_wide
     else
-        tsv_path = joinpath(nombr_path, "protein_groups_wide.tsv")
+        tsv_path = joinpath(nombr_path, "precursors_wide.tsv")
         isfile(tsv_path) || begin
-            @warn "Missing protein groups for noMBR dataset; skipping FTR metrics" dataset=nombr_name path=tsv_path
+            @warn "Missing precursors for noMBR dataset; skipping FTR metrics" dataset=nombr_name path=tsv_path
             return nothing
         end
         read_required_table(tsv_path)
     end
 
-    mbr_quant_cols = dataset_name == mbr_name ? quant_col_names : quant_column_names_from_proteins(protein_groups_mbr)
-    nombr_quant_cols = dataset_name == nombr_name ? quant_col_names : quant_column_names_from_proteins(protein_groups_no_mbr)
+    mbr_quant_cols = dataset_name == mbr_name ? quant_col_names : quant_column_names_from_proteins(precursors_mbr)
+    nombr_quant_cols = dataset_name == nombr_name ? quant_col_names : quant_column_names_from_proteins(precursors_no_mbr)
 
     human_only_runs = get(run_groups_for_dataset(experimental_design, dataset_name), "human_only", String[])
     if isempty(human_only_runs)
@@ -960,19 +957,19 @@ function compute_ftr_metrics(
         return nothing
     end
 
-    yeast_human_only_mbr = count_yeast_ids(protein_groups_mbr, mbr_quant_cols, human_only_runs; table_label = "protein_groups")
+    yeast_human_only_mbr = count_yeast_ids(precursors_mbr, mbr_quant_cols, human_only_runs; table_label = "precursors")
     yeast_human_only_no_mbr = count_yeast_ids(
-        protein_groups_no_mbr,
+        precursors_no_mbr,
         nombr_quant_cols,
         human_only_runs;
-        table_label = "protein_groups",
+        table_label = "precursors",
     )
 
-    total_yeast_mbr = count_yeast_ids(protein_groups_mbr, mbr_quant_cols; table_label = "protein_groups")
-    total_yeast_no_mbr = count_yeast_ids(protein_groups_no_mbr, nombr_quant_cols; table_label = "protein_groups")
+    total_yeast_mbr = count_yeast_ids(precursors_mbr, mbr_quant_cols; table_label = "precursors")
+    total_yeast_no_mbr = count_yeast_ids(precursors_no_mbr, nombr_quant_cols; table_label = "precursors")
 
-    nonyeast_ids_mbr = count_nonyeast_ids(protein_groups_mbr, mbr_quant_cols; table_label = "protein_groups")
-    nonyeast_ids_no_mbr = count_nonyeast_ids(protein_groups_no_mbr, nombr_quant_cols; table_label = "protein_groups")
+    nonyeast_ids_mbr = count_nonyeast_ids(precursors_mbr, mbr_quant_cols; table_label = "precursors")
+    nonyeast_ids_no_mbr = count_nonyeast_ids(precursors_no_mbr, nombr_quant_cols; table_label = "precursors")
 
     additional_yeast_in_human_only = max(yeast_human_only_mbr - yeast_human_only_no_mbr, 0)
     total_additional_yeast = max(total_yeast_mbr - total_yeast_no_mbr, 0)
