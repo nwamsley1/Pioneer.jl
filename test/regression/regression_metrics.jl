@@ -885,6 +885,25 @@ function count_nonyeast_ids(
     count_species_ids(df, quant_col_names, run_names; predicate = val -> !is_yeast_only_species(val), table_label = table_label)
 end
 
+function count_total_ids(
+    df::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    run_names = nothing;
+    table_label::AbstractString = "protein_groups",
+)
+    run_columns = resolve_run_columns(df, quant_col_names, run_names)
+    if isempty(run_columns)
+        if run_names !== nothing
+            available_runs = select_quant_columns(df, quant_col_names)
+            @warn "Requested runs not found in table; skipping total counts" table=table_label requested_runs=run_names available_runs=available_runs
+        end
+        return 0
+    end
+
+    quant_matrix = Matrix(df[:, run_columns])
+    count(!ismissing, quant_matrix)
+end
+
 function paired_mbr_dataset_paths(
     dataset_name::AbstractString,
     dataset_paths::Dict{String, String},
@@ -965,23 +984,20 @@ function compute_ftr_metrics(
         table_label = "precursors",
     )
 
-    total_yeast_mbr = count_yeast_ids(precursors_mbr, mbr_quant_cols; table_label = "precursors")
-    total_yeast_no_mbr = count_yeast_ids(precursors_no_mbr, nombr_quant_cols; table_label = "precursors")
-
-    nonyeast_ids_mbr = count_nonyeast_ids(precursors_mbr, mbr_quant_cols; table_label = "precursors")
-    nonyeast_ids_no_mbr = count_nonyeast_ids(precursors_no_mbr, nombr_quant_cols; table_label = "precursors")
+    total_ids_mbr = count_total_ids(precursors_mbr, mbr_quant_cols; table_label = "precursors")
+    total_ids_no_mbr = count_total_ids(precursors_no_mbr, nombr_quant_cols; table_label = "precursors")
 
     additional_yeast_in_human_only = max(yeast_human_only_mbr - yeast_human_only_no_mbr, 0)
-    total_additional_yeast = max(total_yeast_mbr - total_yeast_no_mbr, 0)
-    ftr = total_additional_yeast > 0 ? additional_yeast_in_human_only / total_additional_yeast : 0.0
+    total_additional_ids = max(total_ids_mbr - total_ids_no_mbr, 0)
+    ftr = total_additional_ids > 0 ? additional_yeast_in_human_only / total_additional_ids : 0.0
 
     return Dict(
         "yeast_ids_human_only_no_mbr" => yeast_human_only_no_mbr,
         "yeast_ids_human_only_mbr" => yeast_human_only_mbr,
-        "nonyeast_ids_no_mbr" => nonyeast_ids_no_mbr,
-        "nonyeast_ids_mbr" => nonyeast_ids_mbr,
+        "total_ids_no_mbr" => total_ids_no_mbr,
+        "total_ids_mbr" => total_ids_mbr,
         "additional_yeast_ids_in_human_only" => additional_yeast_in_human_only,
-        "total_additional_yeast_ids" => total_additional_yeast,
+        "total_additional_ids" => total_additional_ids,
         "false_transfer_rate" => ftr,
         "mbr_dataset" => mbr_name,
         "nombr_dataset" => nombr_name,
