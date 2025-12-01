@@ -419,25 +419,32 @@ function compute_dataset_metrics(
     dataset_name::AbstractString;
     metric_groups::AbstractVector{<:AbstractString} = DEFAULT_METRIC_GROUPS,
     experimental_design::Dict{String, Any} = Dict{String, Any}(),
+    dataset_paths::Dict{String, String} = Dict{String, String}(),
 )
     requested_groups = Set(lowercase.(metric_groups))
     need_identification = "identification" in requested_groups
     need_cv = "cv" in requested_groups
     need_keap1 = "keap1" in requested_groups
-    need_tsv_metrics = need_identification || need_cv || need_keap1
+    need_ftr = "ftr" in requested_groups
+    need_tsv_metrics = need_identification || need_cv || need_keap1 || need_ftr
 
     precursors_metrics = nothing
     protein_metrics = nothing
     keap1_precursor_metrics = nothing
     keap1_protein_metrics = nothing
+    ftr_metrics = nothing
 
     if need_tsv_metrics
-        required_files = [
-            "precursors_long.tsv",
-            "precursors_wide.tsv",
-            "protein_groups_long.tsv",
-            "protein_groups_wide.tsv",
-        ]
+        required_files = if need_identification || need_cv || need_keap1
+            [
+                "precursors_long.tsv",
+                "precursors_wide.tsv",
+                "protein_groups_long.tsv",
+                "protein_groups_wide.tsv",
+            ]
+        else
+            ["protein_groups_wide.tsv"]
+        end
 
         missing_files = filter(f -> !isfile(joinpath(dataset_dir, f)), required_files)
         if !isempty(missing_files)
@@ -445,9 +452,16 @@ function compute_dataset_metrics(
             return nothing
         end
 
-        precursors_long = read_required_table(joinpath(dataset_dir, "precursors_long.tsv"))
-        precursors_wide = read_required_table(joinpath(dataset_dir, "precursors_wide.tsv"))
-        protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.tsv"))
+        precursors_long = nothing
+        precursors_wide = nothing
+        protein_groups_long = nothing
+
+        if need_identification || need_cv || need_keap1
+            precursors_long = read_required_table(joinpath(dataset_dir, "precursors_long.tsv"))
+            precursors_wide = read_required_table(joinpath(dataset_dir, "precursors_wide.tsv"))
+            protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.tsv"))
+        end
+
         protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.tsv"))
 
         quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
@@ -556,6 +570,16 @@ function compute_dataset_metrics(
                 ),
             )
         end
+
+        if need_ftr
+            ftr_metrics = compute_ftr_metrics(
+                dataset_name,
+                protein_groups_wide,
+                quant_col_names,
+                experimental_design,
+                dataset_paths,
+            )
+        end
     end
 
     entrapment_metrics = if "efdr" in requested_groups
@@ -584,6 +608,10 @@ function compute_dataset_metrics(
         if !isempty(protein_metrics)
             metrics["protein_groups"] = protein_metrics
         end
+    end
+
+    if ftr_metrics !== nothing
+        metrics["ftr"] = ftr_metrics
     end
 
     if entrapment_metrics !== nothing
@@ -668,7 +696,7 @@ function normalize_metric_label(label::AbstractString)
     replace(strip(label), r"\s+" => "_")
 end
 
-function experimental_design_for_dataset(
+function experimental_design_entry(
     experimental_design::Dict{String, Any},
     dataset_name::AbstractString,
 )
@@ -676,14 +704,47 @@ function experimental_design_for_dataset(
     if entry === nothing && haskey(experimental_design, "runs")
         entry = experimental_design
     end
+
     if entry isa AbstractDict
-        runs = get(entry, "runs", nothing)
-        if runs isa AbstractDict
-            return Dict(String(k) => String(v) for (k, v) in runs)
+        mapped = Dict{String, Any}()
+        for (k, v) in entry
+            mapped[String(k)] = v
         end
+        return mapped
+    end
+
+    Dict{String, Any}()
+end
+
+function experimental_design_for_dataset(
+    experimental_design::Dict{String, Any},
+    dataset_name::AbstractString,
+)
+    entry = experimental_design_entry(experimental_design, dataset_name)
+    runs = get(entry, "runs", nothing)
+    if runs isa AbstractDict
+        return Dict(String(k) => String(v) for (k, v) in runs)
     end
 
     Dict{String, String}()
+end
+
+function run_groups_for_dataset(
+    experimental_design::Dict{String, Any},
+    dataset_name::AbstractString,
+)
+    entry = experimental_design_entry(experimental_design, dataset_name)
+    grouping = get(entry, "composition", nothing)
+    grouping isa AbstractDict || return Dict{String, Vector{String}}()
+
+    groups = Dict{String, Vector{String}}()
+    for (group, runs) in grouping
+        if runs isa AbstractVector
+            groups[String(group)] = [String(r) for r in runs]
+        end
+    end
+
+    groups
 end
 
 function gene_names_column(df::DataFrame; table_label::AbstractString = "table")
@@ -738,6 +799,198 @@ function gene_counts_metrics_by_run(
     metrics
 end
 
+function species_column(df::DataFrame; table_label::AbstractString = "table")
+    species_col_index = findfirst(name -> String(name) == "species", names(df))
+    if species_col_index === nothing
+        available_columns = join(string.(names(df)), ", ")
+        @warn "Table missing species column; skipping species-based metrics" table=table_label available_columns=available_columns
+        return nothing
+    end
+
+    names(df)[species_col_index]
+end
+
+function is_yeast_only_species(val)
+    val === missing && return false
+    parts = split(String(val), ";")
+    cleaned = unique(filter(!isempty, uppercase.(strip.(parts))))
+    length(cleaned) == 1 && cleaned[1] == "YEAST"
+end
+
+function resolve_run_columns(
+    df::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    requested_runs,
+)
+    quant_columns = select_quant_columns(df, quant_col_names)
+    quant_strings = Set(String.(quant_columns))
+
+    if requested_runs === nothing
+        return String.(quant_columns)
+    end
+
+    run_names = String.(requested_runs)
+    String[x for x in run_names if x in quant_strings]
+end
+
+function count_species_ids(
+    df::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    run_names;
+    predicate::Function,
+    table_label::AbstractString = "protein_groups",
+)
+    species_col = species_column(df; table_label = table_label)
+    species_col === nothing && return 0
+
+    run_columns = resolve_run_columns(df, quant_col_names, run_names)
+    if isempty(run_columns)
+        if run_names !== nothing
+            available_runs = select_quant_columns(df, quant_col_names)
+            @warn "Requested runs not found in table; skipping species-based counts" table=table_label requested_runs=run_names available_runs=available_runs
+        end
+        return 0
+    end
+
+    matches = map(df[:, species_col]) do val
+        predicate(val)
+    end
+
+    matching_indices = findall(identity, matches)
+    isempty(matching_indices) && return 0
+
+    count = 0
+    for idx in matching_indices
+        row_values = df[idx, run_columns]
+        if any(!ismissing, row_values)
+            count += 1
+        end
+    end
+
+    count
+end
+
+function count_yeast_ids(
+    df::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    run_names = nothing;
+    table_label::AbstractString = "protein_groups",
+)
+    count_species_ids(df, quant_col_names, run_names; predicate = is_yeast_only_species, table_label = table_label)
+end
+
+function count_nonyeast_ids(
+    df::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    run_names = nothing;
+    table_label::AbstractString = "protein_groups",
+)
+    count_species_ids(df, quant_col_names, run_names; predicate = val -> !is_yeast_only_species(val), table_label = table_label)
+end
+
+function paired_mbr_dataset_paths(
+    dataset_name::AbstractString,
+    dataset_paths::Dict{String, String},
+)
+    if occursin("_noMBR_", dataset_name)
+        mbr_name = replace(dataset_name, "_noMBR_" => "_MBR_")
+        mbr_path = get(dataset_paths, mbr_name, nothing)
+        nombr_path = get(dataset_paths, dataset_name, nothing)
+        (mbr_path === nothing || nombr_path === nothing) && return nothing
+        return (mbr_name, mbr_path, dataset_name, nombr_path)
+    elseif occursin("_MBR_", dataset_name)
+        nombr_name = replace(dataset_name, "_MBR_" => "_noMBR_")
+        mbr_path = get(dataset_paths, dataset_name, nothing)
+        nombr_path = get(dataset_paths, nombr_name, nothing)
+        (mbr_path === nothing || nombr_path === nothing) && return nothing
+        return (dataset_name, mbr_path, nombr_name, nombr_path)
+    end
+
+    nothing
+end
+
+function compute_ftr_metrics(
+    dataset_name::AbstractString,
+    protein_groups_wide::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    experimental_design::Dict{String, Any},
+    dataset_paths::Dict{String, String},
+)
+    paired_paths = paired_mbr_dataset_paths(dataset_name, dataset_paths)
+    paired_paths === nothing && begin
+        @warn "FTR metrics require paired MBR and noMBR datasets" dataset=dataset_name
+        return nothing
+    end
+
+    mbr_name, mbr_path, nombr_name, nombr_path = paired_paths
+
+    protein_groups_mbr = if dataset_name == mbr_name
+        protein_groups_wide
+    else
+        tsv_path = joinpath(mbr_path, "protein_groups_wide.tsv")
+        isfile(tsv_path) || begin
+            @warn "Missing protein groups for MBR dataset; skipping FTR metrics" dataset=mbr_name path=tsv_path
+            return nothing
+        end
+        read_required_table(tsv_path)
+    end
+
+    protein_groups_no_mbr = if dataset_name == nombr_name
+        protein_groups_wide
+    else
+        tsv_path = joinpath(nombr_path, "protein_groups_wide.tsv")
+        isfile(tsv_path) || begin
+            @warn "Missing protein groups for noMBR dataset; skipping FTR metrics" dataset=nombr_name path=tsv_path
+            return nothing
+        end
+        read_required_table(tsv_path)
+    end
+
+    mbr_quant_cols = dataset_name == mbr_name ? quant_col_names : quant_column_names_from_proteins(protein_groups_mbr)
+    nombr_quant_cols = dataset_name == nombr_name ? quant_col_names : quant_column_names_from_proteins(protein_groups_no_mbr)
+
+    human_only_runs = get(run_groups_for_dataset(experimental_design, dataset_name), "human_only", String[])
+    if isempty(human_only_runs)
+        alt_groups = run_groups_for_dataset(experimental_design, mbr_name == dataset_name ? nombr_name : mbr_name)
+        human_only_runs = get(alt_groups, "human_only", String[])
+    end
+
+    if isempty(human_only_runs)
+        @warn "No human-only runs provided for FTR metrics; skipping" dataset=dataset_name
+        return nothing
+    end
+
+    yeast_human_only_mbr = count_yeast_ids(protein_groups_mbr, mbr_quant_cols, human_only_runs; table_label = "protein_groups")
+    yeast_human_only_no_mbr = count_yeast_ids(
+        protein_groups_no_mbr,
+        nombr_quant_cols,
+        human_only_runs;
+        table_label = "protein_groups",
+    )
+
+    total_yeast_mbr = count_yeast_ids(protein_groups_mbr, mbr_quant_cols; table_label = "protein_groups")
+    total_yeast_no_mbr = count_yeast_ids(protein_groups_no_mbr, nombr_quant_cols; table_label = "protein_groups")
+
+    nonyeast_ids_mbr = count_nonyeast_ids(protein_groups_mbr, mbr_quant_cols; table_label = "protein_groups")
+    nonyeast_ids_no_mbr = count_nonyeast_ids(protein_groups_no_mbr, nombr_quant_cols; table_label = "protein_groups")
+
+    additional_yeast_in_human_only = max(yeast_human_only_mbr - yeast_human_only_no_mbr, 0)
+    total_additional_yeast = max(total_yeast_mbr - total_yeast_no_mbr, 0)
+    ftr = total_additional_yeast > 0 ? additional_yeast_in_human_only / total_additional_yeast : 0.0
+
+    return Dict(
+        "yeast_ids_human_only_no_mbr" => yeast_human_only_no_mbr,
+        "yeast_ids_human_only_mbr" => yeast_human_only_mbr,
+        "nonyeast_ids_no_mbr" => nonyeast_ids_no_mbr,
+        "nonyeast_ids_mbr" => nonyeast_ids_mbr,
+        "additional_yeast_ids_in_human_only" => additional_yeast_in_human_only,
+        "total_additional_yeast_ids" => total_additional_yeast,
+        "false_transfer_rate" => ftr,
+        "mbr_dataset" => mbr_name,
+        "nombr_dataset" => nombr_name,
+    )
+end
+
 function dataset_dirs_from_root(root::AbstractString)
     !isdir(root) && return String[]
     filter(readdir(root; join=true)) do path
@@ -763,6 +1016,8 @@ function main()
     isdir(results_dir) || error("Results directory does not exist: $results_dir")
     dataset_dirs = dataset_dirs_from_root(results_dir)
     isempty(dataset_dirs) && error("No dataset directories found in $results_dir")
+
+    dataset_paths = Dict{String, String}(basename(path) => path for path in dataset_dirs)
 
     @info "Using regression results directory" results_dir=results_dir
 
@@ -808,6 +1063,7 @@ function main()
             dataset_name;
             metric_groups = metric_groups,
             experimental_design = experimental_design,
+            dataset_paths = dataset_paths,
         )
         metrics === nothing && continue
 
