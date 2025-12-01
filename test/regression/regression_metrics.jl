@@ -751,6 +751,15 @@ function run_groups_for_dataset(
     groups
 end
 
+function all_runs_from_groups(groupings::Dict{String, Vector{String}})
+    collected = String[]
+    for runs in values(groupings)
+        append!(collected, runs)
+    end
+
+    unique(collected)
+end
+
 function gene_names_column(df::DataFrame; table_label::AbstractString = "table")
     gene_col_index = findfirst(name -> String(name) == "gene_names", names(df))
     if gene_col_index === nothing
@@ -965,16 +974,26 @@ function compute_ftr_metrics(
     mbr_quant_cols = dataset_name == mbr_name ? quant_col_names : quant_column_names_from_proteins(precursors_mbr)
     nombr_quant_cols = dataset_name == nombr_name ? quant_col_names : quant_column_names_from_proteins(precursors_no_mbr)
 
-    human_only_runs = get(run_groups_for_dataset(experimental_design, dataset_name), "human_only", String[])
-    if isempty(human_only_runs)
-        alt_groups = run_groups_for_dataset(experimental_design, mbr_name == dataset_name ? nombr_name : mbr_name)
-        human_only_runs = get(alt_groups, "human_only", String[])
+    groups = run_groups_for_dataset(experimental_design, dataset_name)
+    alt_groups = run_groups_for_dataset(experimental_design, mbr_name == dataset_name ? nombr_name : mbr_name)
+    if isempty(groups)
+        groups = alt_groups
+    elseif isempty(alt_groups)
+        alt_groups = groups
     end
 
+    human_only_runs = get(groups, "human_only", String[])
+    
     if isempty(human_only_runs)
         @warn "No human-only runs provided for FTR metrics; skipping" dataset=dataset_name
         return nothing
     end
+
+    runs_for_totals = all_runs_from_groups(groups)
+    if isempty(runs_for_totals)
+        runs_for_totals = all_runs_from_groups(alt_groups)
+    end
+    runs_for_totals = isempty(runs_for_totals) ? nothing : runs_for_totals
 
     yeast_human_only_mbr = count_yeast_ids(precursors_mbr, mbr_quant_cols, human_only_runs; table_label = "precursors")
     yeast_human_only_no_mbr = count_yeast_ids(
@@ -984,8 +1003,8 @@ function compute_ftr_metrics(
         table_label = "precursors",
     )
 
-    total_ids_mbr = count_total_ids(precursors_mbr, mbr_quant_cols; table_label = "precursors")
-    total_ids_no_mbr = count_total_ids(precursors_no_mbr, nombr_quant_cols; table_label = "precursors")
+    total_ids_mbr = count_total_ids(precursors_mbr, mbr_quant_cols, runs_for_totals; table_label = "precursors")
+    total_ids_no_mbr = count_total_ids(precursors_no_mbr, nombr_quant_cols, runs_for_totals; table_label = "precursors")
 
     additional_yeast_in_human_only = max(yeast_human_only_mbr - yeast_human_only_no_mbr, 0)
     total_additional_ids = max(total_ids_mbr - total_ids_no_mbr, 0)
