@@ -556,6 +556,20 @@ function create_rt_indices!(
 
     setIrtErrors!(search_context, irt_errs)
 
+    # Log RT tolerances for each file
+    @user_info "FirstPassSearch RT tolerances (per file):"
+    ms_data = getMSData(search_context)
+    for (file_idx, tol) in pairs(irt_errs)
+        file_name = getFileIdToName(ms_data, file_idx)
+        @user_info "  File $(file_idx) ($file_name): RT tol = $(round(tol, digits=3)) min"
+    end
+
+    # Log summary statistics
+    if !isempty(irt_errs)
+        tol_values = collect(values(irt_errs))
+        @user_info "  Summary: min=$(round(minimum(tol_values), digits=3)), max=$(round(maximum(tol_values), digits=3)), median=$(round(median(tol_values), digits=3)) min"
+    end
+
     # Create precursor to iRT mapping
     prec_to_irt = map(x -> (irt=x[:best_irt], mz=x[:mz]), 
                       precursor_dict)
