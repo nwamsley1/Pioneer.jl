@@ -359,77 +359,64 @@ function map_retention_times!(
         end
         psms_path = all_psms_paths[ms_file_idx]
         psms = Arrow.Table(psms_path)
-        best_hits = psms[:prob].>params.min_prob_for_irt_mapping#Map rts using only the best psms
-        try#if sum(best_hits) > 100
-            if params.use_robust_fitting
-                # Use robust fitting with RANSAC/penalty
-                best_psms_df = DataFrame(
-                    rt = psms[:rt][best_hits],
-                    irt_predicted = psms[:irt_predicted][best_hits]
-                )
+        best_hits = psms[:prob].>params.min_prob_for_irt_mapping
 
-                # Fit RT to iRT model using shared robust fitting
-                rt_model, valid_rt, valid_irt, irt_mad = Pioneer.fit_irt_model(
-                    best_psms_df;
-                    lambda_penalty = Float32(0.1),  # Default penalty
-                    ransac_threshold = 1000,        # Default RANSAC threshold
-                    min_psms = 10,                  # Default minimum PSMs
-                    spline_degree = 3,              # Default spline degree
-                    max_knots = 7,                  # Default max knots
-                    outlier_threshold = Float32(5.0)  # Default outlier threshold
-                )
+        try
+            # Check if we have enough PSMs for RT alignment
+            n_good_psms = sum(best_hits)
 
-                # Store RT to iRT model
-                setRtIrtMap!(search_context, rt_model, ms_file_idx)
-
-                # Fit inverse model (iRT to RT) - swap input/output
-                irt_to_rt_df = DataFrame(
-                    rt = valid_irt,           # Use iRT as input
-                    irt_predicted = valid_rt  # Use RT as output
-                )
-                irt_model, _, _, _ = Pioneer.fit_irt_model(
-                    irt_to_rt_df;
-                    lambda_penalty = Float32(0.1),
-                    ransac_threshold = 1000,
-                    min_psms = 10,
-                    spline_degree = 3,
-                    max_knots = 7,
-                    outlier_threshold = Float32(5.0)
-                )
-                setIrtRtMap!(search_context, irt_model, ms_file_idx)
-
-                # Optionally generate plots
-                if params.plot_rt_alignment
-                    plot_rt_alignment_firstpass(
-                        valid_rt,
-                        valid_irt,
-                        rt_model,
-                        ms_file_idx,
-                        getDataOutDir(search_context)
-                    )
+            if n_good_psms < 100
+                # Get file name for warning
+                file_name = try
+                    getFileIdToName(getMSData(search_context), ms_file_idx)
+                catch
+                    "file_$ms_file_idx"
                 end
-            else
-                # Use simple UniformSpline (legacy behavior)
-                best_rts = psms[:rt][best_hits]
-                best_irts = psms[:irt_predicted][best_hits]
 
-                irt_to_rt_spline = UniformSpline(
-                    best_rts,
-                    best_irts,
-                    3,
-                    5
-                )
-                rt_to_irt_spline = UniformSpline(
-                    best_irts,
-                    best_rts,
-                    3,
-                    5
-                )
+                @user_warn "Too few PSMs ($n_good_psms) for RT alignment in file: $file_name (need ≥100). Using identity RT model."
 
-                #Build rt=>irt and irt=> rt mappings for the file and add to the dictionaries
-                setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
-                setIrtRtMap!(search_context, SplineRtConversionModel(irt_to_rt_spline), ms_file_idx)
+                # Use identity mapping as fallback
+                identity_model = IdentityModel()
+                setRtIrtMap!(search_context, identity_model, ms_file_idx)
+                setIrtRtMap!(search_context, identity_model, ms_file_idx)
+                continue
             end
+
+            # Extract best PSM data
+            best_rts = psms[:rt][best_hits]
+            best_irts = psms[:irt_predicted][best_hits]
+
+            # Fit simple 7-knot UniformSpline for RT → iRT conversion
+            rt_to_irt_spline = UniformSpline(
+                best_irts,    # y values (iRT)
+                best_rts,     # x values (RT)
+                3,            # degree (cubic)
+                7             # n_knots (fixed)
+            )
+
+            # Fit simple 7-knot UniformSpline for iRT → RT conversion (inverse)
+            irt_to_rt_spline = UniformSpline(
+                best_rts,     # y values (RT)
+                best_irts,    # x values (iRT)
+                3,            # degree (cubic)
+                7             # n_knots (fixed)
+            )
+
+            # Store models in SearchContext
+            setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
+            setIrtRtMap!(search_context, SplineRtConversionModel(irt_to_rt_spline), ms_file_idx)
+
+            # Optionally generate diagnostic plots
+            if params.plot_rt_alignment
+                plot_rt_alignment_firstpass(
+                    best_rts,
+                    best_irts,
+                    SplineRtConversionModel(rt_to_irt_spline),
+                    ms_file_idx,
+                    getDataOutDir(search_context)
+                )
+            end
+
         catch e
             # Get file name for debugging
             file_name = try
@@ -437,16 +424,16 @@ function map_retention_times!(
             catch
                 "file_$ms_file_idx"
             end
-            
+
             # Safely compute PSM count to avoid excessive output
             n_good_psms = try
                 sum(best_hits)
             catch
                 0  # Default to 0 if calculation fails
             end
-            
-            @user_warn "RT mapping failed for MS data file: $file_name ($n_good_psms good PSMs found, need >100 for spline). Using identity RT model."
-            
+
+            @user_warn "RT mapping failed for MS data file: $file_name ($n_good_psms PSMs). Error: $e. Using identity RT model."
+
             # Use identity mapping as fallback - no RT to iRT conversion
             identity_model = IdentityModel()
             setRtIrtMap!(search_context, identity_model, ms_file_idx)
