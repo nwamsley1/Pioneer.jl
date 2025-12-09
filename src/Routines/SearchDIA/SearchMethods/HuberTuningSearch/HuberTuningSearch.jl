@@ -185,8 +185,17 @@ function process_file!(
         # Get PSMs to tune on
         best_psms = get_best_psms(search_context, params.q_value_threshold)
         file_psms = filter(row -> row.ms_file_idx == ms_file_idx, best_psms)
+
+        # Log PSM counts for diagnostic purposes
+        file_name = try
+            getFileIdToName(getMSData(search_context), ms_file_idx)
+        catch
+            "file_$ms_file_idx"
+        end
+        @user_info "HuberTuning: File $ms_file_idx ($file_name) has $(nrow(file_psms)) PSMs at q-value < $(params.q_value_threshold) ($(length(unique(file_psms[!, :scan_idx]))) unique scans)"
+
         isempty(file_psms) && return results
-        
+
         # Create scan/precursor set and scan indices
         prec_set = Set(zip(file_psms[!, :precursor_idx], file_psms[!, :scan_idx]))
         scan_idxs = Set(file_psms[!, :scan_idx])
