@@ -180,13 +180,18 @@ function score_presearch!(psms::DataFrame)
     psms[!,:prob] = zeros(Float32, size(psms, 1))
 
     M = size(psms, 1)
-    if M > 10
-        tasks_per_thread = 10
-        chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
-        data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
-        β = zeros(Float64, length(features))
-        β = ProbitRegression(β, psms[!,features], psms[!,:target], data_chunks, max_iter = 20)
-        ModelPredictProbs!(psms[!,:prob], psms[!,features], β, data_chunks)
+    if M > 50
+        try
+            tasks_per_thread = 10
+            chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+            data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
+            β = zeros(Float64, length(features))
+            β = ProbitRegression(β, psms[!,features], psms[!,:target], data_chunks, max_iter = 20)
+            ModelPredictProbs!(psms[!,:prob], psms[!,features], β, data_chunks)
+        catch
+            @user_warn "Warning... psm scoring failed. size(psms, 1) is only $(size(psms, 1))."
+            psms[!,:prob] = ones(Float32, size(psms, 1))
+        end
     else
         psms[!,:prob] = ones(Float32, size(psms, 1))
     end
