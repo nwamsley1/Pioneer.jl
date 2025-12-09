@@ -164,26 +164,15 @@ function make_spline_monotonic(
     n_knots::Int = 5
 )::UniformSpline
 
-    # DEBUG: Log input parameters
-    @user_info "=== make_spline_monotonic DEBUG ==="
-    @user_info "  Input array lengths: rt_data=$(length(rt_data)), irt_data=$(length(irt_data))"
-    @user_info "  n_knots parameter: $n_knots"
-
     # 1. Sample from original spline at uniform grid
     rt_min, rt_max = extrema(rt_data)
     n_sample_points = length(rt_data) - 1
-    @user_info "  Computed n_sample_points: $n_sample_points (length(rt_data) - 1)"
-    @user_info "  RT range: [$rt_min, $rt_max]"
-
     rt_grid = collect(LinRange(Float32(rt_min), Float32(rt_max), n_sample_points))
     irt_grid = [original_spline(r) for r in rt_grid]
-
-    @user_info "  Grid lengths: rt_grid=$(length(rt_grid)), irt_grid=$(length(irt_grid))"
 
     # 2. Find median split point
     median_rt = median(rt_data)
     median_idx = argmin(abs.(rt_grid .- median_rt))
-    @user_info "  Median RT: $median_rt, median_idx: $median_idx"
 
     # 3. Filter right side (median → end): enforce monotonic increasing
     for i in (median_idx+1):n_sample_points
@@ -200,18 +189,6 @@ function make_spline_monotonic(
     end
 
     # 5. Refit spline to filtered data with penalty for smoothness
-    @user_info "  After filtering - Grid lengths: rt_grid=$(length(rt_grid)), irt_grid=$(length(irt_grid))"
-    @user_info "  Calling UniformSplinePenalized with:"
-    @user_info "    irt_grid length: $(length(irt_grid))"
-    @user_info "    rt_grid length: $(length(rt_grid))"
-    @user_info "    degree: 3"
-    @user_info "    n_knots: $n_knots"
-    @user_info "    lambda: 1.0"
-    @user_info "    penalty_order: 2"
-    @user_info "  irt_grid range: [$(minimum(irt_grid)), $(maximum(irt_grid))]"
-    @user_info "  rt_grid range: [$(minimum(rt_grid)), $(maximum(rt_grid))]"
-
-    # Let errors propagate to outer try-catch in fit_irt_model
     final_spline = UniformSplinePenalized(
         irt_grid,
         rt_grid,
@@ -401,11 +378,6 @@ function fit_irt_model(
 
         # Apply monotonic enforcement to prevent backwards slopes at edges
         @user_info "Applying monotonic enforcement with bidirectional cumulative max filter"
-        @user_info "DEBUG: Before calling make_spline_monotonic:"
-        @user_info "  valid_psms rows: $(nrow(valid_psms))"
-        @user_info "  valid_psms[!, :rt] length: $(length(valid_psms[!, :rt]))"
-        @user_info "  valid_psms[!, :irt_predicted] length: $(length(valid_psms[!, :irt_predicted]))"
-        @user_info "  n_knots: $n_knots"
         final_map_monotonic = make_spline_monotonic(
             rt_to_irt_map,
             valid_psms[!, :rt],

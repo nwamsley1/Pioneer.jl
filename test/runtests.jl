@@ -35,7 +35,7 @@ using Pioneer: MassErrorModel, matchPeaks!, reset!  # For matchPeaks.jl test
 using Pioneer: FragIndexBin, findFirstFragmentBin  # For queryFragmentIndex.jl test
 using Pioneer: exponentialFragmentBinSearch, searchFragmentBin!  # For queryFragmentIndex.jl test
 using Pioneer: getHigh, Counter, IndexFragment, queryFragment!  # For queryFragmentIndex.jl test
-using Pioneer: UniformSpline  # For uniformBasisCubicSpline.jl test
+using Pioneer: UniformSpline, UniformSplinePenalized, fit_spline_with_ransac  # For uniformBasisCubicSpline.jl test
 using Pioneer: ProteinKey, PeptideKey, InferenceResult  # For test_protein_inference.jl test
 using Pioneer: adjustNCE  # For ChronologerPrepTests.jl
 using Pioneer: PeptideMod, matchVarMods, add_pair_indices!  # For FastaDigestTests.jl
