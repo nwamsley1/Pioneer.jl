@@ -7,7 +7,7 @@ using Pkg
 using Statistics
 using TOML
 
-const DEFAULT_METRIC_GROUPS = ["identification", "CV", "eFDR"]
+const DEFAULT_METRIC_GROUPS = ["identification", "CV", "eFDR", "runtime"]
 
 const NON_QUANT_COLUMNS = Set([
     :target,
@@ -23,6 +23,25 @@ const NON_QUANT_COLUMNS = Set([
 function read_required_table(path::AbstractString)
     isfile(path) || error("Required file not found: $path")
     DataFrame(Arrow.Table(path))
+end
+
+function runtime_minutes_from_report(path::AbstractString)
+    if !isfile(path)
+        @warn "Runtime report not found; skipping runtime metric" path=path
+        return nothing
+    end
+
+    for line in eachline(path)
+        if startswith(line, "Total Runtime:")
+            m = match(r"^Total Runtime:\s*([0-9]+(?:\.[0-9]+)?)\s+minutes", line)
+            if m !== nothing
+                return parse(Float64, m.captures[1])
+            end
+        end
+    end
+
+    @warn "Total runtime line not found in report" path=path
+    nothing
 end
 
 is_numeric_column(col) = begin
@@ -476,6 +495,7 @@ function compute_dataset_metrics(
     need_cv = "cv" in requested_groups
     need_keap1 = "keap1" in requested_groups
     need_ftr = "ftr" in requested_groups
+    need_runtime = "runtime" in requested_groups
     need_three_proteome = ("fold_change" in requested_groups) || ("three_proteome" in requested_groups)
     need_table_metrics = need_identification || need_cv || need_keap1 || need_ftr || need_three_proteome
 
@@ -485,6 +505,7 @@ function compute_dataset_metrics(
     keap1_protein_metrics = nothing
     ftr_metrics = nothing
     fold_change_metrics = nothing
+    runtime_minutes = nothing
 
     if need_table_metrics
         required_files = if need_identification || need_cv || need_keap1 || need_ftr
@@ -696,6 +717,11 @@ function compute_dataset_metrics(
         nothing
     end
 
+    if need_runtime
+        report_path = joinpath(dataset_dir, "pioneer_search_report.txt")
+        runtime_minutes = runtime_minutes_from_report(report_path)
+    end
+
     metrics = Dict{String, Any}()
 
     if precursors_metrics !== nothing
@@ -728,6 +754,10 @@ function compute_dataset_metrics(
 
     if entrapment_metrics !== nothing
         metrics["entrapment"] = entrapment_metrics
+    end
+
+    if runtime_minutes !== nothing
+        metrics["runtime"] = runtime_minutes
     end
 
     return metrics
