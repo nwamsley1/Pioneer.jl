@@ -1,14 +1,13 @@
 #!/usr/bin/env julia
 
 using Arrow
-using CSV
 using DataFrames
 using JSON
 using Pkg
 using Statistics
 using TOML
 
-const DEFAULT_METRIC_GROUPS = ["identification", "CV", "eFDR"]
+const DEFAULT_METRIC_GROUPS = ["identification", "CV", "eFDR", "runtime"]
 
 const NON_QUANT_COLUMNS = Set([
     :target,
@@ -23,7 +22,26 @@ const NON_QUANT_COLUMNS = Set([
 
 function read_required_table(path::AbstractString)
     isfile(path) || error("Required file not found: $path")
-    CSV.read(path, DataFrame; delim='\t', missingstring=["", "NA"], ignorerepeated=false)
+    DataFrame(Arrow.Table(path))
+end
+
+function runtime_minutes_from_report(path::AbstractString)
+    if !isfile(path)
+        @warn "Runtime report not found; skipping runtime metric" path=path
+        return nothing
+    end
+
+    for line in eachline(path)
+        if startswith(line, "Total Runtime:")
+            m = match(r"^Total Runtime:\s*([0-9]+(?:\.[0-9]+)?)\s+minutes", line)
+            if m !== nothing
+                return parse(Float64, m.captures[1])
+            end
+        end
+    end
+
+    @warn "Total runtime line not found in report" path=path
+    nothing
 end
 
 is_numeric_column(col) = begin
@@ -477,8 +495,9 @@ function compute_dataset_metrics(
     need_cv = "cv" in requested_groups
     need_keap1 = "keap1" in requested_groups
     need_ftr = "ftr" in requested_groups
+    need_runtime = "runtime" in requested_groups
     need_three_proteome = ("fold_change" in requested_groups) || ("three_proteome" in requested_groups)
-    need_tsv_metrics = need_identification || need_cv || need_keap1 || need_ftr || need_three_proteome
+    need_table_metrics = need_identification || need_cv || need_keap1 || need_ftr || need_three_proteome
 
     precursors_metrics = nothing
     protein_metrics = nothing
@@ -486,17 +505,18 @@ function compute_dataset_metrics(
     keap1_protein_metrics = nothing
     ftr_metrics = nothing
     fold_change_metrics = nothing
+    runtime_minutes = nothing
 
-    if need_tsv_metrics
+    if need_table_metrics
         required_files = if need_identification || need_cv || need_keap1 || need_ftr
             [
-                "precursors_long.tsv",
-                "precursors_wide.tsv",
-                "protein_groups_long.tsv",
-                "protein_groups_wide.tsv",
+                "precursors_long.arrow",
+                "precursors_wide.arrow",
+                "protein_groups_long.arrow",
+                "protein_groups_wide.arrow",
             ]
         else
-            ["protein_groups_wide.tsv"]
+            ["protein_groups_wide.arrow"]
         end
 
         missing_files = filter(f -> !isfile(joinpath(dataset_dir, f)), required_files)
@@ -510,12 +530,12 @@ function compute_dataset_metrics(
         protein_groups_long = nothing
 
         if need_identification || need_cv || need_keap1 || need_ftr
-            precursors_long = read_required_table(joinpath(dataset_dir, "precursors_long.tsv"))
-            precursors_wide = read_required_table(joinpath(dataset_dir, "precursors_wide.tsv"))
-            protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.tsv"))
+            precursors_long = read_required_table(joinpath(dataset_dir, "precursors_long.arrow"))
+            precursors_wide = read_required_table(joinpath(dataset_dir, "precursors_wide.arrow"))
+            protein_groups_long = read_required_table(joinpath(dataset_dir, "protein_groups_long.arrow"))
         end
 
-        protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.tsv"))
+        protein_groups_wide = read_required_table(joinpath(dataset_dir, "protein_groups_wide.arrow"))
 
         quant_col_names = if precursors_wide !== nothing
             quant_column_names_from_proteins(precursors_wide)
@@ -697,6 +717,11 @@ function compute_dataset_metrics(
         nothing
     end
 
+    if need_runtime
+        report_path = joinpath(dataset_dir, "pioneer_search_report.txt")
+        runtime_minutes = runtime_minutes_from_report(report_path)
+    end
+
     metrics = Dict{String, Any}()
 
     if precursors_metrics !== nothing
@@ -729,6 +754,10 @@ function compute_dataset_metrics(
 
     if entrapment_metrics !== nothing
         metrics["entrapment"] = entrapment_metrics
+    end
+
+    if runtime_minutes !== nothing
+        metrics["runtime"] = runtime_minutes
     end
 
     return metrics
@@ -1364,45 +1393,45 @@ function compute_ftr_metrics(
     precursors_mbr = if dataset_name == mbr_name
         precursors_wide
     else
-        tsv_path = joinpath(mbr_path, "precursors_wide.tsv")
-        isfile(tsv_path) || begin
-            @warn "Missing precursors for MBR dataset; skipping FTR metrics" dataset=mbr_name path=tsv_path
+        arrow_path = joinpath(mbr_path, "precursors_wide.arrow")
+        isfile(arrow_path) || begin
+            @warn "Missing precursors for MBR dataset; skipping FTR metrics" dataset=mbr_name path=arrow_path
             return nothing
         end
-        read_required_table(tsv_path)
+        read_required_table(arrow_path)
     end
 
     precursors_no_mbr = if dataset_name == nombr_name
         precursors_wide
     else
-        tsv_path = joinpath(nombr_path, "precursors_wide.tsv")
-        isfile(tsv_path) || begin
-            @warn "Missing precursors for noMBR dataset; skipping FTR metrics" dataset=nombr_name path=tsv_path
+        arrow_path = joinpath(nombr_path, "precursors_wide.arrow")
+        isfile(arrow_path) || begin
+            @warn "Missing precursors for noMBR dataset; skipping FTR metrics" dataset=nombr_name path=arrow_path
             return nothing
         end
-        read_required_table(tsv_path)
+        read_required_table(arrow_path)
     end
 
     protein_groups_mbr = if dataset_name == mbr_name
         protein_groups_wide
     else
-        tsv_path = joinpath(mbr_path, "protein_groups_wide.tsv")
-        isfile(tsv_path) || begin
-            @warn "Missing protein groups for MBR dataset; skipping FTR metrics" dataset=mbr_name path=tsv_path
+        arrow_path = joinpath(mbr_path, "protein_groups_wide.arrow")
+        isfile(arrow_path) || begin
+            @warn "Missing protein groups for MBR dataset; skipping FTR metrics" dataset=mbr_name path=arrow_path
             return nothing
         end
-        read_required_table(tsv_path)
+        read_required_table(arrow_path)
     end
 
     protein_groups_no_mbr = if dataset_name == nombr_name
         protein_groups_wide
     else
-        tsv_path = joinpath(nombr_path, "protein_groups_wide.tsv")
-        isfile(tsv_path) || begin
-            @warn "Missing protein groups for noMBR dataset; skipping FTR metrics" dataset=nombr_name path=tsv_path
+        arrow_path = joinpath(nombr_path, "protein_groups_wide.arrow")
+        isfile(arrow_path) || begin
+            @warn "Missing protein groups for noMBR dataset; skipping FTR metrics" dataset=nombr_name path=arrow_path
             return nothing
         end
-        read_required_table(tsv_path)
+        read_required_table(arrow_path)
     end
 
     mbr_quant_cols = quant_column_names_from_proteins(precursors_mbr)
