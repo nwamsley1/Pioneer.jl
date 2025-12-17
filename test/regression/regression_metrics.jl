@@ -112,14 +112,13 @@ function compute_cv_metrics(
         end
 
         quant_data = df[:, column_syms]
-        quant_matrix = Matrix(quant_data)
-        complete_mask = [all(!ismissing, row) for row in eachrow(quant_matrix)]
-        rows_evaluated = count(complete_mask)
+        complete_data = dropmissing(quant_data)
+        rows_evaluated = nrow(complete_data)
         if rows_evaluated == 0
             return (; runs, rows_evaluated, cvs = Float64[])
         end
 
-        quant_complete = quant_matrix[complete_mask, :]
+        quant_complete = Matrix(complete_data)
         computed_cvs = Float64[]
         for row in eachrow(quant_complete)
             mean_val = mean(row)
