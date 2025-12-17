@@ -803,7 +803,7 @@ end
 
 function load_three_proteome_designs(path::AbstractString)
     if isdir(path)
-        files = filter(f -> endswith(f, "_ED.json"), readdir(path; join=true))
+        files = filter(f -> endswith(f, ".ED.json") || endswith(f, "_ED.json"), readdir(path; join=true))
         isempty(files) && return Dict{String, Any}()
 
         designs = Dict{String, Any}()
@@ -811,9 +811,14 @@ function load_three_proteome_designs(path::AbstractString)
             parsed = load_three_proteome_designs(file)
             if parsed isa NamedTuple
                 basename_no_ext = replace(basename(file), r"\.json$" => "")
-                if endswith(basename_no_ext, "_ED")
+                if endswith(basename_no_ext, ".ED")
+                    dataset_key = basename_no_ext[1:end-3]
                     designs[basename_no_ext] = parsed
-                    designs[basename_no_ext[1:end-3]] = parsed
+                    designs[dataset_key] = parsed
+                elseif endswith(basename_no_ext, "_ED")
+                    dataset_key = basename_no_ext[1:end-3]
+                    designs[basename_no_ext] = parsed
+                    designs[dataset_key] = parsed
                 else
                     designs[basename_no_ext] = parsed
                 end
@@ -869,7 +874,7 @@ end
 
 function load_experimental_design(path::AbstractString)
     if isdir(path)
-        files = filter(f -> endswith(f, ".json"), readdir(path; join=true))
+        files = filter(f -> endswith(f, ".ED.json") || endswith(f, "_ED.json") || endswith(f, ".json"), readdir(path; join=true))
         if isempty(files)
             @info "No experimental design files found; using run names as labels" experimental_design_dir=path
             return Dict{String, Any}()
@@ -878,7 +883,10 @@ function load_experimental_design(path::AbstractString)
         designs = Dict{String, Any}()
 
         for file in files
-            dataset_key = replace(replace(basename(file), r"_ED\.json$" => ""), r"\.json$" => "")
+            dataset_key = replace(
+                replace(replace(basename(file), r"\.ED\.json$" => ""), r"_ED\.json$" => ""),
+                r"\.json$" => "",
+            )
             parsed = load_experimental_design(file)
             isempty(parsed) && continue
             designs[dataset_key] = parsed
