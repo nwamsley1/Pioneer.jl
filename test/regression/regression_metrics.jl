@@ -10,6 +10,8 @@ using TOML
 
 const DEFAULT_METRIC_GROUPS = ["identification", "CV", "eFDR"]
 
+const NON_QUANT_COLUMNS = Set([:target])
+
 function read_required_table(path::AbstractString)
     isfile(path) || error("Required file not found: $path")
     CSV.read(path, DataFrame; delim='\t', missingstring=["", "NA"], ignorerepeated=false)
@@ -27,7 +29,7 @@ function quant_column_names_from_proteins(df::DataFrame)
     if anchor_idx !== nothing
         quant_start = anchor_idx + 1
         quant_start > ncol(df) && return Symbol[]
-        return Symbol.(col_names[quant_start:end])
+        return drop_non_quant_columns(Symbol.(col_names[quant_start:end]))
     end
 
     numeric_flags = [is_numeric_column(df[:, c]) for c in col_names]
@@ -40,7 +42,11 @@ function quant_column_names_from_proteins(df::DataFrame)
 
     quant_start = last_non_numeric + 1
     quant_start > ncol(df) && return Symbol[]
-    Symbol.(col_names[quant_start:end])
+    drop_non_quant_columns(Symbol.(col_names[quant_start:end]))
+end
+
+function drop_non_quant_columns(col_names::AbstractVector{<:Union{Symbol, String}})
+    [name for name in col_names if Symbol(name) ∉ NON_QUANT_COLUMNS]
 end
 
 function select_quant_columns(df::DataFrame, quant_col_names)
