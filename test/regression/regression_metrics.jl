@@ -878,7 +878,7 @@ function load_experimental_design(path::AbstractString)
         designs = Dict{String, Any}()
 
         for file in files
-            dataset_key = replace(replace(basename(file), r"\.ED\.json$" => ""), r"\.json$" => "")
+            dataset_key = replace(replace(basename(file), r"_ED\.json$" => ""), r"\.json$" => "")
             parsed = load_experimental_design(file)
             isempty(parsed) && continue
             designs[dataset_key] = parsed
