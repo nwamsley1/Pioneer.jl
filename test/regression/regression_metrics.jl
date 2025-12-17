@@ -945,16 +945,29 @@ function run_groups_for_dataset(
 )
     entry = experimental_design_entry(experimental_design, dataset_name)
     grouping = get(entry, "composition", nothing)
-    grouping isa AbstractDict || return Dict{String, Vector{String}}()
-
-    groups = Dict{String, Vector{String}}()
-    for (group, runs) in grouping
-        if runs isa AbstractVector
-            groups[String(group)] = [String(r) for r in runs]
+    if grouping isa AbstractDict
+        groups = Dict{String, Vector{String}}()
+        for (group, runs) in grouping
+            if runs isa AbstractVector
+                groups[String(group)] = [String(r) for r in runs]
+            end
         end
+
+        return groups
     end
 
-    groups
+    runs_mapping = get(entry, "runs", nothing)
+    if runs_mapping isa AbstractDict
+        groups = Dict{String, Vector{String}}()
+        for (run, condition) in runs_mapping
+            condition_key = String(condition)
+            push!(get!(groups, condition_key, String[]), String(run))
+        end
+
+        return groups
+    end
+
+    Dict{String, Vector{String}}()
 end
 
 function all_runs_from_groups(groupings::Dict{String, Vector{String}})
