@@ -104,7 +104,10 @@ function compute_cv_metrics(
     table_label::AbstractString = "wide_table",
     groups::Dict{String, Vector{String}} = Dict{String, Vector{String}}(),
 )
-    function cvs_for_columns(columns::AbstractVector{<:Union{Symbol, String}})
+    function cvs_for_columns(
+        columns::AbstractVector{<:Union{Symbol, String}},
+        label::AbstractString,
+    )
         column_syms = Symbol.(columns)
         runs = length(columns)
         if runs == 0
@@ -114,6 +117,9 @@ function compute_cv_metrics(
         quant_data = df[:, column_syms]
         complete_data = dropmissing(quant_data)
         rows_evaluated = nrow(complete_data)
+
+        first_row_values = rows_evaluated == 0 ? NamedTuple() : NamedTuple(complete_data[1, :])
+        @info "Computing CVs for group" table_label=table_label group_label=label quant_columns=column_syms rows_evaluated=rows_evaluated first_row_values=first_row_values
         if rows_evaluated == 0
             return (; runs, rows_evaluated, cvs = Float64[])
         end
@@ -132,7 +138,7 @@ function compute_cv_metrics(
 
     if isempty(groups)
         existing_quant_cols = select_quant_columns(df, quant_col_names)
-        stats = cvs_for_columns(existing_quant_cols)
+        stats = cvs_for_columns(existing_quant_cols, "all_runs")
         median_cv = isempty(stats.cvs) ? 0.0 : median(stats.cvs)
         return (; runs = stats.runs, rows_evaluated = stats.rows_evaluated, median_cv)
     end
@@ -140,10 +146,10 @@ function compute_cv_metrics(
     all_runs = Set{Symbol}()
     all_cvs = Float64[]
     total_rows = 0
-    for (_, runs) in pairs(groups)
+    for (label, runs) in pairs(groups)
         columns = select_quant_columns(df, runs)
         union!(all_runs, Symbol.(columns))
-        stats = cvs_for_columns(columns)
+        stats = cvs_for_columns(columns, label)
         total_rows += stats.rows_evaluated
         append!(all_cvs, stats.cvs)
     end
