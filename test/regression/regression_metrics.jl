@@ -102,32 +102,54 @@ function compute_cv_metrics(
     df::DataFrame,
     quant_col_names::AbstractVector{<:Union{Symbol, String}};
     table_label::AbstractString = "wide_table",
+    groups::Dict{String, Vector{String}} = Dict{String, Vector{String}}(),
 )
-    existing_quant_cols = select_quant_columns(df, quant_col_names)
-    runs = length(existing_quant_cols)
-    if runs == 0
-        return (; runs = 0, rows_evaluated = 0, mean_cv = 0.0)
-    end
-
-    quant_data = df[:, existing_quant_cols]
-    quant_matrix = Matrix(quant_data)
-    complete_mask = [all(!ismissing, row) for row in eachrow(quant_matrix)]
-    rows_evaluated = count(complete_mask)
-    if rows_evaluated == 0
-        return (; runs, rows_evaluated, mean_cv = 0.0)
-    end
-
-    quant_complete = quant_matrix[complete_mask, :]
-    cvs = Float64[]
-    for row in eachrow(quant_complete)
-        mean_val = mean(row)
-        if mean_val != 0
-            push!(cvs, std(row) / mean_val)
+    function cvs_for_columns(columns::Vector{Symbol})
+        runs = length(columns)
+        if runs == 0
+            return (; runs = 0, rows_evaluated = 0, cvs = Float64[])
         end
+
+        quant_data = df[:, columns]
+        quant_matrix = Matrix(quant_data)
+        complete_mask = [all(!ismissing, row) for row in eachrow(quant_matrix)]
+        rows_evaluated = count(complete_mask)
+        if rows_evaluated == 0
+            return (; runs, rows_evaluated, cvs = Float64[])
+        end
+
+        quant_complete = quant_matrix[complete_mask, :]
+        computed_cvs = Float64[]
+        for row in eachrow(quant_complete)
+            mean_val = mean(row)
+            if mean_val != 0
+                push!(computed_cvs, std(row) / mean_val)
+            end
+        end
+
+        (; runs, rows_evaluated, cvs = computed_cvs)
     end
 
-    mean_cv = isempty(cvs) ? 0.0 : mean(cvs)
-    (; runs, rows_evaluated, mean_cv)
+    if isempty(groups)
+        existing_quant_cols = select_quant_columns(df, quant_col_names)
+        stats = cvs_for_columns(existing_quant_cols)
+        mean_cv = isempty(stats.cvs) ? 0.0 : mean(stats.cvs)
+        return (; runs = stats.runs, rows_evaluated = stats.rows_evaluated, mean_cv)
+    end
+
+    all_runs = Set{Symbol}()
+    all_cvs = Float64[]
+    total_rows = 0
+    for (_, runs) in pairs(groups)
+        columns = select_quant_columns(df, runs)
+        union!(all_runs, Symbol.(columns))
+        stats = cvs_for_columns(columns)
+        total_rows += stats.rows_evaluated
+        append!(all_cvs, stats.cvs)
+    end
+
+    mean_cv = isempty(all_cvs) ? 0.0 : mean(all_cvs)
+    (; runs = length(all_runs), rows_evaluated = total_rows, mean_cv)
 end
 
 function load_dataset_config(dataset_dir::AbstractString)
@@ -518,6 +540,7 @@ function compute_dataset_metrics(
 
         if need_cv
             @info "Starting CV metrics" dataset=dataset_name
+            cv_groups = run_groups_for_dataset(experimental_design, dataset_name)
             precursor_wide_metrics = compute_wide_metrics(
                 precursors_wide,
                 quant_col_names;
@@ -531,10 +554,10 @@ function compute_dataset_metrics(
                 dataset_name = dataset_name,
             )
             precursor_cv_metrics = compute_cv_metrics(
-                precursors_wide, quant_col_names; table_label = "precursors_wide"
+                precursors_wide, quant_col_names; table_label = "precursors_wide", groups = cv_groups
             )
             protein_cv_metrics = compute_cv_metrics(
-                protein_groups_wide, protein_quant_col_names; table_label = "protein_groups_wide"
+                protein_groups_wide, protein_quant_col_names; table_label = "protein_groups_wide", groups = cv_groups
             )
         end
 
