@@ -1170,7 +1170,8 @@ function fold_change_metrics_for_table(
             continue
         end
 
-        deviations = Dict{String, Vector{Float64}}()
+        log_ratios = Dict{String, Vector{Float64}}()
+        expected_log2_by_species = Dict{String, Float64}()
 
         for row in eachrow(df)
             species = unique_species_value(row[species_col])
@@ -1191,9 +1192,11 @@ function fold_change_metrics_for_table(
                 continue
             end
 
-            deviation = log2(observed_ratio) - log2(expected_ratio)
+            observed_log2 = log2(observed_ratio)
+            expected_log2 = log2(expected_ratio)
 
-            push!(get!(deviations, species, Float64[]), deviation)
+            push!(get!(log_ratios, species, Float64[]), observed_log2)
+            expected_log2_by_species[species] = get(expected_log2_by_species, species, expected_log2)
         end
 
         pair_label = string(
@@ -1203,8 +1206,16 @@ function fold_change_metrics_for_table(
         )
 
         pair_metrics = Dict{String, Any}()
-        for (species, values) in deviations
-            pair_metrics[string(lowercase(species), "_median_deviation")] = isempty(values) ? missing : median(values)
+        for (species, values) in log_ratios
+            median_log2_fc = isempty(values) ? missing : median(values)
+            expected_log2 = get(expected_log2_by_species, species, missing)
+            deviation = (median_log2_fc === missing || expected_log2 === missing) ? missing : median_log2_fc - expected_log2
+
+            if deviation !== missing
+                @info "Fold-change deviation" table=table_label pair=pair_label species=species median_log2_fc=median_log2_fc expected_log2_fc=expected_log2 deviation=deviation entries=length(values)
+            end
+
+            pair_metrics[string(lowercase(species), "_median_deviation")] = deviation
             pair_metrics[string(lowercase(species), "_entries")] = length(values)
         end
 
