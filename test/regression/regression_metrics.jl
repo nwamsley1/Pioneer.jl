@@ -546,7 +546,16 @@ function compute_dataset_metrics(
 
         if need_cv
             @info "Starting CV metrics" dataset=dataset_name
-            cv_groups = run_groups_for_dataset(experimental_design, dataset_name)
+            cv_groups = run_groups_for_dataset(
+                experimental_design,
+                dataset_name;
+                three_proteome_designs = three_proteome_designs,
+            )
+            if isempty(cv_groups)
+                @info "No CV groups found; computing across all runs" dataset=dataset_name
+            else
+                @info "Using CV groups" dataset=dataset_name groups=cv_groups
+            end
             precursor_wide_metrics = compute_wide_metrics(
                 precursors_wide,
                 quant_col_names;
@@ -947,7 +956,8 @@ end
 
 function run_groups_for_dataset(
     experimental_design::Dict{String, Any},
-    dataset_name::AbstractString,
+    dataset_name::AbstractString;
+    three_proteome_designs=nothing,
 )
     entry = experimental_design_entry(experimental_design, dataset_name)
     grouping = get(entry, "composition", nothing)
@@ -959,7 +969,7 @@ function run_groups_for_dataset(
             end
         end
 
-        return groups
+        isempty(groups) || return groups
     end
 
     runs_mapping = get(entry, "runs", nothing)
@@ -970,7 +980,20 @@ function run_groups_for_dataset(
             push!(get!(groups, condition_key, String[]), String(run))
         end
 
-        return groups
+        isempty(groups) || return groups
+    end
+
+    if three_proteome_designs !== nothing
+        tp_entry = three_proteome_design_entry(three_proteome_designs, dataset_name)
+        tp_runs_mapping = tp_entry isa AbstractDict ? get(tp_entry, "runs", nothing) : nothing
+        if tp_runs_mapping isa AbstractDict
+            groups = Dict{String, Vector{String}}()
+            for (run, condition) in tp_runs_mapping
+                condition_key = String(condition)
+                push!(get!(groups, condition_key, String[]), String(run))
+            end
+            isempty(groups) || return groups
+        end
     end
 
     Dict{String, Vector{String}}()
