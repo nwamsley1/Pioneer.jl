@@ -61,13 +61,16 @@ function compute_wide_metrics(
     available_cols = Symbol.(names(df))
 
     if runs == 0
-        @warn "No quantification columns found in dataset" dataset=dataset_name table_label=table_label expected_quant_cols=Symbol.(quant_col_names) available_cols=available_cols
+        expected = Symbol.(quant_col_names)
+        @warn "No quantification columns found in dataset" dataset=dataset_name table_label=table_label expected_quant_cols=expected available_cols=available_cols expected_quant_cols_list=join(expected, ", ") available_cols_list=join(available_cols, ", ")
         return (; runs = 0, complete_rows = 0, data_completeness = 0.0)
     end
 
     if length(existing_quant_cols) < length(quant_col_names)
         missing_cols = setdiff(Symbol.(quant_col_names), Symbol.(existing_quant_cols))
-        @warn "Missing quantification columns in dataset" dataset=dataset_name table_label=table_label missing_cols=missing_cols expected_quant_cols=Symbol.(quant_col_names) available_quant_cols=Symbol.(existing_quant_cols) available_cols=available_cols
+        expected = Symbol.(quant_col_names)
+        available_quant_syms = Symbol.(existing_quant_cols)
+        @warn "Missing quantification columns in dataset" dataset=dataset_name table_label=table_label missing_cols=missing_cols expected_quant_cols=expected available_quant_cols=available_quant_syms available_cols=available_cols missing_cols_list=join(missing_cols, ", ") expected_quant_cols_list=join(expected, ", ") available_quant_cols_list=join(available_quant_syms, ", ") available_cols_list=join(available_cols, ", ")
     end
 
     quant_data = df[:, existing_quant_cols]
