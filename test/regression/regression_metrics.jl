@@ -58,13 +58,16 @@ function compute_wide_metrics(
 )
     existing_quant_cols = select_quant_columns(df, quant_col_names)
     runs = length(existing_quant_cols)
+    available_cols = Symbol.(names(df))
+
     if runs == 0
+        @warn "No quantification columns found in dataset" dataset=dataset_name table_label=table_label expected_quant_cols=Symbol.(quant_col_names) available_cols=available_cols
         return (; runs = 0, complete_rows = 0, data_completeness = 0.0)
     end
 
     if length(existing_quant_cols) < length(quant_col_names)
         missing_cols = setdiff(Symbol.(quant_col_names), Symbol.(existing_quant_cols))
-        @warn "Missing quantification columns in dataset" dataset=dataset_name table_label=table_label missing_cols=missing_cols
+        @warn "Missing quantification columns in dataset" dataset=dataset_name table_label=table_label missing_cols=missing_cols expected_quant_cols=Symbol.(quant_col_names) available_quant_cols=Symbol.(existing_quant_cols) available_cols=available_cols
     end
 
     quant_data = df[:, existing_quant_cols]
