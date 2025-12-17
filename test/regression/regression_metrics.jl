@@ -580,7 +580,6 @@ function compute_dataset_metrics(
         if precursor_cv_metrics !== nothing
             merge!(precursors_metrics, Dict(
                 "cv_runs" => precursor_cv_metrics.runs,
-                "rows_with_complete_values" => precursor_cv_metrics.rows_evaluated,
                 "median_cv" => precursor_cv_metrics.median_cv,
             ))
         end
@@ -588,7 +587,6 @@ function compute_dataset_metrics(
         if protein_cv_metrics !== nothing
             merge!(protein_metrics, Dict(
                 "cv_runs" => protein_cv_metrics.runs,
-                "rows_with_complete_values" => protein_cv_metrics.rows_evaluated,
                 "median_cv" => protein_cv_metrics.median_cv,
             ))
         end
