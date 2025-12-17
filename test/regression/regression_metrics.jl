@@ -54,6 +54,7 @@ function compute_wide_metrics(
     df::DataFrame,
     quant_col_names::AbstractVector{<:Union{Symbol, String}};
     table_label::AbstractString = "wide_table",
+    dataset_name::AbstractString = "dataset",
 )
     existing_quant_cols = select_quant_columns(df, quant_col_names)
     runs = length(existing_quant_cols)
@@ -63,7 +64,7 @@ function compute_wide_metrics(
 
     if length(existing_quant_cols) < length(quant_col_names)
         missing_cols = setdiff(Symbol.(quant_col_names), Symbol.(existing_quant_cols))
-        @warn "Missing quantification columns in dataset" missing_cols=missing_cols
+        @warn "Missing quantification columns in dataset" dataset=dataset_name table_label=table_label missing_cols=missing_cols
     end
 
     quant_data = df[:, existing_quant_cols]
@@ -419,6 +420,7 @@ function compute_dataset_metrics(
     dataset_name::AbstractString;
     metric_groups::AbstractVector{<:AbstractString} = DEFAULT_METRIC_GROUPS,
     experimental_design::Dict{String, Any} = Dict{String, Any}(),
+    three_proteome_designs = nothing,
     dataset_paths::Dict{String, String} = Dict{String, String}(),
 )
     requested_groups = Set(lowercase.(metric_groups))
@@ -426,13 +428,15 @@ function compute_dataset_metrics(
     need_cv = "cv" in requested_groups
     need_keap1 = "keap1" in requested_groups
     need_ftr = "ftr" in requested_groups
-    need_tsv_metrics = need_identification || need_cv || need_keap1 || need_ftr
+    need_three_proteome = ("fold_change" in requested_groups) || ("three_proteome" in requested_groups)
+    need_tsv_metrics = need_identification || need_cv || need_keap1 || need_ftr || need_three_proteome
 
     precursors_metrics = nothing
     protein_metrics = nothing
     keap1_precursor_metrics = nothing
     keap1_protein_metrics = nothing
     ftr_metrics = nothing
+    fold_change_metrics = nothing
 
     if need_tsv_metrics
         required_files = if need_identification || need_cv || need_keap1 || need_ftr
@@ -469,6 +473,7 @@ function compute_dataset_metrics(
         else
             quant_column_names_from_proteins(protein_groups_wide)
         end
+        protein_quant_col_names = quant_column_names_from_proteins(protein_groups_wide)
         precursor_wide_metrics = nothing
         protein_wide_metrics = nothing
         precursor_cv_metrics = nothing
@@ -491,10 +496,16 @@ function compute_dataset_metrics(
 
         if need_cv
             precursor_wide_metrics = compute_wide_metrics(
-                precursors_wide, quant_col_names; table_label = "precursors_wide"
+                precursors_wide,
+                quant_col_names;
+                table_label = "precursors_wide",
+                dataset_name = dataset_name,
             )
             protein_wide_metrics = compute_wide_metrics(
-                protein_groups_wide, quant_col_names; table_label = "protein_groups_wide"
+                protein_groups_wide,
+                quant_col_names;
+                table_label = "protein_groups_wide",
+                dataset_name = dataset_name,
             )
             precursor_cv_metrics = compute_cv_metrics(
                 precursors_wide, quant_col_names; table_label = "precursors_wide"
@@ -579,10 +590,41 @@ function compute_dataset_metrics(
             ftr_metrics = compute_ftr_metrics(
                 dataset_name,
                 precursors_wide,
-                quant_col_names,
+                protein_groups_wide,
                 experimental_design,
                 dataset_paths,
             )
+        end
+
+        if need_three_proteome
+            design_entry = three_proteome_design_entry(three_proteome_designs, dataset_name)
+            if design_entry === nothing || isempty(design_entry.run_to_condition)
+                @warn "No three-proteome design available; skipping fold-change metrics" dataset=dataset_name
+            elseif isempty(design_entry.condition_pairs)
+                @warn "Three-proteome design missing condition pairs; skipping fold-change metrics" dataset=dataset_name
+            else
+                precursor_fold_changes = fold_change_metrics_for_table(
+                    precursors_wide,
+                    quant_col_names,
+                    design_entry,
+                    design_entry.condition_pairs;
+                    table_label = "precursors",
+                )
+
+                protein_fold_changes = fold_change_metrics_for_table(
+                    protein_groups_wide,
+                    protein_quant_col_names,
+                    design_entry,
+                    design_entry.condition_pairs;
+                    table_label = "protein_groups",
+                )
+
+                if precursor_fold_changes !== nothing || protein_fold_changes !== nothing
+                    fold_change_metrics = Dict{String, Any}()
+                    precursor_fold_changes !== nothing && (fold_change_metrics["precursors"] = precursor_fold_changes)
+                    protein_fold_changes !== nothing && (fold_change_metrics["protein_groups"] = protein_fold_changes)
+                end
+            end
         end
     end
 
@@ -618,6 +660,10 @@ function compute_dataset_metrics(
         metrics["ftr"] = ftr_metrics
     end
 
+    if fold_change_metrics !== nothing
+        metrics["fold_change"] = fold_change_metrics
+    end
+
     if entrapment_metrics !== nothing
         metrics["entrapment"] = entrapment_metrics
     end
@@ -644,6 +690,118 @@ function metric_preferences(config::Dict, dataset_name::AbstractString)
 
     groups = normalize_metric_groups(entry)
     (; groups)
+end
+
+function normalize_three_proteome_design(design::Dict{String, Any})
+    run_mapping = Dict{String, String}()
+    if haskey(design, "runs") && design["runs"] isa AbstractDict
+        for (run, condition) in design["runs"]
+            run_mapping[String(run)] = String(condition)
+        end
+    end
+
+    raw_pairs = if haskey(design, "expected_ratios")
+        design["expected_ratios"]
+    elseif haskey(design, "condition_pairs")
+        design["condition_pairs"]
+    else
+        Any[]
+    end
+
+    condition_pairs =
+        Vector{NamedTuple{(:numerator, :denominator, :expected), Tuple{String, String, Dict{String, Float64}}}}()
+
+    for pair in raw_pairs
+        pair isa AbstractDict || continue
+        numerator = get(pair, "numerator_condition", get(pair, "numerator", nothing))
+        denominator = get(pair, "denominator_condition", get(pair, "denominator", nothing))
+        numerator === nothing && continue
+        denominator === nothing && continue
+
+        expected_raw = get(pair, "species_ratios", get(pair, "expected_ratios", Dict()))
+        expected = Dict{String, Float64}()
+        if expected_raw isa AbstractDict
+            for (species, ratio) in expected_raw
+                try
+                    expected[uppercase(String(species))] = Float64(ratio)
+                catch
+                end
+            end
+        end
+
+        push!(
+            condition_pairs,
+            (; numerator = String(numerator), denominator = String(denominator), expected),
+        )
+    end
+
+    (; run_to_condition = run_mapping, condition_pairs)
+end
+
+function load_three_proteome_designs(path::AbstractString)
+    if isdir(path)
+        files = filter(f -> endswith(f, "_ED.json"), readdir(path; join=true))
+        isempty(files) && return Dict{String, Any}()
+
+        designs = Dict{String, Any}()
+        for file in files
+            parsed = load_three_proteome_designs(file)
+            if parsed isa NamedTuple
+                basename_no_ext = replace(basename(file), r"\.json$" => "")
+                if endswith(basename_no_ext, "_ED")
+                    designs[basename_no_ext] = parsed
+                    designs[basename_no_ext[1:end-3]] = parsed
+                else
+                    designs[basename_no_ext] = parsed
+                end
+            elseif parsed isa Dict
+                merge!(designs, parsed)
+            end
+        end
+
+        return designs
+    end
+
+    if !isfile(path)
+        return Dict{String, Any}()
+    end
+
+    try
+        parsed = JSON.parsefile(path)
+        if parsed isa AbstractDict
+            contains_direct_design =
+                haskey(parsed, "runs") || haskey(parsed, "expected_ratios") || haskey(parsed, "condition_pairs")
+            if contains_direct_design
+                return normalize_three_proteome_design(Dict{String, Any}(parsed))
+            end
+
+            designs = Dict{String, Any}()
+            for (k, v) in parsed
+                v isa AbstractDict || continue
+                designs[String(k)] = normalize_three_proteome_design(Dict{String, Any}(v))
+            end
+
+            return designs
+        end
+    catch err
+        @warn "Failed to parse three-proteome design file; ignoring" design_path=path error=err
+    end
+
+    Dict{String, Any}()
+end
+
+function three_proteome_design_entry(three_proteome_designs, dataset_name::AbstractString)
+    if three_proteome_designs isa NamedTuple
+        return three_proteome_designs
+    elseif three_proteome_designs isa AbstractDict
+        entry = get(three_proteome_designs, dataset_name, nothing)
+        if entry === nothing && haskey(three_proteome_designs, "runs")
+            entry = three_proteome_designs
+        end
+        return entry
+    end
+
+    nothing
 end
 
 function load_experimental_design(path::AbstractString)
@@ -830,6 +988,41 @@ function is_yeast_only_species(val)
     length(cleaned) == 1 && cleaned[1] == "YEAST"
 end
 
+function unique_species_value(val)
+    val === missing && return nothing
+    parts = split(String(val), ";")
+    cleaned = unique(filter(!isempty, uppercase.(strip.(parts))))
+    length(cleaned) == 1 ? cleaned[1] : nothing
+end
+
+function median_for_columns(row::DataFrameRow, cols::AbstractVector)
+    values = [row[c] for c in cols if row[c] !== missing]
+    isempty(values) && return missing
+    median(values)
+end
+
+function condition_columns(
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    run_to_condition::Dict{String, String},
+)
+    quant_lookup = Dict(String(c) => c for c in quant_col_names)
+    condition_to_columns = Dict{String, Vector{eltype(quant_col_names)}}()
+    missing_runs = String[]
+
+    for (run, condition) in run_to_condition
+        col = get(quant_lookup, run, nothing)
+        if col === nothing
+            push!(missing_runs, run)
+            continue
+        end
+
+        cols = get!(condition_to_columns, condition, Vector{eltype(quant_col_names)}())
+        push!(cols, col)
+    end
+
+    return condition_to_columns, missing_runs
+end
+
 function resolve_run_columns(
     df::DataFrame,
     quant_col_names::AbstractVector{<:Union{Symbol, String}},
@@ -913,6 +1106,106 @@ function count_total_ids(
     count(!ismissing, quant_matrix)
 end
 
+function fold_change_metrics_for_table(
+    df::DataFrame,
+    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    design,
+    condition_pairs;
+    table_label::AbstractString,
+)
+    quant_columns = select_quant_columns(df, quant_col_names)
+    if isempty(quant_columns)
+        @warn "No quantification columns available for fold-change metrics" table=table_label
+        return nothing
+    end
+
+    condition_to_columns, missing_runs = condition_columns(quant_columns, design.run_to_condition)
+    if !isempty(missing_runs)
+        @warn "Runs listed in three-proteome design missing from table; skipping those runs" table=table_label missing_runs=missing_runs
+    end
+
+    species_col = species_column(df; table_label = table_label)
+    species_col === nothing && return nothing
+
+    metrics = Dict{String, Any}()
+
+    for pair in condition_pairs
+        numerator_columns = get(condition_to_columns, pair.numerator, Vector{eltype(quant_columns)}())
+        denominator_columns = get(condition_to_columns, pair.denominator, Vector{eltype(quant_columns)}())
+        if isempty(numerator_columns) || isempty(denominator_columns)
+            @warn "Missing runs for condition pair; skipping fold-change computation" table=table_label numerator=pair.numerator denominator=pair.denominator
+            continue
+        end
+
+        deviations = Dict{String, Vector{Float64}}()
+
+        for row in eachrow(df)
+            species = unique_species_value(row[species_col])
+            species === nothing && continue
+
+            expected_ratio = get(pair.expected, species, nothing)
+            expected_ratio === nothing && continue
+
+            numerator_median = median_for_columns(row, numerator_columns)
+            denominator_median = median_for_columns(row, denominator_columns)
+
+            if numerator_median === missing || denominator_median === missing || denominator_median == 0
+                continue
+            end
+
+            observed_ratio = numerator_median / denominator_median
+            deviation = observed_ratio - expected_ratio
+
+            push!(get!(deviations, species, Float64[]), deviation)
+        end
+
+        pair_label = string(
+            normalize_metric_label(pair.numerator),
+            "_over_",
+            normalize_metric_label(pair.denominator),
+        )
+
+        pair_metrics = Dict{String, Any}()
+        for (species, values) in deviations
+            pair_metrics[string(lowercase(species), "_median_deviation")] = isempty(values) ? missing : median(values)
+            pair_metrics[string(lowercase(species), "_entries")] = length(values)
+        end
+
+        isempty(pair_metrics) || (metrics[pair_label] = pair_metrics)
+    end
+
+    isempty(metrics) ? nothing : metrics
+end
+
+function ftr_metrics_for_table(
+    mbr_df::DataFrame,
+    no_mbr_df::DataFrame,
+    mbr_quant_cols::AbstractVector{<:Union{Symbol, String}},
+    no_mbr_quant_cols::AbstractVector{<:Union{Symbol, String}},
+    human_only_runs::AbstractVector{<:AbstractString};
+    table_label::AbstractString,
+)
+    yeast_human_only_mbr = count_yeast_ids(mbr_df, mbr_quant_cols, human_only_runs; table_label = table_label)
+    yeast_human_only_no_mbr = count_yeast_ids(no_mbr_df, no_mbr_quant_cols, human_only_runs; table_label = table_label)
+
+    total_ids_human_only_mbr = count_total_ids(mbr_df, mbr_quant_cols, human_only_runs; table_label = table_label)
+    total_ids_human_only_no_mbr = count_total_ids(no_mbr_df, no_mbr_quant_cols, human_only_runs; table_label = table_label)
+
+    additional_yeast_in_human_only = max(yeast_human_only_mbr - yeast_human_only_no_mbr, 0)
+    additional_ids_in_human_only = max(total_ids_human_only_mbr - total_ids_human_only_no_mbr, 0)
+    ftr = additional_ids_in_human_only > 0 ? additional_yeast_in_human_only / additional_ids_in_human_only : 0.0
+
+    return Dict(
+        "yeast_ids_human_only_no_mbr" => yeast_human_only_no_mbr,
+        "yeast_ids_human_only_mbr" => yeast_human_only_mbr,
+        "total_ids_human_only_no_mbr" => total_ids_human_only_no_mbr,
+        "total_ids_human_only_mbr" => total_ids_human_only_mbr,
+        "additional_yeast_ids_in_human_only" => additional_yeast_in_human_only,
+        "additional_ids_in_human_only" => additional_ids_in_human_only,
+        "false_transfer_rate" => ftr,
+    )
+end
+
 function paired_mbr_dataset_paths(
     dataset_name::AbstractString,
     dataset_paths::Dict{String, String},
@@ -937,7 +1230,7 @@ end
 function compute_ftr_metrics(
     dataset_name::AbstractString,
     precursors_wide::DataFrame,
-    quant_col_names::AbstractVector{<:Union{Symbol, String}},
+    protein_groups_wide::DataFrame,
     experimental_design::Dict{String, Any},
     dataset_paths::Dict{String, String},
 )
@@ -971,8 +1264,33 @@ function compute_ftr_metrics(
         read_required_table(tsv_path)
     end
 
-    mbr_quant_cols = dataset_name == mbr_name ? quant_col_names : quant_column_names_from_proteins(precursors_mbr)
-    nombr_quant_cols = dataset_name == nombr_name ? quant_col_names : quant_column_names_from_proteins(precursors_no_mbr)
+    protein_groups_mbr = if dataset_name == mbr_name
+        protein_groups_wide
+    else
+        tsv_path = joinpath(mbr_path, "protein_groups_wide.tsv")
+        isfile(tsv_path) || begin
+            @warn "Missing protein groups for MBR dataset; skipping FTR metrics" dataset=mbr_name path=tsv_path
+            return nothing
+        end
+        read_required_table(tsv_path)
+    end
+
+    protein_groups_no_mbr = if dataset_name == nombr_name
+        protein_groups_wide
+    else
+        tsv_path = joinpath(nombr_path, "protein_groups_wide.tsv")
+        isfile(tsv_path) || begin
+            @warn "Missing protein groups for noMBR dataset; skipping FTR metrics" dataset=nombr_name path=tsv_path
+            return nothing
+        end
+        read_required_table(tsv_path)
+    end
+
+    mbr_quant_cols = quant_column_names_from_proteins(precursors_mbr)
+    nombr_quant_cols = quant_column_names_from_proteins(precursors_no_mbr)
+
+    protein_mbr_quant_cols = quant_column_names_from_proteins(protein_groups_mbr)
+    protein_nombr_quant_cols = quant_column_names_from_proteins(protein_groups_no_mbr)
 
     groups = run_groups_for_dataset(experimental_design, dataset_name)
     alt_groups = run_groups_for_dataset(experimental_design, mbr_name == dataset_name ? nombr_name : mbr_name)
@@ -989,35 +1307,27 @@ function compute_ftr_metrics(
         return nothing
     end
 
-    runs_for_totals = all_runs_from_groups(groups)
-    if isempty(runs_for_totals)
-        runs_for_totals = all_runs_from_groups(alt_groups)
-    end
-    runs_for_totals = isempty(runs_for_totals) ? nothing : runs_for_totals
-
-    yeast_human_only_mbr = count_yeast_ids(precursors_mbr, mbr_quant_cols, human_only_runs; table_label = "precursors")
-    yeast_human_only_no_mbr = count_yeast_ids(
+    precursor_metrics = ftr_metrics_for_table(
+        precursors_mbr,
         precursors_no_mbr,
+        mbr_quant_cols,
         nombr_quant_cols,
         human_only_runs;
         table_label = "precursors",
     )
 
-    total_ids_mbr = count_total_ids(precursors_mbr, mbr_quant_cols, runs_for_totals; table_label = "precursors")
-    total_ids_no_mbr = count_total_ids(precursors_no_mbr, nombr_quant_cols, runs_for_totals; table_label = "precursors")
-
-    additional_yeast_in_human_only = max(yeast_human_only_mbr - yeast_human_only_no_mbr, 0)
-    total_additional_ids = max(total_ids_mbr - total_ids_no_mbr, 0)
-    ftr = total_additional_ids > 0 ? additional_yeast_in_human_only / total_additional_ids : 0.0
+    protein_metrics = ftr_metrics_for_table(
+        protein_groups_mbr,
+        protein_groups_no_mbr,
+        protein_mbr_quant_cols,
+        protein_nombr_quant_cols,
+        human_only_runs;
+        table_label = "protein_groups",
+    )
 
     return Dict(
-        "yeast_ids_human_only_no_mbr" => yeast_human_only_no_mbr,
-        "yeast_ids_human_only_mbr" => yeast_human_only_mbr,
-        "total_ids_no_mbr" => total_ids_no_mbr,
-        "total_ids_mbr" => total_ids_mbr,
-        "additional_yeast_ids_in_human_only" => additional_yeast_in_human_only,
-        "total_additional_ids" => total_additional_ids,
-        "false_transfer_rate" => ftr,
+        "precursors" => precursor_metrics,
+        "protein_groups" => protein_metrics,
         "mbr_dataset" => mbr_name,
         "nombr_dataset" => nombr_name,
     )
@@ -1072,6 +1382,13 @@ function main()
     )
     experimental_design = load_experimental_design(experimental_design_path)
 
+    three_proteome_designs_path = get(
+        ENV,
+        "PIONEER_THREE_PROTEOME_DESIGNS",
+        joinpath(@__DIR__, "..", "..", "pioneer-regression-configs", "experimental_designs"),
+    )
+    three_proteome_designs = load_three_proteome_designs(three_proteome_designs_path)
+
     dataset_dirs = filter(dataset_dirs) do path
         dataset_name = basename(path)
         preferences = metric_preferences(metric_group_config, dataset_name)
@@ -1095,6 +1412,7 @@ function main()
             dataset_name;
             metric_groups = metric_groups,
             experimental_design = experimental_design,
+            three_proteome_designs = three_proteome_designs,
             dataset_paths = dataset_paths,
         )
         metrics === nothing && continue
