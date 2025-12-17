@@ -1181,7 +1181,11 @@ function fold_change_metrics_for_table(
             end
 
             observed_ratio = numerator_median / denominator_median
-            deviation = observed_ratio - expected_ratio
+            if observed_ratio <= 0 || expected_ratio <= 0
+                continue
+            end
+
+            deviation = log2(observed_ratio) - log2(expected_ratio)
 
             push!(get!(deviations, species, Float64[]), deviation)
         end
