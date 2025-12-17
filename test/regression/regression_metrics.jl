@@ -10,7 +10,16 @@ using TOML
 
 const DEFAULT_METRIC_GROUPS = ["identification", "CV", "eFDR"]
 
-const NON_QUANT_COLUMNS = Set([:target])
+const NON_QUANT_COLUMNS = Set([
+    :target,
+    :isotopic_mods,
+    :prec_mz,
+    :global_score,
+    :MBR_boosted_global_qval,
+    :use_for_protein_quant,
+    :precursor_idx,
+    :entrapment_group_id,
+])
 
 function read_required_table(path::AbstractString)
     isfile(path) || error("Required file not found: $path")
@@ -517,7 +526,7 @@ function compute_dataset_metrics(
             )
             protein_wide_metrics = compute_wide_metrics(
                 protein_groups_wide,
-                quant_col_names;
+                protein_quant_col_names;
                 table_label = "protein_groups_wide",
                 dataset_name = dataset_name,
             )
@@ -525,7 +534,7 @@ function compute_dataset_metrics(
                 precursors_wide, quant_col_names; table_label = "precursors_wide"
             )
             protein_cv_metrics = compute_cv_metrics(
-                protein_groups_wide, quant_col_names; table_label = "protein_groups_wide"
+                protein_groups_wide, protein_quant_col_names; table_label = "protein_groups_wide"
             )
         end
 
@@ -584,7 +593,7 @@ function compute_dataset_metrics(
 
             keap1_protein_metrics = gene_counts_metrics_by_run(
                 protein_groups_wide,
-                quant_col_names,
+                protein_quant_col_names,
                 labels_for_runs,
                 "protein_groups",
                 "KEAP1",
@@ -593,7 +602,7 @@ function compute_dataset_metrics(
                 keap1_protein_metrics,
                 gene_counts_metrics_by_run(
                     protein_groups_wide,
-                    quant_col_names,
+                    protein_quant_col_names,
                     labels_for_runs,
                     "protein_groups",
                     "NFE2L2",
