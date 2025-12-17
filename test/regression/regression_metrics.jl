@@ -1028,6 +1028,12 @@ function median_for_columns(row::DataFrameRow, cols::AbstractVector)
     median(values)
 end
 
+function mean_for_columns(row::DataFrameRow, cols::AbstractVector)
+    values = [row[c] for c in cols if row[c] !== missing]
+    isempty(values) && return missing
+    mean(values)
+end
+
 function condition_columns(
     quant_col_names::AbstractVector{<:Union{Symbol, String}},
     run_to_condition::Dict{String, String},
@@ -1173,14 +1179,14 @@ function fold_change_metrics_for_table(
             expected_ratio = get(pair.expected, species, nothing)
             expected_ratio === nothing && continue
 
-            numerator_median = median_for_columns(row, numerator_columns)
-            denominator_median = median_for_columns(row, denominator_columns)
+            numerator_mean = mean_for_columns(row, numerator_columns)
+            denominator_mean = mean_for_columns(row, denominator_columns)
 
-            if numerator_median === missing || denominator_median === missing || denominator_median == 0
+            if numerator_mean === missing || denominator_mean === missing || denominator_mean == 0
                 continue
             end
 
-            observed_ratio = numerator_median / denominator_median
+            observed_ratio = numerator_mean / denominator_mean
             if observed_ratio <= 0 || expected_ratio <= 0
                 continue
             end
