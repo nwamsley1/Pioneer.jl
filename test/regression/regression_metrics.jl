@@ -444,7 +444,7 @@ function compute_dataset_metrics(
     three_proteome_designs = nothing,
     dataset_paths::Dict{String, String} = Dict{String, String}(),
 )
-    requested_groups = Set(lowercase.(metric_groups))
+    requested_groups = Set(replace.(lowercase.(metric_groups), "-" => "_"))
     need_identification = "identification" in requested_groups
     need_cv = "cv" in requested_groups
     need_keap1 = "keap1" in requested_groups
