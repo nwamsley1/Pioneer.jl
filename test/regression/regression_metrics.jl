@@ -483,6 +483,7 @@ function compute_dataset_metrics(
         protein_metrics = Dict{String, Any}()
 
         if need_identification
+            @info "Starting identification metrics" dataset=dataset_name
             merge!(precursors_metrics, Dict(
                 "total" => nrow(precursors_long),
                 "unique" => nrow(precursors_wide),
@@ -495,6 +496,7 @@ function compute_dataset_metrics(
         end
 
         if need_cv
+            @info "Starting CV metrics" dataset=dataset_name
             precursor_wide_metrics = compute_wide_metrics(
                 precursors_wide,
                 quant_col_names;
@@ -548,6 +550,7 @@ function compute_dataset_metrics(
         end
 
         if need_keap1
+            @info "Starting KEAP1 metrics" dataset=dataset_name
             labels_for_runs = experimental_design_for_dataset(experimental_design, dataset_name)
             keap1_precursor_metrics = gene_counts_metrics_by_run(
                 precursors_wide,
@@ -587,6 +590,7 @@ function compute_dataset_metrics(
         end
 
         if need_ftr
+            @info "Starting false transfer rate metrics" dataset=dataset_name
             ftr_metrics = compute_ftr_metrics(
                 dataset_name,
                 precursors_wide,
@@ -597,6 +601,7 @@ function compute_dataset_metrics(
         end
 
         if need_three_proteome
+            @info "Starting fold-change metrics" dataset=dataset_name
             design_entry = three_proteome_design_entry(three_proteome_designs, dataset_name)
             if design_entry === nothing || isempty(design_entry.run_to_condition)
                 @warn "No three-proteome design available; skipping fold-change metrics" dataset=dataset_name
@@ -629,6 +634,7 @@ function compute_dataset_metrics(
     end
 
     entrapment_metrics = if "efdr" in requested_groups
+        @info "Starting eFDR metrics" dataset=dataset_name
         compute_entrapment_metrics(dataset_dir, dataset_name)
     else
         nothing
