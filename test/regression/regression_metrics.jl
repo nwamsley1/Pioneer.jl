@@ -104,13 +104,14 @@ function compute_cv_metrics(
     table_label::AbstractString = "wide_table",
     groups::Dict{String, Vector{String}} = Dict{String, Vector{String}}(),
 )
-    function cvs_for_columns(columns::Vector{Symbol})
+    function cvs_for_columns(columns::AbstractVector{<:Union{Symbol, String}})
+        column_syms = Symbol.(columns)
         runs = length(columns)
         if runs == 0
             return (; runs = 0, rows_evaluated = 0, cvs = Float64[])
         end
 
-        quant_data = df[:, columns]
+        quant_data = df[:, column_syms]
         quant_matrix = Matrix(quant_data)
         complete_mask = [all(!ismissing, row) for row in eachrow(quant_matrix)]
         rows_evaluated = count(complete_mask)
