@@ -133,8 +133,8 @@ function compute_cv_metrics(
     if isempty(groups)
         existing_quant_cols = select_quant_columns(df, quant_col_names)
         stats = cvs_for_columns(existing_quant_cols)
-        mean_cv = isempty(stats.cvs) ? 0.0 : mean(stats.cvs)
-        return (; runs = stats.runs, rows_evaluated = stats.rows_evaluated, mean_cv)
+        median_cv = isempty(stats.cvs) ? 0.0 : median(stats.cvs)
+        return (; runs = stats.runs, rows_evaluated = stats.rows_evaluated, median_cv)
     end
 
     all_runs = Set{Symbol}()
@@ -148,8 +148,8 @@ function compute_cv_metrics(
         append!(all_cvs, stats.cvs)
     end
 
-    mean_cv = isempty(all_cvs) ? 0.0 : mean(all_cvs)
-    (; runs = length(all_runs), rows_evaluated = total_rows, mean_cv)
+    median_cv = isempty(all_cvs) ? 0.0 : median(all_cvs)
+    (; runs = length(all_runs), rows_evaluated = total_rows, median_cv)
 end
 
 function load_dataset_config(dataset_dir::AbstractString)
@@ -581,7 +581,7 @@ function compute_dataset_metrics(
             merge!(precursors_metrics, Dict(
                 "cv_runs" => precursor_cv_metrics.runs,
                 "rows_with_complete_values" => precursor_cv_metrics.rows_evaluated,
-                "mean_cv" => precursor_cv_metrics.mean_cv,
+                "median_cv" => precursor_cv_metrics.median_cv,
             ))
         end
 
@@ -589,7 +589,7 @@ function compute_dataset_metrics(
             merge!(protein_metrics, Dict(
                 "cv_runs" => protein_cv_metrics.runs,
                 "rows_with_complete_values" => protein_cv_metrics.rows_evaluated,
-                "mean_cv" => protein_cv_metrics.mean_cv,
+                "median_cv" => protein_cv_metrics.median_cv,
             ))
         end
 
