@@ -644,7 +644,7 @@ function main()
         "PIONEER_THREE_PROTEOME_DESIGNS",
         joinpath(@__DIR__, "..", "..", "pioneer-regression-configs", "experimental_designs"),
     )
-    three_proteome_designs = load_three_proteome_designs(three_proteome_designs_path)
+    three_proteome_designs = nothing
 
     dataset_dirs = filter(dataset_dirs) do path
         dataset_name = basename(path)
@@ -664,6 +664,12 @@ function main()
         preferences = metric_preferences(metric_group_config, dataset_name)
 
         metric_groups = preferences.groups
+        normalized_groups = Set(replace.(lowercase.(metric_groups), "-" => "_"))
+        need_three_proteome = ("fold_change" in normalized_groups) || ("three_proteome" in normalized_groups)
+        if need_three_proteome && three_proteome_designs === nothing
+            three_proteome_designs = load_three_proteome_designs(three_proteome_designs_path)
+        end
+
         metrics = compute_dataset_metrics(
             dataset_dir,
             dataset_name;
