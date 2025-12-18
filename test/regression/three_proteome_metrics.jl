@@ -348,23 +348,41 @@ function load_three_proteome_designs(path::AbstractString)
     end
 end
 
-function three_proteome_design_entry(three_proteome_designs, dataset_name::AbstractString)
-    if three_proteome_designs === nothing
-        return nothing
+function three_proteome_design_entry(
+    three_proteome_designs,
+    dataset_name::AbstractString;
+    experimental_design=nothing,
+)
+    entry = nothing
+    if three_proteome_designs isa NamedTuple
+        entry = three_proteome_designs
+    elseif three_proteome_designs isa AbstractDict
+        entry = get(three_proteome_designs, dataset_name, nothing)
+        if entry === nothing && haskey(three_proteome_designs, "runs")
+            entry = three_proteome_designs
+        end
     end
 
-    entry = get(three_proteome_designs, dataset_name, nothing)
-    if entry === nothing
-        @warn "No three-proteome design found for dataset" dataset=dataset_name
-        return nothing
+    if entry === nothing && experimental_design !== nothing
+        base_entry = experimental_design_entry(experimental_design, dataset_name)
+        if !isempty(base_entry)
+            entry = normalize_three_proteome_design(Dict{String, Any}(base_entry))
+        end
     end
 
-    if !haskey(entry, :run_mapping) || !haskey(entry, :condition_pairs)
-        @warn "Three-proteome design missing required fields" dataset=dataset_name
+    entry === nothing && return nothing
+
+    if entry isa NamedTuple
+        if haskey(entry, :run_to_condition) && haskey(entry, :condition_pairs)
+            return entry
+        end
         return nothing
+    elseif entry isa AbstractDict
+        normalized = normalize_three_proteome_design(Dict{String, Any}(entry))
+        return normalized
     end
 
-    (; run_to_condition = entry.run_mapping, condition_pairs = entry.condition_pairs)
+    nothing
 end
 
 export load_experimental_design, normalize_metric_label, experimental_design_for_dataset, run_groups_for_dataset
