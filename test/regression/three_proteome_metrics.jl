@@ -325,7 +325,13 @@ function load_three_proteome_designs(path::AbstractString)
         for file in files
             parsed = load_three_proteome_designs(file)
             if parsed isa NamedTuple
-                designs[replace(basename(file), r"\.json$" => "")] = parsed
+                basename_no_ext = replace(basename(file), r"\.json$" => "")
+                designs[basename_no_ext] = parsed
+                if endswith(basename_no_ext, ".ED")
+                    designs[basename_no_ext[1:end-3]] = parsed
+                elseif endswith(basename_no_ext, "_ED")
+                    designs[basename_no_ext[1:end-3]] = parsed
+                end
             elseif parsed isa Dict
                 merge!(designs, parsed)
             end
@@ -384,7 +390,9 @@ function three_proteome_design_entry(
             @warn "Three-proteome design missing for dataset" dataset=dataset_name available_designs=collect(keys(three_proteome_designs))
             return nothing
         end
-        return normalize_three_proteome_design(Dict{String, Any}(entry))
+        normalized = normalize_three_proteome_design(Dict{String, Any}(entry))
+        @info "Using three-proteome design" dataset=dataset_name selected_keys=[k for k in keys(three_proteome_designs) if three_proteome_designs[k] === entry]
+        return normalized
     end
 
     nothing
