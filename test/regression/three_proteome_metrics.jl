@@ -314,15 +314,16 @@ end
 
 function load_three_proteome_designs(path::AbstractString)
     if isdir(path)
-        files = filter(f -> endswith(f, ".json"), readdir(path; join=true))
-        @info "Scanning three-proteome design directory" three_proteome_design_dir=path json_files=files
-        if isempty(files)
-            @info "No three-proteome design files found in directory" three_proteome_design_dir=path
+        json_files = filter(f -> endswith(f, ".json"), readdir(path; join=true))
+        ed_files = filter(f -> endswith(f, ".ED.json"), json_files)
+        @info "Scanning three-proteome design directory" three_proteome_design_dir=path json_files=json_files ed_files=ed_files
+        if isempty(ed_files)
+            @info "No .ED.json three-proteome design files found in directory" three_proteome_design_dir=path
             return Dict{String, Any}()
         end
 
         designs = Dict{String, Any}()
-        for file in files
+        for file in ed_files
             parsed = load_three_proteome_designs(file)
             if parsed isa NamedTuple
                 designs[replace(basename(file), r"\.json$" => "")] = parsed
