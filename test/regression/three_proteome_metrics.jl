@@ -326,7 +326,9 @@ function load_three_proteome_designs(path::AbstractString)
         for file in ed_files
             parsed = load_three_proteome_designs(file)
             if parsed isa NamedTuple
-                designs[replace(basename(file), r"\.json$" => "")] = parsed
+                base_key = replace(basename(file), r"\.json$" => "")
+                designs[base_key] = parsed
+                endswith(base_key, ".ED") && (designs[base_key[1:end-3]] = parsed)
             elseif parsed isa Dict
                 merge!(designs, parsed)
             end
@@ -378,6 +380,7 @@ function three_proteome_design_entry(
         return three_proteome_designs
     elseif three_proteome_designs isa AbstractDict
         entry = get(three_proteome_designs, dataset_name, nothing)
+        entry === nothing && (entry = get(three_proteome_designs, string(dataset_name, ".ED"), nothing))
         if entry === nothing && haskey(three_proteome_designs, "runs")
             entry = three_proteome_designs
         end
