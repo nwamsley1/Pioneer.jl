@@ -328,11 +328,7 @@ function compute_dataset_metrics(
 
         if need_three_proteome
             @info "Starting fold-change metrics" dataset=dataset_name
-            design_entry = three_proteome_design_entry(
-                three_proteome_designs,
-                dataset_name;
-                experimental_design = experimental_design,
-            )
+            design_entry = three_proteome_design_entry(three_proteome_designs, dataset_name)
             if design_entry === nothing || isempty(design_entry.run_to_condition)
                 @warn "No three-proteome design available; skipping fold-change metrics" dataset=dataset_name
             elseif isempty(design_entry.condition_pairs)

@@ -289,97 +289,103 @@ function normalize_three_proteome_design(design::Dict{String, Any})
 
     for pair in raw_pairs
         pair isa AbstractDict || continue
+        numerator = get(pair, "numerator_condition", get(pair, "numerator", nothing))
+        denominator = get(pair, "denominator_condition", get(pair, "denominator", nothing))
+        numerator === nothing && continue
+        denominator === nothing && continue
 
-        numerator = get(pair, "numerator", nothing)
-        denominator = get(pair, "denominator", nothing)
-        expected = get(pair, "expected", nothing)
-
-        if !(numerator isa AbstractString && denominator isa AbstractString && expected isa AbstractDict)
-            continue
+        expected_raw = get(pair, "species_ratios", get(pair, "expected", get(pair, "expected_ratios", Dict())))
+        expected = Dict{String, Float64}()
+        if expected_raw isa AbstractDict
+            for (species, ratio) in expected_raw
+                ratio isa Real || continue
+                expected[uppercase(String(species))] = Float64(ratio)
+            end
         end
 
-        expected_ratios = Dict{String, Float64}()
-        for (species, ratio) in expected
-            ratio isa Real || continue
-            expected_ratios[String(species)] = Float64(ratio)
-        end
-
-        push!(condition_pairs, (; numerator = String(numerator), denominator = String(denominator), expected = expected_ratios))
+        push!(
+            condition_pairs,
+            (; numerator = String(numerator), denominator = String(denominator), expected),
+        )
     end
 
-    (; run_mapping, condition_pairs)
+    (; run_to_condition = run_mapping, condition_pairs)
 end
 
 function load_three_proteome_designs(path::AbstractString)
     if isdir(path)
-        files = filter(f -> endswith(f, "_three_proteome.json"), readdir(path; join=true))
-        if isempty(files)
-            @info "No three-proteome design files found" three_proteome_design_dir=path
-            return Dict{String, Any}()
-        end
+        files = filter(f -> endswith(f, ".ED.json") || endswith(f, "_ED.json") || endswith(f, "_three_proteome.json"), readdir(path; join=true))
+        isempty(files) && return Dict{String, Any}()
 
         designs = Dict{String, Any}()
         for file in files
-            dataset_key = replace(basename(file), r"_three_proteome\.json$" => "")
             parsed = load_three_proteome_designs(file)
-            isempty(parsed) && continue
-            designs[dataset_key] = parsed
+            if parsed isa NamedTuple
+                basename_no_ext = replace(basename(file), r"\.json$" => "")
+                if endswith(basename_no_ext, ".ED")
+                    dataset_key = basename_no_ext[1:end-3]
+                    designs[basename_no_ext] = parsed
+                    designs[dataset_key] = parsed
+                elseif endswith(basename_no_ext, "_ED")
+                    dataset_key = basename_no_ext[1:end-3]
+                    designs[basename_no_ext] = parsed
+                    designs[dataset_key] = parsed
+                else
+                    designs[basename_no_ext] = parsed
+                end
+            elseif parsed isa Dict
+                merge!(designs, parsed)
+            end
         end
 
         return designs
     end
 
     if !isfile(path)
-        @info "No three-proteome design file found" three_proteome_design_path=path
         return Dict{String, Any}()
     end
 
     try
-        design = JSON.parsefile(path)
-        design isa AbstractDict || return Dict{String, Any}()
-        normalized = Dict{String, Any}()
-        for (k, v) in design
-            normalized[String(k)] = normalize_three_proteome_design(v)
+        parsed = JSON.parsefile(path)
+        if parsed isa AbstractDict
+            contains_direct_design =
+                haskey(parsed, "runs") || haskey(parsed, "expected_ratios") || haskey(parsed, "condition_pairs") || haskey(parsed, "species_ratios")
+            if contains_direct_design
+                return normalize_three_proteome_design(Dict{String, Any}(parsed))
+            end
+
+            designs = Dict{String, Any}()
+            for (k, v) in parsed
+                v isa AbstractDict || continue
+                designs[String(k)] = normalize_three_proteome_design(Dict{String, Any}(v))
+            end
+
+            return designs
         end
-        return normalized
     catch err
         @warn "Failed to parse three-proteome design file; ignoring" three_proteome_design_path=path error=err
-        return Dict{String, Any}()
     end
+
+    Dict{String, Any}()
 end
 
 function three_proteome_design_entry(
     three_proteome_designs,
-    dataset_name::AbstractString;
-    experimental_design=nothing,
+    dataset_name::AbstractString,
 )
-    entry = nothing
+    if three_proteome_designs === nothing
+        return nothing
+    end
+
     if three_proteome_designs isa NamedTuple
-        entry = three_proteome_designs
+        return three_proteome_designs
     elseif three_proteome_designs isa AbstractDict
         entry = get(three_proteome_designs, dataset_name, nothing)
         if entry === nothing && haskey(three_proteome_designs, "runs")
             entry = three_proteome_designs
         end
-    end
-
-    if entry === nothing && experimental_design !== nothing
-        base_entry = experimental_design_entry(experimental_design, dataset_name)
-        if !isempty(base_entry)
-            entry = normalize_three_proteome_design(Dict{String, Any}(base_entry))
-        end
-    end
-
-    entry === nothing && return nothing
-
-    if entry isa NamedTuple
-        if haskey(entry, :run_to_condition) && haskey(entry, :condition_pairs)
-            return entry
-        end
-        return nothing
-    elseif entry isa AbstractDict
-        normalized = normalize_three_proteome_design(Dict{String, Any}(entry))
-        return normalized
+        entry === nothing && return nothing
+        return normalize_three_proteome_design(Dict{String, Any}(entry))
     end
 
     nothing
