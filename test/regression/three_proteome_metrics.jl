@@ -325,13 +325,7 @@ function load_three_proteome_designs(path::AbstractString)
         for file in files
             parsed = load_three_proteome_designs(file)
             if parsed isa NamedTuple
-                basename_no_ext = replace(basename(file), r"\.json$" => "")
-                designs[basename_no_ext] = parsed
-                if endswith(basename_no_ext, ".ED")
-                    designs[basename_no_ext[1:end-3]] = parsed
-                elseif endswith(basename_no_ext, "_ED")
-                    designs[basename_no_ext[1:end-3]] = parsed
-                end
+                designs[replace(basename(file), r"\.json$" => "")] = parsed
             elseif parsed isa Dict
                 merge!(designs, parsed)
             end
