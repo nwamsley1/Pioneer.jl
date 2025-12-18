@@ -315,7 +315,10 @@ end
 function load_three_proteome_designs(path::AbstractString)
     if isdir(path)
         files = filter(f -> endswith(f, ".json"), readdir(path; join=true))
-        isempty(files) && return Dict{String, Any}()
+        if isempty(files)
+            @info "No three-proteome design files found in directory" three_proteome_design_dir=path
+            return Dict{String, Any}()
+        end
 
         designs = Dict{String, Any}()
         for file in files
@@ -331,6 +334,7 @@ function load_three_proteome_designs(path::AbstractString)
     end
 
     if !isfile(path)
+        @info "Three-proteome design path does not exist" three_proteome_design_path=path
         return Dict{String, Any}()
     end
 
@@ -363,6 +367,7 @@ function three_proteome_design_entry(
     dataset_name::AbstractString,
 )
     if three_proteome_designs === nothing
+        @warn "No three-proteome design loaded; skipping dataset" dataset=dataset_name
         return nothing
     end
 
@@ -373,7 +378,10 @@ function three_proteome_design_entry(
         if entry === nothing && haskey(three_proteome_designs, "runs")
             entry = three_proteome_designs
         end
-        entry === nothing && return nothing
+        if entry === nothing
+            @warn "Three-proteome design missing for dataset" dataset=dataset_name available_designs=collect(keys(three_proteome_designs))
+            return nothing
+        end
         return normalize_three_proteome_design(Dict{String, Any}(entry))
     end
 
