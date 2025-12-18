@@ -315,6 +315,7 @@ end
 function load_three_proteome_designs(path::AbstractString)
     if isdir(path)
         files = filter(f -> endswith(f, ".json"), readdir(path; join=true))
+        @info "Scanning three-proteome design directory" three_proteome_design_dir=path json_files=files
         if isempty(files)
             @info "No three-proteome design files found in directory" three_proteome_design_dir=path
             return Dict{String, Any}()
@@ -338,6 +339,7 @@ function load_three_proteome_designs(path::AbstractString)
         return Dict{String, Any}()
     end
 
+    @info "Loading three-proteome design file" three_proteome_design_path=path
     try
         parsed = JSON.parsefile(path)
         if parsed isa AbstractDict
