@@ -314,25 +314,14 @@ end
 
 function load_three_proteome_designs(path::AbstractString)
     if isdir(path)
-        files = filter(f -> endswith(f, ".ED.json") || endswith(f, "_ED.json") || endswith(f, "_three_proteome.json"), readdir(path; join=true))
+        files = filter(f -> endswith(f, ".json"), readdir(path; join=true))
         isempty(files) && return Dict{String, Any}()
 
         designs = Dict{String, Any}()
         for file in files
             parsed = load_three_proteome_designs(file)
             if parsed isa NamedTuple
-                basename_no_ext = replace(basename(file), r"\.json$" => "")
-                if endswith(basename_no_ext, ".ED")
-                    dataset_key = basename_no_ext[1:end-3]
-                    designs[basename_no_ext] = parsed
-                    designs[dataset_key] = parsed
-                elseif endswith(basename_no_ext, "_ED")
-                    dataset_key = basename_no_ext[1:end-3]
-                    designs[basename_no_ext] = parsed
-                    designs[dataset_key] = parsed
-                else
-                    designs[basename_no_ext] = parsed
-                end
+                designs[replace(basename(file), r"\.json$" => "")] = parsed
             elseif parsed isa Dict
                 merge!(designs, parsed)
             end
