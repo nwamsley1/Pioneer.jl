@@ -8,6 +8,7 @@ jobs:
   regression:
     name: Julia ${{ matrix.version }} regression sweep
     runs-on: [self-hosted, pioneer-regression]
+    timeout-minutes: 7200
     strategy:
       matrix:
         version: ['1.11']
