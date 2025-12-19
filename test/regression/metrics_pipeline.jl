@@ -162,6 +162,8 @@ function compute_dataset_metrics(
     need_three_proteome = ("fold_change" in requested_groups) || ("three_proteome" in requested_groups)
     need_table_metrics = need_identification || need_cv || need_keap1 || need_ftr || need_three_proteome
 
+    dataset_three_proteome_designs = need_three_proteome ? three_proteome_designs : nothing
+
     precursor_id_metrics = nothing
     protein_id_metrics = nothing
     keap1_precursor_metrics = nothing
@@ -225,7 +227,7 @@ function compute_dataset_metrics(
             cv_groups = run_groups_for_dataset(
                 experimental_design,
                 dataset_name;
-                three_proteome_designs = three_proteome_designs,
+                three_proteome_designs = dataset_three_proteome_designs,
             )
             precursor_wide_metrics, protein_wide_metrics, precursor_cv_metrics, protein_cv_metrics =
                 cv_metrics(
@@ -262,7 +264,7 @@ function compute_dataset_metrics(
         end
 
         if need_three_proteome
-            design_entry = three_proteome_design_entry(three_proteome_designs, dataset_name)
+            design_entry = three_proteome_design_entry(dataset_three_proteome_designs, dataset_name)
             fold_change_metrics = fold_change_metrics_block(
                 precursors_wide,
                 protein_groups_wide,
