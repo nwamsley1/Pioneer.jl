@@ -288,7 +288,7 @@ function compute_dataset_metrics(
 
     metrics = Dict{String, Any}()
 
-    identification_metrics = Dict{String, Any}()
+    identification_metrics_block = Dict{String, Any}()
 
     if need_identification
         precursors_identification = Dict{String, Any}()
@@ -297,8 +297,8 @@ function compute_dataset_metrics(
         precursor_id_metrics !== nothing && merge!(precursors_identification, precursor_id_metrics)
         protein_id_metrics !== nothing && merge!(protein_identification, protein_id_metrics)
 
-        !isempty(precursors_identification) && (identification_metrics["precursors"] = precursors_identification)
-        !isempty(protein_identification) && (identification_metrics["protein_groups"] = protein_identification)
+        !isempty(precursors_identification) && (identification_metrics_block["precursors"] = precursors_identification)
+        !isempty(protein_identification) && (identification_metrics_block["protein_groups"] = protein_identification)
     end
 
     cv_metrics_block = Dict{String, Any}()
@@ -323,7 +323,7 @@ function compute_dataset_metrics(
         !isempty(protein_cv_block) && (cv_metrics_block["protein_groups"] = protein_cv_block)
     end
 
-    !isempty(identification_metrics) && (metrics["identification"] = identification_metrics)
+    !isempty(identification_metrics_block) && (metrics["identification"] = identification_metrics_block)
     !isempty(cv_metrics_block) && (metrics["cv"] = cv_metrics_block)
     if need_keap1
         keap1_metrics_block = Dict{String, Any}()
