@@ -162,8 +162,10 @@ function compute_dataset_metrics(
     need_three_proteome = ("fold_change" in requested_groups) || ("three_proteome" in requested_groups)
     need_table_metrics = need_identification || need_cv || need_keap1 || need_ftr || need_three_proteome
 
-    precursors_metrics = nothing
-    protein_metrics = nothing
+    dataset_three_proteome_designs = need_three_proteome ? three_proteome_designs : nothing
+
+    precursor_id_metrics = nothing
+    protein_id_metrics = nothing
     keap1_precursor_metrics = nothing
     keap1_protein_metrics = nothing
     ftr_metrics = nothing
@@ -211,9 +213,6 @@ function compute_dataset_metrics(
         precursor_cv_metrics = nothing
         protein_cv_metrics = nothing
 
-        precursors_metrics = Dict{String, Any}()
-        protein_metrics = Dict{String, Any}()
-
         if need_identification
             @info "Starting identification metrics" dataset=dataset_name
             precursor_id_metrics, protein_id_metrics = identification_metrics(
@@ -222,15 +221,13 @@ function compute_dataset_metrics(
                 protein_groups_long,
                 protein_groups_wide,
             )
-            merge!(precursors_metrics, precursor_id_metrics)
-            merge!(protein_metrics, protein_id_metrics)
         end
 
         if need_cv
             cv_groups = run_groups_for_dataset(
                 experimental_design,
                 dataset_name;
-                three_proteome_designs = three_proteome_designs,
+                three_proteome_designs = dataset_three_proteome_designs,
             )
             precursor_wide_metrics, protein_wide_metrics, precursor_cv_metrics, protein_cv_metrics =
                 cv_metrics(
@@ -241,36 +238,6 @@ function compute_dataset_metrics(
                     cv_groups,
                     dataset_name,
                 )
-        end
-
-        if precursor_wide_metrics !== nothing
-            merge!(precursors_metrics, Dict(
-                "runs" => precursor_wide_metrics.runs,
-                "complete_rows" => precursor_wide_metrics.complete_rows,
-                "data_completeness" => precursor_wide_metrics.data_completeness,
-                ))
-        end
-
-        if protein_wide_metrics !== nothing
-            merge!(protein_metrics, Dict(
-                "runs" => protein_wide_metrics.runs,
-                "complete_rows" => protein_wide_metrics.complete_rows,
-                "data_completeness" => protein_wide_metrics.data_completeness,
-                ))
-        end
-
-        if precursor_cv_metrics !== nothing
-            merge!(precursors_metrics, Dict(
-                "cv_runs" => precursor_cv_metrics.runs,
-                "median_cv" => precursor_cv_metrics.median_cv,
-            ))
-        end
-
-        if protein_cv_metrics !== nothing
-            merge!(protein_metrics, Dict(
-                "cv_runs" => protein_cv_metrics.runs,
-                "median_cv" => protein_cv_metrics.median_cv,
-            ))
         end
 
         if need_keap1
@@ -297,7 +264,7 @@ function compute_dataset_metrics(
         end
 
         if need_three_proteome
-            design_entry = three_proteome_design_entry(three_proteome_designs, dataset_name)
+            design_entry = three_proteome_design_entry(dataset_three_proteome_designs, dataset_name)
             fold_change_metrics = fold_change_metrics_block(
                 precursors_wide,
                 protein_groups_wide,
@@ -323,26 +290,51 @@ function compute_dataset_metrics(
 
     metrics = Dict{String, Any}()
 
-    if precursors_metrics !== nothing
-        if keap1_precursor_metrics !== nothing
-            merge!(precursors_metrics, keap1_precursor_metrics)
-        end
+    identification_metrics_block = Dict{String, Any}()
 
-        if !isempty(precursors_metrics)
-            metrics["precursors"] = precursors_metrics
-        end
+    if need_identification
+        precursors_identification = Dict{String, Any}()
+        protein_identification = Dict{String, Any}()
+
+        precursor_id_metrics !== nothing && merge!(precursors_identification, precursor_id_metrics)
+        protein_id_metrics !== nothing && merge!(protein_identification, protein_id_metrics)
+
+        !isempty(precursors_identification) && (identification_metrics_block["precursors"] = precursors_identification)
+        !isempty(protein_identification) && (identification_metrics_block["protein_groups"] = protein_identification)
     end
 
-    if protein_metrics !== nothing
-        if keap1_protein_metrics !== nothing
-            merge!(protein_metrics, keap1_protein_metrics)
+    cv_metrics_block = Dict{String, Any}()
+    if need_cv
+        precursor_cv_block = Dict{String, Any}()
+        protein_cv_block = Dict{String, Any}()
+
+        if precursor_wide_metrics !== nothing
+            precursor_cv_block["complete_rows"] = precursor_wide_metrics.complete_rows
+            precursor_cv_block["data_completeness"] = precursor_wide_metrics.data_completeness
         end
 
-        if !isempty(protein_metrics)
-            metrics["protein_groups"] = protein_metrics
+        if protein_wide_metrics !== nothing
+            protein_cv_block["complete_rows"] = protein_wide_metrics.complete_rows
+            protein_cv_block["data_completeness"] = protein_wide_metrics.data_completeness
         end
+
+        precursor_cv_metrics !== nothing && (precursor_cv_block["median_cv"] = precursor_cv_metrics.median_cv)
+        protein_cv_metrics !== nothing && (protein_cv_block["median_cv"] = protein_cv_metrics.median_cv)
+
+        !isempty(precursor_cv_block) && (cv_metrics_block["precursors"] = precursor_cv_block)
+        !isempty(protein_cv_block) && (cv_metrics_block["protein_groups"] = protein_cv_block)
     end
 
+    !isempty(identification_metrics_block) && (metrics["identification"] = identification_metrics_block)
+    !isempty(cv_metrics_block) && (metrics["cv"] = cv_metrics_block)
+    if need_keap1
+        keap1_metrics_block = Dict{String, Any}()
+        keap1_precursor_metrics !== nothing && !isempty(keap1_precursor_metrics) &&
+            (keap1_metrics_block["precursors"] = keap1_precursor_metrics)
+        keap1_protein_metrics !== nothing && !isempty(keap1_protein_metrics) &&
+            (keap1_metrics_block["protein_groups"] = keap1_protein_metrics)
+        !isempty(keap1_metrics_block) && (metrics["keap1"] = keap1_metrics_block)
+    end
     if ftr_metrics !== nothing
         metrics["ftr"] = ftr_metrics
     end

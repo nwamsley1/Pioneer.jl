@@ -259,7 +259,6 @@ function fold_change_metrics_for_table(
             end
 
             pair_metrics[string(lowercase(species), "_median_deviation")] = deviation
-            pair_metrics[string(lowercase(species), "_entries")] = length(values)
         end
 
         isempty(pair_metrics) || (metrics[pair_label] = pair_metrics)
