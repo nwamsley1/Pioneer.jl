@@ -33,7 +33,7 @@ jobs:
           # Preload host key to avoid interactive prompt
           ssh-keyscan -H "$CLUSTER_HOST" >> ~/.ssh/known_hosts
 
-      - name: Prepare cluster workspace (configs and Pioneer)
+      - name: Prepare cluster workspace (configs, Pioneer, and depot)
         env:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
@@ -47,10 +47,12 @@ jobs:
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
           remote_run_dir="${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           pioneer_dir="${remote_run_dir}/pioneer"
+          depot_dir="${remote_run_dir}/julia-depot"
           pioneer_repo="https://github.com/${GITHUB_REPOSITORY}"
 
           echo "CLUSTER_RUN_DIR=${remote_run_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_PIONEER_DIR=${pioneer_dir}" >> "$GITHUB_ENV"
+          echo "CLUSTER_DEPOT_DIR=${depot_dir}" >> "$GITHUB_ENV"
 
           ssh_options=(
             -o BatchMode=yes
@@ -59,7 +61,7 @@ jobs:
             -o ConnectTimeout=30
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' sh -s" <<'EOF'
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' sh -s" <<'EOF'
             set -eu
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
@@ -78,6 +80,9 @@ jobs:
             fi
 
             git -C "$PIONEER_DIR" checkout --force "$TARGET_SHA"
+
+            mkdir -p "$DEPOT_DIR"
+            JULIA_DEPOT_PATH="$DEPOT_DIR" julia --project="$PIONEER_DIR" -e 'using Pkg; Pkg.instantiate()'
           EOF
 
       - name: Submit regression search jobs on cluster
@@ -87,6 +92,7 @@ jobs:
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_PIONEER_DIR: ${{ env.CLUSTER_PIONEER_DIR }}
+          CLUSTER_DEPOT_DIR: ${{ env.CLUSTER_DEPOT_DIR }}
           REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
         shell: bash
         run: |
@@ -95,6 +101,7 @@ jobs:
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
           remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
           pioneer_dir="${CLUSTER_PIONEER_DIR:-${remote_run_dir}/pioneer}"
+          depot_dir="${CLUSTER_DEPOT_DIR:-${remote_run_dir}/julia-depot}"
           params_dir="${remote_run_dir}/regression-configs/params"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
 
@@ -121,7 +128,7 @@ jobs:
               fi
 
               found=1
-              PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$param_file" bsub < "$JOB_SCRIPT"
+              JULIA_DEPOT_PATH="$DEPOT_DIR" PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$param_file" bsub < "$JOB_SCRIPT"
             done
 
             if [ "$found" -eq 0 ]; then
