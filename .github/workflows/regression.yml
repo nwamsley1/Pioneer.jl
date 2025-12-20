@@ -102,7 +102,7 @@ jobs:
           pioneer_dir="${CLUSTER_PIONEER_DIR:-${remote_run_dir}/pioneer}"
           params_dir="${remote_run_dir}/regression-configs/params"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
-          setup_script_path="${remote_run_dir}/${SETUP_JOB_SCRIPT:-regression-configs/job_scripts/setup_pioneer_env.lsf}"
+          setup_script_path="${remote_run_dir}/${SETUP_JOB_SCRIPT:-regression-configs/job_scripts/setup.bsub}"
 
           ssh_options=(
             -o BatchMode=yes
