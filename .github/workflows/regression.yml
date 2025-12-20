@@ -17,6 +17,44 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Configure SSH for cluster access
+        env:
+          CLUSTER_SSH_KEY: ${{ secrets.CLUSTER_SSH_KEY }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          echo "$CLUSTER_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          # Preload host key to avoid interactive prompt
+          ssh-keyscan -H "$CLUSTER_HOST" >> ~/.ssh/known_hosts
+
+      - name: Checkout regression configs on cluster
+        env:
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
+        run: |
+          set -euo pipefail
+          # Guard the SSH session to avoid hanging forever if the cluster is unreachable
+          timeout 5m ssh \
+            -o BatchMode=yes \
+            -o ServerAliveInterval=60 \
+            -o ServerAliveCountMax=3 \
+            "${CLUSTER_USERNAME}@${CLUSTER_HOST}" <<'EOF'
+          set -euo pipefail
+          RUN_ROOT="${CLUSTER_RUN_ROOT:-$HOME/pioneer-regressions}"
+          mkdir -p "$RUN_ROOT"
+          cd "$RUN_ROOT"
+
+          if [ -d regression-configs/.git ]; then
+            git -C regression-configs fetch --all
+            git -C regression-configs reset --hard origin/main
+          else
+            git clone https://github.com/GoldfarbLab/pioneer-regression-configs regression-configs
+          fi
+          EOF
+
       - name: Checkout regression parameter configs
         uses: actions/checkout@v5
         with:
