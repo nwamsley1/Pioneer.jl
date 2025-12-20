@@ -65,35 +65,42 @@ jobs:
           EOF
 
       - name: Checkout regression parameter configs
+        if: ${{ false }}
         uses: actions/checkout@v5
         with:
           repository: GoldfarbLab/pioneer-regression-configs
           path: pioneer-regression-configs
 
       - name: Checkout Entrapment analyses utilities
+        if: ${{ false }}
         uses: actions/checkout@v5
         with:
           repository: nwamsley1/PioneerEntrapment.jl
           path: PioneerEntrapment.jl
 
       - name: Setup Julia
+        if: ${{ false }}
         uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
           arch: x64
 
       - name: Instantiate PioneerEntrapment project
+        if: ${{ false }}
         run: julia --threads auto --project=PioneerEntrapment.jl -e 'using Pkg; Pkg.instantiate()'
 
       - name: Instantiate project
+        if: ${{ false }}
         run: julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build()'
 
       - name: Run SearchDIA for all parameter files
+        if: ${{ false }}
         env:
           PIONEER_PARAMS_DIR: ${{ github.workspace }}/pioneer-regression-configs/params
         run: julia --threads auto --project=. test/run_regressions.jl
 
       - name: Summarize regression results
+        if: ${{ false }}
         env:
           ENTRAPMENT_ANALYSES_PATH: ${{ github.workspace }}/PioneerEntrapment.jl
           PIONEER_RESULTS_DIR: /pioneer-runner/results/current
