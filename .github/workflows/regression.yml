@@ -50,18 +50,18 @@ jobs:
 
           $remoteRunRoot = if ($env:CLUSTER_RUN_ROOT) { $env:CLUSTER_RUN_ROOT } else { '$HOME/pioneer-regressions' }
           $remoteCommand = @"
-set -eu
-RUN_ROOT="$remoteRunRoot"
-mkdir -p "$RUN_ROOT"
-cd "$RUN_ROOT"
+            set -eu
+            RUN_ROOT="$remoteRunRoot"
+            mkdir -p "$RUN_ROOT"
+            cd "$RUN_ROOT"
 
-if [ -d regression-configs/.git ]; then
-  git -C regression-configs fetch --all
-  git -C regression-configs reset --hard origin/main
-else
-  git clone https://github.com/GoldfarbLab/pioneer-regression-configs regression-configs
-fi
-"@
+            if [ -d regression-configs/.git ]; then
+              git -C regression-configs fetch --all
+              git -C regression-configs reset --hard origin/main
+            else
+              git clone https://github.com/GoldfarbLab/pioneer-regression-configs regression-configs
+            fi
+            "@
 
           $sshArgs = @(
             '-o', 'BatchMode=yes',
