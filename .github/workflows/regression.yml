@@ -44,18 +44,18 @@ jobs:
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
 
           remote_script=$(cat <<'EOF'
-set -eu
-mkdir -p "$RUN_ROOT"
-cd "$RUN_ROOT"
+          set -eu
+          mkdir -p "$RUN_ROOT"
+          cd "$RUN_ROOT"
 
-if [ -d regression-configs/.git ]; then
-  git -C regression-configs fetch --all
-  git -C regression-configs reset --hard origin/main
-else
-  git clone https://github.com/GoldfarbLab/pioneer-regression-configs regression-configs
-fi
-EOF
-)
+          if [ -d regression-configs/.git ]; then
+            git -C regression-configs fetch --all
+            git -C regression-configs reset --hard origin/main
+          else
+            git clone https://github.com/GoldfarbLab/pioneer-regression-configs regression-configs
+          fi
+          EOF
+          )
 
           ssh_options=(
             -o BatchMode=yes
