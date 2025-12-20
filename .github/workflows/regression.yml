@@ -81,7 +81,7 @@ jobs:
           EOF
 
       - name: Cleanup regression configs on cluster
-        if: ${{ false }}
+        if: ${{ always() }}
         env:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
