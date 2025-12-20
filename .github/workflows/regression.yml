@@ -35,7 +35,7 @@ jobs:
           # Restrict permissions on the private key (inheritance removed, user read-only)
           $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
           icacls $privateKeyPath /inheritance:r | Out-Null
-          icacls $privateKeyPath /grant:r "$currentUser:(R)" | Out-Null
+          icacls $privateKeyPath /grant:r "${currentUser}:(R)" | Out-Null
 
           # Preload host key to avoid interactive prompt
           ssh-keyscan -H $env:CLUSTER_HOST | Out-File -FilePath (Join-Path $sshDir 'known_hosts') -Append
