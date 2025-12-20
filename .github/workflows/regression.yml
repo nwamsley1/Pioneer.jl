@@ -82,7 +82,6 @@ jobs:
             git -C "$PIONEER_DIR" checkout --force "$TARGET_SHA"
 
             mkdir -p "$DEPOT_DIR"
-            JULIA_DEPOT_PATH="$DEPOT_DIR" julia --project="$PIONEER_DIR" -e 'using Pkg; Pkg.instantiate()'
           EOF
 
       - name: Submit regression search jobs on cluster
@@ -113,7 +112,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' PARAMS_DIR='${params_dir}' JOB_SCRIPT='${job_script_path}' sh -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' PARAMS_DIR='${params_dir}' DEPOT_DIR='${depot_dir}' JOB_SCRIPT='${job_script_path}' sh -s" <<'EOF'
             set -eu
 
             if [ ! -f "$JOB_SCRIPT" ]; then
