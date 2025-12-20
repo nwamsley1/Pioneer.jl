@@ -183,14 +183,6 @@ jobs:
           version: ${{ matrix.version }}
           arch: x64
 
-      - name: Instantiate PioneerEntrapment project
-        if: ${{ false }}
-        run: julia --threads auto --project=PioneerEntrapment.jl -e 'using Pkg; Pkg.instantiate()'
-
-      - name: Instantiate project
-        if: ${{ false }}
-        run: julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build()'
-
       - name: Run SearchDIA for all parameter files
         if: ${{ false }}
         env:
