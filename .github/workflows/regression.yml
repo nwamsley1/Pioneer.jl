@@ -135,44 +135,6 @@ jobs:
             fi
           EOF
 
-      - name: Show regression job script content
-        env:
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
-          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
-          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
-          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
-          REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
-          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
-          job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
-
-          ssh_options=(
-            -o BatchMode=yes
-            -o ServerAliveInterval=60
-            -o ServerAliveCountMax=3
-            -o ConnectTimeout=30
-          )
-
-          timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "JOB_SCRIPT='${job_script_path}' sh -s" <<'EOF' >> "$GITHUB_STEP_SUMMARY"
-            set -eu
-
-            if [ ! -f "$JOB_SCRIPT" ]; then
-              echo "Job script not found: $JOB_SCRIPT" >&2
-              exit 1
-            fi
-
-            echo "### Submitted job script"
-            echo "Path: $JOB_SCRIPT"
-            echo '```bash'
-            cat "$JOB_SCRIPT"
-            echo '```'
-          EOF
-
       - name: Cleanup regression configs on cluster
         if: ${{ always() }}
         env:
