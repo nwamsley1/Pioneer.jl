@@ -39,6 +39,7 @@ jobs:
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
           GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
@@ -46,6 +47,7 @@ jobs:
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
           remote_run_dir="${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           pioneer_dir="${remote_run_dir}/pioneer"
+          pioneer_repo="https://github.com/${GITHUB_REPOSITORY}"
 
           echo "CLUSTER_RUN_DIR=${remote_run_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_PIONEER_DIR=${pioneer_dir}" >> "$GITHUB_ENV"
@@ -57,7 +59,7 @@ jobs:
             -o ConnectTimeout=30
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' TARGET_SHA='${GITHUB_SHA}' sh -s" <<'EOF'
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' sh -s" <<'EOF'
             set -eu
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
@@ -72,7 +74,7 @@ jobs:
             if [ -d "$PIONEER_DIR/.git" ]; then
               git -C "$PIONEER_DIR" fetch --all --tags
             else
-              git clone https://github.com/GoldfarbLab/Pioneer.jl "$PIONEER_DIR"
+              git clone "$PIONEER_REPO" "$PIONEER_DIR"
             fi
 
             git -C "$PIONEER_DIR" checkout --force "$TARGET_SHA"
