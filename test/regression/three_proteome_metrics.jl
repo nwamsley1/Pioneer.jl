@@ -405,7 +405,8 @@ function three_proteome_design_entry(
     nothing
 end
 
-export load_experimental_design, normalize_metric_label, experimental_design_for_dataset, run_groups_for_dataset
+export load_experimental_design, normalize_metric_label, experimental_design_for_dataset, run_groups_for_dataset,
+       experimental_design_entry
 export gene_counts_metrics_by_run, fold_change_metrics_for_table
 export load_three_proteome_designs, three_proteome_design_entry
 

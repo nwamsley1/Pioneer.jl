@@ -48,6 +48,23 @@ function paired_mbr_dataset_paths(
     nothing
 end
 
+function human_only_condition_from_design(entry, alt_entry)
+    for source in (entry, alt_entry)
+        if source isa AbstractDict
+            ftr_config = get(source, "false_transfer_rate", nothing)
+            if ftr_config isa AbstractDict
+                condition = get(ftr_config, "human_only_condition", nothing)
+                condition !== nothing && return String(condition)
+            end
+
+            condition = get(source, "human_only_condition", nothing)
+            condition !== nothing && return String(condition)
+        end
+    end
+
+    return "human_only"
+end
+
 function compute_ftr_metrics(
     dataset_name::AbstractString,
     precursors_wide::DataFrame,
@@ -113,18 +130,26 @@ function compute_ftr_metrics(
     protein_mbr_quant_cols = quant_column_names_from_proteins(protein_groups_mbr)
     protein_nombr_quant_cols = quant_column_names_from_proteins(protein_groups_no_mbr)
 
+    alt_dataset_name = mbr_name == dataset_name ? nombr_name : mbr_name
     groups = run_groups_for_dataset(experimental_design, dataset_name)
-    alt_groups = run_groups_for_dataset(experimental_design, mbr_name == dataset_name ? nombr_name : mbr_name)
-    if isempty(groups)
-        groups = alt_groups
-    elseif isempty(alt_groups)
-        alt_groups = groups
+    alt_groups = run_groups_for_dataset(experimental_design, alt_dataset_name)
+    entry = experimental_design_entry(experimental_design, dataset_name)
+    alt_entry = experimental_design_entry(experimental_design, alt_dataset_name)
+    human_only_condition = human_only_condition_from_design(entry, alt_entry)
+
+    primary_groups = isempty(groups) ? alt_groups : groups
+    secondary_groups = isempty(groups) ? groups : alt_groups
+
+    human_only_runs = get(primary_groups, human_only_condition, String[])
+    isempty(human_only_runs) && (human_only_runs = get(secondary_groups, human_only_condition, String[]))
+
+    if isempty(human_only_runs) && human_only_condition != "human_only"
+        human_only_runs = get(primary_groups, "human_only", String[])
+        isempty(human_only_runs) && (human_only_runs = get(secondary_groups, "human_only", String[]))
     end
 
-    human_only_runs = get(groups, "human_only", String[])
-
     if isempty(human_only_runs)
-        @warn "No human-only runs provided for FTR metrics; skipping" dataset=dataset_name
+        @warn "No human-only runs provided for FTR metrics; skipping" dataset=dataset_name expected_condition=human_only_condition
         return nothing
     end
 
