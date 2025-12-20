@@ -91,8 +91,8 @@ jobs:
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_PIONEER_DIR: ${{ env.CLUSTER_PIONEER_DIR }}
-          CLUSTER_DEPOT_DIR: ${{ env.CLUSTER_DEPOT_DIR }}
           REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
+          SETUP_JOB_SCRIPT: ${{ vars.SETUP_JOB_SCRIPT }}
         shell: bash
         run: |
           set -euo pipefail
@@ -100,9 +100,9 @@ jobs:
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
           remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
           pioneer_dir="${CLUSTER_PIONEER_DIR:-${remote_run_dir}/pioneer}"
-          depot_dir="${CLUSTER_DEPOT_DIR:-${remote_run_dir}/julia-depot}"
           params_dir="${remote_run_dir}/regression-configs/params"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
+          setup_script_path="${remote_run_dir}/${SETUP_JOB_SCRIPT:-regression-configs/job_scripts/setup_pioneer_env.lsf}"
 
           ssh_options=(
             -o BatchMode=yes
@@ -112,11 +112,25 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' PARAMS_DIR='${params_dir}' DEPOT_DIR='${depot_dir}' JOB_SCRIPT='${job_script_path}' sh -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' PARAMS_DIR='${params_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' sh -s" <<'EOF'
             set -eu
+
+            if [ ! -f "$SETUP_SCRIPT" ]; then
+              echo "Missing setup job script: $SETUP_SCRIPT" >&2
+              exit 1
+            fi
 
             if [ ! -f "$JOB_SCRIPT" ]; then
               echo "Missing job script: $JOB_SCRIPT" >&2
+              exit 1
+            fi
+
+            setup_submit=$(PIONEER_DIR="$PIONEER_DIR" bsub < "$SETUP_SCRIPT")
+            setup_job_id=$(printf '%s\n' "$setup_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
+
+            if [ -z "$setup_job_id" ]; then
+              echo "Failed to parse setup job ID from submission output:" >&2
+              printf '%s\n' "$setup_submit" >&2
               exit 1
             fi
 
@@ -127,7 +141,7 @@ jobs:
               fi
 
               found=1
-              JULIA_DEPOT_PATH="$DEPOT_DIR" PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$param_file" bsub < "$JOB_SCRIPT"
+              PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$param_file" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT"
             done
 
             if [ "$found" -eq 0 ]; then
