@@ -87,6 +87,7 @@ jobs:
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_PIONEER_DIR: ${{ env.CLUSTER_PIONEER_DIR }}
+          REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
         shell: bash
         run: |
           set -euo pipefail
@@ -96,7 +97,7 @@ jobs:
           pioneer_dir="${CLUSTER_PIONEER_DIR:-${remote_run_dir}/pioneer}"
           params_dir="${remote_run_dir}/regression-configs/params"
           logs_dir="${remote_run_dir}/logs"
-          scripts_dir="${remote_run_dir}/scripts"
+          job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
 
           ssh_options=(
             -o BatchMode=yes
@@ -106,10 +107,15 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' PARAMS_DIR='${params_dir}' LOGS_DIR='${logs_dir}' SCRIPTS_DIR='${scripts_dir}' sh -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' PARAMS_DIR='${params_dir}' LOGS_DIR='${logs_dir}' JOB_SCRIPT='${job_script_path}' sh -s" <<'EOF'
             set -eu
 
-            mkdir -p "$LOGS_DIR" "$SCRIPTS_DIR"
+            if [ ! -f "$JOB_SCRIPT" ]; then
+              echo "Missing job script: $JOB_SCRIPT" >&2
+              exit 1
+            fi
+
+            mkdir -p "$LOGS_DIR"
 
             found=0
             for param_file in "$PARAMS_DIR"/*.json; do
@@ -119,36 +125,52 @@ jobs:
 
               found=1
               base_name="$(basename "$param_file" .json)"
-              job_script="$SCRIPTS_DIR/search-${base_name}.sh"
 
-              cat > "$job_script" <<EOS
-#!/bin/bash
-#BSUB -g /d.goldfarb/compute
-#BSUB -G compute-d.goldfarb
-#BSUB -a 'docker(julia:1.11-bullseye)'
-#BSUB -J pioneer-search-${base_name}
-#BSUB -q general
-#BSUB -R "rusage[mem=32GB] span[hosts=1]"
-#BSUB -n 16
-#BSUB -W 3000
-#BSUB -M 32GB
-#BSUB -o ${LOGS_DIR}/search-${base_name}.%J.out.txt
-#BSUB -e ${LOGS_DIR}/search-${base_name}.%J.err.txt
-
-source "$LSF_SCRIPT_PATH/config.sh"
-
-cd "${PIONEER_DIR}"
-julia --project=. --threads auto -e "using Pioneer; SearchDIA(\"${param_file}\")"
-EOS
-
-              chmod +x "$job_script"
-              bsub < "$job_script"
+              PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$param_file" LOGS_DIR="$LOGS_DIR" JOB_NAME="pioneer-search-${base_name}" bsub < "$JOB_SCRIPT"
             done
 
             if [ "$found" -eq 0 ]; then
               echo "No parameter JSON files found in $PARAMS_DIR" >&2
               exit 1
             fi
+          EOF
+
+      - name: Show regression job script content
+        env:
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
+          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
+          job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
+
+          ssh_options=(
+            -o BatchMode=yes
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+          )
+
+          timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+            "JOB_SCRIPT='${job_script_path}' sh -s" <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+            set -eu
+
+            if [ ! -f "$JOB_SCRIPT" ]; then
+              echo "Job script not found: $JOB_SCRIPT" >&2
+              exit 1
+            fi
+
+            echo "### Submitted job script"
+            echo "Path: $JOB_SCRIPT"
+            echo '```bash'
+            cat "$JOB_SCRIPT"
+            echo '```'
           EOF
 
       - name: Cleanup regression configs on cluster
