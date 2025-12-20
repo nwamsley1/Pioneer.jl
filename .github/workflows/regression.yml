@@ -21,6 +21,7 @@ jobs:
         env:
           CLUSTER_SSH_KEY: ${{ secrets.CLUSTER_SSH_KEY }}
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+        shell: bash
         run: |
           set -euo pipefail
           install -m 700 -d ~/.ssh
@@ -34,6 +35,7 @@ jobs:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
+        shell: bash
         run: |
           set -euo pipefail
           # Guard the SSH session to avoid hanging forever if the cluster is unreachable
