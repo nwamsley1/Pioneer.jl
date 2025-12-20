@@ -21,7 +21,7 @@ jobs:
         env:
           CLUSTER_SSH_KEY: ${{ secrets.CLUSTER_SSH_KEY }}
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $ProgressPreference = 'SilentlyContinue'
@@ -43,7 +43,7 @@ jobs:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $ProgressPreference = 'SilentlyContinue'
