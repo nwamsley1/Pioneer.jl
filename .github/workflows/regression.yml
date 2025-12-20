@@ -50,7 +50,7 @@ jobs:
 
           $remoteRunRoot = if ($env:CLUSTER_RUN_ROOT) { $env:CLUSTER_RUN_ROOT } else { '$HOME/pioneer-regressions' }
           $remoteCommand = @"
-set -euo pipefail
+set -eu
 RUN_ROOT="$remoteRunRoot"
 mkdir -p "$RUN_ROOT"
 cd "$RUN_ROOT"
@@ -69,7 +69,7 @@ fi
             '-o', 'ServerAliveCountMax=3',
             '-o', 'ConnectTimeout=30',
             "$($env:CLUSTER_USERNAME)@$($env:CLUSTER_HOST)",
-            "bash -lc `"$remoteCommand`""
+            "sh -c `"$remoteCommand`""
           )
 
           $sshProcess = Start-Process -FilePath 'ssh' -ArgumentList $sshArgs -NoNewWindow -PassThru -RedirectStandardOutput 'ssh_regression_checkout_stdout.log' -RedirectStandardError 'ssh_regression_checkout_stderr.log'
