@@ -33,18 +33,22 @@ jobs:
           # Preload host key to avoid interactive prompt
           ssh-keyscan -H "$CLUSTER_HOST" >> ~/.ssh/known_hosts
 
-      - name: Checkout regression configs on cluster
+      - name: Prepare cluster workspace (configs and Pioneer)
         env:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
+          GITHUB_SHA: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
 
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
           remote_run_dir="${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          pioneer_dir="${remote_run_dir}/pioneer"
+
           echo "CLUSTER_RUN_DIR=${remote_run_dir}" >> "$GITHUB_ENV"
+          echo "CLUSTER_PIONEER_DIR=${pioneer_dir}" >> "$GITHUB_ENV"
 
           ssh_options=(
             -o BatchMode=yes
@@ -53,7 +57,7 @@ jobs:
             -o ConnectTimeout=30
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' sh -s" <<'EOF'
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' TARGET_SHA='${GITHUB_SHA}' sh -s" <<'EOF'
             set -eu
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
@@ -64,35 +68,6 @@ jobs:
             else
               git clone https://github.com/GoldfarbLab/pioneer-regression-configs regression-configs
             fi
-          EOF
-
-      - name: Checkout Pioneer code on cluster
-        env:
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
-          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
-          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
-          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
-          GITHUB_SHA: ${{ github.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
-          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
-          pioneer_dir="${remote_run_dir}/pioneer"
-          echo "CLUSTER_PIONEER_DIR=${pioneer_dir}" >> "$GITHUB_ENV"
-
-          ssh_options=(
-            -o BatchMode=yes
-            -o ServerAliveInterval=60
-            -o ServerAliveCountMax=3
-            -o ConnectTimeout=30
-          )
-
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' TARGET_SHA='${GITHUB_SHA}' sh -s" <<'EOF'
-            set -eu
-            mkdir -p "$RUN_DIR"
-            cd "$RUN_DIR"
 
             if [ -d "$PIONEER_DIR/.git" ]; then
               git -C "$PIONEER_DIR" fetch --all --tags
