@@ -43,6 +43,8 @@ jobs:
           set -euo pipefail
 
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
+          remote_run_dir="${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "CLUSTER_RUN_DIR=${remote_run_dir}" >> "$GITHUB_ENV"
 
           ssh_options=(
             -o BatchMode=yes
@@ -51,10 +53,10 @@ jobs:
             -o ConnectTimeout=30
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' sh -s" <<'EOF'
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' sh -s" <<'EOF'
             set -eu
-            mkdir -p "$RUN_ROOT"
-            cd "$RUN_ROOT"
+            mkdir -p "$RUN_DIR"
+            cd "$RUN_DIR"
 
             if [ -d regression-configs/.git ]; then
               git -C regression-configs fetch --all
@@ -62,6 +64,32 @@ jobs:
             else
               git clone https://github.com/GoldfarbLab/pioneer-regression-configs regression-configs
             fi
+          EOF
+
+      - name: Cleanup regression configs on cluster
+        if: ${{ always() }}
+        env:
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
+          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
+
+          ssh_options=(
+            -o BatchMode=yes
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+          )
+
+          timeout 180 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_DIR='${remote_run_dir}' sh -s" <<'EOF'
+            set -eu
+            rm -rf "$RUN_DIR"
           EOF
 
       - name: Checkout regression parameter configs
