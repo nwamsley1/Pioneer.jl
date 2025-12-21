@@ -398,13 +398,34 @@ function compute_metrics_for_params_dir(
             dataset_paths = dataset_paths,
         )
 
-        metrics === nothing && continue
-        if metrics isa AbstractDict && isempty(metrics)
-            @warn "No metrics produced for search; skipping metrics file" search=entry.search_name dataset=entry.dataset_name results_dir=entry.results_dir
+        output_path = output_metrics_path(entry.results_dir, entry.dataset_name, entry.search_name)
+
+        metrics === nothing && begin
+            @warn "No metrics produced for search; archiving logs only" search=entry.search_name dataset=entry.dataset_name results_dir=entry.results_dir
+            cleanup_results_dir(entry.results_dir, output_path)
+            archive_results(
+                entry.results_dir,
+                output_path;
+                archive_root = archive_root,
+                dataset_name = entry.dataset_name,
+                search_name = entry.search_name,
+            )
             continue
         end
 
-        output_path = output_metrics_path(entry.results_dir, entry.dataset_name, entry.search_name)
+        if metrics isa AbstractDict && isempty(metrics)
+            @warn "No metrics produced for search; archiving logs only" search=entry.search_name dataset=entry.dataset_name results_dir=entry.results_dir
+            cleanup_results_dir(entry.results_dir, output_path)
+            archive_results(
+                entry.results_dir,
+                output_path;
+                archive_root = archive_root,
+                dataset_name = entry.dataset_name,
+                search_name = entry.search_name,
+            )
+            continue
+        end
+
         open(output_path, "w") do io
             JSON.print(io, metrics)
         end
