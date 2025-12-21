@@ -151,7 +151,7 @@ jobs:
               exit 1
             fi
 
-            setup_submit=$(PIONEER_DIR="$PIONEER_DIR" bsub < "$SETUP_SCRIPT")
+            setup_submit=$(PIONEER_DIR="$PIONEER_DIR" PIONEER_ENTRAPMENT_DIR="$ENTRAPMENT_DIR" bsub < "$SETUP_SCRIPT")
             setup_job_id=$(printf '%s\n' "$setup_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
             if [ -z "$setup_job_id" ]; then
