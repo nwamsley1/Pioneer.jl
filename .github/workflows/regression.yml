@@ -134,20 +134,16 @@ jobs:
               exit 1
             fi
 
-            found=0
-            for param_file in "$PARAMS_DIR"/*.json; do
-              if [ ! -f "$param_file" ]; then
-                continue
-              fi
+            param_list=$(find "$PARAMS_DIR" -type f -name 'search*.json' -print)
 
-              found=1
-              PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$param_file" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT"
-            done
-
-            if [ "$found" -eq 0 ]; then
+            if [ -z "$param_list" ]; then
               echo "No parameter JSON files found in $PARAMS_DIR" >&2
               exit 1
             fi
+
+            printf '%s\n' "$param_list" | while IFS= read -r param_file; do
+              PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$param_file" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT"
+            done
           EOF
 
       - name: Cleanup regression configs on cluster
