@@ -289,6 +289,16 @@ jobs:
           manifest_path="$run_dir/job-ids/expected_results.txt"
           results_root="$run_dir/results"
 
+          echo "Run directory contents (top level):"
+          ls -la "$run_dir"
+
+          if [ -d "$run_dir/job-ids" ]; then
+            echo "Job-ids directory contents:"
+            ls -la "$run_dir/job-ids"
+          else
+            echo "Job-ids directory missing at $run_dir/job-ids"
+          fi
+
           if [ ! -f "$manifest_path" ]; then
             echo "Expected manifest not found at $manifest_path" >&2
             exit 1
