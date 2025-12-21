@@ -255,6 +255,7 @@ jobs:
                 PIONEER_PARAMS_DIR="$param_dataset_dir" \
                 PIONEER_METRICS_FILE="$metrics_file" \
                 PIONEER_EXPERIMENTAL_DESIGN="$exp_design_file" \
+                PIONEER_ARCHIVE_ROOT="$RUN_DIR" \
                 bsub -w "$dep_expr" < "$METRICS_SCRIPT")
 
               metrics_job_id=$(printf '%s\n' "$metrics_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)

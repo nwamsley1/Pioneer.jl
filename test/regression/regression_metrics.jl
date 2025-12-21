@@ -294,11 +294,51 @@ function cleanup_results_dir(results_dir::AbstractString, metrics_path::Abstract
     end
 end
 
+function archive_results(
+    results_dir::AbstractString,
+    metrics_path::AbstractString;
+    archive_root::AbstractString = "",
+    dataset_name::AbstractString = "dataset",
+    search_name::AbstractString = "search",
+)
+    if isempty(archive_root)
+        @info "Archive root not provided; skipping move of regression outputs" results_dir=results_dir
+        return
+    end
+
+    target_dir = joinpath(archive_root, "results", dataset_name, search_name)
+    mkpath(target_dir)
+
+    if isfile(metrics_path)
+        target_metrics = joinpath(target_dir, basename(metrics_path))
+        mv(metrics_path, target_metrics; force = true)
+        metrics_path = target_metrics
+    end
+
+    entrapment_dir = joinpath(results_dir, "entrapment_analysis")
+    if isdir(entrapment_dir)
+        for entry in readdir(entrapment_dir; join = true)
+            if isfile(entry) && endswith(lowercase(entry), ".png")
+                mv(entry, joinpath(target_dir, basename(entry)); force = true)
+            end
+        end
+    end
+
+    try
+        rm(results_dir; force = true, recursive = true)
+    catch err
+        @warn "Failed to remove original results directory after archiving" results_dir=results_dir error=err
+    end
+
+    @info "Archived regression outputs" results_dir=results_dir metrics_path=metrics_path target_dir=target_dir
+end
+
 function compute_metrics_for_params_dir(
     params_dir::AbstractString;
     metrics_config_path::AbstractString = "",
     experimental_design_path::AbstractString = "",
     three_proteome_designs_path::AbstractString = "",
+    archive_root::AbstractString = "",
 )
     isdir(params_dir) || error("Params directory does not exist: $params_dir")
 
@@ -351,6 +391,13 @@ function compute_metrics_for_params_dir(
         end
 
         cleanup_results_dir(entry.results_dir, output_path)
+        archive_results(
+            entry.results_dir,
+            output_path;
+            archive_root = archive_root,
+            dataset_name = entry.dataset_name,
+            search_name = entry.search_name,
+        )
     end
 end
 
@@ -360,12 +407,14 @@ function main()
         metrics_config_path = get(ENV, "PIONEER_METRICS_FILE", "")
         experimental_design_path = get(ENV, "PIONEER_EXPERIMENTAL_DESIGN", "")
         three_proteome_designs_path = get(ENV, "PIONEER_THREE_PROTEOME_DESIGNS", "")
+        archive_root = get(ENV, "PIONEER_ARCHIVE_ROOT", "")
 
         compute_metrics_for_params_dir(
             params_dir_override;
             metrics_config_path = metrics_config_path,
             experimental_design_path = experimental_design_path,
             three_proteome_designs_path = three_proteome_designs_path,
+            archive_root = archive_root,
         )
         return
     end
