@@ -45,8 +45,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
-          remote_run_dir="${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          remote_run_root="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
+          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          remote_run_dir="${remote_run_root}/${run_suffix}"
+          mount_run_root="/mnt/ris/Active/Automation/Pioneer"
+          mount_run_dir="${mount_run_root}/${run_suffix}"
           pioneer_dir="${remote_run_dir}/pioneer"
           entrapment_dir="${remote_run_dir}/PioneerEntrapment.jl"
           depot_dir="${remote_run_dir}/julia-depot"
@@ -59,6 +62,7 @@ jobs:
           fi
 
           echo "CLUSTER_RUN_DIR=${remote_run_dir}" >> "$GITHUB_ENV"
+          echo "CLUSTER_RUN_DIR_MOUNT=${mount_run_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_PIONEER_DIR=${pioneer_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_ENTRAPMENT_DIR=${entrapment_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_DEPOT_DIR=${depot_dir}" >> "$GITHUB_ENV"
@@ -116,6 +120,7 @@ jobs:
 
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
           remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
+          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
           pioneer_dir="${CLUSTER_PIONEER_DIR:-${remote_run_dir}/pioneer}"
           entrapment_dir="${CLUSTER_ENTRAPMENT_DIR:-${remote_run_dir}/PioneerEntrapment.jl}"
           params_dir="${remote_run_dir}/regression-configs/params"
@@ -275,12 +280,12 @@ jobs:
 
       - name: Wait for regression outputs on shared storage
         env:
-          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
         shell: bash
         run: |
           set -euo pipefail
 
-          run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
           manifest_path="$run_dir/job-ids/expected_results.txt"
           results_root="$run_dir/results"
 
