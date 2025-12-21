@@ -127,11 +127,6 @@ jobs:
               exit 1
             fi
 
-            if ! command -v jq >/dev/null 2>&1; then
-              echo "jq is required on the cluster to adjust param files" >&2
-              exit 1
-            fi
-
             setup_submit=$(PIONEER_DIR="$PIONEER_DIR" bsub < "$SETUP_SCRIPT")
             setup_job_id=$(printf '%s\n' "$setup_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
@@ -155,7 +150,18 @@ jobs:
               adjusted_path="$ADJUSTED_PARAMS_DIR/$rel_path"
               mkdir -p "$(dirname "$adjusted_path")"
 
-              jq --arg suffix "$RUN_ID_SUFFIX" '.results = (.results | rtrimstr("/") + "/" + $suffix)' "$param_file" > "$adjusted_path"
+              results_path=$(sed -n 's/.*"results"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$param_file" | head -n 1)
+
+              if [ -z "$results_path" ]; then
+                echo "Failed to locate results path in $param_file" >&2
+                exit 1
+              fi
+
+              base_results=${results_path%/}
+              adjusted_results="${base_results}/${RUN_ID_SUFFIX}"
+              escaped_results=$(printf '%s\n' "$adjusted_results" | sed 's/[&/]/\\&/g')
+
+              sed -E "s|(\"results\"[[:space:]]*:[[:space:]]*\")([^"]+)(\")|\\1${escaped_results}\\3|" "$param_file" > "$adjusted_path"
 
               PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$adjusted_path" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT"
             done
