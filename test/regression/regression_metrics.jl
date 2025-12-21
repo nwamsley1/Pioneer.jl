@@ -258,6 +258,42 @@ function output_metrics_path(results_dir::AbstractString, dataset_name::Abstract
     joinpath(results_dir, filename)
 end
 
+function cleanup_entrapment_dir(entrapment_dir::AbstractString)
+    isdir(entrapment_dir) || return
+
+    for entry in readdir(entrapment_dir; join = true)
+        if isfile(entry)
+            endswith(entry, ".png") && continue
+            rm(entry; force = true, recursive = true)
+        else
+            rm(entry; force = true, recursive = true)
+        end
+    end
+end
+
+function cleanup_results_dir(results_dir::AbstractString, metrics_path::AbstractString)
+    if !isdir(results_dir)
+        @warn "Results directory missing during cleanup" results_dir = results_dir
+        return
+    end
+
+    metrics_path_abs = abspath(metrics_path)
+
+    for entry in readdir(results_dir; join = true)
+        entry_abs = abspath(entry)
+        if entry_abs == metrics_path_abs
+            continue
+        end
+
+        if isdir(entry) && basename(entry) == "entrapment_analysis"
+            cleanup_entrapment_dir(entry)
+            continue
+        end
+
+        rm(entry; force = true, recursive = true)
+    end
+end
+
 function compute_metrics_for_params_dir(
     params_dir::AbstractString;
     metrics_config_path::AbstractString = "",
@@ -313,6 +349,8 @@ function compute_metrics_for_params_dir(
         open(output_path, "w") do io
             JSON.print(io, metrics)
         end
+
+        cleanup_results_dir(entry.results_dir, output_path)
     end
 end
 
