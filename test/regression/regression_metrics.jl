@@ -227,6 +227,14 @@ function results_dir_from_param(path::AbstractString)
         if results isa AbstractString
             return results
         end
+
+        paths_block = get(parsed, "paths", nothing)
+        if paths_block isa AbstractDict
+            nested_results = get(paths_block, "results", nothing)
+            if nested_results isa AbstractString
+                return nested_results
+            end
+        end
     catch err
         @warn "Failed to parse search param file" param_path=path error=err
         return nothing
@@ -234,6 +242,15 @@ function results_dir_from_param(path::AbstractString)
 
     @warn "Search param file missing results entry" param_path=path
     nothing
+end
+
+function dataset_name_from_results(results_dir::AbstractString)
+    parent_dir = dirname(results_dir)
+    if isempty(parent_dir) || parent_dir == results_dir
+        return basename(results_dir)
+    end
+
+    basename(parent_dir)
 end
 
 function output_metrics_path(results_dir::AbstractString, dataset_name::AbstractString, search_name::AbstractString)
@@ -260,12 +277,9 @@ function compute_metrics_for_params_dir(
 
     for param_file in param_files
         results_dir = results_dir_from_param(param_file)
-        if results_dir === nothing
-            @warn "Skipping param file without results directory" param_file=param_file
-            continue
-        end
+        results_dir === nothing && error("Missing results entry in search param file $param_file")
 
-        dataset_name = basename(results_dir)
+        dataset_name = dataset_name_from_results(results_dir)
         search_name = replace(basename(param_file), ".json" => "")
         push!(dataset_entries, (; search_name, results_dir, dataset_name))
         haskey(dataset_paths, dataset_name) || (dataset_paths[dataset_name] = results_dir)
