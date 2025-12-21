@@ -161,7 +161,7 @@ jobs:
               adjusted_results="${base_results}/${RUN_ID_SUFFIX}"
               escaped_results=$(printf '%s\n' "$adjusted_results" | sed 's/[&/]/\\&/g')
 
-              sed -E "s|(\"results\"[[:space:]]*:[[:space:]]*\")([^"]+)(\")|\\1${escaped_results}\\3|" "$param_file" > "$adjusted_path"
+              sed "s|\"results\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"results\": \"${escaped_results}\"|" "$param_file" > "$adjusted_path"
 
               PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$adjusted_path" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT"
             done
