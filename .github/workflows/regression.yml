@@ -40,6 +40,7 @@ jobs:
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          CLUSTER_ENTRAPMENT_REPO: ${{ secrets.CLUSTER_ENTRAPMENT_REPO }}
         shell: bash
         run: |
           set -euo pipefail
@@ -47,11 +48,19 @@ jobs:
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
           remote_run_dir="${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           pioneer_dir="${remote_run_dir}/pioneer"
+          entrapment_dir="${remote_run_dir}/PioneerEntrapment.jl"
           depot_dir="${remote_run_dir}/julia-depot"
           pioneer_repo="https://github.com/${GITHUB_REPOSITORY}"
+          entrapment_repo="${CLUSTER_ENTRAPMENT_REPO:-nwamsley1/PioneerEntrapment.jl}"
+          entrapment_repo_url="$entrapment_repo"
+
+          if [[ "$entrapment_repo" != http* ]]; then
+            entrapment_repo_url="https://github.com/${entrapment_repo}"
+          fi
 
           echo "CLUSTER_RUN_DIR=${remote_run_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_PIONEER_DIR=${pioneer_dir}" >> "$GITHUB_ENV"
+          echo "CLUSTER_ENTRAPMENT_DIR=${entrapment_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_DEPOT_DIR=${depot_dir}" >> "$GITHUB_ENV"
 
           ssh_options=(
@@ -61,7 +70,7 @@ jobs:
             -o ConnectTimeout=30
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' sh -s" <<'EOF'
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' bash -s" <<'EOF'
             set -eu
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
@@ -81,6 +90,12 @@ jobs:
 
             git -C "$PIONEER_DIR" checkout --force "$TARGET_SHA"
 
+            if [ -d "$ENTRAPMENT_DIR/.git" ]; then
+              git -C "$ENTRAPMENT_DIR" fetch --all --tags
+            else
+              git clone "$ENTRAPMENT_REPO_URL" "$ENTRAPMENT_DIR"
+            fi
+
             mkdir -p "$DEPOT_DIR"
           EOF
 
@@ -91,8 +106,10 @@ jobs:
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_PIONEER_DIR: ${{ env.CLUSTER_PIONEER_DIR }}
+          CLUSTER_ENTRAPMENT_DIR: ${{ env.CLUSTER_ENTRAPMENT_DIR }}
           REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
           SETUP_JOB_SCRIPT: ${{ vars.SETUP_JOB_SCRIPT }}
+          METRICS_JOB_SCRIPT: ${{ vars.METRICS_JOB_SCRIPT }}
         shell: bash
         run: |
           set -euo pipefail
@@ -100,9 +117,11 @@ jobs:
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
           remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
           pioneer_dir="${CLUSTER_PIONEER_DIR:-${remote_run_dir}/pioneer}"
+          entrapment_dir="${CLUSTER_ENTRAPMENT_DIR:-${remote_run_dir}/PioneerEntrapment.jl}"
           params_dir="${remote_run_dir}/regression-configs/params"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
           setup_script_path="${remote_run_dir}/${SETUP_JOB_SCRIPT:-regression-configs/job_scripts/setup.bsub}"
+          metrics_script_path="${remote_run_dir}/${METRICS_JOB_SCRIPT:-regression-configs/job_scripts/metrics.bsub}"
           adjusted_params_dir="${remote_run_dir}/adjusted-params"
           run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
@@ -114,7 +133,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' PARAMS_DIR='${params_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' sh -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' ENTRAPMENT_DIR='${entrapment_dir}' PARAMS_DIR='${params_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' bash -s" <<'EOF'
             set -eu
 
             if [ ! -f "$SETUP_SCRIPT" ]; then
@@ -124,6 +143,11 @@ jobs:
 
             if [ ! -f "$JOB_SCRIPT" ]; then
               echo "Missing job script: $JOB_SCRIPT" >&2
+              exit 1
+            fi
+
+            if [ ! -f "$METRICS_SCRIPT" ]; then
+              echo "Missing metrics job script: $METRICS_SCRIPT" >&2
               exit 1
             fi
 
@@ -144,9 +168,12 @@ jobs:
             fi
 
             mkdir -p "$ADJUSTED_PARAMS_DIR"
+            job_id_dir="$RUN_DIR/job-ids"
+            mkdir -p "$job_id_dir"
 
             printf '%s\n' "$param_list" | while IFS= read -r param_file; do
               rel_path="${param_file#${PARAMS_DIR}/}"
+              dataset_name="${rel_path%%/*}"
               adjusted_path="$ADJUSTED_PARAMS_DIR/$rel_path"
               mkdir -p "$(dirname "$adjusted_path")"
 
@@ -163,66 +190,73 @@ jobs:
 
               sed "s|\"results\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"results\": \"${escaped_results}\"|" "$param_file" > "$adjusted_path"
 
-              PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$adjusted_path" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT"
+              search_submit=$(PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$adjusted_path" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT")
+              search_job_id=$(printf '%s\n' "$search_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
+
+              if [ -z "$search_job_id" ]; then
+                echo "Failed to parse search job ID from submission output:" >&2
+                printf '%s\n' "$search_submit" >&2
+                exit 1
+              fi
+
+              echo "$search_job_id" >> "$job_id_dir/${dataset_name}.search"
+            done
+
+            dataset_dirs=$(find "$PARAMS_DIR" -mindepth 1 -maxdepth 1 -type d -print)
+
+            if [ -z "$dataset_dirs" ]; then
+              echo "No dataset directories found under $PARAMS_DIR" >&2
+              exit 1
+            fi
+
+            printf '%s\n' "$dataset_dirs" | while IFS= read -r dataset_dir; do
+              dataset_name="$(basename "$dataset_dir")"
+              job_list_file="$job_id_dir/${dataset_name}.search"
+              metrics_file="$dataset_dir/metrics.json"
+              exp_design_file="$dataset_dir/experimental_design.json"
+
+              if [ ! -f "$exp_design_file" ]; then
+                exp_design_file=""
+              fi
+
+              if [ ! -f "$metrics_file" ]; then
+                echo "Skipping dataset $dataset_name: missing metrics.json" >&2
+                continue
+              fi
+
+              if [ ! -s "$job_list_file" ]; then
+                echo "Skipping dataset $dataset_name: no search job IDs recorded" >&2
+                continue
+              fi
+
+              dep_expr=""
+              while IFS= read -r job_id; do
+                [ -n "$job_id" ] || continue
+                if [ -n "$dep_expr" ]; then
+                  dep_expr="$dep_expr && "
+                fi
+                dep_expr="${dep_expr}ended(${job_id})"
+              done < "$job_list_file"
+
+              if [ -z "$dep_expr" ]; then
+                echo "Skipping dataset $dataset_name: unable to build dependency expression" >&2
+                continue
+              fi
+
+              param_dataset_dir="$ADJUSTED_PARAMS_DIR/$dataset_name"
+              if [ ! -d "$param_dataset_dir" ]; then
+                echo "Skipping dataset $dataset_name: adjusted params directory missing at $param_dataset_dir" >&2
+                continue
+              fi
+
+              metrics_submit=$(PIONEER_DIR="$PIONEER_DIR" PIONEER_ENTRAPMENT_DIR="$ENTRAPMENT_DIR" PARAMS_DIR="$param_dataset_dir" METRICS_FILE="$metrics_file" EXPERIMENTAL_DESIGN_FILE="$exp_design_file" RUN_ID_SUFFIX="$RUN_ID_SUFFIX" bsub -w "$dep_expr" < "$METRICS_SCRIPT")
+
+              metrics_job_id=$(printf '%s\n' "$metrics_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
+
+              if [ -z "$metrics_job_id" ]; then
+                echo "Failed to parse metrics job ID for dataset $dataset_name:" >&2
+                printf '%s\n' "$metrics_submit" >&2
+                exit 1
+              fi
             done
           EOF
-
-      - name: Cleanup regression configs on cluster
-        if: ${{ false }}
-        env:
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
-          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
-          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
-          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
-          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
-
-          ssh_options=(
-            -o BatchMode=yes
-            -o ServerAliveInterval=60
-            -o ServerAliveCountMax=3
-            -o ConnectTimeout=30
-          )
-
-          timeout 180 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_DIR='${remote_run_dir}' sh -s" <<'EOF'
-            set -eu
-            rm -rf "$RUN_DIR"
-          EOF
-
-      - name: Checkout regression parameter configs
-        if: ${{ false }}
-        uses: actions/checkout@v5
-        with:
-          repository: GoldfarbLab/pioneer-regression-configs
-          path: pioneer-regression-configs
-
-      - name: Checkout Entrapment analyses utilities
-        if: ${{ false }}
-        uses: actions/checkout@v5
-        with:
-          repository: nwamsley1/PioneerEntrapment.jl
-          path: PioneerEntrapment.jl
-
-      - name: Setup Julia
-        if: ${{ false }}
-        uses: julia-actions/setup-julia@v2
-        with:
-          version: ${{ matrix.version }}
-          arch: x64
-
-      - name: Run SearchDIA for all parameter files
-        if: ${{ false }}
-        env:
-          PIONEER_PARAMS_DIR: ${{ github.workspace }}/pioneer-regression-configs/params
-        run: julia --threads auto --project=. test/run_regressions.jl
-
-      - name: Summarize regression results
-        if: ${{ false }}
-        env:
-          ENTRAPMENT_ANALYSES_PATH: ${{ github.workspace }}/PioneerEntrapment.jl
-          PIONEER_RESULTS_DIR: /pioneer-runner/results/current
-        run: julia --threads auto --project=. test/regression/regression_metrics.jl
