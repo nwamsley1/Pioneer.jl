@@ -249,7 +249,13 @@ jobs:
                 continue
               fi
 
-              metrics_submit=$(PIONEER_DIR="$PIONEER_DIR" PIONEER_ENTRAPMENT_DIR="$ENTRAPMENT_DIR" PARAMS_DIR="$param_dataset_dir" METRICS_FILE="$metrics_file" EXPERIMENTAL_DESIGN_FILE="$exp_design_file" RUN_ID_SUFFIX="$RUN_ID_SUFFIX" bsub -w "$dep_expr" < "$METRICS_SCRIPT")
+              metrics_submit=$(\
+                PIONEER_DIR="$PIONEER_DIR" \
+                ENTRAPMENT_ANALYSES_PATH="$ENTRAPMENT_DIR" \
+                PIONEER_PARAMS_DIR="$param_dataset_dir" \
+                PIONEER_METRICS_FILE="$metrics_file" \
+                PIONEER_EXPERIMENTAL_DESIGN="$exp_design_file" \
+                bsub -w "$dep_expr" < "$METRICS_SCRIPT")
 
               metrics_job_id=$(printf '%s\n' "$metrics_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
