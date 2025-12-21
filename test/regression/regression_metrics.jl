@@ -258,6 +258,11 @@ function output_metrics_path(results_dir::AbstractString, dataset_name::Abstract
     joinpath(results_dir, filename)
 end
 
+function is_log_file(path::AbstractString)
+    lowercasepath = lowercase(path)
+    endswith(lowercasepath, ".log") || endswith(lowercasepath, ".log.gz")
+end
+
 function cleanup_entrapment_dir(entrapment_dir::AbstractString)
     isdir(entrapment_dir) || return
 
@@ -285,7 +290,11 @@ function cleanup_results_dir(results_dir::AbstractString, metrics_path::Abstract
             continue
         end
 
-        if isdir(entry) && basename(entry) == "entrapment_analysis"
+        if isfile(entry)
+            if is_log_file(entry)
+                continue
+            end
+        elseif isdir(entry) && basename(entry) == "entrapment_analysis"
             cleanup_entrapment_dir(entry)
             continue
         end
@@ -321,6 +330,12 @@ function archive_results(
             if isfile(entry) && endswith(lowercase(entry), ".png")
                 mv(entry, joinpath(target_dir, basename(entry)); force = true)
             end
+        end
+    end
+
+    for entry in readdir(results_dir; join = true)
+        if isfile(entry) && is_log_file(entry)
+            mv(entry, joinpath(target_dir, basename(entry)); force = true)
         end
     end
 
@@ -384,6 +399,10 @@ function compute_metrics_for_params_dir(
         )
 
         metrics === nothing && continue
+        if metrics isa AbstractDict && isempty(metrics)
+            @warn "No metrics produced for search; skipping metrics file" search=entry.search_name dataset=entry.dataset_name results_dir=entry.results_dir
+            continue
+        end
 
         output_path = output_metrics_path(entry.results_dir, entry.dataset_name, entry.search_name)
         open(output_path, "w") do io
