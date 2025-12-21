@@ -170,10 +170,13 @@ jobs:
             mkdir -p "$ADJUSTED_PARAMS_DIR"
             job_id_dir="$RUN_DIR/job-ids"
             mkdir -p "$job_id_dir"
+            manifest_file="$job_id_dir/expected_results.txt"
+            : > "$manifest_file"
 
             printf '%s\n' "$param_list" | while IFS= read -r param_file; do
               rel_path="${param_file#${PARAMS_DIR}/}"
               dataset_name="${rel_path%%/*}"
+              search_name="$(basename "${rel_path%.*}")"
               adjusted_path="$ADJUSTED_PARAMS_DIR/$rel_path"
               mkdir -p "$(dirname "$adjusted_path")"
 
@@ -189,6 +192,8 @@ jobs:
               escaped_results=$(printf '%s\n' "$adjusted_results" | sed 's/[&/]/\\&/g')
 
               sed "s|\"results\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"results\": \"${escaped_results}\"|" "$param_file" > "$adjusted_path"
+
+              echo "${dataset_name}/${search_name}" >> "$manifest_file"
 
               search_submit=$(PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$adjusted_path" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT")
               search_job_id=$(printf '%s\n' "$search_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
@@ -267,3 +272,110 @@ jobs:
               fi
             done
           EOF
+
+      - name: Wait for regression outputs on shared storage
+        env:
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          manifest_path="$run_dir/job-ids/expected_results.txt"
+          results_root="$run_dir/results"
+
+          if [ ! -f "$manifest_path" ]; then
+            echo "Expected manifest not found at $manifest_path" >&2
+            exit 1
+          fi
+
+          mapfile -t manifest_entries < "$manifest_path"
+
+          if [ "${#manifest_entries[@]}" -eq 0 ]; then
+            echo "Manifest is empty; cannot determine expected results" >&2
+            exit 1
+          fi
+
+          declare -A seen
+          unique_entries=()
+          for entry in "${manifest_entries[@]}"; do
+            clean_entry="${entry%$'\r'}"
+            [ -n "$clean_entry" ] || continue
+            if [[ -z "${seen[$clean_entry]+x}" ]]; then
+              seen[$clean_entry]=1
+              unique_entries+=("$clean_entry")
+            fi
+          done
+
+          total_expected=${#unique_entries[@]}
+          poll_interval=60
+          max_attempts=720
+          attempt=1
+          progress_log=()
+
+          while :; do
+            found=0
+            missing=()
+
+            for entry in "${unique_entries[@]}"; do
+              dataset="${entry%%/*}"
+              search="${entry#*/}"
+              dataset_dir="$results_root/$dataset"
+              metrics_path="$dataset_dir/metrics_${dataset}_${search}.json"
+
+              log_present=""
+              if compgen -G "$dataset_dir/*${search}*.log" > /dev/null; then
+                log_present=1
+              elif compgen -G "$dataset_dir/*${search}*.log.gz" > /dev/null; then
+                log_present=1
+              fi
+
+              if [ -f "$metrics_path" ] || [ -n "$log_present" ]; then
+                found=$((found + 1))
+              else
+                missing+=("$entry")
+              fi
+            done
+
+            progress_log+=("Attempt ${attempt}: ${found}/${total_expected} ready")
+
+            if [ "${#missing[@]}" -eq 0 ]; then
+              echo "All expected regression outputs detected."
+              break
+            fi
+
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Timeout waiting for regression outputs after $((poll_interval * max_attempts / 60)) minutes" >&2
+              printf 'Still missing:\n' >&2
+              printf '  %s\n' "${missing[@]}" >&2
+              {
+                echo "## Cluster results polling"
+                echo "- Run directory: $run_dir"
+                echo "- Expected outputs: $total_expected"
+                echo "- Status: timed out"
+                echo "- Missing entries:"
+                for entry in "${missing[@]}"; do
+                  echo "  - $entry"
+                done
+                echo "- Progress log:"
+                for line in "${progress_log[@]}"; do
+                  echo "  - $line"
+                done
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+
+            attempt=$((attempt + 1))
+            sleep "$poll_interval"
+          done
+
+          {
+            echo "## Cluster results polling"
+            echo "- Run directory: $run_dir"
+            echo "- Expected outputs: $total_expected"
+            echo "- Status: completed"
+            echo "- Progress log:"
+            for line in "${progress_log[@]}"; do
+              echo "  - $line"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
