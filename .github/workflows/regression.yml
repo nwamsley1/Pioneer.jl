@@ -400,79 +400,61 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Clean run workspace on shared storage
+      - name: Submit cluster cleanup job
         if: always()
         env:
-          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
+          CLEANUP_JOB_SCRIPT: ${{ vars.CLEANUP_JOB_SCRIPT }}
         shell: bash
         run: |
           set -euo pipefail
 
-          run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
-          results_dir="$run_dir/results"
+          remote_run_root="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
+          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
+          cleanup_script_path="${remote_run_dir}/${CLEANUP_JOB_SCRIPT:-regression-configs/job_scripts/cleanup.bsub}"
 
-          case "$run_dir" in
-            /mnt/ris/Active/Automation/Pioneer/run-*) ;;
+          case "$remote_run_dir" in
+            /storage1/fs1/d.goldfarb/Active/Automation/Pioneer/run-*) ;;
             *)
-              echo "Refusing to clean unexpected run directory: $run_dir" >&2
+              echo "Refusing to submit cleanup for unexpected run directory: $remote_run_dir" >&2
               exit 1
               ;;
           esac
 
-          if [ ! -d "$run_dir" ]; then
-            echo "Run directory $run_dir does not exist; skipping cleanup"
-            exit 0
-          fi
+          ssh_options=(
+            -o BatchMode=yes
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+          )
 
-          if [ ! -d "$results_dir" ]; then
-            echo "Results directory not found at $results_dir; skipping cleanup"
-            exit 0
-          fi
+          cleanup_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+            "RUN_DIR='${remote_run_dir}' CLEANUP_SCRIPT='${cleanup_script_path}' bash -s" <<'EOF'
+              set -eu
 
-          shopt -s dotglob nullglob
-          entries=()
-
-          for entry in "$run_dir"/* "$run_dir"/.*; do
-            base="$(basename "$entry")"
-            if [ "$base" = "." ] || [ "$base" = ".." ]; then
-              continue
-            fi
-
-            if [ "$entry" = "$results_dir" ]; then
-              continue
-            fi
-
-            entries+=("$entry")
-          done
-
-          failed=()
-
-          for entry in "${entries[@]}"; do
-            removed=0
-            for attempt in $(seq 1 5); do
-              if rm -rf -- "$entry"; then
-                echo "Removed $entry (attempt $attempt)"
-                removed=1
-                break
+              if [ ! -f "$CLEANUP_SCRIPT" ]; then
+                echo "Missing cleanup job script: $CLEANUP_SCRIPT" >&2
+                exit 1
               fi
 
-              echo "Removal failed for $entry (attempt $attempt); retrying in 5s" >&2
-              sleep 5
-            done
+              submit_out=$(RUN_DIR="$RUN_DIR" bsub < "$CLEANUP_SCRIPT")
+              printf '%s' "$submit_out"
+          EOF
+          )"
 
-            if [ "$removed" -ne 1 ]; then
-              if [ -e "$entry" ]; then
-                failed+=("$entry")
-              else
-                echo "$entry no longer exists after retries; continuing"
-              fi
-            fi
-          done
+          cleanup_job_id=$(printf '%s\n' "$cleanup_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
-          if [ "${#failed[@]}" -gt 0 ]; then
-            echo "Failed to remove the following entries:" >&2
-            printf '  %s\n' "${failed[@]}" >&2
+          if [ -z "$cleanup_job_id" ]; then
+            echo "Failed to parse cleanup job ID from submission output:" >&2
+            printf '%s\n' "$cleanup_submit" >&2
             exit 1
           fi
 
-          echo "Cleanup complete; preserved results at $results_dir" | tee -a "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Cleanup job submission"
+            echo "- Run directory: $remote_run_dir"
+            echo "- Cleanup job ID: $cleanup_job_id"
+          } >> "$GITHUB_STEP_SUMMARY"
