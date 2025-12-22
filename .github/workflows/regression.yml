@@ -328,6 +328,9 @@ jobs:
           attempt=1
           progress_log=()
 
+          echo "Polling for ${total_expected} result paths:" | tee -a "$GITHUB_STEP_SUMMARY"
+          printf '  %s\n' "${unique_entries[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+
           while :; do
             found=0
             missing=()
@@ -352,9 +355,10 @@ jobs:
               fi
             done
 
-            progress_entry="Attempt ${attempt}: ${found}/${total_expected} ready"
+            timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            progress_entry="[${timestamp}] Attempt ${attempt}: ${found}/${total_expected} ready"
             progress_log+=("$progress_entry")
-            echo "$progress_entry"
+            echo "$progress_entry" | tee -a "$GITHUB_STEP_SUMMARY"
 
             if [ "${#missing[@]}" -gt 0 ]; then
               echo "Missing entries (sample):"
