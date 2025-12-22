@@ -199,7 +199,7 @@ jobs:
 
               sed "s|\"results\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"results\": \"${escaped_results}\"|" "$param_file" > "$adjusted_path"
 
-              echo "${dataset_name}/${search_name}" >> "$manifest_file"
+              echo "${dataset_name}" >> "$manifest_file"
 
               search_submit=$(PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$adjusted_path" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT")
               search_job_id=$(printf '%s\n' "$search_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
@@ -326,23 +326,26 @@ jobs:
             found=0
             missing=()
 
-            for entry in "${unique_entries[@]}"; do
-              dataset="${entry%%/*}"
-              search="${entry#*/}"
+            for dataset in "${unique_entries[@]}"; do
               dataset_dir="$results_root/$dataset"
-              metrics_path="$dataset_dir/metrics_${dataset}_${search}.json"
+
+              metrics_glob="$dataset_dir/metrics_${dataset}_*.json"
+              metrics_present=0
+              if compgen -G "$metrics_glob" > /dev/null; then
+                metrics_present=1
+              fi
 
               log_present=""
-              if compgen -G "$dataset_dir/*${search}*.log" > /dev/null; then
+              if compgen -G "$dataset_dir/*.log" > /dev/null; then
                 log_present=1
-              elif compgen -G "$dataset_dir/*${search}*.log.gz" > /dev/null; then
+              elif compgen -G "$dataset_dir/*.log.gz" > /dev/null; then
                 log_present=1
               fi
 
-              if [ -f "$metrics_path" ] || [ -n "$log_present" ]; then
+              if [ "$metrics_present" -eq 1 ] || [ -n "$log_present" ]; then
                 found=$((found + 1))
               else
-                missing+=("$entry")
+                missing+=("$dataset")
               fi
             done
 
