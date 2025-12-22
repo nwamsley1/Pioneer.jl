@@ -399,3 +399,48 @@ jobs:
               echo "  - $line"
             done
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean run workspace on shared storage
+        if: always()
+        env:
+          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
+          results_dir="$run_dir/results"
+
+          case "$run_dir" in
+            /mnt/ris/Active/Automation/Pioneer/run-*) ;;
+            *)
+              echo "Refusing to clean unexpected run directory: $run_dir" >&2
+              exit 1
+              ;;
+          esac
+
+          if [ ! -d "$run_dir" ]; then
+            echo "Run directory $run_dir does not exist; skipping cleanup"
+            exit 0
+          fi
+
+          if [ ! -d "$results_dir" ]; then
+            echo "Results directory not found at $results_dir; skipping cleanup"
+            exit 0
+          fi
+
+          shopt -s dotglob nullglob
+          for entry in "$run_dir"/* "$run_dir"/.*; do
+            base="$(basename "$entry")"
+            if [ "$base" = "." ] || [ "$base" = ".." ]; then
+              continue
+            fi
+
+            if [ "$entry" = "$results_dir" ]; then
+              continue
+            fi
+
+            rm -rf -- "$entry"
+          done
+
+          echo "Cleanup complete; preserved results at $results_dir" | tee -a "$GITHUB_STEP_SUMMARY"
