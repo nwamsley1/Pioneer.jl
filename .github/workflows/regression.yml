@@ -433,7 +433,7 @@ jobs:
           )
 
           cleanup_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' CLEANUP_SCRIPT='${cleanup_script_path}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' RUN_SUFFIX='${CLUSTER_RUN_SUFFIX:-}' CLEANUP_SCRIPT='${cleanup_script_path}' bash -s" <<'EOF'
               set -eu
 
               if [ ! -f "$CLEANUP_SCRIPT" ]; then
@@ -441,7 +441,7 @@ jobs:
                 exit 1
               fi
 
-              submit_out=$(RUN_DIR="$RUN_DIR" bsub < "$CLEANUP_SCRIPT")
+              submit_out=$(RUN_DIR="$RUN_DIR" RUN_SUFFIX="$RUN_SUFFIX" bsub < "$CLEANUP_SCRIPT")
               printf '%s' "$submit_out"
           EOF
           )"
