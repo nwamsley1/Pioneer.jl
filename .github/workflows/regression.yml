@@ -352,7 +352,14 @@ jobs:
               fi
             done
 
-            progress_log+=("Attempt ${attempt}: ${found}/${total_expected} ready")
+            progress_entry="Attempt ${attempt}: ${found}/${total_expected} ready"
+            progress_log+=("$progress_entry")
+            echo "$progress_entry"
+
+            if [ "${#missing[@]}" -gt 0 ]; then
+              echo "Missing entries (sample):"
+              printf '  %s\n' "${missing[@]}"
+            fi
 
             if [ "${#missing[@]}" -eq 0 ]; then
               echo "All expected regression outputs detected."
