@@ -180,7 +180,7 @@ jobs:
 
             printf '%s\n' "$param_list" | while IFS= read -r param_file; do
               rel_path="${param_file#${PARAMS_DIR}/}"
-              dataset_name="${rel_path%%/*}"
+              dataset_dir_name="${rel_path%%/*}"
               search_name="$(basename "${rel_path%.*}")"
               adjusted_path="$ADJUSTED_PARAMS_DIR/$rel_path"
               mkdir -p "$(dirname "$adjusted_path")"
@@ -194,6 +194,7 @@ jobs:
 
               base_results=${results_path%/}
               adjusted_results="${base_results}/${RUN_ID_SUFFIX}"
+              dataset_name="$(basename "$(dirname "$adjusted_results")")"
               escaped_results=$(printf '%s\n' "$adjusted_results" | sed 's/[&/]/\\&/g')
 
               sed "s|\"results\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"results\": \"${escaped_results}\"|" "$param_file" > "$adjusted_path"
@@ -209,7 +210,7 @@ jobs:
                 exit 1
               fi
 
-              echo "$search_job_id" >> "$job_id_dir/${dataset_name}.search"
+              echo "$search_job_id" >> "$job_id_dir/${dataset_dir_name}.search"
             done
 
             dataset_dirs=$(find "$PARAMS_DIR" -mindepth 1 -maxdepth 1 -type d -print)
