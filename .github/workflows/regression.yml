@@ -63,6 +63,7 @@ jobs:
 
           echo "CLUSTER_RUN_DIR=${remote_run_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_RUN_DIR_MOUNT=${mount_run_dir}" >> "$GITHUB_ENV"
+          echo "CLUSTER_RUN_SUFFIX=${run_suffix}" >> "$GITHUB_ENV"
           echo "CLUSTER_PIONEER_DIR=${pioneer_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_ENTRAPMENT_DIR=${entrapment_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_DEPOT_DIR=${depot_dir}" >> "$GITHUB_ENV"
@@ -406,23 +407,23 @@ jobs:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
-          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
+          CLUSTER_RUN_SUFFIX: ${{ env.CLUSTER_RUN_SUFFIX }}
           CLEANUP_JOB_SCRIPT: ${{ vars.CLEANUP_JOB_SCRIPT }}
         shell: bash
         run: |
           set -euo pipefail
 
-          remote_run_root="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
-          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
-          cleanup_script_path="${remote_run_dir}/${CLEANUP_JOB_SCRIPT:-regression-configs/job_scripts/cleanup.bsub}"
+          remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
 
-          case "$remote_run_dir" in
-            /storage1/fs1/d.goldfarb/Active/Automation/Pioneer/run-*) ;;
-            *)
-              echo "Refusing to submit cleanup for unexpected run directory: $remote_run_dir" >&2
-              exit 1
-              ;;
-          esac
+          cleanup_script_path="${CLEANUP_JOB_SCRIPT:-regression-configs/job_scripts/cleanup.bsub}"
+          if [[ "$cleanup_script_path" != /* ]]; then
+            cleanup_script_path="${remote_run_dir}/${cleanup_script_path}"
+          fi
+
+          if [[ -n "${CLUSTER_RUN_SUFFIX:-}" ]] && [[ "${remote_run_dir##*/}" != "${CLUSTER_RUN_SUFFIX}" ]]; then
+            echo "Run directory mismatch: expected suffix ${CLUSTER_RUN_SUFFIX}, got ${remote_run_dir##*/}" >&2
+            exit 1
+          fi
 
           ssh_options=(
             -o BatchMode=yes
