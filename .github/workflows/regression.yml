@@ -314,8 +314,8 @@ jobs:
           done
 
           total_expected=${#unique_entries[@]}
-          poll_interval=60
-          max_attempts=720
+          poll_interval=300
+          max_attempts=144
           attempt=1
           progress_log=()
 
