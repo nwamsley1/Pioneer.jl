@@ -355,7 +355,7 @@ jobs:
             echo "$progress_entry" | tee -a "$GITHUB_STEP_SUMMARY"
 
             if [ "${#missing[@]}" -gt 0 ]; then
-              echo "Missing entries (sample):"
+              echo "Missing entries:"
               printf '  %s\n' "${missing[@]}"
             fi
 
