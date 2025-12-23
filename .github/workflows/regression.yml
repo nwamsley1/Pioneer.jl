@@ -45,10 +45,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          remote_run_root="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
+          remote_run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
+          remote_run_root="${remote_run_root_raw%/}"
           run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           remote_run_dir="${remote_run_root}/${run_suffix}"
-          mount_run_root="/mnt/ris/Active/Automation/Pioneer"
+          mount_run_root_raw="/mnt/ris/Active/Automation/Pioneer"
+          mount_run_root="${mount_run_root_raw%/}"
           mount_run_dir="${mount_run_root}/${run_suffix}"
           pioneer_dir="${remote_run_dir}/pioneer"
           entrapment_dir="${remote_run_dir}/PioneerEntrapment.jl"
