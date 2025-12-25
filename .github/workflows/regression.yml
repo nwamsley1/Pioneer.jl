@@ -7,7 +7,7 @@ on:
 jobs:
   regression:
     name: Julia ${{ matrix.version }} regression sweep
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted, Linux, pioneer-regression]
     timeout-minutes: 7200
     strategy:
       matrix:
@@ -318,7 +318,7 @@ jobs:
 
           total_expected=${#unique_entries[@]}
           poll_interval=300
-          max_attempts=144
+          max_attempts=600
           attempt=1
           progress_log=()
 
