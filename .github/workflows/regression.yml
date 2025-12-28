@@ -436,7 +436,7 @@ jobs:
           )
 
           report_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' REPORT_OUTPUT='${report_output_path}' METRICS_RELEASE_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/release' METRICS_DEVELOP_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/develop' METRICS_CURRENT_ROOT='${remote_run_dir}/results' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' REPORT_OUTPUT='${report_output_path}' METRICS_RELEASE_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/release' METRICS_DEVELOP_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/develop' METRICS_CURRENT_ROOT='${remote_run_dir}/results' PIONEER_REGRESSION_CONFIGS_DIR='${remote_run_dir}/regression-configs' bash -s" <<'EOF'
               set -eu
 
               if [ ! -f "$REPORT_SCRIPT" ]; then
@@ -449,6 +449,7 @@ jobs:
                 PIONEER_METRICS_DEVELOP_ROOT="$METRICS_DEVELOP_ROOT" \
                 PIONEER_METRICS_CURRENT_ROOT="$METRICS_CURRENT_ROOT" \
                 PIONEER_REPORT_OUTPUT="$REPORT_OUTPUT" \
+                PIONEER_REGRESSION_CONFIGS_DIR="$PIONEER_REGRESSION_CONFIGS_DIR" \
                 bsub < "$REPORT_SCRIPT"
               )
               printf '%s' "$submit_out"
@@ -464,6 +465,7 @@ jobs:
           fi
 
           echo "REPORT_OUTPUT_PATH=${report_output_path}" >> "$GITHUB_ENV"
+          echo "REPORT_JOB_ID=${report_job_id}" >> "$GITHUB_ENV"
 
           {
             echo "## Report job submission"
@@ -552,12 +554,14 @@ jobs:
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_SUFFIX: ${{ env.CLUSTER_RUN_SUFFIX }}
+          REPORT_JOB_ID: ${{ env.REPORT_JOB_ID }}
           CLEANUP_JOB_SCRIPT: ${{ vars.CLEANUP_JOB_SCRIPT }}
         shell: bash
         run: |
           set -euo pipefail
 
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          report_job_id="${REPORT_JOB_ID:-}"
 
           cleanup_script_path="${CLEANUP_JOB_SCRIPT:-regression-configs/job_scripts/cleanup.bsub}"
           if [[ "$cleanup_script_path" != /* ]]; then
@@ -577,7 +581,7 @@ jobs:
           )
 
           cleanup_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' RUN_SUFFIX='${CLUSTER_RUN_SUFFIX:-}' CLEANUP_SCRIPT='${cleanup_script_path}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' RUN_SUFFIX='${CLUSTER_RUN_SUFFIX:-}' CLEANUP_SCRIPT='${cleanup_script_path}' REPORT_JOB_ID='${report_job_id}' bash -s" <<'EOF'
               set -eu
 
               if [ ! -f "$CLEANUP_SCRIPT" ]; then
@@ -585,7 +589,12 @@ jobs:
                 exit 1
               fi
 
-              submit_out=$(RUN_DIR="$RUN_DIR" RUN_SUFFIX="$RUN_SUFFIX" bsub < "$CLEANUP_SCRIPT")
+              cleanup_wait=""
+              if [ -n "$REPORT_JOB_ID" ]; then
+                cleanup_wait="-w ended($REPORT_JOB_ID)"
+              fi
+
+              submit_out=$(RUN_DIR="$RUN_DIR" RUN_SUFFIX="$RUN_SUFFIX" bsub $cleanup_wait < "$CLEANUP_SCRIPT")
               printf '%s' "$submit_out"
           EOF
           )"
