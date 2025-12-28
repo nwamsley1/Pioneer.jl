@@ -4,6 +4,10 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   regression:
     name: Julia ${{ matrix.version }} regression sweep
@@ -404,6 +408,142 @@ jobs:
               echo "  - $line"
             done
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Submit regression report job on cluster
+        env:
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+          REPORT_JOB_SCRIPT: ${{ vars.REPORT_JOB_SCRIPT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          report_script_path="${REPORT_JOB_SCRIPT:-regression-configs/job_scripts/metrics_report.bsub}"
+          if [[ "$report_script_path" != /* ]]; then
+            report_script_path="${remote_run_dir}/${report_script_path}"
+          fi
+
+          report_output_path="${remote_run_dir}/results/metrics_report.md"
+
+          ssh_options=(
+            -o BatchMode=yes
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+          )
+
+          report_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' REPORT_OUTPUT='${report_output_path}' METRICS_RELEASE_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/release' METRICS_DEVELOP_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/develop' METRICS_CURRENT_ROOT='${remote_run_dir}/results' bash -s" <<'EOF'
+              set -eu
+
+              if [ ! -f "$REPORT_SCRIPT" ]; then
+                echo "Missing report job script: $REPORT_SCRIPT" >&2
+                exit 1
+              fi
+
+              submit_out=$(
+                PIONEER_METRICS_RELEASE_ROOT="$METRICS_RELEASE_ROOT" \
+                PIONEER_METRICS_DEVELOP_ROOT="$METRICS_DEVELOP_ROOT" \
+                PIONEER_METRICS_CURRENT_ROOT="$METRICS_CURRENT_ROOT" \
+                PIONEER_REPORT_OUTPUT="$REPORT_OUTPUT" \
+                bsub < "$REPORT_SCRIPT"
+              )
+              printf '%s' "$submit_out"
+          EOF
+          )"
+
+          report_job_id=$(printf '%s\n' "$report_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
+
+          if [ -z "$report_job_id" ]; then
+            echo "Failed to parse report job ID from submission output:" >&2
+            printf '%s\n' "$report_submit" >&2
+            exit 1
+          fi
+
+          echo "REPORT_OUTPUT_PATH=${report_output_path}" >> "$GITHUB_ENV"
+
+          {
+            echo "## Report job submission"
+            echo "- Run directory: $remote_run_dir"
+            echo "- Report job ID: $report_job_id"
+            echo "- Report output: $report_output_path"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for regression report on shared storage
+        env:
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+          REPORT_OUTPUT_PATH: ${{ env.REPORT_OUTPUT_PATH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
+          report_path="${REPORT_OUTPUT_PATH:-${run_dir}/results/metrics_report.md}"
+          report_path="${report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
+
+          poll_interval=60
+          max_attempts=180
+          attempt=1
+
+          while [ "$attempt" -le "$max_attempts" ]; do
+            if [ -f "$report_path" ]; then
+              echo "Report found at $report_path"
+              {
+                echo "## Regression report"
+                echo "- Report path: $report_path"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+
+            echo "Waiting for report output (attempt ${attempt}/${max_attempts})..."
+            attempt=$((attempt + 1))
+            sleep "$poll_interval"
+          done
+
+          echo "Timeout waiting for regression report at $report_path" >&2
+          exit 1
+
+      - name: Comment regression report on pull request
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+          REPORT_OUTPUT_PATH: ${{ env.REPORT_OUTPUT_PATH }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = process.env.REPORT_OUTPUT_PATH;
+            if (!path) {
+              core.info('No report output path provided; skipping PR comment.');
+              return;
+            }
+            const reportPath = path.replace(process.env.CLUSTER_RUN_DIR, process.env.CLUSTER_RUN_DIR_MOUNT);
+            if (!fs.existsSync(reportPath)) {
+              core.info(`Report not found at ${reportPath}; skipping PR comment.`);
+              return;
+            }
+            const body = fs.readFileSync(reportPath, 'utf8');
+            const { owner, repo } = context.repo;
+            const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner,
+              repo,
+              commit_sha: context.sha,
+            });
+            if (!pulls.data.length) {
+              core.info('No PR associated with this commit; skipping comment.');
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: pulls.data[0].number,
+              body,
+            });
 
       - name: Submit cluster cleanup job
         if: always()
