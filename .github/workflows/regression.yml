@@ -127,6 +127,7 @@ jobs:
           pioneer_dir="${CLUSTER_PIONEER_DIR:-${remote_run_dir}/pioneer}"
           entrapment_dir="${CLUSTER_ENTRAPMENT_DIR:-${remote_run_dir}/PioneerEntrapment.jl}"
           params_dir="${remote_run_dir}/regression-configs/params"
+          regression_configs_dir="${remote_run_dir}/regression-configs"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
           setup_script_path="${remote_run_dir}/${SETUP_JOB_SCRIPT:-regression-configs/job_scripts/setup.bsub}"
           metrics_script_path="${remote_run_dir}/${METRICS_JOB_SCRIPT:-regression-configs/job_scripts/metrics.bsub}"
@@ -141,7 +142,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' ENTRAPMENT_DIR='${entrapment_dir}' PARAMS_DIR='${params_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' ENTRAPMENT_DIR='${entrapment_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' bash -s" <<'EOF'
             set -eu
 
             if [ ! -f "$SETUP_SCRIPT" ]; then
@@ -269,6 +270,7 @@ jobs:
                 PIONEER_PARAMS_DIR="$param_dataset_dir" \
                 PIONEER_METRICS_FILE="$metrics_file" \
                 PIONEER_EXPERIMENTAL_DESIGN="$exp_design_file" \
+                PIONEER_REGRESSION_CONFIGS_DIR="$REGRESSION_CONFIGS_DIR" \
                 PIONEER_ARCHIVE_ROOT="$RUN_DIR" \
                 bsub -w "$dep_expr" < "$METRICS_SCRIPT")
 
