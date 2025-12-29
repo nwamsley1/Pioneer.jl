@@ -494,7 +494,7 @@ jobs:
           report_path="${report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
           html_report_path="${REPORT_HTML_PATH:-${run_dir}/results/metrics_report.html}"
           html_report_path="${html_report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
-          pages_dir="${run_dir}/results"
+          pages_dir="$(dirname "$html_report_path")"
 
           poll_interval=60
           max_attempts=180
@@ -531,7 +531,7 @@ jobs:
           REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
         with:
           name: regression-efdr-html
-          path: ${{ env.REPORT_PAGES_DIR }}
+          path: ${{ env.REPORT_HTML_PATH_MOUNT }}
           if-no-files-found: warn
 
       - name: Upload regression report to Pages
