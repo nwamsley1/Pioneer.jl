@@ -425,6 +425,7 @@ jobs:
           fi
 
           report_output_path="${remote_run_dir}/results/metrics_report.md"
+          report_html_path="${remote_run_dir}/results/metrics_report.html"
 
           ssh_options=(
             -o BatchMode=yes
@@ -434,7 +435,7 @@ jobs:
           )
 
           report_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' REPORT_OUTPUT='${report_output_path}' METRICS_RELEASE_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/release' METRICS_DEVELOP_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/develop' METRICS_CURRENT_ROOT='${remote_run_dir}/results' PIONEER_REGRESSION_CONFIGS_DIR='${remote_run_dir}/regression-configs' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' REPORT_OUTPUT='${report_output_path}' REPORT_HTML_OUTPUT='${report_html_path}' METRICS_RELEASE_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/release' METRICS_DEVELOP_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/develop' METRICS_CURRENT_ROOT='${remote_run_dir}/results' PIONEER_REGRESSION_CONFIGS_DIR='${remote_run_dir}/regression-configs' bash -s" <<'EOF'
               set -eu
 
               if [ ! -f "$REPORT_SCRIPT" ]; then
@@ -447,6 +448,8 @@ jobs:
                 PIONEER_METRICS_DEVELOP_ROOT="$METRICS_DEVELOP_ROOT" \
                 PIONEER_METRICS_CURRENT_ROOT="$METRICS_CURRENT_ROOT" \
                 PIONEER_REPORT_OUTPUT="$REPORT_OUTPUT" \
+                PIONEER_HTML_REPORT_OUTPUT="$REPORT_HTML_OUTPUT" \
+                PIONEER_FDR_PLOTS_ROOT="$METRICS_CURRENT_ROOT" \
                 PIONEER_REGRESSION_CONFIGS_DIR="$PIONEER_REGRESSION_CONFIGS_DIR" \
                 bsub < "$REPORT_SCRIPT"
               )
@@ -463,6 +466,7 @@ jobs:
           fi
 
           echo "REPORT_OUTPUT_PATH=${report_output_path}" >> "$GITHUB_ENV"
+          echo "REPORT_HTML_PATH=${report_html_path}" >> "$GITHUB_ENV"
           echo "REPORT_JOB_ID=${report_job_id}" >> "$GITHUB_ENV"
 
           {
@@ -470,6 +474,7 @@ jobs:
             echo "- Run directory: $remote_run_dir"
             echo "- Report job ID: $report_job_id"
             echo "- Report output: $report_output_path"
+            echo "- HTML report output: $report_html_path"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Wait for regression report on shared storage
@@ -477,6 +482,7 @@ jobs:
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
           REPORT_OUTPUT_PATH: ${{ env.REPORT_OUTPUT_PATH }}
+          REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
         shell: bash
         run: |
           set -euo pipefail
@@ -484,17 +490,22 @@ jobs:
           run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
           report_path="${REPORT_OUTPUT_PATH:-${run_dir}/results/metrics_report.md}"
           report_path="${report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
+          html_report_path="${REPORT_HTML_PATH:-${run_dir}/results/metrics_report.html}"
+          html_report_path="${html_report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
 
           poll_interval=60
           max_attempts=180
           attempt=1
 
           while [ "$attempt" -le "$max_attempts" ]; do
-            if [ -f "$report_path" ]; then
+            if [ -f "$report_path" ] && [ -f "$html_report_path" ]; then
               echo "Report found at $report_path"
+              echo "REPORT_OUTPUT_PATH_MOUNT=${report_path}" >> "$GITHUB_ENV"
+              echo "REPORT_HTML_PATH_MOUNT=${html_report_path}" >> "$GITHUB_ENV"
               {
                 echo "## Regression report"
                 echo "- Report path: $report_path"
+                echo "- HTML report path: $html_report_path"
               } >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
@@ -507,6 +518,16 @@ jobs:
           echo "Timeout waiting for regression report at $report_path" >&2
           exit 1
 
+      - name: Upload regression HTML report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        env:
+          REPORT_HTML_PATH_MOUNT: ${{ env.REPORT_HTML_PATH_MOUNT }}
+        with:
+          name: regression-efdr-html
+          path: ${{ env.REPORT_HTML_PATH_MOUNT }}
+          if-no-files-found: warn
+
       - name: Comment regression report on pull request
         if: always()
         uses: actions/github-script@v7
@@ -514,20 +535,29 @@ jobs:
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
           REPORT_OUTPUT_PATH: ${{ env.REPORT_OUTPUT_PATH }}
+          REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
         with:
           script: |
             const fs = require('fs');
-            const path = process.env.REPORT_OUTPUT_PATH;
-            if (!path) {
+            const reportPathRaw = process.env.REPORT_OUTPUT_PATH;
+            if (!reportPathRaw) {
               core.info('No report output path provided; skipping PR comment.');
               return;
             }
-            const reportPath = path.replace(process.env.CLUSTER_RUN_DIR, process.env.CLUSTER_RUN_DIR_MOUNT);
+            const reportPath = reportPathRaw.replace(process.env.CLUSTER_RUN_DIR, process.env.CLUSTER_RUN_DIR_MOUNT);
             if (!fs.existsSync(reportPath)) {
               core.info(`Report not found at ${reportPath}; skipping PR comment.`);
               return;
             }
-            const body = fs.readFileSync(reportPath, 'utf8');
+            const reportBody = fs.readFileSync(reportPath, 'utf8');
+            const htmlPathRaw = process.env.REPORT_HTML_PATH || '';
+            const htmlPath = htmlPathRaw.replace(process.env.CLUSTER_RUN_DIR || '', process.env.CLUSTER_RUN_DIR_MOUNT || '');
+            const htmlAvailable = htmlPathRaw && fs.existsSync(htmlPath);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const htmlNote = htmlAvailable
+              ? `\n\n---\n\n**HTML eFDR report artifact**: \`regression-efdr-html\` (download from ${runUrl})`
+              : `\n\n---\n\n**HTML eFDR report artifact**: not available (file not found)`;
+            const body = `${reportBody}${htmlNote}`;
             const { owner, repo } = context.repo;
             const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
               owner,
