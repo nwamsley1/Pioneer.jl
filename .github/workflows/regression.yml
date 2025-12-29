@@ -232,11 +232,8 @@ jobs:
               dataset_name="$(basename "$dataset_dir")"
               job_list_file="$job_id_dir/${dataset_name}.search"
               metrics_file="$dataset_dir/metrics.json"
-              exp_design_file="$dataset_dir/experimental_design.json"
-
-              if [ ! -f "$exp_design_file" ]; then
-                exp_design_file=""
-              fi
+              # Experimental design files now live under params/<dataset>/experimental_design.json.
+              exp_design_root="$PARAMS_DIR"
 
               if [ ! -f "$metrics_file" ]; then
                 echo "Skipping dataset $dataset_name: missing metrics.json" >&2
@@ -273,7 +270,8 @@ jobs:
                 ENTRAPMENT_ANALYSES_PATH="$ENTRAPMENT_DIR" \
                 PIONEER_PARAMS_DIR="$param_dataset_dir" \
                 PIONEER_METRICS_FILE="$metrics_file" \
-                PIONEER_EXPERIMENTAL_DESIGN="$exp_design_file" \
+                PIONEER_EXPERIMENTAL_DESIGN="$exp_design_root" \
+                PIONEER_THREE_PROTEOME_DESIGNS="$exp_design_root" \
                 PIONEER_REGRESSION_CONFIGS_DIR="$REGRESSION_CONFIGS_DIR" \
                 PIONEER_ARCHIVE_ROOT="$RUN_DIR" \
                 bsub -w "$dep_expr" < "$METRICS_SCRIPT")
