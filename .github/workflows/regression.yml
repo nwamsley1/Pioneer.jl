@@ -197,16 +197,8 @@ jobs:
               if ! command -v python3 >/dev/null 2>&1; then
                 python_cmd="python"
               fi
-              dataset_filter=$("$python_cmd" - "$tags_path" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r") as handle:
-    data = json.load(handle)
-
-fast = [name for name, tags in data.items() if isinstance(tags, list) and "fast" in tags]
-print(",".join(fast))
-PY
+              dataset_filter=$(
+                "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); print(",".join([n for n,t in data.items() if isinstance(t, list) and "fast" in t]))' "$tags_path"
               )
             fi
 
