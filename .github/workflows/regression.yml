@@ -490,8 +490,6 @@ jobs:
           set -euo pipefail
 
           run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
-          report_path="${REPORT_OUTPUT_PATH:-${run_dir}/results/metrics_report.md}"
-          report_path="${report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
           html_report_path="${REPORT_HTML_PATH:-${run_dir}/results/metrics_report.html}"
           html_report_path="${html_report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
           pages_dir="$(dirname "$html_report_path")"
@@ -510,8 +508,8 @@ jobs:
           attempt=1
 
           while [ "$attempt" -le "$max_attempts" ]; do
-            if [ -f "$report_path" ] && [ -f "$html_report_path" ]; then
-              echo "Report found at $report_path"
+            if [ -f "$html_report_path" ]; then
+              echo "Report found at $html_report_path"
               rm -rf "$staging_dir"
               mkdir -p "$staging_dir"
               mkdir -p "${staging_dir}/${report_subdir}"
@@ -557,12 +555,11 @@ jobs:
                 echo "</body>"
                 echo "</html>"
               } > "${staging_dir}/index.html"
-              echo "REPORT_OUTPUT_PATH_MOUNT=${report_path}" >> "$GITHUB_ENV"
               echo "REPORT_HTML_PATH_MOUNT=${html_report_path}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
+              echo "REPORT_PAGES_SUBDIR=${report_subdir}" >> "$GITHUB_ENV"
               {
                 echo "## Regression report"
-                echo "- Report path: $report_path"
                 echo "- HTML report path: $html_report_path"
                 echo "- Pages directory: $staging_dir"
                 echo "- Pages index: ${staging_dir}/index.html"
@@ -576,7 +573,7 @@ jobs:
             sleep "$poll_interval"
           done
 
-          echo "Timeout waiting for regression report at $report_path" >&2
+          echo "Timeout waiting for regression report at $html_report_path" >&2
           exit 1
 
       - name: Upload regression HTML report artifact
@@ -609,28 +606,18 @@ jobs:
         env:
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
-          REPORT_OUTPUT_PATH: ${{ env.REPORT_OUTPUT_PATH }}
-          REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
           REPORT_PAGES_URL: ${{ steps.deploy_pages.outputs.page_url }}
+          REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
         with:
           script: |
-            const fs = require('fs');
-            const reportPathRaw = process.env.REPORT_OUTPUT_PATH;
-            if (!reportPathRaw) {
-              core.info('No report output path provided; skipping PR comment.');
-              return;
-            }
-            const reportPath = reportPathRaw.replace(process.env.CLUSTER_RUN_DIR, process.env.CLUSTER_RUN_DIR_MOUNT);
-            if (!fs.existsSync(reportPath)) {
-              core.info(`Report not found at ${reportPath}; skipping PR comment.`);
-              return;
-            }
-            const reportBody = fs.readFileSync(reportPath, 'utf8');
             const pagesUrl = process.env.REPORT_PAGES_URL;
-            const htmlNote = pagesUrl
-              ? `\n\n---\n\n**HTML eFDR report**: [Open report](${pagesUrl})`
-              : `\n\n---\n\n**HTML eFDR report**: not available (Pages URL missing)`;
-            const body = `${reportBody}${htmlNote}`;
+            const reportSubdir = process.env.REPORT_PAGES_SUBDIR || '';
+            if (!pagesUrl || !reportSubdir) {
+              core.info('Pages URL or report subdir missing; skipping PR comment.');
+              return;
+            }
+            const reportUrl = `${pagesUrl.replace(/\\/$/, '')}/${reportSubdir}/`;
+            const body = `**HTML eFDR report**: [Open report](${reportUrl})`;
             const { owner, repo } = context.repo;
             const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
               owner,
