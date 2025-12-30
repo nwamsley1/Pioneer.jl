@@ -493,8 +493,7 @@ jobs:
           html_report_path="${REPORT_HTML_PATH:-${run_dir}/results/metrics_report.html}"
           html_report_path="${html_report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
           pages_dir="$(dirname "$html_report_path")"
-          index_path="${pages_dir}/index.html"
-          staging_dir="${run_dir}/pages-staging"
+          staging_dir="${RUNNER_TEMP:-/tmp}/pages-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           fdr_plots_dir="${pages_dir}/fdr_plots"
           ref_name="${GITHUB_REF_NAME:-unknown}"
           ref_sanitized=$(printf '%s' "$ref_name" | tr '/ ' '__')
@@ -513,7 +512,6 @@ jobs:
               rm -rf "$staging_dir"
               mkdir -p "$staging_dir"
               mkdir -p "${staging_dir}/${report_subdir}"
-              cp "$html_report_path" "$index_path"
               cp "$html_report_path" "${staging_dir}/${report_subdir}/index.html"
               if [ -d "$fdr_plots_dir" ]; then
                 cp -R "$fdr_plots_dir" "${staging_dir}/${report_subdir}/fdr_plots"
@@ -555,7 +553,7 @@ jobs:
                 echo "</body>"
                 echo "</html>"
               } > "${staging_dir}/index.html"
-              echo "REPORT_HTML_PATH_MOUNT=${html_report_path}" >> "$GITHUB_ENV"
+              echo "REPORT_HTML_PATH_MOUNT=${staging_dir}/${report_subdir}/index.html" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_SUBDIR=${report_subdir}" >> "$GITHUB_ENV"
               {
