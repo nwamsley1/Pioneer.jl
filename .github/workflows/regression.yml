@@ -193,7 +193,21 @@ jobs:
                 echo "Missing dataset tags file at $tags_path" >&2
                 exit 1
               fi
-              dataset_filter=$(jq -r 'to_entries[] | select(.value | index("fast")) | .key' "$tags_path" | tr '\n' ',' | sed 's/,$//')
+              python_cmd="python3"
+              if ! command -v python3 >/dev/null 2>&1; then
+                python_cmd="python"
+              fi
+              dataset_filter=$("$python_cmd" - "$tags_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r") as handle:
+    data = json.load(handle)
+
+fast = [name for name, tags in data.items() if isinstance(tags, list) and "fast" in tags]
+print(",".join(fast))
+PY
+              )
             fi
 
             param_list=$(find "$PARAMS_DIR" -type f -name 'search*.json' -print)
