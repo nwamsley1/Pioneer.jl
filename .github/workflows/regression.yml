@@ -497,6 +497,7 @@ jobs:
           pages_dir="$(dirname "$html_report_path")"
           index_path="${pages_dir}/index.html"
           staging_dir="${run_dir}/pages-staging"
+          fdr_plots_dir="${pages_dir}/fdr_plots"
 
           poll_interval=60
           max_attempts=180
@@ -510,6 +511,9 @@ jobs:
               cp "$html_report_path" "$index_path"
               cp "$html_report_path" "${staging_dir}/metrics_report.html"
               cp "$html_report_path" "${staging_dir}/index.html"
+              if [ -d "$fdr_plots_dir" ]; then
+                cp -R "$fdr_plots_dir" "${staging_dir}/fdr_plots"
+              fi
               echo "REPORT_OUTPUT_PATH_MOUNT=${report_path}" >> "$GITHUB_ENV"
               echo "REPORT_HTML_PATH_MOUNT=${html_report_path}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
