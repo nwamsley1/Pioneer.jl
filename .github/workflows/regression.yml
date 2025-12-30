@@ -498,6 +498,12 @@ jobs:
           index_path="${pages_dir}/index.html"
           staging_dir="${run_dir}/pages-staging"
           fdr_plots_dir="${pages_dir}/fdr_plots"
+          ref_name="${GITHUB_REF_NAME:-unknown}"
+          ref_sanitized=$(printf '%s' "$ref_name" | tr '/ ' '__')
+          short_sha="$(printf '%s' "${GITHUB_SHA:-unknown}" | cut -c1-7)"
+          timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          report_subdir="reports/${ref_sanitized}/${GITHUB_SHA:-unknown}"
+          index_source="${run_dir%/*}/pages-index.tsv"
 
           poll_interval=60
           max_attempts=180
@@ -508,12 +514,49 @@ jobs:
               echo "Report found at $report_path"
               rm -rf "$staging_dir"
               mkdir -p "$staging_dir"
+              mkdir -p "${staging_dir}/${report_subdir}"
               cp "$html_report_path" "$index_path"
-              cp "$html_report_path" "${staging_dir}/metrics_report.html"
-              cp "$html_report_path" "${staging_dir}/index.html"
+              cp "$html_report_path" "${staging_dir}/${report_subdir}/index.html"
               if [ -d "$fdr_plots_dir" ]; then
-                cp -R "$fdr_plots_dir" "${staging_dir}/fdr_plots"
+                cp -R "$fdr_plots_dir" "${staging_dir}/${report_subdir}/fdr_plots"
               fi
+              printf '%s\t%s\t%s\t%s\n' "$timestamp" "$ref_name" "$short_sha" "$report_subdir" >> "$index_source"
+              {
+                echo "<!DOCTYPE html>"
+                echo "<html lang=\"en\">"
+                echo "<head>"
+                echo "<meta charset=\"UTF-8\">"
+                echo "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+                echo "<title>Regression Report Index</title>"
+                echo "<style>"
+                echo "body { font-family: Arial, sans-serif; margin: 24px; }"
+                echo "table { border-collapse: collapse; width: 100%; }"
+                echo "th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }"
+                echo "th { background-color: #f4f4f4; }"
+                echo "tr:nth-child(even) { background-color: #fafafa; }"
+                echo "</style>"
+                echo "</head>"
+                echo "<body>"
+                echo "<h1>Regression Reports</h1>"
+                echo "<table>"
+                echo "<thead><tr><th>Date (UTC)</th><th>Branch</th><th>Commit</th><th>Report</th></tr></thead>"
+                echo "<tbody>"
+                if [ -f "$index_source" ]; then
+                  tac "$index_source" | while IFS=$'\t' read -r entry_date entry_branch entry_sha entry_path; do
+                    [ -n "$entry_date" ] || continue
+                    echo "<tr>"
+                    echo "<td>${entry_date}</td>"
+                    echo "<td>${entry_branch}</td>"
+                    echo "<td>${entry_sha}</td>"
+                    echo "<td><a href=\"${entry_path}/\">Open report</a></td>"
+                    echo "</tr>"
+                  done
+                fi
+                echo "</tbody>"
+                echo "</table>"
+                echo "</body>"
+                echo "</html>"
+              } > "${staging_dir}/index.html"
               echo "REPORT_OUTPUT_PATH_MOUNT=${report_path}" >> "$GITHUB_ENV"
               echo "REPORT_HTML_PATH_MOUNT=${html_report_path}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
@@ -523,6 +566,7 @@ jobs:
                 echo "- HTML report path: $html_report_path"
                 echo "- Pages directory: $staging_dir"
                 echo "- Pages index: ${staging_dir}/index.html"
+                echo "- Pages report path: ${report_subdir}/index.html"
               } >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
