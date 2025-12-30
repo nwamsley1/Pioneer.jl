@@ -31,32 +31,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Load dataset selection
-        env:
-          DATASET_SET: ${{ inputs.dataset_set || 'all' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ ! -d /workspace/pioneer-regression-configs ]; then
-            git clone https://github.com/GoldfarbLab/pioneer-regression-configs /workspace/pioneer-regression-configs
-          fi
-
-          tags_path="/workspace/pioneer-regression-configs/params/dataset_tags.json"
-          if [ ! -f "$tags_path" ]; then
-            echo "Missing dataset tags file at $tags_path" >&2
-            exit 1
-          fi
-
-          # dataset_tags.json schema: { "dataset-name": ["tag1", "tag2", ...], ... }
-          if [ "$DATASET_SET" = "fast" ]; then
-            dataset_filter=$(jq -r 'to_entries[] | select(.value | index("fast")) | .key' "$tags_path" | tr '\n' ',' | sed 's/,$//')
-          else
-            dataset_filter=""
-          fi
-
-          echo "DATASET_FILTER=${dataset_filter}" >> "$GITHUB_ENV"
-
       - name: Configure SSH for cluster access
         env:
           CLUSTER_SSH_KEY: ${{ secrets.CLUSTER_SSH_KEY }}
@@ -157,7 +131,7 @@ jobs:
           REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
           SETUP_JOB_SCRIPT: ${{ vars.SETUP_JOB_SCRIPT }}
           METRICS_JOB_SCRIPT: ${{ vars.METRICS_JOB_SCRIPT }}
-          DATASET_FILTER: ${{ env.DATASET_FILTER }}
+          DATASET_SET: ${{ inputs.dataset_set || 'all' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -174,7 +148,7 @@ jobs:
           metrics_script_path="${remote_run_dir}/${METRICS_JOB_SCRIPT:-regression-configs/job_scripts/metrics.bsub}"
           adjusted_params_dir="${remote_run_dir}/adjusted-params"
           run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          dataset_filter="${DATASET_FILTER:-}"
+          dataset_set="${DATASET_SET:-all}"
 
           ssh_options=(
             -o BatchMode=yes
@@ -184,7 +158,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' ENTRAPMENT_DIR='${entrapment_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' DATASET_FILTER='${dataset_filter}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' ENTRAPMENT_DIR='${entrapment_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' DATASET_SET='${dataset_set}' bash -s" <<'EOF'
             set -eu
 
             if [ ! -f "$SETUP_SCRIPT" ]; then
@@ -211,6 +185,17 @@ jobs:
               exit 1
             fi
 
+            dataset_filter=""
+            # dataset_tags.json schema: { "dataset-name": ["tag1", "tag2", ...], ... }
+            if [ "${DATASET_SET:-all}" = "fast" ]; then
+              tags_path="${REGRESSION_CONFIGS_DIR}/params/dataset_tags.json"
+              if [ ! -f "$tags_path" ]; then
+                echo "Missing dataset tags file at $tags_path" >&2
+                exit 1
+              fi
+              dataset_filter=$(jq -r 'to_entries[] | select(.value | index("fast")) | .key' "$tags_path" | tr '\n' ',' | sed 's/,$//')
+            fi
+
             param_list=$(find "$PARAMS_DIR" -type f -name 'search*.json' -print)
 
             if [ -z "$param_list" ]; then
@@ -230,9 +215,9 @@ jobs:
               search_name="$(basename "${rel_path%.*}")"
               adjusted_path="$ADJUSTED_PARAMS_DIR/$rel_path"
               mkdir -p "$(dirname "$adjusted_path")"
-              if [ -n "${DATASET_FILTER:-}" ]; then
+              if [ -n "${dataset_filter:-}" ]; then
                 dataset_allowed=0
-                IFS=',' read -r -a allowed_datasets <<< "$DATASET_FILTER"
+                IFS=',' read -r -a allowed_datasets <<< "$dataset_filter"
                 for allowed in "${allowed_datasets[@]}"; do
                   if [ "$dataset_dir_name" = "$allowed" ]; then
                     dataset_allowed=1
@@ -273,9 +258,9 @@ jobs:
             done
 
             dataset_dirs=$(find "$PARAMS_DIR" -mindepth 1 -maxdepth 1 -type d -print)
-            if [ -n "${DATASET_FILTER:-}" ]; then
+            if [ -n "${dataset_filter:-}" ]; then
               filtered_dirs=()
-              IFS=',' read -r -a allowed_datasets <<< "$DATASET_FILTER"
+              IFS=',' read -r -a allowed_datasets <<< "$dataset_filter"
               for dataset_dir in $dataset_dirs; do
                 dataset_name="$(basename "$dataset_dir")"
                 for allowed in "${allowed_datasets[@]}"; do
