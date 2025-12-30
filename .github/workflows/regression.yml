@@ -496,6 +496,7 @@ jobs:
           html_report_path="${html_report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
           pages_dir="$(dirname "$html_report_path")"
           index_path="${pages_dir}/index.html"
+          staging_dir="${run_dir}/pages-staging"
 
           poll_interval=60
           max_attempts=180
@@ -504,16 +505,20 @@ jobs:
           while [ "$attempt" -le "$max_attempts" ]; do
             if [ -f "$report_path" ] && [ -f "$html_report_path" ]; then
               echo "Report found at $report_path"
+              rm -rf "$staging_dir"
+              mkdir -p "$staging_dir"
+              cp "$html_report_path" "$index_path"
+              cp "$html_report_path" "${staging_dir}/metrics_report.html"
+              cp "$html_report_path" "${staging_dir}/index.html"
               echo "REPORT_OUTPUT_PATH_MOUNT=${report_path}" >> "$GITHUB_ENV"
               echo "REPORT_HTML_PATH_MOUNT=${html_report_path}" >> "$GITHUB_ENV"
-              echo "REPORT_PAGES_DIR=${pages_dir}" >> "$GITHUB_ENV"
-              cp "$html_report_path" "$index_path"
+              echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
               {
                 echo "## Regression report"
                 echo "- Report path: $report_path"
                 echo "- HTML report path: $html_report_path"
-                echo "- Pages directory: $pages_dir"
-                echo "- Pages index: $index_path"
+                echo "- Pages directory: $staging_dir"
+                echo "- Pages index: ${staging_dir}/index.html"
               } >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
