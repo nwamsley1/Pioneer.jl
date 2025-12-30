@@ -616,7 +616,8 @@ jobs:
               core.info('Pages URL or report subdir missing; skipping PR comment.');
               return;
             }
-            const reportUrl = `${pagesUrl.replace(/\\/$/, '')}/${reportSubdir}/`;
+            const normalizedBase = pagesUrl.endsWith('/') ? pagesUrl.slice(0, -1) : pagesUrl;
+            const reportUrl = `${normalizedBase}/${reportSubdir}/`;
             const body = `**HTML eFDR report**: [Open report](${reportUrl})`;
             const { owner, repo } = context.repo;
             const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
