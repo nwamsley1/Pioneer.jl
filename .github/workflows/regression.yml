@@ -10,7 +10,8 @@ on:
         options:
           - all
           - fast
-        default: fast
+          - test
+        default: test
 
 permissions:
   contents: read
@@ -187,7 +188,8 @@ jobs:
 
             dataset_filter=""
             # dataset_tags.json schema: { "dataset-name": ["tag1", "tag2", ...], ... }
-            if [ "${DATASET_SET:-all}" = "fast" ]; then
+            if [ "${DATASET_SET:-all}" != "all" ]; then
+              dataset_tag="${DATASET_SET}"
               tags_path="${REGRESSION_CONFIGS_DIR}/params/dataset_tags.json"
               if [ ! -f "$tags_path" ]; then
                 echo "Missing dataset tags file at $tags_path" >&2
@@ -202,10 +204,10 @@ jobs:
                 exit 1
               fi
               dataset_filter=$(
-                "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); datasets=data.get("datasets", {}); print(",".join([n for n,v in datasets.items() if isinstance(v, dict) and "fast" in (v.get("tags") or [])]))' "$tags_path"
+                "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); datasets=data.get("datasets", {}); tag=sys.argv[2]; print(",".join([n for n,v in datasets.items() if isinstance(v, dict) and tag in (v.get("tags") or [])]))' "$tags_path" "$dataset_tag"
               )
               if [ -z "$dataset_filter" ]; then
-                echo "No datasets tagged 'fast' in $tags_path" >&2
+                echo "No datasets tagged '${dataset_tag}' in $tags_path" >&2
                 exit 1
               fi
             fi
