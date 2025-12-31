@@ -202,7 +202,7 @@ jobs:
                 exit 1
               fi
               dataset_filter=$(
-                "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); print(",".join([n for n,t in data.items() if isinstance(t, list) and "fast" in t]))' "$tags_path"
+                "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); datasets=data.get("datasets", {}); print(",".join([n for n,v in datasets.items() if isinstance(v, dict) and "fast" in (v.get("tags") or [])]))' "$tags_path"
               )
               if [ -z "$dataset_filter" ]; then
                 echo "No datasets tagged 'fast' in $tags_path" >&2
