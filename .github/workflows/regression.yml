@@ -680,7 +680,7 @@ jobs:
             }
             const normalizedBase = pagesUrl.endsWith('/') ? pagesUrl.slice(0, -1) : pagesUrl;
             const reportUrl = `${normalizedBase}/${reportSubdir}/`;
-            const body = `**HTML eFDR report**: <a href="${reportUrl}" target="_blank" rel="noopener noreferrer">Open report</a>`;
+            const body = `**Regression metrics report**: <a href="${reportUrl}" target="_blank" rel="noopener noreferrer">Open report</a>`;
             const { owner, repo } = context.repo;
             const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
               owner,
