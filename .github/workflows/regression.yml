@@ -11,6 +11,7 @@ on:
           - all
           - fast
           - test
+          - fastest
         default: test
 
 permissions:
