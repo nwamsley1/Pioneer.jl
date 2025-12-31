@@ -197,10 +197,20 @@ jobs:
               if ! command -v python3 >/dev/null 2>&1; then
                 python_cmd="python"
               fi
+              if ! command -v "$python_cmd" >/dev/null 2>&1; then
+                echo "Python not available on cluster; cannot parse dataset tags." >&2
+                exit 1
+              fi
               dataset_filter=$(
                 "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); print(",".join([n for n,t in data.items() if isinstance(t, list) and "fast" in t]))' "$tags_path"
               )
+              if [ -z "$dataset_filter" ]; then
+                echo "No datasets tagged 'fast' in $tags_path" >&2
+                exit 1
+              fi
             fi
+            echo "Dataset set: ${DATASET_SET:-all}"
+            echo "Dataset filter: ${dataset_filter:-<all>}"
 
             param_list=$(find "$PARAMS_DIR" -type f -name 'search*.json' -print)
 
