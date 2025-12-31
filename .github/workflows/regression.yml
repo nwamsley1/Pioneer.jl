@@ -10,7 +10,7 @@ on:
         options:
           - all
           - fast
-        default: all
+        default: fast
 
 permissions:
   contents: read
