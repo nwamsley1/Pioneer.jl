@@ -82,8 +82,6 @@ jobs:
           echo "CLUSTER_RUN_DIR=${remote_run_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_RUN_DIR_MOUNT=${mount_run_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_RUN_SUFFIX=${run_suffix}" >> "$GITHUB_ENV"
-          echo "CLUSTER_PIONEER_DIR=${pioneer_dir}" >> "$GITHUB_ENV"
-          echo "CLUSTER_ENTRAPMENT_DIR=${entrapment_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_DEPOT_DIR=${depot_dir}" >> "$GITHUB_ENV"
 
           ssh_options=(
@@ -128,8 +126,6 @@ jobs:
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
-          CLUSTER_PIONEER_DIR: ${{ env.CLUSTER_PIONEER_DIR }}
-          CLUSTER_ENTRAPMENT_DIR: ${{ env.CLUSTER_ENTRAPMENT_DIR }}
           REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
           SETUP_JOB_SCRIPT: ${{ vars.SETUP_JOB_SCRIPT }}
           METRICS_JOB_SCRIPT: ${{ vars.METRICS_JOB_SCRIPT }}
@@ -141,8 +137,6 @@ jobs:
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
           remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
           mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
-          pioneer_dir="${CLUSTER_PIONEER_DIR:-${remote_run_dir}/pioneer}"
-          entrapment_dir="${CLUSTER_ENTRAPMENT_DIR:-${remote_run_dir}/PioneerEntrapment.jl}"
           params_dir="${remote_run_dir}/regression-configs/params"
           regression_configs_dir="${remote_run_dir}/regression-configs"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
@@ -160,7 +154,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' ENTRAPMENT_DIR='${entrapment_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' DATASET_SET='${dataset_set}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' DATASET_SET='${dataset_set}' bash -s" <<'EOF'
             set -eu
 
             if [ ! -f "$SETUP_SCRIPT" ]; then
@@ -178,7 +172,7 @@ jobs:
               exit 1
             fi
 
-            setup_submit=$(PIONEER_ARCHIVE_ROOT="$RUN_DIR" PIONEER_REGRESSION_CONFIGS_DIR="$RUN_DIR/regression-configs" bsub < "$SETUP_SCRIPT")
+            setup_submit=$(RUN_DIR="$RUN_DIR" bsub < "$SETUP_SCRIPT")
             setup_job_id=$(printf '%s\n' "$setup_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
             if [ -z "$setup_job_id" ]; then
@@ -233,7 +227,7 @@ jobs:
               dataset_dir_name="${rel_path%%/*}"
               search_name="$(basename "${rel_path%.*}")"
               adjusted_path="$ADJUSTED_PARAMS_DIR/$rel_path"
-              param_basename="$(basename "$adjusted_path")"
+              param_basename="$(basename "$param_file")"
               mkdir -p "$(dirname "$adjusted_path")"
               if [ -n "${dataset_filter:-}" ]; then
                 dataset_allowed=0
@@ -265,7 +259,7 @@ jobs:
 
               echo "${dataset_name}" >> "$manifest_file"
 
-              search_submit=$(PIONEER_ARCHIVE_ROOT="$RUN_DIR" PIONEER_DATASET_NAME="$dataset_dir_name" PARAM_FILE="$param_basename" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT")
+              search_submit=$(RUN_DIR="$RUN_DIR" PIONEER_DATASET_NAME="$dataset_dir_name" PARAM_FILE="$param_basename" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT")
               search_job_id=$(printf '%s\n' "$search_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
               if [ -z "$search_job_id" ]; then
@@ -334,10 +328,8 @@ jobs:
               fi
 
               metrics_submit=$(\
-                ENTRAPMENT_ANALYSES_PATH="$ENTRAPMENT_DIR" \
-                PIONEER_ARCHIVE_ROOT="$RUN_DIR" \
+                RUN_DIR="$RUN_DIR" \
                 PIONEER_DATASET_NAME="$dataset_name" \
-                PIONEER_REGRESSION_CONFIGS_DIR="$REGRESSION_CONFIGS_DIR" \
                 bsub -w "$dep_expr" < "$METRICS_SCRIPT")
 
               metrics_job_id=$(printf '%s\n' "$metrics_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
@@ -488,7 +480,6 @@ jobs:
             report_script_path="${remote_run_dir}/${report_script_path}"
           fi
 
-          report_output_path="${remote_run_dir}/results/metrics_report.md"
           report_html_path="${remote_run_dir}/results/metrics_report.html"
 
           ssh_options=(
@@ -499,7 +490,7 @@ jobs:
           )
 
           report_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' REPORT_OUTPUT='${report_output_path}' REPORT_HTML_OUTPUT='${report_html_path}' METRICS_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics' PIONEER_REGRESSION_CONFIGS_DIR='${remote_run_dir}/regression-configs' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' bash -s" <<'EOF'
               set -eu
 
               if [ ! -f "$REPORT_SCRIPT" ]; then
@@ -507,13 +498,7 @@ jobs:
                 exit 1
               fi
 
-              submit_out=$(
-                PIONEER_METRICS_ROOT="$METRICS_ROOT" \
-                PIONEER_REPORT_OUTPUT="$REPORT_OUTPUT" \
-                PIONEER_HTML_REPORT_OUTPUT="$REPORT_HTML_OUTPUT" \
-                PIONEER_REGRESSION_CONFIGS_DIR="$PIONEER_REGRESSION_CONFIGS_DIR" \
-                bsub < "$REPORT_SCRIPT"
-              )
+              submit_out=$(RUN_DIR="$RUN_DIR" bsub < "$REPORT_SCRIPT")
               printf '%s' "$submit_out"
           EOF
           )"
@@ -526,7 +511,6 @@ jobs:
             exit 1
           fi
 
-          echo "REPORT_OUTPUT_PATH=${report_output_path}" >> "$GITHUB_ENV"
           echo "REPORT_HTML_PATH=${report_html_path}" >> "$GITHUB_ENV"
           echo "REPORT_JOB_ID=${report_job_id}" >> "$GITHUB_ENV"
 
@@ -534,7 +518,6 @@ jobs:
             echo "## Report job submission"
             echo "- Run directory: $remote_run_dir"
             echo "- Report job ID: $report_job_id"
-            echo "- Report output: $report_output_path"
             echo "- HTML report output: $report_html_path"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -542,7 +525,6 @@ jobs:
         env:
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
-          REPORT_OUTPUT_PATH: ${{ env.REPORT_OUTPUT_PATH }}
           REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
         shell: bash
         run: |
