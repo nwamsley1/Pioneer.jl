@@ -178,7 +178,7 @@ jobs:
               exit 1
             fi
 
-            setup_submit=$(PIONEER_DIR="$PIONEER_DIR" PIONEER_ENTRAPMENT_DIR="$ENTRAPMENT_DIR" PIONEER_REGRESSION_CONFIGS_DIR="$RUN_DIR/regression-configs" bsub < "$SETUP_SCRIPT")
+            setup_submit=$(PIONEER_ARCHIVE_ROOT="$RUN_DIR" PIONEER_REGRESSION_CONFIGS_DIR="$RUN_DIR/regression-configs" bsub < "$SETUP_SCRIPT")
             setup_job_id=$(printf '%s\n' "$setup_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
             if [ -z "$setup_job_id" ]; then
@@ -233,6 +233,7 @@ jobs:
               dataset_dir_name="${rel_path%%/*}"
               search_name="$(basename "${rel_path%.*}")"
               adjusted_path="$ADJUSTED_PARAMS_DIR/$rel_path"
+              param_basename="$(basename "$adjusted_path")"
               mkdir -p "$(dirname "$adjusted_path")"
               if [ -n "${dataset_filter:-}" ]; then
                 dataset_allowed=0
@@ -264,7 +265,7 @@ jobs:
 
               echo "${dataset_name}" >> "$manifest_file"
 
-              search_submit=$(PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$adjusted_path" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT")
+              search_submit=$(PIONEER_ARCHIVE_ROOT="$RUN_DIR" PIONEER_DATASET_NAME="$dataset_dir_name" PARAM_FILE="$param_basename" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT")
               search_job_id=$(printf '%s\n' "$search_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
               if [ -z "$search_job_id" ]; then
@@ -301,8 +302,6 @@ jobs:
               dataset_name="$(basename "$dataset_dir")"
               job_list_file="$job_id_dir/${dataset_name}.search"
               metrics_file="$dataset_dir/metrics.json"
-              # Experimental design files now live under params/<dataset>/experimental_design.json.
-              exp_design_root="$PARAMS_DIR"
 
               if [ ! -f "$metrics_file" ]; then
                 echo "Skipping dataset $dataset_name: missing metrics.json" >&2
@@ -335,14 +334,10 @@ jobs:
               fi
 
               metrics_submit=$(\
-                PIONEER_DIR="$PIONEER_DIR" \
                 ENTRAPMENT_ANALYSES_PATH="$ENTRAPMENT_DIR" \
-                PIONEER_PARAMS_DIR="$param_dataset_dir" \
-                PIONEER_METRICS_FILE="$metrics_file" \
-                PIONEER_EXPERIMENTAL_DESIGN="$exp_design_root" \
-                PIONEER_THREE_PROTEOME_DESIGNS="$exp_design_root" \
-                PIONEER_REGRESSION_CONFIGS_DIR="$REGRESSION_CONFIGS_DIR" \
                 PIONEER_ARCHIVE_ROOT="$RUN_DIR" \
+                PIONEER_DATASET_NAME="$dataset_name" \
+                PIONEER_REGRESSION_CONFIGS_DIR="$REGRESSION_CONFIGS_DIR" \
                 bsub -w "$dep_expr" < "$METRICS_SCRIPT")
 
               metrics_job_id=$(printf '%s\n' "$metrics_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
@@ -504,7 +499,7 @@ jobs:
           )
 
           report_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' REPORT_OUTPUT='${report_output_path}' REPORT_HTML_OUTPUT='${report_html_path}' METRICS_RELEASE_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/release' METRICS_DEVELOP_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics/develop' METRICS_CURRENT_ROOT='${remote_run_dir}/results' PIONEER_REGRESSION_CONFIGS_DIR='${remote_run_dir}/regression-configs' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' REPORT_OUTPUT='${report_output_path}' REPORT_HTML_OUTPUT='${report_html_path}' METRICS_ROOT='/storage1/fs1/d.goldfarb/Active/Automation/Pioneer/metrics' PIONEER_REGRESSION_CONFIGS_DIR='${remote_run_dir}/regression-configs' bash -s" <<'EOF'
               set -eu
 
               if [ ! -f "$REPORT_SCRIPT" ]; then
@@ -513,12 +508,9 @@ jobs:
               fi
 
               submit_out=$(
-                PIONEER_METRICS_RELEASE_ROOT="$METRICS_RELEASE_ROOT" \
-                PIONEER_METRICS_DEVELOP_ROOT="$METRICS_DEVELOP_ROOT" \
-                PIONEER_METRICS_CURRENT_ROOT="$METRICS_CURRENT_ROOT" \
+                PIONEER_METRICS_ROOT="$METRICS_ROOT" \
                 PIONEER_REPORT_OUTPUT="$REPORT_OUTPUT" \
                 PIONEER_HTML_REPORT_OUTPUT="$REPORT_HTML_OUTPUT" \
-                PIONEER_FDR_PLOTS_ROOT="$METRICS_CURRENT_ROOT" \
                 PIONEER_REGRESSION_CONFIGS_DIR="$PIONEER_REGRESSION_CONFIGS_DIR" \
                 bsub < "$REPORT_SCRIPT"
               )
