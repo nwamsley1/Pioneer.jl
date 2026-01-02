@@ -547,6 +547,7 @@ jobs:
               echo "Report found at $html_report_path"
               echo "REPORT_PAGES_SUBDIR=${report_subdir}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_STAGING_DIR=${staging_dir}" >> "$GITHUB_ENV"
+              echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
               {
                 echo "## Regression report"
                 echo "- HTML report path: $html_report_path"
@@ -564,7 +565,7 @@ jobs:
           exit 1
 
       - name: Upload regression HTML report artifact
-        if: env.REPORT_PAGES_DIR != ''
+        if: env.REPORT_PAGES_STAGING_DIR != ''
         uses: actions/upload-artifact@v4
         env:
           REPORT_HTML_PATH_MOUNT: ${{ env.REPORT_HTML_PATH_MOUNT }}
@@ -575,7 +576,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Update gh-pages site on cluster
-        if: env.REPORT_PAGES_DIR != ''
+        if: env.REPORT_PAGES_STAGING_DIR != ''
         env:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
