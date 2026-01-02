@@ -17,16 +17,12 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  pages: write
-  id-token: write
 
 jobs:
   regression:
     name: Julia ${{ matrix.version }} regression sweep
     runs-on: [self-hosted, Linux, pioneer-regression]
     timeout-minutes: 7200
-    environment:
-      name: github-pages
     strategy:
       matrix:
         version: ['1.11']
@@ -720,26 +716,13 @@ jobs:
           path: ${{ env.REPORT_PAGES_DIR }}
           if-no-files-found: warn
 
-      - name: Upload regression report to Pages
-        if: env.REPORT_PAGES_DIR != ''
-        uses: actions/upload-pages-artifact@v3
-        env:
-          REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
-        with:
-          path: ${{ env.REPORT_PAGES_DIR }}
-
-      - name: Deploy regression report to Pages
-        if: env.REPORT_PAGES_DIR != ''
-        id: deploy_pages
-        uses: actions/deploy-pages@v4
-
       - name: Comment regression report on pull request
         if: always()
         uses: actions/github-script@v7
         env:
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
-          REPORT_PAGES_URL: ${{ steps.deploy_pages.outputs.page_url }}
+          REPORT_PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
           REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
         with:
           script: |
