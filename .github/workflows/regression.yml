@@ -15,7 +15,7 @@ on:
         default: test
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   pages: write
   id-token: write
@@ -596,11 +596,12 @@ jobs:
           staging_dir="${REPORT_PAGES_DIR:?REPORT_PAGES_DIR not set}"
           repo_root="${GITHUB_WORKSPACE:-$PWD}"
           pages_worktree="${RUNNER_TEMP:-/tmp}/pages-existing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          history_branch="pages-history"
 
           if git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
-            if git -C "$repo_root" fetch origin gh-pages:refs/remotes/origin/gh-pages; then
+            if git -C "$repo_root" fetch origin "$history_branch:refs/remotes/origin/$history_branch"; then
               rm -rf "$pages_worktree"
-              git -C "$repo_root" worktree add "$pages_worktree" origin/gh-pages
+              git -C "$repo_root" worktree add "$pages_worktree" "origin/${history_branch}"
               if [ -d "$pages_worktree/reports" ]; then
                 mkdir -p "$staging_dir/reports"
                 rsync -a --ignore-existing "$pages_worktree/reports/" "$staging_dir/reports/"
@@ -658,6 +659,35 @@ jobs:
             echo "</body>"
             echo "</html>"
           } > "${staging_dir}/index.html"
+
+      - name: Persist Pages history branch
+        if: env.REPORT_PAGES_DIR != ''
+        env:
+          REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          staging_dir="${REPORT_PAGES_DIR:?REPORT_PAGES_DIR not set}"
+          history_dir="${RUNNER_TEMP:-/tmp}/pages-history-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          history_branch="pages-history"
+
+          rm -rf "$history_dir"
+          mkdir -p "$history_dir"
+          git -C "$history_dir" init -q
+          git -C "$history_dir" checkout -b "$history_branch"
+          rsync -a --delete "${staging_dir}/" "$history_dir/"
+          git -C "$history_dir" add -A
+
+          if git -C "$history_dir" diff --cached --quiet; then
+            echo "No Pages history updates to push."
+            exit 0
+          fi
+
+          git -C "$history_dir" -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "Update Pages history from ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git -C "$history_dir" remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$history_dir" push -f origin "$history_branch"
 
       - name: Upload regression report to Pages
         if: env.REPORT_PAGES_DIR != ''
