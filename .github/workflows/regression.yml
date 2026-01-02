@@ -554,55 +554,6 @@ jobs:
               if [ -d "$fdr_plots_dir" ]; then
                 cp -R "$fdr_plots_dir" "${staging_dir}/${report_subdir}/fdr_plots"
               fi
-              {
-                echo "<!DOCTYPE html>"
-                echo "<html lang=\"en\">"
-                echo "<head>"
-                echo "<meta charset=\"UTF-8\">"
-                echo "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
-                echo "<title>Regression Report Index</title>"
-                echo "<style>"
-                echo "body { font-family: Arial, sans-serif; margin: 24px; }"
-                echo "table { border-collapse: collapse; width: 100%; }"
-                echo "th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }"
-                echo "th { background-color: #f4f4f4; }"
-                echo "tr:nth-child(even) { background-color: #fafafa; }"
-                echo "</style>"
-                echo "</head>"
-                echo "<body>"
-                echo "<h1>Regression Reports</h1>"
-                echo "<table>"
-                echo "<thead><tr><th>Date (UTC)</th><th>Branch</th><th>Commit</th><th>Report</th></tr></thead>"
-                echo "<tbody>"
-                if [ -d "${staging_dir}/reports" ]; then
-                  report_entries=$(
-                    find "${staging_dir}/reports" -type f -name index.html -print0 | while IFS= read -r -d '' report_file; do
-                      report_rel="${report_file#${staging_dir}/}"
-                      report_dir="$(dirname "$report_rel")"
-                      report_key="${report_dir#reports/}"
-                      report_branch="${report_key%%/*}"
-                      report_sha="${report_key#*/}"
-                      report_sha="${report_sha%%/*}"
-                      report_epoch=$(stat -c %Y "$report_file")
-                      report_date=$(date -u -d "@${report_epoch}" +'%Y-%m-%dT%H:%M:%SZ')
-                      printf '%s\t%s\t%s\t%s\t%s\n' "$report_epoch" "$report_date" "$report_branch" "$report_sha" "$report_dir"
-                    done | sort -nr -k1,1
-                  )
-                  printf '%s\n' "$report_entries" | while IFS=$'\t' read -r _ entry_date entry_branch entry_sha entry_path; do
-                    [ -n "$entry_date" ] || continue
-                    echo "<tr>"
-                    echo "<td>${entry_date}</td>"
-                    echo "<td>${entry_branch}</td>"
-                    echo "<td>${entry_sha}</td>"
-                    echo "<td><a href=\"${entry_path}/\">Open report</a></td>"
-                    echo "</tr>"
-                  done
-                fi
-                echo "</tbody>"
-                echo "</table>"
-                echo "</body>"
-                echo "</html>"
-              } > "${staging_dir}/index.html"
               echo "REPORT_HTML_PATH_MOUNT=${staging_dir}/${report_subdir}/index.html" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_SUBDIR=${report_subdir}" >> "$GITHUB_ENV"
@@ -610,7 +561,6 @@ jobs:
                 echo "## Regression report"
                 echo "- HTML report path: $html_report_path"
                 echo "- Pages directory: $staging_dir"
-                echo "- Pages index: ${staging_dir}/index.html"
                 echo "- Pages report path: ${report_subdir}/index.html"
               } >> "$GITHUB_STEP_SUMMARY"
               exit 0
@@ -634,6 +584,80 @@ jobs:
           name: regression-efdr-html
           path: ${{ env.REPORT_HTML_PATH_MOUNT }}
           if-no-files-found: warn
+
+      - name: Merge historical Pages reports and build index
+        if: env.REPORT_PAGES_DIR != ''
+        env:
+          REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          staging_dir="${REPORT_PAGES_DIR:?REPORT_PAGES_DIR not set}"
+          repo_root="${GITHUB_WORKSPACE:-$PWD}"
+          pages_worktree="${RUNNER_TEMP:-/tmp}/pages-existing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          if git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
+            if git -C "$repo_root" fetch origin gh-pages:refs/remotes/origin/gh-pages; then
+              rm -rf "$pages_worktree"
+              git -C "$repo_root" worktree add "$pages_worktree" origin/gh-pages
+              if [ -d "$pages_worktree/reports" ]; then
+                mkdir -p "$staging_dir/reports"
+                rsync -a --ignore-existing "$pages_worktree/reports/" "$staging_dir/reports/"
+              fi
+              git -C "$repo_root" worktree remove "$pages_worktree"
+            fi
+          fi
+
+          {
+            echo "<!DOCTYPE html>"
+            echo "<html lang=\"en\">"
+            echo "<head>"
+            echo "<meta charset=\"UTF-8\">"
+            echo "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+            echo "<title>Regression Report Index</title>"
+            echo "<style>"
+            echo "body { font-family: Arial, sans-serif; margin: 24px; }"
+            echo "table { border-collapse: collapse; width: 100%; }"
+            echo "th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }"
+            echo "th { background-color: #f4f4f4; }"
+            echo "tr:nth-child(even) { background-color: #fafafa; }"
+            echo "</style>"
+            echo "</head>"
+            echo "<body>"
+            echo "<h1>Regression Reports</h1>"
+            echo "<table>"
+            echo "<thead><tr><th>Date (UTC)</th><th>Branch</th><th>Commit</th><th>Report</th></tr></thead>"
+            echo "<tbody>"
+            if [ -d "${staging_dir}/reports" ]; then
+              report_entries=$(
+                find "${staging_dir}/reports" -type f -name index.html -print0 | while IFS= read -r -d '' report_file; do
+                  report_rel="${report_file#${staging_dir}/}"
+                  report_dir="$(dirname "$report_rel")"
+                  report_key="${report_dir#reports/}"
+                  report_branch="${report_key%%/*}"
+                  report_sha="${report_key#*/}"
+                  report_sha="${report_sha%%/*}"
+                  report_epoch=$(stat -c %Y "$report_file")
+                  report_date=$(date -u -d "@${report_epoch}" +'%Y-%m-%dT%H:%M:%SZ')
+                  printf '%s\t%s\t%s\t%s\t%s\n' "$report_epoch" "$report_date" "$report_branch" "$report_sha" "$report_dir"
+                done | sort -nr -k1,1
+              )
+              printf '%s\n' "$report_entries" | while IFS=$'\t' read -r _ entry_date entry_branch entry_sha entry_path; do
+                [ -n "$entry_date" ] || continue
+                echo "<tr>"
+                echo "<td>${entry_date}</td>"
+                echo "<td>${entry_branch}</td>"
+                echo "<td>${entry_sha}</td>"
+                echo "<td><a href=\"${entry_path}/\">Open report</a></td>"
+                echo "</tr>"
+              done
+            fi
+            echo "</tbody>"
+            echo "</table>"
+            echo "</body>"
+            echo "</html>"
+          } > "${staging_dir}/index.html"
 
       - name: Upload regression report to Pages
         if: env.REPORT_PAGES_DIR != ''
