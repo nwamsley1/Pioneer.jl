@@ -538,10 +538,7 @@ jobs:
           fdr_plots_dir="${pages_dir}/fdr_plots"
           ref_name="${GITHUB_REF_NAME:-unknown}"
           ref_sanitized=$(printf '%s' "$ref_name" | tr '/ ' '__')
-          short_sha="$(printf '%s' "${GITHUB_SHA:-unknown}" | cut -c1-7)"
-          timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           report_subdir="reports/${ref_sanitized}/${GITHUB_SHA:-unknown}"
-          index_source="${run_dir%/*}/pages-index.tsv"
 
           poll_interval=60
           max_attempts=180
@@ -557,7 +554,6 @@ jobs:
               if [ -d "$fdr_plots_dir" ]; then
                 cp -R "$fdr_plots_dir" "${staging_dir}/${report_subdir}/fdr_plots"
               fi
-              printf '%s\t%s\t%s\t%s\n' "$timestamp" "$ref_name" "$short_sha" "$report_subdir" >> "$index_source"
               {
                 echo "<!DOCTYPE html>"
                 echo "<html lang=\"en\">"
@@ -578,8 +574,21 @@ jobs:
                 echo "<table>"
                 echo "<thead><tr><th>Date (UTC)</th><th>Branch</th><th>Commit</th><th>Report</th></tr></thead>"
                 echo "<tbody>"
-                if [ -f "$index_source" ]; then
-                  tac "$index_source" | while IFS=$'\t' read -r entry_date entry_branch entry_sha entry_path; do
+                if [ -d "${staging_dir}/reports" ]; then
+                  report_entries=$(
+                    find "${staging_dir}/reports" -type f -name index.html -print0 | while IFS= read -r -d '' report_file; do
+                      report_rel="${report_file#${staging_dir}/}"
+                      report_dir="$(dirname "$report_rel")"
+                      report_key="${report_dir#reports/}"
+                      report_branch="${report_key%%/*}"
+                      report_sha="${report_key#*/}"
+                      report_sha="${report_sha%%/*}"
+                      report_epoch=$(stat -c %Y "$report_file")
+                      report_date=$(date -u -d "@${report_epoch}" +'%Y-%m-%dT%H:%M:%SZ')
+                      printf '%s\t%s\t%s\t%s\t%s\n' "$report_epoch" "$report_date" "$report_branch" "$report_sha" "$report_dir"
+                    done | sort -nr -k1,1
+                  )
+                  printf '%s\n' "$report_entries" | while IFS=$'\t' read -r _ entry_date entry_branch entry_sha entry_path; do
                     [ -n "$entry_date" ] || continue
                     echo "<tr>"
                     echo "<td>${entry_date}</td>"
