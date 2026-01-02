@@ -533,9 +533,7 @@ jobs:
           run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
           html_report_path="${REPORT_HTML_PATH:-${run_dir}/results/metrics_report.html}"
           html_report_path="${html_report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
-          pages_dir="$(dirname "$html_report_path")"
           staging_dir="${RUNNER_TEMP:-/tmp}/pages-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          fdr_plots_dir="${pages_dir}/fdr_plots"
           ref_name="${GITHUB_REF_NAME:-unknown}"
           ref_sanitized=$(printf '%s' "$ref_name" | tr '/ ' '__')
           report_subdir="reports/${ref_sanitized}/${GITHUB_SHA:-unknown}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -547,20 +545,11 @@ jobs:
           while [ "$attempt" -le "$max_attempts" ]; do
             if [ -f "$html_report_path" ]; then
               echo "Report found at $html_report_path"
-              rm -rf "$staging_dir"
-              mkdir -p "$staging_dir"
-              mkdir -p "${staging_dir}/${report_subdir}"
-              cp "$html_report_path" "${staging_dir}/${report_subdir}/index.html"
-              if [ -d "$fdr_plots_dir" ]; then
-                cp -R "$fdr_plots_dir" "${staging_dir}/${report_subdir}/fdr_plots"
-              fi
-              echo "REPORT_HTML_PATH_MOUNT=${staging_dir}/${report_subdir}/index.html" >> "$GITHUB_ENV"
-              echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_SUBDIR=${report_subdir}" >> "$GITHUB_ENV"
+              echo "REPORT_PAGES_STAGING_DIR=${staging_dir}" >> "$GITHUB_ENV"
               {
                 echo "## Regression report"
                 echo "- HTML report path: $html_report_path"
-                echo "- Pages directory: $staging_dir"
                 echo "- Pages report path: ${report_subdir}/index.html"
               } >> "$GITHUB_STEP_SUMMARY"
               exit 0
@@ -585,109 +574,149 @@ jobs:
           path: ${{ env.REPORT_HTML_PATH_MOUNT }}
           if-no-files-found: warn
 
-      - name: Merge historical Pages reports and build index
+      - name: Update gh-pages site on cluster
         if: env.REPORT_PAGES_DIR != ''
         env:
-          REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          staging_dir="${REPORT_PAGES_DIR:?REPORT_PAGES_DIR not set}"
-          repo_root="${GITHUB_WORKSPACE:-$PWD}"
-          pages_worktree="${RUNNER_TEMP:-/tmp}/pages-existing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          history_branch="gh-pages"
-
-          if git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
-            if git -C "$repo_root" fetch origin "$history_branch:refs/remotes/origin/$history_branch"; then
-              rm -rf "$pages_worktree"
-              git -C "$repo_root" worktree add "$pages_worktree" "origin/${history_branch}"
-              if [ -d "$pages_worktree/reports" ]; then
-                mkdir -p "$staging_dir/reports"
-                rsync -a --ignore-existing "$pages_worktree/reports/" "$staging_dir/reports/"
-              fi
-              git -C "$repo_root" worktree remove "$pages_worktree"
-            fi
-          fi
-
-          {
-            echo "<!DOCTYPE html>"
-            echo "<html lang=\"en\">"
-            echo "<head>"
-            echo "<meta charset=\"UTF-8\">"
-            echo "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
-            echo "<title>Regression Report Index</title>"
-            echo "<style>"
-            echo "body { font-family: Arial, sans-serif; margin: 24px; }"
-            echo "table { border-collapse: collapse; width: 100%; }"
-            echo "th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }"
-            echo "th { background-color: #f4f4f4; }"
-            echo "tr:nth-child(even) { background-color: #fafafa; }"
-            echo "</style>"
-            echo "</head>"
-            echo "<body>"
-            echo "<h1>Regression Reports</h1>"
-            echo "<table>"
-            echo "<thead><tr><th>Date (UTC)</th><th>Branch</th><th>Commit</th><th>Report</th></tr></thead>"
-            echo "<tbody>"
-            if [ -d "${staging_dir}/reports" ]; then
-              report_entries=$(
-                find "${staging_dir}/reports" -type f -name index.html -print0 | while IFS= read -r -d '' report_file; do
-                  report_rel="${report_file#${staging_dir}/}"
-                  report_dir="$(dirname "$report_rel")"
-                  report_key="${report_dir#reports/}"
-                  report_branch="${report_key%%/*}"
-                  report_sha="${report_key#*/}"
-                  report_sha="${report_sha%%/*}"
-                  report_epoch=$(stat -c %Y "$report_file")
-                  report_date=$(date -u -d "@${report_epoch}" +'%Y-%m-%dT%H:%M:%SZ')
-                  printf '%s\t%s\t%s\t%s\t%s\n' "$report_epoch" "$report_date" "$report_branch" "$report_sha" "$report_dir"
-                done | sort -nr -k1,1
-              )
-              printf '%s\n' "$report_entries" | while IFS=$'\t' read -r _ entry_date entry_branch entry_sha entry_path; do
-                [ -n "$entry_date" ] || continue
-                echo "<tr>"
-                echo "<td>${entry_date}</td>"
-                echo "<td>${entry_branch}</td>"
-                echo "<td>${entry_sha}</td>"
-                echo "<td><a href=\"${entry_path}/\">Open report</a></td>"
-                echo "</tr>"
-              done
-            fi
-            echo "</tbody>"
-            echo "</table>"
-            echo "</body>"
-            echo "</html>"
-          } > "${staging_dir}/index.html"
-
-      - name: Persist Pages history branch
-        if: env.REPORT_PAGES_DIR != ''
-        env:
-          REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
+          REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
 
-          staging_dir="${REPORT_PAGES_DIR:?REPORT_PAGES_DIR not set}"
-          history_dir="${RUNNER_TEMP:-/tmp}/pages-history-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          report_path="${REPORT_HTML_PATH:?REPORT_HTML_PATH not set}"
+          report_subdir="${REPORT_PAGES_SUBDIR:?REPORT_PAGES_SUBDIR not set}"
           history_branch="gh-pages"
 
-          rm -rf "$history_dir"
-          mkdir -p "$history_dir"
-          git -C "$history_dir" init -q
-          git -C "$history_dir" checkout -b "$history_branch"
-          rsync -a --delete "${staging_dir}/" "$history_dir/"
-          git -C "$history_dir" add -A
+          ssh_options=(
+            -o BatchMode=yes
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+          )
 
-          if git -C "$history_dir" diff --cached --quiet; then
-            echo "No Pages history updates to push."
-            exit 0
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+            "RUN_DIR='${remote_run_dir}' REPORT_PATH='${report_path}' REPORT_SUBDIR='${report_subdir}' HISTORY_BRANCH='${history_branch}' GITHUB_REPOSITORY='${GITHUB_REPOSITORY}' GITHUB_TOKEN='${GITHUB_TOKEN}' bash -s" <<'EOF'
+            set -euo pipefail
+
+            repo_dir="${RUN_DIR}/gh-pages-site"
+            repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+            if [ -d "${repo_dir}/.git" ]; then
+              git -C "$repo_dir" fetch origin "$HISTORY_BRANCH" || true
+              git -C "$repo_dir" checkout "$HISTORY_BRANCH" || git -C "$repo_dir" checkout -b "$HISTORY_BRANCH"
+              if git -C "$repo_dir" rev-parse --verify "origin/${HISTORY_BRANCH}" >/dev/null 2>&1; then
+                git -C "$repo_dir" reset --hard "origin/${HISTORY_BRANCH}"
+              fi
+            else
+              rm -rf "$repo_dir"
+              if git clone --branch "$HISTORY_BRANCH" "$repo_url" "$repo_dir"; then
+                :
+              else
+                git init "$repo_dir"
+                git -C "$repo_dir" checkout -b "$HISTORY_BRANCH"
+                git -C "$repo_dir" remote add origin "$repo_url"
+              fi
+            fi
+
+            mkdir -p "${repo_dir}/${REPORT_SUBDIR}"
+            cp "$REPORT_PATH" "${repo_dir}/${REPORT_SUBDIR}/index.html"
+            results_dir="$(dirname "$REPORT_PATH")"
+            if [ -d "${results_dir}/fdr_plots" ]; then
+              mkdir -p "${repo_dir}/${REPORT_SUBDIR}/fdr_plots"
+              rsync -a "${results_dir}/fdr_plots/" "${repo_dir}/${REPORT_SUBDIR}/fdr_plots/"
+            fi
+
+            {
+              echo "<!DOCTYPE html>"
+              echo "<html lang=\"en\">"
+              echo "<head>"
+              echo "<meta charset=\"UTF-8\">"
+              echo "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+              echo "<title>Regression Report Index</title>"
+              echo "<style>"
+              echo "body { font-family: Arial, sans-serif; margin: 24px; }"
+              echo "table { border-collapse: collapse; width: 100%; }"
+              echo "th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }"
+              echo "th { background-color: #f4f4f4; }"
+              echo "tr:nth-child(even) { background-color: #fafafa; }"
+              echo "</style>"
+              echo "</head>"
+              echo "<body>"
+              echo "<h1>Regression Reports</h1>"
+              echo "<table>"
+              echo "<thead><tr><th>Date (UTC)</th><th>Branch</th><th>Commit</th><th>Report</th></tr></thead>"
+              echo "<tbody>"
+              if [ -d "${repo_dir}/reports" ]; then
+                report_entries=$(
+                  find "${repo_dir}/reports" -type f -name index.html -print0 | while IFS= read -r -d '' report_file; do
+                    report_rel="${report_file#${repo_dir}/}"
+                    report_dir="$(dirname "$report_rel")"
+                    report_key="${report_dir#reports/}"
+                    report_branch="${report_key%%/*}"
+                    report_sha="${report_key#*/}"
+                    report_sha="${report_sha%%/*}"
+                    report_epoch=$(stat -c %Y "$report_file")
+                    report_date=$(date -u -d "@${report_epoch}" +'%Y-%m-%dT%H:%M:%SZ')
+                    printf '%s\t%s\t%s\t%s\t%s\n' "$report_epoch" "$report_date" "$report_branch" "$report_sha" "$report_dir"
+                  done | sort -nr -k1,1
+                )
+                printf '%s\n' "$report_entries" | while IFS=$'\t' read -r _ entry_date entry_branch entry_sha entry_path; do
+                  [ -n "$entry_date" ] || continue
+                  echo "<tr>"
+                  echo "<td>${entry_date}</td>"
+                  echo "<td>${entry_branch}</td>"
+                  echo "<td>${entry_sha}</td>"
+                  echo "<td><a href=\"${entry_path}/\">Open report</a></td>"
+                  echo "</tr>"
+                done
+              fi
+              echo "</tbody>"
+              echo "</table>"
+              echo "</body>"
+              echo "</html>"
+            } > "${repo_dir}/index.html"
+
+            git -C "$repo_dir" add -A
+            if git -C "$repo_dir" diff --cached --quiet; then
+              exit 0
+            fi
+            git -C "$repo_dir" -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "Update Pages history from ${RUN_DIR##*/}"
+            git -C "$repo_dir" push origin "$HISTORY_BRANCH"
+          EOF
+
+      - name: Sync gh-pages site from shared storage
+        if: env.REPORT_PAGES_STAGING_DIR != ''
+        env:
+          REPORT_PAGES_STAGING_DIR: ${{ env.REPORT_PAGES_STAGING_DIR }}
+          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+          REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          staging_dir="${REPORT_PAGES_STAGING_DIR:?REPORT_PAGES_STAGING_DIR not set}"
+          run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
+          history_dir="${run_dir}/gh-pages-site"
+
+          rm -rf "$staging_dir"
+          mkdir -p "$staging_dir"
+          if [ -d "$history_dir" ]; then
+            rsync -a "${history_dir}/" "$staging_dir/"
           fi
 
-          git -C "$history_dir" -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "Update Pages history from ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          git -C "$history_dir" remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git -C "$history_dir" push -f origin "$history_branch"
+          report_subdir="${REPORT_PAGES_SUBDIR:?REPORT_PAGES_SUBDIR not set}"
+          echo "REPORT_HTML_PATH_MOUNT=${staging_dir}/${report_subdir}/index.html" >> "$GITHUB_ENV"
+          echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
 
       - name: Upload regression report to Pages
         if: env.REPORT_PAGES_DIR != ''
