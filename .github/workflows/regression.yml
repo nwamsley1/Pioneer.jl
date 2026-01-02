@@ -596,7 +596,7 @@ jobs:
           staging_dir="${REPORT_PAGES_DIR:?REPORT_PAGES_DIR not set}"
           repo_root="${GITHUB_WORKSPACE:-$PWD}"
           pages_worktree="${RUNNER_TEMP:-/tmp}/pages-existing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          history_branch="pages-history"
+          history_branch="gh-pages"
 
           if git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
             if git -C "$repo_root" fetch origin "$history_branch:refs/remotes/origin/$history_branch"; then
@@ -671,7 +671,7 @@ jobs:
 
           staging_dir="${REPORT_PAGES_DIR:?REPORT_PAGES_DIR not set}"
           history_dir="${RUNNER_TEMP:-/tmp}/pages-history-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          history_branch="pages-history"
+          history_branch="gh-pages"
 
           rm -rf "$history_dir"
           mkdir -p "$history_dir"
