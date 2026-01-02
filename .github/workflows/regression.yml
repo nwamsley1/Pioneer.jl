@@ -564,17 +564,6 @@ jobs:
           echo "Timeout waiting for regression report at $html_report_path" >&2
           exit 1
 
-      - name: Upload regression HTML report artifact
-        if: env.REPORT_PAGES_STAGING_DIR != ''
-        uses: actions/upload-artifact@v4
-        env:
-          REPORT_HTML_PATH_MOUNT: ${{ env.REPORT_HTML_PATH_MOUNT }}
-          REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
-        with:
-          name: regression-efdr-html
-          path: ${{ env.REPORT_HTML_PATH_MOUNT }}
-          if-no-files-found: warn
-
       - name: Update gh-pages site on cluster
         if: env.REPORT_PAGES_STAGING_DIR != ''
         env:
@@ -718,6 +707,16 @@ jobs:
           report_subdir="${REPORT_PAGES_SUBDIR:?REPORT_PAGES_SUBDIR not set}"
           echo "REPORT_HTML_PATH_MOUNT=${staging_dir}/${report_subdir}/index.html" >> "$GITHUB_ENV"
           echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
+
+      - name: Upload regression HTML report artifact
+        if: env.REPORT_PAGES_DIR != ''
+        uses: actions/upload-artifact@v4
+        env:
+          REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
+        with:
+          name: regression-efdr-html
+          path: ${{ env.REPORT_PAGES_DIR }}
+          if-no-files-found: warn
 
       - name: Upload regression report to Pages
         if: env.REPORT_PAGES_DIR != ''
