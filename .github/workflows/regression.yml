@@ -538,7 +538,7 @@ jobs:
           fdr_plots_dir="${pages_dir}/fdr_plots"
           ref_name="${GITHUB_REF_NAME:-unknown}"
           ref_sanitized=$(printf '%s' "$ref_name" | tr '/ ' '__')
-          report_subdir="reports/${ref_sanitized}/${GITHUB_SHA:-unknown}"
+          report_subdir="reports/${ref_sanitized}/${GITHUB_SHA:-unknown}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
           poll_interval=60
           max_attempts=180
