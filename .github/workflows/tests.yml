@@ -3,7 +3,8 @@ name: Tests
 on:
   push:
     branches:
-      - '**'
+      - main
+      - develop
     tags:
       - 'v*.*.*'
   pull_request:
