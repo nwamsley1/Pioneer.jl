@@ -599,7 +599,7 @@ jobs:
             repo_dir="${RUN_DIR}/gh-pages-site"
             repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
             landing_source="${RUN_DIR}/pioneer/pages/index.html"
-            logo_source="${RUN_DIR}/pioneer/figures/Pioneer.jpg"
+            logo_source="${RUN_DIR}/pioneer/figures/PIONEER_LOGO.svg"
 
             if [ -d "${repo_dir}/.git" ]; then
               git -C "$repo_dir" fetch origin "$HISTORY_BRANCH" || true
@@ -640,7 +640,7 @@ jobs:
 
             mkdir -p "${repo_dir}/assets"
             cp "$landing_source" "${repo_dir}/index.html"
-            cp "$logo_source" "${repo_dir}/assets/pioneer-logo.jpg"
+            cp "$logo_source" "${repo_dir}/assets/pioneer-logo.svg"
 
             mkdir -p "${repo_dir}/reports"
             {
@@ -661,7 +661,7 @@ jobs:
               echo "<body>"
               echo "<h1>Regression Reports</h1>"
               echo "<table>"
-              echo "<thead><tr><th>Date (UTC)</th><th>Branch</th><th>Commit</th><th>Run</th><th>Report</th></tr></thead>"
+              echo "<thead><tr><th>Date (CST)</th><th>Branch</th><th>Commit</th><th>Run</th><th>Report</th></tr></thead>"
               echo "<tbody>"
               if [ -d "${repo_dir}/reports" ]; then
                 report_entries=$(
@@ -675,7 +675,11 @@ jobs:
                     report_run="${report_key#*/}"
                     report_run="${report_run#*/}"
                     report_date=$(sed -n 's/.*"timestamp"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$meta_file" | head -n 1)
-                    printf '%s\t%s\t%s\t%s\t%s\n' "$report_date" "$report_branch" "$report_sha" "$report_run" "$report_dir"
+                    report_cst=""
+                    if [ -n "$report_date" ]; then
+                      report_cst=$(TZ=America/Chicago date -d "$report_date" +'%Y-%m-%dT%H:%M:%S')
+                    fi
+                    printf '%s\t%s\t%s\t%s\t%s\n' "$report_cst" "$report_branch" "$report_sha" "$report_run" "$report_dir"
                   done | sort -r
                 )
                 printf '%s\n' "$report_entries" | while IFS=$'\t' read -r entry_date entry_branch entry_sha entry_run entry_path; do
