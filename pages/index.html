@@ -23,11 +23,6 @@
         text-align: center;
       }
 
-      header img {
-        max-width: 140px;
-        margin-bottom: 16px;
-      }
-
       header h1 {
         margin: 0;
         font-size: 40px;
@@ -59,6 +54,13 @@
         box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
       }
 
+      .logo {
+        display: block;
+        width: 300px;
+        max-width: 100%;
+        margin: 0 auto 16px;
+      }
+
       .cta-link {
         color: var(--pioneer-blue);
         font-weight: 600;
@@ -72,13 +74,13 @@
   </head>
   <body>
     <header>
-      <img src="assets/pioneer-logo.svg" alt="Pioneer logo" />
       <h1>Pioneer</h1>
       <p>Fast, open-source analysis of DIA proteomics experiments.</p>
     </header>
     <main>
       <section class="card">
-        <h2>About Pioneer</h2>
+        <img class="logo" src="assets/pioneer-logo.svg" alt="Pioneer logo" />
+        <h2>About</h2>
         <p>
           Pioneer is an open-source and high-performance toolkit for analyzing
           data-independent acquisition (DIA) proteomics experiments. It delivers
@@ -89,10 +91,6 @@
           <a class="cta-link" href="https://github.com/nwamsley1/Pioneer.jl"
             >Visit the Pioneer GitHub repository →</a
           >
-        </p>
-        <p>
-          Learn more in the documentation or explore the latest regression
-          results below.
         </p>
       </section>
 
