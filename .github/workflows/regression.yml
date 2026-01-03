@@ -644,7 +644,7 @@ jobs:
               echo "<body>"
               echo "<h1>Regression Reports</h1>"
               echo "<table>"
-              echo "<thead><tr><th>Date (UTC)</th><th>Branch</th><th>Commit</th><th>Report</th></tr></thead>"
+              echo "<thead><tr><th>Date (UTC)</th><th>Branch</th><th>Commit</th><th>Run</th><th>Report</th></tr></thead>"
               echo "<tbody>"
               if [ -d "${repo_dir}/reports" ]; then
                 report_entries=$(
@@ -655,15 +655,18 @@ jobs:
                     report_branch="${report_key%%/*}"
                     report_sha="${report_key#*/}"
                     report_sha="${report_sha%%/*}"
+                    report_run="${report_key#*/}"
+                    report_run="${report_run#*/}"
                     report_date=$(sed -n 's/.*"timestamp"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$meta_file" | head -n 1)
-                    printf '%s\t%s\t%s\t%s\n' "$report_date" "$report_branch" "$report_sha" "$report_dir"
+                    printf '%s\t%s\t%s\t%s\t%s\n' "$report_date" "$report_branch" "$report_sha" "$report_run" "$report_dir"
                   done | sort -r
                 )
-                printf '%s\n' "$report_entries" | while IFS=$'\t' read -r entry_date entry_branch entry_sha entry_path; do
+                printf '%s\n' "$report_entries" | while IFS=$'\t' read -r entry_date entry_branch entry_sha entry_run entry_path; do
                   echo "<tr>"
                   echo "<td>${entry_date}</td>"
                   echo "<td>${entry_branch}</td>"
                   echo "<td>${entry_sha}</td>"
+                  echo "<td>${entry_run}</td>"
                   echo "<td><a href=\"${entry_path}/\">Open report</a></td>"
                   echo "</tr>"
                 done
