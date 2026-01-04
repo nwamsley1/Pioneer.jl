@@ -456,10 +456,6 @@ jobs:
             progress_log+=("$progress_entry")
             echo "$progress_entry" | tee -a "$GITHUB_STEP_SUMMARY"
 
-            if [ "$active_search" -gt 0 ] || [ "$active_metrics" -gt 0 ]; then
-              echo "Waiting on ${active_search} search job(s) and ${active_metrics} metrics job(s)."
-            fi
-
             if [ "$active_search" -eq 0 ] && [ "$active_metrics" -eq 0 ]; then
               echo "All search and metrics jobs have finished; stopping monitor."
               break
