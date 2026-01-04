@@ -422,23 +422,34 @@ jobs:
             fi
 
             if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -noheader -o 'jobid' ${remaining_metrics[*]} ${remaining_search[*]} 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
+              "bjobs -noheader -o 'jobid' 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
               echo "Cluster login failed or bjobs unavailable." >&2
               exit 1
             fi
 
-            active_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -noheader -o 'jobid' ${remaining_metrics[*]} 2>/dev/null | awk '/^[0-9]+$/'" || true)
+            running_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+              "bjobs -noheader -o 'jobid' 2>/dev/null | awk '/^[0-9]+$/'" || true)
+            declare -A running_map=()
+            if [ -n "$running_jobs" ]; then
+              while IFS= read -r job_id; do
+                [ -n "$job_id" ] || continue
+                running_map["$job_id"]=1
+              done <<< "$running_jobs"
+            fi
+
             active_metrics=0
-            if [ -n "$active_jobs" ]; then
-              active_metrics=$(printf '%s\n' "$active_jobs" | wc -l | tr -d ' ')
-            fi
-            active_search_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -noheader -o 'jobid' ${remaining_search[*]} 2>/dev/null | awk '/^[0-9]+$/'" || true)
+            for job_id in "${remaining_metrics[@]}"; do
+              if [[ -n "${running_map[$job_id]+x}" ]]; then
+                active_metrics=$((active_metrics + 1))
+              fi
+            done
+
             active_search=0
-            if [ -n "$active_search_jobs" ]; then
-              active_search=$(printf '%s\n' "$active_search_jobs" | wc -l | tr -d ' ')
-            fi
+            for job_id in "${remaining_search[@]}"; do
+              if [[ -n "${running_map[$job_id]+x}" ]]; then
+                active_search=$((active_search + 1))
+              fi
+            done
 
             timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
             progress_entry="[${timestamp}] Attempt ${attempt}: ${active_search}/${total_search} search jobs still present, ${active_metrics}/${total_metrics} metrics jobs still present"
