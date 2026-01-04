@@ -381,8 +381,7 @@ jobs:
           attempt=1
           progress_log=()
 
-          echo "Polling for ${total_expected} metrics job IDs:" | tee -a "$GITHUB_STEP_SUMMARY"
-          printf '  %s\n' "${metrics_job_ids[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Polling for ${total_expected} metrics job(s)." | tee -a "$GITHUB_STEP_SUMMARY"
 
           while :; do
             remaining=()
@@ -397,17 +396,17 @@ jobs:
               exit 1
             fi
 
-            if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "bjobs -a -noheader -o 'jobid' ${remaining[*]}" >/dev/null 2>&1; then
+            if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+              "bjobs -a -noheader -o 'jobid' ${remaining[*]} 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
               echo "Cluster login failed or bjobs unavailable." >&2
               exit 1
             fi
 
             active_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -a -noheader -o 'jobid' ${remaining[*]} 2>/dev/null | tr -d ' '" || true)
-            mapfile -t active_list <<< "$active_jobs"
+              "bjobs -a -noheader -o 'jobid' ${remaining[*]} 2>/dev/null | awk '/^[0-9]+$/'" || true)
             active_count=0
             if [ -n "$active_jobs" ]; then
-              active_count=${#active_list[@]}
+              active_count=$(printf '%s\n' "$active_jobs" | wc -l | tr -d ' ')
             fi
 
             timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -416,8 +415,7 @@ jobs:
             echo "$progress_entry" | tee -a "$GITHUB_STEP_SUMMARY"
 
             if [ "$active_count" -gt 0 ]; then
-              echo "Waiting on metrics job IDs:"
-              printf '  %s\n' "${active_list[@]}"
+              echo "Waiting on ${active_count} metrics job(s)."
             fi
 
             if [ "$active_count" -eq 0 ]; then
@@ -428,16 +426,13 @@ jobs:
             if [ "$attempt" -ge "$max_attempts" ]; then
               echo "Timeout waiting for metrics jobs after $((poll_interval * max_attempts / 60)) minutes" >&2
               printf 'Still running:\n' >&2
-              printf '  %s\n' "${active_list[@]}" >&2
+              printf '  %s\n' "${active_count}" >&2
               {
                 echo "## Cluster metrics polling"
                 echo "- Run directory: $run_dir"
                 echo "- Expected jobs: $total_expected"
                 echo "- Status: timed out"
-                echo "- Remaining job IDs:"
-                for entry in "${active_list[@]}"; do
-                  echo "  - $entry"
-                done
+                echo "- Remaining jobs: $active_count"
                 echo "- Progress log:"
                 for line in "${progress_log[@]}"; do
                   echo "  - $line"
@@ -562,24 +557,23 @@ jobs:
               "bjobs -a -noheader -o 'jobid' ${report_job_id} 2>/dev/null | tr -d ' '" || true)
 
             if [ -z "$report_active" ]; then
-              echo "Report job ${report_job_id} has finished; stopping monitor."
+              echo "Report job has finished; stopping monitor."
               echo "REPORT_PAGES_SUBDIR=${report_subdir}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_STAGING_DIR=${staging_dir}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
               {
                 echo "## Regression report"
-                echo "- Report job ID: $report_job_id"
                 echo "- Pages report path: ${report_subdir}/index.html"
               } >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
 
-            echo "Waiting for report job ${report_job_id} (attempt ${attempt}/${max_attempts})..."
+            echo "Waiting for report job (attempt ${attempt}/${max_attempts})..."
             attempt=$((attempt + 1))
             sleep "$poll_interval"
           done
 
-          echo "Timeout waiting for report job ${report_job_id}" >&2
+          echo "Timeout waiting for report job" >&2
           exit 1
 
       - name: Update gh-pages site on cluster
