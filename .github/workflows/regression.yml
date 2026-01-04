@@ -111,6 +111,10 @@ jobs:
               git clone "$PIONEER_REPO" "$PIONEER_DIR"
             fi
 
+            if ! git -C "$PIONEER_DIR" cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
+              git -C "$PIONEER_DIR" fetch --depth=1 origin "$TARGET_SHA"
+            fi
+
             git -C "$PIONEER_DIR" checkout --force "$TARGET_SHA"
 
             if [ -d "$ENTRAPMENT_DIR/.git" ]; then
