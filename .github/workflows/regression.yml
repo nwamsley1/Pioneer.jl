@@ -21,13 +21,14 @@ permissions:
 
 jobs:
   regression:
-    name: Julia ${{ matrix.version }} regression sweep
-    environment: regression-tests
+    name: Julia ${{ matrix.version }} regression sweep (${{ matrix.dataset_set }})
+    environment: regression-tests-${{ matrix.dataset_set }}
     runs-on: [self-hosted, Linux, pioneer-regression]
     timeout-minutes: 7200
     strategy:
       matrix:
         version: ['1.11']
+        dataset_set: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.dataset_set)) || fromJSON('["fastest","fast","all"]') }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -57,13 +58,14 @@ jobs:
           GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           GITHUB_REPOSITORY: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
           CLUSTER_ENTRAPMENT_REPO: ${{ secrets.CLUSTER_ENTRAPMENT_REPO }}
+          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || matrix.dataset_set }}
         shell: bash
         run: |
           set -euo pipefail
 
           remote_run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
           remote_run_root="${remote_run_root_raw%/}"
-          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}"
           remote_run_dir="${remote_run_root}/${run_suffix}"
           mount_run_root_raw="/mnt/ris/Active/Automation/Pioneer"
           mount_run_root="${mount_run_root_raw%/}"
@@ -135,21 +137,21 @@ jobs:
           REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
           SETUP_JOB_SCRIPT: ${{ vars.SETUP_JOB_SCRIPT }}
           METRICS_JOB_SCRIPT: ${{ vars.METRICS_JOB_SCRIPT }}
-          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || 'test' }}
+          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || matrix.dataset_set }}
         shell: bash
         run: |
           set -euo pipefail
 
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
-          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
-          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
+          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}}"
+          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}}"
           params_dir="${remote_run_dir}/regression-configs/params"
           regression_configs_dir="${remote_run_dir}/regression-configs"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
           setup_script_path="${remote_run_dir}/${SETUP_JOB_SCRIPT:-regression-configs/job_scripts/setup.bsub}"
           metrics_script_path="${remote_run_dir}/${METRICS_JOB_SCRIPT:-regression-configs/job_scripts/metrics.bsub}"
           adjusted_params_dir="${remote_run_dir}/adjusted-params"
-          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}"
           dataset_set="${DATASET_SET:-all}"
 
           ssh_options=(
@@ -823,6 +825,7 @@ jobs:
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
           REPORT_PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
           REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
+          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || matrix.dataset_set }}
         with:
           script: |
             const pagesUrl = process.env.REPORT_PAGES_URL;
@@ -831,23 +834,29 @@ jobs:
               core.info('Pages URL or report subdir missing; skipping PR comment.');
               return;
             }
+            const datasetSet = process.env.DATASET_SET;
+            const datasetLabel = datasetSet ? ` (${datasetSet})` : '';
             const normalizedBase = pagesUrl.endsWith('/') ? pagesUrl.slice(0, -1) : pagesUrl;
             const reportUrl = `${normalizedBase}/${reportSubdir}/`;
-            const body = `**Regression metrics report**: <a href="${reportUrl}" target="_blank" rel="noopener noreferrer">Open report</a>`;
+            const body = `**Regression metrics report${datasetLabel}**: <a href="${reportUrl}" target="_blank" rel="noopener noreferrer">Open report</a>`;
             const { owner, repo } = context.repo;
-            const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-              owner,
-              repo,
-              commit_sha: context.sha,
-            });
-            if (!pulls.data.length) {
-              core.info('No PR associated with this commit; skipping comment.');
-              return;
+            let issueNumber = context.payload?.pull_request?.number;
+            if (!issueNumber) {
+              const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: context.sha,
+              });
+              if (!pulls.data.length) {
+                core.info('No PR associated with this commit; skipping comment.');
+                return;
+              }
+              issueNumber = pulls.data[0].number;
             }
             await github.rest.issues.createComment({
               owner,
               repo,
-              issue_number: pulls.data[0].number,
+              issue_number: issueNumber,
               body,
             });
 
