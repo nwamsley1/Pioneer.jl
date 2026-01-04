@@ -837,19 +837,23 @@ jobs:
             const reportUrl = `${normalizedBase}/${reportSubdir}/`;
             const body = `**Regression metrics report**: <a href="${reportUrl}" target="_blank" rel="noopener noreferrer">Open report</a>`;
             const { owner, repo } = context.repo;
-            const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-              owner,
-              repo,
-              commit_sha: context.sha,
-            });
-            if (!pulls.data.length) {
-              core.info('No PR associated with this commit; skipping comment.');
-              return;
+            let issueNumber = context.payload?.pull_request?.number;
+            if (!issueNumber) {
+              const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: context.sha,
+              });
+              if (!pulls.data.length) {
+                core.info('No PR associated with this commit; skipping comment.');
+                return;
+              }
+              issueNumber = pulls.data[0].number;
             }
             await github.rest.issues.createComment({
               owner,
               repo,
-              issue_number: pulls.data[0].number,
+              issue_number: issueNumber,
               body,
             });
 
