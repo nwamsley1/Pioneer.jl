@@ -218,7 +218,9 @@ jobs:
             job_id_dir="$RUN_DIR/job-ids"
             mkdir -p "$job_id_dir"
             manifest_file="$job_id_dir/expected_results.txt"
+            search_job_list="$job_id_dir/search.ids"
             : > "$manifest_file"
+            : > "$search_job_list"
 
             printf '%s\n' "$param_list" | while IFS= read -r param_file; do
               rel_path="${param_file#${PARAMS_DIR}/}"
@@ -267,6 +269,7 @@ jobs:
               fi
 
               echo "$search_job_id" >> "$job_id_dir/${dataset_dir_name}.search"
+              echo "$search_job_id" >> "$search_job_list"
             done
 
             dataset_dirs=$(find "$PARAMS_DIR" -mindepth 1 -maxdepth 1 -type d -print)
@@ -356,15 +359,25 @@ jobs:
           run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
           job_id_dir="$run_dir/job-ids"
           metrics_job_list="$job_id_dir/metrics.ids"
+          search_job_list="$job_id_dir/search.ids"
 
           if [ ! -f "$metrics_job_list" ]; then
             echo "Metrics job ID list not found at $metrics_job_list" >&2
+            exit 1
+          fi
+          if [ ! -f "$search_job_list" ]; then
+            echo "Search job ID list not found at $search_job_list" >&2
             exit 1
           fi
 
           mapfile -t metrics_job_ids < "$metrics_job_list"
           if [ "${#metrics_job_ids[@]}" -eq 0 ]; then
             echo "Metrics job ID list is empty; cannot monitor metrics jobs" >&2
+            exit 1
+          fi
+          mapfile -t search_job_ids < "$search_job_list"
+          if [ "${#search_job_ids[@]}" -eq 0 ]; then
+            echo "Search job ID list is empty; cannot monitor search jobs" >&2
             exit 1
           fi
 
@@ -375,64 +388,84 @@ jobs:
             -o ConnectTimeout=30
           )
 
-          total_expected=${#metrics_job_ids[@]}
+          total_metrics=${#metrics_job_ids[@]}
+          total_search=${#search_job_ids[@]}
           poll_interval=300
           max_attempts=600
           attempt=1
           progress_log=()
 
-          echo "Polling for ${total_expected} metrics job(s)." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Polling for ${total_search} search job(s) and ${total_metrics} metrics job(s)." | tee -a "$GITHUB_STEP_SUMMARY"
 
           while :; do
-            remaining=()
+            remaining_metrics=()
             for job_id in "${metrics_job_ids[@]}"; do
               clean_id="${job_id%$'\r'}"
               [ -n "$clean_id" ] || continue
-              remaining+=("$clean_id")
+              remaining_metrics+=("$clean_id")
             done
 
-            if [ "${#remaining[@]}" -eq 0 ]; then
+            remaining_search=()
+            for job_id in "${search_job_ids[@]}"; do
+              clean_id="${job_id%$'\r'}"
+              [ -n "$clean_id" ] || continue
+              remaining_search+=("$clean_id")
+            done
+
+            if [ "${#remaining_metrics[@]}" -eq 0 ]; then
               echo "No metrics job IDs remaining to monitor." >&2
+              exit 1
+            fi
+            if [ "${#remaining_search[@]}" -eq 0 ]; then
+              echo "No search job IDs remaining to monitor." >&2
               exit 1
             fi
 
             if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -a -noheader -o 'jobid' ${remaining[*]} 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
+              "bjobs -a -noheader -o 'jobid' ${remaining_metrics[*]} ${remaining_search[*]} 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
               echo "Cluster login failed or bjobs unavailable." >&2
               exit 1
             fi
 
             active_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -a -noheader -o 'jobid' ${remaining[*]} 2>/dev/null | awk '/^[0-9]+$/'" || true)
-            active_count=0
+              "bjobs -a -noheader -o 'jobid' ${remaining_metrics[*]} 2>/dev/null | awk '/^[0-9]+$/'" || true)
+            active_metrics=0
             if [ -n "$active_jobs" ]; then
-              active_count=$(printf '%s\n' "$active_jobs" | wc -l | tr -d ' ')
+              active_metrics=$(printf '%s\n' "$active_jobs" | wc -l | tr -d ' ')
+            fi
+            active_search_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+              "bjobs -a -noheader -o 'jobid' ${remaining_search[*]} 2>/dev/null | awk '/^[0-9]+$/'" || true)
+            active_search=0
+            if [ -n "$active_search_jobs" ]; then
+              active_search=$(printf '%s\n' "$active_search_jobs" | wc -l | tr -d ' ')
             fi
 
             timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            progress_entry="[${timestamp}] Attempt ${attempt}: ${active_count}/${total_expected} jobs still present"
+            progress_entry="[${timestamp}] Attempt ${attempt}: ${active_search}/${total_search} search jobs still present, ${active_metrics}/${total_metrics} metrics jobs still present"
             progress_log+=("$progress_entry")
             echo "$progress_entry" | tee -a "$GITHUB_STEP_SUMMARY"
 
-            if [ "$active_count" -gt 0 ]; then
-              echo "Waiting on ${active_count} metrics job(s)."
+            if [ "$active_search" -gt 0 ] || [ "$active_metrics" -gt 0 ]; then
+              echo "Waiting on ${active_search} search job(s) and ${active_metrics} metrics job(s)."
             fi
 
-            if [ "$active_count" -eq 0 ]; then
-              echo "All metrics jobs have finished; stopping monitor."
+            if [ "$active_search" -eq 0 ] && [ "$active_metrics" -eq 0 ]; then
+              echo "All search and metrics jobs have finished; stopping monitor."
               break
             fi
 
             if [ "$attempt" -ge "$max_attempts" ]; then
               echo "Timeout waiting for metrics jobs after $((poll_interval * max_attempts / 60)) minutes" >&2
               printf 'Still running:\n' >&2
-              printf '  %s\n' "${active_count}" >&2
+              printf '  search=%s metrics=%s\n' "${active_search}" "${active_metrics}" >&2
               {
                 echo "## Cluster metrics polling"
                 echo "- Run directory: $run_dir"
-                echo "- Expected jobs: $total_expected"
+                echo "- Expected search jobs: $total_search"
+                echo "- Expected metrics jobs: $total_metrics"
                 echo "- Status: timed out"
-                echo "- Remaining jobs: $active_count"
+                echo "- Remaining search jobs: $active_search"
+                echo "- Remaining metrics jobs: $active_metrics"
                 echo "- Progress log:"
                 for line in "${progress_log[@]}"; do
                   echo "  - $line"
@@ -448,7 +481,8 @@ jobs:
           {
             echo "## Cluster metrics polling"
             echo "- Run directory: $run_dir"
-            echo "- Expected jobs: $total_expected"
+            echo "- Expected search jobs: $total_search"
+            echo "- Expected metrics jobs: $total_metrics"
             echo "- Status: completed"
             echo "- Progress log:"
             for line in "${progress_log[@]}"; do
