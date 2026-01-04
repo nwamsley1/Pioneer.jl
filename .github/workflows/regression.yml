@@ -3,6 +3,20 @@ name: Regression Tests
 on:
   push:
   workflow_dispatch:
+    inputs:
+      dataset_set:
+        description: Dataset selection for regression runs
+        type: choice
+        options:
+          - all
+          - fast
+          - test
+          - fastest
+        default: test
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   regression:
@@ -66,8 +80,6 @@ jobs:
           echo "CLUSTER_RUN_DIR=${remote_run_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_RUN_DIR_MOUNT=${mount_run_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_RUN_SUFFIX=${run_suffix}" >> "$GITHUB_ENV"
-          echo "CLUSTER_PIONEER_DIR=${pioneer_dir}" >> "$GITHUB_ENV"
-          echo "CLUSTER_ENTRAPMENT_DIR=${entrapment_dir}" >> "$GITHUB_ENV"
           echo "CLUSTER_DEPOT_DIR=${depot_dir}" >> "$GITHUB_ENV"
 
           ssh_options=(
@@ -112,11 +124,10 @@ jobs:
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
-          CLUSTER_PIONEER_DIR: ${{ env.CLUSTER_PIONEER_DIR }}
-          CLUSTER_ENTRAPMENT_DIR: ${{ env.CLUSTER_ENTRAPMENT_DIR }}
           REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
           SETUP_JOB_SCRIPT: ${{ vars.SETUP_JOB_SCRIPT }}
           METRICS_JOB_SCRIPT: ${{ vars.METRICS_JOB_SCRIPT }}
+          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || 'test' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -124,8 +135,6 @@ jobs:
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
           remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
           mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
-          pioneer_dir="${CLUSTER_PIONEER_DIR:-${remote_run_dir}/pioneer}"
-          entrapment_dir="${CLUSTER_ENTRAPMENT_DIR:-${remote_run_dir}/PioneerEntrapment.jl}"
           params_dir="${remote_run_dir}/regression-configs/params"
           regression_configs_dir="${remote_run_dir}/regression-configs"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
@@ -133,6 +142,7 @@ jobs:
           metrics_script_path="${remote_run_dir}/${METRICS_JOB_SCRIPT:-regression-configs/job_scripts/metrics.bsub}"
           adjusted_params_dir="${remote_run_dir}/adjusted-params"
           run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          dataset_set="${DATASET_SET:-all}"
 
           ssh_options=(
             -o BatchMode=yes
@@ -142,7 +152,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' ENTRAPMENT_DIR='${entrapment_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' DATASET_SET='${dataset_set}' bash -s" <<'EOF'
             set -eu
 
             if [ ! -f "$SETUP_SCRIPT" ]; then
@@ -160,7 +170,7 @@ jobs:
               exit 1
             fi
 
-            setup_submit=$(PIONEER_DIR="$PIONEER_DIR" PIONEER_ENTRAPMENT_DIR="$ENTRAPMENT_DIR" PIONEER_REGRESSION_CONFIGS_DIR="$RUN_DIR/regression-configs" bsub < "$SETUP_SCRIPT")
+            setup_submit=$(RUN_DIR="$RUN_DIR" bsub < "$SETUP_SCRIPT")
             setup_job_id=$(printf '%s\n' "$setup_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
             if [ -z "$setup_job_id" ]; then
@@ -168,6 +178,34 @@ jobs:
               printf '%s\n' "$setup_submit" >&2
               exit 1
             fi
+
+            dataset_filter=""
+            # dataset_tags.json schema: { "dataset-name": ["tag1", "tag2", ...], ... }
+            if [ "${DATASET_SET:-all}" != "all" ]; then
+              dataset_tag="${DATASET_SET}"
+              tags_path="${REGRESSION_CONFIGS_DIR}/params/dataset_tags.json"
+              if [ ! -f "$tags_path" ]; then
+                echo "Missing dataset tags file at $tags_path" >&2
+                exit 1
+              fi
+              python_cmd="python3"
+              if ! command -v python3 >/dev/null 2>&1; then
+                python_cmd="python"
+              fi
+              if ! command -v "$python_cmd" >/dev/null 2>&1; then
+                echo "Python not available on cluster; cannot parse dataset tags." >&2
+                exit 1
+              fi
+              dataset_filter=$(
+                "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); datasets=data.get("datasets", {}); tag=sys.argv[2]; print(",".join([n for n,v in datasets.items() if isinstance(v, dict) and tag in (v.get("tags") or [])]))' "$tags_path" "$dataset_tag"
+              )
+              if [ -z "$dataset_filter" ]; then
+                echo "No datasets tagged '${dataset_tag}' in $tags_path" >&2
+                exit 1
+              fi
+            fi
+            echo "Dataset set: ${DATASET_SET:-all}"
+            echo "Dataset filter: ${dataset_filter:-<all>}"
 
             param_list=$(find "$PARAMS_DIR" -type f -name 'search*.json' -print)
 
@@ -187,7 +225,21 @@ jobs:
               dataset_dir_name="${rel_path%%/*}"
               search_name="$(basename "${rel_path%.*}")"
               adjusted_path="$ADJUSTED_PARAMS_DIR/$rel_path"
+              param_basename="$(basename "$param_file")"
               mkdir -p "$(dirname "$adjusted_path")"
+              if [ -n "${dataset_filter:-}" ]; then
+                dataset_allowed=0
+                IFS=',' read -r -a allowed_datasets <<< "$dataset_filter"
+                for allowed in "${allowed_datasets[@]}"; do
+                  if [ "$dataset_dir_name" = "$allowed" ]; then
+                    dataset_allowed=1
+                    break
+                  fi
+                done
+                if [ "$dataset_allowed" -eq 0 ]; then
+                  continue
+                fi
+              fi
 
               results_path=$(sed -n 's/.*"results"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$param_file" | head -n 1)
 
@@ -205,7 +257,7 @@ jobs:
 
               echo "${dataset_name}" >> "$manifest_file"
 
-              search_submit=$(PIONEER_DIR="$PIONEER_DIR" PARAM_FILE="$adjusted_path" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT")
+              search_submit=$(RUN_DIR="$RUN_DIR" PIONEER_DATASET_NAME="$dataset_dir_name" PARAM_FILE="$param_basename" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT")
               search_job_id=$(printf '%s\n' "$search_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
               if [ -z "$search_job_id" ]; then
@@ -218,6 +270,20 @@ jobs:
             done
 
             dataset_dirs=$(find "$PARAMS_DIR" -mindepth 1 -maxdepth 1 -type d -print)
+            if [ -n "${dataset_filter:-}" ]; then
+              filtered_dirs=()
+              IFS=',' read -r -a allowed_datasets <<< "$dataset_filter"
+              for dataset_dir in $dataset_dirs; do
+                dataset_name="$(basename "$dataset_dir")"
+                for allowed in "${allowed_datasets[@]}"; do
+                  if [ "$dataset_name" = "$allowed" ]; then
+                    filtered_dirs+=("$dataset_dir")
+                    break
+                  fi
+                done
+              done
+              dataset_dirs=$(printf '%s\n' "${filtered_dirs[@]}")
+            fi
 
             if [ -z "$dataset_dirs" ]; then
               echo "No dataset directories found under $PARAMS_DIR" >&2
@@ -228,11 +294,6 @@ jobs:
               dataset_name="$(basename "$dataset_dir")"
               job_list_file="$job_id_dir/${dataset_name}.search"
               metrics_file="$dataset_dir/metrics.json"
-              exp_design_file="$dataset_dir/experimental_design.json"
-
-              if [ ! -f "$exp_design_file" ]; then
-                exp_design_file=""
-              fi
 
               if [ ! -f "$metrics_file" ]; then
                 echo "Skipping dataset $dataset_name: missing metrics.json" >&2
@@ -265,13 +326,8 @@ jobs:
               fi
 
               metrics_submit=$(\
-                PIONEER_DIR="$PIONEER_DIR" \
-                ENTRAPMENT_ANALYSES_PATH="$ENTRAPMENT_DIR" \
-                PIONEER_PARAMS_DIR="$param_dataset_dir" \
-                PIONEER_METRICS_FILE="$metrics_file" \
-                PIONEER_EXPERIMENTAL_DESIGN="$exp_design_file" \
-                PIONEER_REGRESSION_CONFIGS_DIR="$REGRESSION_CONFIGS_DIR" \
-                PIONEER_ARCHIVE_ROOT="$RUN_DIR" \
+                RUN_DIR="$RUN_DIR" \
+                PIONEER_DATASET_NAME="$dataset_name" \
                 bsub -w "$dep_expr" < "$METRICS_SCRIPT")
 
               metrics_job_id=$(printf '%s\n' "$metrics_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
@@ -405,6 +461,323 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Submit regression report job on cluster
+        env:
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+          REPORT_JOB_SCRIPT: ${{ vars.REPORT_JOB_SCRIPT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          report_script_path="${REPORT_JOB_SCRIPT:-regression-configs/job_scripts/metrics_report.bsub}"
+          if [[ "$report_script_path" != /* ]]; then
+            report_script_path="${remote_run_dir}/${report_script_path}"
+          fi
+
+          report_html_path="${remote_run_dir}/results/metrics_report.html"
+
+          ssh_options=(
+            -o BatchMode=yes
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+          )
+
+          report_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' bash -s" <<'EOF'
+              set -eu
+
+              if [ ! -f "$REPORT_SCRIPT" ]; then
+                echo "Missing report job script: $REPORT_SCRIPT" >&2
+                exit 1
+              fi
+
+              submit_out=$(RUN_DIR="$RUN_DIR" bsub < "$REPORT_SCRIPT")
+              printf '%s' "$submit_out"
+          EOF
+          )"
+
+          report_job_id=$(printf '%s\n' "$report_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
+
+          if [ -z "$report_job_id" ]; then
+            echo "Failed to parse report job ID from submission output:" >&2
+            printf '%s\n' "$report_submit" >&2
+            exit 1
+          fi
+
+          echo "REPORT_HTML_PATH=${report_html_path}" >> "$GITHUB_ENV"
+          echo "REPORT_JOB_ID=${report_job_id}" >> "$GITHUB_ENV"
+
+          {
+            echo "## Report job submission"
+            echo "- Run directory: $remote_run_dir"
+            echo "- Report job ID: $report_job_id"
+            echo "- HTML report output: $report_html_path"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for regression report on shared storage
+        env:
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+          REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
+          html_report_path="${REPORT_HTML_PATH:-${run_dir}/results/metrics_report.html}"
+          html_report_path="${html_report_path/${CLUSTER_RUN_DIR:-}/${run_dir}}"
+          staging_dir="${RUNNER_TEMP:-/tmp}/pages-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ref_name="${GITHUB_REF_NAME:-unknown}"
+          ref_sanitized=$(printf '%s' "$ref_name" | tr '/ ' '__')
+          report_subdir="reports/${ref_sanitized}/${GITHUB_SHA:-unknown}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          poll_interval=60
+          max_attempts=180
+          attempt=1
+
+          while [ "$attempt" -le "$max_attempts" ]; do
+            if [ -f "$html_report_path" ]; then
+              echo "Report found at $html_report_path"
+              echo "REPORT_PAGES_SUBDIR=${report_subdir}" >> "$GITHUB_ENV"
+              echo "REPORT_PAGES_STAGING_DIR=${staging_dir}" >> "$GITHUB_ENV"
+              echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
+              {
+                echo "## Regression report"
+                echo "- HTML report path: $html_report_path"
+                echo "- Pages report path: ${report_subdir}/index.html"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+
+            echo "Waiting for report output (attempt ${attempt}/${max_attempts})..."
+            attempt=$((attempt + 1))
+            sleep "$poll_interval"
+          done
+
+          echo "Timeout waiting for regression report at $html_report_path" >&2
+          exit 1
+
+      - name: Update gh-pages site on cluster
+        if: env.REPORT_PAGES_STAGING_DIR != ''
+        env:
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
+          REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          report_path="${REPORT_HTML_PATH:?REPORT_HTML_PATH not set}"
+          report_subdir="${REPORT_PAGES_SUBDIR:?REPORT_PAGES_SUBDIR not set}"
+          history_branch="gh-pages"
+
+          ssh_options=(
+            -o BatchMode=yes
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+          )
+
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+            "RUN_DIR='${remote_run_dir}' REPORT_PATH='${report_path}' REPORT_SUBDIR='${report_subdir}' HISTORY_BRANCH='${history_branch}' GITHUB_REPOSITORY='${GITHUB_REPOSITORY}' GITHUB_TOKEN='${GITHUB_TOKEN}' bash -s" <<'EOF'
+            set -euo pipefail
+
+            repo_dir="${RUN_DIR}/gh-pages-site"
+            repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            landing_source="${RUN_DIR}/pioneer/pages/index.html"
+            logo_source="${RUN_DIR}/pioneer/figures/PIONEER_LOGO.svg"
+
+            if [ -d "${repo_dir}/.git" ]; then
+              git -C "$repo_dir" fetch origin "$HISTORY_BRANCH" || true
+              git -C "$repo_dir" checkout "$HISTORY_BRANCH" || git -C "$repo_dir" checkout -b "$HISTORY_BRANCH"
+              if git -C "$repo_dir" rev-parse --verify "origin/${HISTORY_BRANCH}" >/dev/null 2>&1; then
+                git -C "$repo_dir" reset --hard "origin/${HISTORY_BRANCH}"
+              fi
+            else
+              rm -rf "$repo_dir"
+              if git clone --branch "$HISTORY_BRANCH" "$repo_url" "$repo_dir"; then
+                :
+              else
+                git init "$repo_dir"
+                git -C "$repo_dir" checkout -b "$HISTORY_BRANCH"
+                git -C "$repo_dir" remote add origin "$repo_url"
+              fi
+            fi
+
+            mkdir -p "${repo_dir}/${REPORT_SUBDIR}"
+            cp "$REPORT_PATH" "${repo_dir}/${REPORT_SUBDIR}/index.html"
+            report_timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            printf '{\n  "timestamp": "%s"\n}\n' "$report_timestamp" > "${repo_dir}/${REPORT_SUBDIR}/meta.json"
+            results_dir="$(dirname "$REPORT_PATH")"
+            if [ -d "${results_dir}/fdr_plots" ]; then
+              mkdir -p "${repo_dir}/${REPORT_SUBDIR}/fdr_plots"
+              rsync -a "${results_dir}/fdr_plots/" "${repo_dir}/${REPORT_SUBDIR}/fdr_plots/"
+            fi
+
+            if [ ! -f "$landing_source" ]; then
+              echo "Missing landing page at $landing_source" >&2
+              exit 1
+            fi
+
+            if [ ! -f "$logo_source" ]; then
+              echo "Missing logo at $logo_source" >&2
+              exit 1
+            fi
+
+            mkdir -p "${repo_dir}/assets"
+            cp "$landing_source" "${repo_dir}/index.html"
+            cp "$logo_source" "${repo_dir}/assets/pioneer-logo.svg"
+
+            mkdir -p "${repo_dir}/reports"
+            {
+              echo "<!DOCTYPE html>"
+              echo "<html lang=\"en\">"
+              echo "<head>"
+              echo "<meta charset=\"UTF-8\">"
+              echo "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+              echo "<title>Regression Report Index</title>"
+              echo "<style>"
+              echo "body { font-family: Arial, sans-serif; margin: 24px; }"
+              echo "table { border-collapse: collapse; width: 100%; }"
+              echo "th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }"
+              echo "th { background-color: #f4f4f4; }"
+              echo "tr:nth-child(even) { background-color: #fafafa; }"
+              echo "</style>"
+              echo "</head>"
+              echo "<body>"
+              echo "<h1>Regression Reports</h1>"
+              echo "<table>"
+              echo "<thead><tr><th>Date (CST)</th><th>Branch</th><th>Commit</th><th>Run</th><th>Report</th></tr></thead>"
+              echo "<tbody>"
+              if [ -d "${repo_dir}/reports" ]; then
+                  report_entries=$(
+                    find "${repo_dir}/reports" -type f -name meta.json -print0 | while IFS= read -r -d '' meta_file; do
+                      report_rel="${meta_file#${repo_dir}/}"
+                      report_dir="$(dirname "$report_rel")"
+                      report_dir_rel="${report_dir#reports/}"
+                      report_key="${report_dir#reports/}"
+                      report_branch="${report_key%%/*}"
+                      report_sha="${report_key#*/}"
+                      report_sha="${report_sha%%/*}"
+                      report_run="${report_key#*/}"
+                    report_run="${report_run#*/}"
+                    report_date=$(sed -n 's/.*"timestamp"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$meta_file" | head -n 1)
+                    report_cst=""
+                    if [ -n "$report_date" ]; then
+                      report_cst=$(TZ=America/Chicago date -d "$report_date" +'%Y-%m-%dT%H:%M:%S')
+                    fi
+                    printf '%s\t%s\t%s\t%s\t%s\n' "$report_cst" "$report_branch" "$report_sha" "$report_run" "$report_dir_rel"
+                  done | sort -r
+                )
+                printf '%s\n' "$report_entries" | while IFS=$'\t' read -r entry_date entry_branch entry_sha entry_run entry_path; do
+                  echo "<tr>"
+                  echo "<td>${entry_date}</td>"
+                  echo "<td>${entry_branch}</td>"
+                  echo "<td>${entry_sha}</td>"
+                  echo "<td>${entry_run}</td>"
+                  echo "<td><a href=\"${entry_path}/\">Open report</a></td>"
+                  echo "</tr>"
+                done
+              fi
+              echo "</tbody>"
+              echo "</table>"
+              echo "</body>"
+              echo "</html>"
+            } > "${repo_dir}/reports/index.html"
+
+            git -C "$repo_dir" add -A
+            if git -C "$repo_dir" diff --cached --quiet; then
+              exit 0
+            fi
+            git -C "$repo_dir" -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "Update Pages history from ${RUN_DIR##*/}"
+            git -C "$repo_dir" push origin "$HISTORY_BRANCH"
+          EOF
+
+      - name: Sync gh-pages site from shared storage
+        if: env.REPORT_PAGES_STAGING_DIR != ''
+        env:
+          REPORT_PAGES_STAGING_DIR: ${{ env.REPORT_PAGES_STAGING_DIR }}
+          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+          REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          staging_dir="${REPORT_PAGES_STAGING_DIR:?REPORT_PAGES_STAGING_DIR not set}"
+          run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
+          history_dir="${run_dir}/gh-pages-site"
+
+          rm -rf "$staging_dir"
+          mkdir -p "$staging_dir"
+          if [ -d "$history_dir" ]; then
+            rsync -a "${history_dir}/" "$staging_dir/"
+          fi
+
+          report_subdir="${REPORT_PAGES_SUBDIR:?REPORT_PAGES_SUBDIR not set}"
+          echo "REPORT_HTML_PATH_MOUNT=${staging_dir}/${report_subdir}/index.html" >> "$GITHUB_ENV"
+          echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
+
+      - name: Upload regression HTML report artifact
+        if: env.REPORT_PAGES_DIR != ''
+        uses: actions/upload-artifact@v4
+        env:
+          REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
+        with:
+          name: regression-efdr-html
+          path: ${{ env.REPORT_PAGES_DIR }}
+          if-no-files-found: warn
+
+      - name: Comment regression report on pull request
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+          REPORT_PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
+        with:
+          script: |
+            const pagesUrl = process.env.REPORT_PAGES_URL;
+            const reportSubdir = process.env.REPORT_PAGES_SUBDIR || '';
+            if (!pagesUrl || !reportSubdir) {
+              core.info('Pages URL or report subdir missing; skipping PR comment.');
+              return;
+            }
+            const normalizedBase = pagesUrl.endsWith('/') ? pagesUrl.slice(0, -1) : pagesUrl;
+            const reportUrl = `${normalizedBase}/${reportSubdir}/`;
+            const historyUrl = `${normalizedBase}/reports/`;
+            const body = `**Regression metrics report**: <a href="${reportUrl}" target="_blank" rel="noopener noreferrer">Open report</a><br/>**Report history**: <a href="${historyUrl}" target="_blank" rel="noopener noreferrer">View all reports</a>`;
+            const { owner, repo } = context.repo;
+            const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner,
+              repo,
+              commit_sha: context.sha,
+            });
+            if (!pulls.data.length) {
+              core.info('No PR associated with this commit; skipping comment.');
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: pulls.data[0].number,
+              body,
+            });
+
       - name: Submit cluster cleanup job
         if: always()
         env:
@@ -412,12 +785,14 @@ jobs:
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_SUFFIX: ${{ env.CLUSTER_RUN_SUFFIX }}
+          REPORT_JOB_ID: ${{ env.REPORT_JOB_ID }}
           CLEANUP_JOB_SCRIPT: ${{ vars.CLEANUP_JOB_SCRIPT }}
         shell: bash
         run: |
           set -euo pipefail
 
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          report_job_id="${REPORT_JOB_ID:-}"
 
           cleanup_script_path="${CLEANUP_JOB_SCRIPT:-regression-configs/job_scripts/cleanup.bsub}"
           if [[ "$cleanup_script_path" != /* ]]; then
@@ -437,7 +812,7 @@ jobs:
           )
 
           cleanup_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' RUN_SUFFIX='${CLUSTER_RUN_SUFFIX:-}' CLEANUP_SCRIPT='${cleanup_script_path}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' RUN_SUFFIX='${CLUSTER_RUN_SUFFIX:-}' CLEANUP_SCRIPT='${cleanup_script_path}' REPORT_JOB_ID='${report_job_id}' bash -s" <<'EOF'
               set -eu
 
               if [ ! -f "$CLEANUP_SCRIPT" ]; then
@@ -445,7 +820,12 @@ jobs:
                 exit 1
               fi
 
-              submit_out=$(RUN_DIR="$RUN_DIR" RUN_SUFFIX="$RUN_SUFFIX" bsub < "$CLEANUP_SCRIPT")
+              cleanup_wait=""
+              if [ -n "$REPORT_JOB_ID" ]; then
+                cleanup_wait="-w ended($REPORT_JOB_ID)"
+              fi
+
+              submit_out=$(RUN_DIR="$RUN_DIR" RUN_SUFFIX="$RUN_SUFFIX" bsub $cleanup_wait < "$CLEANUP_SCRIPT")
               printf '%s' "$submit_out"
           EOF
           )"
