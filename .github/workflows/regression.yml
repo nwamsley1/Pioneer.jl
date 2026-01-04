@@ -387,9 +387,11 @@ jobs:
 
           ssh_options=(
             -o BatchMode=yes
+            -o LogLevel=ERROR
             -o ServerAliveInterval=60
             -o ServerAliveCountMax=3
             -o ConnectTimeout=30
+            -q
           )
 
           total_metrics=${#metrics_job_ids[@]}
@@ -522,9 +524,11 @@ jobs:
 
           ssh_options=(
             -o BatchMode=yes
+            -o LogLevel=ERROR
             -o ServerAliveInterval=60
             -o ServerAliveCountMax=3
             -o ConnectTimeout=30
+            -q
           )
 
           report_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
@@ -582,9 +586,11 @@ jobs:
 
           ssh_options=(
             -o BatchMode=yes
+            -o LogLevel=ERROR
             -o ServerAliveInterval=60
             -o ServerAliveCountMax=3
             -o ConnectTimeout=30
+            -q
           )
 
           poll_interval=60
