@@ -422,19 +422,19 @@ jobs:
             fi
 
             if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -a -noheader -o 'jobid' ${remaining_metrics[*]} ${remaining_search[*]} 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
+              "bjobs -noheader -o 'jobid' ${remaining_metrics[*]} ${remaining_search[*]} 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
               echo "Cluster login failed or bjobs unavailable." >&2
               exit 1
             fi
 
             active_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -a -noheader -o 'jobid' ${remaining_metrics[*]} 2>/dev/null | awk '/^[0-9]+$/'" || true)
+              "bjobs -noheader -o 'jobid' ${remaining_metrics[*]} 2>/dev/null | awk '/^[0-9]+$/'" || true)
             active_metrics=0
             if [ -n "$active_jobs" ]; then
               active_metrics=$(printf '%s\n' "$active_jobs" | wc -l | tr -d ' ')
             fi
             active_search_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -a -noheader -o 'jobid' ${remaining_search[*]} 2>/dev/null | awk '/^[0-9]+$/'" || true)
+              "bjobs -noheader -o 'jobid' ${remaining_search[*]} 2>/dev/null | awk '/^[0-9]+$/'" || true)
             active_search=0
             if [ -n "$active_search_jobs" ]; then
               active_search=$(printf '%s\n' "$active_search_jobs" | wc -l | tr -d ' ')
@@ -582,13 +582,13 @@ jobs:
 
           while [ "$attempt" -le "$max_attempts" ]; do
             if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -a -noheader -o 'jobid' ${report_job_id}" >/dev/null 2>&1; then
+              "bjobs -noheader -o 'jobid' ${report_job_id}" >/dev/null 2>&1; then
               echo "Cluster login failed or bjobs unavailable." >&2
               exit 1
             fi
 
             report_active=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -a -noheader -o 'jobid' ${report_job_id} 2>/dev/null | tr -d ' '" || true)
+              "bjobs -noheader -o 'jobid' ${report_job_id} 2>/dev/null | tr -d ' '" || true)
 
             if [ -z "$report_active" ]; then
               echo "Report job has finished; stopping monitor."
