@@ -1,7 +1,8 @@
 name: Regression Tests
 
 on:
-  push:
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       dataset_set:
@@ -21,6 +22,7 @@ permissions:
 jobs:
   regression:
     name: Julia ${{ matrix.version }} regression sweep
+    environment: regression-tests
     runs-on: [self-hosted, Linux, pioneer-regression]
     timeout-minutes: 7200
     strategy:
@@ -52,8 +54,8 @@ jobs:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
-          GITHUB_SHA: ${{ github.sha }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          GITHUB_REPOSITORY: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
           CLUSTER_ENTRAPMENT_REPO: ${{ secrets.CLUSTER_ENTRAPMENT_REPO }}
         shell: bash
         run: |
@@ -107,6 +109,10 @@ jobs:
               git -C "$PIONEER_DIR" fetch --all --tags
             else
               git clone "$PIONEER_REPO" "$PIONEER_DIR"
+            fi
+
+            if ! git -C "$PIONEER_DIR" cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
+              git -C "$PIONEER_DIR" fetch --depth=1 origin "$TARGET_SHA"
             fi
 
             git -C "$PIONEER_DIR" checkout --force "$TARGET_SHA"
