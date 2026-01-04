@@ -597,6 +597,8 @@ jobs:
           max_attempts=180
           attempt=1
 
+          echo "Monitoring report job ID: ${report_job_id}"
+
           while [ "$attempt" -le "$max_attempts" ]; do
             if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
               "bjobs -noheader -o 'jobid' ${report_job_id}" >/dev/null 2>&1; then
@@ -605,7 +607,7 @@ jobs:
             fi
 
             report_active=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -noheader -o 'jobid' ${report_job_id} 2>/dev/null | tr -d ' '" || true)
+              "bjobs -noheader -o 'jobid' ${report_job_id} 2>/dev/null | awk '/^[0-9]+$/'" || true)
 
             if [ -z "$report_active" ]; then
               echo "Report job has finished; stopping monitor."
