@@ -128,6 +128,7 @@ Releases are created by maintainers:
 2. Tag the merge commit with version (e.g., `v0.3.0`)
 3. GitHub Actions automatically builds and publishes releases
 
+
 ### Branch Naming Examples
 
 Good branch names:
