@@ -1,7 +1,8 @@
 name: Regression Tests
 
 on:
-  push:
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       dataset_set:
@@ -10,9 +11,8 @@ on:
         options:
           - all
           - fast
-          - test
           - fastest
-        default: test
+        default: fast
 
 permissions:
   contents: write
@@ -21,6 +21,7 @@ permissions:
 jobs:
   regression:
     name: Julia ${{ matrix.version }} regression sweep
+    environment: regression-tests
     runs-on: [self-hosted, Linux, pioneer-regression]
     timeout-minutes: 7200
     strategy:
