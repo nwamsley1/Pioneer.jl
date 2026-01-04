@@ -1,6 +1,9 @@
 name: Regression Tests
 
 on:
+  push:
+    branches:
+      - develop
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
@@ -637,6 +640,50 @@ jobs:
 
           echo "Timeout waiting for report job" >&2
           exit 1
+
+      - name: Sync develop metrics to shared storage
+        if: github.ref == 'refs/heads/develop' && github.event_name == 'push' && matrix.dataset_set == 'all'
+        env:
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
+          run_root="${run_root_raw%/}"
+          develop_dir="${run_root}/develop"
+          develop_results_dir="${develop_dir}/results"
+
+          ssh_options=(
+            -o BatchMode=yes
+            -o LogLevel=ERROR
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+            -q
+          )
+
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+            "RUN_DIR='${remote_run_dir}' DEVELOP_DIR='${develop_dir}' DEVELOP_RESULTS_DIR='${develop_results_dir}' bash -s" <<'EOF'
+            set -euo pipefail
+
+            if [ ! -d "$RUN_DIR/results" ]; then
+              echo "Run results directory not found at $RUN_DIR/results" >&2
+              exit 1
+            fi
+
+            if [ -d "$DEVELOP_DIR" ]; then
+              timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
+              mv "$DEVELOP_DIR" "${DEVELOP_DIR}_${timestamp}"
+            fi
+
+            mkdir -p "$DEVELOP_RESULTS_DIR"
+            rsync -a "$RUN_DIR/results/" "$DEVELOP_RESULTS_DIR/"
+          EOF
 
       - name: Update gh-pages site on cluster
         if: env.REPORT_PAGES_STAGING_DIR != ''
