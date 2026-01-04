@@ -84,9 +84,11 @@ jobs:
 
           ssh_options=(
             -o BatchMode=yes
+            -o LogLevel=ERROR
             -o ServerAliveInterval=60
             -o ServerAliveCountMax=3
             -o ConnectTimeout=30
+            -q
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' bash -s" <<'EOF'
@@ -146,9 +148,11 @@ jobs:
 
           ssh_options=(
             -o BatchMode=yes
+            -o LogLevel=ERROR
             -o ServerAliveInterval=60
             -o ServerAliveCountMax=3
             -o ConnectTimeout=30
+            -q
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
@@ -218,7 +222,9 @@ jobs:
             job_id_dir="$RUN_DIR/job-ids"
             mkdir -p "$job_id_dir"
             manifest_file="$job_id_dir/expected_results.txt"
+            search_job_list="$job_id_dir/search.ids"
             : > "$manifest_file"
+            : > "$search_job_list"
 
             printf '%s\n' "$param_list" | while IFS= read -r param_file; do
               rel_path="${param_file#${PARAMS_DIR}/}"
@@ -267,6 +273,7 @@ jobs:
               fi
 
               echo "$search_job_id" >> "$job_id_dir/${dataset_dir_name}.search"
+              echo "$search_job_id" >> "$search_job_list"
             done
 
             dataset_dirs=$(find "$PARAMS_DIR" -mindepth 1 -maxdepth 1 -type d -print)
@@ -294,6 +301,8 @@ jobs:
               dataset_name="$(basename "$dataset_dir")"
               job_list_file="$job_id_dir/${dataset_name}.search"
               metrics_file="$dataset_dir/metrics.json"
+              metrics_job_list="$job_id_dir/metrics.ids"
+              touch "$metrics_job_list"
 
               if [ ! -f "$metrics_file" ]; then
                 echo "Skipping dataset $dataset_name: missing metrics.json" >&2
@@ -337,107 +346,139 @@ jobs:
                 printf '%s\n' "$metrics_submit" >&2
                 exit 1
               fi
+
+              echo "$metrics_job_id" >> "$metrics_job_list"
             done
           EOF
 
       - name: Wait for regression outputs on shared storage
         env:
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
         shell: bash
         run: |
           set -euo pipefail
 
           run_dir="${CLUSTER_RUN_DIR_MOUNT:?CLUSTER_RUN_DIR_MOUNT not set}"
-          manifest_path="$run_dir/job-ids/expected_results.txt"
-          results_root="$run_dir/results"
+          job_id_dir="$run_dir/job-ids"
+          metrics_job_list="$job_id_dir/metrics.ids"
+          search_job_list="$job_id_dir/search.ids"
 
-          if [ ! -f "$manifest_path" ]; then
-            echo "Expected manifest not found at $manifest_path" >&2
+          if [ ! -f "$metrics_job_list" ]; then
+            echo "Metrics job ID list not found at $metrics_job_list" >&2
+            exit 1
+          fi
+          if [ ! -f "$search_job_list" ]; then
+            echo "Search job ID list not found at $search_job_list" >&2
             exit 1
           fi
 
-          mapfile -t manifest_entries < "$manifest_path"
-
-          if [ "${#manifest_entries[@]}" -eq 0 ]; then
-            echo "Manifest is empty; cannot determine expected results" >&2
+          mapfile -t metrics_job_ids < "$metrics_job_list"
+          if [ "${#metrics_job_ids[@]}" -eq 0 ]; then
+            echo "Metrics job ID list is empty; cannot monitor metrics jobs" >&2
+            exit 1
+          fi
+          mapfile -t search_job_ids < "$search_job_list"
+          if [ "${#search_job_ids[@]}" -eq 0 ]; then
+            echo "Search job ID list is empty; cannot monitor search jobs" >&2
             exit 1
           fi
 
-          declare -A seen
-          unique_entries=()
-          for entry in "${manifest_entries[@]}"; do
-            clean_entry="${entry%$'\r'}"
-            [ -n "$clean_entry" ] || continue
-            if [[ -z "${seen[$clean_entry]+x}" ]]; then
-              seen[$clean_entry]=1
-              unique_entries+=("$clean_entry")
-            fi
-          done
+          ssh_options=(
+            -o BatchMode=yes
+            -o LogLevel=ERROR
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+            -q
+          )
 
-          total_expected=${#unique_entries[@]}
+          total_metrics=${#metrics_job_ids[@]}
+          total_search=${#search_job_ids[@]}
           poll_interval=300
           max_attempts=600
           attempt=1
           progress_log=()
 
-          echo "Polling for ${total_expected} result paths:" | tee -a "$GITHUB_STEP_SUMMARY"
-          printf '  %s\n' "${unique_entries[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Polling for ${total_search} search job(s) and ${total_metrics} metrics job(s)." | tee -a "$GITHUB_STEP_SUMMARY"
 
           while :; do
-            found=0
-            missing=()
+            remaining_metrics=()
+            for job_id in "${metrics_job_ids[@]}"; do
+              clean_id="${job_id%$'\r'}"
+              [ -n "$clean_id" ] || continue
+              remaining_metrics+=("$clean_id")
+            done
 
-            for dataset in "${unique_entries[@]}"; do
-              dataset_dir="$results_root/$dataset"
+            remaining_search=()
+            for job_id in "${search_job_ids[@]}"; do
+              clean_id="${job_id%$'\r'}"
+              [ -n "$clean_id" ] || continue
+              remaining_search+=("$clean_id")
+            done
 
-              metrics_glob="$dataset_dir/metrics_${dataset}_*.json"
-              metrics_present=0
-              if compgen -G "$metrics_glob" > /dev/null; then
-                metrics_present=1
+            if [ "${#remaining_metrics[@]}" -eq 0 ]; then
+              echo "No metrics job IDs remaining to monitor." >&2
+              exit 1
+            fi
+            if [ "${#remaining_search[@]}" -eq 0 ]; then
+              echo "No search job IDs remaining to monitor." >&2
+              exit 1
+            fi
+
+            if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+              "bjobs -noheader -o 'jobid' 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
+              echo "Cluster login failed or bjobs unavailable." >&2
+              exit 1
+            fi
+
+            running_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+              "bjobs -noheader -o 'jobid' 2>/dev/null | awk '/^[0-9]+$/'" || true)
+            declare -A running_map=()
+            if [ -n "$running_jobs" ]; then
+              while IFS= read -r job_id; do
+                [ -n "$job_id" ] || continue
+                running_map["$job_id"]=1
+              done <<< "$running_jobs"
+            fi
+
+            active_metrics=0
+            for job_id in "${remaining_metrics[@]}"; do
+              if [[ -n "${running_map[$job_id]+x}" ]]; then
+                active_metrics=$((active_metrics + 1))
               fi
+            done
 
-              log_present=""
-              if compgen -G "$dataset_dir/*.log" > /dev/null; then
-                log_present=1
-              elif compgen -G "$dataset_dir/*.log.gz" > /dev/null; then
-                log_present=1
-              fi
-
-              if [ "$metrics_present" -eq 1 ] || [ -n "$log_present" ]; then
-                found=$((found + 1))
-              else
-                missing+=("$dataset")
+            active_search=0
+            for job_id in "${remaining_search[@]}"; do
+              if [[ -n "${running_map[$job_id]+x}" ]]; then
+                active_search=$((active_search + 1))
               fi
             done
 
             timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            progress_entry="[${timestamp}] Attempt ${attempt}: ${found}/${total_expected} ready"
+            progress_entry="[${timestamp}] Attempt ${attempt}: ${active_search}/${total_search} search jobs still present, ${active_metrics}/${total_metrics} metrics jobs still present"
             progress_log+=("$progress_entry")
             echo "$progress_entry" | tee -a "$GITHUB_STEP_SUMMARY"
 
-            if [ "${#missing[@]}" -gt 0 ]; then
-              echo "Missing entries:"
-              printf '  %s\n' "${missing[@]}"
-            fi
-
-            if [ "${#missing[@]}" -eq 0 ]; then
-              echo "All expected regression outputs detected."
+            if [ "$active_search" -eq 0 ] && [ "$active_metrics" -eq 0 ]; then
+              echo "All search and metrics jobs have finished; stopping monitor."
               break
             fi
 
             if [ "$attempt" -ge "$max_attempts" ]; then
-              echo "Timeout waiting for regression outputs after $((poll_interval * max_attempts / 60)) minutes" >&2
-              printf 'Still missing:\n' >&2
-              printf '  %s\n' "${missing[@]}" >&2
+              echo "Timeout waiting for metrics jobs after $((poll_interval * max_attempts / 60)) minutes" >&2
+              printf 'Still running:\n' >&2
+              printf '  search=%s metrics=%s\n' "${active_search}" "${active_metrics}" >&2
               {
-                echo "## Cluster results polling"
+                echo "## Cluster metrics polling"
                 echo "- Run directory: $run_dir"
-                echo "- Expected outputs: $total_expected"
+                echo "- Expected search jobs: $total_search"
+                echo "- Expected metrics jobs: $total_metrics"
                 echo "- Status: timed out"
-                echo "- Missing entries:"
-                for entry in "${missing[@]}"; do
-                  echo "  - $entry"
-                done
+                echo "- Remaining search jobs: $active_search"
+                echo "- Remaining metrics jobs: $active_metrics"
                 echo "- Progress log:"
                 for line in "${progress_log[@]}"; do
                   echo "  - $line"
@@ -451,9 +492,10 @@ jobs:
           done
 
           {
-            echo "## Cluster results polling"
+            echo "## Cluster metrics polling"
             echo "- Run directory: $run_dir"
-            echo "- Expected outputs: $total_expected"
+            echo "- Expected search jobs: $total_search"
+            echo "- Expected metrics jobs: $total_metrics"
             echo "- Status: completed"
             echo "- Progress log:"
             for line in "${progress_log[@]}"; do
@@ -482,9 +524,11 @@ jobs:
 
           ssh_options=(
             -o BatchMode=yes
+            -o LogLevel=ERROR
             -o ServerAliveInterval=60
             -o ServerAliveCountMax=3
             -o ConnectTimeout=30
+            -q
           )
 
           report_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
@@ -524,6 +568,9 @@ jobs:
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
           REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
+          REPORT_JOB_ID: ${{ env.REPORT_JOB_ID }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
         shell: bash
         run: |
           set -euo pipefail
@@ -535,31 +582,52 @@ jobs:
           ref_name="${GITHUB_REF_NAME:-unknown}"
           ref_sanitized=$(printf '%s' "$ref_name" | tr '/ ' '__')
           report_subdir="reports/${ref_sanitized}/${GITHUB_SHA:-unknown}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          report_job_id="${REPORT_JOB_ID:?REPORT_JOB_ID not set}"
+
+          ssh_options=(
+            -o BatchMode=yes
+            -o LogLevel=ERROR
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+            -q
+          )
 
           poll_interval=60
           max_attempts=180
           attempt=1
 
+          echo "Monitoring report job ID: ${report_job_id}"
+
           while [ "$attempt" -le "$max_attempts" ]; do
-            if [ -f "$html_report_path" ]; then
-              echo "Report found at $html_report_path"
+            if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "true" >/dev/null 2>&1; then
+              echo "Cluster login failed or bjobs unavailable." >&2
+              exit 1
+            fi
+
+            running_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+              "bjobs -noheader -o 'jobid' 2>/dev/null | awk '/^[0-9]+$/'" || true)
+
+            report_active=$(printf '%s\n' "$running_jobs" | awk -v id="$report_job_id" '$0 == id { found=1 } END { if (found) print id }')
+
+            if [ -z "$report_active" ]; then
+              echo "Report job has finished; stopping monitor."
               echo "REPORT_PAGES_SUBDIR=${report_subdir}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_STAGING_DIR=${staging_dir}" >> "$GITHUB_ENV"
               echo "REPORT_PAGES_DIR=${staging_dir}" >> "$GITHUB_ENV"
               {
                 echo "## Regression report"
-                echo "- HTML report path: $html_report_path"
                 echo "- Pages report path: ${report_subdir}/index.html"
               } >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
 
-            echo "Waiting for report output (attempt ${attempt}/${max_attempts})..."
+            echo "Waiting for report job (attempt ${attempt}/${max_attempts})..."
             attempt=$((attempt + 1))
             sleep "$poll_interval"
           done
 
-          echo "Timeout waiting for regression report at $html_report_path" >&2
+          echo "Timeout waiting for report job" >&2
           exit 1
 
       - name: Update gh-pages site on cluster
@@ -759,8 +827,7 @@ jobs:
             }
             const normalizedBase = pagesUrl.endsWith('/') ? pagesUrl.slice(0, -1) : pagesUrl;
             const reportUrl = `${normalizedBase}/${reportSubdir}/`;
-            const historyUrl = `${normalizedBase}/reports/`;
-            const body = `**Regression metrics report**: <a href="${reportUrl}" target="_blank" rel="noopener noreferrer">Open report</a><br/>**Report history**: <a href="${historyUrl}" target="_blank" rel="noopener noreferrer">View all reports</a>`;
+            const body = `**Regression metrics report**: <a href="${reportUrl}" target="_blank" rel="noopener noreferrer">Open report</a>`;
             const { owner, repo } = context.repo;
             const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
               owner,
