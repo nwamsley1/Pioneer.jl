@@ -28,7 +28,7 @@ jobs:
     strategy:
       matrix:
         version: ['1.11']
-        dataset_set: [fastest, fast, all]
+        dataset_set: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.dataset_set)) || fromJSON('["fastest","fast","all"]') }}
     steps:
       - uses: actions/checkout@v5
         with:
