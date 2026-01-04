@@ -84,9 +84,11 @@ jobs:
 
           ssh_options=(
             -o BatchMode=yes
+            -o LogLevel=ERROR
             -o ServerAliveInterval=60
             -o ServerAliveCountMax=3
             -o ConnectTimeout=30
+            -q
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' bash -s" <<'EOF'
@@ -146,9 +148,11 @@ jobs:
 
           ssh_options=(
             -o BatchMode=yes
+            -o LogLevel=ERROR
             -o ServerAliveInterval=60
             -o ServerAliveCountMax=3
             -o ConnectTimeout=30
+            -q
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
