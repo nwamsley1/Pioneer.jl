@@ -21,8 +21,8 @@ permissions:
 
 jobs:
   regression:
-    name: Julia ${{ matrix.version }} regression sweep
-    environment: regression-tests
+    name: Julia ${{ matrix.version }} regression sweep (${{ matrix.dataset_set }})
+    environment: regression-tests-${{ matrix.dataset_set }}
     runs-on: [self-hosted, Linux, pioneer-regression]
     timeout-minutes: 7200
     strategy:
@@ -58,13 +58,14 @@ jobs:
           GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           GITHUB_REPOSITORY: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
           CLUSTER_ENTRAPMENT_REPO: ${{ secrets.CLUSTER_ENTRAPMENT_REPO }}
+          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || matrix.dataset_set }}
         shell: bash
         run: |
           set -euo pipefail
 
           remote_run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
           remote_run_root="${remote_run_root_raw%/}"
-          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}"
           remote_run_dir="${remote_run_root}/${run_suffix}"
           mount_run_root_raw="/mnt/ris/Active/Automation/Pioneer"
           mount_run_root="${mount_run_root_raw%/}"
@@ -142,15 +143,15 @@ jobs:
           set -euo pipefail
 
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
-          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
-          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
+          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}}"
+          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}}"
           params_dir="${remote_run_dir}/regression-configs/params"
           regression_configs_dir="${remote_run_dir}/regression-configs"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
           setup_script_path="${remote_run_dir}/${SETUP_JOB_SCRIPT:-regression-configs/job_scripts/setup.bsub}"
           metrics_script_path="${remote_run_dir}/${METRICS_JOB_SCRIPT:-regression-configs/job_scripts/metrics.bsub}"
           adjusted_params_dir="${remote_run_dir}/adjusted-params"
-          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}"
           dataset_set="${DATASET_SET:-all}"
 
           ssh_options=(
