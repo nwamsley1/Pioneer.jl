@@ -11,8 +11,9 @@ on:
         options:
           - all
           - fast
+          - test
           - fastest
-        default: fast
+        default: test
 
 permissions:
   contents: write
