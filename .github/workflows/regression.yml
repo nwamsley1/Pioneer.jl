@@ -28,6 +28,7 @@ jobs:
     strategy:
       matrix:
         version: ['1.11']
+        dataset_set: [fastest, fast, all]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -135,7 +136,7 @@ jobs:
           REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
           SETUP_JOB_SCRIPT: ${{ vars.SETUP_JOB_SCRIPT }}
           METRICS_JOB_SCRIPT: ${{ vars.METRICS_JOB_SCRIPT }}
-          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || 'test' }}
+          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || matrix.dataset_set }}
         shell: bash
         run: |
           set -euo pipefail
