@@ -1,6 +1,11 @@
 name: Regression Tests
 
 on:
+  push:
+    branches:
+      - develop
+  release:
+    types: [published]
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
@@ -28,7 +33,7 @@ jobs:
     strategy:
       matrix:
         version: ['1.11']
-        dataset_set: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.dataset_set)) || fromJSON('["fastest","fast","all"]') }}
+        dataset_set: ${{ github.event_name == 'release' && fromJSON('["all"]') || (github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.dataset_set)) || fromJSON('["fastest","fast","all"]')) }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -638,6 +643,102 @@ jobs:
           echo "Timeout waiting for report job" >&2
           exit 1
 
+      - name: Sync develop metrics to shared storage
+        if: github.ref == 'refs/heads/develop' && github.event_name == 'push' && matrix.dataset_set == 'all'
+        env:
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
+          run_root="${run_root_raw%/}"
+          develop_dir="${run_root}/metrics/develop"
+
+          ssh_options=(
+            -o BatchMode=yes
+            -o LogLevel=ERROR
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+            -q
+          )
+
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+            "RUN_DIR='${remote_run_dir}' DEVELOP_DIR='${develop_dir}' bash -s" <<'EOF'
+            set -euo pipefail
+            lock_dir="${DEVELOP_DIR}.lock"
+            lock_timeout=900
+            lock_interval=10
+            start_time=$(date +%s)
+
+            while ! mkdir "$lock_dir" 2>/dev/null; do
+              if [ $(( $(date +%s) - start_time )) -ge "$lock_timeout" ]; then
+                echo "Timeout waiting for develop metrics lock at $lock_dir" >&2
+                exit 1
+              fi
+              sleep "$lock_interval"
+            done
+            trap 'rmdir "$lock_dir"' EXIT
+
+            if [ ! -d "$RUN_DIR/results" ]; then
+              echo "Run results directory not found at $RUN_DIR/results" >&2
+              exit 1
+            fi
+
+            if [ -d "$DEVELOP_DIR" ]; then
+              timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
+              mv "$DEVELOP_DIR" "${DEVELOP_DIR}_${timestamp}"
+            fi
+
+            mkdir -p "$DEVELOP_DIR"
+            rsync -a "$RUN_DIR/results/" "$DEVELOP_DIR/"
+          EOF
+
+      - name: Sync release metrics to shared storage
+        if: github.event_name == 'release' && matrix.dataset_set == 'all'
+        env:
+          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
+          CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
+          run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
+          run_root="${run_root_raw%/}"
+          release_tag="${RELEASE_TAG:?RELEASE_TAG not set}"
+          release_dir="${run_root}/release/${release_tag}"
+
+          ssh_options=(
+            -o BatchMode=yes
+            -o LogLevel=ERROR
+            -o ServerAliveInterval=60
+            -o ServerAliveCountMax=3
+            -o ConnectTimeout=30
+            -q
+          )
+
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+            "RUN_DIR='${remote_run_dir}' RELEASE_DIR='${release_dir}' bash -s" <<'EOF'
+            set -euo pipefail
+
+            if [ ! -d "$RUN_DIR/results" ]; then
+              echo "Run results directory not found at $RUN_DIR/results" >&2
+              exit 1
+            fi
+
+            mkdir -p "$RELEASE_DIR"
+            rsync -a "$RUN_DIR/results/" "$RELEASE_DIR/"
+          EOF
+
       - name: Update gh-pages site on cluster
         if: env.REPORT_PAGES_STAGING_DIR != ''
         env:
@@ -858,6 +959,35 @@ jobs:
               repo,
               issue_number: issueNumber,
               body,
+            });
+
+      - name: Update release notes with regression report
+        if: github.event_name == 'release' && env.REPORT_PAGES_SUBDIR != ''
+        uses: actions/github-script@v7
+        env:
+          REPORT_PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
+        with:
+          script: |
+            const pagesUrl = process.env.REPORT_PAGES_URL;
+            const reportSubdir = process.env.REPORT_PAGES_SUBDIR;
+            const release = context.payload.release;
+            if (!pagesUrl || !reportSubdir || !release) {
+              core.info('Missing Pages URL, report subdir, or release payload; skipping release notes update.');
+              return;
+            }
+            const normalizedBase = pagesUrl.endsWith('/') ? pagesUrl.slice(0, -1) : pagesUrl;
+            const reportUrl = `${normalizedBase}/${reportSubdir}/`;
+            const reportLine = `Regression report: ${reportUrl}`;
+            const existingBody = release.body || '';
+            const updatedBody = existingBody.includes(reportLine)
+              ? existingBody
+              : `${existingBody}\n\n${reportLine}`.trim();
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.id,
+              body: updatedBody,
             });
 
       - name: Submit cluster cleanup job
