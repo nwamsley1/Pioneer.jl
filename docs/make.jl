@@ -44,6 +44,7 @@ deploydocs(
     repo = "github.com/nwamsley1/Pioneer.jl",
     devbranch = "develop",
     devurl    = "dev",          # shows up at /dev
+    dirname   = "docs",
     versions  = [
         "stable" => "v^",       # latest release tag (vX.Y.Z) becomes /stable
         "v#.#",                 # publish each minor series: /v0.1, /v0.2, ...
