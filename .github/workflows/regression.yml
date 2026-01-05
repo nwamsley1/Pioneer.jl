@@ -39,22 +39,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Configure SSH for cluster access
-        env:
-          CLUSTER_SSH_KEY: ${{ secrets.CLUSTER_SSH_KEY }}
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p ~/.ssh
-          install -m 600 /dev/null ~/.ssh/id_rsa
-          # Normalize line endings and ensure a trailing newline
-          printf '%s\n' "$CLUSTER_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
-
-          # Preload host key to avoid interactive prompt
-          ssh-keyscan -H "$CLUSTER_HOST" >> ~/.ssh/known_hosts
-
       - name: Prepare cluster workspace (configs, Pioneer, and depot)
         env:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
