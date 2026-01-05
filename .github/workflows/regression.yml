@@ -52,6 +52,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "$CLUSTER_HOST"
+          echo "$CLUSTER_USERNAME"
+          echo "$CLUSTER_RUN_ROOT"
+
           remote_run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
           remote_run_root="${remote_run_root_raw%/}"
           run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}"
