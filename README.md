@@ -2,7 +2,7 @@
 <h1>Pioneer: Fast and Open-Source Analysis of Data-Independent Acquisition Proteomics Experiments
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue)](LICENSE)
-[![Docs: dev](https://img.shields.io/badge/docs-dev-blue)](https://nwamsley1.github.io/Pioneer.jl/dev)
+[![Docs: dev](https://img.shields.io/badge/docs-dev-blue)](https://nwamsley1.github.io/Pioneer.jl/docs/dev)
 [![Main branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=main&label=Main%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Amain)
 [![Develop branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=develop&label=Develop%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Adevelop)
 [![Coverage](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/nwamsley1/Pioneer.jl)
@@ -21,7 +21,7 @@ Pioneer and its companion tool, Altimeter, are together an open-source and perfo
 - **Fast:** Pioneer searches data several times faster than it can be aquired and faster than state-of-the-art search tools.
 
 ## Documentation
-See [documentation for full installation and usage instructions.](https://nwamsley1.github.io/Pioneer.jl/dev)
+See [documentation for full installation and usage instructions.](https://nwamsley1.github.io/Pioneer.jl/docs/dev)
 
 ## Installation
 Download the installer for your operating system from the [releases page](https://github.com/nwamsley1/Pioneer.jl/releases). The installer adds a `pioneer` command to your `PATH`.

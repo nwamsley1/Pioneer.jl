@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pioneer</title>
+    <style>
+      :root {
+        --pioneer-blue: #193b54;
+      }
+
+      body {
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        margin: 0;
+        color: #1f2933;
+        background-color: #f8fafc;
+      }
+
+      header {
+        background: var(--pioneer-blue);
+        color: #ffffff;
+        padding: 48px 24px;
+        text-align: center;
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 40px;
+        letter-spacing: 0.5px;
+      }
+
+      header p {
+        margin: 12px 0 0;
+        font-size: 18px;
+        opacity: 0.9;
+      }
+
+      main {
+        max-width: 900px;
+        margin: 32px auto;
+        padding: 0 24px 48px;
+        line-height: 1.6;
+      }
+
+      h2 {
+        color: var(--pioneer-blue);
+        margin-top: 32px;
+      }
+
+      .card {
+        background: #ffffff;
+        border-radius: 12px;
+        padding: 24px;
+        margin: 20px;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+      }
+
+      .logo {
+        display: block;
+        width: 300px;
+        max-width: 100%;
+        margin: 0 auto 16px;
+      }
+
+      .cta-link {
+        color: var(--pioneer-blue);
+        font-weight: 600;
+        text-decoration: none;
+      }
+
+      .cta-link:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <header></header>
+    <main>
+      <section class="card">
+        <img class="logo" src="assets/pioneer-logo.svg" alt="Pioneer logo" />
+        <p>
+          Pioneer is an open-source and high-performance toolkit for analyzing
+          data-independent acquisition (DIA) proteomics experiments. It delivers
+          rapid spectral library search, quantification, and scalable
+          workflows across large experiments.
+        </p>
+        <p>
+          <a class="cta-link" href="https://github.com/nwamsley1/Pioneer.jl"
+            >Visit the Pioneer GitHub repository →</a
+          >
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Documentation</h2>
+        <p>
+          Explore the Pioneer documentation, including guides, API references,
+          and tutorials.
+        </p>
+        <p>
+          <a class="cta-link" href="docs/stable/">Read the docs →</a>
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Regression Reports</h2>
+        <p>
+          View the history of regression tests for Pioneer.
+        </p>
+        <p>
+          <a class="cta-link" href="reports/">Browse regression reports →</a>
+        </p>
+      </section>
+    </main>
+  </body>
+</html>
