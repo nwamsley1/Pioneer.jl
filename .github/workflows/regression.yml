@@ -1038,6 +1038,18 @@ jobs:
               fi
 
               submit_out=$(RUN_DIR="$RUN_DIR" RUN_SUFFIX="$RUN_SUFFIX" bsub $cleanup_wait < "$CLEANUP_SCRIPT")
+              job_id_dir="$RUN_DIR/job-ids"
+              for job_list in "$job_id_dir/search.ids" "$job_id_dir/metrics.ids"; do
+                if [ -f "$job_list" ]; then
+                  while IFS= read -r job_id; do
+                    [ -n "$job_id" ] || continue
+                    bkill "$job_id" >/dev/null 2>&1 || true
+                  done < "$job_list"
+                fi
+              done
+              if [ -n "$REPORT_JOB_ID" ]; then
+                bkill "$REPORT_JOB_ID" >/dev/null 2>&1 || true
+              fi
               printf '%s' "$submit_out"
           EOF
           )"
