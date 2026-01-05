@@ -72,7 +72,8 @@ jobs:
 
       - name: Build and push release image
         run: |
-          docker build -t dennisgoldfarb/pioneer:${{ needs.linux.outputs.version }} .
+          docker build --build-arg PIONEER_VERSION=${{ needs.linux.outputs.version }} \
+            -t dennisgoldfarb/pioneer:${{ needs.linux.outputs.version }} .
           docker push dennisgoldfarb/pioneer:${{ needs.linux.outputs.version }}
 
       - name: Build and push latest image
