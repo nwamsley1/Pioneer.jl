@@ -236,8 +236,11 @@ jobs:
             mkdir -p "$job_id_dir"
             manifest_file="$job_id_dir/expected_results.txt"
             search_job_list="$job_id_dir/search.ids"
+            setup_job_list="$job_id_dir/setup.ids"
             : > "$manifest_file"
             : > "$search_job_list"
+            : > "$setup_job_list"
+            echo "$setup_job_id" >> "$setup_job_list"
 
             printf '%s\n' "$param_list" | while IFS= read -r param_file; do
               rel_path="${param_file#${PARAMS_DIR}/}"
@@ -1038,6 +1041,18 @@ jobs:
               fi
 
               submit_out=$(RUN_DIR="$RUN_DIR" RUN_SUFFIX="$RUN_SUFFIX" bsub $cleanup_wait < "$CLEANUP_SCRIPT")
+              job_id_dir="$RUN_DIR/job-ids"
+              for job_list in "$job_id_dir/setup.ids" "$job_id_dir/search.ids" "$job_id_dir/metrics.ids"; do
+                if [ -f "$job_list" ]; then
+                  while IFS= read -r job_id; do
+                    [ -n "$job_id" ] || continue
+                    bkill "$job_id" >/dev/null 2>&1 || true
+                  done < "$job_list"
+                fi
+              done
+              if [ -n "$REPORT_JOB_ID" ]; then
+                bkill "$REPORT_JOB_ID" >/dev/null 2>&1 || true
+              fi
               printf '%s' "$submit_out"
           EOF
           )"
