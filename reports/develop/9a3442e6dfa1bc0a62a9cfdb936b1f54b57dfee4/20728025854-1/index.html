@@ -1,0 +1,5310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Regression Metrics eFDR Plots</title>
+  <style>
+body { font-family: Arial, sans-serif; margin: 24px; }
+h1 { margin-bottom: 8px; }
+.search-block { margin-bottom: 32px; }
+.dataset-block { margin-bottom: 20px; }
+.plot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.plot-card { border: 1px solid #ddd; padding: 8px; border-radius: 6px; }
+.plot-card img { width: 100%; height: auto; display: block; }
+.plot-caption { font-size: 12px; margin-top: 6px; color: #555; word-break: break-all; }
+.metrics-report { margin-bottom: 32px; }
+.metric-block { margin-bottom: 24px; }
+.metrics-table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
+.metrics-table th, .metrics-table td { border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; }
+.metrics-table th { background: #f4f4f4; text-align: left; }
+.metrics-table th.numeric, .metrics-table td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.metrics-table tbody tr:nth-child(even) { background: #fafafa; }
+.metrics-table tbody tr:hover td { background: #eef6ff; }
+.metrics-table td.metric-good { background: #e7f3f5; }
+.metrics-table td.metric-bad { background: #f6e9ea; }
+.metrics-table thead th { position: sticky; top: 0; z-index: 1; }
+.metrics-table th.sortable { cursor: pointer; }
+.table-controls { margin: 6px 0 10px; display: flex; gap: 8px; align-items: center; }
+.table-controls label { font-size: 12px; color: #444; }
+.table-filter { padding: 4px 6px; font-size: 12px; min-width: 220px; }
+.table-chart { height: 520px; margin: 6px 0 12px; }
+.warning-banner { background: #fff4e5; border: 1px solid #f1b165; padding: 8px 12px; border-radius: 6px; color: #7a4b00; margin-bottom: 12px; }
+
+  </style>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+  <div class="metrics-report">
+<div class="metric-block">
+<h2>Regression Metrics Report</h2>
+<p><strong>Versions:</strong> v0.6.4, develop, current</p>
+</div>
+<div class="metric-block">
+<h3>Metric: identification.precursors.total</h3>
+<div class="table-chart" data-table-id="identification_precursors_total-1" data-chart-mode="percent_delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="identification_precursors_total-1"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="identification" id="identification_precursors_total-1">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+<th class="numeric">% current vs v0.6.4</th>
+<th class="numeric">% current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="APMS_Astral" data-search="search">
+<td>APMS_Astral</td>
+<td class="numeric">5499336</td>
+<td class="numeric">9506250</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td class="numeric">1096494</td>
+<td class="numeric">1317297</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td class="numeric">586322</td>
+<td class="numeric">644915</td>
+<td class="numeric">644915</td>
+<td class="numeric">+58593</td>
+<td class="numeric">+0</td>
+<td class="numeric">+9.9933%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td class="numeric">596590</td>
+<td class="numeric">653312</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min" data-search="search">
+<td>MTAC_Yeast_Alternating_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">141733</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min" data-search="search">
+<td>MTAC_Yeast_Alternating_5min</td>
+<td class="numeric">155641</td>
+<td class="numeric">161312</td>
+<td class="numeric">161312</td>
+<td class="numeric">+5671</td>
+<td class="numeric">+0</td>
+<td class="numeric">+3.6436%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric">138509</td>
+<td class="numeric">144522</td>
+<td class="numeric">144158</td>
+<td class="numeric">+5649</td>
+<td class="numeric">-364</td>
+<td class="numeric">+4.0784%</td>
+<td class="numeric">-0.2519%</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min" data-search="search">
+<td>MTAC_Yeast_Standard_5min</td>
+<td class="numeric">158962</td>
+<td class="numeric">163293</td>
+<td class="numeric">163392</td>
+<td class="numeric">+4430</td>
+<td class="numeric">+99</td>
+<td class="numeric">+2.7868%</td>
+<td class="numeric">+0.0606%</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td class="numeric">3282083</td>
+<td class="numeric">3932594</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td class="numeric">1022736</td>
+<td class="numeric">1187335</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td class="numeric">672242</td>
+<td class="numeric">781118</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_12ms" data-search="search">
+<td>SCP_Astral_1000pg_12ms</td>
+<td class="numeric">40882</td>
+<td class="numeric">42889</td>
+<td class="numeric">42889</td>
+<td class="numeric">+2007</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.9093%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_24ms" data-search="search">
+<td>SCP_Astral_1000pg_24ms</td>
+<td class="numeric">41069</td>
+<td class="numeric">42995</td>
+<td class="numeric">42995</td>
+<td class="numeric">+1926</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.6897%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_3ms" data-search="search">
+<td>SCP_Astral_1000pg_3ms</td>
+<td class="numeric">8740</td>
+<td class="numeric">23283</td>
+<td class="numeric">23283</td>
+<td class="numeric">+14543</td>
+<td class="numeric">+0</td>
+<td class="numeric">+166.3959%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_6ms" data-search="search">
+<td>SCP_Astral_1000pg_6ms</td>
+<td class="numeric">16935</td>
+<td class="numeric">17872</td>
+<td class="numeric">17872</td>
+<td class="numeric">+937</td>
+<td class="numeric">+0</td>
+<td class="numeric">+5.5329%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_12ms" data-search="search">
+<td>SCP_Astral_10ng_12ms</td>
+<td class="numeric">99908</td>
+<td class="numeric">104674</td>
+<td class="numeric">104674</td>
+<td class="numeric">+4766</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.7704%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_24ms" data-search="search">
+<td>SCP_Astral_10ng_24ms</td>
+<td class="numeric">71098</td>
+<td class="numeric">73368</td>
+<td class="numeric">73407</td>
+<td class="numeric">+2309</td>
+<td class="numeric">+39</td>
+<td class="numeric">+3.2476%</td>
+<td class="numeric">+0.0532%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_6ms" data-search="search">
+<td>SCP_Astral_10ng_6ms</td>
+<td class="numeric">115157</td>
+<td class="numeric">119850</td>
+<td class="numeric">120332</td>
+<td class="numeric">+5175</td>
+<td class="numeric">+482</td>
+<td class="numeric">+4.4939%</td>
+<td class="numeric">+0.4022%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_ms" data-search="search">
+<td>SCP_Astral_10ng_ms</td>
+<td class="numeric">105704</td>
+<td class="numeric">108898</td>
+<td class="numeric">108898</td>
+<td class="numeric">+3194</td>
+<td class="numeric">+0</td>
+<td class="numeric">+3.0216%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_12ms" data-search="search">
+<td>SCP_Astral_250pg_12ms</td>
+<td class="numeric">10194</td>
+<td class="numeric">10725</td>
+<td class="numeric">10725</td>
+<td class="numeric">+531</td>
+<td class="numeric">+0</td>
+<td class="numeric">+5.2089%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_24ms" data-search="search">
+<td>SCP_Astral_250pg_24ms</td>
+<td class="numeric">14807</td>
+<td class="numeric">15487</td>
+<td class="numeric">15487</td>
+<td class="numeric">+680</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.5924%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_3ms" data-search="search">
+<td>SCP_Astral_250pg_3ms</td>
+<td class="numeric">1261</td>
+<td class="numeric">1881</td>
+<td class="numeric">1881</td>
+<td class="numeric">+620</td>
+<td class="numeric">+0</td>
+<td class="numeric">+49.1673%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_6ms" data-search="search">
+<td>SCP_Astral_250pg_6ms</td>
+<td class="numeric">1436</td>
+<td class="numeric">4735</td>
+<td class="numeric">4735</td>
+<td class="numeric">+3299</td>
+<td class="numeric">+0</td>
+<td class="numeric">+229.7354%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_12ms" data-search="search">
+<td>SCP_Astral_500pg_12ms</td>
+<td class="numeric">21710</td>
+<td class="numeric">22164</td>
+<td class="numeric">22164</td>
+<td class="numeric">+454</td>
+<td class="numeric">+0</td>
+<td class="numeric">+2.0912%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_24ms" data-search="search">
+<td>SCP_Astral_500pg_24ms</td>
+<td class="numeric">25860</td>
+<td class="numeric">26218</td>
+<td class="numeric">26218</td>
+<td class="numeric">+358</td>
+<td class="numeric">+0</td>
+<td class="numeric">+1.3844%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_3ms" data-search="search">
+<td>SCP_Astral_500pg_3ms</td>
+<td class="numeric">3484</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_6ms" data-search="search">
+<td>SCP_Astral_500pg_6ms</td>
+<td class="numeric">10699</td>
+<td class="numeric">11408</td>
+<td class="numeric">11408</td>
+<td class="numeric">+709</td>
+<td class="numeric">+0</td>
+<td class="numeric">+6.6268%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_MBR" data-search="search">
+<td>SCP_Astral_MBR</td>
+<td class="numeric">92167</td>
+<td class="numeric">95835</td>
+<td class="numeric">95638</td>
+<td class="numeric">+3471</td>
+<td class="numeric">-197</td>
+<td class="numeric">+3.7660%</td>
+<td class="numeric">-0.2056%</td>
+</tr>
+<tr data-dataset="Seer_Astral_45" data-search="search">
+<td>Seer_Astral_45</td>
+<td class="numeric">2512737</td>
+<td class="numeric">3376226</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="YEAST_KO_Astral" data-search="search">
+<td>YEAST_KO_Astral</td>
+<td class="numeric">16088274</td>
+<td class="numeric">21176849</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="EWZ_2P_MBR_Exploris" data-search="search_MBR">
+<td>EWZ_2P_MBR_Exploris</td>
+<td class="numeric">1662994</td>
+<td class="numeric">1846154</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="EWZ_2P_noMBR_Exploris" data-search="search_noMBR">
+<td>EWZ_2P_noMBR_Exploris</td>
+<td class="numeric">1608906</td>
+<td class="numeric">1772922</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: identification.precursors.unique</h3>
+<div class="table-chart" data-table-id="identification_precursors_unique-2" data-chart-mode="percent_delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="identification_precursors_unique-2"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="identification" id="identification_precursors_unique-2">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+<th class="numeric">% current vs v0.6.4</th>
+<th class="numeric">% current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="APMS_Astral" data-search="search">
+<td>APMS_Astral</td>
+<td class="numeric">246168</td>
+<td class="numeric">456795</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td class="numeric">111504</td>
+<td class="numeric">127915</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td class="numeric">108267</td>
+<td class="numeric">118194</td>
+<td class="numeric">118194</td>
+<td class="numeric">+9927</td>
+<td class="numeric">+0</td>
+<td class="numeric">+9.1690%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td class="numeric">110265</td>
+<td class="numeric">119873</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min" data-search="search">
+<td>MTAC_Yeast_Alternating_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">49179</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min" data-search="search">
+<td>MTAC_Yeast_Alternating_5min</td>
+<td class="numeric">53969</td>
+<td class="numeric">55582</td>
+<td class="numeric">55582</td>
+<td class="numeric">+1613</td>
+<td class="numeric">+0</td>
+<td class="numeric">+2.9888%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric">48621</td>
+<td class="numeric">50392</td>
+<td class="numeric">50266</td>
+<td class="numeric">+1645</td>
+<td class="numeric">-126</td>
+<td class="numeric">+3.3833%</td>
+<td class="numeric">-0.2500%</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min" data-search="search">
+<td>MTAC_Yeast_Standard_5min</td>
+<td class="numeric">55060</td>
+<td class="numeric">56182</td>
+<td class="numeric">56228</td>
+<td class="numeric">+1168</td>
+<td class="numeric">+46</td>
+<td class="numeric">+2.1213%</td>
+<td class="numeric">+0.0819%</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td class="numeric">198770</td>
+<td class="numeric">232128</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td class="numeric">51272</td>
+<td class="numeric">58745</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td class="numeric">82206</td>
+<td class="numeric">93764</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_12ms" data-search="search">
+<td>SCP_Astral_1000pg_12ms</td>
+<td class="numeric">14440</td>
+<td class="numeric">15150</td>
+<td class="numeric">15150</td>
+<td class="numeric">+710</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.9169%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_24ms" data-search="search">
+<td>SCP_Astral_1000pg_24ms</td>
+<td class="numeric">14483</td>
+<td class="numeric">15034</td>
+<td class="numeric">15034</td>
+<td class="numeric">+551</td>
+<td class="numeric">+0</td>
+<td class="numeric">+3.8045%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_3ms" data-search="search">
+<td>SCP_Astral_1000pg_3ms</td>
+<td class="numeric">8740</td>
+<td class="numeric">9410</td>
+<td class="numeric">9410</td>
+<td class="numeric">+670</td>
+<td class="numeric">+0</td>
+<td class="numeric">+7.6659%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_6ms" data-search="search">
+<td>SCP_Astral_1000pg_6ms</td>
+<td class="numeric">8898</td>
+<td class="numeric">9308</td>
+<td class="numeric">9308</td>
+<td class="numeric">+410</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.6078%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_12ms" data-search="search">
+<td>SCP_Astral_10ng_12ms</td>
+<td class="numeric">34865</td>
+<td class="numeric">36461</td>
+<td class="numeric">36461</td>
+<td class="numeric">+1596</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.5777%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_24ms" data-search="search">
+<td>SCP_Astral_10ng_24ms</td>
+<td class="numeric">24649</td>
+<td class="numeric">25347</td>
+<td class="numeric">25340</td>
+<td class="numeric">+691</td>
+<td class="numeric">-7</td>
+<td class="numeric">+2.8034%</td>
+<td class="numeric">-0.0276%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_6ms" data-search="search">
+<td>SCP_Astral_10ng_6ms</td>
+<td class="numeric">40156</td>
+<td class="numeric">41645</td>
+<td class="numeric">41919</td>
+<td class="numeric">+1763</td>
+<td class="numeric">+274</td>
+<td class="numeric">+4.3904%</td>
+<td class="numeric">+0.6579%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_ms" data-search="search">
+<td>SCP_Astral_10ng_ms</td>
+<td class="numeric">36688</td>
+<td class="numeric">37808</td>
+<td class="numeric">37808</td>
+<td class="numeric">+1120</td>
+<td class="numeric">+0</td>
+<td class="numeric">+3.0528%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_12ms" data-search="search">
+<td>SCP_Astral_250pg_12ms</td>
+<td class="numeric">3666</td>
+<td class="numeric">3871</td>
+<td class="numeric">3871</td>
+<td class="numeric">+205</td>
+<td class="numeric">+0</td>
+<td class="numeric">+5.5919%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_24ms" data-search="search">
+<td>SCP_Astral_250pg_24ms</td>
+<td class="numeric">5299</td>
+<td class="numeric">5531</td>
+<td class="numeric">5531</td>
+<td class="numeric">+232</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.3782%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_3ms" data-search="search">
+<td>SCP_Astral_250pg_3ms</td>
+<td class="numeric">675</td>
+<td class="numeric">701</td>
+<td class="numeric">701</td>
+<td class="numeric">+26</td>
+<td class="numeric">+0</td>
+<td class="numeric">+3.8519%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_6ms" data-search="search">
+<td>SCP_Astral_250pg_6ms</td>
+<td class="numeric">1436</td>
+<td class="numeric">1713</td>
+<td class="numeric">1713</td>
+<td class="numeric">+277</td>
+<td class="numeric">+0</td>
+<td class="numeric">+19.2897%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_12ms" data-search="search">
+<td>SCP_Astral_500pg_12ms</td>
+<td class="numeric">7794</td>
+<td class="numeric">7969</td>
+<td class="numeric">7969</td>
+<td class="numeric">+175</td>
+<td class="numeric">+0</td>
+<td class="numeric">+2.2453%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_24ms" data-search="search">
+<td>SCP_Astral_500pg_24ms</td>
+<td class="numeric">9158</td>
+<td class="numeric">9228</td>
+<td class="numeric">9228</td>
+<td class="numeric">+70</td>
+<td class="numeric">+0</td>
+<td class="numeric">+0.7644%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_3ms" data-search="search">
+<td>SCP_Astral_500pg_3ms</td>
+<td class="numeric">1846</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_6ms" data-search="search">
+<td>SCP_Astral_500pg_6ms</td>
+<td class="numeric">3874</td>
+<td class="numeric">4136</td>
+<td class="numeric">4136</td>
+<td class="numeric">+262</td>
+<td class="numeric">+0</td>
+<td class="numeric">+6.7630%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_MBR" data-search="search">
+<td>SCP_Astral_MBR</td>
+<td class="numeric">24110</td>
+<td class="numeric">24950</td>
+<td class="numeric">24900</td>
+<td class="numeric">+790</td>
+<td class="numeric">-50</td>
+<td class="numeric">+3.2766%</td>
+<td class="numeric">-0.2004%</td>
+</tr>
+<tr data-dataset="Seer_Astral_45" data-search="search">
+<td>Seer_Astral_45</td>
+<td class="numeric">69584</td>
+<td class="numeric">90265</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="YEAST_KO_Astral" data-search="search">
+<td>YEAST_KO_Astral</td>
+<td class="numeric">66823</td>
+<td class="numeric">88284</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="EWZ_2P_MBR_Exploris" data-search="search_MBR">
+<td>EWZ_2P_MBR_Exploris</td>
+<td class="numeric">50700</td>
+<td class="numeric">56361</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="EWZ_2P_noMBR_Exploris" data-search="search_noMBR">
+<td>EWZ_2P_noMBR_Exploris</td>
+<td class="numeric">50591</td>
+<td class="numeric">56238</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: identification.protein_groups.total</h3>
+<div class="table-chart" data-table-id="identification_protein_groups_total-3" data-chart-mode="percent_delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="identification_protein_groups_total-3"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="identification" id="identification_protein_groups_total-3">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+<th class="numeric">% current vs v0.6.4</th>
+<th class="numeric">% current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="APMS_Astral" data-search="search">
+<td>APMS_Astral</td>
+<td class="numeric">603278</td>
+<td class="numeric">862543</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td class="numeric">87920</td>
+<td class="numeric">94779</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td class="numeric">63773</td>
+<td class="numeric">65575</td>
+<td class="numeric">65575</td>
+<td class="numeric">+1802</td>
+<td class="numeric">+0</td>
+<td class="numeric">+2.8256%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td class="numeric">64317</td>
+<td class="numeric">66287</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min" data-search="search">
+<td>MTAC_Yeast_Alternating_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">12127</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min" data-search="search">
+<td>MTAC_Yeast_Alternating_5min</td>
+<td class="numeric">12432</td>
+<td class="numeric">12546</td>
+<td class="numeric">12546</td>
+<td class="numeric">+114</td>
+<td class="numeric">+0</td>
+<td class="numeric">+0.9170%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric">12008</td>
+<td class="numeric">12074</td>
+<td class="numeric">12123</td>
+<td class="numeric">+115</td>
+<td class="numeric">+49</td>
+<td class="numeric">+0.9577%</td>
+<td class="numeric">+0.4058%</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min" data-search="search">
+<td>MTAC_Yeast_Standard_5min</td>
+<td class="numeric">12561</td>
+<td class="numeric">12572</td>
+<td class="numeric">12554</td>
+<td class="numeric">-7</td>
+<td class="numeric">-18</td>
+<td class="numeric">-0.0557%</td>
+<td class="numeric">-0.1432%</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td class="numeric">236395</td>
+<td class="numeric">251306</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td class="numeric">146224</td>
+<td class="numeric">155373</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td class="numeric">70810</td>
+<td class="numeric">76507</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_12ms" data-search="search">
+<td>SCP_Astral_1000pg_12ms</td>
+<td class="numeric">9163</td>
+<td class="numeric">9569</td>
+<td class="numeric">9569</td>
+<td class="numeric">+406</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.4309%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_24ms" data-search="search">
+<td>SCP_Astral_1000pg_24ms</td>
+<td class="numeric">9298</td>
+<td class="numeric">9833</td>
+<td class="numeric">9833</td>
+<td class="numeric">+535</td>
+<td class="numeric">+0</td>
+<td class="numeric">+5.7539%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_3ms" data-search="search">
+<td>SCP_Astral_1000pg_3ms</td>
+<td class="numeric">2450</td>
+<td class="numeric">6359</td>
+<td class="numeric">6359</td>
+<td class="numeric">+3909</td>
+<td class="numeric">+0</td>
+<td class="numeric">+159.5510%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_6ms" data-search="search">
+<td>SCP_Astral_1000pg_6ms</td>
+<td class="numeric">4703</td>
+<td class="numeric">4846</td>
+<td class="numeric">4846</td>
+<td class="numeric">+143</td>
+<td class="numeric">+0</td>
+<td class="numeric">+3.0406%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_12ms" data-search="search">
+<td>SCP_Astral_10ng_12ms</td>
+<td class="numeric">16190</td>
+<td class="numeric">16341</td>
+<td class="numeric">16341</td>
+<td class="numeric">+151</td>
+<td class="numeric">+0</td>
+<td class="numeric">+0.9327%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_24ms" data-search="search">
+<td>SCP_Astral_10ng_24ms</td>
+<td class="numeric">13599</td>
+<td class="numeric">13725</td>
+<td class="numeric">13828</td>
+<td class="numeric">+229</td>
+<td class="numeric">+103</td>
+<td class="numeric">+1.6839%</td>
+<td class="numeric">+0.7505%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_6ms" data-search="search">
+<td>SCP_Astral_10ng_6ms</td>
+<td class="numeric">17017</td>
+<td class="numeric">17319</td>
+<td class="numeric">17196</td>
+<td class="numeric">+179</td>
+<td class="numeric">-123</td>
+<td class="numeric">+1.0519%</td>
+<td class="numeric">-0.7102%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_ms" data-search="search">
+<td>SCP_Astral_10ng_ms</td>
+<td class="numeric">16252</td>
+<td class="numeric">16211</td>
+<td class="numeric">16211</td>
+<td class="numeric">-41</td>
+<td class="numeric">+0</td>
+<td class="numeric">-0.2523%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_12ms" data-search="search">
+<td>SCP_Astral_250pg_12ms</td>
+<td class="numeric">3647</td>
+<td class="numeric">3768</td>
+<td class="numeric">3768</td>
+<td class="numeric">+121</td>
+<td class="numeric">+0</td>
+<td class="numeric">+3.3178%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_24ms" data-search="search">
+<td>SCP_Astral_250pg_24ms</td>
+<td class="numeric">4300</td>
+<td class="numeric">4707</td>
+<td class="numeric">4707</td>
+<td class="numeric">+407</td>
+<td class="numeric">+0</td>
+<td class="numeric">+9.4651%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_3ms" data-search="search">
+<td>SCP_Astral_250pg_3ms</td>
+<td class="numeric">576</td>
+<td class="numeric">725</td>
+<td class="numeric">725</td>
+<td class="numeric">+149</td>
+<td class="numeric">+0</td>
+<td class="numeric">+25.8681%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_6ms" data-search="search">
+<td>SCP_Astral_250pg_6ms</td>
+<td class="numeric">637</td>
+<td class="numeric">2045</td>
+<td class="numeric">2045</td>
+<td class="numeric">+1408</td>
+<td class="numeric">+0</td>
+<td class="numeric">+221.0361%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_12ms" data-search="search">
+<td>SCP_Astral_500pg_12ms</td>
+<td class="numeric">6245</td>
+<td class="numeric">5980</td>
+<td class="numeric">5980</td>
+<td class="numeric">-265</td>
+<td class="numeric">+0</td>
+<td class="numeric">-4.2434%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_24ms" data-search="search">
+<td>SCP_Astral_500pg_24ms</td>
+<td class="numeric">6722</td>
+<td class="numeric">6557</td>
+<td class="numeric">6557</td>
+<td class="numeric">-165</td>
+<td class="numeric">+0</td>
+<td class="numeric">-2.4546%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_3ms" data-search="search">
+<td>SCP_Astral_500pg_3ms</td>
+<td class="numeric">982</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_6ms" data-search="search">
+<td>SCP_Astral_500pg_6ms</td>
+<td class="numeric">3708</td>
+<td class="numeric">3661</td>
+<td class="numeric">3661</td>
+<td class="numeric">-47</td>
+<td class="numeric">+0</td>
+<td class="numeric">-1.2675%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_MBR" data-search="search">
+<td>SCP_Astral_MBR</td>
+<td class="numeric">20165</td>
+<td class="numeric">20474</td>
+<td class="numeric">20507</td>
+<td class="numeric">+342</td>
+<td class="numeric">+33</td>
+<td class="numeric">+1.6960%</td>
+<td class="numeric">+0.1612%</td>
+</tr>
+<tr data-dataset="Seer_Astral_45" data-search="search">
+<td>Seer_Astral_45</td>
+<td class="numeric">225377</td>
+<td class="numeric">252139</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="YEAST_KO_Astral" data-search="search">
+<td>YEAST_KO_Astral</td>
+<td class="numeric">1300836</td>
+<td class="numeric">1402980</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="EWZ_2P_MBR_Exploris" data-search="search_MBR">
+<td>EWZ_2P_MBR_Exploris</td>
+<td class="numeric">239484</td>
+<td class="numeric">249426</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="EWZ_2P_noMBR_Exploris" data-search="search_noMBR">
+<td>EWZ_2P_noMBR_Exploris</td>
+<td class="numeric">235990</td>
+<td class="numeric">244345</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: identification.protein_groups.unique</h3>
+<div class="table-chart" data-table-id="identification_protein_groups_unique-4" data-chart-mode="percent_delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="identification_protein_groups_unique-4"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="identification" id="identification_protein_groups_unique-4">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+<th class="numeric">% current vs v0.6.4</th>
+<th class="numeric">% current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="APMS_Astral" data-search="search">
+<td>APMS_Astral</td>
+<td class="numeric">21740</td>
+<td class="numeric">30407</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td class="numeric">7845</td>
+<td class="numeric">8137</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td class="numeric">11361</td>
+<td class="numeric">11544</td>
+<td class="numeric">11544</td>
+<td class="numeric">+183</td>
+<td class="numeric">+0</td>
+<td class="numeric">+1.6108%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td class="numeric">11473</td>
+<td class="numeric">11687</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min" data-search="search">
+<td>MTAC_Yeast_Alternating_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">4117</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min" data-search="search">
+<td>MTAC_Yeast_Alternating_5min</td>
+<td class="numeric">4215</td>
+<td class="numeric">4239</td>
+<td class="numeric">4239</td>
+<td class="numeric">+24</td>
+<td class="numeric">+0</td>
+<td class="numeric">+0.5694%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric">4075</td>
+<td class="numeric">4091</td>
+<td class="numeric">4124</td>
+<td class="numeric">+49</td>
+<td class="numeric">+33</td>
+<td class="numeric">+1.2025%</td>
+<td class="numeric">+0.8066%</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min" data-search="search">
+<td>MTAC_Yeast_Standard_5min</td>
+<td class="numeric">4249</td>
+<td class="numeric">4240</td>
+<td class="numeric">4241</td>
+<td class="numeric">-8</td>
+<td class="numeric">+1</td>
+<td class="numeric">-0.1883%</td>
+<td class="numeric">+0.0236%</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td class="numeric">13820</td>
+<td class="numeric">14472</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td class="numeric">7255</td>
+<td class="numeric">7602</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td class="numeric">8652</td>
+<td class="numeric">9126</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_12ms" data-search="search">
+<td>SCP_Astral_1000pg_12ms</td>
+<td class="numeric">3245</td>
+<td class="numeric">3387</td>
+<td class="numeric">3387</td>
+<td class="numeric">+142</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.3760%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_24ms" data-search="search">
+<td>SCP_Astral_1000pg_24ms</td>
+<td class="numeric">3254</td>
+<td class="numeric">3490</td>
+<td class="numeric">3490</td>
+<td class="numeric">+236</td>
+<td class="numeric">+0</td>
+<td class="numeric">+7.2526%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_3ms" data-search="search">
+<td>SCP_Astral_1000pg_3ms</td>
+<td class="numeric">2450</td>
+<td class="numeric">2463</td>
+<td class="numeric">2463</td>
+<td class="numeric">+13</td>
+<td class="numeric">+0</td>
+<td class="numeric">+0.5306%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_6ms" data-search="search">
+<td>SCP_Astral_1000pg_6ms</td>
+<td class="numeric">2508</td>
+<td class="numeric">2505</td>
+<td class="numeric">2505</td>
+<td class="numeric">-3</td>
+<td class="numeric">+0</td>
+<td class="numeric">-0.1196%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_12ms" data-search="search">
+<td>SCP_Astral_10ng_12ms</td>
+<td class="numeric">5579</td>
+<td class="numeric">5621</td>
+<td class="numeric">5621</td>
+<td class="numeric">+42</td>
+<td class="numeric">+0</td>
+<td class="numeric">+0.7528%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_24ms" data-search="search">
+<td>SCP_Astral_10ng_24ms</td>
+<td class="numeric">4721</td>
+<td class="numeric">4711</td>
+<td class="numeric">4787</td>
+<td class="numeric">+66</td>
+<td class="numeric">+76</td>
+<td class="numeric">+1.3980%</td>
+<td class="numeric">+1.6132%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_6ms" data-search="search">
+<td>SCP_Astral_10ng_6ms</td>
+<td class="numeric">5846</td>
+<td class="numeric">5941</td>
+<td class="numeric">5907</td>
+<td class="numeric">+61</td>
+<td class="numeric">-34</td>
+<td class="numeric">+1.0434%</td>
+<td class="numeric">-0.5723%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_ms" data-search="search">
+<td>SCP_Astral_10ng_ms</td>
+<td class="numeric">5611</td>
+<td class="numeric">5574</td>
+<td class="numeric">5574</td>
+<td class="numeric">-37</td>
+<td class="numeric">+0</td>
+<td class="numeric">-0.6594%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_12ms" data-search="search">
+<td>SCP_Astral_250pg_12ms</td>
+<td class="numeric">1292</td>
+<td class="numeric">1349</td>
+<td class="numeric">1349</td>
+<td class="numeric">+57</td>
+<td class="numeric">+0</td>
+<td class="numeric">+4.4118%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_24ms" data-search="search">
+<td>SCP_Astral_250pg_24ms</td>
+<td class="numeric">1568</td>
+<td class="numeric">1729</td>
+<td class="numeric">1729</td>
+<td class="numeric">+161</td>
+<td class="numeric">+0</td>
+<td class="numeric">+10.2679%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_3ms" data-search="search">
+<td>SCP_Astral_250pg_3ms</td>
+<td class="numeric">307</td>
+<td class="numeric">260</td>
+<td class="numeric">260</td>
+<td class="numeric">-47</td>
+<td class="numeric">+0</td>
+<td class="numeric">-15.3094%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_6ms" data-search="search">
+<td>SCP_Astral_250pg_6ms</td>
+<td class="numeric">637</td>
+<td class="numeric">730</td>
+<td class="numeric">730</td>
+<td class="numeric">+93</td>
+<td class="numeric">+0</td>
+<td class="numeric">+14.5997%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_12ms" data-search="search">
+<td>SCP_Astral_500pg_12ms</td>
+<td class="numeric">2207</td>
+<td class="numeric">2104</td>
+<td class="numeric">2104</td>
+<td class="numeric">-103</td>
+<td class="numeric">+0</td>
+<td class="numeric">-4.6670%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_24ms" data-search="search">
+<td>SCP_Astral_500pg_24ms</td>
+<td class="numeric">2403</td>
+<td class="numeric">2343</td>
+<td class="numeric">2343</td>
+<td class="numeric">-60</td>
+<td class="numeric">+0</td>
+<td class="numeric">-2.4969%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_3ms" data-search="search">
+<td>SCP_Astral_500pg_3ms</td>
+<td class="numeric">525</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_6ms" data-search="search">
+<td>SCP_Astral_500pg_6ms</td>
+<td class="numeric">1318</td>
+<td class="numeric">1319</td>
+<td class="numeric">1319</td>
+<td class="numeric">+1</td>
+<td class="numeric">+0</td>
+<td class="numeric">+0.0759%</td>
+<td class="numeric">+0%</td>
+</tr>
+<tr data-dataset="SCP_Astral_MBR" data-search="search">
+<td>SCP_Astral_MBR</td>
+<td class="numeric">4708</td>
+<td class="numeric">4747</td>
+<td class="numeric">4761</td>
+<td class="numeric">+53</td>
+<td class="numeric">+14</td>
+<td class="numeric">+1.1257%</td>
+<td class="numeric">+0.2949%</td>
+</tr>
+<tr data-dataset="Seer_Astral_45" data-search="search">
+<td>Seer_Astral_45</td>
+<td class="numeric">5802</td>
+<td class="numeric">6291</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="YEAST_KO_Astral" data-search="search">
+<td>YEAST_KO_Astral</td>
+<td class="numeric">4565</td>
+<td class="numeric">4779</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="EWZ_2P_MBR_Exploris" data-search="search_MBR">
+<td>EWZ_2P_MBR_Exploris</td>
+<td class="numeric">6831</td>
+<td class="numeric">7098</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="EWZ_2P_noMBR_Exploris" data-search="search_noMBR">
+<td>EWZ_2P_noMBR_Exploris</td>
+<td class="numeric">6858</td>
+<td class="numeric">7093</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: entrapment.summaries.global_precursors.difference</h3>
+<div class="table-chart" data-table-id="entrapment_summaries_global_precursors_difference-5" data-chart-mode="raw"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="entrapment_summaries_global_precursors_difference-5"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="entrapment" id="entrapment_summaries_global_precursors_difference-5">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="EWZ_2P_MBR_Exploris_Entrapment" data-search="search_entrap">
+<td>EWZ_2P_MBR_Exploris_Entrapment</td>
+<td class="numeric">-0.0006</td>
+<td class="numeric">-0.0007</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating_Entrapment" data-search="search_entrap">
+<td>MTAC_3P_Alternating_Entrapment</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">-0.0004</td>
+<td class="numeric">-0.0004</td>
+<td class="numeric">+0.0001</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard_Entrapment" data-search="search_entrap">
+<td>MTAC_3P_Standard_Entrapment</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">-0.0007</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Alternating_3min_Entrapment</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">-0.0014</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Alternating_5min_Entrapment</td>
+<td class="numeric">-0.0004</td>
+<td class="numeric">-0.0009</td>
+<td class="numeric">-0.0010</td>
+<td class="numeric">-0.0006</td>
+<td class="numeric">-0.0001</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_3min_Entrapment</td>
+<td class="numeric">-0.0019</td>
+<td class="numeric">-0.0024</td>
+<td class="numeric">-0.0024</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_5min_Entrapment</td>
+<td class="numeric">-0.0010</td>
+<td class="numeric">-0.0023</td>
+<td class="numeric">-0.0023</td>
+<td class="numeric">-0.0013</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P_Entrapment" data-search="search_entrap">
+<td>Olsen_Astral_3P_Entrapment</td>
+<td class="numeric">-0.0015</td>
+<td class="numeric">-0.0012</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P_Entrapment" data-search="search_entrap">
+<td>Olsen_Exploris_3P_Entrapment</td>
+<td class="numeric">-0.0002</td>
+<td class="numeric">-0.0006</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P_Entrapment" data-search="search_entrap">
+<td>SCIEX_3P_Entrapment</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">0.0001</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_12ms_Entrapment</td>
+<td class="numeric">-0.0023</td>
+<td class="numeric">-0.0031</td>
+<td class="numeric">-0.0031</td>
+<td class="numeric">-0.0008</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_24ms_Entrapment</td>
+<td class="numeric">-0.0054</td>
+<td class="numeric">-0.0021</td>
+<td class="numeric">-0.0021</td>
+<td class="numeric">+0.0033</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_3ms_Entrapment</td>
+<td class="numeric">-0.0030</td>
+<td class="numeric">-0.0047</td>
+<td class="numeric">-0.0032</td>
+<td class="numeric">-0.0002</td>
+<td class="numeric">+0.0015</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_6ms_Entrapment</td>
+<td class="numeric">-0.0002</td>
+<td class="numeric">0.0001</td>
+<td class="numeric">0.0001</td>
+<td class="numeric">+0.0003</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_12ms_Entrapment</td>
+<td class="numeric">-0.0022</td>
+<td class="numeric">-0.0011</td>
+<td class="numeric">-0.0011</td>
+<td class="numeric">+0.0011</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_24ms_Entrapment</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">-0.0001</td>
+<td class="numeric">-0.0001</td>
+<td class="numeric">+0.0019</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_3ms_Entrapment</td>
+<td class="numeric">-0.0024</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">+0.0005</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_6ms_Entrapment</td>
+<td class="numeric">-0.0008</td>
+<td class="numeric">0.0000</td>
+<td class="numeric">0.0000</td>
+<td class="numeric">+0.0008</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_12ms_Entrapment</td>
+<td class="numeric">-0.0039</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">+0.0019</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_24ms_Entrapment</td>
+<td class="numeric">-0.0002</td>
+<td class="numeric">-0.0012</td>
+<td class="numeric">-0.0012</td>
+<td class="numeric">-0.0010</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_6ms_Entrapment</td>
+<td class="numeric">-0.0051</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_12ms_Entrapment</td>
+<td class="numeric">-0.0022</td>
+<td class="numeric">-0.0007</td>
+<td class="numeric">-0.0007</td>
+<td class="numeric">+0.0015</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_24ms_Entrapment</td>
+<td class="numeric">-0.0013</td>
+<td class="numeric">-0.0047</td>
+<td class="numeric">-0.0047</td>
+<td class="numeric">-0.0034</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_6ms_Entrapment</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0042</td>
+<td class="numeric">-0.0042</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_MBR_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_MBR_Entrapment</td>
+<td class="numeric">-0.0026</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">+0.0007</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="YEAST_KO_Astral_Entrapment" data-search="search_entrap">
+<td>YEAST_KO_Astral_Entrapment</td>
+<td class="numeric">-0.0024</td>
+<td class="numeric">-0.0024</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: entrapment.summaries.global_proteins.difference</h3>
+<div class="table-chart" data-table-id="entrapment_summaries_global_proteins_difference-6" data-chart-mode="raw"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="entrapment_summaries_global_proteins_difference-6"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="entrapment" id="entrapment_summaries_global_proteins_difference-6">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="EWZ_2P_MBR_Exploris_Entrapment" data-search="search_entrap">
+<td>EWZ_2P_MBR_Exploris_Entrapment</td>
+<td class="numeric">-0.0010</td>
+<td class="numeric">-0.0006</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating_Entrapment" data-search="search_entrap">
+<td>MTAC_3P_Alternating_Entrapment</td>
+<td class="numeric">-0.0010</td>
+<td class="numeric">-0.0010</td>
+<td class="numeric">-0.0010</td>
+<td class="numeric">+0.0000</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard_Entrapment" data-search="search_entrap">
+<td>MTAC_3P_Standard_Entrapment</td>
+<td class="numeric">-0.0013</td>
+<td class="numeric">-0.0026</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Alternating_3min_Entrapment</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">-0.0045</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Alternating_5min_Entrapment</td>
+<td class="numeric">-0.0041</td>
+<td class="numeric">-0.0041</td>
+<td class="numeric">-0.0046</td>
+<td class="numeric">-0.0004</td>
+<td class="numeric">-0.0005</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_3min_Entrapment</td>
+<td class="numeric">-0.0058</td>
+<td class="numeric">-0.0040</td>
+<td class="numeric">-0.0040</td>
+<td class="numeric">+0.0019</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_5min_Entrapment</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0050</td>
+<td class="numeric">-0.0050</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P_Entrapment" data-search="search_entrap">
+<td>Olsen_Astral_3P_Entrapment</td>
+<td class="numeric">-0.0041</td>
+<td class="numeric">-0.0028</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P_Entrapment" data-search="search_entrap">
+<td>Olsen_Exploris_3P_Entrapment</td>
+<td class="numeric">-0.0029</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P_Entrapment" data-search="search_entrap">
+<td>SCIEX_3P_Entrapment</td>
+<td class="numeric">-0.0031</td>
+<td class="numeric">-0.0034</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_12ms_Entrapment</td>
+<td class="numeric">-0.0049</td>
+<td class="numeric">-0.0069</td>
+<td class="numeric">-0.0069</td>
+<td class="numeric">-0.0019</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_24ms_Entrapment</td>
+<td class="numeric">-0.0070</td>
+<td class="numeric">-0.0054</td>
+<td class="numeric">-0.0054</td>
+<td class="numeric">+0.0016</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_3ms_Entrapment</td>
+<td class="numeric">-0.0059</td>
+<td class="numeric">-0.0067</td>
+<td class="numeric">-0.0079</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">-0.0013</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_6ms_Entrapment</td>
+<td class="numeric">-0.0018</td>
+<td class="numeric">-0.0034</td>
+<td class="numeric">-0.0034</td>
+<td class="numeric">-0.0017</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_12ms_Entrapment</td>
+<td class="numeric">-0.0054</td>
+<td class="numeric">-0.0050</td>
+<td class="numeric">-0.0050</td>
+<td class="numeric">+0.0005</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_24ms_Entrapment</td>
+<td class="numeric">-0.0032</td>
+<td class="numeric">-0.0034</td>
+<td class="numeric">-0.0034</td>
+<td class="numeric">-0.0001</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_3ms_Entrapment</td>
+<td class="numeric">-0.0037</td>
+<td class="numeric">-0.0045</td>
+<td class="numeric">-0.0045</td>
+<td class="numeric">-0.0009</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_6ms_Entrapment</td>
+<td class="numeric">-0.0054</td>
+<td class="numeric">-0.0039</td>
+<td class="numeric">-0.0039</td>
+<td class="numeric">+0.0016</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_12ms_Entrapment</td>
+<td class="numeric">-0.0053</td>
+<td class="numeric">-0.0078</td>
+<td class="numeric">-0.0078</td>
+<td class="numeric">-0.0025</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_24ms_Entrapment</td>
+<td class="numeric">-0.0042</td>
+<td class="numeric">0.0005</td>
+<td class="numeric">0.0005</td>
+<td class="numeric">+0.0047</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_3ms_Entrapment</td>
+<td class="numeric">-0.0028</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_6ms_Entrapment</td>
+<td class="numeric">-0.0099</td>
+<td class="numeric">-0.0051</td>
+<td class="numeric">-0.0051</td>
+<td class="numeric">+0.0048</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_12ms_Entrapment</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0044</td>
+<td class="numeric">-0.0044</td>
+<td class="numeric">-0.0008</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_24ms_Entrapment</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">-0.0030</td>
+<td class="numeric">-0.0030</td>
+<td class="numeric">-0.0010</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_3ms_Entrapment</td>
+<td class="numeric">-0.0042</td>
+<td class="numeric">0.0144</td>
+<td class="numeric">0.0144</td>
+<td class="numeric">+0.0186</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_6ms_Entrapment</td>
+<td class="numeric">-0.0045</td>
+<td class="numeric">-0.0068</td>
+<td class="numeric">-0.0068</td>
+<td class="numeric">-0.0023</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_MBR_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_MBR_Entrapment</td>
+<td class="numeric">-0.0059</td>
+<td class="numeric">-0.0039</td>
+<td class="numeric">-0.0039</td>
+<td class="numeric">+0.0021</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="YEAST_KO_Astral_Entrapment" data-search="search_entrap">
+<td>YEAST_KO_Astral_Entrapment</td>
+<td class="numeric">-0.0065</td>
+<td class="numeric">-0.0065</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: entrapment.summaries.precursors.difference</h3>
+<div class="table-chart" data-table-id="entrapment_summaries_precursors_difference-7" data-chart-mode="raw"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="entrapment_summaries_precursors_difference-7"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="entrapment" id="entrapment_summaries_precursors_difference-7">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="EWZ_2P_MBR_Exploris_Entrapment" data-search="search_entrap">
+<td>EWZ_2P_MBR_Exploris_Entrapment</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">-0.0008</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating_Entrapment" data-search="search_entrap">
+<td>MTAC_3P_Alternating_Entrapment</td>
+<td class="numeric">-0.0001</td>
+<td class="numeric">-0.0000</td>
+<td class="numeric">-0.0000</td>
+<td class="numeric">+0.0001</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard_Entrapment" data-search="search_entrap">
+<td>MTAC_3P_Standard_Entrapment</td>
+<td class="numeric">-0.0009</td>
+<td class="numeric">-0.0003</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Alternating_3min_Entrapment</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">-0.0012</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Alternating_5min_Entrapment</td>
+<td class="numeric">-0.0004</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">-0.0008</td>
+<td class="numeric">-0.0004</td>
+<td class="numeric">-0.0003</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_3min_Entrapment</td>
+<td class="numeric">-0.0008</td>
+<td class="numeric">-0.0016</td>
+<td class="numeric">-0.0016</td>
+<td class="numeric">-0.0007</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_5min_Entrapment</td>
+<td class="numeric">-0.0008</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">-0.0006</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P_Entrapment" data-search="search_entrap">
+<td>Olsen_Astral_3P_Entrapment</td>
+<td class="numeric">-0.0008</td>
+<td class="numeric">-0.0007</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P_Entrapment" data-search="search_entrap">
+<td>Olsen_Exploris_3P_Entrapment</td>
+<td class="numeric">-0.0004</td>
+<td class="numeric">0.0000</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P_Entrapment" data-search="search_entrap">
+<td>SCIEX_3P_Entrapment</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">0.0001</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_12ms_Entrapment</td>
+<td class="numeric">-0.0015</td>
+<td class="numeric">-0.0029</td>
+<td class="numeric">-0.0029</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_24ms_Entrapment</td>
+<td class="numeric">-0.0046</td>
+<td class="numeric">-0.0019</td>
+<td class="numeric">-0.0019</td>
+<td class="numeric">+0.0027</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_3ms_Entrapment</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">-0.0032</td>
+<td class="numeric">-0.0026</td>
+<td class="numeric">-0.0006</td>
+<td class="numeric">+0.0006</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_6ms_Entrapment</td>
+<td class="numeric">0.0002</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">-0.0006</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_12ms_Entrapment</td>
+<td class="numeric">-0.0017</td>
+<td class="numeric">-0.0010</td>
+<td class="numeric">-0.0010</td>
+<td class="numeric">+0.0007</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_24ms_Entrapment</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">-0.0002</td>
+<td class="numeric">-0.0002</td>
+<td class="numeric">+0.0012</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_3ms_Entrapment</td>
+<td class="numeric">-0.0019</td>
+<td class="numeric">-0.0016</td>
+<td class="numeric">-0.0016</td>
+<td class="numeric">+0.0003</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_6ms_Entrapment</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">-0.0001</td>
+<td class="numeric">-0.0001</td>
+<td class="numeric">+0.0004</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_12ms_Entrapment</td>
+<td class="numeric">-0.0030</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">+0.0016</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_24ms_Entrapment</td>
+<td class="numeric">-0.0007</td>
+<td class="numeric">-0.0011</td>
+<td class="numeric">-0.0011</td>
+<td class="numeric">-0.0004</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_6ms_Entrapment</td>
+<td class="numeric">-0.0037</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_12ms_Entrapment</td>
+<td class="numeric">-0.0019</td>
+<td class="numeric">-0.0013</td>
+<td class="numeric">-0.0013</td>
+<td class="numeric">+0.0005</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_24ms_Entrapment</td>
+<td class="numeric">-0.0016</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_6ms_Entrapment</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_MBR_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_MBR_Entrapment</td>
+<td class="numeric">-0.0017</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">+0.0003</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="YEAST_KO_Astral_Entrapment" data-search="search_entrap">
+<td>YEAST_KO_Astral_Entrapment</td>
+<td class="numeric">-0.0013</td>
+<td class="numeric">-0.0013</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: entrapment.summaries.proteins.difference</h3>
+<div class="table-chart" data-table-id="entrapment_summaries_proteins_difference-8" data-chart-mode="raw"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="entrapment_summaries_proteins_difference-8"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="entrapment" id="entrapment_summaries_proteins_difference-8">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="EWZ_2P_MBR_Exploris_Entrapment" data-search="search_entrap">
+<td>EWZ_2P_MBR_Exploris_Entrapment</td>
+<td class="numeric">-0.0002</td>
+<td class="numeric">-0.0002</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating_Entrapment" data-search="search_entrap">
+<td>MTAC_3P_Alternating_Entrapment</td>
+<td class="numeric">-0.0001</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">-0.0004</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard_Entrapment" data-search="search_entrap">
+<td>MTAC_3P_Standard_Entrapment</td>
+<td class="numeric">-0.0008</td>
+<td class="numeric">-0.0016</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Alternating_3min_Entrapment</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">-0.0034</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Alternating_5min_Entrapment</td>
+<td class="numeric">-0.0037</td>
+<td class="numeric">-0.0035</td>
+<td class="numeric">-0.0033</td>
+<td class="numeric">+0.0004</td>
+<td class="numeric">+0.0002</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_3min_Entrapment</td>
+<td class="numeric">-0.0038</td>
+<td class="numeric">-0.0034</td>
+<td class="numeric">-0.0034</td>
+<td class="numeric">+0.0004</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_5min_Entrapment</td>
+<td class="numeric">-0.0023</td>
+<td class="numeric">-0.0037</td>
+<td class="numeric">-0.0037</td>
+<td class="numeric">-0.0014</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P_Entrapment" data-search="search_entrap">
+<td>Olsen_Astral_3P_Entrapment</td>
+<td class="numeric">-0.0024</td>
+<td class="numeric">-0.0022</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P_Entrapment" data-search="search_entrap">
+<td>Olsen_Exploris_3P_Entrapment</td>
+<td class="numeric">-0.0026</td>
+<td class="numeric">-0.0004</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P_Entrapment" data-search="search_entrap">
+<td>SCIEX_3P_Entrapment</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0035</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_12ms_Entrapment</td>
+<td class="numeric">-0.0037</td>
+<td class="numeric">-0.0049</td>
+<td class="numeric">-0.0049</td>
+<td class="numeric">-0.0011</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_24ms_Entrapment</td>
+<td class="numeric">-0.0049</td>
+<td class="numeric">-0.0041</td>
+<td class="numeric">-0.0041</td>
+<td class="numeric">+0.0008</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_3ms_Entrapment</td>
+<td class="numeric">-0.0044</td>
+<td class="numeric">-0.0047</td>
+<td class="numeric">-0.0046</td>
+<td class="numeric">-0.0002</td>
+<td class="numeric">+0.0000</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_1000pg_6ms_Entrapment</td>
+<td class="numeric">-0.0025</td>
+<td class="numeric">-0.0033</td>
+<td class="numeric">-0.0033</td>
+<td class="numeric">-0.0009</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_12ms_Entrapment</td>
+<td class="numeric">-0.0047</td>
+<td class="numeric">-0.0040</td>
+<td class="numeric">-0.0040</td>
+<td class="numeric">+0.0008</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_24ms_Entrapment</td>
+<td class="numeric">-0.0032</td>
+<td class="numeric">-0.0029</td>
+<td class="numeric">-0.0029</td>
+<td class="numeric">+0.0003</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_3ms_Entrapment</td>
+<td class="numeric">-0.0021</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0015</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_10ng_6ms_Entrapment</td>
+<td class="numeric">-0.0039</td>
+<td class="numeric">-0.0045</td>
+<td class="numeric">-0.0045</td>
+<td class="numeric">-0.0007</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_12ms_Entrapment</td>
+<td class="numeric">-0.0039</td>
+<td class="numeric">-0.0050</td>
+<td class="numeric">-0.0050</td>
+<td class="numeric">-0.0012</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_24ms_Entrapment</td>
+<td class="numeric">-0.0013</td>
+<td class="numeric">-0.0003</td>
+<td class="numeric">-0.0003</td>
+<td class="numeric">+0.0010</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_3ms_Entrapment</td>
+<td class="numeric">-0.0060</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_250pg_6ms_Entrapment</td>
+<td class="numeric">-0.0100</td>
+<td class="numeric">-0.0044</td>
+<td class="numeric">-0.0044</td>
+<td class="numeric">+0.0056</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_12ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_12ms_Entrapment</td>
+<td class="numeric">-0.0040</td>
+<td class="numeric">-0.0040</td>
+<td class="numeric">-0.0040</td>
+<td class="numeric">-0.0000</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_24ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_24ms_Entrapment</td>
+<td class="numeric">-0.0019</td>
+<td class="numeric">-0.0037</td>
+<td class="numeric">-0.0037</td>
+<td class="numeric">-0.0017</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_3ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_3ms_Entrapment</td>
+<td class="numeric">-0.0032</td>
+<td class="numeric">0.0014</td>
+<td class="numeric">0.0014</td>
+<td class="numeric">+0.0046</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_6ms_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_500pg_6ms_Entrapment</td>
+<td class="numeric">-0.0020</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0016</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="SCP_Astral_MBR_Entrapment" data-search="search_entrap">
+<td>SCP_Astral_MBR_Entrapment</td>
+<td class="numeric">-0.0024</td>
+<td class="numeric">-0.0028</td>
+<td class="numeric">-0.0028</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="YEAST_KO_Astral_Entrapment" data-search="search_entrap">
+<td>YEAST_KO_Astral_Entrapment</td>
+<td class="numeric">-0.0041</td>
+<td class="numeric">-0.0041</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: ftr.precursors.false_transfer_rate</h3>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="ftr_precursors_false_transfer_rate-9"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="ftr" id="ftr_precursors_false_transfer_rate-9">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="EWZ_2P_MBR_Exploris" data-search="search_MBR">
+<td>EWZ_2P_MBR_Exploris</td>
+<td class="numeric">0.0131</td>
+<td class="numeric">0.0170</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: ftr.protein_groups.false_transfer_rate</h3>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="ftr_protein_groups_false_transfer_rate-10"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="ftr" id="ftr_protein_groups_false_transfer_rate-10">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="EWZ_2P_MBR_Exploris" data-search="search_MBR">
+<td>EWZ_2P_MBR_Exploris</td>
+<td class="numeric">0.0476</td>
+<td class="numeric">0.0302</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>keap1.precursors</h3>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="keap1-precursors-11"></label></div>
+<table class="metrics-table" data-initial-sort="7" data-versions="v0.6.4|develop|current" data-metric-group="keap1" id="keap1-precursors-11">
+<thead><tr>
+<th>Dataset</th>
+<th>Gene</th>
+<th>Run</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ develop vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_KO_1</td>
+<td class="numeric">0</td>
+<td class="numeric">1</td>
+<td class="numeric"></td>
+<td class="numeric">+1</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_KO_2</td>
+<td class="numeric">0</td>
+<td class="numeric">2</td>
+<td class="numeric"></td>
+<td class="numeric">+2</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_KO_3</td>
+<td class="numeric">0</td>
+<td class="numeric">3</td>
+<td class="numeric"></td>
+<td class="numeric">+3</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_WT_1</td>
+<td class="numeric">9</td>
+<td class="numeric">15</td>
+<td class="numeric"></td>
+<td class="numeric">+6</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_WT_2</td>
+<td class="numeric">9</td>
+<td class="numeric">13</td>
+<td class="numeric"></td>
+<td class="numeric">+4</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_WT_3</td>
+<td class="numeric">10</td>
+<td class="numeric">14</td>
+<td class="numeric"></td>
+<td class="numeric">+4</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_KO_1</td>
+<td class="numeric">1</td>
+<td class="numeric">1</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_KO_2</td>
+<td class="numeric">1</td>
+<td class="numeric">1</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_KO_3</td>
+<td class="numeric">1</td>
+<td class="numeric">1</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_WT_1</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_WT_2</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_WT_3</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>keap1.protein_groups</h3>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="keap1-protein_groups-12"></label></div>
+<table class="metrics-table" data-initial-sort="7" data-versions="v0.6.4|develop|current" data-metric-group="keap1" id="keap1-protein_groups-12">
+<thead><tr>
+<th>Dataset</th>
+<th>Gene</th>
+<th>Run</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ develop vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_KO_1</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_KO_2</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_KO_3</td>
+<td class="numeric">0</td>
+<td class="numeric">1</td>
+<td class="numeric"></td>
+<td class="numeric">+1</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_WT_1</td>
+<td class="numeric">1</td>
+<td class="numeric">1</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_WT_2</td>
+<td class="numeric">1</td>
+<td class="numeric">1</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>KEAP1</td>
+<td>KEAP1_WT_3</td>
+<td class="numeric">1</td>
+<td class="numeric">1</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_KO_1</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_KO_2</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_KO_3</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_WT_1</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_WT_2</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td>NFE2L2</td>
+<td>KEAP1_WT_3</td>
+<td class="numeric">0</td>
+<td class="numeric">0</td>
+<td class="numeric"></td>
+<td class="numeric">+0</td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: cv.precursors.median_cv</h3>
+<div class="table-chart" data-table-id="cv_precursors_median_cv-13" data-chart-mode="delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="cv_precursors_median_cv-13"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="cv" id="cv_precursors_median_cv-13">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="APMS_Astral" data-search="search">
+<td>APMS_Astral</td>
+<td class="numeric"></td>
+<td class="numeric">0.7007</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td class="numeric">0.1459</td>
+<td class="numeric">0.1512</td>
+<td class="numeric">0.1512</td>
+<td class="numeric">+0.0053</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td class="numeric">0.1393</td>
+<td class="numeric">0.1451</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min" data-search="search">
+<td>MTAC_Yeast_Alternating_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">0.1522</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min" data-search="search">
+<td>MTAC_Yeast_Alternating_5min</td>
+<td class="numeric">0.1531</td>
+<td class="numeric">0.1556</td>
+<td class="numeric">0.1476</td>
+<td class="numeric">-0.0054</td>
+<td class="numeric">-0.0080</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric">0.1698</td>
+<td class="numeric">0.1734</td>
+<td class="numeric">0.1701</td>
+<td class="numeric">+0.0003</td>
+<td class="numeric">-0.0034</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min" data-search="search">
+<td>MTAC_Yeast_Standard_5min</td>
+<td class="numeric">0.1503</td>
+<td class="numeric">0.1519</td>
+<td class="numeric">0.1429</td>
+<td class="numeric">-0.0074</td>
+<td class="numeric">-0.0090</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td class="numeric">0.0823</td>
+<td class="numeric">0.0949</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td class="numeric">0.1480</td>
+<td class="numeric">0.1540</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td class="numeric">0.1284</td>
+<td class="numeric">0.1417</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: cv.protein_groups.median_cv</h3>
+<div class="table-chart" data-table-id="cv_protein_groups_median_cv-14" data-chart-mode="delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="cv_protein_groups_median_cv-14"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="cv" id="cv_protein_groups_median_cv-14">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="APMS_Astral" data-search="search">
+<td>APMS_Astral</td>
+<td class="numeric"></td>
+<td class="numeric">0.6098</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td class="numeric">0.0763</td>
+<td class="numeric">0.0773</td>
+<td class="numeric">0.0773</td>
+<td class="numeric">+0.0010</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td class="numeric">0.0723</td>
+<td class="numeric">0.0733</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min" data-search="search">
+<td>MTAC_Yeast_Alternating_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">0.0679</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min" data-search="search">
+<td>MTAC_Yeast_Alternating_5min</td>
+<td class="numeric">0.0778</td>
+<td class="numeric">0.0790</td>
+<td class="numeric">0.0615</td>
+<td class="numeric">-0.0163</td>
+<td class="numeric">-0.0175</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric">0.0792</td>
+<td class="numeric">0.0794</td>
+<td class="numeric">0.0769</td>
+<td class="numeric">-0.0023</td>
+<td class="numeric">-0.0025</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min" data-search="search">
+<td>MTAC_Yeast_Standard_5min</td>
+<td class="numeric">0.0770</td>
+<td class="numeric">0.0774</td>
+<td class="numeric">0.0582</td>
+<td class="numeric">-0.0188</td>
+<td class="numeric">-0.0192</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td class="numeric">0.0374</td>
+<td class="numeric">0.0392</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td class="numeric">0.1028</td>
+<td class="numeric">0.1039</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td class="numeric">0.0864</td>
+<td class="numeric">0.0914</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>fold_change.error.precursors</h3>
+<div class="table-chart" data-table-id="fold-change-precursors-15" data-chart-mode="delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="fold-change-precursors-15"></label></div>
+<table class="metrics-table" data-initial-sort="7" data-versions="v0.6.4|develop|current" data-metric-group="fold_change" id="fold-change-precursors-15">
+<thead><tr>
+<th>Dataset</th>
+<th>Species</th>
+<th>Condition</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ develop vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>ecoli</td>
+<td>A vs B</td>
+<td class="numeric">-0.0714</td>
+<td class="numeric">-0.0709</td>
+<td class="numeric">-0.0709</td>
+<td class="numeric">-0.0005</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>human</td>
+<td>A vs B</td>
+<td class="numeric">-0.0432</td>
+<td class="numeric">-0.0401</td>
+<td class="numeric">-0.0401</td>
+<td class="numeric">-0.0031</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>yeast</td>
+<td>A vs B</td>
+<td class="numeric">-0.0026</td>
+<td class="numeric">-0.0080</td>
+<td class="numeric">-0.0080</td>
+<td class="numeric">+0.0054</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>ecoli</td>
+<td>A vs B</td>
+<td class="numeric">-0.1245</td>
+<td class="numeric">-0.1255</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0010</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>human</td>
+<td>A vs B</td>
+<td class="numeric">-0.0785</td>
+<td class="numeric">-0.0742</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0043</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>yeast</td>
+<td>A vs B</td>
+<td class="numeric">-0.0337</td>
+<td class="numeric">-0.0332</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0005</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">-0.0570</td>
+<td class="numeric">-0.0614</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0043</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>D vs C</td>
+<td class="numeric">-0.2013</td>
+<td class="numeric">-0.1952</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0062</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>F vs E</td>
+<td class="numeric">0.0193</td>
+<td class="numeric">-0.0248</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0055</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">-0.0036</td>
+<td class="numeric">-0.0080</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0043</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>D vs C</td>
+<td class="numeric">-0.3258</td>
+<td class="numeric">-0.3336</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0078</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>F vs E</td>
+<td class="numeric">0.0777</td>
+<td class="numeric">0.0789</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0011</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">0.0756</td>
+<td class="numeric">0.0647</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0109</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>D vs C</td>
+<td class="numeric">-0.2263</td>
+<td class="numeric">-0.2408</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0145</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>F vs E</td>
+<td class="numeric">0.1940</td>
+<td class="numeric">0.1842</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0099</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">0.2272</td>
+<td class="numeric">0.2350</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0078</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>D vs C</td>
+<td class="numeric">-0.0687</td>
+<td class="numeric">-0.0757</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0070</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>F vs E</td>
+<td class="numeric">0.2556</td>
+<td class="numeric">0.2764</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0209</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">0.0955</td>
+<td class="numeric">0.1048</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0093</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>D vs C</td>
+<td class="numeric">-0.0535</td>
+<td class="numeric">-0.0552</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0017</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>F vs E</td>
+<td class="numeric">0.1998</td>
+<td class="numeric">0.2115</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0117</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">0.0478</td>
+<td class="numeric">0.0393</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0085</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>D vs C</td>
+<td class="numeric">-0.1076</td>
+<td class="numeric">-0.1120</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0044</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>F vs E</td>
+<td class="numeric">-0.0679</td>
+<td class="numeric">-0.0850</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0171</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">-0.0531</td>
+<td class="numeric">-0.0603</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0072</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>C vs A</td>
+<td class="numeric">-0.0580</td>
+<td class="numeric">-0.0532</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0049</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>C vs B</td>
+<td class="numeric">-0.0146</td>
+<td class="numeric">-0.0000</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0145</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">-0.0334</td>
+<td class="numeric">-0.0503</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0169</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>C vs A</td>
+<td class="numeric">-0.0804</td>
+<td class="numeric">-0.0854</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0049</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>C vs B</td>
+<td class="numeric">-0.0484</td>
+<td class="numeric">-0.0360</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0123</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">-0.0084</td>
+<td class="numeric">-0.0326</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0242</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>C vs A</td>
+<td class="numeric">-0.1064</td>
+<td class="numeric">-0.1266</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0203</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>C vs B</td>
+<td class="numeric">-0.0912</td>
+<td class="numeric">-0.0838</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0073</td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>fold_change.error.protein_groups</h3>
+<div class="table-chart" data-table-id="fold-change-protein_groups-16" data-chart-mode="delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="fold-change-protein_groups-16"></label></div>
+<table class="metrics-table" data-initial-sort="7" data-versions="v0.6.4|develop|current" data-metric-group="fold_change" id="fold-change-protein_groups-16">
+<thead><tr>
+<th>Dataset</th>
+<th>Species</th>
+<th>Condition</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ develop vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>ecoli</td>
+<td>A vs B</td>
+<td class="numeric">-0.0653</td>
+<td class="numeric">-0.0654</td>
+<td class="numeric">-0.0654</td>
+<td class="numeric">+0.0000</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>human</td>
+<td>A vs B</td>
+<td class="numeric">-0.0451</td>
+<td class="numeric">-0.0404</td>
+<td class="numeric">-0.0404</td>
+<td class="numeric">-0.0047</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>yeast</td>
+<td>A vs B</td>
+<td class="numeric">0.0016</td>
+<td class="numeric">-0.0046</td>
+<td class="numeric">-0.0046</td>
+<td class="numeric">+0.0030</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>ecoli</td>
+<td>A vs B</td>
+<td class="numeric">-0.1244</td>
+<td class="numeric">-0.1255</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0011</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>human</td>
+<td>A vs B</td>
+<td class="numeric">-0.0772</td>
+<td class="numeric">-0.0729</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0043</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>yeast</td>
+<td>A vs B</td>
+<td class="numeric">-0.0322</td>
+<td class="numeric">-0.0309</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0014</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">-0.0453</td>
+<td class="numeric">-0.0608</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0155</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>D vs C</td>
+<td class="numeric">-0.1614</td>
+<td class="numeric">-0.1614</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0000</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>F vs E</td>
+<td class="numeric">0.0601</td>
+<td class="numeric">-0.0157</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0444</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">-0.0149</td>
+<td class="numeric">-0.0186</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0037</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>D vs C</td>
+<td class="numeric">-0.2928</td>
+<td class="numeric">-0.3033</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0105</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>F vs E</td>
+<td class="numeric">0.0700</td>
+<td class="numeric">0.0714</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0014</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">0.0543</td>
+<td class="numeric">0.0423</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0119</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>D vs C</td>
+<td class="numeric">-0.1994</td>
+<td class="numeric">-0.2185</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0191</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>F vs E</td>
+<td class="numeric">0.1690</td>
+<td class="numeric">0.1579</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0110</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">0.2172</td>
+<td class="numeric">0.2222</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0050</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>D vs C</td>
+<td class="numeric">-0.0663</td>
+<td class="numeric">-0.0706</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0043</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>F vs E</td>
+<td class="numeric">0.2558</td>
+<td class="numeric">0.3082</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0524</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">0.0841</td>
+<td class="numeric">0.0916</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0075</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>D vs C</td>
+<td class="numeric">-0.0502</td>
+<td class="numeric">-0.0527</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0024</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>F vs E</td>
+<td class="numeric">0.1988</td>
+<td class="numeric">0.2097</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0108</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">0.0433</td>
+<td class="numeric">0.0424</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0009</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>D vs C</td>
+<td class="numeric">-0.1095</td>
+<td class="numeric">-0.1155</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0060</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>F vs E</td>
+<td class="numeric">-0.0534</td>
+<td class="numeric">-0.1002</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0467</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">-0.0415</td>
+<td class="numeric">-0.0520</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0105</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>C vs A</td>
+<td class="numeric">-0.0531</td>
+<td class="numeric">-0.0463</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0067</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>C vs B</td>
+<td class="numeric">-0.0149</td>
+<td class="numeric">0.0017</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0132</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">-0.0318</td>
+<td class="numeric">-0.0515</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0197</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>C vs A</td>
+<td class="numeric">-0.0819</td>
+<td class="numeric">-0.0875</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0056</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>C vs B</td>
+<td class="numeric">-0.0489</td>
+<td class="numeric">-0.0362</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0127</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">-0.0091</td>
+<td class="numeric">-0.0407</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0315</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>C vs A</td>
+<td class="numeric">-0.1151</td>
+<td class="numeric">-0.1321</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0170</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>C vs B</td>
+<td class="numeric">-0.1020</td>
+<td class="numeric">-0.0930</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0089</td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>fold_change.variance.precursors</h3>
+<div class="table-chart" data-table-id="fold-change-variance-precursors-17" data-chart-mode="delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="fold-change-variance-precursors-17"></label></div>
+<table class="metrics-table" data-initial-sort="7" data-versions="v0.6.4|develop|current" data-metric-group="fold_change_variance" id="fold-change-variance-precursors-17">
+<thead><tr>
+<th>Dataset</th>
+<th>Species</th>
+<th>Condition</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ develop vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>ecoli</td>
+<td>A vs B</td>
+<td class="numeric">0.2619</td>
+<td class="numeric">0.3047</td>
+<td class="numeric">0.3047</td>
+<td class="numeric">+0.0428</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>human</td>
+<td>A vs B</td>
+<td class="numeric">0.1984</td>
+<td class="numeric">0.2118</td>
+<td class="numeric">0.2118</td>
+<td class="numeric">+0.0134</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>yeast</td>
+<td>A vs B</td>
+<td class="numeric">0.2558</td>
+<td class="numeric">0.2690</td>
+<td class="numeric">0.2690</td>
+<td class="numeric">+0.0132</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>ecoli</td>
+<td>A vs B</td>
+<td class="numeric">0.2681</td>
+<td class="numeric">0.3102</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0421</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>human</td>
+<td>A vs B</td>
+<td class="numeric">0.2062</td>
+<td class="numeric">0.2227</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0165</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>yeast</td>
+<td>A vs B</td>
+<td class="numeric">0.2555</td>
+<td class="numeric">0.2704</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0150</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">0.5438</td>
+<td class="numeric">0.6556</td>
+<td class="numeric"></td>
+<td class="numeric">+0.1118</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>D vs C</td>
+<td class="numeric">0.3566</td>
+<td class="numeric">0.3884</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0318</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>F vs E</td>
+<td class="numeric">1.1682</td>
+<td class="numeric">1.5159</td>
+<td class="numeric"></td>
+<td class="numeric">+0.3478</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">0.2100</td>
+<td class="numeric">0.2504</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0404</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>D vs C</td>
+<td class="numeric">0.2930</td>
+<td class="numeric">0.3458</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0528</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>F vs E</td>
+<td class="numeric">0.3046</td>
+<td class="numeric">0.3436</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0389</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">0.2937</td>
+<td class="numeric">0.3335</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0397</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>D vs C</td>
+<td class="numeric">0.2553</td>
+<td class="numeric">0.2832</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0279</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>F vs E</td>
+<td class="numeric">0.4774</td>
+<td class="numeric">0.5467</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0693</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">0.5783</td>
+<td class="numeric">0.6276</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0493</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>D vs C</td>
+<td class="numeric">0.1629</td>
+<td class="numeric">0.1602</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0027</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>F vs E</td>
+<td class="numeric">0.8044</td>
+<td class="numeric">0.8994</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0950</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">0.3372</td>
+<td class="numeric">0.3712</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0340</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>D vs C</td>
+<td class="numeric">0.1096</td>
+<td class="numeric">0.1176</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0080</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>F vs E</td>
+<td class="numeric">0.3024</td>
+<td class="numeric">0.3254</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0229</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">0.6189</td>
+<td class="numeric">0.6764</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0575</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>D vs C</td>
+<td class="numeric">0.1498</td>
+<td class="numeric">0.1799</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0302</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>F vs E</td>
+<td class="numeric">1.0859</td>
+<td class="numeric">1.1552</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0693</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">0.5007</td>
+<td class="numeric">0.5333</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0326</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>C vs A</td>
+<td class="numeric">0.5855</td>
+<td class="numeric">0.6205</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0350</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>C vs B</td>
+<td class="numeric">0.1466</td>
+<td class="numeric">0.1546</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0080</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">0.1942</td>
+<td class="numeric">0.2075</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0133</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>C vs A</td>
+<td class="numeric">0.2171</td>
+<td class="numeric">0.2342</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0172</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>C vs B</td>
+<td class="numeric">0.1705</td>
+<td class="numeric">0.1846</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0141</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">0.2341</td>
+<td class="numeric">0.2394</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0053</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>C vs A</td>
+<td class="numeric">0.5719</td>
+<td class="numeric">0.6038</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0319</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>C vs B</td>
+<td class="numeric">0.4881</td>
+<td class="numeric">0.5638</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0757</td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>fold_change.variance.protein_groups</h3>
+<div class="table-chart" data-table-id="fold-change-variance-protein_groups-18" data-chart-mode="delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="fold-change-variance-protein_groups-18"></label></div>
+<table class="metrics-table" data-initial-sort="7" data-versions="v0.6.4|develop|current" data-metric-group="fold_change_variance" id="fold-change-variance-protein_groups-18">
+<thead><tr>
+<th>Dataset</th>
+<th>Species</th>
+<th>Condition</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ develop vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>ecoli</td>
+<td>A vs B</td>
+<td class="numeric">0.1295</td>
+<td class="numeric">0.1342</td>
+<td class="numeric">0.1342</td>
+<td class="numeric">+0.0047</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>human</td>
+<td>A vs B</td>
+<td class="numeric">0.0731</td>
+<td class="numeric">0.0772</td>
+<td class="numeric">0.0772</td>
+<td class="numeric">+0.0041</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td>yeast</td>
+<td>A vs B</td>
+<td class="numeric">0.1300</td>
+<td class="numeric">0.1168</td>
+<td class="numeric">0.1168</td>
+<td class="numeric">-0.0132</td>
+<td class="numeric">+0</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>ecoli</td>
+<td>A vs B</td>
+<td class="numeric">0.1320</td>
+<td class="numeric">0.1350</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0030</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>human</td>
+<td>A vs B</td>
+<td class="numeric">0.0679</td>
+<td class="numeric">0.0676</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0003</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td>yeast</td>
+<td>A vs B</td>
+<td class="numeric">0.1262</td>
+<td class="numeric">0.1279</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0017</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">0.1924</td>
+<td class="numeric">0.2507</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0583</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>D vs C</td>
+<td class="numeric">0.1089</td>
+<td class="numeric">0.1141</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0052</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>ecoli</td>
+<td>F vs E</td>
+<td class="numeric">0.3405</td>
+<td class="numeric">0.5488</td>
+<td class="numeric"></td>
+<td class="numeric">+0.2083</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">0.0420</td>
+<td class="numeric">0.0482</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0062</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>D vs C</td>
+<td class="numeric">0.0549</td>
+<td class="numeric">0.0695</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0146</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>human</td>
+<td>F vs E</td>
+<td class="numeric">0.0528</td>
+<td class="numeric">0.0599</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0071</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">0.0563</td>
+<td class="numeric">0.0554</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0010</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>D vs C</td>
+<td class="numeric">0.0483</td>
+<td class="numeric">0.0475</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0007</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td>yeast</td>
+<td>F vs E</td>
+<td class="numeric">0.0959</td>
+<td class="numeric">0.1054</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0096</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">0.2033</td>
+<td class="numeric">0.2515</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0482</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>D vs C</td>
+<td class="numeric">0.0636</td>
+<td class="numeric">0.0583</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0053</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>ecoli</td>
+<td>F vs E</td>
+<td class="numeric">0.4584</td>
+<td class="numeric">0.4636</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0052</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">0.0646</td>
+<td class="numeric">0.0700</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0054</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>D vs C</td>
+<td class="numeric">0.0301</td>
+<td class="numeric">0.0326</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0026</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>human</td>
+<td>F vs E</td>
+<td class="numeric">0.0759</td>
+<td class="numeric">0.0703</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0055</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">0.2336</td>
+<td class="numeric">0.2410</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0073</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>D vs C</td>
+<td class="numeric">0.0715</td>
+<td class="numeric">0.0907</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0192</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td>yeast</td>
+<td>F vs E</td>
+<td class="numeric">0.5309</td>
+<td class="numeric">0.3966</td>
+<td class="numeric"></td>
+<td class="numeric">-0.1343</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>B vs A</td>
+<td class="numeric">0.2191</td>
+<td class="numeric">0.2396</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0205</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>C vs A</td>
+<td class="numeric">0.2647</td>
+<td class="numeric">0.2449</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0198</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>ecoli</td>
+<td>C vs B</td>
+<td class="numeric">0.0574</td>
+<td class="numeric">0.0641</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0068</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>B vs A</td>
+<td class="numeric">0.0657</td>
+<td class="numeric">0.0776</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0119</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>C vs A</td>
+<td class="numeric">0.0731</td>
+<td class="numeric">0.0791</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0060</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>human</td>
+<td>C vs B</td>
+<td class="numeric">0.0556</td>
+<td class="numeric">0.0620</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0063</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>B vs A</td>
+<td class="numeric">0.1098</td>
+<td class="numeric">0.0828</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0269</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>C vs A</td>
+<td class="numeric">0.2938</td>
+<td class="numeric">0.2580</td>
+<td class="numeric"></td>
+<td class="numeric">-0.0358</td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td>yeast</td>
+<td>C vs B</td>
+<td class="numeric">0.2531</td>
+<td class="numeric">0.2548</td>
+<td class="numeric"></td>
+<td class="numeric">+0.0017</td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: runtime</h3>
+<div class="table-chart" data-table-id="runtime-19" data-chart-mode="percent_delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="runtime-19"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="runtime" id="runtime-19">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+<th class="numeric">% current vs v0.6.4</th>
+<th class="numeric">% current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="APMS_Astral" data-search="search">
+<td>APMS_Astral</td>
+<td class="numeric">247.2300</td>
+<td class="numeric">290.7700</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="KEAP1KO_Eclipse" data-search="search">
+<td>KEAP1KO_Eclipse</td>
+<td class="numeric">24.0700</td>
+<td class="numeric">27.9100</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_3P_Alternating" data-search="search">
+<td>MTAC_3P_Alternating</td>
+<td class="numeric">12.7500</td>
+<td class="numeric">14.3800</td>
+<td class="numeric">15.8800</td>
+<td class="numeric">+3.1300</td>
+<td class="numeric">+1.5000</td>
+<td class="numeric">+24.5490%</td>
+<td class="numeric">+10.4312%</td>
+</tr>
+<tr data-dataset="MTAC_3P_Standard" data-search="search">
+<td>MTAC_3P_Standard</td>
+<td class="numeric">12.3100</td>
+<td class="numeric">15.5400</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_3min" data-search="search">
+<td>MTAC_Yeast_Alternating_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">6.9200</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Alternating_5min" data-search="search">
+<td>MTAC_Yeast_Alternating_5min</td>
+<td class="numeric">5.3800</td>
+<td class="numeric">6.3600</td>
+<td class="numeric">5.7800</td>
+<td class="numeric">+0.4000</td>
+<td class="numeric">-0.5800</td>
+<td class="numeric">+7.4349%</td>
+<td class="numeric">-9.1195%</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric">5.4300</td>
+<td class="numeric">6.3200</td>
+<td class="numeric">5.9300</td>
+<td class="numeric">+0.5000</td>
+<td class="numeric">-0.3900</td>
+<td class="numeric">+9.2081%</td>
+<td class="numeric">-6.1709%</td>
+</tr>
+<tr data-dataset="MTAC_Yeast_Standard_5min" data-search="search">
+<td>MTAC_Yeast_Standard_5min</td>
+<td class="numeric">5.5500</td>
+<td class="numeric">5.7400</td>
+<td class="numeric">6.1300</td>
+<td class="numeric">+0.5800</td>
+<td class="numeric">+0.3900</td>
+<td class="numeric">+10.4505%</td>
+<td class="numeric">+6.7944%</td>
+</tr>
+<tr data-dataset="Olsen_Astral_3P" data-search="search">
+<td>Olsen_Astral_3P</td>
+<td class="numeric">76.4000</td>
+<td class="numeric">77.1800</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Olsen_Exploris_3P" data-search="search">
+<td>Olsen_Exploris_3P</td>
+<td class="numeric">27.6600</td>
+<td class="numeric">30.8900</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCIEX_3P" data-search="search">
+<td>SCIEX_3P</td>
+<td class="numeric">30.2900</td>
+<td class="numeric">36.5700</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_12ms" data-search="search">
+<td>SCP_Astral_1000pg_12ms</td>
+<td class="numeric">5.7900</td>
+<td class="numeric">6.3900</td>
+<td class="numeric">5.7700</td>
+<td class="numeric">-0.0200</td>
+<td class="numeric">-0.6200</td>
+<td class="numeric">-0.3454%</td>
+<td class="numeric">-9.7027%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_24ms" data-search="search">
+<td>SCP_Astral_1000pg_24ms</td>
+<td class="numeric">6.2600</td>
+<td class="numeric">6.0500</td>
+<td class="numeric">8.4200</td>
+<td class="numeric">+2.1600</td>
+<td class="numeric">+2.3700</td>
+<td class="numeric">+34.5048%</td>
+<td class="numeric">+39.1736%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_3ms" data-search="search">
+<td>SCP_Astral_1000pg_3ms</td>
+<td class="numeric">4.5200</td>
+<td class="numeric">5.0800</td>
+<td class="numeric">24.1700</td>
+<td class="numeric">+19.6500</td>
+<td class="numeric">+19.0900</td>
+<td class="numeric">+434.7345%</td>
+<td class="numeric">+375.7874%</td>
+</tr>
+<tr data-dataset="SCP_Astral_1000pg_6ms" data-search="search">
+<td>SCP_Astral_1000pg_6ms</td>
+<td class="numeric">5.7400</td>
+<td class="numeric">5.5900</td>
+<td class="numeric">5.2400</td>
+<td class="numeric">-0.5000</td>
+<td class="numeric">-0.3500</td>
+<td class="numeric">-8.7108%</td>
+<td class="numeric">-6.2612%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_12ms" data-search="search">
+<td>SCP_Astral_10ng_12ms</td>
+<td class="numeric">7.0700</td>
+<td class="numeric">8.6900</td>
+<td class="numeric">8.1800</td>
+<td class="numeric">+1.1100</td>
+<td class="numeric">-0.5100</td>
+<td class="numeric">+15.7001%</td>
+<td class="numeric">-5.8688%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_24ms" data-search="search">
+<td>SCP_Astral_10ng_24ms</td>
+<td class="numeric">7.5900</td>
+<td class="numeric">8.3400</td>
+<td class="numeric">31.8900</td>
+<td class="numeric">+24.3000</td>
+<td class="numeric">+23.5500</td>
+<td class="numeric">+320.1581%</td>
+<td class="numeric">+282.3741%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_6ms" data-search="search">
+<td>SCP_Astral_10ng_6ms</td>
+<td class="numeric">7.3800</td>
+<td class="numeric">6.8400</td>
+<td class="numeric">7.3400</td>
+<td class="numeric">-0.0400</td>
+<td class="numeric">+0.5000</td>
+<td class="numeric">-0.5420%</td>
+<td class="numeric">+7.3099%</td>
+</tr>
+<tr data-dataset="SCP_Astral_10ng_ms" data-search="search">
+<td>SCP_Astral_10ng_ms</td>
+<td class="numeric">6.4500</td>
+<td class="numeric">5.7700</td>
+<td class="numeric">6.8100</td>
+<td class="numeric">+0.3600</td>
+<td class="numeric">+1.0400</td>
+<td class="numeric">+5.5814%</td>
+<td class="numeric">+18.0243%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_12ms" data-search="search">
+<td>SCP_Astral_250pg_12ms</td>
+<td class="numeric">4.7400</td>
+<td class="numeric">5.6000</td>
+<td class="numeric">5.3200</td>
+<td class="numeric">+0.5800</td>
+<td class="numeric">-0.2800</td>
+<td class="numeric">+12.2363%</td>
+<td class="numeric">-5.0000%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_24ms" data-search="search">
+<td>SCP_Astral_250pg_24ms</td>
+<td class="numeric">5.2600</td>
+<td class="numeric">5.6400</td>
+<td class="numeric">4.6200</td>
+<td class="numeric">-0.6400</td>
+<td class="numeric">-1.0200</td>
+<td class="numeric">-12.1673%</td>
+<td class="numeric">-18.0851%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_3ms" data-search="search">
+<td>SCP_Astral_250pg_3ms</td>
+<td class="numeric">4.6500</td>
+<td class="numeric">4.9700</td>
+<td class="numeric">4.9100</td>
+<td class="numeric">+0.2600</td>
+<td class="numeric">-0.0600</td>
+<td class="numeric">+5.5914%</td>
+<td class="numeric">-1.2072%</td>
+</tr>
+<tr data-dataset="SCP_Astral_250pg_6ms" data-search="search">
+<td>SCP_Astral_250pg_6ms</td>
+<td class="numeric">4.1700</td>
+<td class="numeric">4.8900</td>
+<td class="numeric">4.5900</td>
+<td class="numeric">+0.4200</td>
+<td class="numeric">-0.3000</td>
+<td class="numeric">+10.0719%</td>
+<td class="numeric">-6.1350%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_12ms" data-search="search">
+<td>SCP_Astral_500pg_12ms</td>
+<td class="numeric">5.2800</td>
+<td class="numeric">4.7700</td>
+<td class="numeric">6.8800</td>
+<td class="numeric">+1.6000</td>
+<td class="numeric">+2.1100</td>
+<td class="numeric">+30.3030%</td>
+<td class="numeric">+44.2348%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_24ms" data-search="search">
+<td>SCP_Astral_500pg_24ms</td>
+<td class="numeric">5.5100</td>
+<td class="numeric">5.2400</td>
+<td class="numeric">5.7600</td>
+<td class="numeric">+0.2500</td>
+<td class="numeric">+0.5200</td>
+<td class="numeric">+4.5372%</td>
+<td class="numeric">+9.9237%</td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_3ms" data-search="search">
+<td>SCP_Astral_500pg_3ms</td>
+<td class="numeric">4.7300</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="SCP_Astral_500pg_6ms" data-search="search">
+<td>SCP_Astral_500pg_6ms</td>
+<td class="numeric">4.6500</td>
+<td class="numeric">5.5500</td>
+<td class="numeric">4.4600</td>
+<td class="numeric">-0.1900</td>
+<td class="numeric">-1.0900</td>
+<td class="numeric">-4.0860%</td>
+<td class="numeric">-19.6396%</td>
+</tr>
+<tr data-dataset="SCP_Astral_MBR" data-search="search">
+<td>SCP_Astral_MBR</td>
+<td class="numeric">9.0400</td>
+<td class="numeric">10.3700</td>
+<td class="numeric">8.7700</td>
+<td class="numeric">-0.2700</td>
+<td class="numeric">-1.6000</td>
+<td class="numeric">-2.9867%</td>
+<td class="numeric">-15.4291%</td>
+</tr>
+<tr data-dataset="Seer_Astral_45" data-search="search">
+<td>Seer_Astral_45</td>
+<td class="numeric">100.3500</td>
+<td class="numeric">100.6100</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="YEAST_KO_Astral" data-search="search">
+<td>YEAST_KO_Astral</td>
+<td class="numeric">235.6300</td>
+<td class="numeric">253</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="EWZ_2P_MBR_Exploris" data-search="search_MBR">
+<td>EWZ_2P_MBR_Exploris</td>
+<td class="numeric">29</td>
+<td class="numeric">37.5400</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="Seer_Astral_45_Entrapment" data-search="search_entrap">
+<td>Seer_Astral_45_Entrapment</td>
+<td class="numeric">799.8300</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+<tr data-dataset="EWZ_2P_noMBR_Exploris" data-search="search_noMBR">
+<td>EWZ_2P_noMBR_Exploris</td>
+<td class="numeric">27.1100</td>
+<td class="numeric">33.3600</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+
+  </div>
+<div class="search-block">
+<div class="dataset-block">
+<h3>MTAC_3P_Alternating_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_3P_Alternating_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_3P_Alternating_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_3P_Alternating_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_3P_Alternating_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>MTAC_Yeast_Alternating_3min_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Alternating_3min_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Alternating_3min_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Alternating_3min_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Alternating_3min_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>MTAC_Yeast_Alternating_5min_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Alternating_5min_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Alternating_5min_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Alternating_5min_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Alternating_5min_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>MTAC_Yeast_Standard_3min_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_3min_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_3min_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_3min_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_3min_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>MTAC_Yeast_Standard_5min_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_5min_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_5min_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_5min_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_5min_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_1000pg_12ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_12ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_12ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_12ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_12ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_1000pg_24ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_24ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_24ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_24ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_24ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_1000pg_3ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_3ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_3ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_3ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_3ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_1000pg_6ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_6ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_6ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_6ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_1000pg_6ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_10ng_12ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_12ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_12ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_12ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_12ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_10ng_24ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_24ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_24ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_24ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_24ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_10ng_3ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_3ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_3ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_3ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_3ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_10ng_6ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_6ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_6ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_6ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_10ng_6ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_250pg_12ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_250pg_12ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_250pg_12ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_250pg_12ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_250pg_12ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_250pg_24ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_250pg_24ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_250pg_24ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_250pg_24ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_250pg_24ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_250pg_6ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_250pg_6ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_250pg_6ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_500pg_12ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_12ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_12ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_12ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_12ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_500pg_24ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_24ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_24ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_24ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_24ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_500pg_3ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_3ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_3ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_500pg_6ms_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_6ms_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_6ms_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_6ms_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_500pg_6ms_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+<div class="dataset-block">
+<h3>SCP_Astral_MBR_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_MBR_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_MBR_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_MBR_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/SCP_Astral_MBR_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+</div>
+
+  <script>
+function parseCellValue(text) {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === "NA") return NaN;
+  const cleaned = trimmed.replace(/[%+,]/g, "");
+  const value = parseFloat(cleaned);
+  return Number.isNaN(value) ? NaN : value;
+}
+function sortTable(table, columnIndex, direction) {
+  const tbody = table.tBodies[0];
+  if (!tbody) return;
+  const rows = Array.from(tbody.rows);
+  rows.sort((rowA, rowB) => {
+    const cellA = rowA.cells[columnIndex];
+    const cellB = rowB.cells[columnIndex];
+    const textA = cellA ? cellA.textContent : "";
+    const textB = cellB ? cellB.textContent : "";
+    const numA = parseCellValue(textA);
+    const numB = parseCellValue(textB);
+    let result = 0;
+    if (!Number.isNaN(numA) && !Number.isNaN(numB)) {
+      result = numA - numB;
+    } else if (!Number.isNaN(numA)) {
+      result = 1;
+    } else if (!Number.isNaN(numB)) {
+      result = -1;
+    } else {
+      result = textA.localeCompare(textB);
+    }
+    return direction === "asc" ? result : -result;
+  });
+  rows.forEach(row => tbody.appendChild(row));
+  table.dataset.sortIndex = columnIndex;
+  table.dataset.sortDirection = direction;
+}
+function setupSortableTables() {
+  const tables = document.querySelectorAll("table.metrics-table");
+  tables.forEach(table => {
+    const headers = table.querySelectorAll("thead th");
+    headers.forEach((header, index) => {
+      header.classList.add("sortable");
+      header.addEventListener("click", () => {
+        const currentIndex = parseInt(table.dataset.sortIndex || "-1", 10);
+        const currentDirection = table.dataset.sortDirection || "desc";
+        const nextDirection = currentIndex === index && currentDirection === "desc" ? "asc" : "desc";
+        sortTable(table, index, nextDirection);
+      });
+    });
+    const initial = table.dataset.initialSort;
+    if (initial !== undefined && initial !== "") {
+      sortTable(table, parseInt(initial, 10), "desc");
+    }
+  });
+}
+function setupTableFilters() {
+  const inputs = document.querySelectorAll(".table-filter");
+  inputs.forEach(input => {
+    const tableId = input.dataset.tableId;
+    if (!tableId) return;
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    input.addEventListener("input", () => {
+      const query = input.value.trim().toLowerCase();
+      const rows = Array.from(table.tBodies[0].rows);
+      rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        const dataset = (row.dataset.dataset || "").toLowerCase();
+        const search = (row.dataset.search || "").toLowerCase();
+        const haystack = `${text} ${dataset} ${search}`;
+        row.style.display = !query || haystack.includes(query) ? "" : "none";
+      });
+    });
+  });
+}
+function collectSeries(table, mode) {
+  const headers = Array.from(table.querySelectorAll("thead th")).map(th => th.textContent.trim());
+  const versions = (table.dataset.versions || "").split("|").filter(Boolean);
+  const rows = Array.from(table.tBodies[0].rows);
+  if (!rows.length) return [];
+  const datasetValues = rows.map(row => row.dataset.dataset || (row.cells[0] ? row.cells[0].textContent.trim() : ""));
+  const searchValues = rows.map(row => row.dataset.search || "");
+  const group = (table.dataset.metricGroup || "").toLowerCase();
+  const speciesIndex = headers.indexOf("Species");
+  const conditionIndex = headers.indexOf("Condition");
+  const speciesValues = speciesIndex >= 0 ? rows.map(row => {
+    const cell = row.cells[speciesIndex];
+    return cell ? cell.textContent.trim() : "";
+  }) : [];
+  const conditionValues = conditionIndex >= 0 ? rows.map(row => {
+    const cell = row.cells[conditionIndex];
+    return cell ? cell.textContent.trim() : "";
+  }) : [];
+  const usesCompositeXAxis = (group === "fold_change" || group === "fold_change_variance") && speciesIndex >= 0 && conditionIndex >= 0;
+  const xValues = usesCompositeXAxis ? rows.map((row, idx) => {
+    const dataset = datasetValues[idx];
+    const species = speciesValues[idx];
+    const condition = conditionValues[idx];
+    const parts = [];
+    if (dataset) parts.push(dataset);
+    if (species) parts.push(species);
+    if (condition) parts.push(condition);
+    return parts.join(" / ") || dataset || "";
+  }) : datasetValues;
+  const shouldSplitBySpecies = false;
+  const columnIndexes = [];
+  const labels = [];
+  if (mode === "raw") {
+    versions.forEach(version => {
+      const idx = headers.indexOf(version);
+      if (idx >= 0) {
+        columnIndexes.push(idx);
+        labels.push(version);
+      }
+    });
+  } else if (mode === "delta") {
+    headers.forEach((header, idx) => {
+      if (header.startsWith("Δ ")) {
+        columnIndexes.push(idx);
+        labels.push(header);
+      }
+    });
+  } else if (mode === "percent_delta") {
+    headers.forEach((header, idx) => {
+      if (header.startsWith("% ")) {
+        columnIndexes.push(idx);
+        labels.push(header);
+      }
+    });
+  }
+  if (!columnIndexes.length) return [];
+  if (!shouldSplitBySpecies) {
+    return labels.map((label, seriesIdx) => {
+      const columnIndex = columnIndexes[seriesIdx];
+      const yValues = rows.map(row => {
+        const cell = row.cells[columnIndex];
+        const value = cell ? parseCellValue(cell.textContent) : NaN;
+        return Number.isNaN(value) ? null : value;
+      });
+      const hoverText = rows.map((row, idx) => {
+        const dataset = xValues[idx];
+        const search = searchValues[idx];
+        return search ? `${dataset}<br>${search}` : dataset;
+      });
+      return {
+        name: label,
+        x: xValues,
+        y: yValues,
+        text: hoverText,
+        hovertemplate: "%{text}<br>%{y}<extra>%{name}</extra>",
+        mode: "lines+markers"
+      };
+    });
+  }
+  const seenSpecies = new Set();
+  const speciesList = [];
+  speciesValues.forEach(value => {
+    if (seenSpecies.has(value)) return;
+    seenSpecies.add(value);
+    speciesList.push(value);
+  });
+  const series = [];
+  labels.forEach((label, seriesIdx) => {
+    const columnIndex = columnIndexes[seriesIdx];
+    speciesList.forEach(species => {
+      const x = [];
+      const y = [];
+      const hoverText = [];
+      rows.forEach((row, idx) => {
+        if (speciesValues[idx] !== species) return;
+        x.push(xValues[idx]);
+        const cell = row.cells[columnIndex];
+        const value = cell ? parseCellValue(cell.textContent) : NaN;
+        y.push(Number.isNaN(value) ? null : value);
+        const dataset = xValues[idx];
+        const search = searchValues[idx];
+        hoverText.push(search ? `${dataset}<br>${search}` : dataset);
+      });
+      const hasValue = y.some(value => value !== null && value !== undefined);
+      if (!hasValue) return;
+      const speciesLabel = species || "Unknown";
+      series.push({
+        name: `${label} · ${speciesLabel}`,
+        x,
+        y,
+        text: hoverText,
+        hovertemplate: "%{text}<br>%{y}<extra>%{name}</extra>",
+        mode: "lines+markers"
+      });
+    });
+  });
+  return series;
+}
+function choosePrimarySeries(series) {
+  if (!series.length) return null;
+  const byName = needle => series.find(trace => (trace.name || "").toLowerCase().includes(needle));
+  const currentVsDevelop = byName("current vs develop");
+  if (currentVsDevelop) return currentVsDevelop;
+  const currentExact = series.find(trace => (trace.name || "").trim().toLowerCase() === "current");
+  if (currentExact) return currentExact;
+  return series[0];
+}
+function sortSeriesByY(series) {
+  const primary = choosePrimarySeries(series);
+  if (!primary) return series;
+  const indices = primary.y.map((value, idx) => ({
+    idx,
+    value: value === null || value === undefined || Number.isNaN(value) ? -Infinity : value
+  }));
+  indices.sort((a, b) => b.value - a.value);
+  const order = indices.map(entry => entry.idx);
+  return series.map(trace => {
+    return {
+      ...trace,
+      x: order.map(idx => trace.x[idx]),
+      y: order.map(idx => trace.y[idx]),
+      text: trace.text ? order.map(idx => trace.text[idx]) : trace.text
+    };
+  });
+}
+function setupTableCharts() {
+  if (typeof Plotly === "undefined") return;
+  const chartContainers = document.querySelectorAll(".table-chart");
+  chartContainers.forEach(container => {
+    const tableId = container.dataset.tableId;
+    const mode = container.dataset.chartMode || "";
+    if (!tableId || !mode) return;
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const series = sortSeriesByY(collectSeries(table, mode));
+    if (!series.length) {
+      container.style.display = "none";
+      return;
+    }
+    const showZeroLine = mode !== "raw";
+    const group = (table.dataset.metricGroup || "").toLowerCase();
+    const xAxisTitle = (group === "fold_change" || group === "fold_change_variance") ? "Dataset / Species / Condition" : "Dataset";
+    const layout = {
+      margin: { l: 50, r: 20, t: 10, b: 40 },
+      height: 520,
+      xaxis: { title: xAxisTitle, automargin: true },
+      yaxis: { title: mode === "raw" ? "Value" : (mode === "percent_delta" ? "Δ %" : "Δ"), automargin: true },
+      legend: { orientation: "h", x: 1, y: 1, xanchor: "right", yanchor: "top" },
+      shapes: showZeroLine ? [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: "#666", width: 1, dash: "dash" } }] : []
+    };
+    Plotly.newPlot(container, series, layout, { displaylogo: false, responsive: true });
+  });
+}
+function applyValueCues() {
+  const tables = document.querySelectorAll("table.metrics-table");
+  tables.forEach(table => {
+    const group = (table.dataset.metricGroup || "").toLowerCase();
+    const headers = Array.from(table.querySelectorAll("thead th")).map(th => th.textContent.trim());
+    const rows = Array.from(table.tBodies[0]?.rows || []);
+    rows.forEach(row => {
+      Array.from(row.cells).forEach((cell, idx) => {
+        if (!cell.classList.contains("numeric")) return;
+        const header = headers[idx] || "";
+        const value = parseCellValue(cell.textContent);
+        if (Number.isNaN(value)) return;
+        const isDelta = header.startsWith("Δ ");
+        const isPercent = header.startsWith("% ");
+        const isRaw = !isDelta && !isPercent;
+        let classification = null;
+        if (group === "identification" && (isDelta || isPercent)) {
+          if (value > 0) classification = "good";
+          else if (value < 0) classification = "bad";
+        } else if (group === "runtime" && (isDelta || isPercent)) {
+          if (value < 0) classification = "good";
+          else if (value > 0) classification = "bad";
+        } else if (group === "cv" && isDelta) {
+          if (value < 0) classification = "good";
+          else if (value > 0) classification = "bad";
+        } else if (group === "fold_change_variance" && isDelta) {
+          if (value < 0) classification = "good";
+          else if (value > 0) classification = "bad";
+        } else if (group === "entrapment" && isRaw) {
+          if (value < 0) classification = "good";
+          else if (value > 0) classification = "bad";
+        } else if (group === "ftr" && isRaw) {
+          if (value < 0.01) classification = "good";
+          else if (value > 0.01) classification = "bad";
+        }
+        if (!classification) return;
+        cell.classList.remove("metric-good", "metric-bad");
+        cell.classList.add(classification === "good" ? "metric-good" : "metric-bad");
+      });
+    });
+  });
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    setupSortableTables();
+    setupTableFilters();
+    setupTableCharts();
+    applyValueCues();
+  });
+} else {
+  setupSortableTables();
+  setupTableFilters();
+  setupTableCharts();
+  applyValueCues();
+}
+
+  </script>
+</body>
+</html>
