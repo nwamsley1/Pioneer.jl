@@ -671,6 +671,19 @@ jobs:
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
             "RUN_DIR='${remote_run_dir}' DEVELOP_DIR='${develop_dir}' bash -s" <<'EOF'
             set -euo pipefail
+            lock_dir="${DEVELOP_DIR}.lock"
+            lock_timeout=900
+            lock_interval=10
+            start_time=$(date +%s)
+
+            while ! mkdir "$lock_dir" 2>/dev/null; do
+              if [ $(( $(date +%s) - start_time )) -ge "$lock_timeout" ]; then
+                echo "Timeout waiting for develop metrics lock at $lock_dir" >&2
+                exit 1
+              fi
+              sleep "$lock_interval"
+            done
+            trap 'rmdir "$lock_dir"' EXIT
 
             if [ ! -d "$RUN_DIR/results" ]; then
               echo "Run results directory not found at $RUN_DIR/results" >&2
