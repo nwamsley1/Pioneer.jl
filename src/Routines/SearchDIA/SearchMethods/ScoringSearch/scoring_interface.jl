@@ -147,7 +147,7 @@ function apply_mbr_filter!(
     end
 
     # Apply best method's filtering
-    return apply_filtering(best_result, merged_df, candidate_mask, params)
+    return apply_filtering(best_result, merged_df, candidate_mask, is_bad_transfer, params)
 end
 
 #==========================================================
@@ -401,15 +401,22 @@ Filtering Application
 ==========================================================#
 
 """
-    apply_filtering(result, merged_df, candidate_mask, params) -> NamedTuple
+    apply_filtering(result, merged_df, candidate_mask, is_bad_transfer, params) -> NamedTuple
 
-Apply the filtering result to the full dataframe.
+Apply the filtering result to the full dataframe, zeroing out candidates below the
+selected threshold **and** any bad transfers regardless of their score.
 Returns a NamedTuple with both MBR_boosted_trace_prob and trace_prob filtered.
 """
-function apply_filtering(result::FilterResult, merged_df::DataFrame, candidate_mask::AbstractVector{Bool}, params)
+function apply_filtering(result::FilterResult, 
+    merged_df::DataFrame, 
+    candidate_mask::AbstractVector{Bool}, 
+    is_bad_transfer::AbstractVector{Bool},
+    params)
     filtered_MBR_boosted_trace_probs = copy(merged_df.MBR_boosted_trace_prob)
     filtered_trace_probs = copy(merged_df.trace_prob)
     candidate_indices = findall(candidate_mask)
+    failed_initial_mask = merged_df.q_value .> params.max_q_value_lightgbm_rescore
+    non_candidate_failed_mask = .!candidate_mask .& failed_initial_mask
 
     if result.method_name == "Threshold"
         # Simple threshold on probability
@@ -426,6 +433,14 @@ function apply_filtering(result::FilterResult, merged_df::DataFrame, candidate_m
                 filtered_MBR_boosted_trace_probs[idx] = 0.0f0
                 filtered_trace_probs[idx] = 0.0f0
             end
+        end
+    end
+
+    # Explicitly remove bad transfers even if they cleared the threshold
+    for idx in candidate_indices
+        if is_bad_transfer[idx]
+            filtered_MBR_boosted_trace_probs[idx] = 0.0f0
+            filtered_trace_probs[idx] = 0.0f0
         end
     end
 
