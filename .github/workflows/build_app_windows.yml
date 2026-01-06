@@ -73,7 +73,7 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          julia --threads auto --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
+          julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
@@ -83,7 +83,7 @@ jobs:
       - name: Compile application
         shell: bash
         run: |
-          julia --threads auto --project=. -e '
+          julia --threads auto --project=dev -e '
             using PackageCompiler;
             create_app(
               ".",
