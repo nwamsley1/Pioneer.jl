@@ -444,6 +444,12 @@ function apply_filtering(result::FilterResult,
         end
     end
 
+    # Also clear entries that were not transfer candidates and failed the initial q-value cutoff
+    for idx in findall(non_candidate_failed_mask)
+        filtered_MBR_boosted_trace_probs[idx] = 0.0f0
+        filtered_trace_probs[idx] = 0.0f0
+    end
+
     return (MBR_boosted_trace_prob = filtered_MBR_boosted_trace_probs,
             trace_prob = filtered_trace_probs)
 end
