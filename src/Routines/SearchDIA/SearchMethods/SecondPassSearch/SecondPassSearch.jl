@@ -482,7 +482,7 @@ function process_search_results!(
         init_summary_columns!(psms);
 
         # Calculate summary scores for each PSM group
-        for (key, gpsms) in pairs(groupby(psms, getPsmGroupbyCols(getIsotopeTraceType(params))))
+        for (key, gpsms) in pairs(groupby(psms, getPsmGroupbyCols(getIsotopeTraceType(params)), sort=false))
             get_summary_scores!(
                 gpsms, 
                 gpsms[!,:weight],

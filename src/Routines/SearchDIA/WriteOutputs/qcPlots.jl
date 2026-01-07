@@ -86,7 +86,7 @@ function qcPlots(
 
         # Count unique precursors per file
         file_counts = combine(
-            groupby(filtered_df, file_column),
+            groupby(filtered_df, file_column, sort=false),
             nrow => :precursor_count
         )
 

@@ -67,7 +67,7 @@ function process_psms!(
     get_qvalues!(psms[!,:prob], psms[!,:target], psms[!,:q_value])
 
     # Get best PSMs per precursor/scan
-    spsms = combine(groupby(psms, [:precursor_idx, :scan_idx])) do group
+    spsms = combine(groupby(psms, [:precursor_idx, :scan_idx], sort=false)) do group
         max_idx = argmax(group[!, :scribe])
         return group[max_idx:max_idx, :]
     end
@@ -85,7 +85,7 @@ function process_psms!(
     
     # Select best PSMs
     psms[!, :best_psms] .= false
-    for group in groupby(psms, :precursor_idx)
+    for group in groupby(psms, :precursor_idx, sort=false)
         best_idx = argmax(group[!, :scribe])
         group[best_idx, :best_psms] = true
     end
@@ -93,4 +93,3 @@ function process_psms!(
 
     return psms
 end
-

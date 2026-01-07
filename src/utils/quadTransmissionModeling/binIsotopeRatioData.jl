@@ -205,8 +205,8 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
         isotopes_ratio_data[!,:uniform_bin_idx] = getBinIdx(isotopes_ratio_data[!,:x0], uniform_x_bounds)
         #Use KDE bins or uniform bins? Base this decision on the mean standard deviation of a bin. 
         #A better bin selection means less within-bin variance. 
-        uniform_bin_stds = filter!(!isnan, values(combine(x->std(x.x0), groupby(isotopes_ratio_data,:uniform_bin_idx))[:,2]))
-        kde_bin_stds = filter!(!isnan, values(combine(x->std(x.x0), groupby(isotopes_ratio_data,:kde_bin_idx))[:,2]))
+        uniform_bin_stds = filter!(!isnan, values(combine(x->std(x.x0), groupby(isotopes_ratio_data, :uniform_bin_idx, sort=false))[:,2]))
+        kde_bin_stds = filter!(!isnan, values(combine(x->std(x.x0), groupby(isotopes_ratio_data, :kde_bin_idx, sort=false))[:,2]))
         mean_uniform_std = median(skipmissing(uniform_bin_stds))
         mean_kde_std = median(skipmissing(kde_bin_stds))
         if mean_uniform_std > mean_kde_std*0.9
@@ -221,7 +221,7 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
     last_n_bins = 0
     for iter in 1:1
         # Compute bin statistics
-        grouped_ratio_data = groupby(isotopes_ratio_data, :bin_idx)
+        grouped_ratio_data = groupby(isotopes_ratio_data, :bin_idx, sort=false)
         bin_centers = combine(grouped_ratio_data) do k_mean_bin
             (
                 median_x0 = median(k_mean_bin[!,:x0]),
@@ -274,7 +274,7 @@ function MergeBins(isotopes_ratio_data::DataFrame, x0_lim::Tuple{<:Real,<:Real};
         error("Missing required columns: $(missing_cols)")
     end
     
-    bined_ratio_data = combine(groupby(isotopes_ratio_data,:prec_charge)) do subdf
+    bined_ratio_data = combine(groupby(isotopes_ratio_data, :prec_charge, sort=false)) do subdf
         mb = MergeBins(subdf,x0_lim, min_bin_size = min_bin_size, min_bin_width = min_bin_width, max_iterations = max_iterations)
         mb
     end

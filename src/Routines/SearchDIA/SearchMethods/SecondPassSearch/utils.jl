@@ -1125,7 +1125,7 @@ function parseMs1Psms(
     psms[!, :rt_diff_max_intensity] = zeros(Float32, size(psms, 1))
 
     # Group by precursor and apply hybrid selection
-    return combine(groupby(psms, :precursor_idx)) do group
+    return combine(groupby(psms, :precursor_idx, sort=false)) do group
         # Find max intensity scan
         max_intensity_idx = argmax(group[!, :weight])
         max_intensity_rt = group[max_intensity_idx, :rt]

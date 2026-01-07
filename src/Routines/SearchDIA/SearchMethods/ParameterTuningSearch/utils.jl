@@ -225,7 +225,7 @@ function filter_top_psms_per_precursor(psms::DataFrame, max_per_precursor::Int=3
     end
 
     # Group by precursor_idx and keep top N by probability score
-    filtered_psms = combine(groupby(psms, :precursor_idx)) do group
+    filtered_psms = combine(groupby(psms, :precursor_idx, sort=false)) do group
         n_to_keep = min(nrow(group), max_per_precursor)
         if n_to_keep == nrow(group)
             return group
