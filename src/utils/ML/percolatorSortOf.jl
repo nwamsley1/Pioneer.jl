@@ -913,7 +913,7 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
         num_runs_passing = length(unique(sub_psms.ms_file_idx[sub_psms.q_value .<= q_cutoff]))
         for i in 1:nrow(sub_psms)
             current_ms_file_idx = sub_psms.ms_file_idx[i]
-            any_passing_in_current_ms_file_idx = any(sub_psms.q_value[sub_psms.ms_file_idx == current_ms_file_idx] .<= q_cutoff)
+            any_passing_in_current_ms_file_idx = any(sub_psms.q_value[sub_psms.ms_file_idx .== current_ms_file_idx] .<= q_cutoff)
             sub_psms.MBR_num_runs[i] = num_runs_passing - any_passing_in_current_ms_file_idx
 
             idx = Int(sub_psms.ms_file_idx[i]) - offset + 1
