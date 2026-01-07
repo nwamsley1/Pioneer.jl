@@ -879,17 +879,21 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
         best_p = fill(-Inf, range_len)
         for (i, run) in enumerate(sub_psms.ms_file_idx)
             idx = Int(run) - offset + 1
-            p = sub_psms.trace_prob[i]
-            if p > best_p[idx]
-                best_p[idx] = p
-                best_i[idx] = i
+            if sub_psms.q_value[i] <= q_cutoff
+                p = sub_psms.trace_prob[i]
+                if p > best_p[idx]
+                    best_p[idx] = p
+                    best_i[idx] = i
+                end
             end
         end
 
         # if more than one run, find the global top-2 runs by their best-PSM prob
         run_best_indices = zeros(Int, range_len)
         runs = findall(!=(0), best_i)
-        if length(runs) > 1
+        num_runs_passing = length(runs)
+
+        if num_runs_passing > 0
             # track top two runs (r1 > r2)
             r1 = 0; p1 = -Inf
             r2 = 0; p2 = -Inf
@@ -904,18 +908,29 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             end
 
             # assign, for each run, the best index in “any other” run
-            for r in runs
-                run_best_indices[r] = (r == r1 ? best_i[r2] : best_i[r1])
+            for r in 1:range_len
+                if num_runs_passing == 1
+                    run_best_indices[r] = r == r1 ? 0 : best_i[r1]
+                else
+                    if r == r1
+                        run_best_indices[r] = best_i[r2]
+                    elseif r == r2
+                        run_best_indices[r] = best_i[r1]
+                    else
+                        run_best_indices[r] = best_i[r1]
+                    end
+                end
             end
         end
 
-        # Compute MBR features
+        # Compute MBR features using only runs with passing q-values
         num_runs_passing = length(sub_psms.ms_file_idx[sub_psms.q_value .<= q_cutoff])
         for i in 1:nrow(sub_psms)
-            sub_psms.MBR_num_runs[i] = num_runs_passing - (sub_psms.q_value[i] .<= q_cutoff)
+            run_idx = Int(sub_psms.ms_file_idx[i]) - offset + 1
+            current_run_passing = run_idx in runs
+            sub_psms.MBR_num_runs[i] = num_runs_passing - (current_run_passing ? 1 : 0)
 
-            idx = Int(sub_psms.ms_file_idx[i]) - offset + 1
-            best_idx = run_best_indices[idx]
+            best_idx = run_best_indices[run_idx]
             if best_idx == 0 || sub_psms.MBR_num_runs[i] == 0
                 sub_psms.MBR_best_irt_diff[i]           = -1.0f0
                 sub_psms.MBR_rv_coefficient[i]          = -1.0f0
