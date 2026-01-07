@@ -412,11 +412,10 @@ function apply_filtering(result::FilterResult,
     candidate_mask::AbstractVector{Bool}, 
     is_bad_transfer::AbstractVector{Bool},
     params)
+    
     filtered_MBR_boosted_trace_probs = copy(merged_df.MBR_boosted_trace_prob)
     filtered_trace_probs = copy(merged_df.trace_prob)
     candidate_indices = findall(candidate_mask)
-    failed_initial_mask = merged_df.q_value .> params.max_q_value_lightgbm_rescore
-    non_candidate_failed_mask = .!candidate_mask .& failed_initial_mask
 
     if result.method_name == "Threshold"
         # Simple threshold on probability
@@ -442,12 +441,6 @@ function apply_filtering(result::FilterResult,
             filtered_MBR_boosted_trace_probs[idx] = 0.0f0
             filtered_trace_probs[idx] = 0.0f0
         end
-    end
-
-    # Also clear entries that were not transfer candidates and failed the initial q-value cutoff
-    for idx in findall(non_candidate_failed_mask)
-        filtered_MBR_boosted_trace_probs[idx] = 0.0f0
-        filtered_trace_probs[idx] = 0.0f0
     end
 
     return (MBR_boosted_trace_prob = filtered_MBR_boosted_trace_probs,
