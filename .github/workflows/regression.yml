@@ -10,8 +10,8 @@ on:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
-      dataset_set:
-        description: Dataset selection for regression runs
+      regression_set:
+        description: Regression set selection for regression runs
         type: choice
         options:
           - all
@@ -26,14 +26,14 @@ permissions:
 
 jobs:
   regression:
-    name: Julia ${{ matrix.version }} regression sweep (${{ matrix.dataset_set }})
-    environment: regression-tests-${{ matrix.dataset_set }}
+    name: Julia ${{ matrix.version }} regression sweep (${{ matrix.regression_set }})
+    environment: regression-tests-${{ matrix.regression_set }}
     runs-on: [self-hosted, Linux, pioneer-regression]
     timeout-minutes: 7200
     strategy:
       matrix:
         version: ['1.11']
-        dataset_set: ${{ github.event_name == 'release' && fromJSON('["all"]') || (github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.dataset_set)) || fromJSON('["fastest","fast","all"]')) }}
+        regression_set: ${{ github.event_name == 'release' && fromJSON('["all"]') || (github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.regression_set)) || fromJSON('["fastest","fast","all"]')) }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -47,7 +47,7 @@ jobs:
           GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           GITHUB_REPOSITORY: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
           CLUSTER_ENTRAPMENT_REPO: ${{ secrets.CLUSTER_ENTRAPMENT_REPO }}
-          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || matrix.dataset_set }}
+          REGRESSION_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.regression_set || matrix.regression_set }}
         shell: bash
         run: |
           set -euo pipefail
@@ -58,7 +58,7 @@ jobs:
 
           remote_run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
           remote_run_root="${remote_run_root_raw%/}"
-          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}"
+          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}"
           remote_run_dir="${remote_run_root}/${run_suffix}"
           mount_run_root_raw="/mnt/ris/Active/Automation/Pioneer"
           mount_run_root="${mount_run_root_raw%/}"
@@ -130,22 +130,22 @@ jobs:
           REGRESSION_JOB_SCRIPT: ${{ vars.REGRESSION_JOB_SCRIPT }}
           SETUP_JOB_SCRIPT: ${{ vars.SETUP_JOB_SCRIPT }}
           METRICS_JOB_SCRIPT: ${{ vars.METRICS_JOB_SCRIPT }}
-          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || matrix.dataset_set }}
+          REGRESSION_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.regression_set || matrix.regression_set }}
         shell: bash
         run: |
           set -euo pipefail
 
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
-          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}}"
-          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}}"
+          remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}}"
+          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}}"
           params_dir="${remote_run_dir}/regression-configs/params"
           regression_configs_dir="${remote_run_dir}/regression-configs"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
           setup_script_path="${remote_run_dir}/${SETUP_JOB_SCRIPT:-regression-configs/job_scripts/setup.bsub}"
           metrics_script_path="${remote_run_dir}/${METRICS_JOB_SCRIPT:-regression-configs/job_scripts/metrics.bsub}"
           adjusted_params_dir="${remote_run_dir}/adjusted-params"
-          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DATASET_SET}"
-          dataset_set="${DATASET_SET:-all}"
+          run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}"
+          regression_set="${REGRESSION_SET:-all}"
 
           ssh_options=(
             -o BatchMode=yes
@@ -157,7 +157,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' DATASET_SET='${dataset_set}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' REGRESSION_SET='${regression_set}' bash -s" <<'EOF'
             set -eu
 
             if [ ! -f "$SETUP_SCRIPT" ]; then
@@ -186,8 +186,8 @@ jobs:
 
             dataset_filter=""
             # dataset_tags.json schema: { "dataset-name": ["tag1", "tag2", ...], ... }
-            if [ "${DATASET_SET:-all}" != "all" ]; then
-              dataset_tag="${DATASET_SET}"
+            if [ "${REGRESSION_SET:-all}" != "all" ]; then
+              dataset_tag="${REGRESSION_SET}"
               tags_path="${REGRESSION_CONFIGS_DIR}/params/dataset_tags.json"
               if [ ! -f "$tags_path" ]; then
                 echo "Missing dataset tags file at $tags_path" >&2
@@ -209,7 +209,7 @@ jobs:
                 exit 1
               fi
             fi
-            echo "Dataset set: ${DATASET_SET:-all}"
+            echo "Regression set: ${REGRESSION_SET:-all}"
             echo "Dataset filter: ${dataset_filter:-<all>}"
 
             param_list=$(find "$PARAMS_DIR" -type f -name 'search*.json' -print)
@@ -575,6 +575,7 @@ jobs:
           REPORT_JOB_ID: ${{ env.REPORT_JOB_ID }}
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
+          REGRESSION_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.regression_set || matrix.regression_set }}
         shell: bash
         run: |
           set -euo pipefail
@@ -585,7 +586,8 @@ jobs:
           staging_dir="${RUNNER_TEMP:-/tmp}/pages-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           ref_name="${GITHUB_REF_NAME:-unknown}"
           ref_sanitized=$(printf '%s' "$ref_name" | tr '/ ' '__')
-          report_subdir="reports/${ref_sanitized}/${GITHUB_SHA:-unknown}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          regression_set="${REGRESSION_SET:-unknown}"
+          report_subdir="reports/${ref_sanitized}/${GITHUB_SHA:-unknown}/${regression_set}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           report_job_id="${REPORT_JOB_ID:?REPORT_JOB_ID not set}"
 
           ssh_options=(
@@ -635,7 +637,7 @@ jobs:
           exit 1
 
       - name: Sync develop metrics to shared storage
-        if: github.ref == 'refs/heads/develop' && github.event_name == 'push' && matrix.dataset_set == 'all'
+        if: github.ref == 'refs/heads/develop' && github.event_name == 'push' && matrix.regression_set == 'all'
         env:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
@@ -691,7 +693,7 @@ jobs:
           EOF
 
       - name: Sync release metrics to shared storage
-        if: github.event_name == 'release' && matrix.dataset_set == 'all'
+        if: github.event_name == 'release' && matrix.regression_set == 'all'
         env:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
@@ -829,7 +831,7 @@ jobs:
               echo "<body>"
               echo "<h1>Regression Reports</h1>"
               echo "<table>"
-              echo "<thead><tr><th>Date (CST)</th><th>Branch</th><th>Commit</th><th>Run</th><th>Report</th></tr></thead>"
+              echo "<thead><tr><th>Date (CST)</th><th>Branch</th><th>Commit</th><th>Regression Set</th><th>Run</th><th>Report</th></tr></thead>"
               echo "<tbody>"
               if [ -d "${repo_dir}/reports" ]; then
                   report_entries=$(
@@ -841,21 +843,26 @@ jobs:
                       report_branch="${report_key%%/*}"
                       report_sha="${report_key#*/}"
                       report_sha="${report_sha%%/*}"
+                      report_regression_set="${report_key#*/}"
+                      report_regression_set="${report_regression_set#*/}"
+                      report_regression_set="${report_regression_set%%/*}"
                       report_run="${report_key#*/}"
-                    report_run="${report_run#*/}"
+                      report_run="${report_run#*/}"
+                      report_run="${report_run#*/}"
                     report_date=$(sed -n 's/.*"timestamp"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$meta_file" | head -n 1)
                     report_cst=""
                     if [ -n "$report_date" ]; then
                       report_cst=$(TZ=America/Chicago date -d "$report_date" +'%Y-%m-%dT%H:%M:%S')
                     fi
-                    printf '%s\t%s\t%s\t%s\t%s\n' "$report_cst" "$report_branch" "$report_sha" "$report_run" "$report_dir_rel"
+                    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$report_cst" "$report_branch" "$report_sha" "$report_regression_set" "$report_run" "$report_dir_rel"
                   done | sort -r
                 )
-                printf '%s\n' "$report_entries" | while IFS=$'\t' read -r entry_date entry_branch entry_sha entry_run entry_path; do
+                printf '%s\n' "$report_entries" | while IFS=$'\t' read -r entry_date entry_branch entry_sha entry_regression_set entry_run entry_path; do
                   echo "<tr>"
                   echo "<td>${entry_date}</td>"
                   echo "<td>${entry_branch}</td>"
                   echo "<td>${entry_sha}</td>"
+                  echo "<td>${entry_regression_set}</td>"
                   echo "<td>${entry_run}</td>"
                   echo "<td><a href=\"${entry_path}/\">Open report</a></td>"
                   echo "</tr>"
@@ -905,7 +912,7 @@ jobs:
         env:
           REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
         with:
-          name: regression-efdr-html
+          name: regression-efdr-html-${{ github.event_name == 'workflow_dispatch' && inputs.regression_set || matrix.regression_set }}
           path: ${{ env.REPORT_PAGES_DIR }}
           if-no-files-found: warn
 
@@ -917,7 +924,7 @@ jobs:
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
           REPORT_PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
           REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
-          DATASET_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_set || matrix.dataset_set }}
+          REGRESSION_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.regression_set || matrix.regression_set }}
         with:
           script: |
             const pagesUrl = process.env.REPORT_PAGES_URL;
@@ -926,11 +933,11 @@ jobs:
               core.info('Pages URL or report subdir missing; skipping PR comment.');
               return;
             }
-            const datasetSet = process.env.DATASET_SET;
-            const datasetLabel = datasetSet ? ` (${datasetSet})` : '';
+            const regressionSet = process.env.REGRESSION_SET;
+            const regressionLabel = regressionSet ? ` (${regressionSet})` : '';
             const normalizedBase = pagesUrl.endsWith('/') ? pagesUrl.slice(0, -1) : pagesUrl;
             const reportUrl = `${normalizedBase}/${reportSubdir}/`;
-            const body = `**Regression metrics report${datasetLabel}**: <a href="${reportUrl}" target="_blank" rel="noopener noreferrer">Open report</a>`;
+            const body = `**Regression metrics report${regressionLabel}**: <a href="${reportUrl}" target="_blank" rel="noopener noreferrer">Open report</a>`;
             const { owner, repo } = context.repo;
             let issueNumber = context.payload?.pull_request?.number;
             if (!issueNumber) {
