@@ -1,0 +1,55 @@
+name: Cancel queued regression runs on merge
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel-regression-runs:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel queued regression workflows for merged PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const headSha = context.payload.pull_request?.head?.sha;
+            if (!headSha) {
+              core.warning('PR head SHA not found; skipping cancellation.');
+              return;
+            }
+
+            const workflowId = 'regression.yml';
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner,
+                repo,
+                workflow_id: workflowId,
+                per_page: 100,
+                event: 'pull_request',
+              }
+            );
+
+            const candidates = runs.filter((run) => {
+              return run.head_sha === headSha && ['queued', 'in_progress'].includes(run.status);
+            });
+
+            if (!candidates.length) {
+              core.info('No queued or in-progress regression runs found for this PR.');
+              return;
+            }
+
+            for (const run of candidates) {
+              core.info(`Cancelling regression run ${run.id} (status: ${run.status}).`);
+              await github.rest.actions.cancelWorkflowRun({
+                owner,
+                repo,
+                run_id: run.id,
+              });
+            }
