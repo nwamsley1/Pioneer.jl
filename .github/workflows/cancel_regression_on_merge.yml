@@ -1,4 +1,4 @@
-name: Cancel queued regression runs on merge
+name: Cancel regression runs
 
 on:
   pull_request:
@@ -37,7 +37,7 @@ jobs:
             );
 
             const candidates = runs.filter((run) => {
-              return run.head_sha === headSha && ['queued', 'in_progress'].includes(run.status);
+              return run.head_sha === headSha && ['queued', 'waiting', 'in_progress'].includes(run.status);
             });
 
             if (!candidates.length) {
