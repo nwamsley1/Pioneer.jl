@@ -164,6 +164,10 @@ function make_spline_monotonic(
     n_knots::Int = 5
 )::UniformSpline
 
+    # Cap knots for monotonic enforcement - data is already filtered by cumulative max
+    # 7 knots is sufficient to represent smooth monotonic functions
+    n_knots = min(n_knots, 7)
+
     # 1. Sample from original spline at uniform grid
     rt_min, rt_max = extrema(rt_data)
     n_sample_points = length(rt_data) - 1
