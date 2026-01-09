@@ -398,7 +398,7 @@ function map_retention_times!(
                 bin_edges = collect(LinRange(rt_min_initial, rt_max_initial, n_knots + 1))
 
                 # Count PSMs per bin using optimized histogram
-                hist = fit(Histogram, best_rts, bin_edges)
+                hist = StatsBase.fit(Histogram, best_rts, bin_edges)
                 bin_counts = hist.weights
 
                 # Find first bin from left with sufficient data
