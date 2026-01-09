@@ -218,6 +218,15 @@ function process_scans_for_huber!(
         :other => 0.0
     )
 
+    # Matrix statistics accumulators
+    matrix_stats = Dict(
+        :n_rows => 0,
+        :n_cols => 0,
+        :n_nonzero => 0,
+        :n_scans => 0,
+        :max_cols => 0
+    )
+
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     prec_mz_string = ""
@@ -278,7 +287,7 @@ function process_scans_for_huber!(
         n_scans_processed += 1
 
         # Process delta values for this scan
-        matrix_time, huber_time = process_delta_values!(
+        matrix_time, huber_time, scan_matrix_stats = process_delta_values!(
             params.delta_grid,
             Hs,
             weights,
@@ -294,19 +303,41 @@ function process_scans_for_huber!(
         )
         timing[:design_matrix] += matrix_time
         timing[:huber_solve] += huber_time
+
+        # Accumulate matrix statistics
+        matrix_stats[:n_rows] += scan_matrix_stats[:n_rows]
+        matrix_stats[:n_cols] += scan_matrix_stats[:n_cols]
+        matrix_stats[:n_nonzero] += scan_matrix_stats[:n_nonzero]
+        matrix_stats[:n_scans] += 1
+        matrix_stats[:max_cols] = max(matrix_stats[:max_cols], scan_matrix_stats[:n_cols])
+
+        # Log slow scans for inspection
+        if huber_time > 1.0  # More than 1 second for 26 deltas
+            @user_info "  Slow scan $scan_idx: $(scan_matrix_stats[:n_rows])×$(scan_matrix_stats[:n_cols]) matrix, $(round(huber_time, digits=2))s for 26 deltas"
+        end
     end
     end  # end @elapsed
 
     # Log batch completion summary with timing breakdown
     total_time = sum(values(timing))
     timing[:other] = batch_time - total_time  # Account for loop overhead
+
+    # Calculate matrix statistics
+    avg_rows = matrix_stats[:n_scans] > 0 ? matrix_stats[:n_rows] / matrix_stats[:n_scans] : 0
+    avg_cols = matrix_stats[:n_scans] > 0 ? matrix_stats[:n_cols] / matrix_stats[:n_scans] : 0
+    avg_nonzero = matrix_stats[:n_scans] > 0 ? matrix_stats[:n_nonzero] / matrix_stats[:n_scans] : 0
+    avg_density = (avg_rows * avg_cols > 0) ? 100 * avg_nonzero / (avg_rows * avg_cols) : 0
+
     @user_info """Batch complete: processed $n_scans_processed scans in $(round(batch_time, digits=2))s ($(round(batch_time/max(n_scans_processed,1), digits=3))s per scan)
   Timing breakdown:
     Transition selection: $(round(timing[:transition_selection], digits=2))s ($(round(100*timing[:transition_selection]/batch_time, digits=1))%)
     Peak matching: $(round(timing[:peak_matching], digits=2))s ($(round(100*timing[:peak_matching]/batch_time, digits=1))%)
     Design matrix: $(round(timing[:design_matrix], digits=2))s ($(round(100*timing[:design_matrix]/batch_time, digits=1))%)
     Huber solve (26 deltas): $(round(timing[:huber_solve], digits=2))s ($(round(100*timing[:huber_solve]/batch_time, digits=1))%)
-    Other: $(round(timing[:other], digits=2))s ($(round(100*timing[:other]/batch_time, digits=1))%)"""
+    Other: $(round(timing[:other], digits=2))s ($(round(100*timing[:other]/batch_time, digits=1))%)
+  Matrix statistics:
+    Avg dimensions: $(round(Int, avg_rows))×$(round(Int, avg_cols)) ($(round(Int, avg_nonzero)) non-zero, $(round(avg_density, digits=1))% dense)
+    Max columns: $(matrix_stats[:max_cols])"""
 
     return tuning_results
 end
@@ -408,7 +439,7 @@ end
                          search_data::SearchDataStructures, nmatches::Int, nmisses::Int,
                          params::HuberTuningSearchParameters, scan_idx::Int64,
                          scan_to_prec::Dict{UInt32, Vector{UInt32}}, tuning_results::Dict)
-                         -> (Float64, Float64)
+                         -> (Float64, Float64, Dict{Symbol, Int})
 
 Process multiple delta values for a single scan.
 
@@ -420,7 +451,8 @@ Process multiple delta values for a single scan.
    - Records results for target PSMs
 
 # Returns
-- Tuple of (matrix_time, total_huber_time) for profiling
+- Tuple of (matrix_time, total_huber_time, matrix_stats) for profiling
+  - matrix_stats contains :n_rows, :n_cols, :n_nonzero
 """
 function process_delta_values!(
     delta_grid::Vector{Float32},
@@ -447,6 +479,17 @@ function process_delta_values!(
             getIdToCol(search_data)
         )
     end
+
+    # Collect matrix statistics
+    n_cols = getIdToCol(search_data).size  # Number of precursors
+    n_rows = length(Hs.colptr) - 1  # Number of unique peaks (rows in sparse matrix)
+    n_nonzero = length(Hs.nzval)  # Non-zero elements
+
+    matrix_stats = Dict(
+        :n_rows => n_rows,
+        :n_cols => n_cols,
+        :n_nonzero => n_nonzero
+    )
 
     # Process each delta value
     total_huber_time = 0.0
@@ -514,7 +557,7 @@ function process_delta_values!(
     reset!(getIdToCol(search_data))
     reset!(Hs)
 
-    return (matrix_time, total_huber_time)
+    return (matrix_time, total_huber_time, matrix_stats)
 end
 
 #==========================================================
