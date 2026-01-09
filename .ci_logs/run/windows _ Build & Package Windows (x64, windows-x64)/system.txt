@@ -1,0 +1,8 @@
+2025-10-01T21:59:07.3390000Z Requested labels: windows-latest
+2025-10-01T21:59:07.3390000Z Job defined at: nwamsley1/Pioneer.jl/.github/workflows/build_app_windows.yml@refs/tags/v0.4.4
+2025-10-01T21:59:07.3390000Z Reusable workflow chain:
+2025-10-01T21:59:07.3390000Z nwamsley1/Pioneer.jl/.github/workflows/release.yml@refs/tags/v0.4.4 (f4fbbeb83186689f71d445f661911f6a76ea960f)
+2025-10-01T21:59:07.3390000Z -> nwamsley1/Pioneer.jl/.github/workflows/build_app_windows.yml@refs/tags/v0.4.4 (f4fbbeb83186689f71d445f661911f6a76ea960f)
+2025-10-01T21:59:07.3390000Z Waiting for a runner to pick up this job...
+2025-10-01T21:59:07.8430000Z Job is about to start running on the hosted runner: GitHub Actions 1000002073
+2025-10-01T21:59:07.8430000Z Job is waiting for a hosted runner to come online.

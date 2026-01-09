@@ -188,17 +188,13 @@ function make_spline_monotonic(
         end
     end
 
-    # 5. Refit spline to filtered data with penalty for smoothness
-    final_spline = UniformSplinePenalized(
+    # 5. Refit spline to filtered data (no penalty needed - data already filtered)
+    final_spline = UniformSpline(
         irt_grid,
         rt_grid,
         3,              # degree
-        n_knots,
-        Float32(1.0),   # lambda penalty (matches current hardcoded value)
-        2               # 2nd order penalty
+        n_knots
     )
-
-    #final_spline = UniformSpline(irt_grid, rt_grid, 3, n_knots)
     # 6. Validate monotonicity (optional diagnostic)
     violations = sum(diff(irt_grid) .< 0)
     if violations > 0
