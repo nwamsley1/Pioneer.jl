@@ -418,10 +418,10 @@ function process_delta_values!(
     )
     
     # Process each delta value
-    n_deltas = length(delta_grid)
-    for (delta_idx, δ) in enumerate(delta_grid)
+    # n_deltas = length(delta_grid)
+    for δ in delta_grid  # (delta_idx, δ) in enumerate(delta_grid)
         # Log progress
-        delta_time = @elapsed begin
+        # delta_time = @elapsed begin
 
         # Resize arrays if needed
         if getIdToCol(search_data).size > length(weights)
@@ -471,10 +471,10 @@ function process_delta_values!(
             end
         end
 
-        end  # end @elapsed
+        # end  # end @elapsed
 
         # Log delta progress
-        @user_info "  Delta $delta_idx/$n_deltas (δ=$(round(δ, digits=2))): $(round(delta_time, digits=3))s"
+        # @user_info "  Delta $delta_idx/$n_deltas (δ=$(round(δ, digits=2))): $(round(delta_time, digits=3))s"
     end
     
     reset!(getIdToCol(search_data))
