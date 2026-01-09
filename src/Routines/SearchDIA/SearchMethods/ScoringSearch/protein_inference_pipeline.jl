@@ -259,7 +259,7 @@ function group_psms_by_protein(df::DataFrame)
     end
 
     # Group by protein
-    grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
+    grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id], sort=false)
     
     # Aggregate to protein groups
     protein_groups = combine(grouped) do gdf

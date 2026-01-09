@@ -860,7 +860,7 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
     n_unique_isotopes = length(unique_isotopes)
 
     # Compute pair specific features that rely on decoys and chromatograms
-    pair_groups = collect(pairs(groupby(psms, [:pair_id, :isotopes_captured])))
+    pair_groups = collect(pairs(groupby(psms, [:pair_id, :isotopes_captured], sort=false)))
     n_pair_isotope_groups = length(pair_groups)
 
     @debug_l2 "MBR Feature Computation: $n_unique_pairs unique pair_ids × $n_unique_isotopes isotope combinations = $n_pair_isotope_groups groups"

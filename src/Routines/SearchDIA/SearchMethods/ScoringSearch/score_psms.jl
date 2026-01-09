@@ -860,7 +860,7 @@ function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String}
     # Create mapping: original file index → output file path
     index_to_path = Dict(zip(unique_file_indices, file_paths))
     
-    for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
+    for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx, sort=false))
         file_idx = ms_file_idx[:ms_file_idx]
         if haskey(index_to_path, file_idx)
             fpath = index_to_path[file_idx]

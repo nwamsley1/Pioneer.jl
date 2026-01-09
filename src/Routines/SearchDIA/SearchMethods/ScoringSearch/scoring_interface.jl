@@ -610,7 +610,7 @@ function add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::S
             ]
         else
             # Group-based operation for combined traces
-            transform!(groupby(df, :precursor_idx),
+            transform!(groupby(df, :precursor_idx, sort=false),
                       :trace_prob => (p -> begin
                           best_idx = argmax(p)
                           result = falses(length(p))
@@ -741,7 +741,7 @@ Compute run-specific precursor probabilities from the given probability column.
 """
 function add_prec_prob(prob_col::Symbol)
     op = function(df)
-        transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
+        transform!(groupby(df, [:precursor_idx, :ms_file_idx], sort=false),
                    prob_col => (p -> 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))) => :prec_prob)
         return df
     end

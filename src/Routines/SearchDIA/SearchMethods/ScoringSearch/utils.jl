@@ -84,7 +84,7 @@ function get_best_traces(
         );
     #Now retain only the very best trace!
     psms_trace_df[!,:best_trace] .= false;
-    gpsms = groupby(psms_trace_df,:precursor_idx)
+    gpsms = groupby(psms_trace_df, :precursor_idx, sort=false)
     for (precursor_idx, psms) in pairs(gpsms)
         psms[argmax(psms[!,:score]),:best_trace] = true
     end
@@ -1723,7 +1723,7 @@ function build_protein_cv_fold_mapping(
         end
 
         # Group by inferred_protein_group
-        for group in groupby(psms, :inferred_protein_group)
+        for group in groupby(psms, :inferred_protein_group, sort=false)
             protein_name = first(group.inferred_protein_group)
 
             # Find highest scoring PSM

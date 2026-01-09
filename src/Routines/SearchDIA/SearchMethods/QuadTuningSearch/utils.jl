@@ -511,7 +511,7 @@ function process_initial_psms(
     filter!(:target => identity, psms)
     
     psms[!, :best_psms] .= false
-    for group in groupby(psms, :precursor_idx)
+    for group in groupby(psms, :precursor_idx, sort=false)
         best_idx = argmax(group.prob)
         group[best_idx, :best_psms] = true
     end
@@ -660,7 +660,7 @@ function process_quad_results(
     ))
 
     sort!(processed, [:scan_idx, :precursor_idx, :iso_idx])
-    combined = combine(groupby(processed, [:scan_idx, :precursor_idx])) do group
+    combined = combine(groupby(processed, [:scan_idx, :precursor_idx], sort=false)) do group
         summarize_precursor(
             group[!, :iso_idx],
             group[!, :center_mz],
@@ -1247,6 +1247,5 @@ function fit_quad_model(psms::DataFrame, window_width::Float64)
         ϵ3=1e-5
     )
 end
-
 
 

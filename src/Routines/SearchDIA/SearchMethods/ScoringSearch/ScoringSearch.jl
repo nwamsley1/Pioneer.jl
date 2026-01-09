@@ -211,7 +211,7 @@ function get_precursor_global_qval_dict(merged_path::String, params::ScoringSear
 
     # Reduce to one row per precursor
     # All rows for the same precursor should have the same global_prob, so we just take the first
-    precursor_df = combine(groupby(df, :precursor_idx)) do group
+    precursor_df = combine(groupby(df, :precursor_idx, sort=false)) do group
         (global_prob = first(group[!, score_col]),
          target = first(group.target))
     end
@@ -297,7 +297,7 @@ function get_protein_global_qval_dict(merged_path::String, params::ScoringSearch
 
     # Reduce to one row per protein group
     # All rows for the same protein group should have the same global_pg_score
-    protein_group_df = combine(groupby(df, [:protein_name, :target, :entrap_id])) do group
+    protein_group_df = combine(groupby(df, [:protein_name, :target, :entrap_id], sort=false)) do group
         (global_pg_score = first(group.global_pg_score),)
     end
 
@@ -422,7 +422,7 @@ function summarize_results!(
                 apply_mbr_filter!(merged_df, params)
 
                 # Aggregate MBR-boosted scores to precursor level (per-run)
-                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
+                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx], sort=false),
                            :MBR_boosted_trace_prob => (p -> begin
                                trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
                                trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
@@ -430,7 +430,7 @@ function summarize_results!(
                            end) => :MBR_boosted_prec_prob)
 
                 # Also aggregate non-MBR scores for protein inference (steps 11+)
-                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
+                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx], sort=false),
                            :trace_prob => (p -> begin
                                trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
                                trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
@@ -438,7 +438,7 @@ function summarize_results!(
                            end) => :prec_prob)
             else
                 # No MBR: only aggregate base probabilities to precursor level (per-run)
-                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
+                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx], sort=false),
                            :trace_prob => (p -> begin
                                trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
                                trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
@@ -494,15 +494,15 @@ function summarize_results!(
 
             if hasproperty(merged_df, :MBR_boosted_prec_prob)
                 # Calculate global probabilities from MBR-boosted precursor probabilities
-                transform!(groupby(merged_df, :precursor_idx),
+                transform!(groupby(merged_df, :precursor_idx, sort=false),
                            :MBR_boosted_prec_prob => (p -> logodds(p, sqrt_n_runs)) => :MBR_boosted_global_prob)
 
                 # Also calculate global probabilities from non-MBR precursor probabilities for protein inference
-                transform!(groupby(merged_df, :precursor_idx),
+                transform!(groupby(merged_df, :precursor_idx, sort=false),
                            :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
             else
                 # No MBR: only calculate global probabilities from base precursor probabilities
-                transform!(groupby(merged_df, :precursor_idx),
+                transform!(groupby(merged_df, :precursor_idx, sort=false),
                            :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
             end
 
@@ -755,7 +755,7 @@ function summarize_results!(
             sqrt_n_runs = floor(Int, sqrt(length(pg_refs)))
 
             # Add global_pg_score column using transform! (same as precursor approach)
-            transform!(groupby(merged_df, [:protein_name, :target, :entrap_id]),
+            transform!(groupby(merged_df, [:protein_name, :target, :entrap_id], sort=false),
                        :pg_score => (scores -> logodds(scores, sqrt_n_runs)) => :global_pg_score)
 
             # Write updated data back to individual files

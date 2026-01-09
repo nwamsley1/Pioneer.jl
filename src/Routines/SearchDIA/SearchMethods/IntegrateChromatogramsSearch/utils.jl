@@ -61,7 +61,7 @@ function integrate_precursors(chromatograms::DataFrame,
     if seperateTraces(isotope_trace_type)
         chromatogram_keys = [:precursor_idx,:isotopes_captured]
     end
-    grouped_chroms = groupby(chromatograms, chromatogram_keys)
+    grouped_chroms = groupby(chromatograms, chromatogram_keys, sort=false)
     dtype = Float32
     thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
     #Maximal size of a chromatogram

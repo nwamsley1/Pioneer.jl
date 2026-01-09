@@ -423,7 +423,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         #filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
             subdf,
-            [:target, :entrapment_group_id, :species, :inferred_protein_group]
+            [:target, :entrapment_group_id, :species, :inferred_protein_group],
+            sort=false
         )
         ngroups = length(gpsms)
         nfiles = length(unique(prot[!,:ms_file_idx]))

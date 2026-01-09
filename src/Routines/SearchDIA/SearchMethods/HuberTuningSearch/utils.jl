@@ -480,7 +480,7 @@ function estimate_optimal_delta(
     min_pct_diff::Float32
 )
     # Group by precursor/scan
-    gpsms = groupby(psms, [:precursor_idx, :scan_idx])
+    gpsms = groupby(psms, [:precursor_idx, :scan_idx], sort=false)
     curves = combine(gpsms) do sdf
         process_huber_curve(sdf[!, :weight], sdf[!, :huber_δ])
     end
@@ -492,7 +492,7 @@ function estimate_optimal_delta(
     
     # Get median delta
     curves[!, :huber50] = ceil.(Int, curves[!, :huber50])
-    huber_hist = combine(groupby(curves, :huber50), nrow)
+    huber_hist = combine(groupby(curves, :huber50, sort=false), nrow)
     sort!(huber_hist, :huber50)
     
     huber_hist[!, :prob] = huber_hist[!, :nrow] ./ sum(huber_hist[!, :nrow])
@@ -575,4 +575,3 @@ function get_median_huber_delta(
     @user_warn "Could not estimate huber delta"
     return first(δ)
 end
-
