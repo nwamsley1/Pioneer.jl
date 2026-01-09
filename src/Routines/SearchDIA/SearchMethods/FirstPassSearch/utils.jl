@@ -389,6 +389,46 @@ function map_retention_times!(
             # Calculate adaptive knots: 1 per 100 PSMs, min 5, max 100
             n_knots = clamp(n_good_psms ÷ 100, 5, 100)
 
+            # Trim edges where data is sparse to avoid unstable fitting
+            min_psms_per_bin = 100  # Minimum PSMs required per bin
+
+            if n_good_psms >= 1000 && n_knots >= 10  # Only trim if enough data and knots
+                # Create uniform bin edges based on initial RT range
+                rt_min_initial, rt_max_initial = extrema(best_rts)
+                bin_edges = collect(LinRange(rt_min_initial, rt_max_initial, n_knots + 1))
+
+                # Count PSMs per bin using optimized histogram
+                hist = fit(Histogram, best_rts, bin_edges)
+                bin_counts = hist.weights
+
+                # Find first bin from left with sufficient data
+                left_bin_idx = findfirst(count -> count >= min_psms_per_bin, bin_counts)
+                # Find first bin from right with sufficient data
+                right_bin_idx = findlast(count -> count >= min_psms_per_bin, bin_counts)
+
+                if !isnothing(left_bin_idx) && !isnothing(right_bin_idx) && left_bin_idx <= right_bin_idx
+                    # Trim to dense region
+                    rt_min_trimmed = bin_edges[left_bin_idx]
+                    rt_max_trimmed = bin_edges[right_bin_idx + 1]
+
+                    # Apply trimming
+                    keep_mask = (best_rts .>= rt_min_trimmed) .& (best_rts .<= rt_max_trimmed)
+                    n_excluded = n_good_psms - sum(keep_mask)
+
+                    if n_excluded > 0
+                        best_rts = best_rts[keep_mask]
+                        best_irts = best_irts[keep_mask]
+
+                        pct_excluded = round(100 * n_excluded / n_good_psms, digits=1)
+                        @user_info "Trimmed $n_excluded PSMs ($pct_excluded%) from sparse edge bins (RT: $(round(rt_min_trimmed, digits=2))-$(round(rt_max_trimmed, digits=2)) min)"
+                    end
+                else
+                    @user_info "Edge trimming skipped: insufficient dense bins found"
+                end
+            else
+                @user_info "Edge trimming skipped: n_good_psms=$n_good_psms, n_knots=$n_knots"
+            end
+
             # Fit adaptive UniformSpline for RT → iRT conversion
             rt_to_irt_spline = UniformSpline(
                 best_irts,    # y values (iRT)
