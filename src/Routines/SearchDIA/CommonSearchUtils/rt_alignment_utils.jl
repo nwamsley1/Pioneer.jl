@@ -337,7 +337,7 @@ function fit_irt_model(
         residuals = psms[!, :irt_predicted] .- predicted_irt
 
         # Remove outliers
-        irt_mad = mad(residuals, normalize=false)::Float32
+        irt_mad = mad(residuals, normalize=true)::Float32
 
         outlier_limit = outlier_threshold * irt_mad
         inlier_mask = abs.(residuals) .<= outlier_limit
@@ -388,16 +388,16 @@ function fit_irt_model(
         end
         linear_model, linear_std, _ = fit_linear_irt_model(psms)
 
-        # Calculate MAD for linear model
+        # Calculate MAD for linear model (σ-estimate)
         predicted = [linear_model(rt) for rt in psms[!, :rt]]
         residuals = psms[!, :irt_predicted] .- predicted
-        linear_mad = median(abs.(residuals .- median(residuals)))
+        linear_mad = mad(residuals, normalize=true)::Float32
 
         return (
             linear_model,
             psms[!, :rt],
             psms[!, :irt_predicted],
-            Float32(linear_mad)
+            linear_mad
         )
     end
 end
