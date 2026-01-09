@@ -197,7 +197,12 @@ function process_scans_for_huber!(
         :weight => Float32[],
         :huber_δ => Float32[]
     )
-    
+
+    # Log delta grid info
+    delta_grid = params.delta_grid
+    n_deltas = length(delta_grid)
+    @user_info "Testing $n_deltas delta values: [$(delta_grid[1]), ..., $(delta_grid[end])]"
+
     # Get working arrays
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
@@ -215,6 +220,8 @@ function process_scans_for_huber!(
         bin_rt_size = 0.1)
     
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    n_scans_processed = 0
+    batch_time = @elapsed begin
     for scan_idx in scan_range
         scan_idx ∉ keys(scan_to_prec) && continue
         
@@ -252,7 +259,9 @@ function process_scans_for_huber!(
         )
         
         nmatches ≤ 2 && continue
-        
+
+        n_scans_processed += 1
+
         # Process delta values for this scan
         process_delta_values!(
             params.delta_grid,
@@ -269,7 +278,11 @@ function process_scans_for_huber!(
             tuning_results
         )
     end
-    
+    end  # end @elapsed
+
+    # Log batch completion summary
+    @user_info "Batch complete: processed $n_scans_processed scans in $(round(batch_time, digits=2))s ($(round(batch_time/max(n_scans_processed,1), digits=3))s per scan)"
+
     return tuning_results
 end
 
@@ -405,7 +418,11 @@ function process_delta_values!(
     )
     
     # Process each delta value
-    for δ in delta_grid
+    n_deltas = length(delta_grid)
+    for (delta_idx, δ) in enumerate(delta_grid)
+        # Log progress
+        delta_time = @elapsed begin
+
         # Resize arrays if needed
         if getIdToCol(search_data).size > length(weights)
             new_entries = getIdToCol(search_data).size - length(weights) + 1000
@@ -453,6 +470,11 @@ function process_delta_values!(
                 push!(tuning_results[:scan_idx], UInt32(scan_idx))
             end
         end
+
+        end  # end @elapsed
+
+        # Log delta progress
+        @user_info "  Delta $delta_idx/$n_deltas (δ=$(round(δ, digits=2))): $(round(delta_time, digits=3))s"
     end
     
     reset!(getIdToCol(search_data))
