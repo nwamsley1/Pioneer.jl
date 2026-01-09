@@ -209,11 +209,20 @@ function process_scans_for_huber!(
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     
+    # Timing accumulators for profiling
+    timing = Dict(
+        :transition_selection => 0.0,
+        :peak_matching => 0.0,
+        :design_matrix => 0.0,
+        :huber_solve => 0.0,
+        :other => 0.0
+    )
+
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     prec_mz_string = ""
     ion_idx = 0
-    
+
     # Get RT index
     rt_index = buildRtIndex(
         DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx))),
@@ -242,28 +251,34 @@ function process_scans_for_huber!(
             irt_start = irt_start_new
             irt_stop = irt_stop_new
             prec_mz_string = prec_mz_string_new
-            
-            ion_idx, _ = select_transitions_for_huber!(
-                search_data, search_context, scan_idx, 
-                ms_file_idx, spectra, irt_start, irt_stop, rt_index, params
-            )
+
+            transition_time = @elapsed begin
+                ion_idx, _ = select_transitions_for_huber!(
+                    search_data, search_context, scan_idx,
+                    ms_file_idx, spectra, irt_start, irt_stop, rt_index, params
+                )
+            end
+            timing[:transition_selection] += transition_time
         end
         # Match peaks and process if enough matches found
-        nmatches, nmisses = match_peaks_for_huber!(
-            search_data,
-            ion_idx,
-            spectra,
-            scan_idx,
-            search_context,
-            ms_file_idx
-        )
+        matching_time = @elapsed begin
+            nmatches, nmisses = match_peaks_for_huber!(
+                search_data,
+                ion_idx,
+                spectra,
+                scan_idx,
+                search_context,
+                ms_file_idx
+            )
+        end
+        timing[:peak_matching] += matching_time
         
         nmatches ≤ 2 && continue
 
         n_scans_processed += 1
 
         # Process delta values for this scan
-        process_delta_values!(
+        matrix_time, huber_time = process_delta_values!(
             params.delta_grid,
             Hs,
             weights,
@@ -277,11 +292,21 @@ function process_scans_for_huber!(
             scan_to_prec,
             tuning_results
         )
+        timing[:design_matrix] += matrix_time
+        timing[:huber_solve] += huber_time
     end
     end  # end @elapsed
 
-    # Log batch completion summary
-    @user_info "Batch complete: processed $n_scans_processed scans in $(round(batch_time, digits=2))s ($(round(batch_time/max(n_scans_processed,1), digits=3))s per scan)"
+    # Log batch completion summary with timing breakdown
+    total_time = sum(values(timing))
+    timing[:other] = batch_time - total_time  # Account for loop overhead
+    @user_info """Batch complete: processed $n_scans_processed scans in $(round(batch_time, digits=2))s ($(round(batch_time/max(n_scans_processed,1), digits=3))s per scan)
+  Timing breakdown:
+    Transition selection: $(round(timing[:transition_selection], digits=2))s ($(round(100*timing[:transition_selection]/batch_time, digits=1))%)
+    Peak matching: $(round(timing[:peak_matching], digits=2))s ($(round(100*timing[:peak_matching]/batch_time, digits=1))%)
+    Design matrix: $(round(timing[:design_matrix], digits=2))s ($(round(100*timing[:design_matrix]/batch_time, digits=1))%)
+    Huber solve (26 deltas): $(round(timing[:huber_solve], digits=2))s ($(round(100*timing[:huber_solve]/batch_time, digits=1))%)
+    Other: $(round(timing[:other], digits=2))s ($(round(100*timing[:other]/batch_time, digits=1))%)"""
 
     return tuning_results
 end
@@ -383,6 +408,7 @@ end
                          search_data::SearchDataStructures, nmatches::Int, nmisses::Int,
                          params::HuberTuningSearchParameters, scan_idx::Int64,
                          scan_to_prec::Dict{UInt32, Vector{UInt32}}, tuning_results::Dict)
+                         -> (Float64, Float64)
 
 Process multiple delta values for a single scan.
 
@@ -392,6 +418,9 @@ Process multiple delta values for a single scan.
    - Initializes weights
    - Solves deconvolution problem
    - Records results for target PSMs
+
+# Returns
+- Tuple of (matrix_time, total_huber_time) for profiling
 """
 function process_delta_values!(
     delta_grid::Vector{Float32},
@@ -407,19 +436,21 @@ function process_delta_values!(
     scan_to_prec::Dict{UInt32, Vector{UInt32}},
     tuning_results::Dict
 )
-    # Build design matrix
-    buildDesignMatrix!(
-        Hs,
-        getIonMatches(search_data),
-        getIonMisses(search_data),
-        nmatches,
-        nmisses,
-        getIdToCol(search_data)
-    )
-    
+    # Build design matrix (once per scan)
+    matrix_time = @elapsed begin
+        buildDesignMatrix!(
+            Hs,
+            getIonMatches(search_data),
+            getIonMisses(search_data),
+            nmatches,
+            nmisses,
+            getIdToCol(search_data)
+        )
+    end
+
     # Process each delta value
-    # n_deltas = length(delta_grid)
-    for δ in delta_grid  # (delta_idx, δ) in enumerate(delta_grid)
+    total_huber_time = 0.0
+    for δ in delta_grid
         # Log progress
         # delta_time = @elapsed begin
 
@@ -433,26 +464,29 @@ function process_delta_values!(
         
         # Initialize weights
         for i in 1:getIdToCol(search_data).size
-            weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
+            weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] =
                 precursor_weights[getIdToCol(search_data).keys[i]]
         end
-        
+
         # Solve deconvolution problem
-        initResiduals!(residuals, Hs, weights)
-        solveHuber!(
-            Hs,
-            residuals,
-            weights,
-            δ,
-            params.lambda,
-            params.max_iter_newton,
-            params.max_iter_bisection,
-            params.max_iter_outer,
-            params.accuracy_newton,
-            params.accuracy_bisection,
-            params.max_diff,
-            NoNorm()
-        )
+        huber_time = @elapsed begin
+            initResiduals!(residuals, Hs, weights)
+            solveHuber!(
+                Hs,
+                residuals,
+                weights,
+                δ,
+                params.lambda,
+                params.max_iter_newton,
+                params.max_iter_bisection,
+                params.max_iter_outer,
+                params.accuracy_newton,
+                params.accuracy_bisection,
+                params.max_diff,
+                NoNorm()
+            )
+        end
+        total_huber_time += huber_time
         
         # Record results
         for i in 1:getIdToCol(search_data).size
@@ -476,9 +510,11 @@ function process_delta_values!(
         # Log delta progress
         # @user_info "  Delta $delta_idx/$n_deltas (δ=$(round(δ, digits=2))): $(round(delta_time, digits=3))s"
     end
-    
+
     reset!(getIdToCol(search_data))
     reset!(Hs)
+
+    return (matrix_time, total_huber_time)
 end
 
 #==========================================================
