@@ -386,8 +386,8 @@ function map_retention_times!(
             best_rts = psms[:rt][best_hits]
             best_irts = psms[:irt_predicted][best_hits]
 
-            # Calculate adaptive knots: 1 per 100 PSMs, min 5, max 20
-            n_knots = clamp(n_good_psms ÷ 100, 5, 20)
+            # Calculate adaptive knots: 1 per 100 PSMs, min 5, max 100
+            n_knots = clamp(n_good_psms ÷ 100, 5, 100)
 
             # Fit adaptive UniformSpline for RT → iRT conversion
             rt_to_irt_spline = UniformSpline(
