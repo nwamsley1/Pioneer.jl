@@ -34,6 +34,11 @@ struct SplineRtConversionModel <: RtConversionModel
 end
 (s::SplineRtConversionModel)(x::AbstractFloat) = s.model(x)
 
+struct InterpolationRtConversionModel <: RtConversionModel
+    model::Interpolations.Extrapolation
+end
+(s::InterpolationRtConversionModel)(x::AbstractFloat) = s.model(x)
+
 struct LinearRtConversionModel <: RtConversionModel
     slope::Float32
     intercept::Float32

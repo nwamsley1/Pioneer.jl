@@ -128,45 +128,36 @@ function fit_linear_irt_model(
 end
 
 """
-    make_spline_monotonic(original_spline, rt_data, irt_data; kwargs...)
+    make_spline_monotonic(original_spline, rt_data, irt_data)
 
 Enforces monotonic increasing property on a fitted RT→iRT spline using bidirectional
-cumulative max filter from the median.
+cumulative max filter from the median, then creates a linear interpolation.
 
 # Algorithm
-1. Sample original spline at uniform grid (N=500 points)
+1. Sample original spline at uniform grid (~N PSMs points)
 2. Find median RT in original data
 3. Apply cumulative max filter moving right (enforce increasing)
 4. Apply cumulative max filter moving left (enforce increasing in reverse)
-5. Refit UniformSpline to filtered points
+5. Create linear interpolation of filtered points with constant extrapolation
 
 # Arguments
 - `original_spline::UniformSpline`: Fitted spline that may violate monotonicity
 - `rt_data::Vector{Float32}`: Original RT values from PSM data
 - `irt_data::Vector{Float32}`: Original iRT values from PSM data
 
-# Keyword Arguments
-- `n_sample_points::Int = 500`: Number of uniform grid points for sampling
-- `n_knots::Int = 5`: Number of knots for refitted spline
-
 # Returns
-- `UniformSpline`: Monotonic spline guaranteed to be non-decreasing
+- `Interpolations.Extrapolation`: Linear interpolation guaranteed to be monotonic
 
 # Examples
 ```julia
-monotonic_spline = make_spline_monotonic(original_spline, rt_psms, irt_psms)
+monotonic_interp = make_spline_monotonic(original_spline, rt_psms, irt_psms)
 ```
 """
 function make_spline_monotonic(
     original_spline::UniformSpline,
     rt_data::Vector{Float32},
-    irt_data::Vector{Float32};
-    n_knots::Int = 5
-)::UniformSpline
-
-    # Cap knots for monotonic enforcement - data is already filtered by cumulative max
-    # 7 knots is sufficient to represent smooth monotonic functions
-    n_knots = min(n_knots, 7)
+    irt_data::Vector{Float32}
+)::Interpolations.Extrapolation
 
     # 1. Sample from original spline at uniform grid
     rt_min, rt_max = extrema(rt_data)
@@ -192,20 +183,21 @@ function make_spline_monotonic(
         end
     end
 
-    # 5. Refit spline to filtered data (no penalty needed - data already filtered)
-    final_spline = UniformSpline(
-        irt_grid,
-        rt_grid,
-        3,              # degree
-        n_knots
+    # 5. Create linear interpolation of filtered monotonic data
+    # Linear interpolation exactly preserves monotonicity and requires no knot selection
+    final_interp = linear_interpolation(
+        rt_grid,          # x values (sorted RT)
+        irt_grid,         # y values (filtered monotonic iRT)
+        extrapolation_bc = Interpolations.Flat()  # Constant extrapolation outside range
     )
+
     # 6. Validate monotonicity (optional diagnostic)
     violations = sum(diff(irt_grid) .< 0)
     if violations > 0
-        @user_info "Monotonic filter had $violations violations before refit (edge corrections applied)"
+        @user_info "Monotonic filter had $violations violations (edge corrections applied)"
     end
 
-    return final_spline
+    return final_interp
 end
 
 """
@@ -232,11 +224,11 @@ standard spline fitting for abundant data. Linear model used only as error fallb
 2. Performs initial spline fit (with RANSAC if limited data)
 3. Removes outliers based on MAD threshold
 4. Refits spline model on cleaned data
-5. Applies monotonic enforcement using bidirectional cumulative max filter
+5. Applies monotonic enforcement with linear interpolation
 
 # Returns
 Tuple containing:
-- Final RT conversion model (SplineRtConversionModel, LinearRtConversionModel, or IdentityModel)
+- Final RT conversion model (InterpolationRtConversionModel, LinearRtConversionModel, or IdentityModel)
 - Valid RT values (Float32[])
 - Valid iRT values (Float32[])
 - iRT median absolute deviation (Float32)
@@ -381,10 +373,9 @@ function fit_irt_model(
         final_map_monotonic = make_spline_monotonic(
             rt_to_irt_map,
             valid_psms[!, :rt],
-            valid_psms[!, :irt_predicted],
-            n_knots = n_knots
+            valid_psms[!, :irt_predicted]
         )
-        final_model = SplineRtConversionModel(final_map_monotonic)
+        final_model = InterpolationRtConversionModel(final_map_monotonic)
         return (final_model, psms[!, :rt], psms[!, :irt_predicted], irt_mad)
 
     catch e
