@@ -336,10 +336,10 @@ function fit_irt_model(
         predicted_irt = [rt_to_irt_map(rt) for rt in psms[!, :rt]]
         residuals = psms[!, :irt_predicted] .- predicted_irt
 
-        # Remove outliers
-        irt_mad = mad(residuals, normalize=true)::Float32
+        # Remove outliers using initial MAD
+        irt_mad_initial = mad(residuals, normalize=true)::Float32
 
-        outlier_limit = outlier_threshold * irt_mad
+        outlier_limit = outlier_threshold * irt_mad_initial
         inlier_mask = abs.(residuals) .<= outlier_limit
         valid_psms = psms[inlier_mask, :]
 
@@ -376,6 +376,12 @@ function fit_irt_model(
             valid_psms[!, :irt_predicted]
         )
         final_model = InterpolationRtConversionModel(final_map_monotonic)
+
+        # Recalculate MAD from final model on cleaned data for accurate tolerance estimate
+        final_predicted_irt = [final_model(rt) for rt in valid_psms[!, :rt]]
+        final_residuals = valid_psms[!, :irt_predicted] .- final_predicted_irt
+        irt_mad = mad(final_residuals, normalize=true)::Float32
+
         return (final_model, psms[!, :rt], psms[!, :irt_predicted], irt_mad)
 
     catch e
