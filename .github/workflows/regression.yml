@@ -262,12 +262,28 @@ jobs:
               adjusted_results="${base_results}/${RUN_ID_SUFFIX}"
               dataset_name="$(basename "$(dirname "$adjusted_results")")"
               escaped_results=$(printf '%s\n' "$adjusted_results" | sed 's/[&/]/\\&/g')
+              resource_basename="${param_basename/search/resources}"
+              resource_file="$(dirname "$param_file")/${resource_basename}"
+              cpus=8
+              mem_gb=64
+              if [ -f "$resource_file" ]; then
+                if ! command -v python >/dev/null 2>&1; then
+                  echo "Python not available on cluster; cannot parse resource file." >&2
+                  exit 1
+                fi
+                cpus=$(
+                  python -c 'import json,sys; data=json.load(open(sys.argv[1])); print(data.get("cpus", 8))' "$resource_file"
+                )
+                mem_gb=$(
+                  python -c 'import json,sys; data=json.load(open(sys.argv[1])); print(data.get("mem_gb", 64))' "$resource_file"
+                )
+              fi
 
               sed "s|\"results\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"results\": \"${escaped_results}\"|" "$param_file" > "$adjusted_path"
 
               echo "${dataset_name}" >> "$manifest_file"
 
-              search_submit=$(RUN_DIR="$RUN_DIR" PIONEER_DATASET_NAME="$dataset_dir_name" PARAM_FILE="$param_basename" bsub -w "ended($setup_job_id)" < "$JOB_SCRIPT")
+              search_submit=$(RUN_DIR="$RUN_DIR" PIONEER_DATASET_NAME="$dataset_dir_name" PARAM_FILE="$param_basename" bsub -w "ended($setup_job_id)" -n "$cpus" -M "$mem_gb" -R "rusage[mem=${mem_gb}GB] span[hosts=1]" < "$JOB_SCRIPT")
               search_job_id=$(printf '%s\n' "$search_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
 
               if [ -z "$search_job_id" ]; then
