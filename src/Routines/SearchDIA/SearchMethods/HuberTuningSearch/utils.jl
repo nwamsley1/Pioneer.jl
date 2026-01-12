@@ -198,11 +198,6 @@ function process_scans_for_huber!(
         :huber_δ => Float32[]
     )
 
-    # Log delta grid info
-    delta_grid = params.delta_grid
-    n_deltas = length(delta_grid)
-    @user_info "\nTesting $n_deltas delta values: [$(delta_grid[1]), ..., $(delta_grid[end])]"
-
     # Get working arrays
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
