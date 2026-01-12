@@ -83,8 +83,7 @@
             "max_prob_to_impute_irt": 0.75,
             "fwhm_nstd": 4,
             "irt_nstd": 4,
-            "plot_rt_alignment": false,
-            "use_robust_fitting": true
+            "plot_rt_alignment": false
         }
     },
     "quant_search": {
