@@ -301,17 +301,3 @@ function collect_nce_psms_for_scans(
 
     return psms
 end
-
-"""
-    log_memory_usage(checkpoint::String)
-
-Log current memory usage for monitoring.
-"""
-function log_memory_usage(checkpoint::String)
-    GC.gc()  # Force collection for accurate reading
-    gc_stats = Base.gc_num()
-    mem_used = Sys.total_memory() - Sys.free_memory()
-    println("Memory [$checkpoint]: $(round(mem_used / 1e9, digits=2)) GB")
-    println("  GC collections: $(gc_stats.collect)")
-    println("  GC time: $(round(gc_stats.total_time / 1e9, digits=3))s")
-end
