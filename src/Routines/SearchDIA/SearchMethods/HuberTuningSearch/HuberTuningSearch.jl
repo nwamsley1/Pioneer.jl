@@ -191,16 +191,8 @@ function process_file!(
         best_psms = get_best_psms(search_context, params.q_value_threshold)
         file_psms = filter(row -> row.ms_file_idx == ms_file_idx, best_psms)
 
-        # Get file name for logging
-        file_name = try
-            getFileIdToName(getMSData(search_context), ms_file_idx)
-        catch
-            "file_$ms_file_idx"
-        end
-
         # Limit PSMs if needed - prioritize scans with most PSMs (densest scans)
         n_original_psms = nrow(file_psms)
-        n_original_scans = length(unique(file_psms[!, :scan_idx]))
 
         if n_original_psms > params.max_psms_for_huber
             # Count PSMs per scan (sort=false for efficiency)
@@ -226,10 +218,6 @@ function process_file!(
 
             # Filter PSMs to selected scans
             file_psms = filter(row -> row.scan_idx in scans_to_keep, file_psms)
-
-            @user_info "\nHuberTuning: File $ms_file_idx ($file_name) limited to $(nrow(file_psms)) PSMs from $(length(scans_to_keep)) scans (from $n_original_psms PSMs across $n_original_scans scans)"
-        else
-            @user_info "\nHuberTuning: File $ms_file_idx ($file_name) has $n_original_psms PSMs at q-value < $(params.q_value_threshold) ($n_original_scans unique scans)"
         end
 
         isempty(file_psms) && return results
