@@ -128,6 +128,79 @@ function fit_linear_irt_model(
 end
 
 """
+    make_spline_monotonic(original_spline, rt_data, irt_data)
+
+Enforces monotonic increasing property on a fitted RT→iRT spline using bidirectional
+cumulative max filter from the median, then creates a linear interpolation.
+
+# Algorithm
+1. Sample original spline at uniform grid (~N PSMs points)
+2. Find median RT in original data
+3. Apply cumulative max filter moving right (enforce increasing)
+4. Apply cumulative max filter moving left (enforce increasing in reverse)
+5. Create linear interpolation of filtered points with constant extrapolation
+
+# Arguments
+- `original_spline::UniformSpline`: Fitted spline that may violate monotonicity
+- `rt_data::Vector{Float32}`: Original RT values from PSM data
+- `irt_data::Vector{Float32}`: Original iRT values from PSM data
+
+# Returns
+- `Interpolations.Extrapolation`: Linear interpolation guaranteed to be monotonic
+
+# Examples
+```julia
+monotonic_interp = make_spline_monotonic(original_spline, rt_psms, irt_psms)
+```
+"""
+function make_spline_monotonic(
+    original_spline::UniformSpline,
+    rt_data::Vector{Float32},
+    irt_data::Vector{Float32}
+)::Interpolations.Extrapolation
+
+    # 1. Sample from original spline at uniform grid
+    rt_min, rt_max = extrema(rt_data)
+    n_sample_points = length(rt_data) - 1
+    rt_grid = collect(LinRange(Float32(rt_min), Float32(rt_max), n_sample_points))
+    irt_grid = [original_spline(r) for r in rt_grid]
+
+    # 2. Find median split point
+    median_rt = median(rt_data)
+    median_idx = argmin(abs.(rt_grid .- median_rt))
+
+    # 3. Filter right side (median → end): enforce monotonic increasing
+    for i in (median_idx+1):n_sample_points
+        if irt_grid[i] < irt_grid[i-1]
+            irt_grid[i] = irt_grid[i-1]
+        end
+    end
+
+    # 4. Filter left side (median → start): enforce monotonic increasing in reverse
+    for i in (median_idx-1):-1:1
+        if irt_grid[i] > irt_grid[i+1]
+            irt_grid[i] = irt_grid[i+1]
+        end
+    end
+
+    # 5. Create linear interpolation of filtered monotonic data
+    # Linear interpolation exactly preserves monotonicity and requires no knot selection
+    final_interp = linear_interpolation(
+        rt_grid,          # x values (sorted RT)
+        irt_grid,         # y values (filtered monotonic iRT)
+        extrapolation_bc = Interpolations.Flat()  # Constant extrapolation outside range
+    )
+
+    # 6. Validate monotonicity (optional diagnostic)
+    violations = sum(diff(irt_grid) .< 0)
+    if violations > 0
+        @user_info "Monotonic filter had $violations violations (edge corrections applied)"
+    end
+
+    return final_interp
+end
+
+"""
     fit_irt_model(psms::DataFrame; kwargs...)
 
 Fits retention time alignment model between library and empirical retention times.
@@ -141,7 +214,7 @@ standard spline fitting for abundant data. Linear model used only as error fallb
 # Keyword Arguments
 - `lambda_penalty::Float32 = 0.1f0`: P-spline smoothing penalty
 - `ransac_threshold::Int = 1000`: PSM count below which RANSAC is used
-- `min_psms::Int = 10`: Minimum PSMs required for any RT model
+- `min_psms::Int = 30`: Minimum PSMs required for any RT model
 - `spline_degree::Int = 3`: Degree of B-spline basis
 - `max_knots::Int = 7`: Maximum number of knots allowed
 - `outlier_threshold::Float32 = 5.0f0`: MAD multiplier for outlier removal
@@ -151,10 +224,11 @@ standard spline fitting for abundant data. Linear model used only as error fallb
 2. Performs initial spline fit (with RANSAC if limited data)
 3. Removes outliers based on MAD threshold
 4. Refits spline model on cleaned data
+5. Applies monotonic enforcement with linear interpolation
 
 # Returns
 Tuple containing:
-- Final RT conversion model (SplineRtConversionModel, LinearRtConversionModel, or IdentityModel)
+- Final RT conversion model (InterpolationRtConversionModel, LinearRtConversionModel, or IdentityModel)
 - Valid RT values (Float32[])
 - Valid iRT values (Float32[])
 - iRT median absolute deviation (Float32)
@@ -178,42 +252,101 @@ function fit_irt_model(
     psms::DataFrame;
     lambda_penalty::Float32 = Float32(0.1),
     ransac_threshold::Int = 1000,
-    min_psms::Int = 10,
+    min_psms::Int = 30,  # CHANGED: 10 → 30
     spline_degree::Int = 3,
     max_knots::Int = 7,
     outlier_threshold::Float32 = Float32(5.0)
 )::Tuple{RtConversionModel, Vector{Float32}, Vector{Float32}, Float32}
-
+    # Count PSMs
     n_psms = nrow(psms)
 
     # Calculate adaptive knots: 1 per 100 PSMs, minimum 3
-    n_knots = min(max(3, Int(floor(n_psms / 100))), max_knots)
+    @user_info "max_knots set to: $max_knots"
+    @user_info "min_psms set to: $min_psms"
+    lambda_penalty = Float32(0.1)
+    @user_info "lambda_penalty set to $lambda_penalty \n"
+    min_knots = max(min(10, n_psms ÷ 20), 3) # At least 3 knots, up to 1 per 20 PSMs, capped at 10
+    n_knots = min(max(min_knots, Int(floor(n_psms / 100))), max_knots)
+    @user_info "n_knots set to: $n_knots \n n_psms: $n_psms \n"
 
     # Early exit for insufficient data
     if n_psms < min_psms
-        @debug_l2 "Too few PSMs ($n_psms) for RT alignment (need ≥$min_psms), using identity model"
+        @user_info "Too few PSMs ($n_psms) for RT alignment (need ≥$min_psms), using identity model"
         return (IdentityModel(), Float32[], Float32[], 0.0f0)
     end
 
-    @debug_l2 "Using $n_knots knots for RT spline ($n_psms PSMs)"
+    @user_info "Using $n_knots knots for RT spline ($n_psms PSMs)"
+
+    # For small datasets (< 30 PSMs), use simple linear model instead of splines
+    # Linear models are more robust and appropriate for sparse data
+    if n_psms < 30
+        @user_info "Small dataset ($n_psms PSMs < 30): Using linear model instead of spline"
+        linear_model, linear_std, _ = fit_linear_irt_model(psms)
+
+        # Calculate MAD for consistency with spline path
+        predicted = [linear_model(rt) for rt in psms[!, :rt]]
+        residuals = psms[!, :irt_predicted] .- predicted
+        linear_mad = median(abs.(residuals .- median(residuals)))
+
+        return (
+            linear_model,
+            psms[!, :rt],
+            psms[!, :irt_predicted],
+            Float32(linear_mad)
+        )
+    end
 
     # Single unified spline fitting path with conditional RANSAC
     try
         # Determine if we should use RANSAC based on PSM count
         use_ransac = n_psms < ransac_threshold
 
-        @debug_l2 if use_ransac
+        @user_info if use_ransac
             "Limited data ($n_psms PSMs): Using RANSAC + penalty (λ=$lambda_penalty)"
         else
             "Abundant data ($n_psms PSMs): Using standard fitting (λ=$lambda_penalty)"
         end
 
-        # Fit spline (with or without RANSAC)
+        # Initial fit using appropriate method
         rt_to_irt_map = if use_ransac
-            # Use RANSAC for robustness with limited data
             fit_spline_with_ransac(
                 psms[!, :irt_predicted],
                 psms[!, :rt],
+                spline_degree,
+                n_knots,
+                lambda_penalty,
+                2,
+                ransac_iterations=50,
+                ransac_sample_size=30,
+                ransac_threshold_factor=Float32(2.0)
+            )
+        else
+            UniformSplinePenalized(
+                psms[!, :irt_predicted],
+                psms[!, :rt],
+                spline_degree,
+                n_knots,
+                lambda_penalty,
+                2
+            )
+        end
+
+        # Calculate residuals from initial fit
+        predicted_irt = [rt_to_irt_map(rt) for rt in psms[!, :rt]]
+        residuals = psms[!, :irt_predicted] .- predicted_irt
+
+        # Remove outliers using initial MAD
+        irt_mad_initial = mad(residuals, normalize=true)::Float32
+
+        outlier_limit = outlier_threshold * irt_mad_initial
+        inlier_mask = abs.(residuals) .<= outlier_limit
+        valid_psms = psms[inlier_mask, :]
+
+        rt_to_irt_map = if use_ransac
+            # Use RANSAC for robustness with limited data
+            fit_spline_with_ransac(
+                valid_psms[!, :irt_predicted],
+                valid_psms[!, :rt],
                 spline_degree,
                 n_knots,
                 lambda_penalty,
@@ -225,8 +358,8 @@ function fit_irt_model(
         else
             # Standard P-spline fitting for abundant data
             UniformSplinePenalized(
-                psms[!, :irt_predicted],
-                psms[!, :rt],
+                valid_psms[!, :irt_predicted],
+                valid_psms[!, :rt],
                 spline_degree,
                 n_knots,
                 lambda_penalty,
@@ -234,67 +367,42 @@ function fit_irt_model(
             )
         end
 
-        # Calculate residuals
-        predicted_irt = [rt_to_irt_map(rt) for rt in psms[!, :rt]]
-        residuals = psms[!, :irt_predicted] .- predicted_irt
+        # Apply monotonic enforcement to prevent backwards slopes at edges
+        @user_info "Applying monotonic enforcement with bidirectional cumulative max filter"
+        final_map_monotonic = make_spline_monotonic(
+            rt_to_irt_map,
+            valid_psms[!, :rt],
+            valid_psms[!, :irt_predicted]
+        )
+        final_model = InterpolationRtConversionModel(final_map_monotonic)
 
-        # Remove outliers
-        irt_mad = mad(residuals, normalize=true)::Float32
-        valid_mask = abs.(residuals) .< (irt_mad * outlier_threshold)
-        valid_psms = psms[valid_mask, :]
+        # Recalculate MAD from final model on cleaned data for accurate tolerance estimate
+        final_predicted_irt = [final_model(rt) for rt in valid_psms[!, :rt]]
+        final_residuals = valid_psms[!, :irt_predicted] .- final_predicted_irt
+        irt_mad = mad(final_residuals, normalize=true)::Float32
 
-        # Check if enough PSMs remain
-        if nrow(valid_psms) < min_psms
-            @debug_l2 "Too few PSMs after outlier removal ($(nrow(valid_psms))), using identity model"
-            return (IdentityModel(), Float32[], Float32[], 0.0f0)
-        end
-
-        # Refit with filtered PSMs (same method as initial fit)
-        n_knots_final = min(n_knots, max(3, Int(floor(nrow(valid_psms) / 100))))
-
-        final_map = if use_ransac
-            fit_spline_with_ransac(
-                valid_psms[!, :irt_predicted],
-                valid_psms[!, :rt],
-                spline_degree,
-                n_knots_final,
-                lambda_penalty,
-                2,
-                ransac_iterations=50,
-                ransac_sample_size=30,
-                ransac_threshold_factor=Float32(2.0)
-            )
-        else
-            UniformSplinePenalized(
-                valid_psms[!, :irt_predicted],
-                valid_psms[!, :rt],
-                spline_degree,
-                n_knots_final,
-                lambda_penalty,
-                2
-            )
-        end
-
-        final_model = SplineRtConversionModel(final_map)
-
-        return (final_model, valid_psms[!, :rt], valid_psms[!, :irt_predicted], irt_mad)
+        return (final_model, psms[!, :rt], psms[!, :irt_predicted], irt_mad)
 
     catch e
-        # Only fallback: use linear model on error
-        @user_warn "RT spline fitting failed ($e), falling back to linear model"
-
+        # Unexpected failure during spline fitting - fall back to linear model
+        @user_warn "RT spline fitting failed unexpectedly ($e), falling back to linear model \n"
+        @user_warn "Full stack trace:"
+        for (exc, bt) in Base.catch_stack()
+            showerror(stderr, exc, bt)
+            println(stderr)
+        end
         linear_model, linear_std, _ = fit_linear_irt_model(psms)
 
-        # Calculate MAD for linear model
+        # Calculate MAD for linear model (σ-estimate)
         predicted = [linear_model(rt) for rt in psms[!, :rt]]
         residuals = psms[!, :irt_predicted] .- predicted
-        linear_mad = median(abs.(residuals .- median(residuals)))
+        linear_mad = mad(residuals, normalize=true)::Float32
 
         return (
             linear_model,
             psms[!, :rt],
             psms[!, :irt_predicted],
-            Float32(linear_mad)
+            linear_mad
         )
     end
 end

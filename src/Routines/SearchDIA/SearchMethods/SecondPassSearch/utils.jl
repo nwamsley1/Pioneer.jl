@@ -169,6 +169,14 @@ function process_scans!(
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
     nce_model = getNceModel(search_context, ms_file_idx)
 
+    # Log RT tolerance being used for this file
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        "file_$ms_file_idx"
+    end
+    @user_info "SecondPassSearch: Processing $file_name with RT tolerance = $(round(irt_tol, digits=3)) min"
+
     for scan_idx in scan_range
         ((scan_idx < 1) || scan_idx > length(spectra)) && continue
         msn = getMsOrder(spectra, scan_idx)
@@ -372,6 +380,14 @@ function process_scans!(
     last_val = 0
     # Note: prec_ids scratch array not required in MS1 path
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
+
+    # Log RT tolerance being used for this file (MS1 processing)
+    file_name = try
+        getFileIdToName(getMSData(search_context), ms_file_idx)
+    catch
+        "file_$ms_file_idx"
+    end
+    @user_info "SecondPassSearch (MS1): Processing $file_name with RT tolerance = $(round(irt_tol, digits=3)) min"
 
     for scan_idx in scan_range
         empty!(pair_id_dict)
