@@ -252,39 +252,125 @@ end
 
 ## Recommended Implementation Order
 
-1. **Phase 1: Data Collection** (minimal code change)
-   - Add FWHM binning to FirstPassSearch diagnostic output
-   - Log tolerance vs iRT relationship to verify assumption
+### Phase 0: Diagnostic Plots (DO THIS FIRST)
 
-2. **Phase 2: Model Implementation**
-   - Add `IrtDependentTolerance` type
-   - Implement spline fitting in `get_irt_errs_dependent`
-   - Update storage type
+Before implementing any changes, we need exploratory data analysis to verify our assumptions about RT-dependent behavior.
 
-3. **Phase 3: Integration**
-   - Update all 11 usage locations
-   - Add backward compatibility layer
-   - Test with existing config files
+**Output Location:** `qc_plots/rt_alignment_plots/firstpass/` (same folder as existing RT alignment PDFs)
 
-4. **Phase 4: Configuration**
-   - Add parameter to enable/disable RT-dependent tolerance
-   - Add `min_psms_for_dependent` threshold
+**Plots to Generate (per file):**
+
+1. **RT Prediction Error vs iRT** (`rt_error_vs_irt_{file}.pdf`)
+   - X-axis: Predicted iRT (from library)
+   - Y-axis: RT prediction error (observed RT - predicted RT after alignment)
+   - Purpose: See if prediction accuracy varies across gradient
+
+2. **FWHM vs iRT Scatter** (`fwhm_vs_irt_{file}.pdf`)
+   - X-axis: iRT
+   - Y-axis: Peak FWHM (in minutes)
+   - Scatter plot with optional smoothing line
+   - Purpose: Verify peak width varies across gradient (U-shape expected)
+
+3. **Cross-run iRT Variance vs iRT** (`var_irt_vs_irt_{file}.pdf`)
+   - X-axis: iRT
+   - Y-axis: Variance of iRT apex across runs (for shared precursors)
+   - Purpose: See if cross-run reproducibility varies with RT
+
+**Implementation Location:** `FirstPassSearch/utils.jl` in `create_rt_indices!` or `summarize_results!`
+
+**Data Required:**
+- PSMs DataFrame with columns: `irt_predicted`, `rt`, `fwhm`, `precursor_idx`, `ms_file_idx`
+- `prec_to_irt` dictionary for cross-run variance
+
+**Code Sketch:**
+```julia
+function generate_rt_diagnostic_plots(
+    psms::DataFrame,
+    prec_to_irt::Dictionary,
+    output_dir::String,
+    file_idx::Int,
+    file_name::String
+)
+    # Ensure output directory exists
+    mkpath(output_dir)
+
+    file_psms = filter(row -> row.ms_file_idx == file_idx, psms)
+
+    # Plot 1: FWHM vs iRT
+    p1 = scatter(
+        file_psms.irt_predicted,
+        file_psms.fwhm,
+        xlabel="iRT",
+        ylabel="FWHM (min)",
+        title="Peak Width vs iRT - $file_name",
+        alpha=0.3,
+        markersize=2,
+        legend=false
+    )
+    # Add smoothing line
+    # ...
+    savefig(p1, joinpath(output_dir, "fwhm_vs_irt_$(file_name).pdf"))
+
+    # Plot 2: RT error vs iRT
+    # Need RT-to-iRT model to compute predicted RT
+    # ...
+
+    # Plot 3: var_irt vs iRT (aggregate by iRT bins)
+    # ...
+end
+```
+
+---
+
+### Phase 1: Analyze Diagnostic Results
+
+After generating plots:
+- Review FWHM vs iRT: Is there a U-shape or other pattern?
+- Review var_irt vs iRT: Is variance higher at edges?
+- Decide if RT-dependent tolerance is warranted
+
+---
+
+### Phase 2: Model Implementation (if diagnostics support it)
+
+- Add `IrtDependentTolerance` type
+- Implement spline fitting in `get_irt_errs_dependent`
+- Update storage type
+
+---
+
+### Phase 3: Integration
+
+- Update all 11 usage locations
+- Add backward compatibility layer
+- Test with existing config files
+
+---
+
+### Phase 4: Configuration
+
+- Add parameter to enable/disable RT-dependent tolerance
+- Add `min_psms_for_dependent` threshold
 
 ---
 
 ## Verification Plan
 
-1. **Unit Tests:**
+1. **Diagnostic Plots (Phase 0):**
+   - Generate plots for multiple datasets
+   - Visually confirm RT-dependent patterns exist
+
+2. **Unit Tests (Phase 2+):**
    - Test `IrtDependentTolerance` evaluation
    - Test fallback to constant tolerance
    - Test spline fitting with synthetic data
 
-2. **Integration Tests:**
+3. **Integration Tests:**
    - Run SearchDIA with RT-dependent tolerance enabled
    - Compare PSM counts vs constant tolerance
    - Check that early/late RT regions have appropriate tolerances
 
-3. **Visual Verification:**
+4. **Visual Verification:**
    - Plot tolerance vs iRT curve for each file
    - Compare to FWHM distribution across gradient
 
