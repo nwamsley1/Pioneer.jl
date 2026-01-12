@@ -209,23 +209,6 @@ function process_scans_for_huber!(
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
 
-    # Timing accumulators for profiling
-    timing = Dict(
-        :transition_selection => 0.0,
-        :peak_matching => 0.0,
-        :design_matrix => 0.0,
-        :huber_solve => 0.0,
-        :other => 0.0
-    )
-
-    # Matrix statistics accumulators
-    matrix_stats = Dict(
-        :n_rows => 0,
-        :n_cols => 0,
-        :n_nonzero => 0,
-        :n_scans => 0,
-        :max_cols => 0
-    )
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -238,8 +221,7 @@ function process_scans_for_huber!(
         bin_rt_size = 0.1)
 
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
-    n_scans_processed = 0
-    batch_time = @elapsed begin
+
     for scan_idx in scan_range
         scan_idx ∉ keys(scan_to_prec) && continue
         
@@ -261,33 +243,26 @@ function process_scans_for_huber!(
             irt_stop = irt_stop_new
             prec_mz_string = prec_mz_string_new
 
-            transition_time = @elapsed begin
-                ion_idx, _ = select_transitions_for_huber!(
-                    search_data, search_context, scan_idx,
-                    ms_file_idx, spectra, irt_start, irt_stop, rt_index, params
-                )
-            end
-            timing[:transition_selection] += transition_time
-        end
-        # Match peaks and process if enough matches found
-        matching_time = @elapsed begin
-            nmatches, nmisses = match_peaks_for_huber!(
-                search_data,
-                ion_idx,
-                spectra,
-                scan_idx,
-                search_context,
-                ms_file_idx
+            ion_idx, _ = select_transitions_for_huber!(
+                search_data, search_context, scan_idx,
+                ms_file_idx, spectra, irt_start, irt_stop, rt_index, params
             )
         end
-        timing[:peak_matching] += matching_time
+
+        # Match peaks and process if enough matches found
+        nmatches, nmisses = match_peaks_for_huber!(
+            search_data,
+            ion_idx,
+            spectra,
+            scan_idx,
+            search_context,
+            ms_file_idx
+        )
 
         nmatches ≤ 2 && continue
 
-        n_scans_processed += 1
-
         # Process delta values for this scan
-        matrix_time, huber_time, scan_matrix_stats = process_delta_values!(
+        process_delta_values!(
             params.delta_grid,
             Hs,
             weights,
@@ -301,43 +276,7 @@ function process_scans_for_huber!(
             scan_to_prec,
             tuning_results
         )
-        timing[:design_matrix] += matrix_time
-        timing[:huber_solve] += huber_time
-
-        # Accumulate matrix statistics
-        matrix_stats[:n_rows] += scan_matrix_stats[:n_rows]
-        matrix_stats[:n_cols] += scan_matrix_stats[:n_cols]
-        matrix_stats[:n_nonzero] += scan_matrix_stats[:n_nonzero]
-        matrix_stats[:n_scans] += 1
-        matrix_stats[:max_cols] = max(matrix_stats[:max_cols], scan_matrix_stats[:n_cols])
-
-        # Log slow scans for inspection
-        if huber_time > 1.0  # More than 1 second for 26 deltas
-            @user_info "\n  Slow scan $scan_idx: $(scan_matrix_stats[:n_rows])×$(scan_matrix_stats[:n_cols]) matrix, $(round(huber_time, digits=2))s for 26 deltas"
-        end
     end
-    end  # end @elapsed
-
-    # Log batch completion summary with timing breakdown
-    total_time = sum(values(timing))
-    timing[:other] = batch_time - total_time  # Account for loop overhead
-
-    # Calculate matrix statistics
-    avg_rows = matrix_stats[:n_scans] > 0 ? matrix_stats[:n_rows] / matrix_stats[:n_scans] : 0
-    avg_cols = matrix_stats[:n_scans] > 0 ? matrix_stats[:n_cols] / matrix_stats[:n_scans] : 0
-    avg_nonzero = matrix_stats[:n_scans] > 0 ? matrix_stats[:n_nonzero] / matrix_stats[:n_scans] : 0
-    avg_density = (avg_rows * avg_cols > 0) ? 100 * avg_nonzero / (avg_rows * avg_cols) : 0
-
-    @user_info """\nBatch complete: processed $n_scans_processed scans in $(round(batch_time, digits=2))s ($(round(batch_time/max(n_scans_processed,1), digits=3))s per scan)
-  Timing breakdown:
-    Transition selection: $(round(timing[:transition_selection], digits=2))s ($(round(100*timing[:transition_selection]/batch_time, digits=1))%)
-    Peak matching: $(round(timing[:peak_matching], digits=2))s ($(round(100*timing[:peak_matching]/batch_time, digits=1))%)
-    Design matrix: $(round(timing[:design_matrix], digits=2))s ($(round(100*timing[:design_matrix]/batch_time, digits=1))%)
-    Huber solve (26 deltas): $(round(timing[:huber_solve], digits=2))s ($(round(100*timing[:huber_solve]/batch_time, digits=1))%)
-    Other: $(round(timing[:other], digits=2))s ($(round(100*timing[:other]/batch_time, digits=1))%)
-  Matrix statistics:
-    Avg dimensions: $(round(Int, avg_rows))×$(round(Int, avg_cols)) ($(round(Int, avg_nonzero)) non-zero, $(round(avg_density, digits=1))% dense)
-    Max columns: $(matrix_stats[:max_cols])"""
 
     return tuning_results
 end
@@ -451,8 +390,7 @@ Process multiple delta values for a single scan.
    - Records results for target PSMs
 
 # Returns
-- Tuple of (matrix_time, total_huber_time, matrix_stats) for profiling
-  - matrix_stats contains :n_rows, :n_cols, :n_nonzero
+Nothing (mutates tuning_results in place)
 """
 function process_delta_values!(
     delta_grid::Vector{Float32},
@@ -469,30 +407,16 @@ function process_delta_values!(
     tuning_results::Dict
 )
     # Build design matrix (once per scan)
-    matrix_time = @elapsed begin
-        buildDesignMatrix!(
-            Hs,
-            getIonMatches(search_data),
-            getIonMisses(search_data),
-            nmatches,
-            nmisses,
-            getIdToCol(search_data)
-        )
-    end
-
-    # Collect matrix statistics
-    n_cols = getIdToCol(search_data).size  # Number of precursors
-    n_rows = length(Hs.colptr) - 1  # Number of unique peaks (rows in sparse matrix)
-    n_nonzero = length(Hs.nzval)  # Non-zero elements
-
-    matrix_stats = Dict(
-        :n_rows => n_rows,
-        :n_cols => n_cols,
-        :n_nonzero => n_nonzero
+    buildDesignMatrix!(
+        Hs,
+        getIonMatches(search_data),
+        getIonMisses(search_data),
+        nmatches,
+        nmisses,
+        getIdToCol(search_data)
     )
 
     # Process each delta value
-    total_huber_time = 0.0
     for δ in delta_grid
         # Resize arrays if needed
         if getIdToCol(search_data).size > length(weights)
@@ -509,24 +433,21 @@ function process_delta_values!(
         end
 
         # Solve deconvolution problem
-        huber_time = @elapsed begin
-            initResiduals!(residuals, Hs, weights)
-            solveHuber!(
-                Hs,
-                residuals,
-                weights,
-                δ,
-                params.lambda,
-                params.max_iter_newton,
-                params.max_iter_bisection,
-                params.max_iter_outer,
-                params.accuracy_newton,
-                params.accuracy_bisection,
-                params.max_diff,
-                NoNorm()
-            )
-        end
-        total_huber_time += huber_time
+        initResiduals!(residuals, Hs, weights)
+        solveHuber!(
+            Hs,
+            residuals,
+            weights,
+            δ,
+            params.lambda,
+            params.max_iter_newton,
+            params.max_iter_bisection,
+            params.max_iter_outer,
+            params.accuracy_newton,
+            params.accuracy_bisection,
+            params.max_diff,
+            NoNorm()
+        )
 
         # Record results
         for i in 1:getIdToCol(search_data).size
@@ -549,7 +470,7 @@ function process_delta_values!(
     reset!(getIdToCol(search_data))
     reset!(Hs)
 
-    return (matrix_time, total_huber_time, matrix_stats)
+    return nothing
 end
 
 #==========================================================
