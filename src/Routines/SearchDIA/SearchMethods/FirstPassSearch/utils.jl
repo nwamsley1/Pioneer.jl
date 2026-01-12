@@ -430,11 +430,7 @@ function map_retention_times!(
                         pct_excluded = round(100 * n_excluded / n_good_psms, digits=1)
                         @user_info "Trimmed $n_excluded PSMs ($pct_excluded%) from sparse edge bins (RT: $(round(rt_min_trimmed, digits=2))-$(round(rt_max_trimmed, digits=2)) min)"
                     end
-                else
-                    @user_info "Edge trimming skipped: insufficient dense bins found"
                 end
-            else
-                @user_info "Edge trimming skipped: n_good_psms=$n_good_psms, n_knots=$n_knots"
             end
 
             # Fit adaptive UniformSpline for RT → iRT conversion

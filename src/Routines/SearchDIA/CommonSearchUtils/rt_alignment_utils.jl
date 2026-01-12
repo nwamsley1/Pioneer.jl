@@ -261,21 +261,15 @@ function fit_irt_model(
     n_psms = nrow(psms)
 
     # Calculate adaptive knots: 1 per 100 PSMs, minimum 3
-    @user_info "max_knots set to: $max_knots"
-    @user_info "min_psms set to: $min_psms"
     lambda_penalty = Float32(0.1)
-    @user_info "lambda_penalty set to $lambda_penalty \n"
     min_knots = max(min(10, n_psms ÷ 20), 3) # At least 3 knots, up to 1 per 20 PSMs, capped at 10
     n_knots = min(max(min_knots, Int(floor(n_psms / 100))), max_knots)
-    @user_info "n_knots set to: $n_knots \n n_psms: $n_psms \n"
 
     # Early exit for insufficient data
     if n_psms < min_psms
         @user_info "Too few PSMs ($n_psms) for RT alignment (need ≥$min_psms), using identity model"
         return (IdentityModel(), Float32[], Float32[], 0.0f0)
     end
-
-    @user_info "Using $n_knots knots for RT spline ($n_psms PSMs)"
 
     # For small datasets (< 30 PSMs), use simple linear model instead of splines
     # Linear models are more robust and appropriate for sparse data
@@ -300,12 +294,6 @@ function fit_irt_model(
     try
         # Determine if we should use RANSAC based on PSM count
         use_ransac = n_psms < ransac_threshold
-
-        @user_info if use_ransac
-            "Limited data ($n_psms PSMs): Using RANSAC + penalty (λ=$lambda_penalty)"
-        else
-            "Abundant data ($n_psms PSMs): Using standard fitting (λ=$lambda_penalty)"
-        end
 
         # Initial fit using appropriate method
         rt_to_irt_map = if use_ransac
@@ -368,7 +356,6 @@ function fit_irt_model(
         end
 
         # Apply monotonic enforcement to prevent backwards slopes at edges
-        @user_info "Applying monotonic enforcement with bidirectional cumulative max filter"
         final_map_monotonic = make_spline_monotonic(
             rt_to_irt_map,
             valid_psms[!, :rt],
