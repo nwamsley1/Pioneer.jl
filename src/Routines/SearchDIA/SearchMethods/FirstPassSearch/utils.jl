@@ -407,6 +407,18 @@ function map_retention_times!(
                     rt_min_trimmed = bin_edges[left_bin_idx]
                     rt_max_trimmed = bin_edges[right_bin_idx + 1]
 
+                    # Cap trimming at 2.5% per side (5% total max)
+                    max_trim_per_side = 0.025
+                    left_trim_pct = sum(best_rts .< rt_min_trimmed) / n_good_psms
+                    right_trim_pct = sum(best_rts .> rt_max_trimmed) / n_good_psms
+
+                    if left_trim_pct > max_trim_per_side || right_trim_pct > max_trim_per_side
+                        # Bin-based trimming too aggressive, fall back to percentile-based
+                        rt_min_trimmed = Float32(quantile(best_rts, max_trim_per_side))
+                        rt_max_trimmed = Float32(quantile(best_rts, 1.0 - max_trim_per_side))
+                        @user_info "Edge trimming capped at 2.5% per side (bin-based would trim $(round(100*left_trim_pct, digits=1))% left, $(round(100*right_trim_pct, digits=1))% right)"
+                    end
+
                     # Apply trimming
                     keep_mask = (best_rts .>= rt_min_trimmed) .& (best_rts .<= rt_max_trimmed)
                     n_excluded = n_good_psms - sum(keep_mask)
