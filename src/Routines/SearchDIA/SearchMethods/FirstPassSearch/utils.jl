@@ -381,6 +381,7 @@ function map_retention_times!(
             # Extract best PSM data
             best_rts = psms[:rt][best_hits]
             best_irts = psms[:irt_predicted][best_hits]
+            best_fwhm = psms[:fwhm][best_hits]  # For diagnostic plots
 
             # Calculate adaptive knots: 1 per 100 PSMs, min 5, max 100
             n_knots = clamp(n_good_psms ÷ 100, 5, 100)
@@ -426,6 +427,7 @@ function map_retention_times!(
                     if n_excluded > 0
                         best_rts = best_rts[keep_mask]
                         best_irts = best_irts[keep_mask]
+                        best_fwhm = best_fwhm[keep_mask]  # Apply same trimming for diagnostic plots
 
                         pct_excluded = round(100 * n_excluded / n_good_psms, digits=1)
                         #@user_info "Trimmed $n_excluded PSMs ($pct_excluded%) from sparse edge bins (RT: $(round(rt_min_trimmed, digits=2))-$(round(rt_max_trimmed, digits=2)) min)"
@@ -460,6 +462,19 @@ function map_retention_times!(
                     best_irts,
                     SplineRtConversionModel(rt_to_irt_spline),
                     ms_file_idx,
+                    getDataOutDir(search_context)
+                )
+
+                # Generate RT-dependent tolerance diagnostic plots
+                # Calculate RT error (observed - predicted from iRT→RT model)
+                rt_error = Float32[best_rts[i] - irt_to_rt_spline(best_irts[i]) for i in eachindex(best_rts)]
+
+                generate_rt_diagnostic_plots(
+                    best_irts,
+                    best_fwhm,  # Already extracted and trimmed above
+                    rt_error,
+                    ms_file_idx,
+                    file_name,
                     getDataOutDir(search_context)
                 )
             end
@@ -543,13 +558,223 @@ function plot_rt_alignment_firstpass(
     return nothing
 end
 
+"""
+    generate_rt_diagnostic_plots(irt, fwhm, rt_error, ms_file_idx, file_name, output_dir)
 
-PrecToIrtType = Dictionary{UInt32, 
+Generate diagnostic plots for RT-dependent tolerance analysis.
+
+# Arguments
+- `irt`: Predicted indexed retention times
+- `fwhm`: Peak full width at half maximum values
+- `rt_error`: RT prediction errors (observed - predicted)
+- `ms_file_idx`: MS file index
+- `file_name`: File name for plot titles
+- `output_dir`: Output directory path
+
+Creates scatter plots of FWHM vs iRT and RT error vs iRT.
+Saves to FirstPass RT alignment folder in QC plots directory.
+"""
+function generate_rt_diagnostic_plots(
+    irt::Vector{Float32},
+    fwhm::Vector{<:Union{Missing, Float32}},
+    rt_error::Vector{Float32},
+    ms_file_idx::Int,
+    file_name::String,
+    output_dir::String
+)
+    # Create output directory
+    rt_plot_folder = joinpath(output_dir, "qc_plots", "rt_alignment_plots", "firstpass")
+    !isdir(rt_plot_folder) && mkpath(rt_plot_folder)
+
+    n = length(irt)
+
+    # Filter out missing FWHM values
+    valid_fwhm_mask = .!ismissing.(fwhm)
+    valid_irt_fwhm = irt[valid_fwhm_mask]
+    valid_fwhm = Float32[f for f in fwhm[valid_fwhm_mask]]
+
+    # Plot 1: FWHM vs iRT
+    if length(valid_fwhm) > 10
+        p1 = scatter(
+            valid_irt_fwhm,
+            valid_fwhm,
+            xlabel = "Predicted iRT",
+            ylabel = "FWHM (min)",
+            title = "Peak Width vs iRT - $file_name (n=$(length(valid_fwhm)))",
+            label = nothing,
+            alpha = 0.3,
+            markersize = 2,
+            size = (800, 600),
+            color = :blue
+        )
+
+        # Add binned median line for trend visualization
+        if length(valid_fwhm) >= 100
+            n_bins = min(20, length(valid_fwhm) ÷ 50)
+            if n_bins >= 3
+                irt_range = extrema(valid_irt_fwhm)
+                bin_edges = collect(LinRange(irt_range[1], irt_range[2], n_bins + 1))
+                bin_centers = Float32[]
+                bin_medians = Float32[]
+
+                for i in 1:n_bins
+                    mask = (valid_irt_fwhm .>= bin_edges[i]) .& (valid_irt_fwhm .< bin_edges[i+1])
+                    if sum(mask) >= 10
+                        push!(bin_centers, (bin_edges[i] + bin_edges[i+1]) / 2)
+                        push!(bin_medians, median(valid_fwhm[mask]))
+                    end
+                end
+
+                if length(bin_centers) >= 3
+                    plot!(p1, bin_centers, bin_medians,
+                          color = :red, linewidth = 3, label = "Binned median",
+                          marker = :circle, markersize = 4)
+                end
+            end
+        end
+
+        savefig(p1, joinpath(rt_plot_folder, "fwhm_vs_irt_file_$(ms_file_idx).pdf"))
+    end
+
+    # Plot 2: RT Error vs iRT
+    p2 = scatter(
+        irt,
+        rt_error,
+        xlabel = "Predicted iRT",
+        ylabel = "RT Error (observed - predicted, min)",
+        title = "RT Prediction Error vs iRT - $file_name (n=$n)",
+        label = nothing,
+        alpha = 0.3,
+        markersize = 2,
+        size = (800, 600),
+        color = :green
+    )
+
+    # Add zero line and binned statistics
+    hline!(p2, [0.0], color = :black, linestyle = :dash, label = nothing)
+
+    # Add binned MAD line for trend visualization
+    if n >= 100
+        n_bins = min(20, n ÷ 50)
+        if n_bins >= 3
+            irt_range = extrema(irt)
+            bin_edges = collect(LinRange(irt_range[1], irt_range[2], n_bins + 1))
+            bin_centers = Float32[]
+            bin_mads = Float32[]
+
+            for i in 1:n_bins
+                mask = (irt .>= bin_edges[i]) .& (irt .< bin_edges[i+1])
+                if sum(mask) >= 10
+                    push!(bin_centers, (bin_edges[i] + bin_edges[i+1]) / 2)
+                    bin_errors = rt_error[mask]
+                    push!(bin_mads, mad(bin_errors, normalize=true))
+                end
+            end
+
+            if length(bin_centers) >= 3
+                plot!(p2, bin_centers, bin_mads,
+                      color = :red, linewidth = 3, label = "Binned MAD",
+                      marker = :circle, markersize = 4)
+                plot!(p2, bin_centers, -bin_mads,
+                      color = :red, linewidth = 3, label = nothing,
+                      marker = :circle, markersize = 4)
+            end
+        end
+    end
+
+    savefig(p2, joinpath(rt_plot_folder, "rt_error_vs_irt_file_$(ms_file_idx).pdf"))
+
+    return nothing
+end
+
+# Type alias for precursor-to-iRT dictionary (needed before generate_var_irt_diagnostic_plot)
+const PrecToIrtType = Dictionary{UInt32,
     NamedTuple{
-        (:best_prob, :best_ms_file_idx, :best_scan_idx, :best_irt, :mean_irt, :var_irt, :n, :mz), 
+        (:best_prob, :best_ms_file_idx, :best_scan_idx, :best_irt, :mean_irt, :var_irt, :n, :mz),
         Tuple{Float32, UInt32, UInt32, Float32, Union{Missing, Float32}, Union{Missing, Float32}, Union{Missing, UInt16}, Float32}
     }
 }
+
+"""
+    generate_var_irt_diagnostic_plot(precursor_dict, output_dir)
+
+Generate diagnostic plot of cross-run iRT variance vs iRT.
+
+# Arguments
+- `precursor_dict`: Dictionary mapping precursors to iRT data including var_irt
+- `output_dir`: Output directory path
+
+Creates scatter plot of iRT variance vs iRT for precursors seen in >2 runs.
+Saves to FirstPass RT alignment folder in QC plots directory.
+"""
+function generate_var_irt_diagnostic_plot(
+    precursor_dict::PrecToIrtType,
+    output_dir::String
+)
+    # Create output directory
+    rt_plot_folder = joinpath(output_dir, "qc_plots", "rt_alignment_plots", "firstpass")
+    !isdir(rt_plot_folder) && mkpath(rt_plot_folder)
+
+    # Extract data for precursors seen in >2 runs
+    irt_values = Float32[]
+    var_irt_values = Float32[]
+
+    for (_, data) in pairs(precursor_dict)
+        if !ismissing(data[:n]) && data[:n] > 2 && !ismissing(data[:var_irt])
+            push!(irt_values, data[:best_irt])
+            # Convert variance to standard deviation for interpretability
+            push!(var_irt_values, sqrt(data[:var_irt] / (data[:n] - 1)))
+        end
+    end
+
+    if length(irt_values) < 10
+        @debug_l1 "Insufficient precursors with >2 run observations for var_irt plot (n=$(length(irt_values)))"
+        return nothing
+    end
+
+    # Plot: var_irt vs iRT
+    p = scatter(
+        irt_values,
+        var_irt_values,
+        xlabel = "Best iRT",
+        ylabel = "Cross-run iRT Std Dev (min)",
+        title = "Cross-run iRT Variation vs iRT (n=$(length(irt_values)) precursors)",
+        label = nothing,
+        alpha = 0.3,
+        markersize = 2,
+        size = (800, 600),
+        color = :purple
+    )
+
+    # Add binned median line for trend visualization
+    if length(irt_values) >= 100
+        n_bins = min(20, length(irt_values) ÷ 50)
+        if n_bins >= 3
+            irt_range = extrema(irt_values)
+            bin_edges = collect(LinRange(irt_range[1], irt_range[2], n_bins + 1))
+            bin_centers = Float32[]
+            bin_medians = Float32[]
+
+            for i in 1:n_bins
+                mask = (irt_values .>= bin_edges[i]) .& (irt_values .< bin_edges[i+1])
+                if sum(mask) >= 10
+                    push!(bin_centers, (bin_edges[i] + bin_edges[i+1]) / 2)
+                    push!(bin_medians, median(var_irt_values[mask]))
+                end
+            end
+
+            if length(bin_centers) >= 3
+                plot!(p, bin_centers, bin_medians,
+                      color = :red, linewidth = 3, label = "Binned median",
+                      marker = :circle, markersize = 4)
+            end
+        end
+    end
+
+    savefig(p, joinpath(rt_plot_folder, "var_irt_vs_irt_all_files.pdf"))
+
+    return nothing
+end
 
 """
     create_rt_indices!(search_context::SearchContext, results::FirstPassSearchResults,
@@ -595,6 +820,11 @@ function create_rt_indices!(
     if !isempty(irt_errs)
         tol_values = collect(values(irt_errs))
         @debug_l1 "  Summary: min=$(round(minimum(tol_values), digits=3)), max=$(round(maximum(tol_values), digits=3)), median=$(round(median(tol_values), digits=3)) min"
+    end
+
+    # Generate cross-run iRT variance diagnostic plot
+    if params.plot_rt_alignment
+        generate_var_irt_diagnostic_plot(precursor_dict, getDataOutDir(search_context))
     end
 
     # Create precursor to iRT mapping
