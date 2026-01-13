@@ -704,7 +704,10 @@ Generate diagnostic plot of cross-run iRT variance vs iRT.
 - `precursor_dict`: Dictionary mapping precursors to iRT data including var_irt
 - `output_dir`: Output directory path
 
-Creates scatter plot of iRT variance vs iRT for precursors seen in >2 runs.
+Creates a 2x2 subplot showing iRT variance vs iRT separated by the number of
+runs each precursor was observed in (n=3, n=4, n=5, n>=6). This separates
+the confounding effect of different sample sizes on the variance estimate.
+
 Saves to FirstPass RT alignment folder in QC plots directory.
 """
 function generate_var_irt_diagnostic_plot(
@@ -715,63 +718,85 @@ function generate_var_irt_diagnostic_plot(
     rt_plot_folder = joinpath(output_dir, "qc_plots", "rt_alignment_plots", "firstpass")
     !isdir(rt_plot_folder) && mkpath(rt_plot_folder)
 
-    # Extract data for precursors seen in >2 runs
-    irt_values = Float32[]
-    var_irt_values = Float32[]
+    # Separate data by n value
+    labels = ["n=3", "n=4", "n=5", "n≥6"]
+    data_by_n = Dict{String, Tuple{Vector{Float32}, Vector{Float32}}}()
+    for label in labels
+        data_by_n[label] = (Float32[], Float32[])
+    end
 
     for (_, data) in pairs(precursor_dict)
         if !ismissing(data[:n]) && data[:n] > 2 && !ismissing(data[:var_irt])
-            push!(irt_values, data[:best_irt])
+            n = data[:n]
+            label = n == 3 ? "n=3" : n == 4 ? "n=4" : n == 5 ? "n=5" : "n≥6"
+            push!(data_by_n[label][1], data[:best_irt])
             # Convert variance to standard deviation for interpretability
-            push!(var_irt_values, sqrt(data[:var_irt] / (data[:n] - 1)))
+            push!(data_by_n[label][2], sqrt(data[:var_irt] / (n - 1)))
         end
     end
 
-    if length(irt_values) < 10
-        @debug_l1 "Insufficient precursors with >2 run observations for var_irt plot (n=$(length(irt_values)))"
+    # Check if we have enough data
+    total_points = sum(length(data_by_n[label][1]) for label in labels)
+    if total_points < 10
+        @debug_l1 "Insufficient precursors with >2 run observations for var_irt plot (n=$total_points)"
         return nothing
     end
 
-    # Plot: var_irt vs iRT
-    p = scatter(
-        irt_values,
-        var_irt_values,
-        xlabel = "Best iRT",
-        ylabel = "Cross-run iRT Std Dev (min)",
-        title = "Cross-run iRT Variation vs iRT (n=$(length(irt_values)) precursors)",
-        label = nothing,
-        alpha = 0.3,
-        markersize = 2,
-        size = (800, 600),
-        color = :purple
-    )
+    # Create 2x2 subplot
+    p = plot(layout=(2, 2), size=(1200, 1000))
 
-    # Add binned median line for trend visualization
-    if length(irt_values) >= 100
-        n_bins = min(20, length(irt_values) ÷ 50)
-        if n_bins >= 3
-            irt_range = extrema(irt_values)
-            bin_edges = collect(LinRange(irt_range[1], irt_range[2], n_bins + 1))
-            bin_centers = Float32[]
-            bin_medians = Float32[]
+    colors = [:blue, :green, :orange, :purple]
 
-            for i in 1:n_bins
-                mask = (irt_values .>= bin_edges[i]) .& (irt_values .< bin_edges[i+1])
-                if sum(mask) >= 10
-                    push!(bin_centers, (bin_edges[i] + bin_edges[i+1]) / 2)
-                    push!(bin_medians, median(var_irt_values[mask]))
+    for (i, label) in enumerate(labels)
+        irt_vals, var_vals = data_by_n[label]
+        n_points = length(irt_vals)
+
+        if n_points > 0
+            scatter!(p[i], irt_vals, var_vals,
+                xlabel = "Best iRT",
+                ylabel = "Cross-run iRT Std Dev (min)",
+                title = "$label (n=$n_points precursors)",
+                label = nothing,
+                alpha = 0.3,
+                markersize = 2,
+                color = colors[i]
+            )
+
+            # Add binned median line for trend visualization
+            if n_points >= 100
+                n_bins = min(20, n_points ÷ 50)
+                if n_bins >= 3
+                    irt_range = extrema(irt_vals)
+                    bin_edges = collect(LinRange(irt_range[1], irt_range[2], n_bins + 1))
+                    bin_centers = Float32[]
+                    bin_medians = Float32[]
+
+                    for j in 1:n_bins
+                        mask = (irt_vals .>= bin_edges[j]) .& (irt_vals .< bin_edges[j+1])
+                        if sum(mask) >= 10
+                            push!(bin_centers, (bin_edges[j] + bin_edges[j+1]) / 2)
+                            push!(bin_medians, median(var_vals[mask]))
+                        end
+                    end
+
+                    if length(bin_centers) >= 3
+                        plot!(p[i], bin_centers, bin_medians,
+                              color = :red, linewidth = 3, label = "Binned median",
+                              marker = :circle, markersize = 4)
+                    end
                 end
             end
-
-            if length(bin_centers) >= 3
-                plot!(p, bin_centers, bin_medians,
-                      color = :red, linewidth = 3, label = "Binned median",
-                      marker = :circle, markersize = 4)
-            end
+        else
+            # Empty subplot with message
+            plot!(p[i], [], [],
+                title = "$label (no data)",
+                xlabel = "Best iRT",
+                ylabel = "Cross-run iRT Std Dev (min)"
+            )
         end
     end
 
-    savefig(p, joinpath(rt_plot_folder, "var_irt_vs_irt_all_files.pdf"))
+    savefig(p, joinpath(rt_plot_folder, "var_irt_vs_irt_by_n.pdf"))
 
     return nothing
 end
