@@ -718,17 +718,17 @@ function generate_var_irt_diagnostic_plot(
     rt_plot_folder = joinpath(output_dir, "qc_plots", "rt_alignment_plots", "firstpass")
     !isdir(rt_plot_folder) && mkpath(rt_plot_folder)
 
-    # Separate data by n value
-    labels = ["n=3", "n=4", "n=5", "n≥6"]
+    # Separate data by n value (n=2 is minimum for variance calculation)
+    labels = ["n=2", "n=3", "n=4", "n≥5"]
     data_by_n = Dict{String, Tuple{Vector{Float32}, Vector{Float32}}}()
     for label in labels
         data_by_n[label] = (Float32[], Float32[])
     end
 
     for (_, data) in pairs(precursor_dict)
-        if !ismissing(data[:n]) && data[:n] > 2 && !ismissing(data[:var_irt])
+        if !ismissing(data[:n]) && data[:n] >= 2 && !ismissing(data[:var_irt])
             n = data[:n]
-            label = n == 3 ? "n=3" : n == 4 ? "n=4" : n == 5 ? "n=5" : "n≥6"
+            label = n == 2 ? "n=2" : n == 3 ? "n=3" : n == 4 ? "n=4" : "n≥5"
             push!(data_by_n[label][1], data[:best_irt])
             # Convert variance to standard deviation for interpretability
             push!(data_by_n[label][2], sqrt(data[:var_irt] / (n - 1)))
