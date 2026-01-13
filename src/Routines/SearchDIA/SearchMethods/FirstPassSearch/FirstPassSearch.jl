@@ -492,7 +492,7 @@ function process_search_results!(
     Arrow.write(
         temp_path,
         select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
-            :irt_predicted, :q_value, :score, :prob, :scan_count])
+            :irt_predicted, :q_value, :score, :prob, :scan_count, :fwhm])
     )
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 
