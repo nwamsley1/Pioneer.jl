@@ -742,61 +742,94 @@ function generate_var_irt_diagnostic_plot(
         return nothing
     end
 
-    # Create 2x2 subplot
-    p = plot(layout=(2, 2), size=(1200, 1000))
-
     colors = [:blue, :green, :orange, :purple]
 
-    for (i, label) in enumerate(labels)
-        irt_vals, var_vals = data_by_n[label]
-        n_points = length(irt_vals)
+    # Helper function to create a single version of the plot
+    function create_var_irt_plot(use_log_scale::Bool)
+        p = plot(layout=(2, 2), size=(1200, 1000))
 
-        if n_points > 0
-            scatter!(p[i], irt_vals, var_vals,
-                xlabel = "Best iRT",
-                ylabel = "Cross-run iRT Std Dev (min)",
-                title = "$label (n=$n_points precursors)",
-                label = nothing,
-                alpha = 0.3,
-                markersize = 2,
-                color = colors[i]
-            )
+        for (i, label) in enumerate(labels)
+            irt_vals, var_vals = data_by_n[label]
+            n_points = length(irt_vals)
 
-            # Add binned median line for trend visualization
-            if n_points >= 100
-                n_bins = min(20, n_points ÷ 50)
-                if n_bins >= 3
-                    irt_range = extrema(irt_vals)
-                    bin_edges = collect(LinRange(irt_range[1], irt_range[2], n_bins + 1))
-                    bin_centers = Float32[]
-                    bin_medians = Float32[]
+            if n_points > 0
+                # Calculate overall median for annotation
+                overall_median = median(var_vals)
 
-                    for j in 1:n_bins
-                        mask = (irt_vals .>= bin_edges[j]) .& (irt_vals .< bin_edges[j+1])
-                        if sum(mask) >= 10
-                            push!(bin_centers, (bin_edges[j] + bin_edges[j+1]) / 2)
-                            push!(bin_medians, median(var_vals[mask]))
+                # Transform values for log scale if needed
+                plot_var_vals = use_log_scale ? log2.(var_vals) : var_vals
+                plot_median = use_log_scale ? log2(overall_median) : overall_median
+
+                ylabel_text = use_log_scale ? "log2(Cross-run iRT Std Dev)" : "Cross-run iRT Std Dev (min)"
+                median_text = use_log_scale ?
+                    "Median: $(round(overall_median, digits=4)) min\n(log2: $(round(plot_median, digits=2)))" :
+                    "Median: $(round(overall_median, digits=4)) min"
+
+                scatter!(p[i], irt_vals, plot_var_vals,
+                    xlabel = "Best iRT",
+                    ylabel = ylabel_text,
+                    title = "$label (n=$n_points precursors)",
+                    label = nothing,
+                    alpha = 0.3,
+                    markersize = 2,
+                    color = colors[i]
+                )
+
+                # Add horizontal line at median
+                hline!(p[i], [plot_median], color = :red, linewidth = 2,
+                       linestyle = :dash, label = nothing)
+
+                # Annotate median value in corner
+                irt_range = extrema(irt_vals)
+                var_range = extrema(plot_var_vals)
+                annotate!(p[i], [(irt_range[1] + 0.02*(irt_range[2]-irt_range[1]),
+                                  var_range[2] - 0.05*(var_range[2]-var_range[1]),
+                                  text(median_text, :left, 8, :red))])
+
+                # Add binned median line for trend visualization
+                if n_points >= 100
+                    n_bins = min(20, n_points ÷ 50)
+                    if n_bins >= 3
+                        bin_edges = collect(LinRange(irt_range[1], irt_range[2], n_bins + 1))
+                        bin_centers = Float32[]
+                        bin_medians = Float32[]
+
+                        for j in 1:n_bins
+                            mask = (irt_vals .>= bin_edges[j]) .& (irt_vals .< bin_edges[j+1])
+                            if sum(mask) >= 10
+                                push!(bin_centers, (bin_edges[j] + bin_edges[j+1]) / 2)
+                                bin_med = median(var_vals[mask])
+                                push!(bin_medians, use_log_scale ? log2(bin_med) : bin_med)
+                            end
+                        end
+
+                        if length(bin_centers) >= 3
+                            plot!(p[i], bin_centers, bin_medians,
+                                  color = :darkred, linewidth = 3, label = "Binned median",
+                                  marker = :circle, markersize = 4)
                         end
                     end
-
-                    if length(bin_centers) >= 3
-                        plot!(p[i], bin_centers, bin_medians,
-                              color = :red, linewidth = 3, label = "Binned median",
-                              marker = :circle, markersize = 4)
-                    end
                 end
+            else
+                # Empty subplot with message
+                ylabel_text = use_log_scale ? "log2(Cross-run iRT Std Dev)" : "Cross-run iRT Std Dev (min)"
+                plot!(p[i], [], [],
+                    title = "$label (no data)",
+                    xlabel = "Best iRT",
+                    ylabel = ylabel_text
+                )
             end
-        else
-            # Empty subplot with message
-            plot!(p[i], [], [],
-                title = "$label (no data)",
-                xlabel = "Best iRT",
-                ylabel = "Cross-run iRT Std Dev (min)"
-            )
         end
+        return p
     end
 
-    savefig(p, joinpath(rt_plot_folder, "var_irt_vs_irt_by_n.pdf"))
+    # Create linear scale version
+    p_linear = create_var_irt_plot(false)
+    savefig(p_linear, joinpath(rt_plot_folder, "var_irt_vs_irt_by_n.pdf"))
+
+    # Create log2 scale version
+    p_log = create_var_irt_plot(true)
+    savefig(p_log, joinpath(rt_plot_folder, "var_irt_vs_irt_by_n_log2.pdf"))
 
     return nothing
 end
