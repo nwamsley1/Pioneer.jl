@@ -24,21 +24,26 @@ jobs:
               return;
             }
 
-            const workflowId = 'regression.yml';
-            const runs = await github.paginate(
-              github.rest.actions.listWorkflowRuns,
-              {
-                owner,
-                repo,
-                workflow_id: workflowId,
-                per_page: 100,
-                event: 'pull_request',
-              }
-            );
+            const workflowIds = ['regression.yml', 'regression_slurm.yml'];
+            const candidates = [];
 
-            const candidates = runs.filter((run) => {
-              return run.head_sha === headSha && ['queued', 'waiting', 'in_progress'].includes(run.status);
-            });
+            for (const workflowId of workflowIds) {
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRuns,
+                {
+                  owner,
+                  repo,
+                  workflow_id: workflowId,
+                  per_page: 100,
+                  event: 'pull_request',
+                }
+              );
+              for (const run of runs) {
+                if (run.head_sha === headSha && ['queued', 'waiting', 'in_progress'].includes(run.status)) {
+                  candidates.push(run);
+                }
+              }
+            }
 
             if (!candidates.length) {
               core.info('No queued or in-progress regression runs found for this PR.');
