@@ -88,7 +88,7 @@ jobs:
             -q
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' bash -s" <<'EOF'
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' LMOD_QUIET=1 LMOD_SILENT=1 bash -s" <<'EOF'
             set -eu
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
@@ -159,7 +159,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' REGRESSION_SET='${regression_set}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' REGRESSION_SET='${regression_set}' LMOD_QUIET=1 LMOD_SILENT=1 bash -s" <<'EOF'
             set -eu
 
             if [ ! -f "$SETUP_SCRIPT" ]; then
@@ -552,7 +552,7 @@ jobs:
           )
 
           report_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' REPORT_SCRIPT='${report_script_path}' LMOD_QUIET=1 LMOD_SILENT=1 bash -s" <<'EOF'
               set -eu
 
               if [ ! -f "$REPORT_SCRIPT" ]; then
@@ -679,7 +679,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' DEVELOP_DIR='${develop_dir}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' DEVELOP_DIR='${develop_dir}' LMOD_QUIET=1 LMOD_SILENT=1 bash -s" <<'EOF'
             set -euo pipefail
             lock_dir="${DEVELOP_DIR}.lock"
             lock_timeout=900
@@ -737,7 +737,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' RELEASE_DIR='${release_dir}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' RELEASE_DIR='${release_dir}' LMOD_QUIET=1 LMOD_SILENT=1 bash -s" <<'EOF'
             set -euo pipefail
 
             if [ ! -d "$RUN_DIR/results" ]; then
@@ -780,7 +780,7 @@ jobs:
           )
 
           timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' REPORT_PATH='${report_path}' REPORT_SUBDIR='${report_subdir}' HISTORY_BRANCH='${history_branch}' GITHUB_REPOSITORY='${GITHUB_REPOSITORY}' GITHUB_TOKEN='${GITHUB_TOKEN}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' REPORT_PATH='${report_path}' REPORT_SUBDIR='${report_subdir}' HISTORY_BRANCH='${history_branch}' GITHUB_REPOSITORY='${GITHUB_REPOSITORY}' GITHUB_TOKEN='${GITHUB_TOKEN}' LMOD_QUIET=1 LMOD_SILENT=1 bash -s" <<'EOF'
             set -euo pipefail
 
             repo_dir="${RUN_DIR}/gh-pages-site"
@@ -1039,7 +1039,7 @@ jobs:
           )
 
           cleanup_submit="$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' RUN_SUFFIX='${CLUSTER_RUN_SUFFIX:-}' CLEANUP_SCRIPT='${cleanup_script_path}' REPORT_JOB_ID='${report_job_id}' bash -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' RUN_SUFFIX='${CLUSTER_RUN_SUFFIX:-}' CLEANUP_SCRIPT='${cleanup_script_path}' REPORT_JOB_ID='${report_job_id}' LMOD_QUIET=1 LMOD_SILENT=1 bash -s" <<'EOF'
               set -eu
 
               if [ ! -f "$CLEANUP_SCRIPT" ]; then
