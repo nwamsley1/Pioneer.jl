@@ -672,12 +672,20 @@ function generate_rt_diagnostic_plots(
             end
 
             if length(bin_centers) >= 3
+                # 1x MAD lines
                 plot!(p2, bin_centers, bin_mads,
-                      color = :red, linewidth = 3, label = "Binned MAD",
+                      color = :red, linewidth = 3, label = "1x MAD",
                       marker = :circle, markersize = 4)
                 plot!(p2, bin_centers, -bin_mads,
                       color = :red, linewidth = 3, label = nothing,
                       marker = :circle, markersize = 4)
+                # 4x MAD lines
+                plot!(p2, bin_centers, 4 .* bin_mads,
+                      color = :darkred, linewidth = 2, label = "4x MAD",
+                      marker = :diamond, markersize = 3, linestyle = :dash)
+                plot!(p2, bin_centers, -4 .* bin_mads,
+                      color = :darkred, linewidth = 2, label = nothing,
+                      marker = :diamond, markersize = 3, linestyle = :dash)
             end
         end
     end
