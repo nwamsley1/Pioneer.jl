@@ -653,37 +653,45 @@ function generate_rt_diagnostic_plots(
     # Add zero line and binned statistics
     hline!(p2, [0.0], color = :black, linestyle = :dash, label = nothing)
 
-    # Add binned MAD line for trend visualization
+    # Add binned asymmetric MAD lines for trend visualization
     if n >= 100
         n_bins = min(20, n ÷ 50)
         if n_bins >= 3
             irt_range = extrema(irt)
             bin_edges = collect(LinRange(irt_range[1], irt_range[2], n_bins + 1))
             bin_centers = Float32[]
-            bin_mads = Float32[]
+            bin_mads_pos = Float32[]  # MAD for positive errors
+            bin_mads_neg = Float32[]  # MAD for negative errors
 
             for i in 1:n_bins
                 mask = (irt .>= bin_edges[i]) .& (irt .< bin_edges[i+1])
                 if sum(mask) >= 10
-                    push!(bin_centers, (bin_edges[i] + bin_edges[i+1]) / 2)
                     bin_errors = rt_error[mask]
-                    push!(bin_mads, mad(bin_errors, normalize=true))
+                    pos_errors = bin_errors[bin_errors .> 0]
+                    neg_errors = bin_errors[bin_errors .< 0]
+
+                    # Need at least a few points in each direction
+                    if length(pos_errors) >= 3 && length(neg_errors) >= 3
+                        push!(bin_centers, (bin_edges[i] + bin_edges[i+1]) / 2)
+                        push!(bin_mads_pos, mad(pos_errors, normalize=true))
+                        push!(bin_mads_neg, mad(neg_errors, normalize=true))
+                    end
                 end
             end
 
             if length(bin_centers) >= 3
-                # 1x MAD lines
-                plot!(p2, bin_centers, bin_mads,
+                # 1x MAD lines (asymmetric)
+                plot!(p2, bin_centers, bin_mads_pos,
                       color = :red, linewidth = 3, label = "1x MAD",
                       marker = :circle, markersize = 4)
-                plot!(p2, bin_centers, -bin_mads,
+                plot!(p2, bin_centers, -bin_mads_neg,
                       color = :red, linewidth = 3, label = nothing,
                       marker = :circle, markersize = 4)
-                # 4x MAD lines
-                plot!(p2, bin_centers, 4 .* bin_mads,
+                # 4x MAD lines (asymmetric)
+                plot!(p2, bin_centers, 4 .* bin_mads_pos,
                       color = :darkred, linewidth = 2, label = "4x MAD",
                       marker = :diamond, markersize = 3, linestyle = :dash)
-                plot!(p2, bin_centers, -4 .* bin_mads,
+                plot!(p2, bin_centers, -4 .* bin_mads_neg,
                       color = :darkred, linewidth = 2, label = nothing,
                       marker = :diamond, markersize = 3, linestyle = :dash)
             end
