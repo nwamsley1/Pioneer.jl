@@ -216,7 +216,7 @@ jobs:
             echo "Dataset filter: ${dataset_filter:-<all>}"
 
             param_list=$(
-              "$python_cmd" -c 'import glob,json,os,sys; params_dir=sys.argv[1]; tags_path=sys.argv[2]; allowed=sys.argv[3].split(",") if sys.argv[3] else None; data=json.load(open(tags_path)); datasets=data.get("datasets", {}); def order_for(name): v=datasets.get(name, {}); return v.get("order", 10**9); items=[]; [items.extend((order_for(ds), ds, p) for p in sorted(glob.glob(os.path.join(params_dir, ds, "search*.json")))) for ds in os.listdir(params_dir) if os.path.isdir(os.path.join(params_dir, ds)) and (not allowed or ds in allowed)]; items.sort(key=lambda x: (x[0], x[1], x[2])); print("\n".join([p for _,_,p in items]))' "$PARAMS_DIR" "$tags_path" "${dataset_filter:-}"
+              "$python_cmd" -c 'import glob,json,os,sys; params_dir=sys.argv[1]; tags_path=sys.argv[2]; allowed=sys.argv[3].split(",") if sys.argv[3] else None; data=json.load(open(tags_path)); datasets=data.get("datasets", {}); order_for=lambda name: datasets.get(name, {}).get("order", 10**9); items=[]; [items.extend((order_for(ds), ds, p) for p in sorted(glob.glob(os.path.join(params_dir, ds, "search*.json")))) for ds in os.listdir(params_dir) if os.path.isdir(os.path.join(params_dir, ds)) and (not allowed or ds in allowed)]; items.sort(key=lambda x: (x[0], x[1], x[2])); print("\n".join([p for _,_,p in items]))' "$PARAMS_DIR" "$tags_path" "${dataset_filter:-}"
             )
 
             if [ -z "$param_list" ]; then
