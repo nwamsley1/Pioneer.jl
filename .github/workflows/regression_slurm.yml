@@ -47,7 +47,6 @@ jobs:
           GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           GITHUB_REPOSITORY: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
           CLUSTER_ENTRAPMENT_REPO: ${{ secrets.CLUSTER_ENTRAPMENT_REPO }}
-          CLUSTER_ENTRAPMENT_REF: ${{ secrets.CLUSTER_ENTRAPMENT_REF }}
           REGRESSION_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.regression_set || matrix.regression_set }}
         shell: bash
         run: |
@@ -70,7 +69,7 @@ jobs:
           pioneer_repo="https://github.com/${GITHUB_REPOSITORY}"
           entrapment_repo="${CLUSTER_ENTRAPMENT_REPO:-nwamsley1/PioneerEntrapment.jl}"
           entrapment_repo_url="$entrapment_repo"
-          entrapment_ref="${CLUSTER_ENTRAPMENT_REF:-}"
+          entrapment_ref="codex/add-max_points-and-bin_size-to-plotting-functions-srqvs5"
 
           if [[ "$entrapment_repo" != http* ]]; then
             entrapment_repo_url="https://github.com/${entrapment_repo}"
