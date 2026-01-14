@@ -107,14 +107,11 @@ jobs:
 
             git -C "$PIONEER_DIR" checkout --force "$TARGET_SHA"
 
-            entrapment_branch="feature/option-2-implementation"
             if [ -d "$ENTRAPMENT_DIR/.git" ]; then
               git -C "$ENTRAPMENT_DIR" fetch --all --tags
             else
               git clone "$ENTRAPMENT_REPO_URL" "$ENTRAPMENT_DIR"
             fi
-            git -C "$ENTRAPMENT_DIR" checkout "$entrapment_branch"
-            git -C "$ENTRAPMENT_DIR" reset --hard "origin/${entrapment_branch}"
 
             mkdir -p "$DEPOT_DIR"
           EOF
