@@ -86,13 +86,14 @@ jobs:
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
 
-            regression_branch="codex/create-slurm-job-submission-scripts"
             if [ -d regression-configs/.git ]; then
               git -C regression-configs fetch --all
+              git -C regression-configs remote set-head origin -a
+              regression_branch="$(git -C regression-configs symbolic-ref --short refs/remotes/origin/HEAD | sed 's@^origin/@@')"
               git -C regression-configs checkout "$regression_branch"
               git -C regression-configs reset --hard "origin/${regression_branch}"
             else
-              git clone --branch "$regression_branch" https://github.com/GoldfarbLab/pioneer-regression-configs regression-configs
+              git clone https://github.com/GoldfarbLab/pioneer-regression-configs regression-configs
             fi
 
             if [ -d "$PIONEER_DIR/.git" ]; then
