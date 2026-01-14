@@ -47,6 +47,7 @@ jobs:
           GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           GITHUB_REPOSITORY: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
           CLUSTER_ENTRAPMENT_REPO: ${{ secrets.CLUSTER_ENTRAPMENT_REPO }}
+          CLUSTER_ENTRAPMENT_REF: ${{ secrets.CLUSTER_ENTRAPMENT_REF }}
           REGRESSION_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.regression_set || matrix.regression_set }}
         shell: bash
         run: |
@@ -69,6 +70,7 @@ jobs:
           pioneer_repo="https://github.com/${GITHUB_REPOSITORY}"
           entrapment_repo="${CLUSTER_ENTRAPMENT_REPO:-nwamsley1/PioneerEntrapment.jl}"
           entrapment_repo_url="$entrapment_repo"
+          entrapment_ref="${CLUSTER_ENTRAPMENT_REF:-}"
 
           if [[ "$entrapment_repo" != http* ]]; then
             entrapment_repo_url="https://github.com/${entrapment_repo}"
@@ -88,7 +90,7 @@ jobs:
             -q
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' ENTRAPMENT_REF='${entrapment_ref}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -eu
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
@@ -119,6 +121,14 @@ jobs:
               git -C "$ENTRAPMENT_DIR" fetch --all --tags
             else
               git clone "$ENTRAPMENT_REPO_URL" "$ENTRAPMENT_DIR"
+            fi
+            if [ -n "${ENTRAPMENT_REF:-}" ]; then
+              if git -C "$ENTRAPMENT_DIR" cat-file -e "${ENTRAPMENT_REF}^{commit}" 2>/dev/null; then
+                git -C "$ENTRAPMENT_DIR" checkout --force "$ENTRAPMENT_REF"
+              else
+                git -C "$ENTRAPMENT_DIR" fetch --depth=1 origin "$ENTRAPMENT_REF"
+                git -C "$ENTRAPMENT_DIR" checkout --force FETCH_HEAD
+              fi
             fi
 
             mkdir -p "$DEPOT_DIR"
