@@ -920,7 +920,7 @@ jobs:
 
       - name: Upload regression HTML report artifact
         if: env.REPORT_PAGES_DIR != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         env:
           REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
         with:
