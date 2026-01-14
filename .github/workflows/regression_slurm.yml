@@ -1,6 +1,13 @@
-name: Regression Tests (LSF)
+name: Regression Tests (SLURM)
 
 on:
+  push:
+    branches:
+      - develop
+  release:
+    types: [published]
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       regression_set:
@@ -34,7 +41,7 @@ jobs:
 
       - name: Prepare cluster workspace (configs, Pioneer, and depot)
         env:
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER2_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
           GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
@@ -119,7 +126,7 @@ jobs:
 
       - name: Submit regression search jobs on cluster
         env:
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER2_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
@@ -136,9 +143,9 @@ jobs:
           mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}}"
           params_dir="${remote_run_dir}/regression-configs/params"
           regression_configs_dir="${remote_run_dir}/regression-configs"
-          job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
-          setup_script_path="${remote_run_dir}/${SETUP_JOB_SCRIPT:-regression-configs/job_scripts/setup.bsub}"
-          metrics_script_path="${remote_run_dir}/${METRICS_JOB_SCRIPT:-regression-configs/job_scripts/metrics.bsub}"
+          job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/slurm/search_dia.sbatch}"
+          setup_script_path="${remote_run_dir}/${SETUP_JOB_SCRIPT:-regression-configs/job_scripts/slurm/setup.sbatch}"
+          metrics_script_path="${remote_run_dir}/${METRICS_JOB_SCRIPT:-regression-configs/job_scripts/slurm/metrics.sbatch}"
           adjusted_params_dir="${remote_run_dir}/adjusted-params"
           run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}"
           regression_set="${REGRESSION_SET:-all}"
@@ -171,8 +178,8 @@ jobs:
               exit 1
             fi
 
-            setup_submit=$(RUN_DIR="$RUN_DIR" bsub < "$SETUP_SCRIPT")
-            setup_job_id=$(printf '%s\n' "$setup_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
+            setup_submit=$(RUN_DIR="$RUN_DIR" sbatch "$SETUP_SCRIPT")
+            setup_job_id=$(printf '%s\n' "$setup_submit" | sed -n 's/Submitted batch job \([0-9]\+\).*/\1/p' | head -n 1)
 
             if [ -z "$setup_job_id" ]; then
               echo "Failed to parse setup job ID from submission output:" >&2
@@ -279,8 +286,8 @@ jobs:
 
               echo "${dataset_name}" >> "$manifest_file"
 
-              search_submit=$(RUN_DIR="$RUN_DIR" PIONEER_DATASET_NAME="$dataset_dir_name" PARAM_FILE="$param_basename" bsub -w "ended($setup_job_id)" -n "$cpus" -M "$mem_gb" -R "rusage[mem=${mem_gb}GB] span[hosts=1]" < "$JOB_SCRIPT")
-              search_job_id=$(printf '%s\n' "$search_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
+              search_submit=$(RUN_DIR="$RUN_DIR" PIONEER_DATASET_NAME="$dataset_dir_name" PARAM_FILE="$param_basename" sbatch --dependency=afterany:"$setup_job_id" --cpus-per-task="$cpus" --mem="${mem_gb}G" "$JOB_SCRIPT")
+              search_job_id=$(printf '%s\n' "$search_submit" | sed -n 's/Submitted batch job \([0-9]\+\).*/\1/p' | head -n 1)
 
               if [ -z "$search_job_id" ]; then
                 echo "Failed to parse search job ID from submission output:" >&2
@@ -330,16 +337,13 @@ jobs:
                 continue
               fi
 
-              dep_expr=""
+              dep_ids=()
               while IFS= read -r job_id; do
                 [ -n "$job_id" ] || continue
-                if [ -n "$dep_expr" ]; then
-                  dep_expr="$dep_expr && "
-                fi
-                dep_expr="${dep_expr}ended(${job_id})"
+                dep_ids+=("$job_id")
               done < "$job_list_file"
 
-              if [ -z "$dep_expr" ]; then
+              if [ "${#dep_ids[@]}" -eq 0 ]; then
                 echo "Skipping dataset $dataset_name: unable to build dependency expression" >&2
                 continue
               fi
@@ -350,12 +354,13 @@ jobs:
                 continue
               fi
 
+              dep_list=$(IFS=:; echo "${dep_ids[*]}")
               metrics_submit=$(\
                 RUN_DIR="$RUN_DIR" \
                 PIONEER_DATASET_NAME="$dataset_name" \
-                bsub -w "$dep_expr" < "$METRICS_SCRIPT")
+                sbatch --dependency=afterany:"$dep_list" "$METRICS_SCRIPT")
 
-              metrics_job_id=$(printf '%s\n' "$metrics_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
+              metrics_job_id=$(printf '%s\n' "$metrics_submit" | sed -n 's/Submitted batch job \([0-9]\+\).*/\1/p' | head -n 1)
 
               if [ -z "$metrics_job_id" ]; then
                 echo "Failed to parse metrics job ID for dataset $dataset_name:" >&2
@@ -370,7 +375,7 @@ jobs:
       - name: Wait for regression outputs on shared storage
         env:
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER2_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
         shell: bash
         run: |
@@ -444,13 +449,13 @@ jobs:
             fi
 
             if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -noheader -o 'jobid' 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
-              echo "Cluster login failed or bjobs unavailable." >&2
+              "squeue -h -o '%i' 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
+              echo "Cluster login failed or squeue unavailable." >&2
               exit 1
             fi
 
             running_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -noheader -o 'jobid' 2>/dev/null | awk '/^[0-9]+$/'" || true)
+              "squeue -h -o '%i' 2>/dev/null | awk '/^[0-9]+$/'" || true)
             declare -A running_map=()
             if [ -n "$running_jobs" ]; then
               while IFS= read -r job_id; do
@@ -521,7 +526,7 @@ jobs:
 
       - name: Submit regression report job on cluster
         env:
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER2_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
@@ -531,7 +536,7 @@ jobs:
           set -euo pipefail
 
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
-          report_script_path="${REPORT_JOB_SCRIPT:-regression-configs/job_scripts/metrics_report.bsub}"
+          report_script_path="${REPORT_JOB_SCRIPT:-regression-configs/job_scripts/slurm/metrics_report.sbatch}"
           if [[ "$report_script_path" != /* ]]; then
             report_script_path="${remote_run_dir}/${report_script_path}"
           fi
@@ -556,12 +561,12 @@ jobs:
                 exit 1
               fi
 
-              submit_out=$(RUN_DIR="$RUN_DIR" bsub < "$REPORT_SCRIPT")
+              submit_out=$(RUN_DIR="$RUN_DIR" sbatch "$REPORT_SCRIPT")
               printf '%s' "$submit_out"
           EOF
           )"
 
-          report_job_id=$(printf '%s\n' "$report_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
+          report_job_id=$(printf '%s\n' "$report_submit" | sed -n 's/Submitted batch job \([0-9]\+\).*/\1/p' | head -n 1)
 
           if [ -z "$report_job_id" ]; then
             echo "Failed to parse report job ID from submission output:" >&2
@@ -585,7 +590,7 @@ jobs:
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
           REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
           REPORT_JOB_ID: ${{ env.REPORT_JOB_ID }}
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER2_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           REGRESSION_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.regression_set || matrix.regression_set }}
         shell: bash
@@ -618,13 +623,14 @@ jobs:
           echo "Monitoring report job ID: ${report_job_id}"
 
           while [ "$attempt" -le "$max_attempts" ]; do
-            if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "true" >/dev/null 2>&1; then
-              echo "Cluster login failed or bjobs unavailable." >&2
+            if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+              "squeue -h -o '%i' 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
+              echo "Cluster login failed or squeue unavailable." >&2
               exit 1
             fi
 
             running_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "bjobs -noheader -o 'jobid' 2>/dev/null | awk '/^[0-9]+$/'" || true)
+              "squeue -h -o '%i' 2>/dev/null | awk '/^[0-9]+$/'" || true)
 
             report_active=$(printf '%s\n' "$running_jobs" | awk -v id="$report_job_id" '$0 == id { found=1 } END { if (found) print id }')
 
@@ -651,7 +657,7 @@ jobs:
       - name: Sync develop metrics to shared storage
         if: github.ref == 'refs/heads/develop' && github.event_name == 'push' && matrix.regression_set == 'all'
         env:
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER2_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
@@ -707,7 +713,7 @@ jobs:
       - name: Sync release metrics to shared storage
         if: github.event_name == 'release' && matrix.regression_set == 'all'
         env:
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER2_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
@@ -747,7 +753,7 @@ jobs:
       - name: Update gh-pages site on cluster
         if: env.REPORT_PAGES_STAGING_DIR != ''
         env:
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER2_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
@@ -1003,7 +1009,7 @@ jobs:
       - name: Submit cluster cleanup job
         if: always()
         env:
-          CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
+          CLUSTER_HOST: ${{ secrets.CLUSTER2_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_SUFFIX: ${{ env.CLUSTER_RUN_SUFFIX }}
@@ -1016,7 +1022,7 @@ jobs:
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
           report_job_id="${REPORT_JOB_ID:-}"
 
-          cleanup_script_path="${CLEANUP_JOB_SCRIPT:-regression-configs/job_scripts/cleanup.bsub}"
+          cleanup_script_path="${CLEANUP_JOB_SCRIPT:-regression-configs/job_scripts/slurm/cleanup.sbatch}"
           if [[ "$cleanup_script_path" != /* ]]; then
             cleanup_script_path="${remote_run_dir}/${cleanup_script_path}"
           fi
@@ -1042,29 +1048,29 @@ jobs:
                 exit 1
               fi
 
-              cleanup_wait=""
+              cleanup_dep=""
               if [ -n "$REPORT_JOB_ID" ]; then
-                cleanup_wait="-w ended($REPORT_JOB_ID)"
+                cleanup_dep="--dependency=afterany:${REPORT_JOB_ID}"
               fi
 
-              submit_out=$(RUN_DIR="$RUN_DIR" RUN_SUFFIX="$RUN_SUFFIX" bsub $cleanup_wait < "$CLEANUP_SCRIPT")
+              submit_out=$(RUN_DIR="$RUN_DIR" RUN_SUFFIX="$RUN_SUFFIX" sbatch $cleanup_dep "$CLEANUP_SCRIPT")
               job_id_dir="$RUN_DIR/job-ids"
               for job_list in "$job_id_dir/setup.ids" "$job_id_dir/search.ids" "$job_id_dir/metrics.ids"; do
                 if [ -f "$job_list" ]; then
                   while IFS= read -r job_id; do
                     [ -n "$job_id" ] || continue
-                    bkill "$job_id" >/dev/null 2>&1 || true
+                    scancel "$job_id" >/dev/null 2>&1 || true
                   done < "$job_list"
                 fi
               done
               if [ -n "$REPORT_JOB_ID" ]; then
-                bkill "$REPORT_JOB_ID" >/dev/null 2>&1 || true
+                scancel "$REPORT_JOB_ID" >/dev/null 2>&1 || true
               fi
               printf '%s' "$submit_out"
           EOF
           )"
 
-          cleanup_job_id=$(printf '%s\n' "$cleanup_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
+          cleanup_job_id=$(printf '%s\n' "$cleanup_submit" | sed -n 's/Submitted batch job \([0-9]\+\).*/\1/p' | head -n 1)
 
           if [ -z "$cleanup_job_id" ]; then
             echo "Failed to parse cleanup job ID from submission output:" >&2
