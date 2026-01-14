@@ -325,111 +325,145 @@ function get_best_psms!(psms::DataFrame,
 end
 
 """
-    map_retention_times!(search_context::SearchContext, results::FirstPassSearchResults, params::FirstPassSearchParameters)
+    map_retention_times!(search_context::SearchContext, params::FirstPassSearchParameters, all_psms_paths::Vector{String})
 
-Maps retention times between library and empirical scales for each MS file. For files with sufficient high-confidence PSMs 
-(probability > min_prob_for_irt_mapping), creates spline-based conversion models between retention time (RT) and indexed 
-retention time (iRT) scales.
+Maps retention times between library and empirical scales for each MS file. For files with sufficient high-confidence PSMs
+(probability > min_prob_for_irt_mapping), creates spline-based conversion models between retention time (RT) and indexed
+retention time (iRT) scales. Includes edge trimming to remove sparse data at RT boundaries.
 
 # Arguments
 - `search_context`: Contains MS data and mapping information
-- `results`: FirstPassSearch results container
 - `params`: Search parameters including minimum probability threshold
+- `all_psms_paths`: Paths to PSM Arrow files for each MS file
 
 Creates and stores:
 - RT to iRT mapping splines
 - iRT to RT mapping splines
 
-Throws an error if insufficient high-confidence PSMs are found for mapping.
+Uses identity model as fallback if insufficient PSMs or fitting fails.
 """
 function map_retention_times!(
     search_context::SearchContext,
-    results::FirstPassSearchResults,
-    params::FirstPassSearchParameters
+    params::FirstPassSearchParameters,
+    all_psms_paths::Vector{String}
 )
-
-    # Only process valid (non-failed) files
-    valid_files = get_valid_file_indices(search_context)
-    all_psms_paths = getFirstPassPsms(getMSData(search_context))
-
-    for ms_file_idx in valid_files
-        # Skip files that have been marked as failed
-        if is_file_failed(search_context, ms_file_idx)
-            continue
+    for ms_file_idx in eachindex(all_psms_paths)
+        file_name = try
+            getFileIdToName(getMSData(search_context), ms_file_idx)
+        catch
+            "file_$ms_file_idx"
         end
         psms_path = all_psms_paths[ms_file_idx]
         psms = Arrow.Table(psms_path)
-        best_hits = psms[:prob].>params.min_prob_for_irt_mapping#Map rts using only the best psms
-        try#if sum(best_hits) > 100
-            if params.use_robust_fitting
-                # Use robust fitting with RANSAC/penalty
-                best_psms_df = DataFrame(
-                    rt = psms[:rt][best_hits],
-                    irt_predicted = psms[:irt_predicted][best_hits]
-                )
+        best_hits = psms[:prob].>params.min_prob_for_irt_mapping
 
-                # Fit RT to iRT model using shared robust fitting
-                rt_model, valid_rt, valid_irt, irt_mad = Pioneer.fit_irt_model(
-                    best_psms_df;
-                    lambda_penalty = Float32(0.1),  # Default penalty
-                    ransac_threshold = 1000,        # Default RANSAC threshold
-                    min_psms = 10,                  # Default minimum PSMs
-                    spline_degree = 3,              # Default spline degree
-                    max_knots = 7,                  # Default max knots
-                    outlier_threshold = Float32(5.0)  # Default outlier threshold
-                )
+        try
+            # Check if we have enough PSMs for RT alignment
+            n_good_psms = sum(best_hits)
 
-                # Store RT to iRT model
-                setRtIrtMap!(search_context, rt_model, ms_file_idx)
-
-                # Fit inverse model (iRT to RT) - swap input/output
-                irt_to_rt_df = DataFrame(
-                    rt = valid_irt,           # Use iRT as input
-                    irt_predicted = valid_rt  # Use RT as output
-                )
-                irt_model, _, _, _ = Pioneer.fit_irt_model(
-                    irt_to_rt_df;
-                    lambda_penalty = Float32(0.1),
-                    ransac_threshold = 1000,
-                    min_psms = 10,
-                    spline_degree = 3,
-                    max_knots = 7,
-                    outlier_threshold = Float32(5.0)
-                )
-                setIrtRtMap!(search_context, irt_model, ms_file_idx)
-
-                # Optionally generate plots
-                if params.plot_rt_alignment
-                    plot_rt_alignment_firstpass(
-                        valid_rt,
-                        valid_irt,
-                        rt_model,
-                        ms_file_idx,
-                        getDataOutDir(search_context)
-                    )
+            if n_good_psms < 100
+                # Get file name for warning
+                file_name = try
+                    getFileIdToName(getMSData(search_context), ms_file_idx)
+                catch
+                    "file_$ms_file_idx"
                 end
-            else
-                # Use simple UniformSpline (legacy behavior)
-                best_rts = psms[:rt][best_hits]
-                best_irts = psms[:irt_predicted][best_hits]
 
-                irt_to_rt_spline = UniformSpline(
-                    best_rts,
-                    best_irts,
-                    3,
-                    5
-                )
-                rt_to_irt_spline = UniformSpline(
-                    best_irts,
-                    best_rts,
-                    3,
-                    5
-                )
+                @user_warn "Too few PSMs ($n_good_psms) for RT alignment in file: $file_name (need ≥100). Using identity RT model."
 
-                #Build rt=>irt and irt=> rt mappings for the file and add to the dictionaries
-                setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
-                setIrtRtMap!(search_context, SplineRtConversionModel(irt_to_rt_spline), ms_file_idx)
+                # Use identity mapping as fallback
+                identity_model = IdentityModel()
+                setRtIrtMap!(search_context, identity_model, ms_file_idx)
+                setIrtRtMap!(search_context, identity_model, ms_file_idx)
+                continue
             end
+
+            # Extract best PSM data
+            best_rts = psms[:rt][best_hits]
+            best_irts = psms[:irt_predicted][best_hits]
+
+            # Calculate adaptive knots: 1 per 100 PSMs, min 5, max 100
+            n_knots = clamp(n_good_psms ÷ 100, 5, 100)
+
+            # Trim edges where data is sparse to avoid unstable fitting
+            min_psms_per_bin = 100  # Minimum PSMs required per bin
+
+            if n_good_psms >= 1000 && n_knots >= 10  # Only trim if enough data and knots
+                # Create uniform bin edges based on initial RT range
+                rt_min_initial, rt_max_initial = extrema(best_rts)
+                bin_edges = collect(LinRange(rt_min_initial, rt_max_initial, n_knots + 1))
+
+                # Count PSMs per bin using optimized histogram
+                hist = StatsBase.fit(Histogram, best_rts, bin_edges)
+                bin_counts = hist.weights
+
+                # Find first bin from left with sufficient data
+                left_bin_idx = findfirst(count -> count >= min_psms_per_bin, bin_counts)
+                # Find first bin from right with sufficient data
+                right_bin_idx = findlast(count -> count >= min_psms_per_bin, bin_counts)
+
+                if !isnothing(left_bin_idx) && !isnothing(right_bin_idx) && left_bin_idx <= right_bin_idx
+                    # Trim to dense region
+                    rt_min_trimmed = bin_edges[left_bin_idx]
+                    rt_max_trimmed = bin_edges[right_bin_idx + 1]
+
+                    # Cap trimming at 2.5% per side (5% total max)
+                    max_trim_per_side = 0.025
+                    left_trim_pct = sum(best_rts .< rt_min_trimmed) / n_good_psms
+                    right_trim_pct = sum(best_rts .> rt_max_trimmed) / n_good_psms
+
+                    if left_trim_pct > max_trim_per_side || right_trim_pct > max_trim_per_side
+                        # Bin-based trimming too aggressive, fall back to percentile-based
+                        rt_min_trimmed = Float32(quantile(best_rts, max_trim_per_side))
+                        rt_max_trimmed = Float32(quantile(best_rts, 1.0 - max_trim_per_side))
+                        @user_info "Edge trimming capped at 2.5% per side (bin-based would trim $(round(100*left_trim_pct, digits=1))% left, $(round(100*right_trim_pct, digits=1))% right)"
+                    end
+
+                    # Apply trimming
+                    keep_mask = (best_rts .>= rt_min_trimmed) .& (best_rts .<= rt_max_trimmed)
+                    n_excluded = n_good_psms - sum(keep_mask)
+
+                    if n_excluded > 0
+                        best_rts = best_rts[keep_mask]
+                        best_irts = best_irts[keep_mask]
+
+                        pct_excluded = round(100 * n_excluded / n_good_psms, digits=1)
+                        #@user_info "Trimmed $n_excluded PSMs ($pct_excluded%) from sparse edge bins (RT: $(round(rt_min_trimmed, digits=2))-$(round(rt_max_trimmed, digits=2)) min)"
+                    end
+                end
+            end
+
+            # Fit adaptive UniformSpline for RT → iRT conversion
+            rt_to_irt_spline = UniformSpline(
+                best_irts,    # y values (iRT)
+                best_rts,     # x values (RT)
+                3,            # degree (cubic)
+                n_knots       # adaptive based on PSM count
+            )
+
+            # Fit adaptive UniformSpline for iRT → RT conversion (inverse)
+            irt_to_rt_spline = UniformSpline(
+                best_rts,     # y values (RT)
+                best_irts,    # x values (iRT)
+                3,            # degree (cubic)
+                n_knots       # adaptive based on PSM count
+            )
+
+            # Store models in SearchContext
+            setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
+            setIrtRtMap!(search_context, SplineRtConversionModel(irt_to_rt_spline), ms_file_idx)
+
+            # Optionally generate diagnostic plots
+            if params.plot_rt_alignment
+                plot_rt_alignment_firstpass(
+                    best_rts,
+                    best_irts,
+                    SplineRtConversionModel(rt_to_irt_spline),
+                    ms_file_idx,
+                    getDataOutDir(search_context)
+                )
+            end
+
         catch e
             # Get file name for debugging
             file_name = try
@@ -437,39 +471,22 @@ function map_retention_times!(
             catch
                 "file_$ms_file_idx"
             end
-            
+
             # Safely compute PSM count to avoid excessive output
             n_good_psms = try
                 sum(best_hits)
             catch
                 0  # Default to 0 if calculation fails
             end
-            
-            @user_warn "RT mapping failed for MS data file: $file_name ($n_good_psms good PSMs found, need >100 for spline). Using identity RT model."
-            
+
+            @user_warn "RT mapping failed for MS data file: $file_name ($n_good_psms PSMs). Error: $e. Using identity RT model."
+
             # Use identity mapping as fallback - no RT to iRT conversion
             identity_model = IdentityModel()
             setRtIrtMap!(search_context, identity_model, ms_file_idx)
             setIrtRtMap!(search_context, identity_model, ms_file_idx)
         end
     end
-    
-    # Set identity models for failed files
-    ms_data = getMassSpecData(search_context)
-    for failed_idx in 1:length(ms_data.file_paths)
-        if getFailedIndicator(ms_data, failed_idx)
-            file_name = try
-                getFileIdToName(getMSData(search_context), failed_idx)
-            catch
-                "file_$failed_idx"
-            end
-            @user_warn "Setting identity RT models for failed file: $file_name"
-            setRtIrtMap!(search_context, IdentityModel(), failed_idx)
-            setIrtRtMap!(search_context, IdentityModel(), failed_idx)
-        end
-    end
-    
-    return nothing
 end
 
 """
@@ -565,6 +582,20 @@ function create_rt_indices!(
 
 
     setIrtErrors!(search_context, irt_errs)
+
+    # Log RT tolerances for each file
+   # @user_info "FirstPassSearch RT tolerances (per file):"
+    ms_data = getMSData(search_context)
+    for (file_idx, tol) in pairs(irt_errs)
+        file_name = getFileIdToName(ms_data, file_idx)
+        @debug_l1 "  File $(file_idx) ($file_name): RT tol = $(round(tol, digits=3)) min"
+    end
+
+    # Log summary statistics
+    if !isempty(irt_errs)
+        tol_values = collect(values(irt_errs))
+        @debug_l1 "  Summary: min=$(round(minimum(tol_values), digits=3)), max=$(round(maximum(tol_values), digits=3)), median=$(round(median(tol_values), digits=3)) min"
+    end
 
     # Create precursor to iRT mapping
     prec_to_irt = map(x -> (irt=x[:best_irt], mz=x[:mz]), 

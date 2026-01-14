@@ -341,7 +341,7 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
             Set{Int64}([2]), # spec_order default
             Float32(frag_params.relative_improvement_threshold),
             3,  # spline_degree default
-            5,  # spline_n_knots default
+            100,  # spline_n_knots default - higher for fine-grained RT calibration
             5,  # spline_fit_outlier_sd default
             Int64(rt_params.sigma_tolerance),
             prec_estimation,

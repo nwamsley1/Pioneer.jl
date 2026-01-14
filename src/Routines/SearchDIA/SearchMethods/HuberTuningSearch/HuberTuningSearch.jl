@@ -89,6 +89,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
     delta_grid::Vector{Float32}
     min_pct_diff::Float32
     q_value_threshold::Float32
+    max_psms_for_huber::Int64
     prec_estimation::P
 
     # Override Parameters
@@ -121,6 +122,9 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
             @user_warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
 
+        # Get max PSMs for huber tuning (default 5000)
+        max_psms_huber = haskey(deconv_params, :max_psms_for_huber) ? Int64(deconv_params.max_psms_for_huber) : 5000
+
         new{typeof(prec_estimation)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Int64(frag_params.n_isotopes),  # Fixed n_frag_isotopes
@@ -139,6 +143,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
             huber_δs,
             10.0f0,  # Default min_pct_diff
             0.001f0, # Default q_value_threshold
+            max_psms_huber,
             prec_estimation,
 
             global_params.huber_override.override_huber_delta_fit,
@@ -185,8 +190,38 @@ function process_file!(
         # Get PSMs to tune on
         best_psms = get_best_psms(search_context, params.q_value_threshold)
         file_psms = filter(row -> row.ms_file_idx == ms_file_idx, best_psms)
+
+        # Limit PSMs if needed - prioritize scans with most PSMs (densest scans)
+        n_original_psms = nrow(file_psms)
+
+        if n_original_psms > params.max_psms_for_huber
+            # Count PSMs per scan (sort=false for efficiency)
+            psm_counts = combine(
+                groupby(file_psms, :scan_idx, sort=false),
+                nrow => :n_psms
+            )
+
+            # Sort scans by PSM count (descending) - densest scans first
+            sort!(psm_counts, :n_psms, rev=true)
+
+            # Select scans until we reach max_psms_for_huber
+            scans_to_keep = Set{UInt32}()
+            total_psms = 0
+
+            for row in eachrow(psm_counts)
+                push!(scans_to_keep, row.scan_idx)
+                total_psms += row.n_psms
+                if total_psms >= params.max_psms_for_huber
+                    break
+                end
+            end
+
+            # Filter PSMs to selected scans
+            file_psms = filter(row -> row.scan_idx in scans_to_keep, file_psms)
+        end
+
         isempty(file_psms) && return results
-        
+
         # Create scan/precursor set and scan indices
         prec_set = Set(zip(file_psms[!, :precursor_idx], file_psms[!, :scan_idx]))
         scan_idxs = Set(file_psms[!, :scan_idx])
