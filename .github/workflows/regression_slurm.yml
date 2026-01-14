@@ -288,7 +288,7 @@ jobs:
 
               echo "${dataset_name}" >> "$manifest_file"
 
-              search_submit=$(RUN_DIR="$RUN_DIR" PIONEER_DATASET_NAME="$dataset_dir_name" PARAM_FILE="$param_basename" sbatch --dependency=afterok:"$setup_job_id" --cpus-per-task="$cpus" --mem="${mem_gb}G" "$JOB_SCRIPT")
+              search_submit=$(RUN_DIR="$RUN_DIR" PIONEER_DATASET_NAME="$dataset_dir_name" PARAM_FILE="$param_basename" sbatch --dependency=afterany:"$setup_job_id" --cpus-per-task="$cpus" --mem="${mem_gb}G" "$JOB_SCRIPT")
               search_job_id=$(printf '%s\n' "$search_submit" | sed -n 's/Submitted batch job \([0-9]\+\).*/\1/p' | head -n 1)
 
               if [ -z "$search_job_id" ]; then
@@ -360,7 +360,7 @@ jobs:
               metrics_submit=$(\
                 RUN_DIR="$RUN_DIR" \
                 PIONEER_DATASET_NAME="$dataset_name" \
-                sbatch --dependency=afterok:"$dep_list" "$METRICS_SCRIPT")
+                sbatch --dependency=afterany:"$dep_list" "$METRICS_SCRIPT")
 
               metrics_job_id=$(printf '%s\n' "$metrics_submit" | sed -n 's/Submitted batch job \([0-9]\+\).*/\1/p' | head -n 1)
 
