@@ -181,22 +181,22 @@ jobs:
             fi
 
             dataset_filter=""
-            # dataset_tags.json schema: { "dataset-name": ["tag1", "tag2", ...], ... }
+            # dataset_tags.json schema: { "datasets": { "dataset-name": { "order": 1, "tags": ["tag1"] } } }
+            tags_path="${REGRESSION_CONFIGS_DIR}/params/dataset_tags.json"
+            if [ ! -f "$tags_path" ]; then
+              echo "Missing dataset tags file at $tags_path" >&2
+              exit 1
+            fi
+            python_cmd="python3"
+            if ! command -v python3 >/dev/null 2>&1; then
+              python_cmd="python"
+            fi
+            if ! command -v "$python_cmd" >/dev/null 2>&1; then
+              echo "Python not available on cluster; cannot parse dataset tags." >&2
+              exit 1
+            fi
             if [ "${REGRESSION_SET:-all}" != "all" ]; then
               dataset_tag="${REGRESSION_SET}"
-              tags_path="${REGRESSION_CONFIGS_DIR}/params/dataset_tags.json"
-              if [ ! -f "$tags_path" ]; then
-                echo "Missing dataset tags file at $tags_path" >&2
-                exit 1
-              fi
-              python_cmd="python3"
-              if ! command -v python3 >/dev/null 2>&1; then
-                python_cmd="python"
-              fi
-              if ! command -v "$python_cmd" >/dev/null 2>&1; then
-                echo "Python not available on cluster; cannot parse dataset tags." >&2
-                exit 1
-              fi
               dataset_filter=$(
                 "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); datasets=data.get("datasets", {}); tag=sys.argv[2]; print(",".join([n for n,v in datasets.items() if isinstance(v, dict) and tag in (v.get("tags") or [])]))' "$tags_path" "$dataset_tag"
               )
@@ -208,7 +208,9 @@ jobs:
             echo "Regression set: ${REGRESSION_SET:-all}"
             echo "Dataset filter: ${dataset_filter:-<all>}"
 
-            param_list=$(find "$PARAMS_DIR" -type f -name 'search*.json' -print)
+            param_list=$(
+              "$python_cmd" -c 'import glob,json,os,sys; params_dir=sys.argv[1]; tags_path=sys.argv[2]; allowed=sys.argv[3].split(",") if sys.argv[3] else None; data=json.load(open(tags_path)); datasets=data.get("datasets", {}); def order_for(name): v=datasets.get(name, {}); return v.get("order", 10**9); items=[]; [items.extend((order_for(ds), ds, p) for p in sorted(glob.glob(os.path.join(params_dir, ds, "search*.json")))) for ds in os.listdir(params_dir) if os.path.isdir(os.path.join(params_dir, ds)) and (not allowed or ds in allowed)]; items.sort(key=lambda x: (x[0], x[1], x[2])); print("\n".join([p for _,_,p in items]))' "$PARAMS_DIR" "$tags_path" "${dataset_filter:-}"
+            )
 
             if [ -z "$param_list" ]; then
               echo "No parameter JSON files found in $PARAMS_DIR" >&2
