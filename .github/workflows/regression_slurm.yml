@@ -308,17 +308,11 @@ jobs:
                 fi
               fi
 
-              results_path=$(sed -n 's/.*"results"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$param_file" | head -n 1)
-
-              if [ -z "$results_path" ]; then
-                echo "Failed to locate results path in $param_file" >&2
-                exit 1
-              fi
-
-              base_results=${results_path%/}
-              adjusted_results="${base_results}/${RUN_ID_SUFFIX}"
-              dataset_name="$(basename "$(dirname "$adjusted_results")")"
+              results_root="/scratch2/fs1/d.goldfarb/pioneer-regression/search"
+              adjusted_results="${results_root}/${dataset_dir_name}/${RUN_ID_SUFFIX}/${search_name}"
+              dataset_name="$dataset_dir_name"
               escaped_results=$(printf '%s\n' "$adjusted_results" | sed 's/[&/]/\\&/g')
+              mkdir -p "$adjusted_results"
               resource_basename="${param_basename/search/resources}"
               resource_file="$(dirname "$param_file")/${resource_basename}"
               cpus=8
