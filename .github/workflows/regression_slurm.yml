@@ -291,9 +291,7 @@ jobs:
               rel_path="${param_file#${PARAMS_DIR}/}"
               dataset_dir_name="${rel_path%%/*}"
               search_name="$(basename "${rel_path%.*}")"
-              adjusted_path="$ADJUSTED_PARAMS_DIR/$rel_path"
               param_basename="$(basename "$param_file")"
-              mkdir -p "$(dirname "$adjusted_path")"
               if [ -n "${dataset_filter:-}" ]; then
                 dataset_allowed=0
                 IFS=',' read -r -a allowed_datasets <<< "$dataset_filter"
@@ -330,7 +328,7 @@ jobs:
                 )
               fi
 
-              sed "s|\"results\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"results\": \"${escaped_results}\"|" "$param_file" > "$adjusted_path"
+              sed -i "s|\"results\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"results\": \"${escaped_results}\"|" "$param_file"
 
               echo "${dataset_name}" >> "$manifest_file"
 
