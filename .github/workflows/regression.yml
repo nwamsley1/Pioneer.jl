@@ -9,9 +9,40 @@ on:
         options:
           - all
           - fast
-          - test
           - fastest
-        default: test
+          - APMS_Astral
+          - EWZ_2P_MBR_Exploris
+          - KEAP1KO_Eclipse
+          - MTAC_3P_Alternating
+          - MTAC_3P_Standard
+          - MTAC_Yeast_Alternating_3min
+          - MTAC_Yeast_Alternating_5min
+          - MTAC_Yeast_Standard_3min
+          - MTAC_Yeast_Standard_5min
+          - Olsen_Astral_3P
+          - Olsen_Exploris_3P
+          - SCIEX_3P
+          - SCP_Astral_10ng_3ms
+          - SCP_Astral_10ng_6ms
+          - SCP_Astral_10ng_12ms
+          - SCP_Astral_10ng_24ms
+          - SCP_Astral_250pg_3ms
+          - SCP_Astral_250pg_6ms
+          - SCP_Astral_250pg_12ms
+          - SCP_Astral_250pg_24ms
+          - SCP_Astral_500pg_3ms
+          - SCP_Astral_500pg_6ms
+          - SCP_Astral_500pg_12ms
+          - SCP_Astral_500pg_24ms
+          - SCP_Astral_1000pg_3ms
+          - SCP_Astral_1000pg_6ms
+          - SCP_Astral_1000pg_12ms
+          - SCP_Astral_1000pg_24ms
+          - SCP_Astral_MBR
+          - Seer_Astral_45
+          - Seer_Astral_single
+          - YEAST_KO_Astral
+        default: all
 
 permissions:
   contents: write
@@ -26,7 +57,7 @@ jobs:
     strategy:
       matrix:
         version: ['1.11']
-        regression_set: ${{ github.event_name == 'release' && fromJSON('["all"]') || (github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.regression_set)) || fromJSON('["fastest","fast","all"]')) }}
+        regression_set: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.regression_set)) || fromJSON('["all"]') }}
     steps:
       - uses: actions/checkout@v5
         with:
