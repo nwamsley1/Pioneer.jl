@@ -9,9 +9,40 @@ on:
         options:
           - all
           - fast
-          - test
           - fastest
-        default: test
+          - APMS_Astral
+          - EWZ_2P_MBR_Exploris
+          - KEAP1KO_Eclipse
+          - MTAC_3P_Alternating
+          - MTAC_3P_Standard
+          - MTAC_Yeast_Alternating_3min
+          - MTAC_Yeast_Alternating_5min
+          - MTAC_Yeast_Standard_3min
+          - MTAC_Yeast_Standard_5min
+          - Olsen_Astral_3P
+          - Olsen_Exploris_3P
+          - SCIEX_3P
+          - SCP_Astral_10ng_3ms
+          - SCP_Astral_10ng_6ms
+          - SCP_Astral_10ng_12ms
+          - SCP_Astral_10ng_24ms
+          - SCP_Astral_250pg_3ms
+          - SCP_Astral_250pg_6ms
+          - SCP_Astral_250pg_12ms
+          - SCP_Astral_250pg_24ms
+          - SCP_Astral_500pg_3ms
+          - SCP_Astral_500pg_6ms
+          - SCP_Astral_500pg_12ms
+          - SCP_Astral_500pg_24ms
+          - SCP_Astral_1000pg_3ms
+          - SCP_Astral_1000pg_6ms
+          - SCP_Astral_1000pg_12ms
+          - SCP_Astral_1000pg_24ms
+          - SCP_Astral_MBR
+          - Seer_Astral_45
+          - Seer_Astral_single
+          - YEAST_KO_Astral
+        default: all
 
 permissions:
   contents: write
@@ -26,7 +57,7 @@ jobs:
     strategy:
       matrix:
         version: ['1.11']
-        regression_set: ${{ github.event_name == 'release' && fromJSON('["all"]') || (github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.regression_set)) || fromJSON('["fastest","fast","all"]')) }}
+        regression_set: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.regression_set)) || fromJSON('["all"]') }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -62,6 +93,7 @@ jobs:
           pioneer_repo="https://github.com/${GITHUB_REPOSITORY}"
           entrapment_repo="${CLUSTER_ENTRAPMENT_REPO:-nwamsley1/PioneerEntrapment.jl}"
           entrapment_repo_url="$entrapment_repo"
+          entrapment_ref="codex/add-max_points-and-bin_size-to-plotting-functions-srqvs5"
 
           if [[ "$entrapment_repo" != http* ]]; then
             entrapment_repo_url="https://github.com/${entrapment_repo}"
@@ -81,20 +113,23 @@ jobs:
             -q
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
+          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' ENTRAPMENT_REF='${entrapment_ref}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -eu
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
 
+            regression_branch="codex/update-run_efdr_analysis-parameters-o07uog"
             if [ -d regression-configs/.git ]; then
               git -C regression-configs fetch --all
-              git -C regression-configs remote set-head origin -a
-              regression_branch="$(git -C regression-configs symbolic-ref --short refs/remotes/origin/HEAD | sed 's@^origin/@@')"
-              git -C regression-configs checkout "$regression_branch"
-              git -C regression-configs reset --hard "origin/${regression_branch}"
             else
               git clone https://github.com/GoldfarbLab/pioneer-regression-configs regression-configs
             fi
+            if [ ! -d regression-configs/.git ]; then
+              echo "Missing regression-configs repo after clone" >&2
+              exit 1
+            fi
+            git -C regression-configs checkout --force "$regression_branch"
+            git -C regression-configs reset --hard "origin/${regression_branch}"
 
             if [ -d "$PIONEER_DIR/.git" ]; then
               git -C "$PIONEER_DIR" fetch --all --tags
@@ -112,6 +147,14 @@ jobs:
               git -C "$ENTRAPMENT_DIR" fetch --all --tags
             else
               git clone "$ENTRAPMENT_REPO_URL" "$ENTRAPMENT_DIR"
+            fi
+            if [ -n "${ENTRAPMENT_REF:-}" ]; then
+              if git -C "$ENTRAPMENT_DIR" cat-file -e "${ENTRAPMENT_REF}^{commit}" 2>/dev/null; then
+                git -C "$ENTRAPMENT_DIR" checkout --force "$ENTRAPMENT_REF"
+              else
+                git -C "$ENTRAPMENT_DIR" fetch --depth=1 origin "$ENTRAPMENT_REF"
+                git -C "$ENTRAPMENT_DIR" checkout --force FETCH_HEAD
+              fi
             fi
 
             mkdir -p "$DEPOT_DIR"
@@ -181,22 +224,22 @@ jobs:
             fi
 
             dataset_filter=""
-            # dataset_tags.json schema: { "dataset-name": ["tag1", "tag2", ...], ... }
+            # dataset_tags.json schema: { "datasets": { "dataset-name": { "order": 1, "tags": ["tag1"] } } }
+            tags_path="${REGRESSION_CONFIGS_DIR}/params/dataset_tags.json"
+            if [ ! -f "$tags_path" ]; then
+              echo "Missing dataset tags file at $tags_path" >&2
+              exit 1
+            fi
+            python_cmd="python3"
+            if ! command -v python3 >/dev/null 2>&1; then
+              python_cmd="python"
+            fi
+            if ! command -v "$python_cmd" >/dev/null 2>&1; then
+              echo "Python not available on cluster; cannot parse dataset tags." >&2
+              exit 1
+            fi
             if [ "${REGRESSION_SET:-all}" != "all" ]; then
               dataset_tag="${REGRESSION_SET}"
-              tags_path="${REGRESSION_CONFIGS_DIR}/params/dataset_tags.json"
-              if [ ! -f "$tags_path" ]; then
-                echo "Missing dataset tags file at $tags_path" >&2
-                exit 1
-              fi
-              python_cmd="python3"
-              if ! command -v python3 >/dev/null 2>&1; then
-                python_cmd="python"
-              fi
-              if ! command -v "$python_cmd" >/dev/null 2>&1; then
-                echo "Python not available on cluster; cannot parse dataset tags." >&2
-                exit 1
-              fi
               dataset_filter=$(
                 "$python_cmd" -c 'import json,sys; data=json.load(open(sys.argv[1])); datasets=data.get("datasets", {}); tag=sys.argv[2]; print(",".join([n for n,v in datasets.items() if isinstance(v, dict) and tag in (v.get("tags") or [])]))' "$tags_path" "$dataset_tag"
               )
@@ -208,7 +251,9 @@ jobs:
             echo "Regression set: ${REGRESSION_SET:-all}"
             echo "Dataset filter: ${dataset_filter:-<all>}"
 
-            param_list=$(find "$PARAMS_DIR" -type f -name 'search*.json' -print)
+            param_list=$(
+              "$python_cmd" -c 'import glob,json,os,sys; params_dir=sys.argv[1]; tags_path=sys.argv[2]; allowed=sys.argv[3].split(",") if sys.argv[3] else None; data=json.load(open(tags_path)); datasets=data.get("datasets", {}); order_for=lambda name: datasets.get(name, {}).get("order", 10**9); items=[]; [items.extend((order_for(ds), ds, p) for p in sorted(glob.glob(os.path.join(params_dir, ds, "search*.json")))) for ds in os.listdir(params_dir) if os.path.isdir(os.path.join(params_dir, ds)) and (not allowed or ds in allowed)]; items.sort(key=lambda x: (x[0], x[1], x[2])); print("\n".join([p for _,_,p in items]))' "$PARAMS_DIR" "$tags_path" "${dataset_filter:-}"
+            )
 
             if [ -z "$param_list" ]; then
               echo "No parameter JSON files found in $PARAMS_DIR" >&2
