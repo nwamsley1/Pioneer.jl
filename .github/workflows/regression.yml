@@ -203,7 +203,7 @@ jobs:
             -q
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+          timeout 9000 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
             "RUN_DIR='${remote_run_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' REGRESSION_SET='${regression_set}' PIONEER_DELETE_RESULTS='${PIONEER_DELETE_RESULTS}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -eu
             PIONEER_DELETE_RESULTS="${PIONEER_DELETE_RESULTS:-true}"
@@ -847,7 +847,7 @@ jobs:
               fi
             else
               rm -rf "$repo_dir"
-              if git clone --branch "$HISTORY_BRANCH" "$repo_url" "$repo_dir"; then
+              if git clone --branch "$HISTORY_BRANCH" --depth 1 --filter=blob:none "$repo_url" "$repo_dir"; then
                 :
               else
                 git init "$repo_dir"
