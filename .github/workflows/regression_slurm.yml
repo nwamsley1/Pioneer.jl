@@ -736,7 +736,7 @@ jobs:
             -q
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+          timeout 9000 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
             "RUN_DIR='${remote_run_dir}' DEVELOP_DIR='${develop_dir}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -euo pipefail
             lock_dir="${DEVELOP_DIR}.lock"
@@ -794,7 +794,7 @@ jobs:
             -q
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+          timeout 9000 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
             "RUN_DIR='${remote_run_dir}' RELEASE_DIR='${release_dir}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -euo pipefail
 
@@ -837,7 +837,7 @@ jobs:
             -o ConnectTimeout=30
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+          timeout 9000 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
             "RUN_DIR='${remote_run_dir}' REPORT_PATH='${report_path}' REPORT_SUBDIR='${report_subdir}' HISTORY_BRANCH='${history_branch}' GITHUB_REPOSITORY='${GITHUB_REPOSITORY}' GITHUB_TOKEN='${GITHUB_TOKEN}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -euo pipefail
 
