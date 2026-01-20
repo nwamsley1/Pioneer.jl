@@ -95,11 +95,11 @@ jobs:
           echo "$CLUSTER_RUN_ROOT"
 
           remote_run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
-          remote_run_root="${remote_run_root_raw%/}"
+          remote_run_root="${remote_run_root_raw%/}/runs"
           run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}"
           remote_run_dir="${remote_run_root}/${run_suffix}"
           mount_run_root_raw="/mnt/ris/Active/Automation/Pioneer"
-          mount_run_root="${mount_run_root_raw%/}"
+          mount_run_root="${mount_run_root_raw%/}/runs"
           mount_run_dir="${mount_run_root}/${run_suffix}"
           pioneer_dir="${remote_run_dir}/pioneer"
           entrapment_dir="${remote_run_dir}/PioneerEntrapment.jl"
@@ -190,8 +190,9 @@ jobs:
           set -euo pipefail
 
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
+          remote_run_root="${remote_run_root%/}/runs"
           remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}}"
-          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}}"
+          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/runs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}}"
           params_dir="${remote_run_dir}/regression-configs/params"
           regression_configs_dir="${remote_run_dir}/regression-configs"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/slurm/search_dia.sbatch}"
@@ -723,7 +724,7 @@ jobs:
 
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
           run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
-          run_root="${run_root_raw%/}"
+          run_root="${run_root_raw%/}/runs"
           develop_dir="${run_root}/metrics/develop"
 
           ssh_options=(
@@ -780,7 +781,7 @@ jobs:
 
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
           run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
-          run_root="${run_root_raw%/}"
+          run_root="${run_root_raw%/}/runs"
           release_tag="${RELEASE_TAG:?RELEASE_TAG not set}"
           release_dir="${run_root}/release/${release_tag}"
 
