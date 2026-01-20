@@ -58,7 +58,7 @@ permissions:
 jobs:
   regression:
     name: Julia ${{ matrix.version }} regression sweep (${{ matrix.regression_set }})
-    environment: regression-tests-${{ matrix.regression_set }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'regression-tests-manual' || format('regression-tests-{0}', matrix.regression_set) }}
     runs-on: [self-hosted, Linux, pioneer-regression]
     timeout-minutes: 7200
     strategy:
