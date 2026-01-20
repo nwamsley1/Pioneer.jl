@@ -107,7 +107,7 @@ jobs:
           pioneer_repo="https://github.com/${GITHUB_REPOSITORY}"
           entrapment_repo="${CLUSTER_ENTRAPMENT_REPO:-nwamsley1/PioneerEntrapment.jl}"
           entrapment_repo_url="$entrapment_repo"
-          entrapment_ref="codex/add-max_points-and-bin_size-to-plotting-functions-srqvs5"
+          entrapment_ref="main"
 
           if [[ "$entrapment_repo" != http* ]]; then
             entrapment_repo_url="https://github.com/${entrapment_repo}"
@@ -132,7 +132,7 @@ jobs:
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
 
-            regression_branch="codex/update-run_efdr_analysis-parameters-o07uog"
+            regression_branch="main"
             if [ -d regression-configs/.git ]; then
               git -C regression-configs fetch --all
             else
