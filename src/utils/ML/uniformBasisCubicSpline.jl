@@ -97,7 +97,23 @@ function build_temp_spline_from_coeffs(
     XPoly = buildPieceWise(knots, bin_width, spline_basis)
     piecewise_polynomials = XPoly * c
     n_total_coeffs = n_knots * (degree + 1)
-    coeffs = SVector{n_total_coeffs}(vcat([poly.coeffs for poly in piecewise_polynomials]...))
+
+    # Extract coefficients, padding to ensure exactly (degree+1) per polynomial
+    # The Polynomial type drops trailing zeros, so we must pad them back
+    expected_length = degree + 1
+    coeff_vecs = [
+        let c = poly.coeffs
+            if length(c) < expected_length
+                # Pad with zeros for missing trailing coefficients
+                vcat(c, zeros(T, expected_length - length(c)))
+            else
+                # Take exactly the expected number (shouldn't exceed, but be defensive)
+                c[1:expected_length]
+            end
+        end
+        for poly in piecewise_polynomials
+    ]
+    coeffs = SVector{n_total_coeffs}(vcat(coeff_vecs...))
 
     return UniformSpline{n_total_coeffs, T}(
         coeffs,
@@ -229,8 +245,23 @@ function UniformSpline(
     XPoly = buildPieceWise(knots, bin_width, spline_basis)
     piecewise_polynomials = XPoly*c
     n_coeffs = n_knots*(degree + 1)
-    coeffs = SVector{n_coeffs}(vcat([polynomial.coeffs for polynomial in piecewise_polynomials]...))
 
+    # Extract coefficients, padding to ensure exactly (degree+1) per polynomial
+    # The Polynomial type drops trailing zeros, so we must pad them back
+    expected_length = degree + 1
+    coeff_vecs = [
+        let c = polynomial.coeffs
+            if length(c) < expected_length
+                # Pad with zeros for missing trailing coefficients
+                vcat(c, zeros(T, expected_length - length(c)))
+            else
+                # Take exactly the expected number (shouldn't exceed, but be defensive)
+                c[1:expected_length]
+            end
+        end
+        for polynomial in piecewise_polynomials
+    ]
+    coeffs = SVector{n_coeffs}(vcat(coeff_vecs...))
 
     UniformSpline{n_coeffs, T}(
         coeffs,
@@ -666,7 +697,23 @@ function UniformSplinePenalized(
     XPoly = buildPieceWise(knots, bin_width, spline_basis)
     piecewise_polynomials = XPoly * c
     n_total_coeffs = n_knots * (degree + 1)
-    coeffs = SVector{n_total_coeffs}(vcat([poly.coeffs for poly in piecewise_polynomials]...))
+
+    # Extract coefficients, padding to ensure exactly (degree+1) per polynomial
+    # The Polynomial type drops trailing zeros, so we must pad them back
+    expected_length = degree + 1
+    coeff_vecs = [
+        let c = poly.coeffs
+            if length(c) < expected_length
+                # Pad with zeros for missing trailing coefficients
+                vcat(c, zeros(T, expected_length - length(c)))
+            else
+                # Take exactly the expected number (shouldn't exceed, but be defensive)
+                c[1:expected_length]
+            end
+        end
+        for poly in piecewise_polynomials
+    ]
+    coeffs = SVector{n_total_coeffs}(vcat(coeff_vecs...))
 
     return UniformSpline{n_total_coeffs, T}(
         coeffs,
