@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Regression Metrics eFDR Plots</title>
+  <style>
+body { font-family: Arial, sans-serif; margin: 24px; }
+h1 { margin-bottom: 8px; }
+.search-block { margin-bottom: 32px; }
+.dataset-block { margin-bottom: 20px; }
+.plot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.plot-card { border: 1px solid #ddd; padding: 8px; border-radius: 6px; }
+.plot-card img { width: 100%; height: auto; display: block; }
+.plot-caption { font-size: 12px; margin-top: 6px; color: #555; word-break: break-all; }
+.metrics-report { margin-bottom: 32px; }
+.metric-block { margin-bottom: 24px; }
+.metrics-table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
+.metrics-table th, .metrics-table td { border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; }
+.metrics-table th { background: #f4f4f4; text-align: left; }
+.metrics-table th.numeric, .metrics-table td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.metrics-table tbody tr:nth-child(even) { background: #fafafa; }
+.metrics-table tbody tr:hover td { background: #eef6ff; }
+.metrics-table td.metric-good { background: #e7f3f5; }
+.metrics-table td.metric-bad { background: #f6e9ea; }
+.metrics-table thead th { position: sticky; top: 0; z-index: 1; }
+.metrics-table th.sortable { cursor: pointer; }
+.table-controls { margin: 6px 0 10px; display: flex; gap: 8px; align-items: center; }
+.table-controls label { font-size: 12px; color: #444; }
+.table-filter { padding: 4px 6px; font-size: 12px; min-width: 220px; }
+.table-chart { height: 520px; margin: 6px 0 12px; }
+.warning-banner { background: #fff4e5; border: 1px solid #f1b165; padding: 8px 12px; border-radius: 6px; color: #7a4b00; margin-bottom: 12px; }
+
+  </style>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+  <div class="metrics-report">
+<div class="metric-block">
+<h2>Regression Metrics Report</h2>
+<p><strong>Versions:</strong> v0.6.4, develop, current</p>
+</div>
+<div class="metric-block">
+<h3>Metric: identification.precursors.total</h3>
+<div class="table-chart" data-table-id="identification_precursors_total-1" data-chart-mode="percent_delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="identification_precursors_total-1"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="identification" id="identification_precursors_total-1">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+<th class="numeric">% current vs v0.6.4</th>
+<th class="numeric">% current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">139536</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: identification.precursors.unique</h3>
+<div class="table-chart" data-table-id="identification_precursors_unique-2" data-chart-mode="percent_delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="identification_precursors_unique-2"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="identification" id="identification_precursors_unique-2">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+<th class="numeric">% current vs v0.6.4</th>
+<th class="numeric">% current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">49889</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: identification.protein_groups.total</h3>
+<div class="table-chart" data-table-id="identification_protein_groups_total-3" data-chart-mode="percent_delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="identification_protein_groups_total-3"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="identification" id="identification_protein_groups_total-3">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+<th class="numeric">% current vs v0.6.4</th>
+<th class="numeric">% current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">12067</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: identification.protein_groups.unique</h3>
+<div class="table-chart" data-table-id="identification_protein_groups_unique-4" data-chart-mode="percent_delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="identification_protein_groups_unique-4"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="identification" id="identification_protein_groups_unique-4">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+<th class="numeric">% current vs v0.6.4</th>
+<th class="numeric">% current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">4140</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: entrapment.summaries.global_precursors.difference</h3>
+<div class="table-chart" data-table-id="entrapment_summaries_global_precursors_difference-5" data-chart-mode="raw"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="entrapment_summaries_global_precursors_difference-5"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="entrapment" id="entrapment_summaries_global_precursors_difference-5">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_3min_Entrapment</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">-0.0013</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: entrapment.summaries.global_proteins.difference</h3>
+<div class="table-chart" data-table-id="entrapment_summaries_global_proteins_difference-6" data-chart-mode="raw"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="entrapment_summaries_global_proteins_difference-6"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="entrapment" id="entrapment_summaries_global_proteins_difference-6">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_3min_Entrapment</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">-0.0050</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: entrapment.summaries.precursors.difference</h3>
+<div class="table-chart" data-table-id="entrapment_summaries_precursors_difference-7" data-chart-mode="raw"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="entrapment_summaries_precursors_difference-7"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="entrapment" id="entrapment_summaries_precursors_difference-7">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_3min_Entrapment</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">-0.0007</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: entrapment.summaries.proteins.difference</h3>
+<div class="table-chart" data-table-id="entrapment_summaries_proteins_difference-8" data-chart-mode="raw"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="entrapment_summaries_proteins_difference-8"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="entrapment" id="entrapment_summaries_proteins_difference-8">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min_Entrapment" data-search="search_entrap">
+<td>MTAC_Yeast_Standard_3min_Entrapment</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">-0.0032</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: cv.precursors.median_cv</h3>
+<div class="table-chart" data-table-id="cv_precursors_median_cv-9" data-chart-mode="delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="cv_precursors_median_cv-9"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="cv" id="cv_precursors_median_cv-9">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">0.1641</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: cv.protein_groups.median_cv</h3>
+<div class="table-chart" data-table-id="cv_protein_groups_median_cv-10" data-chart-mode="delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="cv_protein_groups_median_cv-10"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="cv" id="cv_protein_groups_median_cv-10">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">0.0764</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+<div class="metric-block">
+<h3>Metric: runtime</h3>
+<div class="table-chart" data-table-id="runtime-11" data-chart-mode="percent_delta"></div>
+<div class="table-controls"><label>Filter: <input class="table-filter" type="search" placeholder="Filter rows" data-table-id="runtime-11"></label></div>
+<table class="metrics-table" data-initial-sort="5" data-versions="v0.6.4|develop|current" data-metric-group="runtime" id="runtime-11">
+<thead><tr>
+<th>Dataset</th>
+<th class="numeric">v0.6.4</th>
+<th class="numeric">develop</th>
+<th class="numeric">current</th>
+<th class="numeric">Δ current vs v0.6.4</th>
+<th class="numeric">Δ current vs develop</th>
+<th class="numeric">% current vs v0.6.4</th>
+<th class="numeric">% current vs develop</th>
+</tr></thead>
+<tbody>
+<tr data-dataset="MTAC_Yeast_Standard_3min" data-search="search">
+<td>MTAC_Yeast_Standard_3min</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric">4.4800</td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+<td class="numeric"></td>
+</tr>
+</tbody></table>
+</div>
+
+  </div>
+<div class="search-block">
+<div class="dataset-block">
+<h3>MTAC_Yeast_Standard_3min_Entrapment</h3>
+<div class="plot-grid">
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_3min_Entrapment/efdr_comparison_MBR_boosted_global_prob.png" alt="efdr_comparison_MBR_boosted_global_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_global_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_3min_Entrapment/efdr_comparison_MBR_boosted_prec_prob.png" alt="efdr_comparison_MBR_boosted_prec_prob.png">
+<div class="plot-caption">efdr_comparison_MBR_boosted_prec_prob.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_3min_Entrapment/efdr_comparison_global_pg_score.png" alt="efdr_comparison_global_pg_score.png">
+<div class="plot-caption">efdr_comparison_global_pg_score.png</div>
+</div>
+<div class="plot-card">
+<img src="fdr_plots/results/MTAC_Yeast_Standard_3min_Entrapment/efdr_comparison_pg_score.png" alt="efdr_comparison_pg_score.png">
+<div class="plot-caption">efdr_comparison_pg_score.png</div>
+</div>
+</div>
+</div>
+</div>
+
+  <script>
+function parseCellValue(text) {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === "NA") return NaN;
+  const cleaned = trimmed.replace(/[%+,]/g, "");
+  const value = parseFloat(cleaned);
+  return Number.isNaN(value) ? NaN : value;
+}
+function sortTable(table, columnIndex, direction) {
+  const tbody = table.tBodies[0];
+  if (!tbody) return;
+  const rows = Array.from(tbody.rows);
+  rows.sort((rowA, rowB) => {
+    const cellA = rowA.cells[columnIndex];
+    const cellB = rowB.cells[columnIndex];
+    const textA = cellA ? cellA.textContent : "";
+    const textB = cellB ? cellB.textContent : "";
+    const numA = parseCellValue(textA);
+    const numB = parseCellValue(textB);
+    let result = 0;
+    if (!Number.isNaN(numA) && !Number.isNaN(numB)) {
+      result = numA - numB;
+    } else if (!Number.isNaN(numA)) {
+      result = 1;
+    } else if (!Number.isNaN(numB)) {
+      result = -1;
+    } else {
+      result = textA.localeCompare(textB);
+    }
+    return direction === "asc" ? result : -result;
+  });
+  rows.forEach(row => tbody.appendChild(row));
+  table.dataset.sortIndex = columnIndex;
+  table.dataset.sortDirection = direction;
+}
+function setupSortableTables() {
+  const tables = document.querySelectorAll("table.metrics-table");
+  tables.forEach(table => {
+    const headers = table.querySelectorAll("thead th");
+    headers.forEach((header, index) => {
+      header.classList.add("sortable");
+      header.addEventListener("click", () => {
+        const currentIndex = parseInt(table.dataset.sortIndex || "-1", 10);
+        const currentDirection = table.dataset.sortDirection || "desc";
+        const nextDirection = currentIndex === index && currentDirection === "desc" ? "asc" : "desc";
+        sortTable(table, index, nextDirection);
+      });
+    });
+    const initial = table.dataset.initialSort;
+    if (initial !== undefined && initial !== "") {
+      sortTable(table, parseInt(initial, 10), "desc");
+    }
+  });
+}
+function setupTableFilters() {
+  const inputs = document.querySelectorAll(".table-filter");
+  inputs.forEach(input => {
+    const tableId = input.dataset.tableId;
+    if (!tableId) return;
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    input.addEventListener("input", () => {
+      const query = input.value.trim().toLowerCase();
+      const rows = Array.from(table.tBodies[0].rows);
+      rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        const dataset = (row.dataset.dataset || "").toLowerCase();
+        const search = (row.dataset.search || "").toLowerCase();
+        const haystack = `${text} ${dataset} ${search}`;
+        row.style.display = !query || haystack.includes(query) ? "" : "none";
+      });
+    });
+  });
+}
+function collectSeries(table, mode) {
+  const headers = Array.from(table.querySelectorAll("thead th")).map(th => th.textContent.trim());
+  const versions = (table.dataset.versions || "").split("|").filter(Boolean);
+  const rows = Array.from(table.tBodies[0].rows);
+  if (!rows.length) return [];
+  const datasetValues = rows.map(row => row.dataset.dataset || (row.cells[0] ? row.cells[0].textContent.trim() : ""));
+  const searchValues = rows.map(row => row.dataset.search || "");
+  const group = (table.dataset.metricGroup || "").toLowerCase();
+  const speciesIndex = headers.indexOf("Species");
+  const conditionIndex = headers.indexOf("Condition");
+  const speciesValues = speciesIndex >= 0 ? rows.map(row => {
+    const cell = row.cells[speciesIndex];
+    return cell ? cell.textContent.trim() : "";
+  }) : [];
+  const conditionValues = conditionIndex >= 0 ? rows.map(row => {
+    const cell = row.cells[conditionIndex];
+    return cell ? cell.textContent.trim() : "";
+  }) : [];
+  const usesCompositeXAxis = (group === "fold_change" || group === "fold_change_variance") && speciesIndex >= 0 && conditionIndex >= 0;
+  const xValues = usesCompositeXAxis ? rows.map((row, idx) => {
+    const dataset = datasetValues[idx];
+    const species = speciesValues[idx];
+    const condition = conditionValues[idx];
+    const parts = [];
+    if (dataset) parts.push(dataset);
+    if (species) parts.push(species);
+    if (condition) parts.push(condition);
+    return parts.join(" / ") || dataset || "";
+  }) : datasetValues;
+  const shouldSplitBySpecies = false;
+  const columnIndexes = [];
+  const labels = [];
+  if (mode === "raw") {
+    versions.forEach(version => {
+      const idx = headers.indexOf(version);
+      if (idx >= 0) {
+        columnIndexes.push(idx);
+        labels.push(version);
+      }
+    });
+  } else if (mode === "delta") {
+    headers.forEach((header, idx) => {
+      if (header.startsWith("Δ ")) {
+        columnIndexes.push(idx);
+        labels.push(header);
+      }
+    });
+  } else if (mode === "percent_delta") {
+    headers.forEach((header, idx) => {
+      if (header.startsWith("% ")) {
+        columnIndexes.push(idx);
+        labels.push(header);
+      }
+    });
+  }
+  if (!columnIndexes.length) return [];
+  if (!shouldSplitBySpecies) {
+    return labels.map((label, seriesIdx) => {
+      const columnIndex = columnIndexes[seriesIdx];
+      const yValues = rows.map(row => {
+        const cell = row.cells[columnIndex];
+        const value = cell ? parseCellValue(cell.textContent) : NaN;
+        return Number.isNaN(value) ? null : value;
+      });
+      const hoverText = rows.map((row, idx) => {
+        const dataset = xValues[idx];
+        const search = searchValues[idx];
+        return search ? `${dataset}<br>${search}` : dataset;
+      });
+      return {
+        name: label,
+        x: xValues,
+        y: yValues,
+        text: hoverText,
+        hovertemplate: "%{text}<br>%{y}<extra>%{name}</extra>",
+        mode: "lines+markers"
+      };
+    });
+  }
+  const seenSpecies = new Set();
+  const speciesList = [];
+  speciesValues.forEach(value => {
+    if (seenSpecies.has(value)) return;
+    seenSpecies.add(value);
+    speciesList.push(value);
+  });
+  const series = [];
+  labels.forEach((label, seriesIdx) => {
+    const columnIndex = columnIndexes[seriesIdx];
+    speciesList.forEach(species => {
+      const x = [];
+      const y = [];
+      const hoverText = [];
+      rows.forEach((row, idx) => {
+        if (speciesValues[idx] !== species) return;
+        x.push(xValues[idx]);
+        const cell = row.cells[columnIndex];
+        const value = cell ? parseCellValue(cell.textContent) : NaN;
+        y.push(Number.isNaN(value) ? null : value);
+        const dataset = xValues[idx];
+        const search = searchValues[idx];
+        hoverText.push(search ? `${dataset}<br>${search}` : dataset);
+      });
+      const hasValue = y.some(value => value !== null && value !== undefined);
+      if (!hasValue) return;
+      const speciesLabel = species || "Unknown";
+      series.push({
+        name: `${label} · ${speciesLabel}`,
+        x,
+        y,
+        text: hoverText,
+        hovertemplate: "%{text}<br>%{y}<extra>%{name}</extra>",
+        mode: "lines+markers"
+      });
+    });
+  });
+  return series;
+}
+function choosePrimarySeries(series) {
+  if (!series.length) return null;
+  const byName = needle => series.find(trace => (trace.name || "").toLowerCase().includes(needle));
+  const currentVsDevelop = byName("current vs develop");
+  if (currentVsDevelop) return currentVsDevelop;
+  const currentExact = series.find(trace => (trace.name || "").trim().toLowerCase() === "current");
+  if (currentExact) return currentExact;
+  return series[0];
+}
+function sortSeriesByY(series) {
+  const primary = choosePrimarySeries(series);
+  if (!primary) return series;
+  const indices = primary.y.map((value, idx) => ({
+    idx,
+    value: value === null || value === undefined || Number.isNaN(value) ? -Infinity : value
+  }));
+  indices.sort((a, b) => b.value - a.value);
+  const order = indices.map(entry => entry.idx);
+  return series.map(trace => {
+    return {
+      ...trace,
+      x: order.map(idx => trace.x[idx]),
+      y: order.map(idx => trace.y[idx]),
+      text: trace.text ? order.map(idx => trace.text[idx]) : trace.text
+    };
+  });
+}
+function setupTableCharts() {
+  if (typeof Plotly === "undefined") return;
+  const chartContainers = document.querySelectorAll(".table-chart");
+  chartContainers.forEach(container => {
+    const tableId = container.dataset.tableId;
+    const mode = container.dataset.chartMode || "";
+    if (!tableId || !mode) return;
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const series = sortSeriesByY(collectSeries(table, mode));
+    if (!series.length) {
+      container.style.display = "none";
+      return;
+    }
+    const showZeroLine = mode !== "raw";
+    const group = (table.dataset.metricGroup || "").toLowerCase();
+    const xAxisTitle = (group === "fold_change" || group === "fold_change_variance") ? "Dataset / Species / Condition" : "Dataset";
+    const layout = {
+      margin: { l: 50, r: 20, t: 10, b: 40 },
+      height: 520,
+      xaxis: { title: xAxisTitle, automargin: true },
+      yaxis: { title: mode === "raw" ? "Value" : (mode === "percent_delta" ? "Δ %" : "Δ"), automargin: true },
+      legend: { orientation: "h", x: 1, y: 1, xanchor: "right", yanchor: "top" },
+      shapes: showZeroLine ? [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: "#666", width: 1, dash: "dash" } }] : []
+    };
+    Plotly.newPlot(container, series, layout, { displaylogo: false, responsive: true });
+  });
+}
+function applyValueCues() {
+  const tables = document.querySelectorAll("table.metrics-table");
+  tables.forEach(table => {
+    const group = (table.dataset.metricGroup || "").toLowerCase();
+    const headers = Array.from(table.querySelectorAll("thead th")).map(th => th.textContent.trim());
+    const rows = Array.from(table.tBodies[0]?.rows || []);
+    rows.forEach(row => {
+      Array.from(row.cells).forEach((cell, idx) => {
+        if (!cell.classList.contains("numeric")) return;
+        const header = headers[idx] || "";
+        const value = parseCellValue(cell.textContent);
+        if (Number.isNaN(value)) return;
+        const isDelta = header.startsWith("Δ ");
+        const isPercent = header.startsWith("% ");
+        const isRaw = !isDelta && !isPercent;
+        let classification = null;
+        if (group === "identification" && (isDelta || isPercent)) {
+          if (value > 0) classification = "good";
+          else if (value < 0) classification = "bad";
+        } else if (group === "runtime" && (isDelta || isPercent)) {
+          if (value < 0) classification = "good";
+          else if (value > 0) classification = "bad";
+        } else if (group === "cv" && isDelta) {
+          if (value < 0) classification = "good";
+          else if (value > 0) classification = "bad";
+        } else if (group === "fold_change_variance" && isDelta) {
+          if (value < 0) classification = "good";
+          else if (value > 0) classification = "bad";
+        } else if (group === "entrapment" && isRaw) {
+          if (value < 0) classification = "good";
+          else if (value > 0) classification = "bad";
+        } else if (group === "ftr" && isRaw) {
+          if (value < 0.01) classification = "good";
+          else if (value > 0.01) classification = "bad";
+        }
+        if (!classification) return;
+        cell.classList.remove("metric-good", "metric-bad");
+        cell.classList.add(classification === "good" ? "metric-good" : "metric-bad");
+      });
+    });
+  });
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    setupSortableTables();
+    setupTableFilters();
+    setupTableCharts();
+    applyValueCues();
+  });
+} else {
+  setupSortableTables();
+  setupTableFilters();
+  setupTableCharts();
+  applyValueCues();
+}
+
+  </script>
+</body>
+</html>
