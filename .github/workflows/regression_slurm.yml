@@ -725,7 +725,7 @@ jobs:
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
           run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
           run_root="${run_root_raw%/}/runs"
-          develop_dir="${run_root}/metrics/develop"
+          develop_dir="${run_root_raw%/}/metrics/develop"
 
           ssh_options=(
             -o BatchMode=yes
@@ -769,7 +769,7 @@ jobs:
           run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
           run_root="${run_root_raw%/}/runs"
           release_tag="${RELEASE_TAG:?RELEASE_TAG not set}"
-          release_dir="${run_root}/release/${release_tag}"
+          release_dir="${run_root_raw%/}/release/${release_tag}"
 
           ssh_options=(
             -o BatchMode=yes
