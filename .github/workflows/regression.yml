@@ -43,6 +43,13 @@ on:
           - Seer_Astral_single
           - YEAST_KO_Astral
         default: all
+      delete_results:
+        description: Delete search results after metrics (set false to archive all results)
+        type: choice
+        options:
+          - "true"
+          - "false"
+        default: "true"
 
 permissions:
   contents: write
@@ -51,7 +58,7 @@ permissions:
 jobs:
   regression:
     name: Julia ${{ matrix.version }} regression sweep (${{ matrix.regression_set }})
-    environment: regression-tests-${{ matrix.regression_set }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'regression-tests-manual' || format('regression-tests-{0}', matrix.regression_set) }}
     runs-on: [self-hosted, Linux, pioneer-regression]
     timeout-minutes: 7200
     strategy:
@@ -81,11 +88,11 @@ jobs:
           echo "$CLUSTER_RUN_ROOT"
 
           remote_run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
-          remote_run_root="${remote_run_root_raw%/}"
+          remote_run_root="${remote_run_root_raw%/}/runs"
           run_suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}"
           remote_run_dir="${remote_run_root}/${run_suffix}"
           mount_run_root_raw="/mnt/ris/Active/Automation/Pioneer"
-          mount_run_root="${mount_run_root_raw%/}"
+          mount_run_root="${mount_run_root_raw%/}/runs"
           mount_run_dir="${mount_run_root}/${run_suffix}"
           pioneer_dir="${remote_run_dir}/pioneer"
           entrapment_dir="${remote_run_dir}/PioneerEntrapment.jl"
@@ -93,7 +100,7 @@ jobs:
           pioneer_repo="https://github.com/${GITHUB_REPOSITORY}"
           entrapment_repo="${CLUSTER_ENTRAPMENT_REPO:-nwamsley1/PioneerEntrapment.jl}"
           entrapment_repo_url="$entrapment_repo"
-          entrapment_ref="codex/add-max_points-and-bin_size-to-plotting-functions-srqvs5"
+          entrapment_ref="main"
 
           if [[ "$entrapment_repo" != http* ]]; then
             entrapment_repo_url="https://github.com/${entrapment_repo}"
@@ -118,7 +125,7 @@ jobs:
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
 
-            regression_branch="codex/update-run_efdr_analysis-parameters-o07uog"
+            regression_branch="main"
             if [ -d regression-configs/.git ]; then
               git -C regression-configs fetch --all
             else
@@ -170,13 +177,15 @@ jobs:
           SETUP_JOB_SCRIPT: ${{ vars.SETUP_JOB_SCRIPT }}
           METRICS_JOB_SCRIPT: ${{ vars.METRICS_JOB_SCRIPT }}
           REGRESSION_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.regression_set || matrix.regression_set }}
+          PIONEER_DELETE_RESULTS: ${{ github.event_name == 'workflow_dispatch' && inputs.delete_results || 'true' }}
         shell: bash
         run: |
           set -euo pipefail
 
           remote_run_root="${CLUSTER_RUN_ROOT:-\$HOME/pioneer-regressions}"
+          remote_run_root="${remote_run_root%/}/runs"
           remote_run_dir="${CLUSTER_RUN_DIR:-${remote_run_root}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}}"
-          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}}"
+          mount_run_dir="${CLUSTER_RUN_DIR_MOUNT:-/mnt/ris/Active/Automation/Pioneer/runs/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${REGRESSION_SET}}"
           params_dir="${remote_run_dir}/regression-configs/params"
           regression_configs_dir="${remote_run_dir}/regression-configs"
           job_script_path="${remote_run_dir}/${REGRESSION_JOB_SCRIPT:-regression-configs/job_scripts/search_dia.bsub}"
@@ -195,9 +204,10 @@ jobs:
             -q
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' REGRESSION_SET='${regression_set}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
+          timeout 9000 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+            "RUN_DIR='${remote_run_dir}' PARAMS_DIR='${params_dir}' REGRESSION_CONFIGS_DIR='${regression_configs_dir}' JOB_SCRIPT='${job_script_path}' SETUP_SCRIPT='${setup_script_path}' METRICS_SCRIPT='${metrics_script_path}' ADJUSTED_PARAMS_DIR='${adjusted_params_dir}' RUN_ID_SUFFIX='${run_suffix}' REGRESSION_SET='${regression_set}' PIONEER_DELETE_RESULTS='${PIONEER_DELETE_RESULTS}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -eu
+            PIONEER_DELETE_RESULTS="${PIONEER_DELETE_RESULTS:-true}"
 
             if [ ! -f "$SETUP_SCRIPT" ]; then
               echo "Missing setup job script: $SETUP_SCRIPT" >&2
@@ -301,8 +311,9 @@ jobs:
 
               base_results=${results_path%/}
               adjusted_results="${base_results}/${RUN_ID_SUFFIX}"
-              dataset_name="$(basename "$(dirname "$adjusted_results")")"
+              dataset_name="$dataset_dir_name"
               escaped_results=$(printf '%s\n' "$adjusted_results" | sed 's/[&/]/\\&/g')
+              mkdir -p "$adjusted_results"
               resource_basename="${param_basename/search/resources}"
               resource_file="$(dirname "$param_file")/${resource_basename}"
               cpus=8
@@ -398,6 +409,7 @@ jobs:
               metrics_submit=$(\
                 RUN_DIR="$RUN_DIR" \
                 PIONEER_DATASET_NAME="$dataset_name" \
+                PIONEER_DELETE_RESULTS="$PIONEER_DELETE_RESULTS" \
                 bsub -w "$dep_expr" < "$METRICS_SCRIPT")
 
               metrics_job_id=$(printf '%s\n' "$metrics_submit" | sed -n 's/Job <\([0-9]\+\)>.*$/\1/p' | head -n 1)
@@ -706,7 +718,7 @@ jobs:
 
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
           run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
-          run_root="${run_root_raw%/}"
+          run_root="${run_root_raw%/}/runs"
           develop_dir="${run_root}/metrics/develop"
 
           ssh_options=(
@@ -718,7 +730,7 @@ jobs:
             -q
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+          timeout 9000 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
             "RUN_DIR='${remote_run_dir}' DEVELOP_DIR='${develop_dir}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -euo pipefail
             lock_dir="${DEVELOP_DIR}.lock"
@@ -763,7 +775,7 @@ jobs:
 
           remote_run_dir="${CLUSTER_RUN_DIR:?CLUSTER_RUN_DIR not set}"
           run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
-          run_root="${run_root_raw%/}"
+          run_root="${run_root_raw%/}/runs"
           release_tag="${RELEASE_TAG:?RELEASE_TAG not set}"
           release_dir="${run_root}/release/${release_tag}"
 
@@ -776,7 +788,7 @@ jobs:
             -q
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+          timeout 9000 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
             "RUN_DIR='${remote_run_dir}' RELEASE_DIR='${release_dir}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -euo pipefail
 
@@ -819,7 +831,7 @@ jobs:
             -o ConnectTimeout=30
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+          timeout 9000 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
             "RUN_DIR='${remote_run_dir}' REPORT_PATH='${report_path}' REPORT_SUBDIR='${report_subdir}' HISTORY_BRANCH='${history_branch}' GITHUB_REPOSITORY='${GITHUB_REPOSITORY}' GITHUB_TOKEN='${GITHUB_TOKEN}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -euo pipefail
 
@@ -836,7 +848,7 @@ jobs:
               fi
             else
               rm -rf "$repo_dir"
-              if git clone --branch "$HISTORY_BRANCH" "$repo_url" "$repo_dir"; then
+              if git clone --branch "$HISTORY_BRANCH" --depth 1 --filter=blob:none "$repo_url" "$repo_dir"; then
                 :
               else
                 git init "$repo_dir"
