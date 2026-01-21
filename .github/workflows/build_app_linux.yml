@@ -25,7 +25,7 @@ jobs:
             format('call-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.identifier) ||
             format('{0}-{1}-{2}', github.workflow, github.ref_name, matrix.identifier) }}
       cancel-in-progress: true
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, pioneer-compile]
     env:
       JULIA_NUM_THREADS: auto
     outputs:
@@ -71,7 +71,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
+          julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
 
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
@@ -80,7 +80,7 @@ jobs:
 
       - name: Compile application
         run: |
-          julia --project=. -e '
+          julia --threads auto --project=dev -e '
             using PackageCompiler;
             create_app(
               ".",

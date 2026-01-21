@@ -123,7 +123,7 @@ function assign_random_target_decoy_pairs!(psms::DataFrame)
     psms[!,:pair_id] = zeros(UInt32, nrow(psms))  # Initialize pair_id column
     psms[!,:irt_bin_idx] = getIrtBins(psms.irt_pred)  # Ensure irt_bin_idx column exists
 
-    irt_bin_groups = groupby(psms, :irt_bin_idx)
+    irt_bin_groups = groupby(psms, [:irt_bin_idx, :cv_fold, :isotopes_captured], sort=false)
     for (irt_bin_idx, sub_psms) in pairs(irt_bin_groups)
         last_pair_id = assignPairIds!(sub_psms, last_pair_id)
     end
@@ -910,9 +910,11 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
         end
 
         # Compute MBR features
-        num_runs_passing = length(sub_psms.ms_file_idx[sub_psms.q_value .<= q_cutoff])
+        num_runs_passing = length(unique(sub_psms.ms_file_idx[sub_psms.q_value .<= q_cutoff]))
         for i in 1:nrow(sub_psms)
-            sub_psms.MBR_num_runs[i] = num_runs_passing - (sub_psms.q_value[i] .<= q_cutoff)
+            current_ms_file_idx = sub_psms.ms_file_idx[i]
+            any_passing_in_current_ms_file_idx = any(sub_psms.q_value[sub_psms.ms_file_idx .== current_ms_file_idx] .<= q_cutoff)
+            sub_psms.MBR_num_runs[i] = num_runs_passing - any_passing_in_current_ms_file_idx
 
             idx = Int(sub_psms.ms_file_idx[i]) - offset + 1
             best_idx = run_best_indices[idx]

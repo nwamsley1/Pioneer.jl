@@ -197,24 +197,26 @@ function process_scans_for_huber!(
         :weight => Float32[],
         :huber_δ => Float32[]
     )
-    
+
     # Get working arrays
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
-    
+
+
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     prec_mz_string = ""
     ion_idx = 0
-    
+
     # Get RT index
     rt_index = buildRtIndex(
         DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx))),
         bin_rt_size = 0.1)
-    
+
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
+
     for scan_idx in scan_range
         scan_idx ∉ keys(scan_to_prec) && continue
         
@@ -235,12 +237,13 @@ function process_scans_for_huber!(
             irt_start = irt_start_new
             irt_stop = irt_stop_new
             prec_mz_string = prec_mz_string_new
-            
+
             ion_idx, _ = select_transitions_for_huber!(
-                search_data, search_context, scan_idx, 
+                search_data, search_context, scan_idx,
                 ms_file_idx, spectra, irt_start, irt_stop, rt_index, params
             )
         end
+
         # Match peaks and process if enough matches found
         nmatches, nmisses = match_peaks_for_huber!(
             search_data,
@@ -250,9 +253,9 @@ function process_scans_for_huber!(
             search_context,
             ms_file_idx
         )
-        
+
         nmatches ≤ 2 && continue
-        
+
         # Process delta values for this scan
         process_delta_values!(
             params.delta_grid,
@@ -269,7 +272,7 @@ function process_scans_for_huber!(
             tuning_results
         )
     end
-    
+
     return tuning_results
 end
 
@@ -370,6 +373,7 @@ end
                          search_data::SearchDataStructures, nmatches::Int, nmisses::Int,
                          params::HuberTuningSearchParameters, scan_idx::Int64,
                          scan_to_prec::Dict{UInt32, Vector{UInt32}}, tuning_results::Dict)
+                         -> (Float64, Float64, Dict{Symbol, Int})
 
 Process multiple delta values for a single scan.
 
@@ -379,6 +383,9 @@ Process multiple delta values for a single scan.
    - Initializes weights
    - Solves deconvolution problem
    - Records results for target PSMs
+
+# Returns
+Nothing (mutates tuning_results in place)
 """
 function process_delta_values!(
     delta_grid::Vector{Float32},
@@ -394,7 +401,7 @@ function process_delta_values!(
     scan_to_prec::Dict{UInt32, Vector{UInt32}},
     tuning_results::Dict
 )
-    # Build design matrix
+    # Build design matrix (once per scan)
     buildDesignMatrix!(
         Hs,
         getIonMatches(search_data),
@@ -403,7 +410,7 @@ function process_delta_values!(
         nmisses,
         getIdToCol(search_data)
     )
-    
+
     # Process each delta value
     for δ in delta_grid
         # Resize arrays if needed
@@ -413,13 +420,13 @@ function process_delta_values!(
             resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
             append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
         end
-        
+
         # Initialize weights
         for i in 1:getIdToCol(search_data).size
-            weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
+            weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] =
                 precursor_weights[getIdToCol(search_data).keys[i]]
         end
-        
+
         # Solve deconvolution problem
         initResiduals!(residuals, Hs, weights)
         solveHuber!(
@@ -436,15 +443,15 @@ function process_delta_values!(
             params.max_diff,
             NoNorm()
         )
-        
+
         # Record results
         for i in 1:getIdToCol(search_data).size
             id = getIdToCol(search_data).keys[i]
             colid = getIdToCol(search_data)[id]
-            
+
             # Update precursor weights
             precursor_weights[id] = weights[colid]
-            
+
             # Record if this is a target PSM
             if id ∈ scan_to_prec[scan_idx]
                 push!(tuning_results[:precursor_idx], id)
@@ -454,9 +461,11 @@ function process_delta_values!(
             end
         end
     end
-    
+
     reset!(getIdToCol(search_data))
     reset!(Hs)
+
+    return nothing
 end
 
 #==========================================================

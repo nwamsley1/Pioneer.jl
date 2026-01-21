@@ -118,7 +118,6 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     fwhm_nstd::Float32
     irt_nstd::Float32
     plot_rt_alignment::Bool
-    use_robust_fitting::Bool
     prec_estimation::P
 
     function FirstPassSearchParameters(params::PioneerParameters)
@@ -173,7 +172,6 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Float32(irt_mapping_params.fwhm_nstd),   # Default fwhm_nstd
             Float32(irt_mapping_params.irt_nstd),   # Default irt_nstd
             Bool(hasproperty(irt_mapping_params, :plot_rt_alignment) ? irt_mapping_params.plot_rt_alignment : false),
-            Bool(hasproperty(irt_mapping_params, :use_robust_fitting) ? irt_mapping_params.use_robust_fitting : true),
             prec_estimation
         )
     end
@@ -558,7 +556,8 @@ function summarize_results!(
         )
     end
     # Map retention times
-    map_retention_times!(search_context, results, params)
+    all_psms_paths = getFirstPassPsms(getMSData(search_context))
+    map_retention_times!(search_context, params, all_psms_paths)
     # Process precursors
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
 

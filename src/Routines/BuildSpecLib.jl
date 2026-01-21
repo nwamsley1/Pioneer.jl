@@ -168,7 +168,7 @@ function BuildSpecLib(params_path::String)
                 if occursin("unispec", prediction_model)
                     try
                         mz_to_ev_interp = get_mz_to_ev_interp(
-                            params["calibration_raw_file"],
+                            get(params, "calibration_raw_file", ""),
                             lib_dir
                         )
                         dual_println("Successfully created collision energy interpolator")
