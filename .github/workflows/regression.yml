@@ -753,13 +753,13 @@ jobs:
           EOF
 
       - name: Sync release metrics to shared storage
-        if: github.event_name == 'release' && matrix.regression_set == 'all'
+        if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.ref_type == 'tag')) && matrix.regression_set == 'all'
         env:
           CLUSTER_HOST: ${{ secrets.CLUSTER_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1020,19 +1020,34 @@ jobs:
             });
 
       - name: Update release notes with regression report
-        if: github.event_name == 'release' && env.REPORT_PAGES_SUBDIR != ''
+        if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.ref_type == 'tag')) && env.REPORT_PAGES_SUBDIR != ''
         uses: actions/github-script@v7
         env:
           REPORT_PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
           REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
         with:
           script: |
             const pagesUrl = process.env.REPORT_PAGES_URL;
             const reportSubdir = process.env.REPORT_PAGES_SUBDIR;
-            const release = context.payload.release;
-            if (!pagesUrl || !reportSubdir || !release) {
-              core.info('Missing Pages URL, report subdir, or release payload; skipping release notes update.');
+            if (!pagesUrl || !reportSubdir) {
+              core.info('Missing Pages URL or report subdir; skipping release notes update.');
               return;
+            }
+            const { owner, repo } = context.repo;
+            let release = context.payload.release;
+            if (!release) {
+              const releaseTag = process.env.RELEASE_TAG;
+              if (!releaseTag) {
+                core.info('Missing release payload and tag; skipping release notes update.');
+                return;
+              }
+              const response = await github.rest.repos.getReleaseByTag({
+                owner,
+                repo,
+                tag: releaseTag,
+              });
+              release = response.data;
             }
             const normalizedBase = pagesUrl.endsWith('/') ? pagesUrl.slice(0, -1) : pagesUrl;
             const reportUrl = `${normalizedBase}/${reportSubdir}/`;
