@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - develop
+    tags:
+      - 'v*.*.*'
   release:
     types: [published]
   pull_request:
@@ -72,6 +74,9 @@ jobs:
       matrix:
         version: ['1.11']
         regression_set: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.regression_set)) || fromJSON('["all"]') }}
+    env:
+      GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (github.ref_type == 'tag' && github.ref_name || github.sha) }}
+      GITHUB_REF_NAME: ${{ github.ref_type == 'tag' && github.ref_name || github.ref_name }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -82,7 +87,6 @@ jobs:
           CLUSTER_HOST: ${{ secrets.CLUSTER2_HOST }}
           CLUSTER_USERNAME: ${{ secrets.CLUSTER_USERNAME }}
           CLUSTER_RUN_ROOT: ${{ secrets.CLUSTER_RUN_ROOT }}
-          GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           GITHUB_REPOSITORY: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
           CLUSTER_ENTRAPMENT_REPO: ${{ secrets.CLUSTER_ENTRAPMENT_REPO }}
           REGRESSION_SET: ${{ github.event_name == 'workflow_dispatch' && inputs.regression_set || matrix.regression_set }}
@@ -802,8 +806,8 @@ jobs:
           REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
           REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ env.GITHUB_REF_NAME }}
+          GITHUB_SHA: ${{ env.GITHUB_SHA }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
