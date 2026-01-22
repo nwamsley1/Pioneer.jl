@@ -125,7 +125,7 @@ jobs:
             -q
           )
 
-          timeout 300 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' ENTRAPMENT_REF='${entrapment_ref}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
+          timeout 9000 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" "RUN_ROOT='${remote_run_root}' RUN_DIR='${remote_run_dir}' PIONEER_DIR='${pioneer_dir}' DEPOT_DIR='${depot_dir}' PIONEER_REPO='${pioneer_repo}' TARGET_SHA='${GITHUB_SHA}' ENTRAPMENT_DIR='${entrapment_dir}' ENTRAPMENT_REPO_URL='${entrapment_repo_url}' ENTRAPMENT_REF='${entrapment_ref}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -eu
             mkdir -p "$RUN_DIR"
             cd "$RUN_DIR"
