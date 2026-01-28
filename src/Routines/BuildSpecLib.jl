@@ -313,6 +313,9 @@ function BuildSpecLib(params_path::String)
                 precursors_table[!, :mz] = Float32.(precursors_table[!, :mz])
                 precursors_table[!, :irt] = Float32.(precursors_table[!, :irt])
                 precursors_table[!, :start_idx] = UInt32.(precursors_table[!, :start_idx])
+                if hasproperty(precursors_table, :num_enzymatic_termini)
+                    precursors_table[!, :num_enzymatic_termini] = UInt8.(precursors_table[!, :num_enzymatic_termini])
+                end
 
                 # Save processed precursor table
                 println("   Before add_pair_indices!: $(nrow(precursors_table)) precursors")

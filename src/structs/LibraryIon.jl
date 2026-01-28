@@ -756,6 +756,7 @@ getBasePepId(lp::LibraryPrecursors)::Arrow.Primitive{UInt32, Vector{UInt32}} = l
 getMz(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}}  = lp.data[:mz]
 getLength(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}}  = lp.data[:length]
 getMissedCleavages(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:missed_cleavages]
+getNumEnzymaticTermini(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:num_enzymatic_termini]
 getIrt(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:irt]
 getSulfurCount(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
 getIsotopicMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]
@@ -783,5 +784,4 @@ function extract_pair_idx(pair_idx_column, idx)
 end
 getPairIdx(lp::LibraryPrecursors) = lp.data[:pair_id]
 #getPlex(lp::PlexedLibraryPrecursors)::Arrow.Primitive{I, Vector{I}} where {I<:Integer} = lp.data[:plex]
-
 

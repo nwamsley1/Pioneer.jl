@@ -51,6 +51,7 @@ function add_main_search_columns!(psms::DataFrame,
                                 rt_irt::T,
                                 structural_mods::AbstractVector{Union{Missing, String}},
                                 prec_missed_cleavages::Arrow.Primitive{UInt8, Vector{UInt8}},
+                                prec_num_enzymatic_termini::AbstractVector{UInt8},
                                 prec_is_decoy::Arrow.BoolVector{Bool},
                                 prec_irt::Arrow.Primitive{U, Vector{U}},
                                 prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}},
@@ -63,6 +64,7 @@ function add_main_search_columns!(psms::DataFrame,
     #Allocate new columns
     N = size(psms, 1)
     missed_cleavage = zeros(UInt8, N);
+    num_enzymatic_termini = zeros(UInt8, N);
     Mox = zeros(UInt8, N);
     irt_pred = zeros(Float32, N);
     rt = zeros(Float32, N);
@@ -92,6 +94,7 @@ function add_main_search_columns!(psms::DataFrame,
 
                 targets[i] = prec_is_decoy[prec_idx] == false;
                 missed_cleavage[i] = prec_missed_cleavages[prec_idx]
+                num_enzymatic_termini[i] = prec_num_enzymatic_termini[prec_idx]
                 Mox[i] = countMOX(coalesce(structural_mods[prec_idx], ""))::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
                 irt_pred[i] = Float32(prec_irt[prec_idx]);
                 rt[i] = Float32(scan_retention_time[scan_idx[i]]);
@@ -112,6 +115,7 @@ function add_main_search_columns!(psms::DataFrame,
     psms[!,:err_norm] = err_norm
     psms[!,:target] = targets
     psms[!,:missed_cleavage] = missed_cleavage
+    psms[!,:num_enzymatic_termini] = num_enzymatic_termini
     psms[!,:Mox] = Mox
     psms[!,:charge] = charge
     psms[!,:spectrum_peak_count] = spectrum_peak_count
@@ -766,6 +770,5 @@ function mass_err_ms1(ppm_errs::Vector{Float32},
         (Float32(abs(l_bound)), Float32(abs(r_bound)))
     ), pmp_errs_corrected
 end
-
 
 

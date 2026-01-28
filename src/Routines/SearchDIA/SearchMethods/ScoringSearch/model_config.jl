@@ -43,6 +43,7 @@ end
 # Note: :target is excluded as it's the label, not a feature
 const ADVANCED_FEATURE_SET = [
     :missed_cleavage,
+    :num_enzymatic_termini,
     :Mox,
     :prec_mz_qbin,     # Quantile-binned version of :prec_mz
     #:prec_mz,
@@ -106,7 +107,7 @@ const ADVANCED_FEATURE_SET = [
 
 const REDUCED_FEATURE_SET = [
     # Core peptide properties
-    :missed_cleavage, :Mox, :prec_mz_qbin, :sequence_length, :charge,
+    :missed_cleavage, :num_enzymatic_termini, :Mox, :prec_mz_qbin, :sequence_length, :charge,
     # RT features
     :irt_pred_qbin, :irt_error, :irt_diff,
     :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space

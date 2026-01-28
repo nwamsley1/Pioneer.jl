@@ -33,6 +33,7 @@ using Test
     @test get_entrapment_pair_id(e1) == 0
     @test get_base_pep_id(e1) == 0
     @test get_charge(e1) == 0
+    @test get_num_enzymatic_termini(e1) == 0
 
     # 16-arg compatibility constructor (base_prec_id ignored)
     e2 = FastaEntry(acc, desc, gene, prot, org, protm, seq,
@@ -40,5 +41,5 @@ using Test
                     UInt32(1), UInt32(2), UInt32(999), 1, false)
     @test get_base_pep_id(e2) == 2
     @test get_entrapment_pair_id(e2) == 1
+    @test get_num_enzymatic_termini(e2) == 0
 end
-

@@ -842,6 +842,11 @@ function add_features!(psms::DataFrame,
     prec_charge = getCharge(getPrecursors(getSpecLib(search_context)))#[:prec_charge],
     entrap_group_ids = getEntrapmentGroupId(getPrecursors(getSpecLib(search_context)))
     precursor_missed_cleavage = getMissedCleavages(getPrecursors(getSpecLib(search_context)))#[:missed_cleavages],
+    precursor_num_enzymatic_termini = if hasproperty(getPrecursors(getSpecLib(search_context)).data, :num_enzymatic_termini)
+        getNumEnzymaticTermini(getPrecursors(getSpecLib(search_context)))
+    else
+        fill(UInt8(0), length(getPrecursors(getSpecLib(search_context))))
+    end
     precursor_pair_idxs = getPairIdx(getPrecursors(getSpecLib(search_context)))
     #filter!(x -> x.best_scan, psms);
     filter!(x->x.weight>0, psms);
@@ -859,6 +864,7 @@ function add_features!(psms::DataFrame,
     #psms[!,:missed_cleavage] .= zero(UInt8);
     #psms[!,:sequence] .= "";
     missed_cleavage = zeros(UInt8, N);
+    num_enzymatic_termini = zeros(UInt8, N);
     #sequence = Vector{String}(undef, N);
     #stripped_sequence = Vector{String}(undef, N);
     adjusted_intensity_explained = zeros(Float16, N);
@@ -913,6 +919,7 @@ function add_features!(psms::DataFrame,
                 irt_error[i] = abs(irt_obs[i] - irt_pred[i])
 
                 missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
+                num_enzymatic_termini[i] = precursor_num_enzymatic_termini[prec_idx]
                 #sequence[i] = precursor_sequence[prec_idx]
                 sequence_length[i] = length(replace(precursor_sequence[prec_idx], r"\(.*?\)" => ""))#replace.(sequence[i], "M(ox)" => "M");
                 Mox[i] = countMOX(structural_mods[prec_idx])::UInt8
@@ -935,6 +942,7 @@ function add_features!(psms::DataFrame,
     psms[!,:irt_error] = irt_error
     psms[!,:ms1_irt_diff] = ms1_irt_diff
     psms[!,:missed_cleavage] = missed_cleavage
+    psms[!,:num_enzymatic_termini] = num_enzymatic_termini
     #psms[!,:sequence] = sequence
     #psms[!,:stripped_sequence] = stripped_sequence
     psms[!,:Mox] = Mox

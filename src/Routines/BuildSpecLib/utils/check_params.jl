@@ -78,6 +78,23 @@ function check_params_bsp(json_string::String)
     check_param(fasta_digest_params, "max_var_mods", Integer)
     check_param(fasta_digest_params, "add_decoys", Bool)
     check_param(fasta_digest_params, "entrapment_r", Real)
+
+    if haskey(fasta_digest_params, "specificity")
+        check_param(fasta_digest_params, "specificity", String)
+    end
+    if !haskey(fasta_digest_params, "specificity") && haskey(fasta_digest_params, "enzymaticity")
+        fasta_digest_params["specificity"] = fasta_digest_params["enzymaticity"]
+    end
+
+    if !haskey(fasta_digest_params, "specificity")
+        fasta_digest_params["specificity"] = "full"
+    else
+        specificity = lowercase(fasta_digest_params["specificity"])
+        if !(specificity in ["full", "semi-n", "semi-c", "semi"])
+            error("specificity must be one of \"full\", \"semi-n\", \"semi-c\", or \"semi\"; got: $(fasta_digest_params["specificity"])")
+        end
+        fasta_digest_params["specificity"] = specificity
+    end
     
     # Check decoy_method with default value
     if !haskey(fasta_digest_params, "decoy_method")

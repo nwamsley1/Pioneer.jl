@@ -22,51 +22,69 @@
     @testset "digest_sequence" begin
         # Test basic tryptic digest with no missed cleavages
         sequence = "MKVGPKAFRVLTEDEMAKR"
-        peptides, starts = digest_sequence(sequence, r"[KR][^P]", 20, 5, 1)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR][^P]", 20, 5, 1)
         @test Set(peptides) == Set(["MKVGPK", "VGPKAFR", "VLTEDEMAK", "VLTEDEMAKR", "AFRVLTEDEMAK"])
         @test Set(starts) == Set([1, 3, 7, 10])
         
-        peptides, starts = digest_sequence(sequence, r"[KR][^P]", 20, 5, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR][^P]", 20, 5, 0)
         @test Set(peptides) == Set(["VLTEDEMAK"])
         @test Set(starts) == Set([10])
 
         sequence = "MAKRTGKR"
-        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR]", 10, 1, 0)
         @test Set(peptides) == Set(["MAK", "R", "TGK", "R"])
         @test Set(starts) == Set([1, 4, 5, 8])
         
         # Test with missed cleavages
-        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 1)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR]", 10, 1, 1)
         @test Set(peptides) == Set(["MAK", "MAKR", "R", "RTGK", "TGK", "TGKR", "R"])
         @test Set(starts) == Set([1, 4, 5, 8])
         
         # Test with length constraints
-        peptides, starts = digest_sequence(sequence, r"[KR]", 5, 3, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR]", 5, 3, 0)
         @test Set(peptides) == Set(["MAK", "TGK"])
         @test Set(starts) == Set([1, 5])
         
         # Test with regex that has overlap=true
         sequence = "MAKRRMAK"
-        peptides, starts = digest_sequence(sequence, r"R", 10, 1, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"R", 10, 1, 0)
         @test Set(peptides) == Set(["MAKR","R","MAK"])
         @test Set(starts) == Set([1, 5, 6])
         
         # Test with no matches
         sequence = "ACDEFGHIJ"
-        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR]", 10, 1, 0)
         @test Set(peptides) == Set(["ACDEFGHIJ"])
         @test Set(starts) == Set([1])
         
         # Test with empty sequence
         sequence = ""
-        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR]", 10, 1, 0)
         @test isempty(peptides)
         @test isempty(starts)
         
         # Test returned type is Vector{String}, not Vector{SubString}
         sequence = "MAKRTGKR"
-        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts, _ = digest_sequence(sequence, r"[KR]", 10, 1, 0)
         @test eltype(peptides) === String
+    end
+
+    @testset "digest_sequence specificity" begin
+        sequence = "MAKRTGKR"
+        peptides_full, _, counts_full = digest_sequence(sequence, r"[KR]", 4, 2, 0, "full")
+        peptides_semi_n, _, counts_semi_n = digest_sequence(sequence, r"[KR]", 4, 2, 0, "semi-n")
+        peptides_semi_c, _, counts_semi_c = digest_sequence(sequence, r"[KR]", 4, 2, 0, "semi-c")
+        peptides_semi, _, counts_semi = digest_sequence(sequence, r"[KR]", 4, 2, 0, "semi")
+
+        @test !("AK" in peptides_full)
+        @test "AK" in peptides_semi_n
+        @test "MA" in peptides_semi_c
+        @test "AK" in peptides_semi
+        @test "MA" in peptides_semi
+        @test all(count -> count == 2, counts_full)
+        @test all(count -> count >= 1, counts_semi_n)
+        @test all(count -> count >= 1, counts_semi_c)
+        @test any(count -> count == 1, counts_semi)
     end
     
     
