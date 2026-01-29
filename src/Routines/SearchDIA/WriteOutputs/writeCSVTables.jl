@@ -203,6 +203,7 @@ function writePrecursorCSV(
     "isotopic_mods"
     "prec_mz"
     "start_idx"
+    "num_enzymatic_termini"
     "global_score"
     String(global_qval_col)  # Conditional: MBR_boosted_global_qval or global_qval
     "use_for_protein_quant"
