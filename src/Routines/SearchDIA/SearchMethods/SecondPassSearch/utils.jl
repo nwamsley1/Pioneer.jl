@@ -840,6 +840,7 @@ function add_features!(psms::DataFrame,
     prec_mz = getMz(getPrecursors(getSpecLib(search_context)))#[:mz],
     prec_irt = getIrt(getPrecursors(getSpecLib(search_context)))#[:irt],
     prec_charge = getCharge(getPrecursors(getSpecLib(search_context)))#[:prec_charge],
+    prec_start_idx = getStartIdx(getPrecursors(getSpecLib(search_context)))
     entrap_group_ids = getEntrapmentGroupId(getPrecursors(getSpecLib(search_context)))
     precursor_missed_cleavage = getMissedCleavages(getPrecursors(getSpecLib(search_context)))#[:missed_cleavages],
     precursor_num_enzymatic_termini = if hasproperty(getPrecursors(getSpecLib(search_context)).data, :num_enzymatic_termini)
@@ -865,6 +866,7 @@ function add_features!(psms::DataFrame,
     #psms[!,:sequence] .= "";
     missed_cleavage = zeros(UInt8, N);
     num_enzymatic_termini = zeros(UInt8, N);
+    start_idx = zeros(UInt32, N);
     #sequence = Vector{String}(undef, N);
     #stripped_sequence = Vector{String}(undef, N);
     adjusted_intensity_explained = zeros(Float16, N);
@@ -920,6 +922,7 @@ function add_features!(psms::DataFrame,
 
                 missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
                 num_enzymatic_termini[i] = precursor_num_enzymatic_termini[prec_idx]
+                start_idx[i] = prec_start_idx[prec_idx]
                 #sequence[i] = precursor_sequence[prec_idx]
                 sequence_length[i] = length(replace(precursor_sequence[prec_idx], r"\(.*?\)" => ""))#replace.(sequence[i], "M(ox)" => "M");
                 Mox[i] = countMOX(structural_mods[prec_idx])::UInt8
@@ -943,6 +946,7 @@ function add_features!(psms::DataFrame,
     psms[!,:ms1_irt_diff] = ms1_irt_diff
     psms[!,:missed_cleavage] = missed_cleavage
     psms[!,:num_enzymatic_termini] = num_enzymatic_termini
+    psms[!,:start_idx] = start_idx
     #psms[!,:sequence] = sequence
     #psms[!,:stripped_sequence] = stripped_sequence
     psms[!,:Mox] = Mox
