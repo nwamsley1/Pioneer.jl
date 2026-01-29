@@ -525,6 +525,7 @@ function get_quant_necessary_columns(match_between_runs::Bool)
         :rt,
         :irt_obs,
         :missed_cleavage,
+        :num_enzymatic_termini,
         :Mox,
         :isotopes_captured,
         :scan_idx,

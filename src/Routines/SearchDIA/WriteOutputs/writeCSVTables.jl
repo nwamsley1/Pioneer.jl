@@ -247,6 +247,7 @@ function writePrecursorCSV(
         :isotopic_mods,
         :prec_mz,
         :missed_cleavage,
+        :num_enzymatic_termini,
         :global_score,
         :score,
         global_qval_col,  # Conditional: MBR_boosted_global_qval or global_qval
