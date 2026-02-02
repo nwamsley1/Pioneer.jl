@@ -11,10 +11,16 @@
     ],
     "fasta_names": ["HUMAN"],
 
+    "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
+    "fasta_header_regex_accessions": ["^\\w+\\|(\\w+(?:-\\d+)?)\\|"],
+    "fasta_header_regex_genes": [" GN=(\\S+)"],
+    "fasta_header_regex_proteins": ["^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="],
+    "fasta_header_regex_organisms": [" OS=([^ ]+.*?) [^ ]+="],
+
     "comment_digestion": "=== Protein digestion settings ===",
     "fasta_digest_params": {
         "min_length": 7,
-        "max_length": 30,
+        "max_length": 40,
         "min_charge": 2,
         "max_charge": 4,
         "cleavage_regex": "[KR][^_|$]",
