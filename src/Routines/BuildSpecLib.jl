@@ -248,9 +248,10 @@ function BuildSpecLib(params_path::String)
                 # Load tables
                 precursors_table = Arrow.Table(precursors_arrow_path)
                 fragments_table = Arrow.Table(raw_fragments_arrow_path)
-                #Record the spline knots 
+                #Record the spline knots (stored as Arrow metadata, not per-row column)
                 try
-                    spl_knots = copy(fragments_table[:knot_vector][1])
+                    meta = Arrow.getmetadata(fragments_table)
+                    spl_knots = Vector{Float32}(JSON.parse(meta["knot_vector"]))
                     serialize_to_jls(
                         joinpath(lib_dir, "spline_knots.jls"),
                         spl_knots

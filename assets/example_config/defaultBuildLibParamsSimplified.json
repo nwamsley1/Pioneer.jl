@@ -2,8 +2,7 @@
     "comment_output": "=== Output library path ===",
     "library_path": "/path/to/output/my_library",
 
-    "comment_calibration": "=== Calibration file for automatic detection of fragment and precursor m/z ranges (optional) ===",
-    "comment_calibration": "=== Convert a representative RAW file to Arrow format and provide its path here ===",
+    "comment_calibration": "=== Calibration file (optional but recommended) ===",
     "calibration_raw_file": "",
 
     "comment_fasta": "=== FASTA files ===",
@@ -12,28 +11,12 @@
     ],
     "fasta_names": ["HUMAN"],
 
-    "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
-    "fasta_header_regex_accessions": ["^\\w+\\|(\\w+(?:-\\d+)?)\\|"],
-    "fasta_header_regex_genes": [" GN=(\\S+)"],
-    "fasta_header_regex_proteins": ["^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="],
-    "fasta_header_regex_organisms": [" OS=([^ ]+.*?) [^ ]+="],
-
-    "comment_library": "=== Library m/z bounds ===",
-    "comment_library": "=== If auto_detect_frag_bounds=true, bounds are determined from the calibration_raw_file; otherwise manual values are used ===",
-    "library_params": {
-        "auto_detect_frag_bounds": true,
-        "frag_mz_min": 150.0,
-        "frag_mz_max": 2020.0,
-        "prec_mz_min": 390.0,
-        "prec_mz_max": 1010.0
-    },
-
     "comment_digestion": "=== Protein digestion settings ===",
     "fasta_digest_params": {
         "min_length": 7,
-        "max_length": 40,
+        "max_length": 30,
         "min_charge": 2,
-        "max_charge": 3,
+        "max_charge": 4,
         "cleavage_regex": "[KR][^_|$]",
         "missed_cleavages": 1,
         "max_var_mods": 1,
@@ -41,7 +24,7 @@
         "entrapment_r": 0
     },
 
-    "comment_modifications": "=== Modifications (variable and fixed, including PTMs and peptide-terminal labels) ===",
+    "comment_modifications": "=== Modifications ===",
     "variable_mods": {
         "pattern": ["M"],
         "mass": [15.99491],
@@ -54,19 +37,7 @@
     },
     "isotope_mod_groups": [],
 
-    "comment_collision_energy": "=== Collision energy settings ===",
-    "nce_params": {
-        "nce": 26.0,
-        "default_charge": 2,
-        "dynamic_nce": true
-    },
-
-    "comment_koina": "=== Koina API settings ===",
-    "max_koina_requests": 24,
-    "max_koina_batch": 1000,
-
     "comment_processing": "=== Processing settings ===",
-    "match_lib_build_batch": 100000,
     "include_contaminants": true,
     "predict_fragments": true
 }
