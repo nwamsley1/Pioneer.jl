@@ -22,7 +22,7 @@
         "min_length": 7,
         "max_length": 40,
         "min_charge": 2,
-        "max_charge": 4,
+        "max_charge": 3,
         "cleavage_regex": "[KR][^_|$]",
         "missed_cleavages": 1,
         "max_var_mods": 1,
