@@ -431,378 +431,387 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     return models
 end
 
-# DISABLED: Out-of-memory processing - hardcoded to always use in-memory approach
-# This function is commented out in favor of always using in-memory processing.
-# Preserved for potential future use if needed for extremely large datasets.
-#=
-function sort_of_percolator_out_of_memory!(psms::DataFrame,
-                    file_paths::Vector{String},
-                    features::Vector{Symbol},
-                    match_between_runs::Bool = true;
-                    max_q_value_lightgbm_rescore::Float32 = 0.01f0,
-                    max_q_value_mbr_itr::Float32 = 0.20f0,
-                    min_PEP_neg_threshold_itr::Float32 = 0.90f0,
-                    feature_fraction::Float64 = 0.5,
-                    learning_rate::Float64 = 0.15,
-                    min_data_in_leaf::Int = 1,
-                    bagging_fraction::Float64 = 0.5,
-                    min_gain_to_split::Float64 = 0.0,
-                    max_depth::Int = 10,
-                    num_leaves::Int = 63,
-                    iter_scheme::Vector{Int} = [100, 200, 200],
-                    print_importance::Bool = false)
+"""
+    sort_of_percolator_out_of_memory!(psms::DataFrame, file_paths::Vector{String}, ...)
 
-    function getBestScorePerPrec!(
-        prec_to_best_score_new::Dictionary,
-        file_paths::Vector{String},
-        models::Dictionary{UInt8,LightGBMModel},
-        non_mbr_models::Union{Dictionary{UInt8,LightGBMModel}, Nothing},
-        features::Vector{Symbol},
-        non_mbr_features::Vector{Symbol},
-        match_between_runs::Bool;
-        is_last_iteration::Bool = false)
-    
-        # Reset counts for new scores
-        reset_precursor_scores!(prec_to_best_score_new)
-            
-        for file_path in file_paths
-            psms_subset = DataFrame(Arrow.Table(file_path))
+Out-of-memory percolator that:
+1. Trains on sampled PSMs (complete pair groups)
+2. Applies models file-by-file
+3. Computes MBR features using tracker dictionary
 
-            trace_probs = predict_cv_models(models, psms_subset, features)
+# Architecture
+- Phase A: Train models on sampled PSMs using same iterative approach as in-memory
+- Phase B: For each iteration, predict all files and update MBR tracker
+- Phase C: Finalize scores, compute transfer candidates
 
-            if match_between_runs && !is_last_iteration
-                #Update maximum probabilities for tracked precursors
-                qvals = zeros(Float32, nrow(psms_subset))
-                get_qvalues!(trace_probs, psms_subset.target, qvals)
+# Arguments
+- `psms`: Sampled PSMs for training (complete pair groups)
+- `file_paths`: Paths to all PSM files
+- `features`: Feature columns for ML
+- `match_between_runs`: Whether to perform MBR
+"""
+function sort_of_percolator_out_of_memory!(
+    psms::DataFrame,
+    file_paths::Vector{String},
+    features::Vector{Symbol},
+    match_between_runs::Bool = true;
+    max_q_value_lightgbm_rescore::Float32 = 0.01f0,
+    max_q_value_mbr_itr::Float32 = 0.20f0,
+    min_PEP_neg_threshold_itr::Float32 = 0.90f0,
+    feature_fraction::Float64 = 0.5,
+    learning_rate::Float64 = 0.15,
+    min_data_in_leaf::Int = 1,
+    bagging_fraction::Float64 = 0.5,
+    min_gain_to_split::Float64 = 0.0,
+    max_depth::Int = 10,
+    num_leaves::Int = 63,
+    iter_scheme::Vector{Int} = [100, 200, 200],
+    print_importance::Bool = false
+)
+    @debug_l1 "\n[OOM] Starting OOM percolator training on $(nrow(psms)) sampled PSMs"
 
-                for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
-                    trace_prob = trace_probs[i]
-                    key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
-                    if haskey(prec_to_best_score_new, key)
-                        scores = prec_to_best_score_new[key]
+    #=== PHASE A: Train models on sampled PSMs ===#
+    phase_a_timing = @timed begin
+        # Ensure sampled PSMs are sorted by pair_id (should already be done but ensure consistency)
+        sort!(psms, [:pair_id, :isotopes_captured, :precursor_idx, :ms_file_idx])
 
-                        # Update running statistics with new probability
-                        updated_stats = update_pair_statistics(scores, trace_prob)
+        unique_cv_folds = unique(psms[!, :cv_fold])
+        models = Dict{UInt8, LightGBMModelVector}()
+        mbr_start_iter = length(iter_scheme)
+        iterations_per_fold = match_between_runs ? length(iter_scheme) : max(mbr_start_iter - 1, 1)
 
-                        if trace_prob > scores.best_prob_1
-                           new_scores = merge(updated_stats, (
-                                # replace best_prob_2 with best_prob_1
-                                best_prob_2                     = scores.best_prob_1,
-                                best_log2_weights_2             = scores.best_log2_weights_1,
-                                best_irts_2                     = scores.best_irts_1,
-                                best_irt_residual_2             = scores.best_irt_residual_1,
-                                best_weight_2                   = scores.best_weight_1,
-                                best_log2_intensity_explained_2 = scores.best_log2_intensity_explained_1,
-                                best_ms_file_idx_2              = scores.best_ms_file_idx_1,
-                                is_best_decoy_2                 = scores.is_best_decoy_1,
-                                # overwrite best_prob_1
-                                best_prob_1                     = trace_prob,
-                                best_log2_weights_1             = log2.(psms_subset.weights[i]),
-                                best_irts_1                     = psms_subset.irts[i],
-                                best_irt_residual_1             = irt_residual(psms_subset, i),
-                                best_weight_1                   = psms_subset.weight[i],
-                                best_log2_intensity_explained_1 = psms_subset.log2_intensity_explained[i],
-                                best_ms_file_idx_1              = psms_subset.ms_file_idx[i],
-                                is_best_decoy_1                 = psms_subset.decoy[i]
-                            ))
-                            prec_to_best_score_new[key] = new_scores
+        cv_fold_col = psms[!, :cv_fold]
+        fold_indices = Dict(fold => findall(==(fold), cv_fold_col) for fold in unique_cv_folds)
+        train_indices = Dict(fold => findall(!=(fold), cv_fold_col) for fold in unique_cv_folds)
 
-                        elseif trace_prob > scores.best_prob_2
-                            # overwrite best_prob_2
-                            new_scores = merge(updated_stats, (
-                                best_prob_2                     = trace_prob,
-                                best_log2_weights_2             = log2.(psms_subset.weights[i]),
-                                best_irts_2                     = psms_subset.irts[i],
-                                best_irt_residual_2             = irt_residual(psms_subset, i),
-                                best_weight_2                   = psms_subset.weight[i],
-                                best_log2_intensity_explained_2 = psms_subset.log2_intensity_explained[i],
-                                best_ms_file_idx_2              = psms_subset.ms_file_idx[i],
-                                is_best_decoy_2                 = psms_subset.decoy[i]
-                            ))
-                            prec_to_best_score_new[key] = new_scores
-                        else
-                            # No change to best/second best, but update running stats
-                            prec_to_best_score_new[key] = updated_stats
-                        end
+        Random.seed!(1776)
+        non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
 
-                        if qvals[i] <= max_q_value_lightgbm_rescore
-                            push!(scores.unique_passing_runs, psms_subset.ms_file_idx[i])
-                        end
+        total_progress_steps = length(unique_cv_folds) * iterations_per_fold
+        pbar = ProgressBar(total=total_progress_steps)
 
-                    else
-                        insert!(prec_to_best_score_new, key, (
-                                best_prob_1                     = trace_prob,
-                                best_prob_2                     = zero(Float32),
-                                worst_prob_1                    = trace_prob,
-                                worst_prob_2                    = zero(Float32),
-                                mean_prob                       = trace_prob,
-                                count_pairs                     = Int32(1),
-                                best_log2_weights_1             = log2.(psms_subset.weights[i]),
-                                best_log2_weights_2             = Vector{Float32}(),
-                                best_irts_1                     = psms_subset.irts[i],
-                                best_irts_2                     = Vector{Float32}(),
-                                best_irt_residual_1             = irt_residual(psms_subset, i),
-                                best_irt_residual_2             = zero(Float32),
-                                best_weight_1                   = psms_subset.weight[i],
-                                best_weight_2                   = zero(Float32),
-                                best_log2_intensity_explained_1 = psms_subset.log2_intensity_explained[i],
-                                best_log2_intensity_explained_2 = zero(Float32),
-                                best_ms_file_idx_1              = psms_subset.ms_file_idx[i],
-                                best_ms_file_idx_2              = zero(UInt32),
-                                is_best_decoy_1                 = psms_subset.decoy[i],
-                                is_best_decoy_2                 = false,
-                                unique_passing_runs             = ( qvals[i] <= max_q_value_lightgbm_rescore ?
-                                                                    Set{UInt16}([psms_subset.ms_file_idx[i]]) :
-                                                                    Set{UInt16}() )
-                            ))
-                    end
-                end
-            end
+        # Training arrays for sampled PSMs
+        prob_train = zeros(Float32, nrow(psms))
+        nonMBR_estimates = zeros(Float32, nrow(psms))
 
-
-            if is_last_iteration
-                if match_between_runs
-                    update_mbr_probs!(psms_subset, trace_probs, max_q_value_lightgbm_rescore)
-                else
-                    psms_subset.trace_prob = trace_probs
-                end
-
-            end
-        end
-    
-
-        # Compute trace_probs and features for next round
-        for file_path in file_paths
-            psms_subset = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-            trace_probs = predict_cv_models(models, psms_subset, features)
-
-            # On last iteration with MBR, also get non-MBR predictions
-            non_mbr_trace_probs = if is_last_iteration && match_between_runs && non_mbr_models !== nothing
-                predict_cv_models(non_mbr_models, psms_subset, non_mbr_features)
-            else
-                nothing
-            end
-
-            for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
-                psms_subset[i,:trace_prob] = trace_probs[i]
-
-
-                if match_between_runs && !is_last_iteration
-                    key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
-                    if haskey(prec_to_best_score_new, key)
-                        scores = prec_to_best_score_new[key]
-
-                        psms_subset.MBR_num_runs[i] = length(scores.unique_passing_runs)
-
-                        best_log2_weights = Float32[]
-                        best_irts = Float32[]
-                        best_weight = zero(Float32)
-                        best_log2_ie = zero(Float32)
-                        best_residual = zero(Float32)
-
-                        if (scores.best_ms_file_idx_1 != psms_subset.ms_file_idx[i]) &&
-                           (!isempty(scores.best_log2_weights_1))
-                            best_log2_weights                   = scores.best_log2_weights_1
-                            best_irts                           = scores.best_irts_1
-                            best_weight                         = scores.best_weight_1
-                            best_log2_ie                        = scores.best_log2_intensity_explained_1
-                            best_residual                       = scores.best_irt_residual_1
-                            psms_subset.MBR_max_pair_prob[i]    = scores.best_prob_1
-                            MBR_is_best_decoy                   = scores.is_best_decoy_1
-                        elseif (scores.best_ms_file_idx_2 != psms_subset.ms_file_idx[i]) &&
-                               (!isempty(scores.best_log2_weights_2))
-                            best_log2_weights                   = scores.best_log2_weights_2
-                            best_irts                           = scores.best_irts_2
-                            best_weight                         = scores.best_weight_2
-                            best_log2_ie                        = scores.best_log2_intensity_explained_2
-                            best_residual                       = scores.best_irt_residual_2
-                            psms_subset.MBR_max_pair_prob[i]    = scores.best_prob_2
-                            MBR_is_best_decoy                   = scores.is_best_decoy_2
-                        else
-                            psms_subset.MBR_best_irt_diff[i]        = -1.0f0
-                            psms_subset.MBR_rv_coefficient[i]       = -1.0f0
-                            psms_subset.MBR_is_best_decoy[i]        = true
-                            psms_subset.MBR_max_pair_prob[i]        = -1.0f0
-                            psms_subset.MBR_log2_weight_ratio[i]    = -1.0f0
-                            psms_subset.MBR_log2_explained_ratio[i] = -1.0f0
-                            psms_subset.MBR_is_missing[i]           = true
-                            continue
-                        end
-
-                        best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(psms_subset.weights[i]))
-                        best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_irts, psms_subset.irts[i])
-
-                        current_residual = irt_residual(psms_subset, i)
-                        psms_subset.MBR_best_irt_diff[i] = abs(best_residual - current_residual)
-                        psms_subset.MBR_rv_coefficient[i] = MBR_rv_coefficient(best_log2_weights_padded, best_iRTs_padded, weights_padded, iRTs_padded)
-                        psms_subset.MBR_log2_weight_ratio[i] = log2(psms_subset.weight[i] / best_weight)
-                        psms_subset.MBR_log2_explained_ratio[i] = psms_subset.log2_intensity_explained[i] - best_log2_ie
-                        psms_subset.MBR_is_best_decoy[i] = MBR_is_best_decoy
-                    end
-                end
-            end
-
-            # On last iteration with MBR: trace_probs=MBR-boosted, non_mbr_trace_probs=base
-            # Otherwise: trace_probs=base, non_mbr_trace_probs=nothing
-            mbr_trace_probs_arg = if is_last_iteration && match_between_runs
-                trace_probs  # MBR-boosted predictions
-            else
-                nothing
-            end
-            trace_probs_arg = if is_last_iteration && match_between_runs && non_mbr_trace_probs !== nothing
-                non_mbr_trace_probs  # Non-MBR predictions
-            else
-                trace_probs  # Regular predictions
-            end
-
-            write_subset(
-                file_path,
-                psms_subset,
-                trace_probs_arg,
-                mbr_trace_probs_arg,
-                match_between_runs,
-                max_q_value_lightgbm_rescore;
-                dropVectors = is_last_iteration,
-            )
-        end
-        
-        return prec_to_best_score_new
-    end
-
-
-    unique_cv_folds = unique(psms[!, :cv_fold])
-    #Train the model for 1:K-1 cross validation folds and apply to the held-out fold
-    models = Dictionary{UInt8, LightGBMModelVector}()
-    mbr_start_iter = length(iter_scheme)
-    iterations_per_fold = match_between_runs ? length(iter_scheme) : max(mbr_start_iter - 1, 1)
-    total_progress_steps = length(unique_cv_folds) * iterations_per_fold
-    pbar = ProgressBar(total=total_progress_steps)
-    Random.seed!(1776);
-    non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
-
-    for test_fold_idx in unique_cv_folds#(0, 1)#range(1, n_folds)
-        #Clear prob stats 
-        initialize_prob_group_features!(psms, match_between_runs)
-        # Get training data
-        psms_train = @view(psms[findall(x -> x != test_fold_idx, psms[!, :cv_fold]), :])
-
-        for (itr, num_round) in enumerate(iter_scheme)
-
-            psms_train_itr = get_training_data_for_iteration!(psms_train, 
-                                                                itr,
-                                                                match_between_runs, 
-                                                                max_q_value_lightgbm_rescore,
-                                                                max_q_value_mbr_itr,
-                                                                min_PEP_neg_threshold_itr,
-                                                                itr >= length(iter_scheme))
-            ###################
-            #Train a model on the n-1 training folds.
-            train_feats = itr < length(iter_scheme) ? non_mbr_features : features
-            bst = train_booster(psms_train_itr, train_feats, num_round;
-                               feature_fraction=feature_fraction,
-                               learning_rate=learning_rate,
-                               min_data_in_leaf=min_data_in_leaf,
-                               bagging_fraction=bagging_fraction,
-                               min_gain_to_split=min_gain_to_split,
-                               max_depth=max_depth,
-                               num_leaves=num_leaves)
-            if !haskey(models, test_fold_idx)
-                insert!(
-                    models,
-                    test_fold_idx,
-                    LightGBMModelVector([bst])
-                )
-            else
-                push!(models[test_fold_idx], bst)
-            end
-            # Print feature importances
-            if print_importance
-                importances = lightgbm_feature_importances(bst)
-                if importances === nothing
-                    @user_warn "LightGBM backend did not provide feature importances for iteration $(itr)."
-                else
-                    feature_pairs = collect(zip(bst.features, importances))
-                    @user_info "Feature Importances ($(length(feature_pairs)) features):"
-                    for i in 1:10:length(feature_pairs)
-                        chunk = feature_pairs[i:min(i+9, end)]
-                        feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
-                        @user_info "  " * join(feat_strs, " | ")
-                    end
-                end
-            end
-
-            # Get probabilities for training sample so we can get q-values
-            psms_train[!,:trace_prob] = lightgbm_predict(bst, psms_train; output_type=Float32)
-            
-            if match_between_runs
-                summarize_precursors!(psms_train, q_cutoff = max_q_value_lightgbm_rescore)
-            end
-
-            show_progress && update(pbar)
-        end
-    end
-    
-    pbar = ProgressBar(total=length(iter_scheme))
-    prec_to_best_score = Dictionary{@NamedTuple{pair_id::UInt32,
-                                                isotopes::Tuple{Int8,Int8}},
-                                    @NamedTuple{best_prob_1::Float32,
-                                                best_prob_2::Float32,
-                                                worst_prob_1::Float32,
-                                                worst_prob_2::Float32,
-                                                mean_prob::Float32,
-                                                count_pairs::Int32,
-                                                best_log2_weights_1::Vector{Float32},
-                                                best_log2_weights_2::Vector{Float32},
-                                                best_irts_1::Vector{Float32},
-                                                best_irts_2::Vector{Float32},
-                                                best_irt_residual_1::Float32,
-                                                best_irt_residual_2::Float32,
-                                                best_weight_1::Float32,
-                                                best_weight_2::Float32,
-                                                best_log2_intensity_explained_1::Float32,
-                                                best_log2_intensity_explained_2::Float32,
-                                                best_ms_file_idx_1::UInt32,
-                                                best_ms_file_idx_2::UInt32,
-                                                is_best_decoy_1::Bool,
-                                                is_best_decoy_2::Bool,
-                                                unique_passing_runs::Set{UInt16}}}()
-
-    for (train_iter, num_round) in enumerate(iter_scheme)
-        models_for_iter = Dictionary{UInt8,LightGBMModel}()
         for test_fold_idx in unique_cv_folds
-            insert!(models_for_iter, test_fold_idx, models[test_fold_idx][train_iter])
-        end
+            initialize_prob_group_features!(psms, match_between_runs)
 
-        # On last iteration with MBR, also get previous (non-MBR) models
-        non_mbr_models_for_iter = if (train_iter == length(iter_scheme)) && match_between_runs && (train_iter > 1)
-            non_mbr_models = Dictionary{UInt8,LightGBMModel}()
-            for test_fold_idx in unique_cv_folds
-                insert!(non_mbr_models, test_fold_idx, models[test_fold_idx][train_iter - 1])
+            train_idx = train_indices[test_fold_idx]
+            test_idx = fold_indices[test_fold_idx]
+
+            psms_train = @view psms[train_idx, :]
+            psms_test = @view psms[test_idx, :]
+
+            fold_models = LightGBMModelVector(undef, length(iter_scheme))
+
+            for (itr, num_round) in enumerate(iter_scheme)
+                psms_train_itr = get_training_data_for_iteration!(
+                    psms_train, itr, match_between_runs,
+                    max_q_value_lightgbm_rescore, max_q_value_mbr_itr,
+                    min_PEP_neg_threshold_itr, itr >= mbr_start_iter
+                )
+
+                train_feats = itr < mbr_start_iter ? non_mbr_features : features
+
+                bst = train_booster(
+                    psms_train_itr, train_feats, num_round;
+                    feature_fraction=feature_fraction,
+                    learning_rate=learning_rate,
+                    min_data_in_leaf=min_data_in_leaf,
+                    bagging_fraction=bagging_fraction,
+                    min_gain_to_split=min_gain_to_split,
+                    max_depth=max_depth,
+                    num_leaves=num_leaves
+                )
+
+                fold_models[itr] = bst
+
+                # Predict on training sample for q-values
+                prob_train[train_idx] = predict(bst, psms_train)
+                psms_train[!, :trace_prob] = prob_train[train_idx]
+                get_qvalues!(psms_train.trace_prob, psms_train.target, psms_train.q_value)
+
+                # Predict on test fold
+                psms_test[!, :trace_prob] = predict(bst, psms_test)
+
+                if itr == (mbr_start_iter - 1)
+                    nonMBR_estimates[test_idx] = psms_test.trace_prob
+                end
+
+                if match_between_runs && itr >= mbr_start_iter - 1
+                    get_qvalues!(psms_test.trace_prob, psms_test.target, psms_test.q_value)
+                    summarize_precursors!(psms_test, q_cutoff=max_q_value_lightgbm_rescore)
+                    summarize_precursors!(psms_train, q_cutoff=max_q_value_lightgbm_rescore)
+                end
+
+                update(pbar)
+
+                if (!match_between_runs) && itr == (mbr_start_iter - 1)
+                    break
+                end
             end
-            non_mbr_models
-        else
-            nothing
+
+            models[test_fold_idx] = fold_models
         end
-
-        # Determine which features to use
-        current_features = (train_iter == length(iter_scheme)) ? features : non_mbr_features
-
-        prec_to_best_score = getBestScorePerPrec!(
-            prec_to_best_score,
-            file_paths,
-            models_for_iter,
-            non_mbr_models_for_iter,
-            current_features,
-            non_mbr_features,
-            match_between_runs;
-            is_last_iteration = (train_iter == length(iter_scheme))
-        )
-        update(pbar)
     end
+    @debug_l1 "\n[OOM] Phase A (training): $(round(phase_a_timing.time, digits=2))s"
+
+    #=== PHASE B: Apply models to all files ===#
+    phase_b_timing = @timed begin
+        # Initialize MBR tracker dictionary
+        MBRTrackerType = @NamedTuple{
+            pair_id::UInt32,
+            isotopes::Tuple{Int8,Int8}
+        }
+        MBRTrackerValueType = @NamedTuple{
+            best_prob_1::Float32,
+            best_prob_2::Float32,
+            worst_prob_1::Float32,
+            worst_prob_2::Float32,
+            mean_prob::Float32,
+            count_pairs::Int32,
+            best_log2_weights_1::Vector{Float32},
+            best_log2_weights_2::Vector{Float32},
+            best_irts_1::Vector{Float32},
+            best_irts_2::Vector{Float32},
+            best_irt_residual_1::Float32,
+            best_irt_residual_2::Float32,
+            best_weight_1::Float32,
+            best_weight_2::Float32,
+            best_log2_intensity_explained_1::Float32,
+            best_log2_intensity_explained_2::Float32,
+            best_ms_file_idx_1::UInt32,
+            best_ms_file_idx_2::UInt32,
+            is_best_decoy_1::Bool,
+            is_best_decoy_2::Bool,
+            unique_passing_runs::Set{UInt16}
+        }
+        mbr_tracker = Dictionary{MBRTrackerType, MBRTrackerValueType}()
+
+        pbar_apply = ProgressBar(total=length(iter_scheme))
+        non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
+
+        for (train_iter, num_round) in enumerate(iter_scheme)
+            iter_timing = @timed begin
+                # Get models for this iteration
+                models_for_iter = Dictionary{UInt8, Any}()
+                for (test_fold_idx, fold_models) in pairs(models)
+                    insert!(models_for_iter, test_fold_idx, fold_models[train_iter])
+                end
+
+                # Determine features for this iteration
+                current_features = (train_iter == length(iter_scheme)) ? features : non_mbr_features
+                is_last_iteration = (train_iter == length(iter_scheme))
+                is_mbr_feature_iteration = match_between_runs && (train_iter == mbr_start_iter - 1)
+
+                # Get non-MBR models for last iteration comparison
+                non_mbr_models_for_iter = if is_last_iteration && match_between_runs && train_iter > 1
+                    non_mbr_models = Dictionary{UInt8, Any}()
+                    for (test_fold_idx, fold_models) in pairs(models)
+                        insert!(non_mbr_models, test_fold_idx, fold_models[train_iter - 1])
+                    end
+                    non_mbr_models
+                else
+                    nothing
+                end
+
+                # Pass 1: Predict all files and update MBR tracker
+                if match_between_runs && !is_last_iteration
+                    # Reset tracker for new iteration
+                    reset_precursor_scores!(mbr_tracker)
+                end
+
+                for file_path in file_paths
+                    psms_subset = DataFrame(Arrow.Table(file_path))
+                    trace_probs = predict_cv_models_oom(models_for_iter, psms_subset, current_features)
+
+                    if match_between_runs && !is_last_iteration
+                        # Update MBR tracker
+                        qvals = zeros(Float32, nrow(psms_subset))
+                        get_qvalues!(trace_probs, psms_subset.target, qvals)
+
+                        for i in 1:nrow(psms_subset)
+                            trace_prob = trace_probs[i]
+                            key = (pair_id = psms_subset.pair_id[i], isotopes = psms_subset.isotopes_captured[i])
+
+                            if haskey(mbr_tracker, key)
+                                scores = mbr_tracker[key]
+                                updated_stats = update_pair_statistics(scores, trace_prob)
+
+                                if trace_prob > scores.best_prob_1
+                                    new_scores = merge(updated_stats, (
+                                        best_prob_2 = scores.best_prob_1,
+                                        best_log2_weights_2 = scores.best_log2_weights_1,
+                                        best_irts_2 = scores.best_irts_1,
+                                        best_irt_residual_2 = scores.best_irt_residual_1,
+                                        best_weight_2 = scores.best_weight_1,
+                                        best_log2_intensity_explained_2 = scores.best_log2_intensity_explained_1,
+                                        best_ms_file_idx_2 = scores.best_ms_file_idx_1,
+                                        is_best_decoy_2 = scores.is_best_decoy_1,
+                                        best_prob_1 = trace_prob,
+                                        best_log2_weights_1 = log2.(psms_subset.weights[i]),
+                                        best_irts_1 = psms_subset.irts[i],
+                                        best_irt_residual_1 = irt_residual(psms_subset, i),
+                                        best_weight_1 = psms_subset.weight[i],
+                                        best_log2_intensity_explained_1 = psms_subset.log2_intensity_explained[i],
+                                        best_ms_file_idx_1 = psms_subset.ms_file_idx[i],
+                                        is_best_decoy_1 = psms_subset.decoy[i]
+                                    ))
+                                    mbr_tracker[key] = new_scores
+                                elseif trace_prob > scores.best_prob_2
+                                    new_scores = merge(updated_stats, (
+                                        best_prob_2 = trace_prob,
+                                        best_log2_weights_2 = log2.(psms_subset.weights[i]),
+                                        best_irts_2 = psms_subset.irts[i],
+                                        best_irt_residual_2 = irt_residual(psms_subset, i),
+                                        best_weight_2 = psms_subset.weight[i],
+                                        best_log2_intensity_explained_2 = psms_subset.log2_intensity_explained[i],
+                                        best_ms_file_idx_2 = psms_subset.ms_file_idx[i],
+                                        is_best_decoy_2 = psms_subset.decoy[i]
+                                    ))
+                                    mbr_tracker[key] = new_scores
+                                else
+                                    mbr_tracker[key] = updated_stats
+                                end
+
+                                if qvals[i] <= max_q_value_lightgbm_rescore
+                                    push!(scores.unique_passing_runs, psms_subset.ms_file_idx[i])
+                                end
+                            else
+                                insert!(mbr_tracker, key, (
+                                    best_prob_1 = trace_prob,
+                                    best_prob_2 = zero(Float32),
+                                    worst_prob_1 = trace_prob,
+                                    worst_prob_2 = zero(Float32),
+                                    mean_prob = trace_prob,
+                                    count_pairs = Int32(1),
+                                    best_log2_weights_1 = log2.(psms_subset.weights[i]),
+                                    best_log2_weights_2 = Vector{Float32}(),
+                                    best_irts_1 = psms_subset.irts[i],
+                                    best_irts_2 = Vector{Float32}(),
+                                    best_irt_residual_1 = irt_residual(psms_subset, i),
+                                    best_irt_residual_2 = zero(Float32),
+                                    best_weight_1 = psms_subset.weight[i],
+                                    best_weight_2 = zero(Float32),
+                                    best_log2_intensity_explained_1 = psms_subset.log2_intensity_explained[i],
+                                    best_log2_intensity_explained_2 = zero(Float32),
+                                    best_ms_file_idx_1 = psms_subset.ms_file_idx[i],
+                                    best_ms_file_idx_2 = zero(UInt32),
+                                    is_best_decoy_1 = psms_subset.decoy[i],
+                                    is_best_decoy_2 = false,
+                                    unique_passing_runs = qvals[i] <= max_q_value_lightgbm_rescore ?
+                                        Set{UInt16}([psms_subset.ms_file_idx[i]]) :
+                                        Set{UInt16}()
+                                ))
+                            end
+                        end
+                    end
+                end
+
+                # Pass 2: Write predictions and MBR features to files
+                for file_path in file_paths
+                    psms_subset = DataFrame(Arrow.Table(file_path))
+                    trace_probs = predict_cv_models_oom(models_for_iter, psms_subset, current_features)
+
+                    # Get non-MBR predictions for last iteration
+                    non_mbr_trace_probs = if is_last_iteration && match_between_runs && non_mbr_models_for_iter !== nothing
+                        predict_cv_models_oom(non_mbr_models_for_iter, psms_subset, non_mbr_features)
+                    else
+                        nothing
+                    end
+
+                    # Initialize MBR columns if needed
+                    if match_between_runs && !hasproperty(psms_subset, :MBR_num_runs)
+                        initialize_prob_group_features!(psms_subset, match_between_runs)
+                    end
+
+                    for i in 1:nrow(psms_subset)
+                        psms_subset.trace_prob[i] = trace_probs[i]
+
+                        # Apply MBR features from tracker
+                        if match_between_runs && !is_last_iteration
+                            key = (pair_id = psms_subset.pair_id[i], isotopes = psms_subset.isotopes_captured[i])
+
+                            if haskey(mbr_tracker, key)
+                                scores = mbr_tracker[key]
+                                psms_subset.MBR_num_runs[i] = length(scores.unique_passing_runs)
+
+                                best_log2_weights = Float32[]
+                                best_irts = Float32[]
+                                best_weight = zero(Float32)
+                                best_log2_ie = zero(Float32)
+                                best_residual = zero(Float32)
+
+                                if (scores.best_ms_file_idx_1 != psms_subset.ms_file_idx[i]) &&
+                                   (!isempty(scores.best_log2_weights_1))
+                                    best_log2_weights = scores.best_log2_weights_1
+                                    best_irts = scores.best_irts_1
+                                    best_weight = scores.best_weight_1
+                                    best_log2_ie = scores.best_log2_intensity_explained_1
+                                    best_residual = scores.best_irt_residual_1
+                                    psms_subset.MBR_max_pair_prob[i] = scores.best_prob_1
+                                    MBR_is_best_decoy = scores.is_best_decoy_1
+                                elseif (scores.best_ms_file_idx_2 != psms_subset.ms_file_idx[i]) &&
+                                       (!isempty(scores.best_log2_weights_2))
+                                    best_log2_weights = scores.best_log2_weights_2
+                                    best_irts = scores.best_irts_2
+                                    best_weight = scores.best_weight_2
+                                    best_log2_ie = scores.best_log2_intensity_explained_2
+                                    best_residual = scores.best_irt_residual_2
+                                    psms_subset.MBR_max_pair_prob[i] = scores.best_prob_2
+                                    MBR_is_best_decoy = scores.is_best_decoy_2
+                                else
+                                    psms_subset.MBR_best_irt_diff[i] = -1.0f0
+                                    psms_subset.MBR_rv_coefficient[i] = -1.0f0
+                                    psms_subset.MBR_is_best_decoy[i] = true
+                                    psms_subset.MBR_max_pair_prob[i] = -1.0f0
+                                    psms_subset.MBR_log2_weight_ratio[i] = -1.0f0
+                                    psms_subset.MBR_log2_explained_ratio[i] = -1.0f0
+                                    psms_subset.MBR_is_missing[i] = true
+                                    continue
+                                end
+
+                                best_log2_weights_padded, weights_padded = pad_equal_length(
+                                    best_log2_weights, log2.(psms_subset.weights[i])
+                                )
+                                best_iRTs_padded, iRTs_padded = pad_rt_equal_length(
+                                    best_irts, psms_subset.irts[i]
+                                )
+
+                                current_residual = irt_residual(psms_subset, i)
+                                psms_subset.MBR_best_irt_diff[i] = abs(best_residual - current_residual)
+                                psms_subset.MBR_rv_coefficient[i] = MBR_rv_coefficient(
+                                    best_log2_weights_padded, best_iRTs_padded,
+                                    weights_padded, iRTs_padded
+                                )
+                                psms_subset.MBR_log2_weight_ratio[i] = log2(psms_subset.weight[i] / best_weight)
+                                psms_subset.MBR_log2_explained_ratio[i] = psms_subset.log2_intensity_explained[i] - best_log2_ie
+                                psms_subset.MBR_is_best_decoy[i] = MBR_is_best_decoy
+                            end
+                        end
+                    end
+
+                    # Write to file
+                    write_subset_oom(
+                        file_path,
+                        psms_subset,
+                        trace_probs,
+                        non_mbr_trace_probs,
+                        match_between_runs,
+                        max_q_value_lightgbm_rescore;
+                        dropVectors = is_last_iteration
+                    )
+                end
+            end
+            @debug_l2 "\n[OOM] Iteration $train_iter: $(round(iter_timing.time, digits=2))s"
+            update(pbar_apply)
+        end
+    end
+    @debug_l1 "\n[OOM] Phase B (apply to files): $(round(phase_b_timing.time, digits=2))s"
 
     return models
 end
-=#
 
 function train_booster(psms::AbstractDataFrame, features, num_round;
                        feature_fraction::Float64,
@@ -1018,19 +1027,26 @@ function dropVectorColumns!(df)
     # 2) Drop those columns in place
     select!(df, Not(to_drop))
 end
-# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
-#=
+
+#==========================================================
+OOM Helper Functions - Used by sort_of_percolator_out_of_memory!
+==========================================================#
+
 """
     reset_precursor_scores!(dict)
 
-Set all values of `dict` to an empty precursor score tuple.  This helps reuse
-the same dictionary between iterations without reallocating memory.
+Set all values of `dict` to reset counts for new iteration.
+This helps reuse the same dictionary between iterations without reallocating memory.
 """
 function reset_precursor_scores!(dict)
     for key in keys(dict)
         dict[key] = (
             best_prob_1 = zero(Float32),
             best_prob_2 = zero(Float32),
+            worst_prob_1 = zero(Float32),
+            worst_prob_2 = zero(Float32),
+            mean_prob = zero(Float32),
+            count_pairs = Int32(0),
             best_log2_weights_1 = Vector{Float32}(),
             best_log2_weights_2 = Vector{Float32}(),
             best_irts_1 = Vector{Float32}(),
@@ -1045,23 +1061,23 @@ function reset_precursor_scores!(dict)
             best_ms_file_idx_2 = zero(UInt32),
             is_best_decoy_1 = false,
             is_best_decoy_2 = false,
-            unique_passing_runs = Set{UInt16}(),
+            unique_passing_runs = Set{UInt16}()
         )
     end
     return dict
 end
-=#
 
-# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
-#=
 """
-    predict_cv_models(models, df, features)
+    predict_cv_models_oom(models, df, features)
 
 Return a vector of probabilities for `df` using the cross validation `models`.
+This version works with Dict{UInt8, Any} from the OOM implementation.
 """
-function predict_cv_models(models::Dictionary{UInt8,LightGBMModel},
-                           df::AbstractDataFrame,
-                           features::Vector{Symbol})
+function predict_cv_models_oom(
+    models::Dictionary{UInt8, T},
+    df::AbstractDataFrame,
+    features::Vector{Symbol}
+) where T
     trace_probs = zeros(Float32, nrow(df))
     for (fold_idx, bst) in pairs(models)
         fold_rows = findall(==(fold_idx), df[!, :cv_fold])
@@ -1071,22 +1087,50 @@ function predict_cv_models(models::Dictionary{UInt8,LightGBMModel},
     end
     return trace_probs
 end
-=#
 
-# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
-#=
 """
-    update_mbr_probs!(df, trace_probs, qval_thresh)
+    write_subset_oom(file_path, df, trace_probs, mbr_trace_probs, match_between_runs, qval_thresh; dropVectors=false)
 
-Store final MBR probabilities and mark transfer candidates as those
-failing the pre-MBR q-value threshold but whose best matched pair passed
-the corresponding probability cutoff.
+Write the updated subset to disk for OOM processing, optionally dropping vector columns.
 """
-function update_mbr_probs!(
+function write_subset_oom(
+    file_path::String,
+    df::DataFrame,
+    trace_probs::AbstractVector{Float32},
+    mbr_trace_probs::Union{AbstractVector{Float32}, Nothing},
+    match_between_runs::Bool,
+    qval_thresh::Float32;
+    dropVectors::Bool = false
+)
+    if dropVectors
+        if match_between_runs && mbr_trace_probs !== nothing
+            update_mbr_probs_oom!(df, trace_probs, mbr_trace_probs, qval_thresh)
+        else
+            df[!, :trace_prob] = trace_probs
+        end
+        dropVectorColumns!(df)
+        writeArrow(file_path, df)
+    else
+        if match_between_runs && mbr_trace_probs !== nothing
+            df[!, :trace_prob] = trace_probs
+            df[!, :MBR_boosted_trace_prob] = mbr_trace_probs
+        else
+            df[!, :trace_prob] = trace_probs
+        end
+        writeArrow(file_path, convert_subarrays(df))
+    end
+end
+
+"""
+    update_mbr_probs_oom!(df, trace_probs, mbr_trace_probs, qval_thresh)
+
+Store final MBR probabilities and mark transfer candidates for OOM processing.
+"""
+function update_mbr_probs_oom!(
     df::AbstractDataFrame,
     trace_probs::AbstractVector{Float32},
     mbr_trace_probs::AbstractVector{Float32},
-    qval_thresh::Float32,
+    qval_thresh::Float32
 )
     prev_qvals = similar(trace_probs)
     get_qvalues!(trace_probs, df.target, prev_qvals)
@@ -1098,44 +1142,6 @@ function update_mbr_probs!(
     df[!, :MBR_boosted_trace_prob] = mbr_trace_probs
     return df
 end
-=#
-
-# DISABLED: OOM helper function - only used by sort_of_percolator_out_of_memory!
-#=
-"""
-    write_subset(file_path, df, trace_probs, match_between_runs, qval_thresh; dropVectors=false)
-
-Write the updated subset to disk, optionally dropping vector columns.
-The `qval_thresh` argument is used to mark transfer candidates when
-`match_between_runs` is true and `dropVectors` is set.
-"""
-function write_subset(
-    file_path::String,
-    df::DataFrame,
-    trace_probs::AbstractVector{Float32},
-    mbr_trace_probs::Union{AbstractVector{Float32}, Nothing},
-    match_between_runs::Bool,
-    qval_thresh::Float32;
-    dropVectors::Bool=false,
-)
-    if dropVectors
-        if match_between_runs
-            update_mbr_probs!(df, trace_probs, mbr_trace_probs, qval_thresh)
-        else
-            df[!, :trace_prob] = trace_probs
-        end
-        writeArrow(file_path, dropVectorColumns!(df))
-    else
-        if match_between_runs && mbr_trace_probs !== nothing
-            df[!, :trace_prob] = trace_probs
-            df[!, :MBR_boosted_trace_prob] = mbr_trace_probs
-        else
-            df[!, :trace_prob] = trace_probs
-        end
-        writeArrow(file_path, convert_subarrays(df))
-    end
-end
-=#
 
 function MBR_rv_coefficient(weights_A::AbstractVector{<:Real},
     times_A::AbstractVector{<:Real},

@@ -66,6 +66,7 @@ function score_precursor_isotope_traces(
     max_q_value_mbr_itr::Float32,
     min_PEP_neg_threshold_itr::Float32,
     max_psms_in_memory::Int64,
+    max_psm_memory_mb::Int64,  # User-specified memory limit for PSMs (MB)
     n_quantile_bins::Int64,
     q_value_threshold::Float32 = 0.01f0,  # Default to 1% if not specified
     ms1_scoring::Bool = true
@@ -73,18 +74,40 @@ function score_precursor_isotope_traces(
     # Step 1: Count PSMs and determine processing approach
     psms_count = get_psms_count(file_paths)
 
-    # HARDCODED: Always use in-memory processing (OOM path disabled)
-    if false  # psms_count >= max_psms_in_memory
-        # Case 1: Out-of-memory processing with default LightGBM (DISABLED)
-        @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
-        best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
+    # Calculate memory-based threshold
+    # Estimated bytes per PSM including all features and overhead
+    psm_size_bytes = 500
+    memory_based_threshold = floor(Int64, max_psm_memory_mb * 1e6 / psm_size_bytes)
+    effective_threshold = min(max_psms_in_memory, memory_based_threshold)
+
+    if psms_count >= effective_threshold
+        # Case 1: Out-of-memory processing with default LightGBM
+        @user_info "Using OUT-OF-MEMORY mode: $psms_count PSMs exceeds $effective_threshold threshold"
+        @debug_l1 "\n[OOM] Out-of-memory percolator activated"
+        @debug_l1 "\n[OOM]   PSM count: $psms_count"
+        @debug_l1 "\n[OOM]   Memory threshold: $max_psm_memory_mb MB → $memory_based_threshold PSMs"
+        @debug_l1 "\n[OOM]   Count threshold: $max_psms_in_memory PSMs"
+        @debug_l1 "\n[OOM]   Effective threshold: $effective_threshold PSMs"
+        @debug_l1 "\n[OOM]   Files: $(length(file_paths))"
+
+        # Phase 0: Assign pair_ids across all files
+        phase0_timing = @timed assign_pair_ids_oom!(file_paths)
+        @debug_l1 "\n[OOM] Phase 0 (pair assignment): $(round(phase0_timing.time, digits=2))s"
+
+        # Sample complete pair groups for training
+        best_psms = sample_complete_pairs_for_training(
+            file_paths,
+            effective_threshold
+        )
 
         # Add quantile-binned features before training
         features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
-        # Use a ModelConfig (AdvancedLightGBM by default) for OOM path
+        # Use AdvancedLightGBM config for OOM
         model_config = create_default_advanced_lightgbm_config(ms1_scoring)
+
+        # Train and apply OOM percolator
         models = score_precursor_isotope_traces_out_of_memory!(
             best_psms,
             file_paths,
@@ -755,23 +778,176 @@ function probit_regression_scoring_cv!(
     return nothing
 end
 
-# DISABLED: Out-of-memory processing - hardcoded to always use in-memory approach
-# This function is commented out in favor of always using in-memory processing.
-# Preserved for potential future use if needed for extremely large datasets.
-#=
+"""
+    assign_pair_ids_oom!(file_paths::Vector{String})
+
+Assign pair_ids to ALL PSMs across ALL files before sampling.
+This ensures pair groups are never split between training sample and OOM data.
+
+# Process
+1. Pass 1: Collect all unique (precursor_idx, irt_pred, cv_fold, isotopes_captured, target) from all files
+2. Pass 2: Assign pair_ids using same algorithm as in-memory (via assignPairIds!)
+3. Pass 3: Write pair_ids back to all files
+
+# Returns
+- `pair_lookup`: Dictionary mapping (precursor_idx, cv_fold, isotopes_captured) -> pair_id
+"""
+function assign_pair_ids_oom!(file_paths::Vector{String})
+    @debug_l1 "\n[OOM] Collecting precursor info from $(length(file_paths)) files..."
+
+    # Pass 1: Collect all unique (precursor_idx, irt_pred, cv_fold, isotopes_captured, target)
+    precursor_info = DataFrame(
+        precursor_idx = UInt32[],
+        irt_pred = Float32[],
+        cv_fold = UInt8[],
+        isotopes_captured = Tuple{Int8,Int8}[],
+        target = Bool[]
+    )
+
+    for file_path in file_paths
+        df = DataFrame(Arrow.Table(file_path))
+        # Get unique precursors from this file
+        unique_precs = unique(df, [:precursor_idx, :cv_fold, :isotopes_captured])
+        append!(precursor_info, select(unique_precs,
+            :precursor_idx, :irt_pred, :cv_fold, :isotopes_captured, :target))
+    end
+
+    # Deduplicate across files
+    unique!(precursor_info, [:precursor_idx, :cv_fold, :isotopes_captured])
+
+    @debug_l1 "\n[OOM] Found $(nrow(precursor_info)) unique precursor-isotope combinations"
+
+    # Pass 2: Assign pair_ids using same algorithm as in-memory
+    # Sort for deterministic ordering regardless of file processing order
+    sort!(precursor_info, [:cv_fold, :isotopes_captured, :irt_pred, :precursor_idx])
+
+    # Add irt_bin_idx using the existing function
+    precursor_info[!, :irt_bin_idx] = getIrtBins(precursor_info.irt_pred)
+
+    # Assign pair_ids within groups using existing assignPairIds! function
+    last_pair_id = zero(UInt32)
+    precursor_info[!, :pair_id] = zeros(UInt32, nrow(precursor_info))
+
+    for group in groupby(precursor_info, [:irt_bin_idx, :cv_fold, :isotopes_captured])
+        last_pair_id = assignPairIds!(group, last_pair_id)
+    end
+
+    # Create lookup: (precursor_idx, cv_fold, isotopes) -> pair_id
+    pair_lookup = Dict{Tuple{UInt32, UInt8, Tuple{Int8,Int8}}, UInt32}()
+    for row in eachrow(precursor_info)
+        key = (row.precursor_idx, row.cv_fold, row.isotopes_captured)
+        pair_lookup[key] = row.pair_id
+    end
+
+    @debug_l1 "\n[OOM] Assigned $(last_pair_id) pair_ids"
+
+    # Pass 3: Write pair_ids back to all files
+    @debug_l1 "\n[OOM] Writing pair_ids to files..."
+    for file_path in file_paths
+        df = DataFrame(Arrow.Table(file_path))
+
+        # Add pair_id column by looking up each row
+        df[!, :pair_id] = map(eachrow(df)) do row
+            key = (row.precursor_idx, row.cv_fold, row.isotopes_captured)
+            get(pair_lookup, key, zero(UInt32))
+        end
+
+        # Write back
+        Arrow.write(file_path, df)
+    end
+
+    return pair_lookup
+end
+
+"""
+    sample_complete_pairs_for_training(file_paths, max_psms)
+
+Sample COMPLETE pair groups for training. Never splits a pair between
+training sample and OOM data.
+
+# Process
+1. Collect all unique pair_ids and count their PSMs across all files
+2. Randomly select pair_ids until we reach target PSM count
+3. Load PSMs belonging to selected pairs from all files
+
+# Arguments
+- `file_paths`: Vector of PSM file paths
+- `max_psms`: Maximum number of PSMs to sample for training
+
+# Returns
+- DataFrame containing sampled PSMs (complete pairs only)
+"""
+function sample_complete_pairs_for_training(
+    file_paths::Vector{String},
+    max_psms::Int64
+)
+    @debug_l1 "\n[OOM] Sampling complete pairs for training (target: $max_psms PSMs)..."
+
+    # Collect all unique pair_ids and their PSM counts
+    pair_counts = Dict{UInt32, Int}()
+    for file_path in file_paths
+        df = DataFrame(Arrow.Table(file_path))
+        for pair_id in df.pair_id
+            pair_counts[pair_id] = get(pair_counts, pair_id, 0) + 1
+        end
+    end
+
+    all_pair_ids = collect(keys(pair_counts))
+    @debug_l1 "\n[OOM] Found $(length(all_pair_ids)) unique pair_ids"
+
+    # Shuffle and select pairs until we reach target PSM count
+    Random.seed!(1776)
+    shuffled_pairs = shuffle(all_pair_ids)
+
+    selected_pairs = Set{UInt32}()
+    total_psms = 0
+    for pair_id in shuffled_pairs
+        if total_psms + pair_counts[pair_id] <= max_psms
+            push!(selected_pairs, pair_id)
+            total_psms += pair_counts[pair_id]
+        end
+        if total_psms >= max_psms * 0.9  # Stop at 90% to avoid overshoot
+            break
+        end
+    end
+
+    @debug_l1 "\n[OOM] Selected $(length(selected_pairs)) pairs with $total_psms PSMs"
+
+    # Load PSMs belonging to selected pairs
+    sampled_dfs = DataFrame[]
+    for file_path in file_paths
+        df = DataFrame(Arrow.Table(file_path))
+        mask = in.(df.pair_id, Ref(selected_pairs))
+        if any(mask)
+            push!(sampled_dfs, df[mask, :])
+        end
+    end
+
+    sampled_psms = vcat(sampled_dfs...)
+    @debug_l1 "\n[OOM] Loaded $(nrow(sampled_psms)) PSMs for training"
+
+    return sampled_psms
+end
+
 """
     score_precursor_isotope_traces_out_of_memory!(best_psms::DataFrame, file_paths::Vector{String},
                                   precursors::LibraryPrecursors) -> Dictionary{UInt8, LightGBMModel}
 
-Train LightGBM models for PSM scoring. Only a subset of psms are kept in memory
+Train LightGBM models for PSM scoring using out-of-memory processing.
+Only a subset of psms (complete pair groups) are kept in memory for training.
 
 # Arguments
-- `best_psms`: Sample of high-quality PSMs for training
+- `best_psms`: Sampled PSMs (complete pair groups) for training
 - `file_paths`: Paths to PSM files
 - `precursors`: Library precursor information
+- `model_config`: Model configuration with features and hyperparameters
+- `match_between_runs`: Whether to perform match between runs
+- `max_q_value_lightgbm_rescore`: Max q-value for LightGBM rescoring
+- `max_q_value_mbr_itr`: Max q-value for MBR transfers during iterative training
+- `min_PEP_neg_threshold_itr`: Min PEP threshold for relabeling weak targets
 
 # Returns
-Trained LightGBM models or simplified model if insufficient PSMs.
+Trained LightGBM models dictionary.
 """
 function score_precursor_isotope_traces_out_of_memory!(
     best_psms::DataFrame,
@@ -785,55 +961,55 @@ function score_precursor_isotope_traces_out_of_memory!(
 )
     file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
     # Features from model_config; do not include :target
-    features = [f for f in model_config.features if hasproperty(best_psms, f)];
+    features = [f for f in model_config.features if hasproperty(best_psms, f)]
     if match_between_runs
         append!(features, [
             :MBR_rv_coefficient,
-            :MBR_best_irt_diff,
+            #:MBR_best_irt_diff,
             #:MBR_num_runs,
             :MBR_max_pair_prob,
             :MBR_log2_weight_ratio,
             :MBR_log2_explained_ratio,
             :MBR_is_missing
-            ])
+        ])
     end
 
     # Diagnostic: Report which quantile-binned features are being used
     qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
     if !isempty(qbin_features)
-        @user_info "OOM LightGBM using $(length(qbin_features)) quantile-binned features: $(join(string.(qbin_features), ", "))"
+        @debug_l2 "\n[OOM] LightGBM using $(length(qbin_features)) quantile-binned features"
         for qbin_feat in qbin_features
             n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-            @user_info "  $qbin_feat: $n_unique unique values in training sample"
+            @debug_l2 "\n[OOM]   $qbin_feat: $n_unique unique values in training sample"
         end
     end
 
-    best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
-    best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
-    best_psms[!,:decoy] = best_psms[!,:target].==false;
+    best_psms[!, :accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!, :precursor_idx]]
+    best_psms[!, :q_value] = zeros(Float32, size(best_psms, 1))
+    best_psms[!, :decoy] = best_psms[!, :target] .== false
 
     # Hyperparameters from model_config
     hp = model_config.hyperparams
     models = sort_of_percolator_out_of_memory!(
-                            best_psms,
-                            file_paths,
-                            features,
-                            match_between_runs;
-                            max_q_value_lightgbm_rescore,
-                            max_q_value_mbr_itr,
-                            min_PEP_neg_threshold_itr,
-                            feature_fraction = get(hp, :feature_fraction, 0.5),
-                            min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
-                            min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
-                            bagging_fraction = get(hp, :bagging_fraction, 0.25),
-                            max_depth = get(hp, :max_depth, 10),
-                            num_leaves = get(hp, :num_leaves, 63),
-                            learning_rate = get(hp, :learning_rate, 0.05),
-                            iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
-                            print_importance = false);
-    return models;#best_psms
+        best_psms,
+        file_paths,
+        features,
+        match_between_runs;
+        max_q_value_lightgbm_rescore,
+        max_q_value_mbr_itr,
+        min_PEP_neg_threshold_itr,
+        feature_fraction = get(hp, :feature_fraction, 0.5),
+        min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
+        min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
+        bagging_fraction = get(hp, :bagging_fraction, 0.25),
+        max_depth = get(hp, :max_depth, 10),
+        num_leaves = get(hp, :num_leaves, 63),
+        learning_rate = get(hp, :learning_rate, 0.05),
+        iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
+        print_importance = false
+    )
+    return models
 end
-=#
 
 """
     write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})

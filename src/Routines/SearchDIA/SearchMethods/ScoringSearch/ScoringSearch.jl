@@ -49,6 +49,7 @@ Parameters for scoring search.
 struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # LightGBM parameters
     max_psms_in_memory::Int64
+    max_psm_memory_mb::Int64  # User-specified memory limit for PSMs (MB)
     min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
     precursor_q_value_interpolation_points_per_bin::Int64
@@ -91,6 +92,7 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
         
         new{typeof(isotope_trace_type)}(
             Int64(ml_params.max_psms_in_memory),
+            Int64(get(ml_params, :max_psm_memory_mb, 8000)),  # Default 8GB
             Float32(ml_params.min_trace_prob),
             Int64(ml_params.spline_points),
             Int64(ml_params.interpolation_points),
@@ -394,6 +396,7 @@ function summarize_results!(
                 params.max_q_value_mbr_itr,
                 params.min_PEP_neg_threshold_itr,
                 params.max_psms_in_memory,
+                params.max_psm_memory_mb,  # User-specified memory limit for OOM processing
                 params.n_quantile_bins,
                 params.q_value_threshold,
                 params.ms1_scoring
