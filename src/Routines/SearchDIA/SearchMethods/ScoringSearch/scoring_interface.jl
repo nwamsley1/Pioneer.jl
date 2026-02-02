@@ -510,6 +510,9 @@ function get_quant_necessary_columns(match_between_runs::Bool)
         :target,
         :rt,
         :refined_irt_obs,
+        #:refined_irt_pred, #temp
+        #:irt_obs, #temp
+        #:irt_pred, #temp 
         :missed_cleavage,
         :Mox,
         :isotopes_captured,
