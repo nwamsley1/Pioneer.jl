@@ -4,7 +4,7 @@
 
     "comment_calibration": "=== Calibration file for automatic detection of fragment and precursor m/z ranges (optional) ===",
     "comment_calibration": "=== Convert a representative RAW file to Arrow format and provide its path here ===",
-    "calibration_raw_file": "/path/to/calibration/file.arrow",
+    "calibration_raw_file": "",
 
     "comment_fasta": "=== FASTA files ===",
     "fasta_paths": [
@@ -36,7 +36,9 @@
         "max_charge": 3,
         "cleavage_regex": "[KR][^_|$]",
         "missed_cleavages": 1,
-        "max_var_mods": 1
+        "max_var_mods": 1,
+        "add_decoys": true,
+        "entrapment_r": 0
     },
 
     "comment_modifications": "=== Modifications (variable and fixed, including PTMs and peptide-terminal labels) ===",
@@ -49,5 +51,22 @@
         "pattern": ["C"],
         "mass": [57.021464],
         "name": ["Unimod:4"]
-    }
+    },
+    "isotope_mod_groups": [],
+
+    "comment_collision_energy": "=== Collision energy settings ===",
+    "nce_params": {
+        "nce": 26.0,
+        "default_charge": 2,
+        "dynamic_nce": true
+    },
+
+    "comment_koina": "=== Koina API settings ===",
+    "max_koina_requests": 24,
+    "max_koina_batch": 1000,
+
+    "comment_processing": "=== Processing settings ===",
+    "match_lib_build_batch": 100000,
+    "include_contaminants": true,
+    "predict_fragments": true
 }
