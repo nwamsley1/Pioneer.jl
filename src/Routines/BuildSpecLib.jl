@@ -251,8 +251,8 @@ function BuildSpecLib(params_path::String)
                 #Record the spline knots 
                 try
                     spl_knots = copy(fragments_table[:knot_vector][1])
-                    jldsave(
-                        joinpath(lib_dir, "spline_knots.jld2");
+                    serialize_to_jls(
+                        joinpath(lib_dir, "spline_knots.jls"),
                         spl_knots
                     )
                     ion_dictionary = get_altimeter_ion_dict(asset_path("ion_dictionary.txt"))
