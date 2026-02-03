@@ -863,7 +863,7 @@ function assign_pair_ids_oom!(file_paths::Vector{String})
         last_pair_id = zero(UInt32)
         precursor_info[!, :pair_id] = zeros(UInt32, nrow(precursor_info))
 
-        for group in groupby(precursor_info, [:irt_bin_idx, :cv_fold, :isotopes_captured])
+        for group in groupby(precursor_info, [:irt_bin_idx, :cv_fold, :isotopes_captured], sort=false)
             last_pair_id = assignPairIds!(group, last_pair_id)
         end
 

@@ -173,7 +173,8 @@ function assign_pair_ids(
     last_pair_id::UInt32
 )
     # Get all unique precursors in this iRT bin (regardless of target/decoy status)
-    unique_precursors = unique(precursor_idx)
+    # Sort to ensure deterministic pairing regardless of input order (critical for OOM consistency)
+    unique_precursors = sort(unique(precursor_idx))
     n_precursors = length(unique_precursors)
 
     # Randomly shuffle all precursors using fixed seed for reproducibility
