@@ -1,3 +1,53 @@
+# ML Module Documentation
+
+## Percolator Pipeline (percolatorSortOf.jl)
+
+This module implements semi-supervised PSM scoring using LightGBM with cross-validation and optional Match-Between-Runs (MBR) features.
+
+### Architecture Overview
+
+The pipeline has two modes:
+- **In-Memory**: All PSMs loaded into a single DataFrame
+- **Out-of-Memory (OOM)**: Files processed individually with streaming MBR computation
+
+### Entry Points
+
+| Function | Purpose |
+|----------|---------|
+| `sort_of_percolator_in_memory!` | Main in-memory training and scoring |
+| `apply_models_to_files!` | Apply trained models to all files (OOM) |
+| `build_mbr_tracker_for_fold` | Build MBR feature tracker per CV fold |
+| `apply_mbr_from_tracker!` | Apply MBR features from tracker |
+
+### Key Algorithms
+
+**Pair ID Assignment** (`assign_random_target_decoy_pairs!`):
+- Groups by `[:irt_bin_idx, :cv_fold, :isotopes_captured]`
+- Random pairing with fixed seed (1844) for reproducibility
+- Allows T-T, T-D, D-D pairs
+
+**MBR Feature Computation** (`summarize_precursors!`):
+- Finds top-2 runs per (pair_id, isotopes) group
+- Computes: `MBR_max_pair_prob`, `MBR_num_runs`, `MBR_rv_coefficient`
+- Q-value based filtering for "passing runs"
+
+**OOM MBR Tracking** (`build_mbr_tracker_for_fold`):
+- Per-fold q-value computation (matches in-memory behavior)
+- Tracks best/second-best PSMs per pair across files
+- Excludes current run from MBR_num_runs count
+
+### Critical Implementation Details
+
+**Per-Fold Q-Values**: Both in-memory and OOM compute q-values on CV fold subsets for MBR features, ensuring consistent "unique_passing_runs" determination.
+
+**Transfer Candidates**: PSMs that fail q-value cutoff but have MBR_max_pair_prob >= minimum passing probability.
+
+### Documentation
+
+See `/docs/plans/in-memory-vs-oom-percolator-documentation.md` for comprehensive documentation of both pipelines.
+
+---
+
 # SpectralLinearRegression.jl Optimization Analysis
 
 ## Overview

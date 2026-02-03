@@ -904,7 +904,7 @@ function apply_models_to_files!(
             get_qvalues!(df.trace_prob, df.target, df.q_value)
 
             # Write back predictions
-            Arrow.write(file_path, df)
+            Arrow.write(file_path, convert_subarrays(df))
         end
         @debug_l2 "\n[OOM-Apply] Predictions written"
 
@@ -927,26 +927,60 @@ function apply_models_to_files!(
     # Final pass: Write final outputs (transfer candidates, etc.)
     if match_between_runs
         @debug_l2 "\n[OOM-Apply] Writing final MBR outputs..."
-        for file_path in file_paths
-            df = DataFrame(Arrow.Table(file_path); copycols=true)
 
-            # Get non-MBR predictions for transfer candidate computation
-            non_mbr_trace_probs = zeros(Float32, nrow(df))
+        # Step 1: Collect all non-MBR predictions to compute GLOBAL threshold
+        # Store predictions per file for later use
+        file_non_mbr_probs = Vector{Vector{Float32}}()
+        file_mbr_probs = Vector{Vector{Float32}}()
+        all_non_mbr_probs = Float32[]
+        all_targets = Bool[]
+
+        for file_path in file_paths
+            df = DataFrame(Arrow.Table(file_path))
+            n = nrow(df)
+
+            # Predict non-MBR probabilities for this file (stored in row order)
+            non_mbr_probs = zeros(Float32, n)
             for fold_idx in unique_cv_folds
                 fold_rows = findall(==(fold_idx), df.cv_fold)
                 if !isempty(fold_rows)
-                    # Use iteration mbr_start_iter - 1 model (last non-MBR)
                     model = models[fold_idx][mbr_start_iter - 1]
-                    non_mbr_trace_probs[fold_rows] = lightgbm_predict(model, df[fold_rows, :]; output_type=Float32)
+                    non_mbr_probs[fold_rows] = lightgbm_predict(model, df[fold_rows, :]; output_type=Float32)
                 end
             end
 
-            # Compute transfer candidates and final outputs
-            update_mbr_probs_oom!(df, non_mbr_trace_probs, df.trace_prob, max_q_value_lightgbm_rescore)
+            push!(file_non_mbr_probs, non_mbr_probs)
+            push!(file_mbr_probs, Vector{Float32}(df.trace_prob))  # Current trace_prob has MBR
+            append!(all_non_mbr_probs, non_mbr_probs)
+            append!(all_targets, df.target)
+        end
 
-            # Drop vector columns for final output
+        # Compute GLOBAL q-values and threshold (matching in-memory)
+        global_qvals = Vector{Float32}(undef, length(all_non_mbr_probs))
+        get_qvalues!(all_non_mbr_probs, all_targets, global_qvals)
+        pass_mask = global_qvals .<= max_q_value_lightgbm_rescore
+        global_prob_thresh = any(pass_mask) ? minimum(all_non_mbr_probs[pass_mask]) : typemax(Float32)
+
+        @debug_l2 "\n[OOM-Apply] Global prob threshold: $global_prob_thresh"
+
+        # Step 2: Apply global threshold to each file
+        global_idx = 1
+        for (file_idx, file_path) in enumerate(file_paths)
+            df = DataFrame(Arrow.Table(file_path); copycols=true)
+            n = nrow(df)
+
+            # Get this file's global q-values
+            file_qvals = global_qvals[global_idx:global_idx + n - 1]
+            global_idx += n
+
+            # Apply transfer candidate logic with GLOBAL threshold
+            df[!, :MBR_transfer_candidate] = (file_qvals .> max_q_value_lightgbm_rescore) .&
+                                             (df.MBR_max_pair_prob .>= global_prob_thresh)
+            df[!, :trace_prob] = file_non_mbr_probs[file_idx]
+            df[!, :MBR_boosted_trace_prob] = file_mbr_probs[file_idx]
+
             dropVectorColumns!(df)
-            Arrow.write(file_path, df)
+            Arrow.write(file_path, convert_subarrays(df))
         end
     end
 
@@ -979,7 +1013,7 @@ function build_mbr_tracker_for_fold(
     end
 
     # Compute per-fold q_values (matching in-memory FDR calculation scope)
-    fold_qvalues = Vector{Float64}(undef, length(fold_probs))
+    fold_qvalues = Vector{Float32}(undef, length(fold_probs))
     get_qvalues!(fold_probs, fold_targets, fold_qvalues)
 
     # Build a lookup from (file_path_idx, row_in_fold) to per-fold q_value
@@ -1181,7 +1215,7 @@ function apply_mbr_from_tracker!(
         end
 
         if modified
-            Arrow.write(file_path, df)
+            Arrow.write(file_path, convert_subarrays(df))
         end
     end
 end

@@ -303,6 +303,22 @@ include("test/UnitTests/ScoringSearch/test_protein_inference.jl")
 - File I/O dominates for large experiments
 - Thread-safe operations in score_psms.jl
 
+## Recent Changes (2025-02)
+
+### OOM Percolator Pipeline Refinement (February 2025)
+- **Per-Fold Q-Value Computation**: Fixed `build_mbr_tracker_for_fold` to compute q-values on CV fold subsets (matching in-memory behavior)
+- **MBR_num_runs Consistency**: Both modes now exclude current run from count if it has passing PSMs
+- **Transfer Candidate Logic**: Verified equivalent implementation between in-memory and OOM modes
+- **Comprehensive Documentation**: Added `/docs/plans/in-memory-vs-oom-percolator-documentation.md`
+- **Result Alignment**: OOM and in-memory modes now produce ~0.3% difference (within expected variance)
+
+### Key OOM Functions
+| Function | Location | Purpose |
+|----------|----------|---------|
+| `apply_models_to_files!` | `percolatorSortOf.jl:857` | Apply trained models file-by-file |
+| `build_mbr_tracker_for_fold` | `percolatorSortOf.jl:960` | Build per-fold MBR tracker |
+| `apply_mbr_from_tracker!` | `percolatorSortOf.jl:1099` | Apply MBR features from tracker |
+
 ## Recent Changes (2025-01)
 
 ### Automatic Model Selection Feature (January 2025)

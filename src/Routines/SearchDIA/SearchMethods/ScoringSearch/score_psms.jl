@@ -81,7 +81,7 @@ function score_precursor_isotope_traces(
     memory_based_threshold = floor(Int64, max_psm_memory_mb * 1e6 / psm_size_bytes)
     effective_threshold = min(max_psms_in_memory, memory_based_threshold)
 
-    if psms_count >= effective_threshold
+    if true==false#psms_count >= effective_threshold
         # Case 1: Out-of-memory processing with default LightGBM
         @user_info "Using OUT-OF-MEMORY mode: $psms_count PSMs exceeds $effective_threshold threshold"
         @debug_l1 "\n[OOM] Out-of-memory percolator activated"
@@ -971,9 +971,6 @@ function sample_complete_pairs_for_training(
         if total_psms + pair_counts[pair_id] <= max_psms
             push!(selected_pairs, pair_id)
             total_psms += pair_counts[pair_id]
-        end
-        if total_psms >= max_psms * 0.9  # Stop at 90% to avoid overshoot
-            break
         end
     end
 
