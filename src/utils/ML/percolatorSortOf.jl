@@ -1153,7 +1153,8 @@ function update_mbr_probs_oom!(
 )
     prev_qvals = similar(trace_probs)
     get_qvalues!(trace_probs, df.target, prev_qvals)
-    pass_mask = (prev_qvals .<= qval_thresh) .& df.target
+    # Match in-memory logic: pass_mask should NOT filter by target
+    pass_mask = (prev_qvals .<= qval_thresh)
     trace_prob_thresh = any(pass_mask) ? minimum(trace_probs[pass_mask]) : typemax(Float32)
     df[!, :MBR_transfer_candidate] = (prev_qvals .> qval_thresh) .&
                                      (df.MBR_max_pair_prob .>= trace_prob_thresh)
