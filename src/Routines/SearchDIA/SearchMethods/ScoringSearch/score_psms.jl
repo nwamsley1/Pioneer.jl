@@ -848,8 +848,10 @@ function assign_pair_ids_oom!(file_paths::Vector{String})
     # Pass 2: Assign pair_ids using same algorithm as in-memory
     @debug_l1 "\n[OOM] === Pass 2: Assigning pair_ids ==="
     pass2_timing = @timed begin
-        # Sort for deterministic ordering regardless of file processing order
-        sort!(precursor_info, [:cv_fold, :isotopes_captured, :irt_pred, :precursor_idx])
+        # NOTE: Do NOT sort precursor_info here. The in-memory version uses PSMs in
+        # arbitrary order (from file loading), and the pairing depends on the order
+        # of unique(precursor_idx) which returns values in order of first occurrence.
+        # Sorting here would change the pairing and cause OOM to differ from in-memory.
 
         # Add irt_bin_idx using the existing function
         precursor_info[!, :irt_bin_idx] = getIrtBins(precursor_info.irt_pred)
