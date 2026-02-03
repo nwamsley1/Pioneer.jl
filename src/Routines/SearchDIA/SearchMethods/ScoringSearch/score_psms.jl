@@ -1037,13 +1037,12 @@ function score_precursor_isotope_traces_out_of_memory!(
     bin_edges::Dict{Symbol, Vector{Float64}} = Dict{Symbol, Vector{Float64}}()
 )
     file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
-    # Features from model_config; do not include :target
+
+    # Features from model_config
     features = [f for f in model_config.features if hasproperty(best_psms, f)]
     if match_between_runs
         append!(features, [
             :MBR_rv_coefficient,
-            #:MBR_best_irt_diff,
-            #:MBR_num_runs,
             :MBR_max_pair_prob,
             :MBR_log2_weight_ratio,
             :MBR_log2_explained_ratio,
@@ -1061,31 +1060,53 @@ function score_precursor_isotope_traces_out_of_memory!(
         end
     end
 
+    # Add required columns for in-memory training
     best_psms[!, :accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!, :precursor_idx]]
     best_psms[!, :q_value] = zeros(Float32, size(best_psms, 1))
     best_psms[!, :decoy] = best_psms[!, :target] .== false
 
     # Hyperparameters from model_config
     hp = model_config.hyperparams
-    models = sort_of_percolator_out_of_memory!(
-        best_psms,
-        file_paths,
-        features,
-        match_between_runs;
-        max_q_value_lightgbm_rescore,
-        max_q_value_mbr_itr,
-        min_PEP_neg_threshold_itr,
-        feature_fraction = get(hp, :feature_fraction, 0.5),
-        min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
-        min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
-        bagging_fraction = get(hp, :bagging_fraction, 0.25),
-        max_depth = get(hp, :max_depth, 10),
-        num_leaves = get(hp, :num_leaves, 63),
-        learning_rate = get(hp, :learning_rate, 0.05),
-        iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
-        print_importance = false,
-        bin_edges = bin_edges
-    )
+    iter_scheme = get(hp, :iter_scheme, [100, 200, 200])
+
+    # STEP 1: Train on sampled PSMs using EXACT same code as in-memory
+    @debug_l1 "\n[OOM] Training models on $(nrow(best_psms)) sampled PSMs..."
+    train_timing = @timed begin
+        models = sort_of_percolator_in_memory!(
+            best_psms,
+            features,
+            match_between_runs;
+            max_q_value_lightgbm_rescore,
+            max_q_value_mbr_itr,
+            min_PEP_neg_threshold_itr,
+            feature_fraction = get(hp, :feature_fraction, 0.5),
+            min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
+            min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
+            bagging_fraction = get(hp, :bagging_fraction, 0.25),
+            max_depth = get(hp, :max_depth, 10),
+            num_leaves = get(hp, :num_leaves, 63),
+            learning_rate = get(hp, :learning_rate, 0.05),
+            iter_scheme = iter_scheme,
+            show_progress = true
+        )
+    end
+    @debug_l1 "\n[OOM] Training complete: $(round(train_timing.time, digits=2))s"
+
+    # STEP 2: Apply trained models to ALL files
+    @debug_l1 "\n[OOM] Applying models to $(length(file_paths)) files..."
+    apply_timing = @timed begin
+        apply_models_to_files!(
+            models,
+            file_paths,
+            features,
+            match_between_runs;
+            max_q_value_lightgbm_rescore,
+            iter_scheme = iter_scheme,
+            bin_edges = bin_edges
+        )
+    end
+    @debug_l1 "\n[OOM] Application complete: $(round(apply_timing.time, digits=2))s"
+
     return models
 end
 

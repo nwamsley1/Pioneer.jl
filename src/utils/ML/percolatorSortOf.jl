@@ -834,6 +834,330 @@ function sort_of_percolator_out_of_memory!(
     return models
 end
 
+#==========================================================
+Simplified OOM: Apply trained models to all files
+===========================================================#
+
+"""
+    apply_models_to_files!(models, file_paths, features, match_between_runs; kwargs...)
+
+Apply trained models from `sort_of_percolator_in_memory!` to all files.
+This matches in-memory timing exactly:
+- For each iteration: predict all files, then compute MBR features per CV fold.
+
+# Arguments
+- `models`: Dict{UInt8, LightGBMModelVector} from sort_of_percolator_in_memory!
+- `file_paths`: Paths to all PSM Arrow files
+- `features`: Feature columns for prediction
+- `match_between_runs`: Whether to compute MBR features
+- `max_q_value_lightgbm_rescore`: Q-value threshold for MBR
+- `iter_scheme`: Iteration scheme (default [100, 200, 200])
+- `bin_edges`: Quantile bin edges for feature engineering
+"""
+function apply_models_to_files!(
+    models::Dict{UInt8, LightGBMModelVector},
+    file_paths::Vector{String},
+    features::Vector{Symbol},
+    match_between_runs::Bool;
+    max_q_value_lightgbm_rescore::Float32 = 0.01f0,
+    iter_scheme::Vector{Int} = [100, 200, 200],
+    bin_edges::Dict{Symbol, Vector{Float64}} = Dict{Symbol, Vector{Float64}}()
+)
+    n_iterations = length(iter_scheme)
+    mbr_start_iter = n_iterations  # MBR features used in last iteration
+    non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
+    unique_cv_folds = collect(keys(models))
+
+    @debug_l1 "\n[OOM-Apply] Applying $(n_iterations) iterations to $(length(file_paths)) files"
+
+    for iter in 1:n_iterations
+        iter_start = time()
+        current_features = iter < mbr_start_iter ? non_mbr_features : features
+        is_last_iter = (iter == n_iterations)
+        need_mbr = match_between_runs && (iter >= mbr_start_iter - 1)
+
+        @debug_l2 "\n[OOM-Apply] === Iteration $iter ==="
+
+        # Step 1: Apply predictions for this iteration to ALL files
+        @debug_l2 "\n[OOM-Apply] Predicting all files..."
+        for (file_idx, file_path) in enumerate(file_paths)
+            df = DataFrame(Arrow.Table(file_path); copycols=true)
+
+            # Apply quantile binning
+            if !isempty(bin_edges)
+                apply_quantile_bins!(df, bin_edges)
+            end
+
+            # Predict using fold-specific models for this iteration
+            trace_probs = zeros(Float32, nrow(df))
+            for fold_idx in unique_cv_folds
+                fold_rows = findall(==(fold_idx), df.cv_fold)
+                if !isempty(fold_rows)
+                    model = models[fold_idx][iter]
+                    trace_probs[fold_rows] = lightgbm_predict(model, df[fold_rows, :]; output_type=Float32)
+                end
+            end
+
+            df.trace_prob = trace_probs
+
+            # Compute q-values (needed for MBR)
+            get_qvalues!(df.trace_prob, df.target, df.q_value)
+
+            # Write back predictions
+            Arrow.write(file_path, df)
+        end
+        @debug_l2 "\n[OOM-Apply] Predictions written"
+
+        # Step 2: Compute MBR features per CV fold (if needed)
+        if need_mbr
+            for cv_fold in unique_cv_folds
+                @debug_l2 "\n[OOM-Apply] Computing MBR for fold $cv_fold..."
+
+                # Pass 1: Build tracker for this fold
+                tracker = build_mbr_tracker_for_fold(file_paths, cv_fold, max_q_value_lightgbm_rescore)
+
+                # Pass 2: Apply MBR features for this fold
+                apply_mbr_from_tracker!(file_paths, cv_fold, tracker)
+            end
+        end
+
+        @debug_l1 "\n[OOM-Apply] Iteration $iter complete: $(round(time() - iter_start, digits=2))s"
+    end
+
+    # Final pass: Write final outputs (transfer candidates, etc.)
+    if match_between_runs
+        @debug_l2 "\n[OOM-Apply] Writing final MBR outputs..."
+        for file_path in file_paths
+            df = DataFrame(Arrow.Table(file_path); copycols=true)
+
+            # Get non-MBR predictions for transfer candidate computation
+            non_mbr_trace_probs = zeros(Float32, nrow(df))
+            for fold_idx in unique_cv_folds
+                fold_rows = findall(==(fold_idx), df.cv_fold)
+                if !isempty(fold_rows)
+                    # Use iteration mbr_start_iter - 1 model (last non-MBR)
+                    model = models[fold_idx][mbr_start_iter - 1]
+                    non_mbr_trace_probs[fold_rows] = lightgbm_predict(model, df[fold_rows, :]; output_type=Float32)
+                end
+            end
+
+            # Compute transfer candidates and final outputs
+            update_mbr_probs_oom!(df, non_mbr_trace_probs, df.trace_prob, max_q_value_lightgbm_rescore)
+
+            # Drop vector columns for final output
+            dropVectorColumns!(df)
+            Arrow.write(file_path, df)
+        end
+    end
+
+    @debug_l1 "\n[OOM-Apply] All iterations complete"
+end
+
+"""
+Build MBR tracker for a single CV fold by scanning all files.
+Returns a Dict mapping (pair_id, isotopes) -> best PSM info.
+"""
+function build_mbr_tracker_for_fold(
+    file_paths::Vector{String},
+    cv_fold::UInt8,
+    q_cutoff::Float32
+)
+    # Tracker: (pair_id, isotopes) -> (best_prob, best_idx, best_file, second_best_prob, ...)
+    tracker = Dict{Tuple{UInt32, Tuple{Int8,Int8}}, NamedTuple{
+        (:best_prob_1, :best_prob_2, :best_file_1, :best_file_2,
+         :best_weights_1, :best_weights_2, :best_irts_1, :best_irts_2,
+         :best_weight_1, :best_weight_2, :best_log2_ie_1, :best_log2_ie_2,
+         :best_irt_residual_1, :best_irt_residual_2,
+         :is_best_decoy_1, :is_best_decoy_2, :unique_passing_runs),
+        Tuple{Float32, Float32, UInt32, UInt32,
+              Vector{Float32}, Vector{Float32}, Vector{Float32}, Vector{Float32},
+              Float32, Float32, Float32, Float32, Float32, Float32,
+              Bool, Bool, Set{UInt16}}
+    }}()
+
+    for file_path in file_paths
+        df = DataFrame(Arrow.Table(file_path))
+
+        for i in 1:nrow(df)
+            df.cv_fold[i] == cv_fold || continue  # Only process this fold
+
+            key = (df.pair_id[i], df.isotopes_captured[i])
+            prob = df.trace_prob[i]
+            file_idx = df.ms_file_idx[i]
+
+            if !haskey(tracker, key)
+                # First entry for this pair
+                tracker[key] = (
+                    best_prob_1 = prob,
+                    best_prob_2 = -Inf32,
+                    best_file_1 = file_idx,
+                    best_file_2 = UInt32(0),
+                    best_weights_1 = Vector{Float32}(log2.(df.weights[i])),
+                    best_weights_2 = Float32[],
+                    best_irts_1 = Vector{Float32}(df.irts[i]),
+                    best_irts_2 = Float32[],
+                    best_weight_1 = df.weight[i],
+                    best_weight_2 = 0f0,
+                    best_log2_ie_1 = df.log2_intensity_explained[i],
+                    best_log2_ie_2 = 0f0,
+                    best_irt_residual_1 = Float32(df.irt_pred[i] - df.irt_obs[i]),
+                    best_irt_residual_2 = 0f0,
+                    is_best_decoy_1 = df.decoy[i],
+                    is_best_decoy_2 = false,
+                    unique_passing_runs = df.q_value[i] <= q_cutoff ? Set{UInt16}([file_idx]) : Set{UInt16}()
+                )
+            else
+                entry = tracker[key]
+
+                # Update unique_passing_runs
+                if df.q_value[i] <= q_cutoff
+                    push!(entry.unique_passing_runs, file_idx)
+                end
+
+                # Update best/second-best
+                if prob > entry.best_prob_1
+                    # New best - shift old best to second
+                    tracker[key] = (
+                        best_prob_1 = prob,
+                        best_prob_2 = entry.best_prob_1,
+                        best_file_1 = file_idx,
+                        best_file_2 = entry.best_file_1,
+                        best_weights_1 = Vector{Float32}(log2.(df.weights[i])),
+                        best_weights_2 = entry.best_weights_1,
+                        best_irts_1 = Vector{Float32}(df.irts[i]),
+                        best_irts_2 = entry.best_irts_1,
+                        best_weight_1 = df.weight[i],
+                        best_weight_2 = entry.best_weight_1,
+                        best_log2_ie_1 = df.log2_intensity_explained[i],
+                        best_log2_ie_2 = entry.best_log2_ie_1,
+                        best_irt_residual_1 = Float32(df.irt_pred[i] - df.irt_obs[i]),
+                        best_irt_residual_2 = entry.best_irt_residual_1,
+                        is_best_decoy_1 = df.decoy[i],
+                        is_best_decoy_2 = entry.is_best_decoy_1,
+                        unique_passing_runs = entry.unique_passing_runs
+                    )
+                elseif prob > entry.best_prob_2
+                    # New second best
+                    tracker[key] = (
+                        best_prob_1 = entry.best_prob_1,
+                        best_prob_2 = prob,
+                        best_file_1 = entry.best_file_1,
+                        best_file_2 = file_idx,
+                        best_weights_1 = entry.best_weights_1,
+                        best_weights_2 = Vector{Float32}(log2.(df.weights[i])),
+                        best_irts_1 = entry.best_irts_1,
+                        best_irts_2 = Vector{Float32}(df.irts[i]),
+                        best_weight_1 = entry.best_weight_1,
+                        best_weight_2 = df.weight[i],
+                        best_log2_ie_1 = entry.best_log2_ie_1,
+                        best_log2_ie_2 = df.log2_intensity_explained[i],
+                        best_irt_residual_1 = entry.best_irt_residual_1,
+                        best_irt_residual_2 = Float32(df.irt_pred[i] - df.irt_obs[i]),
+                        is_best_decoy_1 = entry.is_best_decoy_1,
+                        is_best_decoy_2 = df.decoy[i],
+                        unique_passing_runs = entry.unique_passing_runs
+                    )
+                end
+            end
+        end
+    end
+
+    return tracker
+end
+
+"""
+Apply MBR features from tracker to all files for a single CV fold.
+"""
+function apply_mbr_from_tracker!(
+    file_paths::Vector{String},
+    cv_fold::UInt8,
+    tracker::Dict
+)
+    for file_path in file_paths
+        df = DataFrame(Arrow.Table(file_path); copycols=true)
+        modified = false
+
+        for i in 1:nrow(df)
+            df.cv_fold[i] == cv_fold || continue  # Only process this fold
+            modified = true
+
+            key = (df.pair_id[i], df.isotopes_captured[i])
+            file_idx = df.ms_file_idx[i]
+
+            if !haskey(tracker, key)
+                # No tracker entry - set defaults
+                df.MBR_best_irt_diff[i] = -1.0f0
+                df.MBR_rv_coefficient[i] = -1.0f0
+                df.MBR_is_best_decoy[i] = true
+                df.MBR_log2_weight_ratio[i] = -1.0f0
+                df.MBR_log2_explained_ratio[i] = -1.0f0
+                df.MBR_max_pair_prob[i] = -1.0f0
+                df.MBR_is_missing[i] = true
+                df.MBR_num_runs[i] = 0
+                continue
+            end
+
+            entry = tracker[key]
+
+            # Compute MBR_num_runs (exclude current run if it passes)
+            current_run_passes = file_idx in entry.unique_passing_runs
+            df.MBR_num_runs[i] = length(entry.unique_passing_runs) - current_run_passes
+
+            # Find best from OTHER run
+            if entry.best_file_1 != file_idx && !isempty(entry.best_weights_1)
+                # Use best
+                best_prob = entry.best_prob_1
+                best_weights = entry.best_weights_1
+                best_irts = entry.best_irts_1
+                best_weight = entry.best_weight_1
+                best_log2_ie = entry.best_log2_ie_1
+                best_residual = entry.best_irt_residual_1
+                is_best_decoy = entry.is_best_decoy_1
+            elseif entry.best_file_2 != 0 && !isempty(entry.best_weights_2)
+                # Use second best
+                best_prob = entry.best_prob_2
+                best_weights = entry.best_weights_2
+                best_irts = entry.best_irts_2
+                best_weight = entry.best_weight_2
+                best_log2_ie = entry.best_log2_ie_2
+                best_residual = entry.best_irt_residual_2
+                is_best_decoy = entry.is_best_decoy_2
+            else
+                # No valid comparison
+                df.MBR_best_irt_diff[i] = -1.0f0
+                df.MBR_rv_coefficient[i] = -1.0f0
+                df.MBR_is_best_decoy[i] = true
+                df.MBR_log2_weight_ratio[i] = -1.0f0
+                df.MBR_log2_explained_ratio[i] = -1.0f0
+                df.MBR_max_pair_prob[i] = -1.0f0
+                df.MBR_is_missing[i] = true
+                continue
+            end
+
+            # Compute MBR features
+            current_weights = log2.(df.weights[i])
+            current_irts = df.irts[i]
+            current_residual = Float32(df.irt_pred[i] - df.irt_obs[i])
+
+            best_weights_padded, current_weights_padded = pad_equal_length(best_weights, current_weights)
+            best_irts_padded, current_irts_padded = pad_rt_equal_length(best_irts, current_irts)
+
+            df.MBR_max_pair_prob[i] = best_prob
+            df.MBR_best_irt_diff[i] = abs(best_residual - current_residual)
+            df.MBR_rv_coefficient[i] = MBR_rv_coefficient(best_weights_padded, best_irts_padded,
+                                                          current_weights_padded, current_irts_padded)
+            df.MBR_log2_weight_ratio[i] = log2(df.weight[i] / best_weight)
+            df.MBR_log2_explained_ratio[i] = df.log2_intensity_explained[i] - best_log2_ie
+            df.MBR_is_best_decoy[i] = is_best_decoy
+            df.MBR_is_missing[i] = false
+        end
+
+        if modified
+            Arrow.write(file_path, df)
+        end
+    end
+end
+
 function train_booster(psms::AbstractDataFrame, features, num_round;
                        feature_fraction::Float64,
                        learning_rate::Float64,
