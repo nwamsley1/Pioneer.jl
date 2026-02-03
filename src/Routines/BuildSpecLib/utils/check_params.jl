@@ -26,14 +26,8 @@ function check_params_bsp(json_string::String)
     # Parse user parameters
     user_params = JSON.parse(json_string)
     
-    # Determine if simplified based on presence of detailed parameters
-    # Simplified version typically omits library_params details and nce_params
-    is_simplified = !haskey(user_params, "nce_params") && 
-                   (!haskey(user_params, "library_params") || 
-                    length(user_params["library_params"]) < 5)
-    
-    # Get appropriate defaults
-    defaults = get_build_default_parameters(is_simplified)
+    # Always use full defaults - user values will be merged over them
+    defaults = get_build_default_parameters()
 
     # Merge user params over defaults
     params = merge_with_build_defaults(user_params, defaults)
