@@ -76,6 +76,7 @@ function score_precursor_isotope_traces(
 
     # Calculate memory-based threshold
     # Estimated bytes per PSM including all features and overhead
+    # Note: max_psm_memory_mb is validated to be >= 50 MB at parameter loading
     psm_size_bytes = 500
     memory_based_threshold = floor(Int64, max_psm_memory_mb * 1e6 / psm_size_bytes)
     effective_threshold = min(max_psms_in_memory, memory_based_threshold)
@@ -91,33 +92,55 @@ function score_precursor_isotope_traces(
         @debug_l1 "\n[OOM]   Files: $(length(file_paths))"
 
         # Phase 0: Assign pair_ids across all files
+        @debug_l1 "\n[OOM] === PHASE 0: Pair ID Assignment ==="
         phase0_timing = @timed assign_pair_ids_oom!(file_paths)
-        @debug_l1 "\n[OOM] Phase 0 (pair assignment): $(round(phase0_timing.time, digits=2))s"
+        @debug_l1 "\n[OOM] Phase 0 complete: $(round(phase0_timing.time, digits=2))s"
 
-        # Sample complete pair groups for training
-        best_psms = sample_complete_pairs_for_training(
-            file_paths,
-            effective_threshold
-        )
+        # Phase 1: Sample complete pair groups for training (up to effective_threshold PSMs)
+        @debug_l1 "\n[OOM] === PHASE 1: Sampling PSMs for Training ==="
+        phase1_timing = @timed begin
+            best_psms = sample_complete_pairs_for_training(
+                file_paths,
+                effective_threshold
+            )
+        end
+        @debug_l1 "\n[OOM] Phase 1 complete: $(round(phase1_timing.time, digits=2))s, $(nrow(best_psms)) PSMs sampled"
 
-        # Add quantile-binned features before training
-        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
-        add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
+        # Phase 2: Add quantile-binned features and save bin edges for OOM prediction
+        @debug_l1 "\n[OOM] === PHASE 2: Feature Engineering ==="
+        phase2_timing = @timed begin
+            features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
+            # Compute bin edges BEFORE adding binned features (so we capture edges from training data)
+            bin_edges = compute_quantile_bin_edges(best_psms, features_to_bin, n_quantile_bins)
+            add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
+        end
+        @debug_l1 "\n[OOM] Phase 2 complete: $(round(phase2_timing.time, digits=2))s"
+        @debug_l1 "\n[OOM]   Computed bin edges for $(length(bin_edges)) features"
 
         # Use AdvancedLightGBM config for OOM
         model_config = create_default_advanced_lightgbm_config(ms1_scoring)
 
-        # Train and apply OOM percolator
-        models = score_precursor_isotope_traces_out_of_memory!(
-            best_psms,
-            file_paths,
-            precursors,
-            model_config,
-            match_between_runs,
-            max_q_value_lightgbm_rescore,
-            max_q_value_mbr_itr,
-            min_PEP_neg_threshold_itr
-        )
+        # Phase 3: Train models and apply to ALL files (this is the expensive part)
+        @debug_l1 "\n[OOM] === PHASE 3: Training & Scoring ALL Files ==="
+        @debug_l1 "\n[OOM]   Training on $(nrow(best_psms)) sampled PSMs"
+        @debug_l1 "\n[OOM]   Will apply models to $(length(file_paths)) files with $psms_count total PSMs"
+        phase3_timing = @timed begin
+            models = score_precursor_isotope_traces_out_of_memory!(
+                best_psms,
+                file_paths,
+                precursors,
+                model_config,
+                match_between_runs,
+                max_q_value_lightgbm_rescore,
+                max_q_value_mbr_itr,
+                min_PEP_neg_threshold_itr;
+                bin_edges = bin_edges
+            )
+        end
+        @debug_l1 "\n[OOM] Phase 3 complete: $(round(phase3_timing.time, digits=2))s"
+        @debug_l1 "\n[OOM] === OOM Pipeline Complete ==="
+        total_time = phase0_timing.time + phase1_timing.time + phase2_timing.time + phase3_timing.time
+        @debug_l1 "\n[OOM] Total OOM time: $(round(total_time, digits=2))s"
     else
         # In-memory processing - load PSMs first
         best_psms = load_psms_for_lightgbm(second_pass_folder)
@@ -793,68 +816,101 @@ This ensures pair groups are never split between training sample and OOM data.
 - `pair_lookup`: Dictionary mapping (precursor_idx, cv_fold, isotopes_captured) -> pair_id
 """
 function assign_pair_ids_oom!(file_paths::Vector{String})
-    @debug_l1 "\n[OOM] Collecting precursor info from $(length(file_paths)) files..."
+    @debug_l1 "\n[OOM] === Pass 1: Collecting precursor info from $(length(file_paths)) files ==="
 
     # Pass 1: Collect all unique (precursor_idx, irt_pred, cv_fold, isotopes_captured, target)
-    precursor_info = DataFrame(
-        precursor_idx = UInt32[],
-        irt_pred = Float32[],
-        cv_fold = UInt8[],
-        isotopes_captured = Tuple{Int8,Int8}[],
-        target = Bool[]
-    )
+    pass1_timing = @timed begin
+        precursor_info = DataFrame(
+            precursor_idx = UInt32[],
+            irt_pred = Float32[],
+            cv_fold = UInt8[],
+            isotopes_captured = Tuple{Int8,Int8}[],
+            target = Bool[]
+        )
 
-    for file_path in file_paths
-        df = DataFrame(Arrow.Table(file_path))
-        # Get unique precursors from this file
-        unique_precs = unique(df, [:precursor_idx, :cv_fold, :isotopes_captured])
-        append!(precursor_info, select(unique_precs,
-            :precursor_idx, :irt_pred, :cv_fold, :isotopes_captured, :target))
-    end
-
-    # Deduplicate across files
-    unique!(precursor_info, [:precursor_idx, :cv_fold, :isotopes_captured])
-
-    @debug_l1 "\n[OOM] Found $(nrow(precursor_info)) unique precursor-isotope combinations"
-
-    # Pass 2: Assign pair_ids using same algorithm as in-memory
-    # Sort for deterministic ordering regardless of file processing order
-    sort!(precursor_info, [:cv_fold, :isotopes_captured, :irt_pred, :precursor_idx])
-
-    # Add irt_bin_idx using the existing function
-    precursor_info[!, :irt_bin_idx] = getIrtBins(precursor_info.irt_pred)
-
-    # Assign pair_ids within groups using existing assignPairIds! function
-    last_pair_id = zero(UInt32)
-    precursor_info[!, :pair_id] = zeros(UInt32, nrow(precursor_info))
-
-    for group in groupby(precursor_info, [:irt_bin_idx, :cv_fold, :isotopes_captured])
-        last_pair_id = assignPairIds!(group, last_pair_id)
-    end
-
-    # Create lookup: (precursor_idx, cv_fold, isotopes) -> pair_id
-    pair_lookup = Dict{Tuple{UInt32, UInt8, Tuple{Int8,Int8}}, UInt32}()
-    for row in eachrow(precursor_info)
-        key = (row.precursor_idx, row.cv_fold, row.isotopes_captured)
-        pair_lookup[key] = row.pair_id
-    end
-
-    @debug_l1 "\n[OOM] Assigned $(last_pair_id) pair_ids"
-
-    # Pass 3: Write pair_ids back to all files
-    @debug_l1 "\n[OOM] Writing pair_ids to files..."
-    for file_path in file_paths
-        df = DataFrame(Arrow.Table(file_path))
-
-        # Add pair_id column by looking up each row
-        df[!, :pair_id] = map(eachrow(df)) do row
-            key = (row.precursor_idx, row.cv_fold, row.isotopes_captured)
-            get(pair_lookup, key, zero(UInt32))
+        for (i, file_path) in enumerate(file_paths)
+            df = DataFrame(Arrow.Table(file_path))
+            # Get unique precursors from this file
+            unique_precs = unique(df, [:precursor_idx, :cv_fold, :isotopes_captured])
+            append!(precursor_info, select(unique_precs,
+                :precursor_idx, :irt_pred, :cv_fold, :isotopes_captured, :target))
+            if i % 10 == 0 || i == length(file_paths)
+                @debug_l2 "\n[OOM]   Read $i/$(length(file_paths)) files, $(nrow(precursor_info)) precursors collected..."
+            end
         end
 
-        # Write back
-        Arrow.write(file_path, df)
+        # Deduplicate across files
+        unique!(precursor_info, [:precursor_idx, :cv_fold, :isotopes_captured])
     end
+    @debug_l1 "\n[OOM]   Pass 1 complete: $(round(pass1_timing.time, digits=2))s"
+    @debug_l1 "\n[OOM]   Found $(nrow(precursor_info)) unique precursor-isotope combinations"
+
+    # Pass 2: Assign pair_ids using same algorithm as in-memory
+    @debug_l1 "\n[OOM] === Pass 2: Assigning pair_ids ==="
+    pass2_timing = @timed begin
+        # Sort for deterministic ordering regardless of file processing order
+        sort!(precursor_info, [:cv_fold, :isotopes_captured, :irt_pred, :precursor_idx])
+
+        # Add irt_bin_idx using the existing function
+        precursor_info[!, :irt_bin_idx] = getIrtBins(precursor_info.irt_pred)
+
+        # Add decoy column (required by assignPairIds! which calls assign_pair_ids)
+        precursor_info[!, :decoy] = .!precursor_info.target
+
+        # Assign pair_ids within groups using existing assignPairIds! function
+        last_pair_id = zero(UInt32)
+        precursor_info[!, :pair_id] = zeros(UInt32, nrow(precursor_info))
+
+        for group in groupby(precursor_info, [:irt_bin_idx, :cv_fold, :isotopes_captured])
+            last_pair_id = assignPairIds!(group, last_pair_id)
+        end
+
+        # Create lookup: (precursor_idx, cv_fold, isotopes) -> pair_id
+        # Use column iteration instead of eachrow() for performance
+        pair_lookup = Dict{Tuple{UInt32, UInt8, Tuple{Int8,Int8}}, UInt32}()
+        for (pid, cv, iso, pair) in zip(precursor_info.precursor_idx,
+                                         precursor_info.cv_fold,
+                                         precursor_info.isotopes_captured,
+                                         precursor_info.pair_id)
+            key = (pid, cv, iso)
+            pair_lookup[key] = pair
+        end
+    end
+    @debug_l1 "\n[OOM]   Pass 2 complete: $(round(pass2_timing.time, digits=2))s"
+    @debug_l1 "\n[OOM]   Assigned $(length(pair_lookup)) pair_ids"
+
+    # Pass 3: Write pair_ids back to all files
+    @debug_l1 "\n[OOM] === Pass 3: Writing pair_ids to $(length(file_paths)) files ==="
+    pass3_timing = @timed begin
+        for (file_idx, file_path) in enumerate(file_paths)
+            @debug_l2 "\n[OOM]   File $file_idx/$(length(file_paths)): $file_path"
+
+            # Create file reference for streaming column operation
+            ref = PSMFileReference(file_path)
+
+            # Define compute function using pair_lookup closure
+            read_time = @elapsed begin
+                compute_pair_id = function(df_batch)
+                    n = nrow(df_batch)
+                    result = Vector{UInt32}(undef, n)
+                    pids = df_batch.precursor_idx
+                    cvs = df_batch.cv_fold
+                    isos = df_batch.isotopes_captured
+                    for j in 1:n
+                        key = (pids[j], cvs[j], isos[j])
+                        result[j] = get(pair_lookup, key, zero(UInt32))
+                    end
+                    return result
+                end
+            end
+            @debug_l2 "\n[OOM]     Function setup: $(round(read_time * 1000, digits=1))ms"
+
+            # Use existing streaming infrastructure to add column
+            write_time = @elapsed add_column_to_file!(ref, :pair_id, compute_pair_id)
+            @debug_l2 "\n[OOM]     add_column_to_file!: $(round(write_time, digits=2))s"
+        end
+    end
+    @debug_l1 "\n[OOM]   Pass 3 complete: $(round(pass3_timing.time, digits=2))s"
 
     return pair_lookup
 end
@@ -882,18 +938,26 @@ function sample_complete_pairs_for_training(
     max_psms::Int64
 )
     @debug_l1 "\n[OOM] Sampling complete pairs for training (target: $max_psms PSMs)..."
+    @debug_l1 "\n[OOM]   Reading pair counts from $(length(file_paths)) files..."
 
     # Collect all unique pair_ids and their PSM counts
-    pair_counts = Dict{UInt32, Int}()
-    for file_path in file_paths
-        df = DataFrame(Arrow.Table(file_path))
-        for pair_id in df.pair_id
-            pair_counts[pair_id] = get(pair_counts, pair_id, 0) + 1
+    count_timing = @timed begin
+        pair_counts = Dict{UInt32, Int}()
+        for (i, file_path) in enumerate(file_paths)
+            df = DataFrame(Arrow.Table(file_path))
+            # Iterate directly over column vector (fast)
+            for pair_id in df.pair_id
+                pair_counts[pair_id] = get(pair_counts, pair_id, 0) + 1
+            end
+            if i % 10 == 0 || i == length(file_paths)
+                @debug_l2 "\n[OOM]     Processed $i/$(length(file_paths)) files..."
+            end
         end
     end
+    @debug_l1 "\n[OOM]   Pair counting: $(round(count_timing.time, digits=2))s"
 
     all_pair_ids = collect(keys(pair_counts))
-    @debug_l1 "\n[OOM] Found $(length(all_pair_ids)) unique pair_ids"
+    @debug_l1 "\n[OOM]   Found $(length(all_pair_ids)) unique pair_ids"
 
     # Shuffle and select pairs until we reach target PSM count
     Random.seed!(1776)
@@ -911,20 +975,30 @@ function sample_complete_pairs_for_training(
         end
     end
 
-    @debug_l1 "\n[OOM] Selected $(length(selected_pairs)) pairs with $total_psms PSMs"
+    @debug_l1 "\n[OOM]   Selected $(length(selected_pairs)) pairs with $total_psms PSMs"
 
     # Load PSMs belonging to selected pairs
-    sampled_dfs = DataFrame[]
-    for file_path in file_paths
-        df = DataFrame(Arrow.Table(file_path))
-        mask = in.(df.pair_id, Ref(selected_pairs))
-        if any(mask)
-            push!(sampled_dfs, df[mask, :])
+    @debug_l1 "\n[OOM]   Loading selected PSMs from files..."
+    load_timing = @timed begin
+        sampled_dfs = DataFrame[]
+        for (i, file_path) in enumerate(file_paths)
+            df = DataFrame(Arrow.Table(file_path))
+            mask = in.(df.pair_id, Ref(selected_pairs))
+            if any(mask)
+                push!(sampled_dfs, df[mask, :])
+            end
+            if i % 10 == 0 || i == length(file_paths)
+                @debug_l2 "\n[OOM]     Loaded $i/$(length(file_paths)) files..."
+            end
         end
     end
+    @debug_l1 "\n[OOM]   File loading: $(round(load_timing.time, digits=2))s"
 
-    sampled_psms = vcat(sampled_dfs...)
-    @debug_l1 "\n[OOM] Loaded $(nrow(sampled_psms)) PSMs for training"
+    concat_timing = @timed begin
+        sampled_psms = vcat(sampled_dfs...)
+    end
+    @debug_l1 "\n[OOM]   DataFrame concatenation: $(round(concat_timing.time, digits=2))s"
+    @debug_l1 "\n[OOM]   Loaded $(nrow(sampled_psms)) PSMs for training"
 
     return sampled_psms
 end
@@ -957,7 +1031,8 @@ function score_precursor_isotope_traces_out_of_memory!(
     match_between_runs::Bool,
     max_q_value_lightgbm_rescore::Float32,
     max_q_value_mbr_itr::Float32,
-    min_PEP_neg_threshold_itr::Float32
+    min_PEP_neg_threshold_itr::Float32;
+    bin_edges::Dict{Symbol, Vector{Float64}} = Dict{Symbol, Vector{Float64}}()
 )
     file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
     # Features from model_config; do not include :target
@@ -1006,7 +1081,8 @@ function score_precursor_isotope_traces_out_of_memory!(
         num_leaves = get(hp, :num_leaves, 63),
         learning_rate = get(hp, :learning_rate, 0.05),
         iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
-        print_importance = false
+        print_importance = false,
+        bin_edges = bin_edges
     )
     return models
 end

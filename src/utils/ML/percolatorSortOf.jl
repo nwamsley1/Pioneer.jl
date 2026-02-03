@@ -466,7 +466,8 @@ function sort_of_percolator_out_of_memory!(
     max_depth::Int = 10,
     num_leaves::Int = 63,
     iter_scheme::Vector{Int} = [100, 200, 200],
-    print_importance::Bool = false
+    print_importance::Bool = false,
+    bin_edges::Dict{Symbol, Vector{Float64}} = Dict{Symbol, Vector{Float64}}()
 )
     @debug_l1 "\n[OOM] Starting OOM percolator training on $(nrow(psms)) sampled PSMs"
 
@@ -622,8 +623,14 @@ function sort_of_percolator_out_of_memory!(
                     reset_precursor_scores!(mbr_tracker)
                 end
 
-                for file_path in file_paths
+                @debug_l2 "\n[OOM] Iteration $train_iter Pass 1: Predicting $(length(file_paths)) files..."
+                pass1_start = time()
+                for (file_idx, file_path) in enumerate(file_paths)
                     psms_subset = DataFrame(Arrow.Table(file_path))
+                    # Apply quantile binning using training data's bin edges
+                    if !isempty(bin_edges)
+                        apply_quantile_bins!(psms_subset, bin_edges)
+                    end
                     trace_probs = predict_cv_models_oom(models_for_iter, psms_subset, current_features)
 
                     if match_between_runs && !is_last_iteration
@@ -708,10 +715,21 @@ function sort_of_percolator_out_of_memory!(
                         end
                     end
                 end
+                @debug_l2 "\n[OOM] Iteration $train_iter Pass 1 complete: $(round(time() - pass1_start, digits=2))s"
+                if match_between_runs && !is_last_iteration
+                    @debug_l2 "\n[OOM]   MBR tracker size: $(length(mbr_tracker)) unique pair-isotope combinations"
+                end
 
                 # Pass 2: Write predictions and MBR features to files
-                for file_path in file_paths
-                    psms_subset = DataFrame(Arrow.Table(file_path))
+                @debug_l2 "\n[OOM] Iteration $train_iter Pass 2: Writing $(length(file_paths)) files..."
+                pass2_start = time()
+                for (file_idx, file_path) in enumerate(file_paths)
+                    # copycols=true needed because Arrow memory-maps columns as read-only
+                    psms_subset = DataFrame(Arrow.Table(file_path); copycols=true)
+                    # Apply quantile binning using training data's bin edges
+                    if !isempty(bin_edges)
+                        apply_quantile_bins!(psms_subset, bin_edges)
+                    end
                     trace_probs = predict_cv_models_oom(models_for_iter, psms_subset, current_features)
 
                     # Get non-MBR predictions for last iteration
@@ -803,8 +821,9 @@ function sort_of_percolator_out_of_memory!(
                         dropVectors = is_last_iteration
                     )
                 end
+                @debug_l2 "\n[OOM] Iteration $train_iter Pass 2 complete: $(round(time() - pass2_start, digits=2))s"
             end
-            @debug_l2 "\n[OOM] Iteration $train_iter: $(round(iter_timing.time, digits=2))s"
+            @debug_l1 "\n[OOM] Iteration $train_iter complete: $(round(iter_timing.time, digits=2))s"
             update(pbar_apply)
         end
     end

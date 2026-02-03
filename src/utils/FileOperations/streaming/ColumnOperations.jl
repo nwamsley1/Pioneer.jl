@@ -114,63 +114,88 @@ Column Operations
 ==========================================================#
 
 """
-    add_column_to_file!(ref::FileReference, col_name::Symbol, 
+    _slice_arrow_to_df(tbl::Arrow.Table, start_row::Int, end_row::Int)
+
+Slice an Arrow table to a DataFrame for the given row range.
+Creates copies of the specified rows from the memory-mapped columns.
+Memory usage is O(end_row - start_row), not O(total_rows).
+
+This is used instead of Tables.partitioner because Arrow.Table is not callable,
+which causes Tables.partitioner's LazyTable to fail when materializing batches.
+"""
+function _slice_arrow_to_df(tbl, start_row::Int, end_row::Int)
+    cols = Tables.columns(tbl)
+    col_names = Tables.columnnames(tbl)
+    # Use a vector of pairs to preserve column order
+    sliced_cols = Pair{Symbol, Any}[]
+    for name in col_names
+        col = Tables.getcolumn(cols, name)
+        push!(sliced_cols, name => col[start_row:end_row])
+    end
+    return DataFrame(sliced_cols)
+end
+
+"""
+    add_column_to_file!(ref::FileReference, col_name::Symbol,
                        compute_fn::Function; batch_size=100_000)
 
 Add a new column to a file by computing it from existing columns.
 Updates the file in place and updates the reference's schema.
+
+Uses memory-efficient manual row slicing for large files. Memory usage is
+O(batch_size) regardless of total file size since Arrow.Table is memory-mapped.
 """
-function add_column_to_file!(ref::FileReference, 
+function add_column_to_file!(ref::FileReference,
                            col_name::Symbol,
                            compute_fn::Function;
                            batch_size::Int=100_000)
     validate_exists(ref)
-    
+
     # Check if column already exists
     if has_column(schema(ref), col_name)
         @user_warn "Column $col_name already exists, will be overwritten"
     end
-    
+
     # Create temporary output file
     temp_path = file_path(ref) * ".tmp"
-    
-    # For small files or if partitioner has issues, process entire file at once
-    tbl = Arrow.Table(file_path(ref))
-    
-    # Check if file is small enough to process at once
-    if row_count(ref) <= batch_size
-        # Process entire file at once
-        df_batch = DataFrame(Tables.columntable(tbl))
-        df_batch[!, col_name] = compute_fn(df_batch)
-        writeArrow(temp_path, df_batch)
+    tbl = Arrow.Table(file_path(ref))  # Memory-mapped, not fully loaded
+    total_rows = row_count(ref)
+
+    # For small files, process at once (avoid stream format overhead)
+    if total_rows <= batch_size
+        df = DataFrame(Tables.columntable(tbl))
+        df[!, col_name] = compute_fn(df)
+        writeArrow(temp_path, df)
     else
-        # Stream through file for larger files
-        partitions = Tables.partitioner(tbl, batch_size)
-        
+        # Stream through file using manual row slicing
+        # Memory usage: O(batch_size) regardless of file size
         first_write = true
-        for partition in partitions
-            df_batch = DataFrame(Tables.columntable(partition))
+        for start_row in 1:batch_size:total_rows
+            end_row = min(start_row + batch_size - 1, total_rows)
+
+            # Slice columns manually (creates small batch copies from mmap)
+            df_batch = _slice_arrow_to_df(tbl, start_row, end_row)
             df_batch[!, col_name] = compute_fn(df_batch)
-            
+
             if first_write
-                writeArrow(temp_path, df_batch)
+                # Write as stream format to enable append
+                Arrow.write(temp_path, df_batch; file=false)
                 first_write = false
             else
                 Arrow.append(temp_path, df_batch)
             end
         end
     end
-    
+
     # Replace original file using Windows-safe method
     safe_replace_file(temp_path, file_path(ref), tbl)
-    
+
     # Update reference metadata
-    # We need to re-read the file to update schema
     new_ref = create_reference(file_path(ref), typeof(ref))
     ref.schema = schema(new_ref)
     ref.row_count = row_count(new_ref)
     ref.sorted_by = ()  # Adding column may invalidate sort
-    
+
     return ref
 end
 
@@ -179,55 +204,59 @@ end
                           update_fn::Function; batch_size=100_000)
 
 Update an existing column in a file.
+
+Uses memory-efficient manual row slicing for large files. Memory usage is
+O(batch_size) regardless of total file size since Arrow.Table is memory-mapped.
 """
 function update_column_in_file!(ref::FileReference,
                                col_name::Symbol,
                                update_fn::Function;
                                batch_size::Int=100_000)
     validate_exists(ref)
-    
+
     if !has_column(schema(ref), col_name)
         error("Column $col_name does not exist")
     end
-    
+
     # Create temporary output file
     temp_path = file_path(ref) * ".tmp"
-    
-    # For small files or if partitioner has issues, process entire file at once
-    tbl = Arrow.Table(file_path(ref))
-    
-    # Check if file is small enough to process at once
-    if row_count(ref) <= batch_size
-        # Process entire file at once
-        df_batch = DataFrame(Tables.columntable(tbl))
-        df_batch[!, col_name] = update_fn(df_batch[!, col_name])
-        writeArrow(temp_path, df_batch)
+    tbl = Arrow.Table(file_path(ref))  # Memory-mapped, not fully loaded
+    total_rows = row_count(ref)
+
+    # For small files, process at once (avoid stream format overhead)
+    if total_rows <= batch_size
+        df = DataFrame(Tables.columntable(tbl))
+        df[!, col_name] = update_fn(df[!, col_name])
+        writeArrow(temp_path, df)
     else
-        # Stream through file for larger files
-        partitions = Tables.partitioner(tbl, batch_size)
-        
+        # Stream through file using manual row slicing
+        # Memory usage: O(batch_size) regardless of file size
         first_write = true
-        for partition in partitions
-            df_batch = DataFrame(Tables.columntable(partition))
+        for start_row in 1:batch_size:total_rows
+            end_row = min(start_row + batch_size - 1, total_rows)
+
+            # Slice columns manually (creates small batch copies from mmap)
+            df_batch = _slice_arrow_to_df(tbl, start_row, end_row)
             df_batch[!, col_name] = update_fn(df_batch[!, col_name])
-            
+
             if first_write
-                writeArrow(temp_path, df_batch)
+                # Write as stream format to enable append
+                Arrow.write(temp_path, df_batch; file=false)
                 first_write = false
             else
                 Arrow.append(temp_path, df_batch)
             end
         end
     end
-    
+
     # Replace original file using Windows-safe method
     safe_replace_file(temp_path, file_path(ref), tbl)
-    
+
     # Sort order may be affected if we updated a sort key
     if col_name in sorted_by(ref)
         mark_sorted!(ref)  # Empty tuple - not sorted
     end
-    
+
     return ref
 end
 

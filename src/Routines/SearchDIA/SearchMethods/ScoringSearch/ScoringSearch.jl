@@ -89,10 +89,18 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
         else
             SeperateTraces()
         end
-        
+
+        # Validate max_psm_memory_mb with minimum of 50 MB (required for training ~100K PSMs)
+        MIN_PSM_MEMORY_MB = 50
+        raw_max_psm_memory_mb = Int64(get(ml_params, :max_psm_memory_mb, 8000))
+        if raw_max_psm_memory_mb < MIN_PSM_MEMORY_MB
+            @warn "max_psm_memory_mb ($raw_max_psm_memory_mb MB) is below minimum required for model training. Setting to $MIN_PSM_MEMORY_MB MB."
+            raw_max_psm_memory_mb = MIN_PSM_MEMORY_MB
+        end
+
         new{typeof(isotope_trace_type)}(
             Int64(ml_params.max_psms_in_memory),
-            Int64(get(ml_params, :max_psm_memory_mb, 8000)),  # Default 8GB
+            raw_max_psm_memory_mb,
             Float32(ml_params.min_trace_prob),
             Int64(ml_params.spline_points),
             Int64(ml_params.interpolation_points),

@@ -433,3 +433,141 @@ function add_quantile_binned_features!(df::DataFrame, features::Vector{Symbol}, 
 
     return nothing
 end
+
+"""
+    compute_quantile_bin_edges(df::DataFrame, features::Vector{Symbol}, n_bins::Int=100)
+
+Compute and return quantile bin edges for each feature.
+Returns Dict{Symbol, Vector{Float64}} mapping feature name to bin edges.
+
+This function extracts the bin edges from training data so they can be applied
+consistently to new data during out-of-memory (OOM) processing.
+
+# Arguments
+- `df`: DataFrame containing training data with features to analyze
+- `features`: Vector of feature column names to compute edges for
+- `n_bins`: Number of quantile bins (default: 100)
+
+# Returns
+- Dict{Symbol, Vector{Float64}} mapping feature name to its bin edges
+
+# Example
+```julia
+bin_edges = compute_quantile_bin_edges(training_psms, [:prec_mz, :irt_pred, :weight, :tic], 100)
+# Later, apply to new data:
+apply_quantile_bins!(new_psms, bin_edges)
+```
+"""
+function compute_quantile_bin_edges(df::DataFrame, features::Vector{Symbol}, n_bins::Int=100)
+    bin_edges = Dict{Symbol, Vector{Float64}}()
+
+    for feature in features
+        if !hasproperty(df, feature)
+            @user_warn "Feature $feature not found in DataFrame, skipping bin edge computation"
+            continue
+        end
+
+        col_data = df[!, feature]
+
+        # Handle missing values
+        non_missing_mask = .!ismissing.(col_data)
+        if !any(non_missing_mask)
+            @user_warn "Feature $feature has all missing values, skipping bin edge computation"
+            continue
+        end
+
+        # Calculate quantiles on non-missing data
+        non_missing_data = col_data[non_missing_mask]
+        quantiles = range(0, 1, length=n_bins+1)
+
+        edges = try
+            StatsBase.quantile(non_missing_data, quantiles)
+        catch e
+            @user_warn "Failed to compute quantiles for $feature: $e"
+            continue
+        end
+
+        bin_edges[feature] = edges
+    end
+
+    return bin_edges
+end
+
+"""
+    apply_quantile_bins!(df::DataFrame, bin_edges::Dict{Symbol, Vector{Float64}})
+
+Apply pre-computed quantile bin edges to a DataFrame, adding _qbin columns.
+
+This function applies bin edges computed from training data to new data,
+ensuring consistent binning across the OOM pipeline.
+
+# Arguments
+- `df`: DataFrame to add binned features to
+- `bin_edges`: Dict mapping feature names to their bin edges (from compute_quantile_bin_edges)
+
+# Behavior
+- Missing values are preserved as missing in binned columns
+- Values below the minimum edge are placed in bin 1
+- Values above the maximum edge are placed in the last bin
+- Uses UInt8 storage for n_bins ≤ 255, UInt16 otherwise
+
+# Example
+```julia
+# During training:
+bin_edges = compute_quantile_bin_edges(training_psms, [:prec_mz, :irt_pred], 100)
+
+# During OOM prediction:
+for file_path in file_paths
+    psms_subset = DataFrame(Arrow.Table(file_path))
+    apply_quantile_bins!(psms_subset, bin_edges)  # Now has _qbin columns
+    predictions = predict(model, psms_subset)
+end
+```
+"""
+function apply_quantile_bins!(df::DataFrame, bin_edges::Dict{Symbol, Vector{Float64}})
+    for (feature, edges) in bin_edges
+        if !hasproperty(df, feature)
+            @user_warn "Feature $feature not found in DataFrame during bin application, skipping"
+            continue
+        end
+
+        col_data = df[!, feature]
+        n_bins = length(edges) - 1
+        bin_type = n_bins <= 255 ? UInt8 : UInt16
+
+        non_missing_mask = .!ismissing.(col_data)
+        has_missing = any(ismissing.(col_data))
+
+        if has_missing
+            # Preserve missing values in output
+            binned_col = Vector{Union{Missing, bin_type}}(missing, length(col_data))
+            for i in eachindex(col_data)
+                if non_missing_mask[i]
+                    val = col_data[i]
+                    # searchsortedfirst gives index in bin_edges, subtract 1 for bin index
+                    bin_idx = searchsortedfirst(edges, val) - 1
+                    # Clamp to valid range [1, n_bins]
+                    bin_idx = clamp(bin_idx, 1, n_bins)
+                    binned_col[i] = bin_type(bin_idx)
+                end
+            end
+        else
+            # No missing values - create non-missing vector for ML compatibility
+            binned_col = Vector{bin_type}(undef, length(col_data))
+            for i in eachindex(col_data)
+                val = col_data[i]
+                # searchsortedfirst gives index in bin_edges, subtract 1 for bin index
+                bin_idx = searchsortedfirst(edges, val) - 1
+                # Clamp to valid range [1, n_bins]
+                bin_idx = clamp(bin_idx, 1, n_bins)
+                binned_col[i] = bin_type(bin_idx)
+            end
+        end
+
+        # Add binned column with _qbin suffix
+        binned_feature_name = Symbol(string(feature) * "_qbin")
+        df[!, binned_feature_name] = binned_col
+    end
+
+    return nothing
+end
