@@ -753,7 +753,9 @@ function sort_of_percolator_out_of_memory!(
 
                             if haskey(mbr_tracker, key)
                                 scores = mbr_tracker[key]
-                                psms_subset.MBR_num_runs[i] = length(scores.unique_passing_runs)
+                                # Match in-memory: exclude current run if it passes (count OTHER runs only)
+                                current_run_passes = psms_subset.ms_file_idx[i] in scores.unique_passing_runs
+                                psms_subset.MBR_num_runs[i] = length(scores.unique_passing_runs) - current_run_passes
 
                                 best_log2_weights = Float32[]
                                 best_irts = Float32[]
