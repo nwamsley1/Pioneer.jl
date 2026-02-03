@@ -24,6 +24,7 @@
         "min_charge": 2,
         "max_charge": 3,
         "cleavage_regex": "[KR][^_|$]",
+        "specificity": "full",
         "missed_cleavages": 1,
         "max_var_mods": 1,
         "add_decoys": true,

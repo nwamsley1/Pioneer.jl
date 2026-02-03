@@ -285,14 +285,21 @@ function process_file!(
         search_context::SearchContext,
         rt_model::RtConversionModel,
         ms_file_idx::Int64)
+        precursors = getPrecursors(getSpecLib(search_context))
+        num_enzymatic_termini = if hasproperty(precursors.data, :num_enzymatic_termini)
+            getNumEnzymaticTermini(precursors)
+        else
+            fill(UInt8(0), length(precursors))
+        end
         add_main_search_columns!(
             psms,
             getModel(rt_model),
-            getStructuralMods(getPrecursors(getSpecLib(search_context))),
-            getMissedCleavages(getPrecursors(getSpecLib(search_context))),
-            getIsDecoy(getPrecursors(getSpecLib(search_context))),
-            getIrt(getPrecursors(getSpecLib(search_context))),
-            getCharge(getPrecursors(getSpecLib(search_context))),
+            getStructuralMods(precursors),
+            getMissedCleavages(precursors),
+            num_enzymatic_termini,
+            getIsDecoy(precursors),
+            getIrt(precursors),
+            getCharge(precursors),
             getRetentionTimes(spectra),
             getTICs(spectra),
             getMzArrays(spectra)
@@ -314,7 +321,8 @@ function process_file!(
         column_names = [
             :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
             :charge2, :poisson, :irt_error, 
-            :missed_cleavage, 
+            :missed_cleavage,
+            :num_enzymatic_termini,
             :Mox,
             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
             #:b_count, might be good for non-tryptic enzymes
@@ -324,6 +332,9 @@ function process_file!(
         # Avoid singular error if no peaks were ignored
         if maximum(psms.percent_theoretical_ignored) == 0
             deleteat!(column_names, findfirst(==(:percent_theoretical_ignored), column_names))
+        end
+        if :num_enzymatic_termini in column_names && length(unique(psms.num_enzymatic_termini)) == 1
+            deleteat!(column_names, findfirst(==(:num_enzymatic_termini), column_names))
         end
 
 
@@ -615,4 +626,3 @@ function summarize_results!(
         empty!(results.ms1_mass_plots)
     end
 end
-

@@ -357,6 +357,7 @@ function train_lightgbm_model_in_memory(
             :MBR_is_missing
         ])
     end
+    remove_zero_variance_columns!(features, best_psms)
 
     # Diagnostic: Report which quantile-binned features are being used
     qbin_features = filter(f -> endswith(string(f), "_qbin"), features)

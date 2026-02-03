@@ -221,6 +221,7 @@ The regex patterns for parsing FASTA headers can be configured in three ways:
 | `min_charge` | Int | Minimum charge state (default: 2) |
 | `max_charge` | Int | Maximum charge state (default: 4) |
 | `cleavage_regex` | String | Regular expression for cleavage sites (default: "[KR][^_\|$]", to exclude cleavage after proline: "[KR][^P|$]") |
+| `specificity` | String | Digestion specificity ("full", "semi-n", "semi-c", or "semi"; default: "full") |
 | `missed_cleavages` | Int | Maximum allowed missed cleavages (default: 1) |
 | `max_var_mods` | Int | Maximum variable modifications per peptide (default: 1) |
 | `add_decoys` | Boolean | Generate decoy sequences (default: true) |

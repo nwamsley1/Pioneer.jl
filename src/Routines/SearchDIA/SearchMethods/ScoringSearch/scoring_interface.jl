@@ -519,12 +519,14 @@ function get_quant_necessary_columns(match_between_runs::Bool)
         qval_cols.global_qval,  # Conditional: :MBR_boosted_global_qval or :global_qval
         :run_specific_qval,
         :prec_mz,
+        :start_idx,
         qval_cols.pep,  # Always :pep but included for consistency
         :weight,
         :target,
         :rt,
         :irt_obs,
         :missed_cleavage,
+        :num_enzymatic_termini,
         :Mox,
         :isotopes_captured,
         :scan_idx,

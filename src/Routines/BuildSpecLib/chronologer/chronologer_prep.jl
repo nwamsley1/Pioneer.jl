@@ -162,7 +162,8 @@ function prepare_chronologer_input(
                 regex = Regex(_params.fasta_digest_params["cleavage_regex"]),
                 max_length = _params.fasta_digest_params["max_length"],
                 min_length = _params.fasta_digest_params["min_length"],
-                missed_cleavages = _params.fasta_digest_params["missed_cleavages"]
+                missed_cleavages = _params.fasta_digest_params["missed_cleavages"],
+                specificity = _params.fasta_digest_params["specificity"]
             )
         )
     end
@@ -348,6 +349,7 @@ function add_mods(
                     get_base_target_id(fasta_peptide), # preserve base_target_id
                     get_base_pep_id(fasta_peptide),  # Preserve original base_pep_id
                     get_entrapment_pair_id(fasta_peptide),
+                    get_num_enzymatic_termini(fasta_peptide),
                     is_decoy(fasta_peptide),
                 ))
         end
@@ -401,6 +403,7 @@ function add_charge(
                     get_base_target_id(fasta_peptide), # preserve base_target_id
                     get_base_pep_id(fasta_peptide),   # preserve base_pep_id
                     get_entrapment_pair_id(fasta_peptide),
+                    get_num_enzymatic_termini(fasta_peptide),
                     is_decoy(fasta_peptide)
                 ))
         end
@@ -489,6 +492,7 @@ Create a DataFrame containing peptide information from FASTA entries.
 - `DataFrame`: DataFrame containing peptide information including:
   - Precursor identification info (upid, accession_number)
   - Sequence information (sequence, mods, isotopic_mods)
+  - Digestion information (num_enzymatic_termini)
   - Charge and energy (precursor_charge, collision_energy)
   - Group information (decoy, entrapment_group_id, base_pep_id, pair_id)
   - Koina-compatible sequence representation
@@ -549,6 +553,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
     _structural_mods = Vector{Union{String, Missing}}(undef, prec_alloc_size)
     _isotopic_mods = Vector{Union{String, Missing}}(undef, prec_alloc_size)
     _start_idx = Vector{UInt32}(undef, prec_alloc_size)
+    _num_enzymatic_termini = Vector{UInt8}(undef, prec_alloc_size)
     _precursor_charge = Vector{UInt8}(undef, prec_alloc_size)
     _collision_energy = Vector{Float32}(undef, prec_alloc_size )
     _decoy = Vector{Bool}(undef, prec_alloc_size)  
@@ -570,6 +575,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         _accession_number[n] = accession_id
         _sequence[n] = sequence
         _start_idx[n] = get_start_idx(peptide)
+        _num_enzymatic_termini[n] = get_num_enzymatic_termini(peptide)
         _structural_mods[n] = getModString(get_structural_mods(peptide))
         _isotopic_mods[n] = getModString(get_isotopic_mods(peptide))
         _precursor_charge[n] = get_charge(peptide)
@@ -587,6 +593,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
          accession_number = _accession_number[1:n],
          sequence = _sequence[1:n],
          start_idx = _start_idx[1:n],
+         num_enzymatic_termini = _num_enzymatic_termini[1:n],
          mods = _structural_mods[1:n],
          isotopic_mods = _isotopic_mods[1:n],
          precursor_charge = _precursor_charge[1:n],

@@ -21,7 +21,12 @@
 const VALID_AAS = Set(['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L',
                        'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y'])
 """
-    digest_sequence(sequence::AbstractString, regex::Regex, max_length::Int, min_length::Int, missed_cleavages::Int)::Vector{String}
+    digest_sequence(sequence::AbstractString,
+                    regex::Regex,
+                    max_length::Int,
+                    min_length::Int,
+                    missed_cleavages::Int,
+                    specificity::String = "full")::Tuple{Vector{String}, Vector{UInt32}, Vector{UInt8}}
 
 Digest a protein sequence into peptides using the specified enzyme cleavage pattern.
 
@@ -31,9 +36,10 @@ Digest a protein sequence into peptides using the specified enzyme cleavage patt
 - `max_length::Int`: Maximum peptide length to include
 - `min_length::Int`: Minimum peptide length to include
 - `missed_cleavages::Int`: Maximum number of internal cleavage sites allowed in a peptide
+- `specificity::String`: Digestion specificity ("full", "semi-n", "semi-c", or "semi")
 
 # Returns
-- `Vector{String}`: Vector of digested peptide sequences as Strings
+- `Tuple{Vector{String}, Vector{UInt32}, Vector{UInt8}}`: Peptide sequences, start indices, and number of enzymatic termini
 
 # Details
 The function simulates enzymatic digestion by:
@@ -45,69 +51,105 @@ The function simulates enzymatic digestion by:
 # Examples
 ```julia
 # Trypsin-like digestion (cleaves after K or R except when followed by P)
-peptides = digest_sequence("MKVGPKAFRVLTEDEMAKR", r"[KR][^P]", 20, 5, 1)
+peptides, _, _ = digest_sequence("MKVGPKAFRVLTEDEMAKR", r"[KR][^P]", 20, 5, 1)
 # Returns ["MKVGPK", "VGPKAFR", "VLTEDEMAK", "VLTEDEMAKR", "AFRVLTEDEMAK"]
 
 # No missed cleavages
-peptides = digest_sequence("MKVGPKAFRVLTEDEMAKR", r"[KR][^P]", 20, 5, 0)
+peptides, _, _ = digest_sequence("MKVGPKAFRVLTEDEMAKR", r"[KR][^P]", 20, 5, 0)
 # Returns ["VLTEDEMAK"]
 ```
 """
 function digest_sequence(sequence::AbstractString,
-                        regex::Regex,
-                        max_length::Int,
-                        min_length::Int,
-                        missed_cleavages::Int)::Tuple{Vector{String}, Vector{UInt32}}
-    
-    function add_peptide!(peptides::Vector{SubString{String}},
-                        starts::Vector{UInt32},
-                        n::Int,
-                        sequence::AbstractString,
-                        site::Int,
-                        previous_sites::Vector{Int},
-                        min_length::Int,
-                        max_length::Int,
-                        missed_cleavages::Int)
-        
-        for i in 1:min(n, missed_cleavages + 1)
-            previous_site = previous_sites[end - i + 1]
-            if ((site - previous_site) >= min_length) && 
-                ((site - previous_site) <= max_length)
-                # Convert SubString to String when adding to peptides
-                push!(peptides, String(@view sequence[previous_site+1:site]))
-                push!(starts, UInt32(previous_site + 1))
-            end
-        end
-
-        for i in 1:length(previous_sites)-1
-            previous_sites[i] = previous_sites[i+1]
-        end
-        previous_sites[end] = site
-        return n + 1
+                         regex::Regex,
+                         max_length::Int,
+                         min_length::Int,
+                         missed_cleavages::Int,
+                         specificity::String = "full")::Tuple{Vector{String}, Vector{UInt32}, Vector{UInt8}}
+    if isempty(sequence)
+        return String[], UInt32[], UInt8[]
     end
 
-    peptides = Vector{SubString{String}}()
-    starts = Vector{UInt32}()
-    previous_sites = zeros(Int, missed_cleavages + 1)
-    previous_sites[1] = 0
-    n = 1
+    normalized_specificity = lowercase(specificity)
+    if !(normalized_specificity in ("full", "semi-n", "semi-c", "semi"))
+        error("specificity must be one of \"full\", \"semi-n\", \"semi-c\", or \"semi\"; got: $specificity")
+    end
 
+    require_n_cleavage = normalized_specificity in ("full", "semi-c")
+    require_c_cleavage = normalized_specificity in ("full", "semi-n")
+    require_one_cleavage = normalized_specificity == "semi"
+
+    sequence_length = lastindex(sequence)
+    cleavage_mask = falses(sequence_length)
     for site in eachmatch(regex, sequence, overlap = true)
-        n = add_peptide!(peptides, starts, n, sequence, site.offset,
-                        previous_sites, min_length, max_length,
-                        missed_cleavages)
+        if 1 <= site.offset <= sequence_length
+            cleavage_mask[site.offset] = true
+        end
     end
 
-    # Handle C-terminal peptides
-    n = add_peptide!(peptides, starts, n, sequence, length(sequence),
-                    previous_sites, min_length, max_length,
-                    missed_cleavages)
+    cleavage_prefix = zeros(Int, sequence_length)
+    running = 0
+    for idx in 1:sequence_length
+        if cleavage_mask[idx]
+            running += 1
+        end
+        cleavage_prefix[idx] = running
+    end
 
-    return peptides, starts
+    function start_is_enzymatic(start_idx::Int)
+        return start_idx == 1 || (start_idx > 1 && cleavage_mask[start_idx - 1])
+    end
+
+    function end_is_enzymatic(end_idx::Int)
+        return end_idx == sequence_length || cleavage_mask[end_idx]
+    end
+
+    function internal_cleavages(start_idx::Int, end_idx::Int)
+        if end_idx <= 1
+            return 0
+        end
+        before_end = cleavage_prefix[end_idx - 1]
+        before_start = start_idx > 1 ? cleavage_prefix[start_idx - 1] : 0
+        return before_end - before_start
+    end
+
+    peptides = String[]
+    starts = UInt32[]
+    enzymatic_counts = UInt8[]
+    for start_idx in 1:sequence_length
+        start_enzymatic = start_is_enzymatic(start_idx)
+        if require_n_cleavage && !start_enzymatic
+            continue
+        end
+
+        min_end = start_idx + min_length - 1
+        if min_end > sequence_length
+            continue
+        end
+        max_end = min(start_idx + max_length - 1, sequence_length)
+        for end_idx in min_end:max_end
+            end_enzymatic = end_is_enzymatic(end_idx)
+            if require_c_cleavage && !end_enzymatic
+                continue
+            end
+            if require_one_cleavage && !(start_enzymatic || end_enzymatic)
+                continue
+            end
+            if internal_cleavages(start_idx, end_idx) > missed_cleavages
+                continue
+            end
+
+            push!(peptides, String(@view sequence[start_idx:end_idx]))
+            push!(starts, UInt32(start_idx))
+            num_enzymatic = UInt8((start_enzymatic ? 1 : 0) + (end_enzymatic ? 1 : 0))
+            push!(enzymatic_counts, num_enzymatic)
+        end
+    end
+
+    return peptides, starts, enzymatic_counts
 end
 
 """
-    digest_fasta(fasta::Vector{FastaEntry}, proteome_id::String; regex::Regex = r"[KR][^P|\$]", max_length::Int = 40, min_length::Int = 8, missed_cleavages::Int = 1)::Vector{FastaEntry}
+    digest_fasta(fasta::Vector{FastaEntry}, proteome_id::String; regex::Regex = r"[KR][^P|\$]", max_length::Int = 40, min_length::Int = 8, missed_cleavages::Int = 1, specificity::String = "full")::Vector{FastaEntry}
 
 Enzymatically digest protein sequences from FASTA entries into peptides.
 
@@ -118,6 +160,7 @@ Enzymatically digest protein sequences from FASTA entries into peptides.
 - `max_length::Int`: Maximum peptide length to include (default: 40)
 - `min_length::Int`: Minimum peptide length to include (default: 8)
 - `missed_cleavages::Int`: Maximum missed cleavages allowed (default: 1)
+- `specificity::String`: Digestion specificity ("full", "semi-n", "semi-c", or "semi")
 
 # Returns
 - `Vector{FastaEntry}`: Digested peptide entries as FastaEntry objects
@@ -164,19 +207,21 @@ function digest_fasta(fasta::Vector{FastaEntry},
                      regex::Regex = r"[KR][^P|$]",
                      max_length::Int = 40,
                      min_length::Int = 8,
-                     missed_cleavages::Int = 1)::Vector{FastaEntry}
+                     missed_cleavages::Int = 1,
+                     specificity::String = "full")::Vector{FastaEntry}
 
     peptides_fasta = Vector{FastaEntry}()
     base_pep_id = one(UInt32)
     for entry in fasta
-        peptides, starts = digest_sequence(
+        peptides, starts, enzymatic_counts = digest_sequence(
             get_sequence(entry),
             regex,
             max_length,
             min_length,
             missed_cleavages,
+            specificity,
         )
-        for (peptide, start_idx) in zip(peptides, starts)
+        for (peptide, start_idx, num_enzymatic_termini) in zip(peptides, starts, enzymatic_counts)
 
             # Skip peptides containing non-standard amino acids
             if !all(aa -> aa ∈ VALID_AAS, peptide)
@@ -198,6 +243,7 @@ function digest_fasta(fasta::Vector{FastaEntry},
                 zero(UInt32),  # base_target_id (will be assigned later)
                 base_pep_id,
                 zero(UInt8),   # entrapment_pair_id
+                num_enzymatic_termini,
                 false          # is_decoy
             ))
             base_pep_id += one(UInt32)

@@ -223,6 +223,7 @@ function add_entrapment_sequences(
                         get_base_target_id(target_entry), # inherit base_target_id for tracking
                         get_base_pep_id(target_entry),
                         entrapment_group_id,
+                        get_num_enzymatic_termini(target_entry),
                         false
                     )
                     n += 1
@@ -400,6 +401,7 @@ function add_entrapment_sequences_grouped(
                     get_base_target_id(target_entry),
                     get_base_pep_id(target_entry),
                     UInt8(i),
+                    get_num_enzymatic_termini(target_entry),
                     false
                 ))
             end
@@ -805,6 +807,7 @@ function add_decoy_sequences(
                 get_base_target_id(target_entry), # inherit base_target_id for tracking
                 get_base_pep_id(target_entry),  # inherit base_pep_id for pairing
                 get_entrapment_pair_id(target_entry),
+                get_num_enzymatic_termini(target_entry),
                 true  # This is a decoy sequence
             )
             
@@ -963,6 +966,7 @@ function add_decoy_sequences_grouped(
                 get_base_target_id(target_entry),
                 get_base_pep_id(target_entry),
                 get_entrapment_pair_id(target_entry),
+                get_num_enzymatic_termini(target_entry),
                 true
             ))
         end
@@ -1056,7 +1060,8 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
                                                         get_charge(fasta_entry),
                                                         get_base_target_id(fasta_entry), # preserve base_target_id
                                                         base_pep_id,
-                                                        get_entrapment_pair_id(fasta_entry), 
+                                                        get_entrapment_pair_id(fasta_entry),
+                                                        get_num_enzymatic_termini(fasta_entry),
                                                         is_decoy(fasta_entry)
                                                         )
             base_pep_id += one(UInt32)
@@ -1104,6 +1109,7 @@ function assign_base_pep_ids!(fasta_entries::Vector{FastaEntry})
             get_base_target_id(entry), # preserve base_target_id
             UInt32(i),               # base_pep_id - sequential assignment
             get_entrapment_pair_id(entry),
+            get_num_enzymatic_termini(entry),
             is_decoy(entry)
         )
     end
@@ -1131,6 +1137,7 @@ function assign_base_target_ids!(fasta_entries::Vector{FastaEntry})
             UInt32(i),   # assign grouped base_target_id
             get_base_pep_id(entry),    # preserve existing base_pep_id
             get_entrapment_pair_id(entry),
+            get_num_enzymatic_termini(entry),
             is_decoy(entry)
         )
     end
