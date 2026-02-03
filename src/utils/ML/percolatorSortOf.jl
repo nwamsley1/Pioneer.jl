@@ -962,6 +962,30 @@ function build_mbr_tracker_for_fold(
     cv_fold::UInt8,
     q_cutoff::Float32
 )
+    # First pass: collect all PSMs for this CV fold to compute per-fold q_values
+    # This matches in-memory behavior where q_values are computed per CV fold subset
+    fold_probs = Float32[]
+    fold_targets = Bool[]
+    fold_file_indices = UInt32[]  # ms_file_idx for each PSM
+
+    for file_path in file_paths
+        df = DataFrame(Arrow.Table(file_path))
+        for i in 1:nrow(df)
+            df.cv_fold[i] == cv_fold || continue
+            push!(fold_probs, df.trace_prob[i])
+            push!(fold_targets, df.target[i])
+            push!(fold_file_indices, df.ms_file_idx[i])
+        end
+    end
+
+    # Compute per-fold q_values (matching in-memory FDR calculation scope)
+    fold_qvalues = Vector{Float64}(undef, length(fold_probs))
+    get_qvalues!(fold_probs, fold_targets, fold_qvalues)
+
+    # Build a lookup from (file_path_idx, row_in_fold) to per-fold q_value
+    # We'll track position as we iterate through files again
+    fold_qvalue_idx = 1
+
     # Tracker: (pair_id, isotopes) -> (best_prob, best_idx, best_file, second_best_prob, ...)
     tracker = Dict{Tuple{UInt32, Tuple{Int8,Int8}}, NamedTuple{
         (:best_prob_1, :best_prob_2, :best_file_1, :best_file_2,
@@ -980,6 +1004,10 @@ function build_mbr_tracker_for_fold(
 
         for i in 1:nrow(df)
             df.cv_fold[i] == cv_fold || continue  # Only process this fold
+
+            # Get per-fold q_value for this PSM
+            per_fold_qvalue = fold_qvalues[fold_qvalue_idx]
+            fold_qvalue_idx += 1
 
             key = (df.pair_id[i], df.isotopes_captured[i])
             prob = df.trace_prob[i]
@@ -1004,13 +1032,13 @@ function build_mbr_tracker_for_fold(
                     best_irt_residual_2 = 0f0,
                     is_best_decoy_1 = df.decoy[i],
                     is_best_decoy_2 = false,
-                    unique_passing_runs = df.q_value[i] <= q_cutoff ? Set{UInt16}([file_idx]) : Set{UInt16}()
+                    unique_passing_runs = per_fold_qvalue <= q_cutoff ? Set{UInt16}([file_idx]) : Set{UInt16}()
                 )
             else
                 entry = tracker[key]
 
-                # Update unique_passing_runs
-                if df.q_value[i] <= q_cutoff
+                # Update unique_passing_runs using per-fold q_value
+                if per_fold_qvalue <= q_cutoff
                     push!(entry.unique_passing_runs, file_idx)
                 end
 
