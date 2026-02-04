@@ -90,30 +90,49 @@ Returns the estimated size in bytes per element for an Arrow column type.
 Used for memory estimation without loading data.
 """
 function sizeof_arrow_column_type(col_type)
-    # Handle common Arrow types
-    if col_type <: Union{Float32, Int32, UInt32}
-        return 4
-    elseif col_type <: Union{Float64, Int64, UInt64}
+    # Ensure we're working with a Type, not a value
+    # Some Arrow column eltypes can return unexpected results
+    try
+        # Handle common primitive types using pattern matching
+        if col_type === Float32 || col_type === Int32 || col_type === UInt32
+            return 4
+        elseif col_type === Float64 || col_type === Int64 || col_type === UInt64
+            return 8
+        elseif col_type === Float16 || col_type === Int16 || col_type === UInt16
+            return 2
+        elseif col_type === Int8 || col_type === UInt8 || col_type === Bool
+            return 1
+        elseif col_type isa DataType
+            # Try subtype checks for more complex types
+            if col_type <: AbstractVector
+                # For vector columns, estimate based on typical length
+                # PSM vectors (weights, irts) are typically ~10-20 elements of Float32
+                return 60  # Conservative estimate: 15 elements × 4 bytes
+            elseif col_type <: AbstractString
+                return 20  # Estimate average string length
+            elseif col_type <: Tuple
+                # For tuples like Tuple{Int8, Int8}, sum up component sizes
+                if hasproperty(col_type, :parameters) && !isempty(col_type.parameters)
+                    return sum(sizeof_arrow_column_type(t) for t in col_type.parameters)
+                else
+                    return 8
+                end
+            elseif col_type <: Real
+                # Any other numeric type
+                return sizeof(col_type)
+            else
+                return 8  # Default for unknown DataTypes
+            end
+        elseif col_type isa UnionAll
+            # Handle Union types like Union{Missing, T}
+            # Just estimate conservatively
+            return 8
+        else
+            return 8  # Default fallback for any other case
+        end
+    catch
+        # If anything fails, return a safe default
         return 8
-    elseif col_type <: Union{Int8, UInt8, Bool}
-        return 1
-    elseif col_type <: Union{Int16, UInt16}
-        return 2
-    elseif col_type <: Tuple
-        # For tuples like Tuple{Int8, Int8}, sum up component sizes
-        return sum(sizeof_arrow_column_type(t) for t in col_type.parameters)
-    elseif col_type <: AbstractVector
-        # For vector columns, estimate based on typical length
-        # PSM vectors (weights, irts) are typically ~10-20 elements of Float32
-        return 60  # Conservative estimate: 15 elements × 4 bytes
-    elseif col_type <: AbstractString
-        return 20  # Estimate average string length
-    elseif col_type <: Union{Missing, T} where T
-        # Union with Missing - use size of non-missing type + 1 byte for flag
-        inner_type = Base.typesplit(col_type, Missing)[1]
-        return sizeof_arrow_column_type(inner_type) + 1
-    else
-        return 8  # Default fallback
     end
 end
 
