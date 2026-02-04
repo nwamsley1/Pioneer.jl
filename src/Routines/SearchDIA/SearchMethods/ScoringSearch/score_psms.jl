@@ -1321,6 +1321,14 @@ function score_precursor_isotope_traces_oom!(
         calculate_global_qvalues_streaming!(file_paths)
 
         # ========================================
+        # Step 5.5: Save non-MBR scores before MBR iteration overwrites them
+        # ========================================
+        if match_between_runs && itr == mbr_start_iter - 1
+            @user_info "OOM Step 5.5 (Iter $itr): Saving non-MBR scores before MBR iteration..."
+            save_nonmbr_scores_streaming!(file_paths)
+        end
+
+        # ========================================
         # Step 6: Compute MBR features for next iteration (if needed)
         # ========================================
         if match_between_runs && itr >= mbr_start_iter - 1
@@ -1339,8 +1347,123 @@ function score_precursor_isotope_traces_oom!(
         end
     end
 
+    # Finalize MBR scores: swap non-MBR/MBR and compute transfer candidates
+    if match_between_runs
+        @user_info "OOM: Finalizing MBR scores and transfer candidates..."
+        finalize_oom_mbr_scores_streaming!(file_paths, max_q_value_lightgbm_rescore)
+    end
+
+    # Add aggregated probability columns to match in-memory output schema
+    @user_info "OOM: Computing aggregated probability columns..."
+    n_runs = length(file_paths)
+    add_aggregated_prob_columns_oom!(file_paths, n_runs, match_between_runs)
+
     @user_info "OOM scoring complete"
     return models
+end
+
+"""
+    add_aggregated_prob_columns_oom!(file_paths, n_runs, match_between_runs)
+
+Add aggregated probability columns to OOM-scored files to match in-memory output schema.
+Computes prec_prob (per precursor per run) and global_prob (per precursor across runs).
+
+Memory-efficient: Only stores one Float32 per unique (precursor, run) combination
+in dictionaries, not the full PSM data.
+"""
+function add_aggregated_prob_columns_oom!(
+    file_paths::Vector{String},
+    n_runs::Int,
+    match_between_runs::Bool
+)
+    sqrt_n_runs = ceil(Int, sqrt(n_runs))
+
+    # Pass 1: Compute prec_prob per file and collect for global aggregation
+    # Dict: precursor_idx => Vector of prec_prob values (one per run)
+    precursor_probs = Dict{UInt32, Vector{Float32}}()
+    mbr_precursor_probs = Dict{UInt32, Vector{Float32}}()
+
+    for file_path in file_paths
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+
+        # Aggregate trace_prob → prec_prob (per precursor_idx, ms_file_idx)
+        gdf = groupby(df, [:precursor_idx, :ms_file_idx])
+        prec_agg = combine(gdf, :trace_prob => (p -> begin
+            prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+            clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+        end) => :prec_prob)
+
+        # Join prec_prob back to df
+        df = leftjoin(df, prec_agg, on=[:precursor_idx, :ms_file_idx])
+
+        # Collect unique prec_probs for global aggregation
+        seen = Set{Tuple{UInt32, UInt32}}()
+        for i in eachindex(df.precursor_idx)
+            key = (df.precursor_idx[i], df.ms_file_idx[i])
+            if key ∉ seen
+                push!(seen, key)
+                prec_idx = df.precursor_idx[i]
+                if !haskey(precursor_probs, prec_idx)
+                    precursor_probs[prec_idx] = Float32[]
+                end
+                push!(precursor_probs[prec_idx], df.prec_prob[i])
+            end
+        end
+
+        # If MBR, also compute MBR_boosted_prec_prob
+        if match_between_runs && hasproperty(df, :MBR_boosted_trace_prob)
+            mbr_agg = combine(gdf, :MBR_boosted_trace_prob => (p -> begin
+                prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+                clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+            end) => :MBR_boosted_prec_prob)
+            df = leftjoin(df, mbr_agg, on=[:precursor_idx, :ms_file_idx])
+
+            # Collect for global aggregation
+            seen_mbr = Set{Tuple{UInt32, UInt32}}()
+            for i in eachindex(df.precursor_idx)
+                key = (df.precursor_idx[i], df.ms_file_idx[i])
+                if key ∉ seen_mbr
+                    push!(seen_mbr, key)
+                    prec_idx = df.precursor_idx[i]
+                    if !haskey(mbr_precursor_probs, prec_idx)
+                        mbr_precursor_probs[prec_idx] = Float32[]
+                    end
+                    push!(mbr_precursor_probs[prec_idx], df.MBR_boosted_prec_prob[i])
+                end
+            end
+        end
+
+        writeArrow(file_path, df)
+    end
+
+    # Compute global_prob for each precursor using logodds
+    global_probs = Dict{UInt32, Float32}()
+    for (prec_idx, probs) in precursor_probs
+        global_probs[prec_idx] = logodds(probs, sqrt_n_runs)
+    end
+
+    mbr_global_probs = Dict{UInt32, Float32}()
+    if match_between_runs && !isempty(mbr_precursor_probs)
+        for (prec_idx, probs) in mbr_precursor_probs
+            mbr_global_probs[prec_idx] = logodds(probs, sqrt_n_runs)
+        end
+    end
+
+    # Pass 2: Add global_prob to all files
+    for file_path in file_paths
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+        df[!, :global_prob] = [global_probs[prec_idx] for prec_idx in df.precursor_idx]
+
+        if match_between_runs && !isempty(mbr_global_probs)
+            df[!, :MBR_boosted_global_prob] = [mbr_global_probs[prec_idx] for prec_idx in df.precursor_idx]
+        end
+
+        writeArrow(file_path, df)
+    end
+
+    @user_info "OOM aggregation complete: Added prec_prob, global_prob" *
+               (match_between_runs ? ", MBR_boosted_prec_prob, MBR_boosted_global_prob" : "") *
+               " columns"
 end
 
 """
@@ -1571,8 +1694,103 @@ function apply_models_streaming!(
             end
         end
 
+        # NOTE: Do NOT copy trace_prob to MBR_boosted_trace_prob here!
+        # The OOM pipeline overwrites trace_prob on each iteration, so copying here
+        # would give incorrect results. Instead, finalize_oom_mbr_scores_streaming!
+        # handles the score assignment after all iterations complete.
+
         writeArrow(file_path, df)
     end
+end
+
+"""
+    save_nonmbr_scores_streaming!(file_paths)
+
+Save non-MBR trace_prob scores to a temporary column before the MBR iteration
+overwrites them. This preserves the pre-MBR scores needed for computing
+MBR_transfer_candidate.
+
+Called after iteration 2 (the last non-MBR iteration) and before iteration 3 (MBR).
+"""
+function save_nonmbr_scores_streaming!(file_paths::Vector{String})
+    for file_path in file_paths
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+        df[!, :nonMBR_trace_prob] = copy(df.trace_prob)
+        writeArrow(file_path, df)
+    end
+end
+
+"""
+    finalize_oom_mbr_scores_streaming!(file_paths, max_q_value_lightgbm_rescore)
+
+Finalize MBR scores after OOM scoring completes. This function:
+1. Swaps scores: trace_prob = nonMBR_trace_prob, MBR_boosted_trace_prob = trace_prob (MBR)
+2. Computes MBR_transfer_candidate using the same logic as the in-memory pipeline
+3. Removes the temporary nonMBR_trace_prob column
+
+This matches the in-memory logic in percolatorSortOf.jl lines 564-579.
+
+# Arguments
+- `file_paths`: Vector of Arrow file paths
+- `max_q_value_lightgbm_rescore`: Q-value threshold for determining pass/fail
+"""
+function finalize_oom_mbr_scores_streaming!(
+    file_paths::Vector{String},
+    max_q_value_lightgbm_rescore::Float32
+)
+    # Pass 1: Compute global pass_mask threshold
+    # Collect all non-MBR scores and targets to compute global q-values
+    all_nonmbr_scores = Float32[]
+    all_targets = Bool[]
+
+    for file_path in file_paths
+        table = Arrow.Table(file_path)
+        append!(all_nonmbr_scores, Tables.getcolumn(table, :nonMBR_trace_prob))
+        append!(all_targets, Tables.getcolumn(table, :target))
+    end
+
+    # Compute global q-values from non-MBR scores
+    qvals = Vector{Float32}(undef, length(all_nonmbr_scores))
+    get_qvalues!(all_nonmbr_scores, all_targets, qvals)
+
+    # Global pass mask and probability threshold
+    pass_mask = qvals .<= max_q_value_lightgbm_rescore
+    has_passing_psms = any(pass_mask)
+    prob_thresh = has_passing_psms ? minimum(all_nonmbr_scores[pass_mask]) : typemax(Float32)
+
+    @user_info "OOM MBR finalization: $(sum(pass_mask)) PSMs pass q-value threshold, prob_thresh = $(round(prob_thresh, digits=4))"
+
+    # Pass 2: Apply swap and compute MBR_transfer_candidate per file
+    total_candidates = 0
+    for file_path in file_paths
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+
+        # Swap: trace_prob gets non-MBR, MBR_boosted_trace_prob gets MBR
+        # Current trace_prob contains MBR-enhanced scores from iteration 3
+        df[!, :MBR_boosted_trace_prob] = copy(df.trace_prob)
+        # Restore non-MBR scores to trace_prob
+        df[!, :trace_prob] = df.nonMBR_trace_prob
+
+        # Compute per-PSM q-values from non-MBR scores for this file
+        file_qvals = Vector{Float32}(undef, nrow(df))
+        get_qvalues!(df.trace_prob, df.target, file_qvals)
+
+        # Mark MBR transfer candidates:
+        # - Failed q-value cutoff (using non-MBR scores)
+        # - BUT have strong MBR match (MBR_max_pair_prob >= prob_thresh)
+        file_pass_mask = file_qvals .<= max_q_value_lightgbm_rescore
+        df[!, :MBR_transfer_candidate] = .!file_pass_mask .&
+                                         (df.MBR_max_pair_prob .>= prob_thresh)
+
+        total_candidates += sum(df.MBR_transfer_candidate)
+
+        # Remove temporary column
+        select!(df, Not(:nonMBR_trace_prob))
+
+        writeArrow(file_path, df)
+    end
+
+    @user_info "OOM MBR finalization complete: $(total_candidates) transfer candidates identified"
 end
 
 """
