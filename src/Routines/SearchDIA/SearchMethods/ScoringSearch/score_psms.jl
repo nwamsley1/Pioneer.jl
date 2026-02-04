@@ -1730,6 +1730,10 @@ Finalize MBR scores after OOM scoring completes. This function:
 
 This matches the in-memory logic in percolatorSortOf.jl lines 564-579.
 
+IMPORTANT: Uses GLOBAL q-values for pass_mask to match in-memory behavior.
+Per-file q-values would give different results because q-value computation
+depends on the full target/decoy score distribution.
+
 # Arguments
 - `file_paths`: Vector of Arrow file paths
 - `max_q_value_lightgbm_rescore`: Q-value threshold for determining pass/fail
@@ -1738,32 +1742,40 @@ function finalize_oom_mbr_scores_streaming!(
     file_paths::Vector{String},
     max_q_value_lightgbm_rescore::Float32
 )
-    # Pass 1: Compute global pass_mask threshold
-    # Collect all non-MBR scores and targets to compute global q-values
+    # Pass 1: Compute global q-values and pass_mask
+    # Collect all non-MBR scores and targets, tracking file boundaries
     all_nonmbr_scores = Float32[]
     all_targets = Bool[]
+    file_boundaries = Int[]  # Start index of each file's data (1-indexed)
 
+    push!(file_boundaries, 1)
     for file_path in file_paths
         table = Arrow.Table(file_path)
         append!(all_nonmbr_scores, Tables.getcolumn(table, :nonMBR_trace_prob))
         append!(all_targets, Tables.getcolumn(table, :target))
+        push!(file_boundaries, length(all_nonmbr_scores) + 1)
     end
 
-    # Compute global q-values from non-MBR scores
-    qvals = Vector{Float32}(undef, length(all_nonmbr_scores))
-    get_qvalues!(all_nonmbr_scores, all_targets, qvals)
+    # Compute GLOBAL q-values from all non-MBR scores
+    global_qvals = Vector{Float32}(undef, length(all_nonmbr_scores))
+    get_qvalues!(all_nonmbr_scores, all_targets, global_qvals)
 
     # Global pass mask and probability threshold
-    pass_mask = qvals .<= max_q_value_lightgbm_rescore
-    has_passing_psms = any(pass_mask)
-    prob_thresh = has_passing_psms ? minimum(all_nonmbr_scores[pass_mask]) : typemax(Float32)
+    global_pass_mask = global_qvals .<= max_q_value_lightgbm_rescore
+    has_passing_psms = any(global_pass_mask)
+    prob_thresh = has_passing_psms ? minimum(all_nonmbr_scores[global_pass_mask]) : typemax(Float32)
 
-    @user_info "OOM MBR finalization: $(sum(pass_mask)) PSMs pass q-value threshold, prob_thresh = $(round(prob_thresh, digits=4))"
+    @user_info "OOM MBR finalization: $(sum(global_pass_mask)) PSMs pass q-value threshold, prob_thresh = $(round(prob_thresh, digits=4))"
 
-    # Pass 2: Apply swap and compute MBR_transfer_candidate per file
+    # Pass 2: Apply swap and use GLOBAL pass_mask for MBR_transfer_candidate
     total_candidates = 0
-    for file_path in file_paths
+    for (file_idx, file_path) in enumerate(file_paths)
         df = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+
+        # Get the slice of global pass_mask for this file
+        start_idx = file_boundaries[file_idx]
+        end_idx = file_boundaries[file_idx + 1] - 1
+        file_pass_mask = global_pass_mask[start_idx:end_idx]
 
         # Swap: trace_prob gets non-MBR, MBR_boosted_trace_prob gets MBR
         # Current trace_prob contains MBR-enhanced scores from iteration 3
@@ -1771,14 +1783,9 @@ function finalize_oom_mbr_scores_streaming!(
         # Restore non-MBR scores to trace_prob
         df[!, :trace_prob] = df.nonMBR_trace_prob
 
-        # Compute per-PSM q-values from non-MBR scores for this file
-        file_qvals = Vector{Float32}(undef, nrow(df))
-        get_qvalues!(df.trace_prob, df.target, file_qvals)
-
-        # Mark MBR transfer candidates:
-        # - Failed q-value cutoff (using non-MBR scores)
+        # Mark MBR transfer candidates using GLOBAL pass_mask:
+        # - Failed q-value cutoff (using global q-values, not per-file)
         # - BUT have strong MBR match (MBR_max_pair_prob >= prob_thresh)
-        file_pass_mask = file_qvals .<= max_q_value_lightgbm_rescore
         df[!, :MBR_transfer_candidate] = .!file_pass_mask .&
                                          (df.MBR_max_pair_prob .>= prob_thresh)
 
