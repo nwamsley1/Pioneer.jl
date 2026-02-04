@@ -1878,30 +1878,42 @@ end
     collect_pair_mbr_data_streaming(file_paths, precursor_to_pair_id, max_q_value)
 
 Collect best PSM data per pair per run for MBR feature computation.
+Uses TOP-2 RUNS logic to match in-memory behavior (percolatorSortOf.jl:1023-1064).
 
 # Returns
-- Dict mapping (pair_id, isotopes) -> Dict{ms_file_idx -> RunBestPSM}
+- Dict mapping (pair_id, isotopes) -> NamedTuple with:
+  - top2_runs: (r1, r2) where r1 is best run, r2 is second-best
+  - run_data: Dict{ms_file_idx -> RunBestPSM}
 """
 function collect_pair_mbr_data_streaming(
     file_paths::Vector{String},
     precursor_to_pair_id::Dict{UInt32, UInt32},
     max_q_value::Float32
 )
-    # Structure: (pair_id, isotopes) -> (ms_file_idx -> best PSM data)
-    pair_mbr = Dict{
-        @NamedTuple{pair_id::UInt32, isotopes::Tuple{Int8,Int8}},
-        Dict{UInt32, @NamedTuple{
-            trace_prob::Float32,
-            weights::Vector{Float32},
-            irts::Vector{Float32},
-            weight::Float32,
-            log2_intensity_explained::Float32,
-            irt_residual::Float32,
-            is_decoy::Bool,
-            passes_qvalue::Bool
-        }}
-    }()
+    # PSM data type for best PSM per run
+    PSMDataType = @NamedTuple{
+        trace_prob::Float32,
+        weights::Vector{Float32},
+        irts::Vector{Float32},
+        weight::Float32,
+        log2_intensity_explained::Float32,
+        irt_residual::Float32,
+        is_decoy::Bool,
+        passes_qvalue::Bool
+    }
 
+    # Structure: (pair_id, isotopes) -> (top2_runs, run_data)
+    # top2_runs: (r1, r2) - r1 is best run, r2 is second-best
+    # run_data: ms_file_idx -> best PSM data for that run
+    PairKeyType = @NamedTuple{pair_id::UInt32, isotopes::Tuple{Int8,Int8}}
+    PairDataType = @NamedTuple{
+        top2_runs::Tuple{UInt32, UInt32},
+        run_data::Dict{UInt32, PSMDataType}
+    }
+
+    pair_mbr = Dict{PairKeyType, PairDataType}()
+
+    # Pass 1: Collect best PSM per run for each pair-isotope group
     for file_path in file_paths
         table = Arrow.Table(file_path)
 
@@ -1919,7 +1931,7 @@ function collect_pair_mbr_data_streaming(
         irt_pred_col = Tables.getcolumn(table, :irt_pred)
         irt_obs_col = Tables.getcolumn(table, :irt_obs)
 
-        for i in 1:length(prec_idx_col)
+        for i in eachindex(prec_idx_col)
             prec_idx = prec_idx_col[i]
             if !haskey(precursor_to_pair_id, prec_idx)
                 continue
@@ -1932,14 +1944,13 @@ function collect_pair_mbr_data_streaming(
 
             # Initialize pair entry if needed
             if !haskey(pair_mbr, key)
-                pair_mbr[key] = Dict{UInt32, @NamedTuple{
-                    trace_prob::Float32, weights::Vector{Float32}, irts::Vector{Float32},
-                    weight::Float32, log2_intensity_explained::Float32, irt_residual::Float32,
-                    is_decoy::Bool, passes_qvalue::Bool
-                }}()
+                pair_mbr[key] = (
+                    top2_runs = (UInt32(0), UInt32(0)),  # Will be computed in Pass 2
+                    run_data = Dict{UInt32, PSMDataType}()
+                )
             end
 
-            run_data = pair_mbr[key]
+            run_data = pair_mbr[key].run_data
 
             # Update if this is the best PSM for this run
             if !haskey(run_data, ms_file_idx) || trace_prob > run_data[ms_file_idx].trace_prob
@@ -1957,6 +1968,39 @@ function collect_pair_mbr_data_streaming(
         end
     end
 
+    # Pass 2: Compute top-2 runs for each pair-isotope group
+    # This matches in-memory logic in percolatorSortOf.jl:1043-1058
+    for (key, pair_data) in pair_mbr
+        run_data = pair_data.run_data
+        runs = collect(keys(run_data))
+
+        if length(runs) == 0
+            # No runs - shouldn't happen but handle gracefully
+            continue
+        elseif length(runs) == 1
+            # Only one run - use it as both r1 and r2
+            r = runs[1]
+            pair_mbr[key] = (top2_runs = (r, r), run_data = run_data)
+        else
+            # Find top-2 runs by best trace_prob
+            # r1 = best run, r2 = second-best run
+            r1 = UInt32(0); p1 = -Inf32
+            r2 = UInt32(0); p2 = -Inf32
+
+            for r in runs
+                p = run_data[r].trace_prob
+                if p > p1
+                    r2, p2 = r1, p1
+                    r1, p1 = r, p
+                elseif p > p2
+                    r2, p2 = r, p
+                end
+            end
+
+            pair_mbr[key] = (top2_runs = (r1, r2), run_data = run_data)
+        end
+    end
+
     return pair_mbr
 end
 
@@ -1964,6 +2008,9 @@ end
     apply_mbr_features_streaming!(file_paths, pair_mbr, precursor_to_pair_id)
 
 Apply MBR features to all files using collected pair statistics.
+Uses TOP-2 RUNS logic to match in-memory behavior (percolatorSortOf.jl:1060-1062):
+- If current run is r1 (best), use PSM from r2 (second-best)
+- Otherwise, use PSM from r1 (best)
 """
 function apply_mbr_features_streaming!(
     file_paths::Vector{String},
@@ -1999,25 +2046,24 @@ function apply_mbr_features_streaming!(
                 continue
             end
 
-            run_data = pair_mbr[key]
+            pair_data = pair_mbr[key]
+            run_data = pair_data.run_data
+            r1, r2 = pair_data.top2_runs
             current_run = df.ms_file_idx[i]
 
             # Count runs with passing PSMs (excluding current run)
+            # This matches in-memory logic in percolatorSortOf.jl:1067-1071
             n_passing = sum(data.passes_qvalue for (run_idx, data) in run_data
                            if run_idx != current_run; init=0)
             df.MBR_num_runs[i] = n_passing
 
-            # Find best PSM from a DIFFERENT run
-            best_other = nothing
-            best_other_prob = -Inf32
-            for (run_idx, data) in run_data
-                if run_idx != current_run && data.trace_prob > best_other_prob
-                    best_other_prob = data.trace_prob
-                    best_other = data
-                end
-            end
+            # Use TOP-2 RUNS logic (matches percolatorSortOf.jl:1060-1062):
+            # - If current run is r1 (best), use PSM from r2 (second-best)
+            # - Otherwise, use PSM from r1 (best)
+            best_run = (current_run == r1) ? r2 : r1
 
-            if isnothing(best_other) || n_passing == 0
+            # Check if we have valid data for the selected run
+            if best_run == 0 || !haskey(run_data, best_run) || n_passing == 0
                 df.MBR_is_missing[i] = true
                 df.MBR_best_irt_diff[i] = -1.0f0
                 df.MBR_rv_coefficient[i] = -1.0f0
@@ -2026,6 +2072,8 @@ function apply_mbr_features_streaming!(
                 df.MBR_log2_explained_ratio[i] = -1.0f0
                 continue
             end
+
+            best_other = run_data[best_run]
 
             # Compute MBR features
             df.MBR_max_pair_prob[i] = best_other.trace_prob
