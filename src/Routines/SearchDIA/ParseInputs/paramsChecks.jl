@@ -285,6 +285,7 @@ function checkParams(json_path::String)
     check_param(deconv, "max_diff", Real)
 
     ml_params = opt_params["machine_learning"]
+    check_param(ml_params, "max_psm_memory_mb", Integer)
     check_param(ml_params, "max_psms_in_memory", Integer)
     check_param(ml_params, "min_trace_prob", Real)
     check_param(ml_params, "max_q_value_mbr_itr", Real)
@@ -292,6 +293,11 @@ function checkParams(json_path::String)
     check_param(ml_params, "spline_points", Integer)
     check_param(ml_params, "interpolation_points", Integer)
     check_param(ml_params, "n_quantile_bins", Integer)
+
+    # Validate max_psm_memory_mb bounds
+    if ml_params["max_psm_memory_mb"] < 0
+        throw(InvalidParametersError("max_psm_memory_mb must be ≥ 0 (0 = use max_psms_in_memory), got $(ml_params["max_psm_memory_mb"])", ml_params))
+    end
 
     # Validate n_quantile_bins bounds (UInt16 limit)
     if ml_params["n_quantile_bins"] > 65535

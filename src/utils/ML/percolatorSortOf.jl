@@ -239,6 +239,160 @@ function assign_pair_ids(
     return pair_ids, last_pair_id
 end
 
+#############################################################################
+# Streaming Pair Assignment for OOM Processing
+#############################################################################
+
+"""
+    collect_unique_precursors_streaming(file_paths)
+
+Collect unique precursor information from all files via streaming.
+Processes files one at a time for predictable memory control.
+
+# Returns
+- Dict{UInt32, NamedTuple} mapping precursor_idx to (irt_pred, cv_fold, isotopes_captured)
+"""
+function collect_unique_precursors_streaming(file_paths::Vector{String})
+    precursor_info = Dict{UInt32, @NamedTuple{
+        irt_pred::Float32,
+        cv_fold::UInt8,
+        isotopes_captured::Tuple{Int8,Int8}
+    }}()
+
+    for file_path in file_paths
+        table = Arrow.Table(file_path)
+
+        # Get column references
+        prec_idx_col = Tables.getcolumn(table, :precursor_idx)
+        irt_pred_col = Tables.getcolumn(table, :irt_pred)
+        cv_fold_col = Tables.getcolumn(table, :cv_fold)
+        isotopes_col = Tables.getcolumn(table, :isotopes_captured)
+
+        for i in eachindex(prec_idx_col)
+            pid = prec_idx_col[i]
+            if !haskey(precursor_info, pid)
+                precursor_info[pid] = (
+                    irt_pred = irt_pred_col[i],
+                    cv_fold = cv_fold_col[i],
+                    isotopes_captured = isotopes_col[i]
+                )
+            end
+        end
+        # table goes out of scope, OS can reclaim mapped memory
+    end
+
+    return precursor_info
+end
+
+"""
+    assign_pair_ids_streaming!(file_paths, precursors)
+
+Assign pair_ids to all precursors via streaming without loading all data.
+Uses the same pairing algorithm as in-memory version for consistency.
+
+# Algorithm
+1. Collect unique precursors from all files (streaming)
+2. Calculate iRT bins using existing `getIrtBins()`
+3. Group by (irt_bin, cv_fold, isotopes_captured)
+4. Shuffle and pair consecutive precursors (seed PAIRING_RANDOM_SEED)
+5. Return Dict mapping precursor_idx → pair_id
+
+# Arguments
+- `file_paths`: Vector of Arrow file paths
+- `precursors`: LibraryPrecursors for target/decoy info
+
+# Returns
+- Dict{UInt32, UInt32} mapping precursor_idx → pair_id
+"""
+function assign_pair_ids_streaming!(
+    file_paths::Vector{String},
+    precursors
+)
+    # Step 1: Collect unique precursors via streaming
+    precursor_info = collect_unique_precursors_streaming(file_paths)
+    @user_info "OOM pair assignment: Found $(length(precursor_info)) unique precursors"
+
+    # Step 2: Build arrays for iRT binning
+    unique_prec_ids = collect(keys(precursor_info))
+    irt_preds = [precursor_info[pid].irt_pred for pid in unique_prec_ids]
+
+    # Calculate iRT bins using existing function
+    irt_bins = getIrtBins(irt_preds)
+
+    # Step 3: Group precursors by (irt_bin, cv_fold, isotopes_captured)
+    # and assign pair_ids within each group
+    precursor_to_pair_id = Dict{UInt32, UInt32}()
+    last_pair_id = zero(UInt32)
+
+    # Build groups: (irt_bin, cv_fold, isotopes) -> list of precursor_idx
+    groups = Dict{@NamedTuple{irt_bin::UInt32, cv_fold::UInt8, isotopes::Tuple{Int8,Int8}},
+                  Vector{UInt32}}()
+
+    for (idx, pid) in enumerate(unique_prec_ids)
+        info = precursor_info[pid]
+        key = (irt_bin = irt_bins[idx], cv_fold = info.cv_fold, isotopes = info.isotopes_captured)
+        if !haskey(groups, key)
+            groups[key] = UInt32[]
+        end
+        push!(groups[key], pid)
+    end
+
+    # Step 4: Assign pair_ids within each group
+    for (group_key, prec_ids) in groups
+        n_precursors = length(prec_ids)
+
+        # Randomly shuffle using fixed seed
+        perm = randperm(MersenneTwister(PAIRING_RANDOM_SEED), n_precursors)
+        shuffled = prec_ids[perm]
+
+        # Pair consecutive elements
+        n_pairs = n_precursors ÷ 2
+        for i in 1:n_pairs
+            last_pair_id += one(UInt32)
+            precursor_to_pair_id[shuffled[2*i - 1]] = last_pair_id
+            precursor_to_pair_id[shuffled[2*i]] = last_pair_id
+        end
+
+        # Handle odd number - last precursor gets singleton pair_id
+        if isodd(n_precursors)
+            last_pair_id += one(UInt32)
+            precursor_to_pair_id[shuffled[end]] = last_pair_id
+        end
+    end
+
+    @user_info "OOM pair assignment: Created $last_pair_id pairs from $(length(groups)) groups"
+
+    # Step 5: Write pair_ids to all files
+    write_pair_ids_to_files!(file_paths, precursor_to_pair_id)
+
+    return precursor_to_pair_id
+end
+
+"""
+    write_pair_ids_to_files!(file_paths, precursor_to_pair_id)
+
+Add pair_id column to all files based on precursor_idx mapping.
+"""
+function write_pair_ids_to_files!(
+    file_paths::Vector{String},
+    precursor_to_pair_id::Dict{UInt32, UInt32}
+)
+    for file_path in file_paths
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+
+        # Add pair_id column
+        df[!, :pair_id] = [get(precursor_to_pair_id, pid, zero(UInt32))
+                          for pid in df.precursor_idx]
+
+        # Also add irt_bin_idx for compatibility
+        if !hasproperty(df, :irt_bin_idx)
+            df[!, :irt_bin_idx] = getIrtBins(df.irt_pred)
+        end
+
+        writeArrow(file_path, df)
+    end
+end
+
 function sort_of_percolator_in_memory!(psms::DataFrame,
                   features::Vector{Symbol},
                   match_between_runs::Bool = true;
