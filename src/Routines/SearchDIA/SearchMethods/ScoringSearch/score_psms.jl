@@ -1779,7 +1779,7 @@ function apply_mbr_features_streaming!(
 
             # Count runs with passing PSMs (excluding current run)
             n_passing = sum(data.passes_qvalue for (run_idx, data) in run_data
-                           if run_idx != current_run)
+                           if run_idx != current_run; init=0)
             df.MBR_num_runs[i] = n_passing
 
             # Find best PSM from a DIFFERENT run
