@@ -197,29 +197,35 @@ end
 
 """
     should_use_oom_processing(file_paths::Vector{String}, max_psm_memory_mb::Int,
-                               max_psms_in_memory::Int)::Bool
+                               max_psms_in_memory::Int, force_oom::Bool)::Bool
 
 Determine whether to use out-of-memory processing based on memory estimation.
 
 # Arguments
 - `file_paths`: Vector of Arrow file paths
-- `max_psm_memory_mb`: Memory-based threshold in MB (0 = use count-based threshold)
-- `max_psms_in_memory`: Count-based threshold (fallback if max_psm_memory_mb == 0)
+- `max_psm_memory_mb`: Memory-based threshold in MB
+- `max_psms_in_memory`: Count-based threshold (fallback)
+- `force_oom`: If true, always use OOM processing (useful for testing/debugging)
 
 # Returns
 - true if OOM processing should be used, false otherwise
 """
 function should_use_oom_processing(file_paths::Vector{String}, max_psm_memory_mb::Int,
-                                    max_psms_in_memory::Int)::Bool
-    if max_psm_memory_mb > 0
-        # Memory-based decision
-        estimated_mb = estimate_arrow_dataframe_memory_mb(file_paths)
-        return estimated_mb > max_psm_memory_mb
-    else
-        # Count-based decision (fallback)
-        psms_count = get_psms_count(file_paths)
-        return psms_count >= max_psms_in_memory
+                                    max_psms_in_memory::Int, force_oom::Bool)::Bool
+    # Force OOM for testing/debugging
+    if force_oom
+        return true
     end
+
+    # Memory-based decision
+    estimated_mb = estimate_arrow_dataframe_memory_mb(file_paths)
+    if estimated_mb > max_psm_memory_mb
+        return true
+    end
+
+    # Count-based decision (fallback)
+    psms_count = get_psms_count(file_paths)
+    return psms_count >= max_psms_in_memory
 end
 
 """
@@ -231,12 +237,13 @@ end
                                   max_q_value_mbr_itr::Float32,
                                   min_PEP_neg_threshold_itr::Float32,
                                   max_psms_in_memory::Int64,
-                                  max_psm_memory_mb::Int64)
+                                  max_psm_memory_mb::Int64,
+                                  force_oom::Bool)
 
 Main entry point for PSM scoring with automatic model selection based on dataset size.
 
 # Processing Strategy
-1. If OOM triggered (memory or count threshold): Out-of-memory streaming processing
+1. If force_oom=true OR memory/count threshold exceeded: Out-of-memory streaming processing
 2. PSMs < threshold AND ≥ 200K: In-memory with default/advanced LightGBM
 3. PSMs < 200K: In-memory with automatic model comparison
 
@@ -249,7 +256,8 @@ Main entry point for PSM scoring with automatic model selection based on dataset
 - `max_q_value_mbr_itr`: Max q-value for MBR transfers retained during iterative training (ITR)
 - `min_PEP_neg_threshold_itr`: Min PEP threshold for relabeling weak targets as negatives during ITR
 - `max_psms_in_memory`: Maximum PSMs to keep in memory (count-based threshold)
-- `max_psm_memory_mb`: Memory-based threshold in MB (0 = use count-based threshold)
+- `max_psm_memory_mb`: Memory-based threshold in MB (default: 5000 = 5GB)
+- `force_oom`: If true, always use OOM processing (useful for testing/debugging)
 - `n_quantile_bins`: Number of quantile bins for feature discretization (1-65535)
 - `q_value_threshold`: Q-value threshold for model comparison (default: 0.01)
 - `ms1_scoring`: Whether to include MS1 scoring features (default: true)
@@ -267,6 +275,7 @@ function score_precursor_isotope_traces(
     min_PEP_neg_threshold_itr::Float32,
     max_psms_in_memory::Int64,
     max_psm_memory_mb::Int64,
+    force_oom::Bool,
     n_quantile_bins::Int64,
     q_value_threshold::Float32 = 0.01f0,  # Default to 1% if not specified
     ms1_scoring::Bool = true
@@ -275,12 +284,16 @@ function score_precursor_isotope_traces(
     psms_count = get_psms_count(file_paths)
 
     # Determine if OOM processing is needed
-    use_oom = should_use_oom_processing(file_paths, Int(max_psm_memory_mb), Int(max_psms_in_memory))
+    use_oom = should_use_oom_processing(file_paths, Int(max_psm_memory_mb), Int(max_psms_in_memory), force_oom)
 
     if use_oom
         # Case 1: Out-of-memory streaming processing
         estimated_mb = estimate_arrow_dataframe_memory_mb(file_paths)
-        @user_info "Using out-of-memory streaming processing for $psms_count PSMs (estimated $(round(estimated_mb, digits=1)) MB)"
+        if force_oom
+            @user_info "Using out-of-memory streaming processing for $psms_count PSMs (FORCED, estimated $(round(estimated_mb, digits=1)) MB)"
+        else
+            @user_info "Using out-of-memory streaming processing for $psms_count PSMs (estimated $(round(estimated_mb, digits=1)) MB exceeds $(max_psm_memory_mb) MB threshold)"
+        end
 
         # Create OOM model config (uses raw features, no _qbin)
         model_config = create_oom_lightgbm_config(ms1_scoring)

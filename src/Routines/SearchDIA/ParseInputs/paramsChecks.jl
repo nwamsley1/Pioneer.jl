@@ -286,6 +286,7 @@ function checkParams(json_path::String)
 
     ml_params = opt_params["machine_learning"]
     check_param(ml_params, "max_psm_memory_mb", Integer)
+    check_param(ml_params, "force_oom", Bool)
     check_param(ml_params, "max_psms_in_memory", Integer)
     check_param(ml_params, "min_trace_prob", Real)
     check_param(ml_params, "max_q_value_mbr_itr", Real)
