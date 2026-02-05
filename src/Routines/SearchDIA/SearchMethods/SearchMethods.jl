@@ -471,6 +471,37 @@ function filter_to_valid_files(file_paths::Vector{String}, search_context)
 end
 
 """
+    get_valid_fold_file_paths(search_context) -> Vector{String}
+
+Get paths to all fold-split second pass PSM files for valid (non-failed) files.
+
+Returns paths to both fold0 and fold1 files for each valid MS file.
+Files that don't exist are filtered out (e.g., if a file had no PSMs for one fold).
+
+# Returns
+- Vector of paths to fold-specific Arrow files (e.g., ["file1_fold0.arrow", "file1_fold1.arrow", ...])
+"""
+function get_valid_fold_file_paths(search_context)
+    valid_indices = get_valid_file_indices(search_context)
+    ms_data = getMassSpecData(search_context)
+
+    fold_paths = String[]
+    for idx in valid_indices
+        base_path = getSecondPassPsms(ms_data, idx)
+        if !isempty(base_path)
+            # Add paths for both folds if they exist
+            for fold in UInt8[0, 1]
+                fold_path = getSecondPassPsmsFold(ms_data, idx, fold)
+                if isfile(fold_path)
+                    push!(fold_paths, fold_path)
+                end
+            end
+        end
+    end
+    return fold_paths
+end
+
+"""
     safe_process_file!(search_context, ms_file_idx, processing_fn) -> Bool
 
 Safely process a file with error handling. Returns true if successful, false if failed.

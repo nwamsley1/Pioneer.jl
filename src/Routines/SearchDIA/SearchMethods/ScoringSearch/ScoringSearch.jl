@@ -376,18 +376,26 @@ function summarize_results!(
         # Filter to only include valid (non-failed) files
         valid_file_data = get_valid_file_paths(search_context, getSecondPassPsms)
         valid_file_indices = [idx for (idx, _) in valid_file_data]
-        valid_second_pass_psms = [path for (_, path) in valid_file_data]
-        
+
         # Check if any valid files remain
-        if isempty(valid_second_pass_psms)
+        if isempty(valid_file_data)
             @user_warn "No valid files for ScoringSearch - all files failed in previous search methods"
             return nothing
         end
-        
+
+        # Get all fold-split file paths for LightGBM training and downstream processing
+        # SecondPassSearch now writes separate files per CV fold: *_fold0.arrow, *_fold1.arrow
+        valid_fold_paths = get_valid_fold_file_paths(search_context)
+
+        if isempty(valid_fold_paths)
+            @user_warn "No valid fold-split PSM files found for ScoringSearch"
+            return nothing
+        end
+
         step1_time = @elapsed begin
             score_precursor_isotope_traces(
                 second_pass_folder,
-                valid_second_pass_psms,
+                valid_fold_paths,
                 getPrecursors(getSpecLib(search_context)),
                 params.match_between_runs,
                 params.max_q_value_lightgbm_rescore,
@@ -401,8 +409,37 @@ function summarize_results!(
         end
         #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
 
-        # Create references for second pass PSMs (only valid files)
-        second_pass_paths = valid_second_pass_psms
+        # Step 1b: Merge fold files back into single files per MS run
+        # After ML scoring, we merge fold0 and fold1 files back together
+        # This simplifies downstream processing which expects one file per MS run
+        merged_psm_paths = String[]
+        for (idx, base_path) in valid_file_data
+            fold0_path = "$(base_path)_fold0.arrow"
+            fold1_path = "$(base_path)_fold1.arrow"
+            merged_path = "$(base_path).arrow"
+
+            # Collect data from both folds
+            fold_dfs = DataFrame[]
+            if isfile(fold0_path)
+                push!(fold_dfs, DataFrame(Arrow.Table(fold0_path)))
+            end
+            if isfile(fold1_path)
+                push!(fold_dfs, DataFrame(Arrow.Table(fold1_path)))
+            end
+
+            if !isempty(fold_dfs)
+                # Merge and write combined file
+                combined_df = vcat(fold_dfs...)
+                writeArrow(merged_path, combined_df)
+                push!(merged_psm_paths, merged_path)
+
+                # Update search context with merged path
+                setSecondPassPsms!(getMSData(search_context), idx, merged_path)
+            end
+        end
+
+        # Create references for second pass PSMs (now using merged files)
+        second_pass_paths = merged_psm_paths
         second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
         # Step 2: Apply MBR filtering and calculate precursor probabilities
@@ -446,7 +483,7 @@ function summarize_results!(
                            end) => :prec_prob)
             end
             # Note: global_prob calculation moved to after best trace filtering (Step 5)
-            # Write updated data back to individual files
+            # Write updated data back to individual files (now merged per MS run)
             for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
                 sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
                 write_arrow_file(ref, sub_df)
@@ -458,7 +495,7 @@ function summarize_results!(
         #@debug_l1 "Step 3: Finding best isotope traces..."
         step3_time = @elapsed begin
             best_traces = get_best_traces(
-                valid_second_pass_psms,
+                second_pass_paths,
                 params.min_best_trace_prob
             )
         end
