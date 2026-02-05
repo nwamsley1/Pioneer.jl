@@ -82,14 +82,13 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
 
     Random.seed!(1776)
 
-    # Step 6: Cross-validation training loop
+    # Step 6: PHASE 1 - Train all models (predict on training data only)
+    # This separates training from held-out prediction for cleaner phases
     for test_fold_idx in unique_cv_folds
         train_idx = train_indices[test_fold_idx]
-        test_idx = fold_indices[test_fold_idx]
 
-        # Create views for train/test splits
+        # Create view for training split only
         psms_train = get_view(psms, train_idx)
-        psms_test = get_view(psms, test_idx)
 
         fold_models = Vector{Any}(undef, total_iterations)
 
@@ -106,7 +105,7 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
             model = train_model(config.model, psms_train_itr, features, num_round)
             fold_models[itr] = model
 
-            # Predict on training set
+            # Predict on training set only
             prob_train[train_idx] = predict_scores(model, psms_train)
             set_column!(psms_train, :trace_prob, prob_train[train_idx])
 
@@ -117,7 +116,32 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
             get_qvalues!(trace_probs_train, targets_train, q_values_train)
             set_column!(psms_train, :q_value, q_values_train)
 
-            # Predict on test set
+            # Update MBR features on training data only
+            update_mbr_features_train_only!(psms_train, itr, mbr_start_iter, config.mbr_update)
+
+            show_progress && update(pbar)
+
+            # Early exit for non-MBR mode
+            if !has_mbr_support(config.mbr_update) && itr == (mbr_start_iter - 1)
+                break
+            end
+        end
+
+        models[test_fold_idx] = fold_models
+    end
+
+    # Step 7: PHASE 2 - Apply stored models to held-out test data
+    for test_fold_idx in unique_cv_folds
+        test_idx = fold_indices[test_fold_idx]
+        fold_models = models[test_fold_idx]
+
+        # Create view for test split
+        psms_test = get_view(psms, test_idx)
+
+        for (itr, num_round) in enumerate(iteration_rounds)
+            model = fold_models[itr]
+
+            # Predict on test set (held-out fold)
             prob_test[test_idx] = predict_scores(model, psms_test)
             set_column!(psms_test, :trace_prob, prob_test[test_idx])
 
@@ -126,10 +150,8 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
                 nonMBR_estimates[test_idx] = prob_test[test_idx]
             end
 
-            # Update MBR features
-            update_mbr_features!(psms_train, psms_test, itr, mbr_start_iter, config.mbr_update)
-
-            show_progress && update(pbar)
+            # Update MBR features on test data
+            update_mbr_features_test_only!(psms_test, itr, mbr_start_iter, config.mbr_update)
 
             # Early exit for non-MBR mode
             if !has_mbr_support(config.mbr_update) && itr == (mbr_start_iter - 1)
@@ -143,11 +165,9 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
         else
             prob_test[test_idx] = collect(Float32, get_column(psms_test, :trace_prob))
         end
-
-        models[test_fold_idx] = fold_models
     end
 
-    # Step 7: Finalize scoring
+    # Step 8: Finalize scoring
     finalize_scoring!(psms, config.mbr_update, prob_test, nonMBR_estimates, MBR_estimates)
 
     return models
