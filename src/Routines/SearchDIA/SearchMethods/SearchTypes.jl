@@ -316,6 +316,27 @@ end
 getFileIdToName(ref::ArrowTableReference, index::Int) = ref.file_id_to_name[index]
 getFirstPassPsms(ref::ArrowTableReference, index::Int) = ref.first_pass_psms[index]
 getSecondPassPsms(ref::ArrowTableReference, index::Int) = ref.second_pass_psms[index]
+
+"""
+    getSecondPassPsmsFold(ref::ArrowTableReference, index::Int, fold::UInt8) -> String
+
+Get the path to a specific CV fold's second pass PSM file.
+
+The second_pass_psms field stores the base path (without fold suffix).
+This function constructs the full path for a specific fold.
+
+# Arguments
+- `ref`: ArrowTableReference containing file paths
+- `index`: MS file index
+- `fold`: CV fold number (0 or 1)
+
+# Returns
+- Full path to the fold-specific Arrow file, or empty string if base path is empty
+"""
+function getSecondPassPsmsFold(ref::ArrowTableReference, index::Int, fold::UInt8)
+    base = ref.second_pass_psms[index]
+    return isempty(base) ? "" : "$(base)_fold$(fold).arrow"
+end
 getPassingPsms(ref::ArrowTableReference, index::Int) = ref.passing_psms[index]
 getPassingProteins(ref::ArrowTableReference, index::Int) = ref.passing_proteins[index]
 getRtIndex(ref::ArrowTableReference, index::Int) = ref.rt_index_paths[index]

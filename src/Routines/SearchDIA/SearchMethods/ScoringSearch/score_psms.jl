@@ -480,12 +480,35 @@ function sample_psms_for_lightgbm(quant_psms_folder::String, psms_count::Integer
 end
 
 """
-     get_psms_count(quant_psms_folder::String)::Integer
+    load_psms_for_lightgbm(quant_psms_folder::String; fold::Union{Nothing,UInt8}=nothing) -> DataFrame
 
-Loads all PSMs from multiple files for LightGBM model training.
+Load PSMs from Arrow files for LightGBM model training.
+
+# Arguments
+- `quant_psms_folder`: Folder containing PSM Arrow files
+- `fold`: Optional CV fold to load (0 or 1). If nothing, loads all fold files.
+
+# Returns
+- DataFrame containing loaded PSMs
+
+# Behavior
+When `fold` is specified, only loads files ending with `_fold{fold}.arrow`.
+When `fold` is nothing, loads all files ending with `.arrow` (both fold files).
+
+# Memory Benefit
+Loading only a single fold reduces memory usage by ~50% during ML training,
+as each fold contains approximately half the PSMs.
 """
-function load_psms_for_lightgbm(quant_psms_folder::String)
-    file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
+function load_psms_for_lightgbm(quant_psms_folder::String; fold::Union{Nothing,UInt8}=nothing)
+    if fold !== nothing
+        # Load only specified fold
+        file_paths = [f for f in readdir(quant_psms_folder, join=true)
+                      if endswith(f, "_fold$(fold).arrow")]
+    else
+        # Load all fold files
+        file_paths = [f for f in readdir(quant_psms_folder, join=true)
+                      if endswith(f, ".arrow")]
+    end
     return DataFrame(Tables.columntable(Arrow.Table(file_paths)))
 end
 
@@ -822,35 +845,80 @@ end
 """
     write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})
 
-Write scored PSMs back to Arrow files, grouped by ms_file_idx.
+Write scored PSMs back to Arrow files, grouped by ms_file_idx and cv_fold.
 This function is separated from scoring to allow model comparison without file I/O.
 
+Supports both single-file-per-MS-run format (legacy) and fold-split format.
+For fold-split files (containing "_fold" in path), groups by (ms_file_idx, cv_fold).
+For legacy files, groups by ms_file_idx only.
+
 # Arguments
-- `psms`: DataFrame containing scored PSMs with ms_file_idx column
+- `psms`: DataFrame containing scored PSMs with ms_file_idx column (and cv_fold for fold-split)
 - `file_paths`: Vector of file paths for valid files only
 """
 function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})
     dropVectorColumns!(psms) # avoids writing issues
-    
-    # Create mapping from unique ms_file_idx values to file paths
-    unique_file_indices = unique(psms[:, :ms_file_idx])
-    sort!(unique_file_indices)
-    
-    # Check that we have enough file paths for all file indices
-    if length(file_paths) != length(unique_file_indices)
-        error("Mismatch: $(length(file_paths)) file paths provided but $(length(unique_file_indices)) unique file indices found in PSM data")
-    end
-    
-    # Create mapping: original file index → output file path
-    index_to_path = Dict(zip(unique_file_indices, file_paths))
-    
-    for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
-        file_idx = ms_file_idx[:ms_file_idx]
-        if haskey(index_to_path, file_idx)
-            fpath = index_to_path[file_idx]
-            writeArrow(fpath, gpsms)
-        else
-            @warn "No output path found for file index $file_idx, skipping"
+
+    # Detect if we're using fold-split files
+    is_fold_split = any(p -> occursin("_fold", p), file_paths)
+
+    if is_fold_split && hasproperty(psms, :cv_fold)
+        # Fold-split mode: create mapping from (ms_file_idx, cv_fold) -> file_path
+        # Parse fold number from file paths
+        path_to_key = Dict{String, Tuple{UInt32, UInt8}}()
+        for fpath in file_paths
+            # Extract fold number from path (e.g., "*_fold0.arrow" -> 0)
+            fold_match = match(r"_fold(\d)\.arrow$", fpath)
+            if fold_match !== nothing
+                fold_num = parse(UInt8, fold_match.captures[1])
+                # Read the file to get its ms_file_idx value
+                orig_df = DataFrame(Arrow.Table(fpath))
+                if nrow(orig_df) > 0
+                    ms_idx = first(orig_df.ms_file_idx)
+                    path_to_key[fpath] = (ms_idx, fold_num)
+                end
+            end
+        end
+
+        # Create reverse mapping: (ms_file_idx, cv_fold) -> file_path
+        key_to_path = Dict{Tuple{UInt32, UInt8}, String}()
+        for (fpath, key) in path_to_key
+            key_to_path[key] = fpath
+        end
+
+        # Write PSMs grouped by (ms_file_idx, cv_fold)
+        for (key, gpsms) in pairs(groupby(psms, [:ms_file_idx, :cv_fold]))
+            ms_idx = key[:ms_file_idx]
+            cv_fold = key[:cv_fold]
+            lookup_key = (ms_idx, cv_fold)
+            if haskey(key_to_path, lookup_key)
+                fpath = key_to_path[lookup_key]
+                writeArrow(fpath, gpsms)
+            else
+                @warn "No output path found for ms_file_idx=$ms_idx, cv_fold=$cv_fold, skipping"
+            end
+        end
+    else
+        # Legacy mode: group by ms_file_idx only
+        unique_file_indices = unique(psms[:, :ms_file_idx])
+        sort!(unique_file_indices)
+
+        # Check that we have enough file paths for all file indices
+        if length(file_paths) != length(unique_file_indices)
+            error("Mismatch: $(length(file_paths)) file paths provided but $(length(unique_file_indices)) unique file indices found in PSM data")
+        end
+
+        # Create mapping: original file index → output file path
+        index_to_path = Dict(zip(unique_file_indices, file_paths))
+
+        for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
+            file_idx = ms_file_idx[:ms_file_idx]
+            if haskey(index_to_path, file_idx)
+                fpath = index_to_path[file_idx]
+                writeArrow(fpath, gpsms)
+            else
+                @warn "No output path found for file index $file_idx, skipping"
+            end
         end
     end
 end
