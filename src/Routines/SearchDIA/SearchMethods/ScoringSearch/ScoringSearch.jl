@@ -435,6 +435,10 @@ function summarize_results!(
 
                 # Update search context with merged path
                 setSecondPassPsms!(getMSData(search_context), idx, merged_path)
+
+                # Delete fold files to save disk space (merged file now contains all data)
+                isfile(fold0_path) && rm(fold0_path)
+                isfile(fold1_path) && rm(fold1_path)
             end
         end
 
