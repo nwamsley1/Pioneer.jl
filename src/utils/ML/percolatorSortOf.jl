@@ -91,155 +91,39 @@ function update_pair_statistics(current_stats, new_prob::Float32)
     ))
 end
 
-function getIrtBins(irts::AbstractVector{R}) where {R <:Real}
-    sort_idx = sortperm(irts)
-    bin_idx, bin_count = zero(UInt32), zero(UInt32)
-    bin_idxs = similar(irts, UInt32, length(irts))
-    for idx in sort_idx
-        bin_count += one(UInt32)
-        bin_idxs[idx] = bin_idx
-        if bin_count >= IRT_BIN_SIZE
-            bin_idx += one(UInt32)
-            bin_count = zero(UInt32)
-        end
-    end
-    return bin_idxs 
-end
-
-
-function getIrtBins!(psms::AbstractDataFrame)
-    psms[!, :irt_bin_idx] = getIrtBins(psms.irt_pred)
-    return psms
-end
-
-
 @inline function irt_residual(psms::AbstractDataFrame, idx::Integer)
     return Float32(psms.irt_pred[idx] - psms.irt_obs[idx])
 end
 
-
-function assign_random_target_decoy_pairs!(psms::DataFrame)
-    last_pair_id = zero(UInt32)
-    psms[!,:pair_id] = zeros(UInt32, nrow(psms))  # Initialize pair_id column
-    psms[!,:irt_bin_idx] = getIrtBins(psms.irt_pred)  # Ensure irt_bin_idx column exists
-
-    irt_bin_groups = groupby(psms, [:irt_bin_idx, :cv_fold, :isotopes_captured], sort=false)
-    for (irt_bin_idx, sub_psms) in pairs(irt_bin_groups)
-        last_pair_id = assignPairIds!(sub_psms, last_pair_id)
-    end
-end
-
-
-function assignPairIds!(psms::AbstractDataFrame, last_pair_id::UInt32)
-    psms[!,:pair_id], last_pair_id = assign_pair_ids(
-        psms.target, psms.decoy, psms.precursor_idx, psms.irt_bin_idx, last_pair_id
-    )
-    return last_pair_id
-end
-
 """
-    assign_pair_ids(target, decoy, precursor_idx, irt_bin_idx, last_pair_id)
+    sort_of_percolator!(psms, features, match_between_runs; kwargs...) -> Models
 
-Randomly assign pair IDs to precursors within an iRT bin, allowing all pairing types.
+Generic PSM scoring function using LightGBM with cross-validation.
+Delegates to the trait-based `percolator_scoring!` function.
 
 # Arguments
-- `target::AbstractVector{Bool}`: Target/decoy labels (used only for statistics)
-- `decoy::AbstractVector{Bool}`: Decoy flags (used only for statistics)
-- `precursor_idx::AbstractVector{UInt32}`: Unique precursor identifiers
-- `irt_bin_idx::AbstractVector{UInt32}`: iRT bin identifiers
-- `last_pair_id::UInt32`: Last assigned pair_id (for continuity across bins)
+- `psms::AbstractPSMContainer`: PSMs to score (modified in-place)
+- `features::Vector{Symbol}`: Feature columns to use
+- `match_between_runs::Bool`: Whether to enable MBR features
+
+# Keyword Arguments
+- `max_q_value_lightgbm_rescore::Float32`: Q-value threshold for training (default: 0.01)
+- `min_PEP_neg_threshold_itr::Float32`: PEP threshold for negative mining (default: 0.90)
+- `feature_fraction::Float64`: LightGBM feature fraction (default: 0.5)
+- `learning_rate::Float64`: LightGBM learning rate (default: 0.15)
+- `min_data_in_leaf::Int`: Minimum samples per leaf (default: 1)
+- `bagging_fraction::Float64`: LightGBM bagging fraction (default: 0.5)
+- `min_gain_to_split::Float64`: Minimum gain to split (default: 0.0)
+- `max_depth::Int`: Maximum tree depth (default: 10)
+- `num_leaves::Int`: Maximum leaves per tree (default: 63)
+- `iter_scheme::Vector{Int}`: Boosting rounds per iteration (default: [100, 200, 200])
+- `show_progress::Bool`: Show progress bar (default: true)
+- `verbose_logging::Bool`: Enable verbose output (default: false)
 
 # Returns
-- `pair_ids::Vector{UInt32}`: Pair ID for each row
-- `last_pair_id::UInt32`: Updated last pair_id value
-
-# Pairing Strategy
-Within each iRT bin, all unique precursors are randomly shuffled and paired
-consecutively: (1,2), (3,4), (5,6), etc. This creates:
-- **Target-Target pairs**: Both members are targets
-- **Target-Decoy pairs**: One target, one decoy
-- **Decoy-Decoy pairs**: Both members are decoys
-- **Singleton pairs**: If odd number, last precursor pairs with itself
-
-# Notes
-- Uses fixed random seed (`PAIRING_RANDOM_SEED`) for reproducibility
-- Both members of a pair receive the same `pair_id`
-- Pairing is independent of target/decoy status
-- Reports pairing statistics to @debug_l2 log level
+- `Dict{UInt8, Vector{Any}}`: Dictionary mapping CV fold to trained models
 """
-function assign_pair_ids(
-    target::AbstractVector{Bool}, decoy::AbstractVector{Bool},
-    precursor_idx::AbstractVector{UInt32}, irt_bin_idx::AbstractVector{UInt32},
-    last_pair_id::UInt32
-)
-    # Get all unique precursors in this iRT bin (regardless of target/decoy status)
-    unique_precursors = unique(precursor_idx)
-    n_precursors = length(unique_precursors)
-
-    # Randomly shuffle all precursors using fixed seed for reproducibility
-    perm = randperm(MersenneTwister(PAIRING_RANDOM_SEED), n_precursors)
-    shuffled_precursors = unique_precursors[perm]
-
-    # Create mapping from precursor_idx to pair_id
-    precursor_idx_to_pair_id = Dict{UInt32, UInt32}()
-
-    # Pair consecutive elements: (1,2), (3,4), (5,6), etc.
-    n_pairs = n_precursors ÷ 2
-    for i in 1:n_pairs
-        last_pair_id += one(UInt32)
-        precursor_idx_to_pair_id[shuffled_precursors[2*i - 1]] = last_pair_id
-        precursor_idx_to_pair_id[shuffled_precursors[2*i]] = last_pair_id
-    end
-
-    # Handle odd number - last precursor gets singleton pair_id
-    if isodd(n_precursors)
-        last_pair_id += one(UInt32)
-        precursor_idx_to_pair_id[shuffled_precursors[end]] = last_pair_id
-    end
-
-    # Count pairing types for reporting
-    n_target_target = 0
-    n_target_decoy = 0
-    n_decoy_decoy = 0
-    n_singleton = isodd(n_precursors) ? 1 : 0
-
-    # Build target/decoy lookup for statistics
-    precursor_is_target = Dict{UInt32, Bool}()
-    for (i, pid) in enumerate(precursor_idx)
-        if !haskey(precursor_is_target, pid)
-            precursor_is_target[pid] = target[i]
-        end
-    end
-
-    # Count pair types
-    for i in 1:n_pairs
-        p1 = shuffled_precursors[2*i - 1]
-        p2 = shuffled_precursors[2*i]
-        is_t1 = precursor_is_target[p1]
-        is_t2 = precursor_is_target[p2]
-
-        if is_t1 && is_t2
-            n_target_target += 1
-        elseif !is_t1 && !is_t2
-            n_decoy_decoy += 1
-        else
-            n_target_decoy += 1
-        end
-    end
-
-    # Report pairing statistics for this bin
-    @debug_l2 "iRT bin $(first(irt_bin_idx)): $(n_pairs) pairs (T-T: $n_target_target, T-D: $n_target_decoy, D-D: $n_decoy_decoy), Singletons: $n_singleton"
-
-    # Map all rows to their pair_ids
-    pair_ids = similar(precursor_idx, UInt32)
-    for (row_idx, pid) in enumerate(precursor_idx)
-        pair_ids[row_idx] = precursor_idx_to_pair_id[pid]
-    end
-
-    return pair_ids, last_pair_id
-end
-
-function sort_of_percolator_in_memory!(psms::DataFrame,
+function sort_of_percolator!(psms::AbstractPSMContainer,
                   features::Vector{Symbol},
                   match_between_runs::Bool = true;
                   max_q_value_lightgbm_rescore::Float32 = 0.01f0,
@@ -256,179 +140,31 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   print_importance::Bool = false,
                   show_progress::Bool = true,
                   verbose_logging::Bool = false)
-    
-    # Apply random target-decoy pairing before ML training
-    assign_random_target_decoy_pairs!(psms)
-    #Faster if sorted first (handle missing pair_id values)
-    sort!(psms, [:pair_id, :isotopes_captured, :precursor_idx, :ms_file_idx])
-    # Display target/decoy/entrapment counts for training dataset
-    if verbose_logging
-        n_targets = sum(psms.target)
-        n_decoys = sum(.!psms.target)
-        n_entrapments = hasproperty(psms, :entrapment) ? sum(psms.entrapment) : 0
-        n_total = nrow(psms)
 
-        if n_entrapments > 0
-            @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys, $n_entrapments entrapments (total: $n_total PSMs)"
-        else
-            @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $n_total PSMs)"
-        end
-    end
+    # Separate base features from MBR features
+    base_features = [f for f in features if !startswith(String(f), "MBR_")]
+    mbr_features = [f for f in features if startswith(String(f), "MBR_")]
 
-    prob_test   = zeros(Float32, nrow(psms))  # final CV predictions
-    prob_train  = zeros(Float32, nrow(psms))  # temporary, used during training
-    #first_pass_estimates = zeros(Float32, nrow(psms)) # store first iteration estimates
-    MBR_estimates = zeros(Float32, nrow(psms)) # optional MBR layer
-    nonMBR_estimates  = zeros(Float32, nrow(psms)) # keep track of last nonMBR test scores
+    # Build ScoringConfig from keyword arguments
+    config = ScoringConfig(
+        LightGBMScorer(Dict{Symbol,Any}(
+            :feature_fraction => feature_fraction,
+            :learning_rate => learning_rate,
+            :min_data_in_leaf => min_data_in_leaf,
+            :bagging_fraction => bagging_fraction,
+            :min_gain_to_split => min_gain_to_split,
+            :max_depth => max_depth,
+            :num_leaves => num_leaves
+        )),
+        RandomPairing(),
+        QValueNegativeMining(max_q_value_lightgbm_rescore, Float32(min_PEP_neg_threshold_itr)),
+        IterativeFeatureSelection(base_features, mbr_features, length(iter_scheme)),
+        FixedIterationScheme(iter_scheme),
+        match_between_runs ? PairBasedMBR(max_q_value_lightgbm_rescore) : NoMBR()
+    )
 
-    unique_cv_folds = unique(psms[!, :cv_fold])
-    models = Dict{UInt8, LightGBMModelVector}()
-    mbr_start_iter = length(iter_scheme)
-    iterations_per_fold = match_between_runs ? length(iter_scheme) : max(mbr_start_iter - 1, 1)
-
-    cv_fold_col = psms[!, :cv_fold]
-    fold_indices = Dict(fold => findall(==(fold), cv_fold_col) for fold in unique_cv_folds)
-    train_indices = Dict(fold => findall(!=(fold), cv_fold_col) for fold in unique_cv_folds)
-
-    Random.seed!(1776)
-    non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
-
-    total_progress_steps = length(unique_cv_folds) * iterations_per_fold
-    pbar = show_progress ? ProgressBar(total=total_progress_steps) : nothing
-
-    # Collect final-iteration training sets if requested
-    final_train_parts = Vector{DataFrame}()
-
-    for test_fold_idx in unique_cv_folds
-
-        initialize_prob_group_features!(psms, match_between_runs)
-
-        train_idx = train_indices[test_fold_idx]
-        test_idx  = fold_indices[test_fold_idx]
-        
-        psms_train = @view psms[train_idx, :]
-        psms_test  = @view psms[test_idx, :]
-
-        # Display counts for this CV fold
-        if verbose_logging
-            n_train_targets = sum(psms_train.target)
-            n_train_decoys = sum(.!psms_train.target)
-            n_test_targets = sum(psms_test.target)
-            n_test_decoys = sum(.!psms_test.target)
-
-            if hasproperty(psms, :entrapment)
-                n_train_entrapments = sum(psms_train.entrapment)
-                n_test_entrapments = sum(psms_test.entrapment)
-                @user_info "Fold $test_fold_idx - Train: $n_train_targets targets, $n_train_decoys decoys, $n_train_entrapments entrapments | Test: $n_test_targets targets, $n_test_decoys decoys, $n_test_entrapments entrapments"
-            else
-                @user_info "Fold $test_fold_idx - Train: $n_train_targets targets, $n_train_decoys decoys | Test: $n_test_targets targets, $n_test_decoys decoys"
-            end
-        end
-
-        fold_models = LightGBMModelVector(undef, length(iter_scheme))
-
-        for (itr, num_round) in enumerate(iter_scheme)
-            psms_train_itr = get_training_data_for_iteration!(psms_train,
-                                                              itr,
-                                                              match_between_runs,
-                                                              max_q_value_lightgbm_rescore,
-                                                              max_q_value_mbr_itr,
-                                                              min_PEP_neg_threshold_itr,
-                                                              itr >= mbr_start_iter)
-
-            train_feats = itr < mbr_start_iter ? non_mbr_features : features
-
-            bst = train_booster(psms_train_itr, train_feats, num_round;
-                               feature_fraction=feature_fraction,
-                               learning_rate=learning_rate,
-                               min_data_in_leaf=min_data_in_leaf,
-                               bagging_fraction=bagging_fraction,
-                               min_gain_to_split=min_gain_to_split,
-                               max_depth=max_depth,
-                               num_leaves=num_leaves)
-                               
-            fold_models[itr] = bst
-
-            # Print feature importances for each iteration and fold
-            if print_importance
-                importances = lightgbm_feature_importances(bst)
-                if importances === nothing
-                    @user_warn "LightGBM backend did not provide feature importances for iteration $(itr)."
-                else
-                    feature_pairs = collect(zip(bst.features, importances))
-                    # Sort by importance in descending order
-                    sort!(feature_pairs, by=x->x[2], rev=true)
-                    @user_info "Feature Importances - Fold $(test_fold_idx), Iteration $(itr) ($(length(feature_pairs)) features):"
-                    for i in 1:10:length(feature_pairs)
-                        chunk = feature_pairs[i:min(i+9, end)]
-                        feat_strs = ["$(feat):$(round(score, digits=3))" for (feat, score) in chunk]
-                        @user_info "  " * join(feat_strs, " | ")
-                    end
-                end
-            end
-
-            #predict_fold!(bst, psms_train, psms_test, train_feats)
-            # **temporary predictions for training only**
-            prob_train[train_idx] = predict(bst, psms_train)
-            psms_train[!,:trace_prob] = prob_train[train_idx]
-            get_qvalues!(psms_train.trace_prob, psms_train.target, psms_train.q_value)
-
-            # **predict held-out fold**
-            prob_test[test_idx] = predict(bst, psms_test)
-            psms_test[!,:trace_prob] = prob_test[test_idx]
-
-            #if itr == 1
-            #    first_pass_estimates[test_idx] = prob_test[test_idx]
-            #end
-
-            if itr == (mbr_start_iter - 1)
-			    nonMBR_estimates[test_idx] = prob_test[test_idx]
-            end
-
-            if match_between_runs
-                update_mbr_features!(psms_train, psms_test, prob_test,
-                                     test_idx, itr, mbr_start_iter,
-                                     max_q_value_lightgbm_rescore)
-            end
-
-            show_progress && update(pbar)
-
-            if (!match_between_runs) && itr == (mbr_start_iter - 1)
-                break
-            end
-        end
-        # Make predictions on hold out data.
-        if match_between_runs
-            MBR_estimates[test_idx] = psms_test.trace_prob
-        else
-            prob_test[test_idx] = psms_test.trace_prob
-        end
-        # Store models for this fold
-        models[test_fold_idx] = fold_models
-    end
-
-    if match_between_runs
-        # Determine which precursors failed the q-value cutoff prior to MBR
-        qvals_prev = Vector{Float32}(undef, length(nonMBR_estimates))
-        get_qvalues!(nonMBR_estimates, psms.target, qvals_prev)
-        pass_mask = (qvals_prev .<= max_q_value_lightgbm_rescore)
-        has_passing_psms = !isempty(pass_mask) && any(pass_mask)
-        prob_thresh = has_passing_psms ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
-        # Label as transfer candidates only those failing the q-value cutoff but
-        # whose best matched pair surpassed the passing probability threshold.
-        psms[!, :MBR_transfer_candidate] .= .!pass_mask .&
-                                            (psms.MBR_max_pair_prob .>= prob_thresh)
-
-        # Store base trace probabilities (non-MBR)
-        psms[!, :trace_prob] = nonMBR_estimates
-        # Store MBR-enhanced trace probabilities
-        psms[!, :MBR_boosted_trace_prob] = MBR_estimates
-    else
-        # Only store base trace probabilities
-        psms[!, :trace_prob] = prob_test
-    end
-
-    return models
+    # Delegate to trait-based implementation
+    return percolator_scoring!(psms, config; show_progress=show_progress, verbose=verbose_logging)
 end
 
 # DISABLED: Out-of-memory processing - hardcoded to always use in-memory approach
