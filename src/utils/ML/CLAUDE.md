@@ -81,6 +81,16 @@ abstract type IterationScheme end
 abstract type MBRUpdateStrategy end
 ├── PairBasedMBR         # MBR features from paired precursors
 └── NoMBR                # MBR disabled
+
+# 7. ScoringPhase - Training vs Prediction
+abstract type ScoringPhase end
+├── TrainingPhase        # Train models, compute q-values
+└── PredictionPhase      # Apply stored models to test data
+
+# 8. MemoryStrategy - Memory Processing
+abstract type MemoryStrategy end
+├── InMemoryProcessing   # All PSMs in memory (default)
+└── OutOfMemoryProcessing # File-by-file processing for large datasets
 ```
 
 ### Configuration (scoring_config.jl)
@@ -139,8 +149,18 @@ to_dataframe(container)
 ### Main Entry Point (percolator_generic.jl)
 
 ```julia
-# Generic scoring function
+# Generic scoring function (in-memory - default)
 models = percolator_scoring!(psms, config; show_progress=true, verbose=false)
+
+# Out-of-memory scoring for large datasets
+memory = OutOfMemoryProcessing(
+    max_training_psms = 5_000_000,  # Max PSMs to sample for training
+    fold_file_paths = Dict(         # CV fold -> file paths
+        0x00 => ["fold0_file1.arrow", "fold0_file2.arrow"],
+        0x01 => ["fold1_file1.arrow", "fold1_file2.arrow"]
+    )
+)
+models = percolator_scoring!(psms, config; memory=memory, show_progress=true)
 
 # Algorithm flow:
 # 1. assign_pairs!(psms, config.pairing)
@@ -301,15 +321,33 @@ end
 
 ## Memory Management
 
-### In-Memory Processing
+### In-Memory Processing (InMemoryProcessing)
 - `DataFramePSMContainer` holds all PSMs in memory
 - `DataFramePSMContainerView` provides zero-copy views for train/test splits
 - Feature matrices are allocated per iteration
+- Default behavior for datasets that fit in memory
 
-### Out-of-Memory Processing (disabled)
-- The OOM approach in `percolatorSortOf.jl` is commented out
-- Uses file-based iteration with `Arrow.Table` streaming
-- Maintains `prec_to_best_score` dictionary for MBR features
+### Out-of-Memory Processing (OutOfMemoryProcessing)
+Implemented in `percolator_generic.jl` for datasets too large to fit in memory.
+
+**Training Phase:**
+- Samples pair_ids proportionally to meet `max_training_psms` budget
+- All PSMs with same pair_id are either all sampled or all excluded (maintains pair integrity)
+- Only sampled PSMs are loaded into memory for training
+- Q-values computed on sampled training data only
+
+**Prediction Phase (file-by-file):**
+- Pass 1: Apply trained models to each file, write predictions back
+- Pass 2: Compute global q-values across all files in CV fold
+- MBR: Collect pair statistics across files, then apply features
+
+**Key Functions:**
+- `scan_pair_ids()` - Scan files to get pair_id counts
+- `sample_pair_ids()` - Sample pair_ids proportionally
+- `load_sampled_psms()` - Load only sampled PSMs from files
+- `compute_global_qvalues!()` - Two-pass global q-value computation
+- `collect_pair_statistics_oom()` - Stream MBR statistics across files
+- `apply_mbr_features_from_stats!()` - Apply MBR features using statistics
 
 ## Recent Changes (2025-02)
 

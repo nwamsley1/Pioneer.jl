@@ -18,7 +18,119 @@
 #=
 Generic percolator scoring function using trait-based abstraction.
 Uses AbstractPSMContainer for data access.
+Supports both in-memory and out-of-memory processing via MemoryStrategy trait.
 =#
+
+#############################################################################
+# Memory Strategy Helper Functions (In-Memory and OOM side-by-side)
+#############################################################################
+
+#= Pair ID Sampling - OOM only =#
+
+"""
+    scan_pair_ids(file_paths::Vector{String}) -> (pair_counts, pair_to_files)
+
+Scan files to get pair_id -> count mapping and pair_id -> file paths mapping.
+Used for proportional sampling in OOM mode.
+"""
+function scan_pair_ids(file_paths::Vector{String})
+    pair_counts = Dict{UInt32, Int}()
+    pair_to_files = Dict{UInt32, Vector{String}}()
+
+    for fpath in file_paths
+        tbl = Arrow.Table(fpath)
+        pair_ids = tbl.pair_id
+        for pid in pair_ids
+            pair_counts[pid] = get(pair_counts, pid, 0) + 1
+            files = get!(pair_to_files, pid, String[])
+            if isempty(files) || files[end] != fpath
+                push!(files, fpath)
+            end
+        end
+    end
+
+    return pair_counts, pair_to_files
+end
+
+"""
+    sample_pair_ids(pair_counts::Dict{UInt32, Int}, max_psms::Int) -> Set{UInt32}
+
+Sample pair_ids proportionally to achieve target PSM count.
+Returns Set of sampled pair_ids. All PSMs with same pair_id are either all
+sampled or all excluded (maintains pair integrity for MBR).
+"""
+function sample_pair_ids(pair_counts::Dict{UInt32, Int}, max_psms::Int)
+    total_psms = sum(values(pair_counts))
+    if total_psms <= max_psms
+        return Set(keys(pair_counts))  # Use all
+    end
+
+    # Sample proportionally
+    sample_rate = max_psms / total_psms
+    sampled = Set{UInt32}()
+    rng = Random.MersenneTwister(1776)
+
+    for (pid, _) in pair_counts
+        if rand(rng) < sample_rate
+            push!(sampled, pid)
+        end
+    end
+
+    return sampled
+end
+
+"""
+    load_sampled_psms(file_paths::Vector{String}, sampled_pairs::Set{UInt32}) -> DataFrame
+
+Load only PSMs with sampled pair_ids from files.
+"""
+function load_sampled_psms(file_paths::Vector{String}, sampled_pairs::Set{UInt32})
+    dfs = DataFrame[]
+    for fpath in file_paths
+        tbl = Arrow.Table(fpath)
+        df = DataFrame(tbl)
+        mask = [pid in sampled_pairs for pid in df.pair_id]
+        if any(mask)
+            push!(dfs, df[mask, :])
+        end
+    end
+    return isempty(dfs) ? DataFrame() : vcat(dfs...)
+end
+
+#= Global Q-value Computation (OOM) =#
+
+"""
+    compute_global_qvalues!(file_paths::Vector{String})
+
+Compute global q-values across all files in a CV fold and write back.
+Two-pass approach: first collect all scores/targets, then compute and write back.
+"""
+function compute_global_qvalues!(file_paths::Vector{String})
+    # Collect all scores and targets
+    all_scores = Float32[]
+    all_targets = Bool[]
+    file_ranges = Tuple{Int,Int}[]  # (start, end) for each file
+
+    for fpath in file_paths
+        tbl = Arrow.Table(fpath)
+        start_idx = length(all_scores) + 1
+        append!(all_scores, tbl.trace_prob)
+        append!(all_targets, tbl.target)
+        push!(file_ranges, (start_idx, length(all_scores)))
+    end
+
+    # Compute global q-values
+    q_values = zeros(Float64, length(all_scores))
+    get_qvalues!(all_scores, all_targets, q_values)
+
+    # Write back to each file
+    for (i, fpath) in enumerate(file_paths)
+        df = DataFrame(Arrow.Table(fpath))
+        start_idx, end_idx = file_ranges[i]
+        df.q_value = q_values[start_idx:end_idx]
+        Arrow.write(fpath, df)
+    end
+end
 
 #############################################################################
 # Phase-dispatched helper functions
@@ -194,13 +306,15 @@ end
 
 """
     percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
+                        memory::MemoryStrategy=InMemoryProcessing(),
                         show_progress::Bool=true, verbose::Bool=false) -> Dict{UInt8, Any}
 
 Generic PSM scoring using configurable traits.
 
 # Arguments
-- `psms::AbstractPSMContainer`: PSMs to score (modified in-place)
+- `psms::AbstractPSMContainer`: PSMs to score (modified in-place for in-memory mode)
 - `config::ScoringConfig`: Configuration specifying all algorithm components
+- `memory::MemoryStrategy`: Memory strategy (InMemoryProcessing or OutOfMemoryProcessing)
 - `show_progress::Bool`: Whether to show progress bar
 - `verbose::Bool`: Whether to print verbose logging
 
@@ -208,7 +322,15 @@ Generic PSM scoring using configurable traits.
 - `Dict{UInt8, Vector{TrainedModel}}`: Dictionary mapping CV fold to trained models
 """
 function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
+                             memory::MemoryStrategy = InMemoryProcessing(),
                              show_progress::Bool = true, verbose::Bool = false)
+    return percolator_scoring_impl!(psms, config, memory; show_progress, verbose)
+end
+
+# In-memory implementation (existing code path)
+function percolator_scoring_impl!(psms::AbstractPSMContainer, config::ScoringConfig,
+                                   ::InMemoryProcessing;
+                                   show_progress::Bool = true, verbose::Bool = false)
 
     # Step 1: Apply pairing strategy
     assign_pairs!(psms, config.pairing)
@@ -329,6 +451,366 @@ function finalize_scoring!(psms::AbstractPSMContainer, ::NoMBR,
 end
 
 #############################################################################
+# Out-of-Memory Implementation
+#############################################################################
+
+"""
+    percolator_scoring_impl!(psms, config, memory::OutOfMemoryProcessing; kwargs...)
+
+Out-of-memory implementation that processes files one at a time.
+Training uses sampled data, prediction is file-by-file with global q-values.
+"""
+function percolator_scoring_impl!(::AbstractPSMContainer, config::ScoringConfig,
+                                   memory::OutOfMemoryProcessing;
+                                   show_progress::Bool = true, verbose::Bool = false)
+    unique_cv_folds = collect(keys(memory.fold_file_paths))
+    models = Dict{UInt8, Vector{Any}}()
+
+    iteration_rounds = get_iteration_rounds(config.iteration_scheme)
+    total_iterations = length(iteration_rounds)
+    mbr_start_iter = total_iterations
+
+    iterations_to_run = has_mbr_support(config.mbr_update) ? total_iterations : max(mbr_start_iter - 1, 1)
+
+    # Progress tracking - training + prediction for each fold
+    total_progress_steps = length(unique_cv_folds) * iterations_to_run * 2
+    pbar = show_progress ? ProgressBar(total=total_progress_steps) : nothing
+
+    Random.seed!(1776)
+
+    # Phase 1: Training (one fold at a time)
+    for test_fold in unique_cv_folds
+        # Get files for training (all folds except test fold)
+        train_files = String[]
+        for (f, paths) in memory.fold_file_paths
+            if f != test_fold
+                append!(train_files, paths)
+            end
+        end
+
+        # Scan and sample pair_ids
+        pair_counts, _ = scan_pair_ids(train_files)
+        sampled_pairs = sample_pair_ids(pair_counts, memory.max_training_psms)
+
+        # Load sampled PSMs
+        df = load_sampled_psms(train_files, sampled_pairs)
+
+        if verbose
+            @user_info "OOM Training Fold $test_fold: Sampled $(nrow(df)) PSMs from $(length(train_files)) files"
+        end
+
+        if nrow(df) == 0
+            @warn "No training data sampled for fold $test_fold"
+            continue
+        end
+
+        training_psms = DataFramePSMContainer(df, Val(:unsafe))
+
+        # Apply pairing to sampled data (pair_id already assigned during file split)
+        # Initialize MBR columns
+        initialize_mbr_columns!(training_psms, config.mbr_update)
+
+        # Sort for MBR grouping
+        sort_container!(training_psms, [:pair_id, :isotopes_captured, :precursor_idx, :ms_file_idx])
+
+        # Train models - dummy arrays since we don't need outputs in memory
+        n_train = nrows(training_psms)
+        prob_train = zeros(Float32, n_train)
+        nonMBR_estimates = zeros(Float32, n_train)
+        train_indices = collect(1:n_train)
+
+        fold_models = Vector{Any}(undef, total_iterations)
+        process_fold_iterations!(
+            TrainingPhase(), training_psms, train_indices, fold_models,
+            iteration_rounds, config, mbr_start_iter,
+            prob_train, nonMBR_estimates, pbar
+        )
+        models[test_fold] = fold_models
+
+        # Free memory
+        training_psms = nothing
+        df = nothing
+        GC.gc()
+    end
+
+    # Phase 2: Prediction (file-by-file)
+    for test_fold in unique_cv_folds
+        fold_models = models[test_fold]
+        test_files = memory.fold_file_paths[test_fold]
+
+        if verbose
+            @user_info "OOM Prediction Fold $test_fold: Processing $(length(test_files)) files"
+        end
+
+        # Pass 1: Predict on each file
+        for fpath in test_files
+            df = DataFrame(Arrow.Table(fpath))
+            psms = DataFramePSMContainer(df, Val(:unsafe))
+
+            # Initialize MBR columns if needed
+            if !has_column(psms, :trace_prob)
+                initialize_mbr_columns!(psms, config.mbr_update)
+            end
+
+            # Apply each iteration's model
+            for (itr, _) in enumerate(iteration_rounds)
+                if !has_mbr_support(config.mbr_update) && itr > (mbr_start_iter - 1)
+                    break
+                end
+
+                model = fold_models[itr]
+                probs = predict_scores(model, psms)
+                set_column!(psms, :trace_prob, probs)
+            end
+
+            # Write predictions back
+            Arrow.write(fpath, to_dataframe(psms))
+
+            # Update progress
+            !isnothing(pbar) && update(pbar)
+        end
+
+        # Pass 2: Compute global q-values across all test files
+        compute_global_qvalues!(test_files)
+
+        # MBR: Collect pair statistics, then apply
+        if has_mbr_support(config.mbr_update)
+            compute_and_apply_mbr_features_oom!(test_files, config.mbr_update)
+        end
+    end
+
+    return models
+end
+
+"""
+    compute_and_apply_mbr_features_oom!(file_paths::Vector{String}, strategy::PairBasedMBR)
+
+Compute MBR features across files using streaming approach.
+Two-pass: first collect pair statistics, then apply features.
+"""
+function compute_and_apply_mbr_features_oom!(file_paths::Vector{String}, strategy::PairBasedMBR)
+    # Collect pair statistics across all files
+    pair_stats = collect_pair_statistics_oom(file_paths, strategy.q_cutoff)
+
+    # Apply MBR features to each file
+    for fpath in file_paths
+        df = DataFrame(Arrow.Table(fpath))
+        apply_mbr_features_from_stats!(df, pair_stats, strategy.q_cutoff)
+        Arrow.write(fpath, df)
+    end
+end
+
+function compute_and_apply_mbr_features_oom!(::Vector{String}, ::NoMBR)
+    return nothing
+end
+
+"""
+    PairStatisticsOOM
+
+Running statistics for MBR feature computation in OOM mode.
+Tracks the best 2 PSMs per pair group for MBR transfer.
+"""
+mutable struct PairStatisticsOOM
+    # Best PSM info
+    best_prob_1::Float32
+    best_ms_file_idx_1::UInt32
+    best_log2_weights_1::Vector{Float32}
+    best_irts_1::Vector{Float32}
+    best_irt_residual_1::Float32
+    best_weight_1::Float32
+    best_log2_intensity_explained_1::Float32
+    is_best_decoy_1::Bool
+
+    # Second best PSM info
+    best_prob_2::Float32
+    best_ms_file_idx_2::UInt32
+    best_log2_weights_2::Vector{Float32}
+    best_irts_2::Vector{Float32}
+    best_irt_residual_2::Float32
+    best_weight_2::Float32
+    best_log2_intensity_explained_2::Float32
+    is_best_decoy_2::Bool
+
+    # Aggregate stats
+    num_runs_passing::Int32
+    unique_passing_runs::Set{UInt32}
+end
+
+function PairStatisticsOOM()
+    return PairStatisticsOOM(
+        -Inf32, zero(UInt32), Float32[], Float32[], 0f0, 0f0, 0f0, true,
+        -Inf32, zero(UInt32), Float32[], Float32[], 0f0, 0f0, 0f0, true,
+        zero(Int32), Set{UInt32}()
+    )
+end
+
+"""
+    collect_pair_statistics_oom(file_paths::Vector{String}, q_cutoff::Float32)
+
+Collect running statistics per (pair_id, isotopes_captured) across files.
+"""
+function collect_pair_statistics_oom(file_paths::Vector{String}, q_cutoff::Float32)
+    # Key: (pair_id, isotopes_captured)
+    pair_stats = Dict{Tuple{UInt32, Tuple{Int8, Int8}}, PairStatisticsOOM}()
+
+    for fpath in file_paths
+        tbl = Arrow.Table(fpath)
+        n = length(tbl.pair_id)
+
+        for i in 1:n
+            pair_id = tbl.pair_id[i]
+            isotopes = tbl.isotopes_captured[i]
+            key = (pair_id, isotopes)
+
+            stats = get!(pair_stats, key, PairStatisticsOOM())
+
+            prob = tbl.trace_prob[i]
+            ms_file_idx = tbl.ms_file_idx[i]
+            q_val = tbl.q_value[i]
+
+            # Track passing runs
+            if q_val <= q_cutoff
+                push!(stats.unique_passing_runs, ms_file_idx)
+            end
+
+            # Update best/second-best
+            if prob > stats.best_prob_1
+                # Shift best_1 to best_2
+                stats.best_prob_2 = stats.best_prob_1
+                stats.best_ms_file_idx_2 = stats.best_ms_file_idx_1
+                stats.best_log2_weights_2 = stats.best_log2_weights_1
+                stats.best_irts_2 = stats.best_irts_1
+                stats.best_irt_residual_2 = stats.best_irt_residual_1
+                stats.best_weight_2 = stats.best_weight_1
+                stats.best_log2_intensity_explained_2 = stats.best_log2_intensity_explained_1
+                stats.is_best_decoy_2 = stats.is_best_decoy_1
+
+                # Update best_1
+                stats.best_prob_1 = prob
+                stats.best_ms_file_idx_1 = ms_file_idx
+                stats.best_log2_weights_1 = log2.(Vector{Float32}(tbl.weights[i]))
+                stats.best_irts_1 = Vector{Float32}(tbl.irts[i])
+                stats.best_irt_residual_1 = Float32(tbl.irt_pred[i] - tbl.irt_obs[i])
+                stats.best_weight_1 = tbl.weight[i]
+                stats.best_log2_intensity_explained_1 = tbl.log2_intensity_explained[i]
+                stats.is_best_decoy_1 = tbl.decoy[i]
+
+            elseif prob > stats.best_prob_2
+                # Update best_2
+                stats.best_prob_2 = prob
+                stats.best_ms_file_idx_2 = ms_file_idx
+                stats.best_log2_weights_2 = log2.(Vector{Float32}(tbl.weights[i]))
+                stats.best_irts_2 = Vector{Float32}(tbl.irts[i])
+                stats.best_irt_residual_2 = Float32(tbl.irt_pred[i] - tbl.irt_obs[i])
+                stats.best_weight_2 = tbl.weight[i]
+                stats.best_log2_intensity_explained_2 = tbl.log2_intensity_explained[i]
+                stats.is_best_decoy_2 = tbl.decoy[i]
+            end
+        end
+    end
+
+    # Compute num_runs_passing for each pair
+    for (_, stats) in pair_stats
+        stats.num_runs_passing = Int32(length(stats.unique_passing_runs))
+    end
+
+    return pair_stats
+end
+
+"""
+    apply_mbr_features_from_stats!(df::DataFrame, pair_stats, q_cutoff::Float32)
+
+Apply MBR features to a DataFrame using pre-computed pair statistics.
+"""
+function apply_mbr_features_from_stats!(df::DataFrame, pair_stats::Dict, q_cutoff::Float32)
+    n = nrow(df)
+
+    # Initialize MBR columns if missing
+    if !hasproperty(df, :MBR_max_pair_prob)
+        df.MBR_max_pair_prob = zeros(Float32, n)
+        df.MBR_best_irt_diff = zeros(Float32, n)
+        df.MBR_log2_weight_ratio = zeros(Float32, n)
+        df.MBR_log2_explained_ratio = zeros(Float32, n)
+        df.MBR_rv_coefficient = zeros(Float32, n)
+        df.MBR_is_best_decoy = trues(n)
+        df.MBR_num_runs = zeros(Int32, n)
+        df.MBR_is_missing = falses(n)
+    end
+
+    for i in 1:n
+        pair_id = df.pair_id[i]
+        isotopes = df.isotopes_captured[i]
+        key = (pair_id, isotopes)
+
+        if !haskey(pair_stats, key)
+            df.MBR_is_missing[i] = true
+            continue
+        end
+
+        stats = pair_stats[key]
+        ms_file_idx = df.ms_file_idx[i]
+
+        # Count passing runs excluding current file
+        current_passes = df.q_value[i] <= q_cutoff
+        df.MBR_num_runs[i] = stats.num_runs_passing - (current_passes && ms_file_idx in stats.unique_passing_runs ? 1 : 0)
+
+        # Get best PSM from a different run
+        best_log2_weights = Float32[]
+        best_irts = Float32[]
+        best_weight = 0f0
+        best_log2_ie = 0f0
+        best_residual = 0f0
+        best_prob = -1f0
+        MBR_is_best_decoy = true
+
+        if stats.best_ms_file_idx_1 != ms_file_idx && !isempty(stats.best_log2_weights_1)
+            best_log2_weights = stats.best_log2_weights_1
+            best_irts = stats.best_irts_1
+            best_weight = stats.best_weight_1
+            best_log2_ie = stats.best_log2_intensity_explained_1
+            best_residual = stats.best_irt_residual_1
+            best_prob = stats.best_prob_1
+            MBR_is_best_decoy = stats.is_best_decoy_1
+        elseif stats.best_ms_file_idx_2 != ms_file_idx && !isempty(stats.best_log2_weights_2)
+            best_log2_weights = stats.best_log2_weights_2
+            best_irts = stats.best_irts_2
+            best_weight = stats.best_weight_2
+            best_log2_ie = stats.best_log2_intensity_explained_2
+            best_residual = stats.best_irt_residual_2
+            best_prob = stats.best_prob_2
+            MBR_is_best_decoy = stats.is_best_decoy_2
+        else
+            # No valid MBR match
+            df.MBR_best_irt_diff[i] = -1f0
+            df.MBR_rv_coefficient[i] = -1f0
+            df.MBR_is_best_decoy[i] = true
+            df.MBR_max_pair_prob[i] = -1f0
+            df.MBR_log2_weight_ratio[i] = -1f0
+            df.MBR_log2_explained_ratio[i] = -1f0
+            df.MBR_is_missing[i] = true
+            continue
+        end
+
+        df.MBR_max_pair_prob[i] = best_prob
+        df.MBR_is_best_decoy[i] = MBR_is_best_decoy
+
+        # Compute MBR features
+        current_log2_weights = log2.(df.weights[i])
+        current_irts = df.irts[i]
+        current_residual = Float32(df.irt_pred[i] - df.irt_obs[i])
+
+        df.MBR_best_irt_diff[i] = abs(best_residual - current_residual)
+        df.MBR_log2_weight_ratio[i] = log2(df.weight[i] / best_weight)
+        df.MBR_log2_explained_ratio[i] = df.log2_intensity_explained[i] - best_log2_ie
+
+        # RV coefficient
+        best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, current_log2_weights)
+        best_irts_padded, irts_padded = pad_rt_equal_length(best_irts, current_irts)
+        df.MBR_rv_coefficient[i] = MBR_rv_coefficient(best_log2_weights_padded, best_irts_padded, weights_padded, irts_padded)
+    end
+end
+
+#############################################################################
 # DataFrame convenience wrapper
 #############################################################################
 
@@ -338,7 +820,8 @@ end
 Convenience wrapper that wraps DataFrame in DataFramePSMContainer.
 """
 function percolator_scoring!(psms::DataFrame, config::ScoringConfig;
+                             memory::MemoryStrategy = InMemoryProcessing(),
                              show_progress::Bool = true, verbose::Bool = false)
     container = DataFramePSMContainer(psms, Val(:unsafe))
-    return percolator_scoring!(container, config; show_progress, verbose)
+    return percolator_scoring!(container, config; memory, show_progress, verbose)
 end

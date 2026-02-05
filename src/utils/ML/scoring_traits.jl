@@ -260,6 +260,38 @@ Phase 2: Apply stored models to held-out test data.
 struct PredictionPhase <: ScoringPhase end
 
 #############################################################################
+# 8. MemoryStrategy - In-Memory vs Out-of-Memory Processing
+#############################################################################
+
+"""
+Abstract type for memory processing strategies.
+Controls whether PSMs are processed in-memory or file-by-file.
+"""
+abstract type MemoryStrategy end
+
+"""
+    InMemoryProcessing <: MemoryStrategy
+
+All PSMs loaded into memory. Current default behavior.
+"""
+struct InMemoryProcessing <: MemoryStrategy end
+
+"""
+    OutOfMemoryProcessing <: MemoryStrategy
+
+PSMs processed file-by-file. Only sampled training data held in memory.
+Training samples pair_ids (not individual PSMs) to keep pairs together for MBR.
+
+# Fields
+- `max_training_psms::Int`: Maximum PSMs to load for training
+- `fold_file_paths::Dict{UInt8, Vector{String}}`: CV fold -> file paths mapping
+"""
+struct OutOfMemoryProcessing <: MemoryStrategy
+    max_training_psms::Int
+    fold_file_paths::Dict{UInt8, Vector{String}}
+end
+
+#############################################################################
 # Wrapper struct for trained probit models
 #############################################################################
 
