@@ -20,6 +20,178 @@ Generic percolator scoring function using trait-based abstraction.
 Uses AbstractPSMContainer for data access.
 =#
 
+#############################################################################
+# Phase-dispatched helper functions
+#############################################################################
+
+"""
+    get_or_train_model(phase, fold_models, itr, config, psms_itr, features, num_round) -> Model
+
+Get or train a model depending on the phase.
+- TrainingPhase: Train a new model and store it
+- PredictionPhase: Retrieve pre-trained model
+"""
+function get_or_train_model(::TrainingPhase, fold_models::Vector{Any}, itr::Int,
+                            config::ScoringConfig, psms_itr::AbstractPSMContainer,
+                            features::Vector{Symbol}, num_round::Int)
+    model = train_model(config.model, psms_itr, features, num_round)
+    fold_models[itr] = model
+    return model
+end
+
+function get_or_train_model(::PredictionPhase, fold_models::Vector{Any}, itr::Int,
+                            ::ScoringConfig, ::AbstractPSMContainer,
+                            ::Vector{Symbol}, ::Int)
+    return fold_models[itr]
+end
+
+"""
+    get_training_subset(phase, psms, config, itr, total_iterations) -> AbstractPSMContainer
+
+Get training data subset for model training.
+- TrainingPhase: Apply training data selection strategy
+- PredictionPhase: Return all data (no subset needed)
+"""
+function get_training_subset(::TrainingPhase, psms::AbstractPSMContainer,
+                             config::ScoringConfig, itr::Int, total_iterations::Int)
+    training_strategy = itr == 1 ? AllDataSelection() : config.training_data
+    psms_itr = select_training_data(psms, training_strategy, itr)
+
+    # Get features and filter to available
+    features = get_features(config.feature_selection, itr, total_iterations)
+    features = filter_available_features(features, psms_itr)
+
+    return psms_itr, features
+end
+
+function get_training_subset(::PredictionPhase, psms::AbstractPSMContainer,
+                             config::ScoringConfig, itr::Int, total_iterations::Int)
+    # For prediction, no training subset needed - features only matter for shape
+    features = get_features(config.feature_selection, itr, total_iterations)
+    features = filter_available_features(features, psms)
+    return psms, features
+end
+
+"""
+    compute_and_set_qvalues!(phase, psms) -> Nothing
+
+Compute and set q-values on PSM data.
+- TrainingPhase: Compute q-values (needed for select_training_data in next iteration)
+- PredictionPhase: No-op (q-values computed inside update_mbr_features_test_only!)
+"""
+function compute_and_set_qvalues!(::TrainingPhase, psms::AbstractPSMContainer)
+    trace_probs = collect(Float32, get_column(psms, :trace_prob))
+    targets = collect(Bool, get_column(psms, :target))
+    q_values = zeros(Float64, nrows(psms))
+    get_qvalues!(trace_probs, targets, q_values)
+    set_column!(psms, :q_value, q_values)
+    return nothing
+end
+
+function compute_and_set_qvalues!(::PredictionPhase, ::AbstractPSMContainer)
+    return nothing
+end
+
+"""
+    update_mbr!(phase, psms, itr, mbr_start_iter, strategy) -> Nothing
+
+Update MBR features based on phase.
+- TrainingPhase: Uses update_mbr_features_train_only!
+- PredictionPhase: Uses update_mbr_features_test_only!
+"""
+function update_mbr!(::TrainingPhase, psms::AbstractPSMContainer,
+                     itr::Int, mbr_start_iter::Int, strategy::MBRUpdateStrategy)
+    update_mbr_features_train_only!(psms, itr, mbr_start_iter, strategy)
+    return nothing
+end
+
+function update_mbr!(::PredictionPhase, psms::AbstractPSMContainer,
+                     itr::Int, mbr_start_iter::Int, strategy::MBRUpdateStrategy)
+    update_mbr_features_test_only!(psms, itr, mbr_start_iter, strategy)
+    return nothing
+end
+
+"""
+    store_baseline!(phase, baseline, indices, probs, itr, mbr_start_iter) -> Nothing
+
+Store baseline predictions before MBR iteration.
+- TrainingPhase: No-op
+- PredictionPhase: Store at mbr_start_iter - 1
+"""
+function store_baseline!(::TrainingPhase, ::Vector{Float32}, ::Vector{Int},
+                         ::Vector{Float32}, ::Int, ::Int)
+    return nothing
+end
+
+function store_baseline!(::PredictionPhase, baseline::Vector{Float32}, indices::Vector{Int},
+                         probs::Vector{Float32}, itr::Int, mbr_start_iter::Int)
+    if itr == mbr_start_iter - 1
+        baseline[indices] .= probs[indices]
+    end
+    return nothing
+end
+
+#############################################################################
+# Unified fold iteration processing
+#############################################################################
+
+"""
+    process_fold_iterations!(phase, psms_view, indices, fold_models, iteration_rounds,
+                             config, mbr_start_iter, prob_output, baseline_output, pbar) -> Nothing
+
+Process one fold through all iterations for either training or prediction phase.
+Uses trait dispatch to control phase-specific behavior.
+"""
+function process_fold_iterations!(
+    phase::ScoringPhase,
+    psms_view::AbstractPSMContainer,
+    indices::Vector{Int},
+    fold_models::Vector{Any},
+    iteration_rounds::Vector{Int},
+    config::ScoringConfig,
+    mbr_start_iter::Int,
+    prob_output::Vector{Float32},
+    baseline_output::Vector{Float32},
+    pbar
+)
+    total_iterations = length(iteration_rounds)
+
+    for (itr, num_round) in enumerate(iteration_rounds)
+        # Get training subset (TrainingPhase) or full data (PredictionPhase)
+        psms_itr, features = get_training_subset(phase, psms_view, config, itr, total_iterations)
+
+        # Train or retrieve model
+        model = get_or_train_model(phase, fold_models, itr, config, psms_itr, features, num_round)
+
+        # Predict on PSM view
+        prob_output[indices] = predict_scores(model, psms_view)
+        set_column!(psms_view, :trace_prob, prob_output[indices])
+
+        # Store baseline before MBR iteration (PredictionPhase only)
+        store_baseline!(phase, baseline_output, indices, prob_output, itr, mbr_start_iter)
+
+        # Compute q-values (TrainingPhase only - needed for next iteration's select_training_data)
+        compute_and_set_qvalues!(phase, psms_view)
+
+        # Update MBR features
+        update_mbr!(phase, psms_view, itr, mbr_start_iter, config.mbr_update)
+
+        # Update progress
+        !isnothing(pbar) && update(pbar)
+
+        # Early exit for non-MBR mode
+        if !has_mbr_support(config.mbr_update) && itr == (mbr_start_iter - 1)
+            break
+        end
+    end
+
+    return nothing
+end
+
+#############################################################################
+# Main percolator scoring function
+#############################################################################
+
 """
     percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
                         show_progress::Bool=true, verbose::Bool=false) -> Dict{UInt8, Any}
@@ -83,50 +255,16 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
     Random.seed!(1776)
 
     # Step 6: PHASE 1 - Train all models (predict on training data only)
-    # This separates training from held-out prediction for cleaner phases
     for test_fold_idx in unique_cv_folds
         train_idx = train_indices[test_fold_idx]
-
-        # Create view for training split only
         psms_train = get_view(psms, train_idx)
 
         fold_models = Vector{Any}(undef, total_iterations)
-
-        for (itr, num_round) in enumerate(iteration_rounds)
-            # Get training data based on strategy
-            training_strategy = itr == 1 ? AllDataSelection() : config.training_data
-            psms_train_itr = select_training_data(psms_train, training_strategy, itr)
-
-            # Get features for this iteration
-            features = get_features(config.feature_selection, itr, total_iterations)
-            features = filter_available_features(features, psms_train_itr)
-
-            # Train model
-            model = train_model(config.model, psms_train_itr, features, num_round)
-            fold_models[itr] = model
-
-            # Predict on training set only
-            prob_train[train_idx] = predict_scores(model, psms_train)
-            set_column!(psms_train, :trace_prob, prob_train[train_idx])
-
-            # Compute q-values on training set
-            trace_probs_train = collect(Float32, get_column(psms_train, :trace_prob))
-            targets_train = collect(Bool, get_column(psms_train, :target))
-            q_values_train = zeros(Float64, length(train_idx))
-            get_qvalues!(trace_probs_train, targets_train, q_values_train)
-            set_column!(psms_train, :q_value, q_values_train)
-
-            # Update MBR features on training data only
-            update_mbr_features_train_only!(psms_train, itr, mbr_start_iter, config.mbr_update)
-
-            show_progress && update(pbar)
-
-            # Early exit for non-MBR mode
-            if !has_mbr_support(config.mbr_update) && itr == (mbr_start_iter - 1)
-                break
-            end
-        end
-
+        process_fold_iterations!(
+            TrainingPhase(), psms_train, train_idx, fold_models,
+            iteration_rounds, config, mbr_start_iter,
+            prob_train, nonMBR_estimates, pbar
+        )
         models[test_fold_idx] = fold_models
     end
 
@@ -134,30 +272,13 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
     for test_fold_idx in unique_cv_folds
         test_idx = fold_indices[test_fold_idx]
         fold_models = models[test_fold_idx]
-
-        # Create view for test split
         psms_test = get_view(psms, test_idx)
 
-        for (itr, num_round) in enumerate(iteration_rounds)
-            model = fold_models[itr]
-
-            # Predict on test set (held-out fold)
-            prob_test[test_idx] = predict_scores(model, psms_test)
-            set_column!(psms_test, :trace_prob, prob_test[test_idx])
-
-            # Store non-MBR baseline before MBR iteration
-            if itr == (mbr_start_iter - 1)
-                nonMBR_estimates[test_idx] = prob_test[test_idx]
-            end
-
-            # Update MBR features on test data
-            update_mbr_features_test_only!(psms_test, itr, mbr_start_iter, config.mbr_update)
-
-            # Early exit for non-MBR mode
-            if !has_mbr_support(config.mbr_update) && itr == (mbr_start_iter - 1)
-                break
-            end
-        end
+        process_fold_iterations!(
+            PredictionPhase(), psms_test, test_idx, fold_models,
+            iteration_rounds, config, mbr_start_iter,
+            prob_test, nonMBR_estimates, pbar
+        )
 
         # Store final predictions
         if has_mbr_support(config.mbr_update)

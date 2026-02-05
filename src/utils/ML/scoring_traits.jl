@@ -230,6 +230,36 @@ has_mbr_support(::PairBasedMBR) = true
 has_mbr_support(::NoMBR) = false
 
 #############################################################################
+# 7. ScoringPhase - Training vs Prediction Phase
+#############################################################################
+
+"""
+Abstract type for scoring phases.
+Controls whether training or prediction behavior is used in unified loop.
+"""
+abstract type ScoringPhase end
+
+"""
+    TrainingPhase <: ScoringPhase
+
+Phase 1: Train models and predict on training data.
+- Trains models and stores them
+- Computes q-values in main loop (needed for select_training_data)
+- Uses update_mbr_features_train_only!
+"""
+struct TrainingPhase <: ScoringPhase end
+
+"""
+    PredictionPhase <: ScoringPhase
+
+Phase 2: Apply stored models to held-out test data.
+- Retrieves pre-trained models (no training)
+- Q-values computed inside update_mbr_features_test_only!
+- Stores baseline at mbr_start_iter - 1
+"""
+struct PredictionPhase <: ScoringPhase end
+
+#############################################################################
 # Wrapper struct for trained probit models
 #############################################################################
 
