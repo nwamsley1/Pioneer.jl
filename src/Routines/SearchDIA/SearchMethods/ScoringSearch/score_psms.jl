@@ -1235,31 +1235,27 @@ function score_precursor_isotope_traces_oom!(
         # ========================================
         # Step 2: Sample PSMs for this iteration
         # ========================================
-        if itr == 1
-            # Iteration 1: Sample from ALL PSMs (no q-value filtering)
-            @user_info "OOM Step 2 (Iter $itr): Sampling from all PSMs..."
-            sampled_psms = sample_psms_by_pairs(
-                file_paths, precursor_to_pair_id, target_psm_count, precursors
-            )
-        else
-            # Iterations 2+: Sample from training-eligible PSMs only
-            # (decoys + targets passing GLOBAL q-value threshold)
-            @user_info "OOM Step 2 (Iter $itr): Sampling from q-value filtered PSMs..."
-            sampled_psms = sample_psms_by_pairs_with_qvalue_filter(
-                file_paths, precursor_to_pair_id, target_psm_count,
-                max_q_value_lightgbm_rescore, precursors
-            )
-        end
+        # Always sample from ALL PSMs (same as iteration 1)
+        # For iteration 2+, we apply negative mining THEN filter to training-eligible
+        # This matches in-memory logic where negative mining happens before filtering
+        @user_info "OOM Step 2 (Iter $itr): Sampling PSMs..."
+        sampled_psms = sample_psms_by_pairs(
+            file_paths, precursor_to_pair_id, target_psm_count, precursors
+        )
         @user_info "OOM Step 2 (Iter $itr) complete: Sampled $(nrow(sampled_psms)) PSMs"
 
         # Add required columns
         sampled_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in sampled_psms[!,:precursor_idx]]
-        sampled_psms[!,:q_value] = zeros(Float32, nrow(sampled_psms))
+        # Only initialize q_value for iteration 1; iteration 2+ keeps q_value from files
+        if itr == 1
+            sampled_psms[!,:q_value] = zeros(Float32, nrow(sampled_psms))
+        end
         sampled_psms[!,:decoy] = sampled_psms[!,:target] .== false
 
-        # Initialize MBR columns if needed
+        # Initialize MBR columns if needed - but DON'T zero trace_prob/q_value
+        # which were loaded from files and contain scores from previous iteration
         if match_between_runs
-            initialize_prob_group_features!(sampled_psms, true)
+            initialize_mbr_columns_only!(sampled_psms)
         end
 
         # ========================================
@@ -1274,11 +1270,17 @@ function score_precursor_isotope_traces_oom!(
             train_mask = sampled_psms.cv_fold .!= test_fold_idx
             psms_train = sampled_psms[train_mask, :]
 
-            # Apply negative mining for iteration 2+
+            # For iteration 2+: Apply negative mining THEN filter (matching in-memory order)
             if itr >= 2
+                # Step 1: Apply negative mining on FULL training set
                 psms_train = apply_negative_mining_oom!(
                     psms_train, min_PEP_neg_threshold_itr
                 )
+
+                # Step 2: THEN filter to training-eligible PSMs
+                # Keep: all decoys (including relabeled) + targets passing q-value
+                training_eligible = .!psms_train.target .| (psms_train.q_value .<= max_q_value_lightgbm_rescore)
+                psms_train = psms_train[training_eligible, :]
             end
 
             # Train booster
@@ -1321,6 +1323,12 @@ function score_precursor_isotope_traces_oom!(
         calculate_global_qvalues_streaming!(file_paths)
 
         # ========================================
+        # Diagnostic Checkpoint 1: After each training iteration
+        # ========================================
+        @debug_l2 "OOM Checkpoint 1: Logging scores after iteration $itr"
+        log_oom_checkpoint("Iter $itr", file_paths)
+
+        # ========================================
         # Step 5.5: Save non-MBR scores before MBR iteration overwrites them
         # ========================================
         if match_between_runs && itr == mbr_start_iter - 1
@@ -1332,9 +1340,24 @@ function score_precursor_isotope_traces_oom!(
         # Step 6: Compute MBR features for next iteration (if needed)
         # ========================================
         if match_between_runs && itr >= mbr_start_iter - 1
+            # ========================================
+            # Diagnostic Checkpoint 2: Before MBR feature computation
+            # ========================================
+            @debug_l2 "OOM Checkpoint 2: Before MBR feature computation (Iter $itr)"
+            scores, targets, qvals = collect_scores_for_diagnostics_oom(file_paths)
+            n_passing = sum(qvals[targets] .<= max_q_value_lightgbm_rescore)
+            @debug_l2 "OOM Checkpoint 2: $(length(scores)) total PSMs, $n_passing targets pass q-value <= $max_q_value_lightgbm_rescore"
+
             @user_info "OOM Step 6 (Iter $itr): Computing MBR features..."
             compute_mbr_features_streaming!(file_paths, precursor_to_pair_id,
                                             max_q_value_lightgbm_rescore)
+
+            # ========================================
+            # Diagnostic Checkpoint 3: After MBR feature computation
+            # ========================================
+            @debug_l2 "OOM Checkpoint 3: After MBR feature computation (Iter $itr)"
+            mbr_probs, mbr_missing = collect_mbr_features_for_diagnostics_oom(file_paths)
+            log_mbr_feature_diagnostics("OOM Iter $itr", mbr_probs, mbr_missing)
         end
 
         # Clean up sampled data
@@ -1541,6 +1564,12 @@ end
 """
     sample_psms_by_pairs_with_qvalue_filter(file_paths, precursor_to_pair_id,
                                              target_count, max_q_value, precursors)
+
+!!! warning "Deprecated"
+    This function is deprecated and no longer used. The OOM pipeline now samples from
+    ALL PSMs (using `sample_psms_by_pairs`) and applies q-value filtering AFTER negative
+    mining to match the in-memory logic. This ensures consistent PEP calculations between
+    in-memory and OOM pipelines.
 
 Sample PSMs by complete pairs, but only from training-eligible PSMs.
 Training-eligible = decoys OR targets passing q-value threshold.
@@ -1765,6 +1794,19 @@ function finalize_oom_mbr_scores_streaming!(
     has_passing_psms = any(global_pass_mask)
     prob_thresh = has_passing_psms ? minimum(all_nonmbr_scores[global_pass_mask]) : typemax(Float32)
 
+    # ========================================
+    # Diagnostic Checkpoint 4: Transfer candidate selection (pre-calculation)
+    # ========================================
+    n_passing_qval = sum(global_pass_mask)
+    @debug_l2 """OOM Checkpoint 4 (Pre-calculation):
+      Total PSMs: $(length(all_nonmbr_scores))
+      Targets: $(sum(all_targets)), Decoys: $(sum(.!all_targets))
+      PSMs passing q-value (<= $max_q_value_lightgbm_rescore): $n_passing_qval
+      prob_thresh: $prob_thresh"""
+
+    # Log non-MBR score distribution
+    log_score_diagnostics("OOM Final (nonMBR scores)", all_nonmbr_scores, all_targets, global_qvals)
+
     @user_info "OOM MBR finalization: $(sum(global_pass_mask)) PSMs pass q-value threshold, prob_thresh = $(round(prob_thresh, digits=4))"
 
     # Pass 2: Apply swap and use GLOBAL pass_mask for MBR_transfer_candidate
@@ -1795,6 +1837,26 @@ function finalize_oom_mbr_scores_streaming!(
         select!(df, Not(:nonMBR_trace_prob))
 
         writeArrow(file_path, df)
+    end
+
+    # ========================================
+    # Diagnostic Checkpoint 4: Transfer candidate selection (post-calculation)
+    # ========================================
+    # Collect MBR features for diagnostic logging
+    all_mbr_probs, all_mbr_missing = collect_mbr_features_for_diagnostics_oom(file_paths)
+
+    # Create transfer candidate mask by re-computing (we already have total_candidates count)
+    all_transfer_candidates = Bool[]
+    for file_path in file_paths
+        table = Arrow.Table(file_path)
+        if hasproperty(table, :MBR_transfer_candidate)
+            append!(all_transfer_candidates, Tables.getcolumn(table, :MBR_transfer_candidate))
+        end
+    end
+
+    if !isempty(all_transfer_candidates)
+        log_transfer_candidate_diagnostics("OOM Final", prob_thresh, n_passing_qval,
+                                          total_candidates, all_mbr_probs, all_transfer_candidates)
     end
 
     @user_info "OOM MBR finalization complete: $(total_candidates) transfer candidates identified"
@@ -1839,19 +1901,45 @@ Calculate global q-values across all files and write back to each file.
 Uses the same algorithm as in-memory get_qvalues! to ensure identical behavior.
 """
 function calculate_global_qvalues_streaming!(file_paths::Vector{String})
-    # Pass 1: Collect global score distribution
-    target_scores, decoy_scores = collect_score_distribution_streaming(file_paths)
-    @user_info "OOM Q-values: Collected $(length(target_scores)) target and $(length(decoy_scores)) decoy scores"
+    # Pass 1: Collect ALL scores and targets from all files
+    all_scores = Float32[]
+    all_targets = Bool[]
 
-    # Pass 2: Write q-values to all files
+    for file_path in file_paths
+        table = Arrow.Table(file_path)
+        trace_prob_col = Tables.getcolumn(table, :trace_prob)
+        target_col = Tables.getcolumn(table, :target)
+
+        append!(all_scores, trace_prob_col)
+        append!(all_targets, target_col)
+    end
+
+    @user_info "OOM Q-values: Collected $(sum(all_targets)) target and $(sum(.!all_targets)) decoy scores"
+
+    # Calculate global q-values
+    global_qvals = Vector{Float32}(undef, length(all_scores))
+    get_qvalues!(all_scores, all_targets, global_qvals)
+
+    # Build score → q-value lookup table (sorted by score descending)
+    order = sortperm(all_scores, rev=true)
+    sorted_scores = all_scores[order]
+    sorted_qvals = global_qvals[order]
+
+    # Pass 2: Write global q-values to all files using lookup
     for file_path in file_paths
         df = DataFrame(Tables.columntable(Arrow.Table(file_path)))
 
-        # Calculate q-values using existing function
+        # Look up global q-value for each PSM's score
         qvals = Vector{Float32}(undef, nrow(df))
-        get_qvalues!(df.trace_prob, df.target, qvals)
-        df[!, :q_value] = qvals
+        for i in 1:nrow(df)
+            score = df.trace_prob[i]
+            # Binary search for this score in sorted_scores
+            idx = searchsortedfirst(sorted_scores, score, rev=true)
+            idx = clamp(idx, 1, length(sorted_qvals))
+            qvals[i] = sorted_qvals[idx]
+        end
 
+        df[!, :q_value] = qvals
         writeArrow(file_path, df)
     end
 end
@@ -2100,4 +2188,65 @@ function apply_mbr_features_streaming!(
 
         writeArrow(file_path, df)
     end
+end
+
+#############################################################################
+# OOM Diagnostic Logging Helper Functions
+#############################################################################
+
+"""
+    collect_scores_for_diagnostics_oom(file_paths)
+
+Collect all trace_prob scores, targets, and q-values from OOM files for diagnostic logging.
+Used to compare score distributions between OOM and in-memory pipelines.
+
+# Returns
+- (scores::Vector{Float32}, targets::Vector{Bool}, qvals::Vector{Float32})
+"""
+function collect_scores_for_diagnostics_oom(file_paths::Vector{String})
+    all_scores = Float32[]
+    all_targets = Bool[]
+    all_qvals = Float32[]
+
+    for file_path in file_paths
+        table = Arrow.Table(file_path)
+        append!(all_scores, Tables.getcolumn(table, :trace_prob))
+        append!(all_targets, Tables.getcolumn(table, :target))
+        append!(all_qvals, Tables.getcolumn(table, :q_value))
+    end
+
+    return all_scores, all_targets, all_qvals
+end
+
+"""
+    collect_mbr_features_for_diagnostics_oom(file_paths)
+
+Collect MBR feature data from OOM files for diagnostic logging.
+
+# Returns
+- (mbr_max_pair_prob::Vector{Float32}, mbr_is_missing::Vector{Bool})
+"""
+function collect_mbr_features_for_diagnostics_oom(file_paths::Vector{String})
+    all_mbr_prob = Float32[]
+    all_mbr_missing = Bool[]
+
+    for file_path in file_paths
+        table = Arrow.Table(file_path)
+        if hasproperty(table, :MBR_max_pair_prob) && hasproperty(table, :MBR_is_missing)
+            append!(all_mbr_prob, Tables.getcolumn(table, :MBR_max_pair_prob))
+            append!(all_mbr_missing, Tables.getcolumn(table, :MBR_is_missing))
+        end
+    end
+
+    return all_mbr_prob, all_mbr_missing
+end
+
+"""
+    log_oom_checkpoint(checkpoint_name, file_paths)
+
+Log diagnostic checkpoint for OOM pipeline, collecting data from all files.
+"""
+function log_oom_checkpoint(checkpoint_name::String, file_paths::Vector{String})
+    scores, targets, qvals = collect_scores_for_diagnostics_oom(file_paths)
+    log_score_diagnostics("OOM $checkpoint_name", scores, targets, qvals)
 end

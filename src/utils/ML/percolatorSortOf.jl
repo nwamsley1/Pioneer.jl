@@ -117,6 +117,146 @@ end
     return Float32(psms.irt_pred[idx] - psms.irt_obs[idx])
 end
 
+#############################################################################
+# Diagnostic Logging Functions for OOM vs In-Memory Comparison
+#############################################################################
+
+"""
+    log_score_diagnostics(label, scores, targets, qvals)
+
+Log score distribution diagnostics for comparing OOM vs in-memory pipelines.
+
+# Arguments
+- `label::String`: Identifier for this checkpoint (e.g., "OOM Iter 1", "InMem Iter 2 Fold 1")
+- `scores::AbstractVector{<:Real}`: trace_prob or similar scores
+- `targets::AbstractVector{Bool}`: target/decoy labels
+- `qvals::AbstractVector{<:Real}`: q-values
+
+# Logs (at @debug level)
+- Score distribution: min, max, mean, median, std, percentiles (10th, 25th, 75th, 90th)
+- Counts: n_targets, n_decoys
+- Q-value thresholds: count passing q≤0.01, q≤0.05, q≤0.10
+"""
+function log_score_diagnostics(label::String, scores::AbstractVector{<:Real},
+                               targets::AbstractVector{Bool}, qvals::AbstractVector{<:Real})
+    # Filter out invalid scores
+    valid_mask = .!isnan.(scores) .& .!isinf.(scores)
+    valid_scores = scores[valid_mask]
+    valid_targets = targets[valid_mask]
+    valid_qvals = qvals[valid_mask]
+
+    n_valid = length(valid_scores)
+    if n_valid == 0
+        @debug_l2 "$label: No valid scores to analyze"
+        return
+    end
+
+    n_targets = sum(valid_targets)
+    n_decoys = sum(.!valid_targets)
+
+    # Score distribution statistics
+    min_score = minimum(valid_scores)
+    max_score = maximum(valid_scores)
+    mean_score = mean(valid_scores)
+    median_score = median(valid_scores)
+    std_score = std(valid_scores)
+    p10 = quantile(valid_scores, 0.10)
+    p25 = quantile(valid_scores, 0.25)
+    p75 = quantile(valid_scores, 0.75)
+    p90 = quantile(valid_scores, 0.90)
+
+    # Q-value thresholds (targets only)
+    target_qvals = valid_qvals[valid_targets]
+    n_q01 = sum(target_qvals .<= 0.01)
+    n_q05 = sum(target_qvals .<= 0.05)
+    n_q10 = sum(target_qvals .<= 0.10)
+
+    @debug_l2 """$label Score Distribution:
+      Total: $n_valid valid scores ($n_targets targets, $n_decoys decoys)
+      Range: [$min_score, $max_score]
+      Mean: $mean_score, Median: $median_score, Std: $std_score
+      Percentiles: p10=$p10, p25=$p25, p75=$p75, p90=$p90
+      Targets passing q-value thresholds: q≤0.01: $n_q01, q≤0.05: $n_q05, q≤0.10: $n_q10"""
+end
+
+"""
+    log_mbr_feature_diagnostics(label, mbr_max_pair_prob, mbr_is_missing)
+
+Log MBR feature assignment diagnostics.
+
+# Arguments
+- `label::String`: Identifier for this checkpoint
+- `mbr_max_pair_prob::AbstractVector{Float32}`: MBR_max_pair_prob values
+- `mbr_is_missing::AbstractVector{Bool}`: MBR_is_missing flags
+"""
+function log_mbr_feature_diagnostics(label::String,
+                                     mbr_max_pair_prob::AbstractVector{Float32},
+                                     mbr_is_missing::AbstractVector{Bool})
+    n_total = length(mbr_max_pair_prob)
+    n_missing = sum(mbr_is_missing)
+    n_valid = n_total - n_missing
+
+    valid_probs = mbr_max_pair_prob[.!mbr_is_missing .& (mbr_max_pair_prob .>= 0)]
+
+    if length(valid_probs) == 0
+        @debug_l2 "$label MBR Features: $n_total total, $n_missing missing, 0 valid"
+        return
+    end
+
+    min_prob = minimum(valid_probs)
+    max_prob = maximum(valid_probs)
+    mean_prob = mean(valid_probs)
+    median_prob = median(valid_probs)
+    p25 = quantile(valid_probs, 0.25)
+    p75 = quantile(valid_probs, 0.75)
+
+    @debug_l2 """$label MBR Features:
+      Total: $n_total, Missing: $n_missing, Valid: $(length(valid_probs))
+      MBR_max_pair_prob range: [$min_prob, $max_prob]
+      Mean: $mean_prob, Median: $median_prob, p25=$p25, p75=$p75"""
+end
+
+"""
+    log_transfer_candidate_diagnostics(label, prob_thresh, n_passing_qval, n_transfer_candidates,
+                                       mbr_max_pair_prob, transfer_candidate_mask)
+
+Log transfer candidate selection diagnostics.
+
+# Arguments
+- `label::String`: Identifier for this checkpoint
+- `prob_thresh::Real`: Probability threshold for transfer candidates
+- `n_passing_qval::Int`: Number of PSMs passing q-value threshold
+- `n_transfer_candidates::Int`: Number of transfer candidates identified
+- `mbr_max_pair_prob::AbstractVector{Float32}`: MBR_max_pair_prob values
+- `transfer_candidate_mask::AbstractVector{Bool}`: Transfer candidate flags
+"""
+function log_transfer_candidate_diagnostics(label::String, prob_thresh::Real,
+                                            n_passing_qval::Int, n_transfer_candidates::Int,
+                                            mbr_max_pair_prob::AbstractVector{Float32},
+                                            transfer_candidate_mask::AbstractVector{Bool})
+    candidate_probs = mbr_max_pair_prob[transfer_candidate_mask]
+
+    if length(candidate_probs) == 0
+        @debug_l2 """$label Transfer Candidates:
+      prob_thresh: $prob_thresh
+      PSMs passing q-value: $n_passing_qval
+      Transfer candidates: $n_transfer_candidates (none)"""
+        return
+    end
+
+    min_prob = minimum(candidate_probs)
+    max_prob = maximum(candidate_probs)
+    mean_prob = mean(candidate_probs)
+    median_prob = median(candidate_probs)
+
+    @debug_l2 """$label Transfer Candidates:
+      prob_thresh: $prob_thresh
+      PSMs passing q-value: $n_passing_qval
+      Transfer candidates: $n_transfer_candidates
+      Candidate MBR_max_pair_prob range: [$min_prob, $max_prob]
+      Mean: $mean_prob, Median: $median_prob"""
+end
+
 
 function assign_random_target_decoy_pairs!(psms::DataFrame)
     last_pair_id = zero(UInt32)
@@ -531,6 +671,15 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             prob_test[test_idx] = predict(bst, psms_test)
             psms_test[!,:trace_prob] = prob_test[test_idx]
 
+            # ========================================
+            # Diagnostic Checkpoint 1: After each iteration (per fold)
+            # ========================================
+            # Log score distribution for test fold after prediction
+            temp_qvals_test = Vector{Float32}(undef, length(test_idx))
+            get_qvalues!(psms_test.trace_prob, psms_test.target, temp_qvals_test)
+            log_score_diagnostics("InMem Iter $itr Fold $test_fold_idx (test)",
+                                  psms_test.trace_prob, psms_test.target, temp_qvals_test)
+
             #if itr == 1
             #    first_pass_estimates[test_idx] = prob_test[test_idx]
             #end
@@ -540,9 +689,28 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             end
 
             if match_between_runs
+                # ========================================
+                # Diagnostic Checkpoint 2: Before MBR feature update
+                # ========================================
+                if itr >= mbr_start_iter - 1
+                    @debug_l2 "InMem Checkpoint 2: Before MBR feature update (Iter $itr Fold $test_fold_idx)"
+                    n_passing_train = sum(psms_train.q_value .<= max_q_value_lightgbm_rescore)
+                    @debug_l2 "InMem Checkpoint 2: Train $(nrow(psms_train)) PSMs, $n_passing_train pass q-value"
+                end
+
                 update_mbr_features!(psms_train, psms_test, prob_test,
                                      test_idx, itr, mbr_start_iter,
                                      max_q_value_lightgbm_rescore)
+
+                # ========================================
+                # Diagnostic Checkpoint 3: After MBR feature update
+                # ========================================
+                if itr >= mbr_start_iter - 1 && hasproperty(psms_test, :MBR_max_pair_prob)
+                    @debug_l2 "InMem Checkpoint 3: After MBR feature update (Iter $itr Fold $test_fold_idx)"
+                    log_mbr_feature_diagnostics("InMem Iter $itr Fold $test_fold_idx",
+                                               psms_test.MBR_max_pair_prob,
+                                               psms_test.MBR_is_missing)
+                end
             end
 
             show_progress && update(pbar)
@@ -568,10 +736,32 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         pass_mask = (qvals_prev .<= max_q_value_lightgbm_rescore)
         has_passing_psms = !isempty(pass_mask) && any(pass_mask)
         prob_thresh = has_passing_psms ? minimum(nonMBR_estimates[pass_mask]) : typemax(Float32)
+
+        # ========================================
+        # Diagnostic Checkpoint 4: Transfer candidate selection (pre-calculation)
+        # ========================================
+        n_passing_qval = sum(pass_mask)
+        @debug_l2 """InMem Checkpoint 4 (Pre-calculation):
+          Total PSMs: $(length(nonMBR_estimates))
+          Targets: $(sum(psms.target)), Decoys: $(sum(.!psms.target))
+          PSMs passing q-value (<= $max_q_value_lightgbm_rescore): $n_passing_qval
+          prob_thresh: $prob_thresh"""
+
+        # Log non-MBR score distribution
+        log_score_diagnostics("InMem Final (nonMBR scores)", nonMBR_estimates, psms.target, qvals_prev)
+
         # Label as transfer candidates only those failing the q-value cutoff but
         # whose best matched pair surpassed the passing probability threshold.
         psms[!, :MBR_transfer_candidate] .= .!pass_mask .&
                                             (psms.MBR_max_pair_prob .>= prob_thresh)
+
+        # ========================================
+        # Diagnostic Checkpoint 4: Transfer candidate selection (post-calculation)
+        # ========================================
+        n_transfer_candidates = sum(psms.MBR_transfer_candidate)
+        log_transfer_candidate_diagnostics("InMem Final", prob_thresh, n_passing_qval,
+                                          n_transfer_candidates, psms.MBR_max_pair_prob,
+                                          psms.MBR_transfer_candidate)
 
         # Store base trace probabilities (non-MBR)
         psms[!, :trace_prob] = nonMBR_estimates
@@ -1098,6 +1288,15 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             sub_psms.MBR_is_best_decoy[i] = sub_psms.decoy[best_idx]
         end
     end
+
+    # Diagnostic: Summary after MBR feature computation
+    n_with_valid_mbr = sum(.!psms.MBR_is_missing)
+    n_with_passing_pair = sum(psms.MBR_num_runs .> 0)
+    @debug_l2 """InMem summarize_precursors! completed:
+      Total PSMs: $(nrow(psms))
+      Groups processed: $n_pair_isotope_groups
+      PSMs with valid MBR features: $n_with_valid_mbr
+      PSMs with ≥1 passing run: $n_with_passing_pair"""
 end
 
 function initialize_prob_group_features!(
@@ -1120,6 +1319,30 @@ function initialize_prob_group_features!(
         psms[!, :MBR_is_missing]                = falses(n)
     end
 
+    return psms
+end
+
+"""
+    initialize_mbr_columns_only!(psms)
+
+Initialize MBR-related columns without zeroing trace_prob/q_value.
+Used by OOM pipeline where trace_prob/q_value come from files and must be preserved
+for negative mining in subsequent iterations.
+"""
+function initialize_mbr_columns_only!(psms::AbstractDataFrame)
+    n = nrow(psms)
+    # Only initialize MBR columns, preserve trace_prob and q_value from files
+    if !hasproperty(psms, :MBR_max_pair_prob) || all(psms.MBR_max_pair_prob .== 0)
+        psms[!, :MBR_max_pair_prob]        = zeros(Float32, n)
+        psms[!, :MBR_best_irt_diff]        = zeros(Float32, n)
+        psms[!, :MBR_log2_weight_ratio]    = zeros(Float32, n)
+        psms[!, :MBR_log2_explained_ratio] = zeros(Float32, n)
+        psms[!, :MBR_rv_coefficient]       = zeros(Float32, n)
+        psms[!, :MBR_is_best_decoy]        = trues(n)
+        psms[!, :MBR_num_runs]             = zeros(Int32, n)
+        psms[!, :MBR_transfer_candidate]   = falses(n)
+        psms[!, :MBR_is_missing]           = falses(n)
+    end
     return psms
 end
 
