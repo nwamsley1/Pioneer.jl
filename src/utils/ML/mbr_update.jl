@@ -92,5 +92,48 @@ function update_mbr_features!(psms_train::DataFrame, psms_test::DataFrame,
     return nothing
 end
 
+"""
+    update_mbr_features_train_only!(psms_train, iteration, mbr_start_iter, strategy) -> Nothing
+
+Update MBR features on training data only (used in Phase 1 of separated training/prediction).
+"""
+function update_mbr_features_train_only!(psms_train::AbstractPSMContainer,
+                                          iteration::Int, mbr_start_iter::Int, strategy::PairBasedMBR)
+    if iteration >= mbr_start_iter - 1
+        # summarize_precursors! needs DataFrame - convert temporarily
+        summarize_precursors!(to_dataframe(psms_train), q_cutoff=strategy.q_cutoff)
+    end
+    return nothing
+end
+
+function update_mbr_features_train_only!(::AbstractPSMContainer, ::Int, ::Int, ::NoMBR)
+    return nothing
+end
+
+"""
+    update_mbr_features_test_only!(psms_test, iteration, mbr_start_iter, strategy) -> Nothing
+
+Update MBR features on test data only (used in Phase 2 of separated training/prediction).
+"""
+function update_mbr_features_test_only!(psms_test::AbstractPSMContainer,
+                                         iteration::Int, mbr_start_iter::Int, strategy::PairBasedMBR)
+    if iteration >= mbr_start_iter - 1
+        # Compute q-values on test set
+        trace_probs = collect(Float32, get_column(psms_test, :trace_prob))
+        targets = collect(Bool, get_column(psms_test, :target))
+        q_values = Vector{Float64}(undef, length(trace_probs))
+        get_qvalues!(trace_probs, targets, q_values)
+        set_column!(psms_test, :q_value, q_values)
+
+        # summarize_precursors! needs DataFrame - convert temporarily
+        summarize_precursors!(to_dataframe(psms_test), q_cutoff=strategy.q_cutoff)
+    end
+    return nothing
+end
+
+function update_mbr_features_test_only!(::AbstractPSMContainer, ::Int, ::Int, ::NoMBR)
+    return nothing
+end
+
 # Note: summarize_precursors! stays in percolatorSortOf.jl - operates on DataFrame
 # due to complex groupby operations that require DataFrame
