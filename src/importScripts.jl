@@ -132,20 +132,31 @@ function importScripts()
     )
 
     
-    # Utilities/ML
+    # Utilities/ML - core utilities first, then trait-based scoring system
     include_files!(
         joinpath(package_root, "src", "utils", "ML"),
         [
             "fdrUtilities.jl",
             "ftrUtilities.jl",
             "lightgbm_utils.jl",
-            "percolatorSortOf.jl",
-            "piecewiseLinearFunction.jl",
             "probitRegression.jl",
+            "piecewiseLinearFunction.jl",
             "spectralLinearRegression.jl",
             "uniformBasisCubicSpline.jl",
             "wittakerHendersonSmoothing.jl",
-            "libraryBSpline.jl"
+            "libraryBSpline.jl",
+            # Trait-based scoring system (in dependency order)
+            "psm_container.jl",       # AbstractPSMContainer abstraction
+            "scoring_traits.jl",      # Abstract types for scoring traits
+            "scoring_config.jl",      # ScoringConfig struct
+            "pairing.jl",             # PairingStrategy implementations
+            "model_training.jl",      # PSMScoringModel train/predict
+            "training_selection.jl",  # TrainingDataStrategy implementations
+            "feature_selection.jl",   # FeatureSelectionStrategy implementations
+            "iteration_scheme.jl",    # IterationScheme implementations
+            "mbr_update.jl",          # MBRUpdateStrategy implementations
+            "percolator_generic.jl",  # Main percolator_scoring! function
+            "percolatorSortOf.jl"     # Legacy sort_of_percolator! function
         ]
     )
 

@@ -307,14 +307,14 @@ function score_precursor_isotope_traces_in_memory(
 )
     
     if model_config.model_type == :lightgbm
-        return train_lightgbm_model_in_memory(
+        return train_lightgbm_model(
             best_psms, file_paths, precursors, model_config,
             match_between_runs, max_q_value_lightgbm_rescore,
             max_q_value_mbr_itr, min_PEP_neg_threshold_itr,
             show_progress
         )
     elseif model_config.model_type == :probit
-        return train_probit_model_in_memory(
+        return train_probit_model(
             best_psms, file_paths, precursors, model_config, match_between_runs,
             min_PEP_neg_threshold_itr
         )
@@ -324,18 +324,36 @@ function score_precursor_isotope_traces_in_memory(
 end
 
 """
-    train_lightgbm_model_in_memory(...) -> Models
+    train_lightgbm_model(best_psms, file_paths, precursors, model_config,
+                         match_between_runs, max_q_value_lightgbm_rescore,
+                         max_q_value_mbr_itr, min_PEP_neg_threshold_itr;
+                         show_progress=true) -> Models
 
 Trains LightGBM model using configuration from ModelConfig.
+Delegates to trait-based percolator_scoring! with a ScoringConfig.
+
+# Arguments
+- `best_psms::DataFrame`: PSMs to score
+- `file_paths::Vector{String}`: Paths to PSM files (unused, kept for API compatibility)
+- `precursors::LibraryPrecursors`: Library precursor information
+- `model_config::ModelConfig`: Model configuration
+- `match_between_runs::Bool`: Whether to enable MBR
+- `max_q_value_lightgbm_rescore::Float32`: Q-value threshold
+- `max_q_value_mbr_itr::Float32`: MBR q-value threshold (unused in current implementation)
+- `min_PEP_neg_threshold_itr::Float32`: PEP threshold for negative mining
+- `show_progress::Bool`: Whether to show progress bars
+
+# Returns
+- Dictionary of trained models per CV fold
 """
-function train_lightgbm_model_in_memory(
+function train_lightgbm_model(
     best_psms::DataFrame,
-    file_paths::Vector{String},
+    ::Vector{String},  # file_paths - unused
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
     max_q_value_lightgbm_rescore::Float32,
-    max_q_value_mbr_itr::Float32,
+    ::Float32,  # max_q_value_mbr_itr - unused in current implementation
     min_PEP_neg_threshold_itr::Float32,
     show_progress::Bool = true
 )
@@ -343,54 +361,30 @@ function train_lightgbm_model_in_memory(
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
     best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
     best_psms[!,:decoy] = best_psms[!,:target].==false
-    
-    # Get features and hyperparams from config
-    features = [f for f in model_config.features if hasproperty(best_psms, f)]
-    if match_between_runs
-        append!(features, [
-            #:MBR_num_runs,
-            :MBR_max_pair_prob,
-            :MBR_log2_weight_ratio,
-            :MBR_log2_explained_ratio,
-            :MBR_rv_coefficient,
-            #:MBR_best_irt_diff,
-            :MBR_is_missing
-        ])
-    end
 
-    # Diagnostic: Report which quantile-binned features are being used
-    qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
-    if !isempty(qbin_features)
-        for qbin_feat in qbin_features
-            n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-        end
-    end
-
-    hp = model_config.hyperparams
-    return sort_of_percolator_in_memory!(
-        best_psms, features, match_between_runs;
-        max_q_value_lightgbm_rescore, max_q_value_mbr_itr,
-        min_PEP_neg_threshold_itr,
-        feature_fraction = get(hp, :feature_fraction, 0.5),
-        min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
-        min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
-        bagging_fraction = get(hp, :bagging_fraction, 0.25),
-        max_depth = get(hp, :max_depth, 10),
-        num_leaves = get(hp, :num_leaves, 63),
-        learning_rate = get(hp, :learning_rate, 0.05),
-        iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
-        show_progress = show_progress
+    # Build ScoringConfig from ModelConfig
+    config = build_scoring_config(
+        model_config,
+        match_between_runs,
+        max_q_value_lightgbm_rescore,
+        min_PEP_neg_threshold_itr
     )
+
+    # Delegate to trait-based implementation
+    return percolator_scoring!(best_psms, config; show_progress=show_progress)
 end
 
+
 """
-    train_probit_model_in_memory(...) -> Nothing
+    train_probit_model(best_psms, file_paths, precursors, model_config,
+                        match_between_runs, min_PEP_neg_threshold_itr) -> Nothing
 
 Trains probit regression model using configuration from ModelConfig.
+Uses the trait-based percolator_scoring! with ProbitScorer.
 """
-function train_probit_model_in_memory(
+function train_probit_model(
     best_psms::DataFrame,
-    file_paths::Vector{String},
+    ::Vector{String},  # file_paths - unused
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
@@ -400,31 +394,21 @@ function train_probit_model_in_memory(
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
     best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
     best_psms[!,:decoy] = best_psms[!,:target].==false
-    
-    # Get features from config
-    features = [f for f in model_config.features if hasproperty(best_psms, f)]
 
-    # Diagnostic: Report which quantile-binned features are being used
-    qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
-    if !isempty(qbin_features)
-        for qbin_feat in qbin_features
-            n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-            col_type = eltype(best_psms[!, qbin_feat])
-        end
-    end
-
-    probit_regression_scoring_cv!(
-        best_psms,
-        file_paths,
-        features,
-        match_between_runs;
-        neg_mining_pep_threshold = min_PEP_neg_threshold_itr
+    # Build ScoringConfig for probit
+    config = build_scoring_config(
+        model_config,
+        match_between_runs,
+        0.01f0,  # max_q_value - probit doesn't use this
+        min_PEP_neg_threshold_itr
     )
-    
-    # File writing removed - will be done at higher level
-    
+
+    # Delegate to trait-based implementation
+    percolator_scoring!(best_psms, config; show_progress=false)
+
     return nothing  # Probit doesn't return models
 end
+
 
 """
      get_psms_count(quant_psms_folder::String)::Integer

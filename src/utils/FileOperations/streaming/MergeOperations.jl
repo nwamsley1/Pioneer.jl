@@ -164,6 +164,24 @@ function fillColumn!(
     end
 end
 
+"""
+Specialized fillColumn! for AbstractArray types (handles List columns with array elements).
+This handles columns where each row contains an array (e.g., SubArray{Float32, ...}).
+No type assertion needed - Julia's dispatch ensures type safety.
+"""
+function fillColumn!(
+    batch_col::Vector{A},
+    col::Symbol,
+    sorted_tuples::Vector{Tuple{Int64, Int64}},
+    tables::Vector{Arrow.Table},
+    n_rows::Int
+) where {A<:AbstractArray}
+    for i in 1:n_rows
+        table_idx, row_idx = sorted_tuples[i]
+        batch_col[i] = tables[table_idx][col][row_idx]
+    end
+end
+
 # Generic fillColumn! implementations (fallback)
 function _fillColumn!(col::Vector{T}, col_symbol::Symbol, 
                      sorted_tuples::Vector{Tuple{Int64, Int64}},
@@ -192,18 +210,42 @@ Type-Stable DataFrame Creation
 ==========================================================#
 
 """
+    unwrap_array_eltype(col_type)
+
+Unwrap nested array types to get the scalar element type.
+E.g., SubArray{Float32, ...} -> Float32, Vector{Int32} -> Int32
+Strings are not unwrapped as they are valid scalar types.
+"""
+function unwrap_array_eltype(col_type)
+    # Don't unwrap strings - they are valid scalar types
+    if col_type <: AbstractString
+        return col_type
+    end
+
+    # Unwrap array types to get the inner element type
+    while col_type isa DataType && col_type <: AbstractArray
+        col_type = eltype(col_type)
+    end
+
+    return col_type
+end
+
+"""
 Create a type-stable empty DataFrame with pre-allocated vectors.
 Types are determined from the schema of the first table.
+
+Note: Array element types (e.g., SubArray{Float32, ...}) are preserved as-is,
+since some Arrow columns store array data per row (List columns).
 """
 function create_typed_dataframe(reference_table::Arrow.Table, batch_size::Int)
     df = DataFrame()
     col_names = Tables.columnnames(reference_table)
-    
+
     for col_name in col_names
         col_type = eltype(Tables.getcolumn(reference_table, col_name))
-        
-        # Create appropriately typed vector
-        if col_type <: Union && Missing <: col_type
+
+        # Create appropriately typed vector (preserve array types as-is)
+        if col_type isa Union && Missing <: col_type
             # Handle Union{Missing, T} types
             non_missing_types = Base.uniontypes(col_type)
             actual_type = first(t for t in non_missing_types if t !== Missing)
@@ -212,7 +254,7 @@ function create_typed_dataframe(reference_table::Arrow.Table, batch_size::Int)
             df[!, col_name] = Vector{col_type}(undef, batch_size)
         end
     end
-    
+
     return df
 end
 
