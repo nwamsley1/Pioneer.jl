@@ -136,24 +136,29 @@ end
 #############################################################################
 
 """
-    process_fold_iterations!(phase, psms_view, indices, fold_models, iteration_rounds,
-                             config, mbr_start_iter, prob_output, baseline_output, pbar) -> Nothing
+    process_fold_iterations!(phase, workspace, fold, iteration_rounds,
+                             config, mbr_start_iter, pbar) -> Nothing
 
 Process one fold through all iterations for either training or prediction phase.
-Uses trait dispatch to control phase-specific behavior.
+Uses trait dispatch to control phase-specific behavior. Fold-specific data
+(PSM views, indices, models, output arrays) is accessed via phase-dispatched
+workspace accessors.
 """
 function process_fold_iterations!(
     phase::ScoringPhase,
-    psms_view::AbstractPSMContainer,
-    indices::Vector{Int},
-    fold_models::Vector{Any},
+    workspace::AbstractScoringWorkspace,
+    fold::UInt8,
     iteration_rounds::Vector{Int},
     config::ScoringConfig,
     mbr_start_iter::Int,
-    prob_output::Vector{Float32},
-    baseline_output::Vector{Float32},
     pbar
 )
+    psms_view = get_phase_view(workspace, phase, fold)
+    indices = get_phase_indices(workspace, phase, fold)
+    fold_models = init_fold_models(workspace, phase, fold, length(iteration_rounds))
+    prob_output = get_phase_output(workspace, phase)
+    baseline_output = get_baseline_output(workspace)
+
     total_iterations = length(iteration_rounds)
 
     for (itr, num_round) in enumerate(iteration_rounds)
@@ -185,6 +190,7 @@ function process_fold_iterations!(
         end
     end
 
+    commit_fold!(workspace, phase, fold, fold_models)
     return nothing
 end
 
@@ -210,9 +216,8 @@ Generic PSM scoring using configurable traits.
 function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
                              show_progress::Bool = true, verbose::Bool = false)
 
-    # Step 1: Apply pairing strategy
-    assign_pairs!(psms, config.pairing)
-    sort_container!(psms, [:pair_id, :isotopes_captured, :precursor_idx, :ms_file_idx])
+    # Step 1: Prepare training data (pairing, sorting, column init — dispatched on container type)
+    prepare_training_data!(psms, config)
 
     # Log dataset info
     if verbose
@@ -222,10 +227,7 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
         @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $(nrows(psms)) PSMs)"
     end
 
-    # Step 2: Initialize columns
-    initialize_mbr_columns!(psms, config.mbr_update)
-
-    # Step 3: Get iteration scheme
+    # Step 2: Get iteration scheme
     iteration_rounds = get_iteration_rounds(config.iteration_scheme)
     total_iterations = length(iteration_rounds)
     mbr_start_iter = total_iterations  # MBR features used in last iteration
@@ -233,11 +235,8 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
     # Determine actual iterations to run
     iterations_to_run = has_mbr_support(config.mbr_update) ? total_iterations : max(mbr_start_iter - 1, 1)
 
-    # Step 3.5: Prepare training data (dispatch point for future OOM sampling)
-    training_psms = prepare_training_data(psms, config)
-
     # Steps 4-5: Setup workspace (CV folds + output arrays, dispatched on container type)
-    workspace = setup_scoring_workspace(training_psms, config)
+    workspace = setup_scoring_workspace(psms, config)
 
     # Progress tracking
     total_progress_steps = length(get_cv_folds(workspace)) * iterations_to_run
@@ -247,36 +246,15 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
 
     # Step 6: PHASE 1 - Train all models (predict on training data only)
     for fold in get_cv_folds(workspace)
-        train_idx = get_train_indices(workspace, fold)
-        psms_train = get_training_view(workspace, fold)
-
-        fold_models = Vector{Any}(undef, total_iterations)
-        process_fold_iterations!(
-            TrainingPhase(), psms_train, train_idx, fold_models,
-            iteration_rounds, config, mbr_start_iter,
-            get_train_output(workspace), get_baseline_output(workspace), pbar
-        )
-        store_fold_models!(workspace, fold, fold_models)
+        process_fold_iterations!(TrainingPhase(), workspace, fold,
+                                 iteration_rounds, config, mbr_start_iter, pbar)
     end
 
     # Step 7: PHASE 2 - Apply stored models to held-out test data
     for fold in get_cv_folds(workspace)
-        test_idx = get_test_indices(workspace, fold)
-        fold_models = get_fold_models(workspace, fold)
-        psms_test = get_test_view(workspace, fold)
-
-        process_fold_iterations!(
-            PredictionPhase(), psms_test, test_idx, fold_models,
-            iteration_rounds, config, mbr_start_iter,
-            get_test_output(workspace), get_baseline_output(workspace), pbar
-        )
-
-        # Store final predictions
-        if has_mbr_support(config.mbr_update)
-            get_mbr_output(workspace)[test_idx] = collect(Float32, get_column(psms_test, :trace_prob))
-        else
-            get_test_output(workspace)[test_idx] = collect(Float32, get_column(psms_test, :trace_prob))
-        end
+        process_fold_iterations!(PredictionPhase(), workspace, fold,
+                                 iteration_rounds, config, mbr_start_iter, pbar)
+        store_final_predictions!(workspace, fold, config.mbr_update)
     end
 
     # Step 8: Finalize scoring
