@@ -214,12 +214,6 @@ function prepare_training_data!(container::ArrowFilePSMContainer, config::Scorin
         scores_df = _create_scores_sidecar(n, config.mbr_update)
         writeArrow(group.scores_path, scores_df)
 
-        # DIAGNOSTIC: verify Arrow round-trip preserves row count
-        verify_tbl = Arrow.Table(group.scores_path)
-        n_verify = length(verify_tbl[1])
-        @info "prepare_training_data! sidecar created" path=group.scores_path n_data=n n_scores_readback=n_verify
-        n_verify != n && error("Arrow round-trip row count mismatch: wrote $n rows to $(group.scores_path), read back $n_verify")
-
         df = nothing  # allow GC per file
     end
 
@@ -501,14 +495,6 @@ function process_fold_iterations!(
             data_df = DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
             scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
 
-            # DIAGNOSTIC: verify data and scores row counts match
-            if nrow(data_df) != nrow(scores_df)
-                error("Prediction phase row count mismatch: " *
-                      "data=$(group.data_path) has $(nrow(data_df)) rows, " *
-                      "scores=$(group.scores_path) has $(nrow(scores_df)) rows " *
-                      "(fold=$fold, itr=$itr)")
-            end
-
             fold_mask = data_df.cv_fold .== fold
             any(fold_mask) || continue
 
@@ -572,16 +558,6 @@ function _compute_mbr_for_fold!(container::ArrowFilePSMContainer, fold::UInt8, s
         data_tbl = Arrow.Table(group.data_path)
         scores_tbl = Arrow.Table(group.scores_path)
 
-        # DIAGNOSTIC: verify data and scores row counts match
-        n_data = length(data_tbl[1])
-        n_scores = length(scores_tbl[1])
-        @info "_compute_mbr_for_fold! row counts" path=group.data_path n_data=n_data n_scores=n_scores fold=fold
-        if n_data != n_scores
-            error("MBR row count mismatch: " *
-                  "data=$(group.data_path) has $n_data rows, " *
-                  "scores=$(group.scores_path) has $n_scores rows (fold=$fold)")
-        end
-
         # Filter to this fold
         cv_folds = collect(data_tbl.cv_fold)
         fold_mask = cv_folds .== fold
@@ -589,7 +565,8 @@ function _compute_mbr_for_fold!(container::ArrowFilePSMContainer, fold::UInt8, s
         n_fold = sum(fold_mask)
         n_fold == 0 && (push!(file_offsets, offset); continue)
 
-        df = DataFrame(col => collect(getproperty(data_tbl, col))[fold_mask] for col in mbr_data_cols)
+        df = DataFrame([col => collect(getproperty(data_tbl, col))[fold_mask] for col in mbr_data_cols])
+
         for col in mbr_score_cols
             df[!, col] = collect(getproperty(scores_tbl, col))[fold_mask]
         end
