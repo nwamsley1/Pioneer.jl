@@ -155,6 +155,7 @@ function importScripts()
             "feature_selection.jl",   # FeatureSelectionStrategy implementations
             "iteration_scheme.jl",    # IterationScheme implementations
             "mbr_update.jl",          # MBRUpdateStrategy implementations
+            "scoring_workspace.jl",   # AbstractScoringWorkspace for CV setup + output arrays
             "percolator_generic.jl",  # Main percolator_scoring! function
             "percolatorSortOf.jl"     # Legacy sort_of_percolator! function
         ]

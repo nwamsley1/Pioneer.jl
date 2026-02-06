@@ -233,65 +233,58 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
     # Determine actual iterations to run
     iterations_to_run = has_mbr_support(config.mbr_update) ? total_iterations : max(mbr_start_iter - 1, 1)
 
-    # Step 4: Setup cross-validation
-    unique_cv_folds = get_cv_folds(psms)
-    models = Dict{UInt8, Vector{Any}}()
+    # Step 3.5: Prepare training data (dispatch point for future OOM sampling)
+    training_psms = prepare_training_data(psms, config)
 
-    # Pre-compute fold indices
-    fold_indices = Dict(fold => get_fold_indices(psms, fold) for fold in unique_cv_folds)
-    train_indices = Dict(fold => get_train_indices(psms, fold) for fold in unique_cv_folds)
-
-    # Step 5: Allocate output arrays
-    n = nrows(psms)
-    prob_test = zeros(Float32, n)
-    prob_train = zeros(Float32, n)
-    nonMBR_estimates = zeros(Float32, n)
-    MBR_estimates = zeros(Float32, n)
+    # Steps 4-5: Setup workspace (CV folds + output arrays, dispatched on container type)
+    workspace = setup_scoring_workspace(training_psms, config)
 
     # Progress tracking
-    total_progress_steps = length(unique_cv_folds) * iterations_to_run
+    total_progress_steps = length(get_cv_folds(workspace)) * iterations_to_run
     pbar = show_progress ? ProgressBar(total=total_progress_steps) : nothing
 
     Random.seed!(1776)
 
     # Step 6: PHASE 1 - Train all models (predict on training data only)
-    for test_fold_idx in unique_cv_folds
-        train_idx = train_indices[test_fold_idx]
-        psms_train = get_view(psms, train_idx)
+    for fold in get_cv_folds(workspace)
+        train_idx = get_train_indices(workspace, fold)
+        psms_train = get_training_view(workspace, fold)
 
         fold_models = Vector{Any}(undef, total_iterations)
         process_fold_iterations!(
             TrainingPhase(), psms_train, train_idx, fold_models,
             iteration_rounds, config, mbr_start_iter,
-            prob_train, nonMBR_estimates, pbar
+            get_train_output(workspace), get_baseline_output(workspace), pbar
         )
-        models[test_fold_idx] = fold_models
+        store_fold_models!(workspace, fold, fold_models)
     end
 
     # Step 7: PHASE 2 - Apply stored models to held-out test data
-    for test_fold_idx in unique_cv_folds
-        test_idx = fold_indices[test_fold_idx]
-        fold_models = models[test_fold_idx]
-        psms_test = get_view(psms, test_idx)
+    for fold in get_cv_folds(workspace)
+        test_idx = get_test_indices(workspace, fold)
+        fold_models = get_fold_models(workspace, fold)
+        psms_test = get_test_view(workspace, fold)
 
         process_fold_iterations!(
             PredictionPhase(), psms_test, test_idx, fold_models,
             iteration_rounds, config, mbr_start_iter,
-            prob_test, nonMBR_estimates, pbar
+            get_test_output(workspace), get_baseline_output(workspace), pbar
         )
 
         # Store final predictions
         if has_mbr_support(config.mbr_update)
-            MBR_estimates[test_idx] = collect(Float32, get_column(psms_test, :trace_prob))
+            get_mbr_output(workspace)[test_idx] = collect(Float32, get_column(psms_test, :trace_prob))
         else
-            prob_test[test_idx] = collect(Float32, get_column(psms_test, :trace_prob))
+            get_test_output(workspace)[test_idx] = collect(Float32, get_column(psms_test, :trace_prob))
         end
     end
 
     # Step 8: Finalize scoring
-    finalize_scoring!(psms, config.mbr_update, prob_test, nonMBR_estimates, MBR_estimates)
+    finalize_scoring!(get_psms(workspace), config.mbr_update,
+                      get_test_output(workspace), get_baseline_output(workspace),
+                      get_mbr_output(workspace))
 
-    return models
+    return get_all_models(workspace)
 end
 
 """
