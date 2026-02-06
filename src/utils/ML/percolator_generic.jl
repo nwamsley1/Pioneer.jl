@@ -251,17 +251,15 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
                                  iteration_rounds, config, mbr_start_iter, pbar)
     end
 
-    # Step 7: PHASE 2 - Apply stored models to held-out test data
+    # Step 7: PHASE 2 - Predict on held-out test data (dispatched on phase + workspace type)
     for fold in get_cv_folds(workspace)
         process_fold_iterations!(PredictionPhase(), workspace, fold,
                                  iteration_rounds, config, mbr_start_iter, pbar)
         store_final_predictions!(workspace, fold, config.mbr_update)
     end
 
-    # Step 8: Finalize scoring
-    finalize_scoring!(get_psms(workspace), config.mbr_update,
-                      get_test_output(workspace), get_baseline_output(workspace),
-                      get_mbr_output(workspace))
+    # Step 8: Finalize scoring (dispatched on workspace type)
+    finalize_scoring!(workspace, config.mbr_update)
 
     return get_all_models(workspace)
 end
@@ -298,6 +296,22 @@ function finalize_scoring!(psms::AbstractPSMContainer, ::NoMBR,
                            prob_test::Vector{Float32}, ::Vector{Float32},
                            ::Vector{Float32})
     set_column!(psms, :trace_prob, prob_test)
+end
+
+#############################################################################
+# Workspace-level finalize_scoring! dispatch
+#############################################################################
+
+"""
+    finalize_scoring!(workspace, mbr_strategy)
+
+Workspace-level dispatch for finalization. InMemoryScoringWorkspace delegates
+to the psms-level method; ArrowFileScoringWorkspace is defined in scoring_workspace.jl.
+"""
+function finalize_scoring!(ws::InMemoryScoringWorkspace, mbr_strategy)
+    finalize_scoring!(get_psms(ws), mbr_strategy,
+                      get_test_output(ws), get_baseline_output(ws),
+                      get_mbr_output(ws))
 end
 
 #############################################################################
