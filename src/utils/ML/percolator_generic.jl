@@ -219,14 +219,6 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
     # Step 1: Prepare training data (pairing, sorting, column init — dispatched on container type)
     prepare_training_data!(psms, config)
 
-    # Log dataset info
-    if verbose
-        targets = collect(get_column(psms, :target))
-        n_targets = sum(targets)
-        n_decoys = sum(.!targets)
-        @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $(nrows(psms)) PSMs)"
-    end
-
     # Step 2: Get iteration scheme
     iteration_rounds = get_iteration_rounds(config.iteration_scheme)
     total_iterations = length(iteration_rounds)
@@ -237,6 +229,15 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
 
     # Steps 4-5: Setup workspace (CV folds + output arrays, dispatched on container type)
     workspace = setup_scoring_workspace(psms, config)
+
+    # Log dataset info (after workspace setup so we can use the resolved container)
+    if verbose
+        resolved_psms = get_psms(workspace)
+        targets = collect(get_column(resolved_psms, :target))
+        n_targets = sum(targets)
+        n_decoys = sum(.!targets)
+        @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $(nrows(resolved_psms)) PSMs)"
+    end
 
     # Progress tracking
     total_progress_steps = length(get_cv_folds(workspace)) * iterations_to_run
