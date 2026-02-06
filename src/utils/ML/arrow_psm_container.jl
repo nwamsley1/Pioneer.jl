@@ -78,17 +78,19 @@ Operations that require all data in memory will error with guidance messages.
 struct ArrowFilePSMContainer <: AbstractPSMContainer
     file_groups::Vector{ArrowFileGroup}
     total_rows::Int
+    max_scoring_memory_mb::Int
 end
 
 """
-    ArrowFilePSMContainer(data_paths::Vector{String})
+    ArrowFilePSMContainer(data_paths::Vector{String}; max_scoring_memory_mb::Int=1000)
 
 Construct from a vector of data file paths (e.g. `*_fold0.arrow`, `*_fold1.arrow`).
+`max_scoring_memory_mb` sets the memory budget for training-sample selection.
 """
-function ArrowFilePSMContainer(data_paths::Vector{String})
+function ArrowFilePSMContainer(data_paths::Vector{String}; max_scoring_memory_mb::Int=1000)
     groups = [ArrowFileGroup(p) for p in data_paths]
     total = sum(g.n_rows for g in groups)
-    return ArrowFilePSMContainer(groups, total)
+    return ArrowFilePSMContainer(groups, total, max_scoring_memory_mb)
 end
 
 #############################################################################

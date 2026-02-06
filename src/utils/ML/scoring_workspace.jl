@@ -254,3 +254,244 @@ function _create_scores_sidecar(n::Int, ::NoMBR)
         q_value    = zeros(Float64, n),
     )
 end
+
+#############################################################################
+# ArrowFileScoringWorkspace — OOM wrapper for pair-sampled training
+#############################################################################
+
+"""
+    ArrowFileScoringWorkspace <: AbstractScoringWorkspace
+
+OOM-aware workspace that samples a representative subset of PSMs (by pair_id)
+from an `ArrowFilePSMContainer`, loads the sample into a normal
+`InMemoryScoringWorkspace`, and delegates all training/prediction to it.
+
+The `container` field retains a reference to all files on disk for later
+per-file prediction (Step 3).
+"""
+struct ArrowFileScoringWorkspace <: AbstractScoringWorkspace
+    container::ArrowFilePSMContainer
+    inner::InMemoryScoringWorkspace
+end
+
+#############################################################################
+# setup_scoring_workspace — ArrowFilePSMContainer dispatch
+#############################################################################
+
+"""
+    setup_scoring_workspace(psms::ArrowFilePSMContainer, config::ScoringConfig)
+
+Build a scoring workspace for the OOM path. Estimates per-PSM memory cost from
+the Arrow schema, samples whole pairs within a memory budget, loads the sample
+into an `InMemoryScoringWorkspace`, and wraps it.
+"""
+function setup_scoring_workspace(psms::ArrowFilePSMContainer, config::ScoringConfig)
+    # 1. Estimate bytes per PSM from first file group's schema
+    bytes_per_psm = _estimate_bytes_per_psm(psms.file_groups[1])
+    max_psms = floor(Int, psms.max_scoring_memory_mb * 1024^2 / bytes_per_psm)
+    max_psms = min(max_psms, nrows(psms))
+
+    # 2. Sample by pair_id (3-pass: count → select → fill)
+    sampled = _sample_by_pair_id(psms, max_psms)
+
+    # 3. Create inner InMemoryScoringWorkspace from sampled data
+    inner = setup_scoring_workspace(sampled, config)
+
+    return ArrowFileScoringWorkspace(psms, inner)
+end
+
+#############################################################################
+# _estimate_bytes_per_psm — schema-based memory estimation
+#############################################################################
+
+"""
+    _estimate_bytes_per_psm(group::ArrowFileGroup) -> Float64
+
+Estimate bytes per PSM from the Arrow schema of a file group's data and
+sidecar files. Uses `sizeof(T)` for fixed-width types and
+`Base.summarysize(col) / n` for variable-width columns.
+"""
+function _estimate_bytes_per_psm(group::ArrowFileGroup)
+    total_bytes_per_psm = 0.0
+
+    for path in (group.data_path, group.scores_path)
+        (!isfile(path)) && continue
+        tbl = Arrow.Table(path)
+        n = length(tbl)
+        n == 0 && continue
+        schema = Tables.schema(tbl)
+        for (col_name, col_type) in zip(Tables.columnnames(tbl), schema.types)
+            if isbitstype(col_type)
+                total_bytes_per_psm += sizeof(col_type)
+            else
+                col_data = Tables.getcolumn(tbl, col_name)
+                total_bytes_per_psm += Base.summarysize(col_data) / n
+            end
+        end
+    end
+
+    return total_bytes_per_psm
+end
+
+#############################################################################
+# _sample_by_pair_id — 3-pass pair-aware sampling
+#############################################################################
+
+"""
+    _sample_by_pair_id(container::ArrowFilePSMContainer, max_psms::Int) -> DataFramePSMContainer
+
+Sample whole target-decoy pairs from disk files within a PSM budget.
+
+Three passes:
+1. Count PSMs per pair_id (reads only the pair_id column).
+2. Shuffle pair_ids deterministically, greedily select within budget.
+3. Pre-allocate a DataFrame and copy only matching rows from each file.
+"""
+function _sample_by_pair_id(container::ArrowFilePSMContainer, max_psms::Int)
+    # ─── Pass 1: Count PSMs per pair_id ──────────────────────────────────
+    pair_counts = Dict{UInt32, Int}()
+    for group in container.file_groups
+        tbl = Arrow.Table(group.data_path)
+        for pid in tbl.pair_id
+            pair_counts[pid] = get(pair_counts, pid, 0) + 1
+        end
+    end
+
+    # ─── Pass 2: Select pair_ids within budget ───────────────────────────
+    unique_pids = collect(keys(pair_counts))
+    shuffle!(MersenneTwister(1776), unique_pids)
+
+    selected_vec = Vector{UInt32}(undef, length(unique_pids))
+    n_selected = 0
+    running_count = 0
+    for pid in unique_pids
+        count = pair_counts[pid]
+        if running_count + count > max_psms
+            continue  # skip this pair, try smaller ones
+        end
+        n_selected += 1
+        selected_vec[n_selected] = pid
+        running_count += count
+    end
+    resize!(selected_vec, n_selected)
+
+    # BitVector for O(1) lookup — pair_ids are dense (sequential from 1)
+    max_pid = maximum(keys(pair_counts))
+    is_selected = falses(max_pid)
+    for pid in selected_vec
+        is_selected[pid] = true
+    end
+
+    # ─── Pass 3: Pre-allocate and fill ───────────────────────────────────
+    # Read schema from first file group (data + sidecar)
+    first_data_tbl = Arrow.Table(container.file_groups[1].data_path)
+    first_scores_tbl = Arrow.Table(container.file_groups[1].scores_path)
+
+    # Allocate combined DataFrame with exact row count
+    sampled_df = _create_combined_dataframe(first_data_tbl, first_scores_tbl, running_count)
+
+    # Fill from each file
+    write_offset = 0
+    for group in container.file_groups
+        data_tbl = Arrow.Table(group.data_path)
+        scores_tbl = Arrow.Table(group.scores_path)
+
+        # Build mask from memory-mapped pair_id column
+        pair_id_col = data_tbl.pair_id
+        mask = BitVector(undef, length(pair_id_col))
+        @inbounds for i in eachindex(pair_id_col)
+            mask[i] = is_selected[pair_id_col[i]]
+        end
+        n_match = sum(mask)
+        n_match == 0 && continue
+
+        dest_range = (write_offset + 1):(write_offset + n_match)
+
+        # Copy matching rows from data columns
+        for col_name in Tables.columnnames(data_tbl)
+            src_col = Tables.getcolumn(data_tbl, col_name)
+            sampled_df[!, col_name][dest_range] = src_col[mask]
+        end
+        # Copy matching rows from sidecar columns
+        for col_name in Tables.columnnames(scores_tbl)
+            src_col = Tables.getcolumn(scores_tbl, col_name)
+            sampled_df[!, col_name][dest_range] = src_col[mask]
+        end
+
+        write_offset += n_match
+    end
+
+    return DataFramePSMContainer(sampled_df, Val(:unsafe))
+end
+
+"""
+    _create_combined_dataframe(data_tbl, scores_tbl, n_rows::Int) -> DataFrame
+
+Pre-allocate a DataFrame with columns from both data and sidecar Arrow tables.
+"""
+function _create_combined_dataframe(data_tbl::Arrow.Table, scores_tbl::Arrow.Table, n_rows::Int)
+    df = DataFrame()
+    for tbl in (data_tbl, scores_tbl)
+        schema = Tables.schema(tbl)
+        for (col_name, col_type) in zip(Tables.columnnames(tbl), schema.types)
+            if col_type isa Union && Missing <: col_type
+                non_missing_type = Base.uniontypes(col_type)
+                actual_type = first(t for t in non_missing_type if t !== Missing)
+                df[!, col_name] = Vector{Union{Missing, actual_type}}(undef, n_rows)
+            else
+                df[!, col_name] = Vector{col_type}(undef, n_rows)
+            end
+        end
+    end
+    return df
+end
+
+#############################################################################
+# Delegation — ArrowFileScoringWorkspace → inner InMemoryScoringWorkspace
+#############################################################################
+
+# CV fold iteration
+get_cv_folds(ws::ArrowFileScoringWorkspace) = get_cv_folds(ws.inner)
+
+# Training/prediction phase access
+get_training_view(ws::ArrowFileScoringWorkspace, fold::UInt8) = get_training_view(ws.inner, fold)
+get_train_indices(ws::ArrowFileScoringWorkspace, fold::UInt8) = get_train_indices(ws.inner, fold)
+get_test_view(ws::ArrowFileScoringWorkspace, fold::UInt8) = get_test_view(ws.inner, fold)
+get_test_indices(ws::ArrowFileScoringWorkspace, fold::UInt8) = get_test_indices(ws.inner, fold)
+
+# Output arrays
+get_train_output(ws::ArrowFileScoringWorkspace) = get_train_output(ws.inner)
+get_test_output(ws::ArrowFileScoringWorkspace) = get_test_output(ws.inner)
+get_baseline_output(ws::ArrowFileScoringWorkspace) = get_baseline_output(ws.inner)
+get_mbr_output(ws::ArrowFileScoringWorkspace) = get_mbr_output(ws.inner)
+
+# Model storage
+store_fold_models!(ws::ArrowFileScoringWorkspace, fold::UInt8, models::Vector{Any}) = store_fold_models!(ws.inner, fold, models)
+get_fold_models(ws::ArrowFileScoringWorkspace, fold::UInt8) = get_fold_models(ws.inner, fold)
+get_all_models(ws::ArrowFileScoringWorkspace) = get_all_models(ws.inner)
+
+# Container access — returns sampled DataFramePSMContainer
+get_psms(ws::ArrowFileScoringWorkspace) = get_psms(ws.inner)
+
+# Phase-dispatched accessors
+get_phase_view(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8) = get_phase_view(ws.inner, phase, fold)
+get_phase_view(ws::ArrowFileScoringWorkspace, phase::PredictionPhase, fold::UInt8) = get_phase_view(ws.inner, phase, fold)
+
+get_phase_indices(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8) = get_phase_indices(ws.inner, phase, fold)
+get_phase_indices(ws::ArrowFileScoringWorkspace, phase::PredictionPhase, fold::UInt8) = get_phase_indices(ws.inner, phase, fold)
+
+get_phase_output(ws::ArrowFileScoringWorkspace, phase::TrainingPhase) = get_phase_output(ws.inner, phase)
+get_phase_output(ws::ArrowFileScoringWorkspace, phase::PredictionPhase) = get_phase_output(ws.inner, phase)
+
+init_fold_models(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8, n::Int) = init_fold_models(ws.inner, phase, fold, n)
+init_fold_models(ws::ArrowFileScoringWorkspace, phase::PredictionPhase, fold::UInt8, n::Int) = init_fold_models(ws.inner, phase, fold, n)
+
+commit_fold!(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8, models::Vector{Any}) = commit_fold!(ws.inner, phase, fold, models)
+commit_fold!(ws::ArrowFileScoringWorkspace, phase::PredictionPhase, fold::UInt8, models::Vector{Any}) = commit_fold!(ws.inner, phase, fold, models)
+
+function store_final_predictions!(ws::ArrowFileScoringWorkspace, fold::UInt8, mbr::PairBasedMBR)
+    store_final_predictions!(ws.inner, fold, mbr)
+end
+function store_final_predictions!(ws::ArrowFileScoringWorkspace, fold::UInt8, mbr::NoMBR)
+    store_final_predictions!(ws.inner, fold, mbr)
+end
