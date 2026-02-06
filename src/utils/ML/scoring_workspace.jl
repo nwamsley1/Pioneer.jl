@@ -282,56 +282,19 @@ end
 """
     setup_scoring_workspace(psms::ArrowFilePSMContainer, config::ScoringConfig)
 
-Build a scoring workspace for the OOM path. Estimates per-PSM memory cost from
-the Arrow schema, samples whole pairs within a memory budget, loads the sample
-into an `InMemoryScoringWorkspace`, and wraps it.
+Build a scoring workspace for the OOM path. Samples whole pairs within a PSM
+budget, loads the sample into an `InMemoryScoringWorkspace`, and wraps it.
 """
 function setup_scoring_workspace(psms::ArrowFilePSMContainer, config::ScoringConfig)
-    # 1. Estimate bytes per PSM from first file group's schema
-    bytes_per_psm = _estimate_bytes_per_psm(psms.file_groups[1])
-    max_psms = floor(Int, psms.max_scoring_memory_mb * 1024^2 / bytes_per_psm)
-    max_psms = min(max_psms, nrows(psms))
+    max_psms = min(psms.max_training_psms, nrows(psms))
 
-    # 2. Sample by pair_id (3-pass: count → select → fill)
+    # Sample by pair_id (3-pass: count → select → fill)
     sampled = _sample_by_pair_id(psms, max_psms)
 
-    # 3. Create inner InMemoryScoringWorkspace from sampled data
+    # Create inner InMemoryScoringWorkspace from sampled data
     inner = setup_scoring_workspace(sampled, config)
 
     return ArrowFileScoringWorkspace(psms, inner)
-end
-
-#############################################################################
-# _estimate_bytes_per_psm — schema-based memory estimation
-#############################################################################
-
-"""
-    _estimate_bytes_per_psm(group::ArrowFileGroup) -> Float64
-
-Estimate bytes per PSM from the Arrow schema of a file group's data and
-sidecar files. Uses `sizeof(T)` for fixed-width types and
-`Base.summarysize(col) / n` for variable-width columns.
-"""
-function _estimate_bytes_per_psm(group::ArrowFileGroup)
-    total_bytes_per_psm = 0.0
-
-    for path in (group.data_path, group.scores_path)
-        (!isfile(path)) && continue
-        tbl = Arrow.Table(path)
-        n = length(tbl)
-        n == 0 && continue
-        schema = Tables.schema(tbl)
-        for (col_name, col_type) in zip(Tables.columnnames(tbl), schema.types)
-            if isbitstype(col_type)
-                total_bytes_per_psm += sizeof(col_type)
-            else
-                col_data = Tables.getcolumn(tbl, col_name)
-                total_bytes_per_psm += Base.summarysize(col_data) / n
-            end
-        end
-    end
-
-    return total_bytes_per_psm
 end
 
 #############################################################################

@@ -53,6 +53,8 @@ Main entry point for PSM scoring with automatic model selection based on dataset
 - `n_quantile_bins`: Number of quantile bins for feature discretization (1-65535)
 - `q_value_threshold`: Q-value threshold for model comparison (default: 0.01)
 - `ms1_scoring`: Whether to include MS1 scoring features (default: true)
+- `force_oom`: Force out-of-memory processing regardless of PSM count (default: false)
+- `max_training_psms`: Maximum PSMs to sample for training in OOM mode (default: 50M)
 
 # Returns
 - Trained LightGBM models or nothing for probit regression
@@ -67,34 +69,29 @@ function score_precursor_isotope_traces(
     min_PEP_neg_threshold_itr::Float32,
     max_psms_in_memory::Int64,
     n_quantile_bins::Int64,
-    q_value_threshold::Float32 = 0.01f0,  # Default to 1% if not specified
-    ms1_scoring::Bool = true
+    q_value_threshold::Float32 = 0.01f0,
+    ms1_scoring::Bool = true,
+    force_oom::Bool = false,
+    max_training_psms::Int64 = Int64(50_000_000)
 )
     # Step 1: Count PSMs and determine processing approach
     psms_count = get_psms_count(file_paths)
 
-    # HARDCODED: Always use in-memory processing (OOM path disabled)
-    if false  # psms_count >= max_psms_in_memory
-        # Case 1: Out-of-memory processing with default LightGBM (DISABLED)
-        @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
-        best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
+    if force_oom || psms_count >= max_psms_in_memory
+        # Case 1: Out-of-memory processing with ArrowFilePSMContainer + trait-based percolator_scoring!
+        @user_info "Using out-of-memory processing for $psms_count PSMs"
+        max_training = force_oom ? typemax(Int) : max_training_psms
 
-        # Add quantile-binned features before training
-        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
-        add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
-
-        # Use a ModelConfig (AdvancedLightGBM by default) for OOM path
         model_config = create_default_advanced_lightgbm_config(ms1_scoring)
-        models = score_precursor_isotope_traces_out_of_memory!(
-            best_psms,
-            file_paths,
-            precursors,
-            model_config,
-            match_between_runs,
-            max_q_value_lightgbm_rescore,
-            max_q_value_mbr_itr,
-            min_PEP_neg_threshold_itr
-        )
+        config = build_scoring_config(model_config, match_between_runs,
+                                       max_q_value_lightgbm_rescore,
+                                       min_PEP_neg_threshold_itr)
+
+        container = ArrowFilePSMContainer(file_paths; max_training_psms=max_training)
+        models = percolator_scoring!(container, config; show_progress=true, verbose=true)
+
+        # _finalize_scoring_arrow! already wrote trace_prob, MBR_boosted_trace_prob,
+        # and MBR_transfer_candidate back to the data files. No write_scored_psms_to_files! needed.
     else
         # In-memory processing - load PSMs first
         best_psms = load_psms_for_lightgbm(second_pass_folder)
@@ -127,11 +124,10 @@ function score_precursor_isotope_traces(
         # Write scored PSMs to files
         write_scored_psms_to_files!(best_psms, file_paths)
     end
-    
+
     # Clean up
-    best_psms = nothing
     GC.gc()
-    
+
     return models
 end
 
@@ -762,85 +758,6 @@ function probit_regression_scoring_cv!(
     return nothing
 end
 
-# DISABLED: Out-of-memory processing - hardcoded to always use in-memory approach
-# This function is commented out in favor of always using in-memory processing.
-# Preserved for potential future use if needed for extremely large datasets.
-#=
-"""
-    score_precursor_isotope_traces_out_of_memory!(best_psms::DataFrame, file_paths::Vector{String},
-                                  precursors::LibraryPrecursors) -> Dictionary{UInt8, LightGBMModel}
-
-Train LightGBM models for PSM scoring. Only a subset of psms are kept in memory
-
-# Arguments
-- `best_psms`: Sample of high-quality PSMs for training
-- `file_paths`: Paths to PSM files
-- `precursors`: Library precursor information
-
-# Returns
-Trained LightGBM models or simplified model if insufficient PSMs.
-"""
-function score_precursor_isotope_traces_out_of_memory!(
-    best_psms::DataFrame,
-    file_paths::Vector{String},
-    precursors::LibraryPrecursors,
-    model_config::ModelConfig,
-    match_between_runs::Bool,
-    max_q_value_lightgbm_rescore::Float32,
-    max_q_value_mbr_itr::Float32,
-    min_PEP_neg_threshold_itr::Float32
-)
-    file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
-    # Features from model_config; do not include :target
-    features = [f for f in model_config.features if hasproperty(best_psms, f)];
-    if match_between_runs
-        append!(features, [
-            :MBR_rv_coefficient,
-            :MBR_best_irt_diff,
-            #:MBR_num_runs,
-            :MBR_max_pair_prob,
-            :MBR_log2_weight_ratio,
-            :MBR_log2_explained_ratio,
-            :MBR_is_missing
-            ])
-    end
-
-    # Diagnostic: Report which quantile-binned features are being used
-    qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
-    if !isempty(qbin_features)
-        @user_info "OOM LightGBM using $(length(qbin_features)) quantile-binned features: $(join(string.(qbin_features), ", "))"
-        for qbin_feat in qbin_features
-            n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-            @user_info "  $qbin_feat: $n_unique unique values in training sample"
-        end
-    end
-
-    best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
-    best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
-    best_psms[!,:decoy] = best_psms[!,:target].==false;
-
-    # Hyperparameters from model_config
-    hp = model_config.hyperparams
-    models = sort_of_percolator_out_of_memory!(
-                            best_psms,
-                            file_paths,
-                            features,
-                            match_between_runs;
-                            max_q_value_lightgbm_rescore,
-                            max_q_value_mbr_itr,
-                            min_PEP_neg_threshold_itr,
-                            feature_fraction = get(hp, :feature_fraction, 0.5),
-                            min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
-                            min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
-                            bagging_fraction = get(hp, :bagging_fraction, 0.25),
-                            max_depth = get(hp, :max_depth, 10),
-                            num_leaves = get(hp, :num_leaves, 63),
-                            learning_rate = get(hp, :learning_rate, 0.05),
-                            iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
-                            print_importance = false);
-    return models;#best_psms
-end
-=#
 
 """
     write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})

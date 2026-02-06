@@ -38,7 +38,7 @@ Construct from a data file path. Derives scores_path by replacing
 function ArrowFileGroup(data_path::String)
     scores_path = _derive_scores_path(data_path)
     tbl = Arrow.Table(data_path)
-    n = length(tbl)
+    n = length(tbl[1])
     return ArrowFileGroup(data_path, scores_path, n)
 end
 
@@ -78,19 +78,19 @@ Operations that require all data in memory will error with guidance messages.
 struct ArrowFilePSMContainer <: AbstractPSMContainer
     file_groups::Vector{ArrowFileGroup}
     total_rows::Int
-    max_scoring_memory_mb::Int
+    max_training_psms::Int
 end
 
 """
-    ArrowFilePSMContainer(data_paths::Vector{String}; max_scoring_memory_mb::Int=1000)
+    ArrowFilePSMContainer(data_paths::Vector{String}; max_training_psms::Int=typemax(Int))
 
 Construct from a vector of data file paths (e.g. `*_fold0.arrow`, `*_fold1.arrow`).
-`max_scoring_memory_mb` sets the memory budget for training-sample selection.
+`max_training_psms` sets the maximum number of PSMs to sample for training.
 """
-function ArrowFilePSMContainer(data_paths::Vector{String}; max_scoring_memory_mb::Int=1000)
+function ArrowFilePSMContainer(data_paths::Vector{String}; max_training_psms::Int=typemax(Int))
     groups = [ArrowFileGroup(p) for p in data_paths]
     total = sum(g.n_rows for g in groups)
-    return ArrowFilePSMContainer(groups, total, max_scoring_memory_mb)
+    return ArrowFilePSMContainer(groups, total, max_training_psms)
 end
 
 #############################################################################
