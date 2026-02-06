@@ -492,7 +492,7 @@ function process_fold_iterations!(
 
         # Per-file prediction for this fold
         for group in container.file_groups
-            data_df = DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
+            data_df = DataFrame(Arrow.Table(group.data_path))#DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
             scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
 
             fold_mask = data_df.cv_fold .== fold
