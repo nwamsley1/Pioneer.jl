@@ -140,3 +140,117 @@ function store_final_predictions!(ws::InMemoryScoringWorkspace, fold::UInt8, ::N
     idx = ws.fold_indices[fold]
     ws.prob_test[idx] = collect(Float32, get_column(get_test_view(ws, fold), :trace_prob))
 end
+
+#############################################################################
+# OOM Training Data Preparation (ArrowFilePSMContainer)
+#############################################################################
+
+"""
+    prepare_training_data!(container::ArrowFilePSMContainer, config::ScoringConfig)
+
+Prepare training data for the file-backed OOM container. Two phases:
+
+**Phase 1 — Lightweight global pairing**: Read only the 4 columns needed for
+pairing (~19 bytes/PSM) from all files, assign globally-unique pair_ids.
+
+**Phase 2 — Per-file sort + sidecar creation**: Load one file at a time,
+merge in global pair_ids, sort for MBR locality, write sorted data back,
+and create a scores sidecar file with initialized mutable columns.
+"""
+function prepare_training_data!(container::ArrowFilePSMContainer, config::ScoringConfig)
+    file_groups = container.file_groups
+    isempty(file_groups) && return nothing
+
+    # ─── Phase 1: Lightweight global pairing ────────────────────────────
+    # Read only the 4 columns needed for pairing from each file.
+    # This fits in memory even for very large datasets (10M PSMs ≈ 190 MB).
+    pairing_dfs = Vector{DataFrame}(undef, length(file_groups))
+    file_boundaries = Vector{UnitRange{Int}}(undef, length(file_groups))
+    row_offset = 0
+
+    for (i, group) in enumerate(file_groups)
+        tbl = Arrow.Table(group.data_path)
+        pairing_dfs[i] = DataFrame(
+            irt_pred        = collect(tbl.irt_pred),
+            cv_fold         = collect(tbl.cv_fold),
+            isotopes_captured = collect(tbl.isotopes_captured),
+            precursor_idx   = collect(tbl.precursor_idx),
+        )
+        n = group.n_rows
+        file_boundaries[i] = (row_offset + 1):(row_offset + n)
+        row_offset += n
+    end
+
+    global_df = vcat(pairing_dfs...)
+    pairing_dfs = nothing  # allow GC
+
+    # Reuse existing assign_pairs! via a lightweight container
+    pairing_container = DataFramePSMContainer(global_df, Val(:unsafe))
+    assign_pairs!(pairing_container, config.pairing)
+
+    global_pair_ids = collect(UInt32, global_df[!, :pair_id])
+    global_irt_bins = collect(UInt32, global_df[!, :irt_bin_idx])
+    global_df = nothing  # allow GC
+
+    # ─── Phase 2: Per-file sort + sidecar creation ──────────────────────
+    for (i, group) in enumerate(file_groups)
+        rows = file_boundaries[i]
+
+        # Load full data for this one file
+        df = DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
+
+        # Merge in globally-computed columns
+        df[!, :pair_id] = global_pair_ids[rows]
+        df[!, :irt_bin_idx] = global_irt_bins[rows]
+
+        # Sort for MBR memory locality (same order as in-memory path)
+        sort!(df, [:pair_id, :isotopes_captured, :precursor_idx, :ms_file_idx])
+
+        # Write sorted main data back (immutable after this point)
+        writeArrow(group.data_path, df)
+
+        # Create scores sidecar with initialized mutable columns
+        n = nrow(df)
+        scores_df = _create_scores_sidecar(n, config.mbr_update)
+        writeArrow(group.scores_path, scores_df)
+
+        df = nothing  # allow GC per file
+    end
+
+    return nothing
+end
+
+"""
+    _create_scores_sidecar(n::Int, ::PairBasedMBR) -> DataFrame
+
+Create the mutable scores sidecar DataFrame for PairBasedMBR mode.
+Mirrors the columns initialized by `initialize_mbr_columns!(_, ::PairBasedMBR)`.
+"""
+function _create_scores_sidecar(n::Int, ::PairBasedMBR)
+    return DataFrame(
+        trace_prob              = zeros(Float32, n),
+        q_value                 = zeros(Float64, n),
+        MBR_max_pair_prob       = zeros(Float32, n),
+        MBR_best_irt_diff       = zeros(Float32, n),
+        MBR_log2_weight_ratio   = zeros(Float32, n),
+        MBR_log2_explained_ratio = zeros(Float32, n),
+        MBR_rv_coefficient      = zeros(Float32, n),
+        MBR_is_best_decoy       = trues(n),
+        MBR_num_runs            = zeros(Int32, n),
+        MBR_transfer_candidate  = falses(n),
+        MBR_is_missing          = falses(n),
+    )
+end
+
+"""
+    _create_scores_sidecar(n::Int, ::NoMBR) -> DataFrame
+
+Create the mutable scores sidecar DataFrame for NoMBR mode.
+Mirrors the columns initialized by `initialize_mbr_columns!(_, ::NoMBR)`.
+"""
+function _create_scores_sidecar(n::Int, ::NoMBR)
+    return DataFrame(
+        trace_prob = zeros(Float32, n),
+        q_value    = zeros(Float64, n),
+    )
+end
