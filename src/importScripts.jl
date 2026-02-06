@@ -147,6 +147,7 @@ function importScripts()
             "libraryBSpline.jl",
             # Trait-based scoring system (in dependency order)
             "psm_container.jl",       # AbstractPSMContainer abstraction
+            "arrow_psm_container.jl", # ArrowFilePSMContainer (file-backed OOM)
             "scoring_traits.jl",      # Abstract types for scoring traits
             "scoring_config.jl",      # ScoringConfig struct
             "pairing.jl",             # PairingStrategy implementations
