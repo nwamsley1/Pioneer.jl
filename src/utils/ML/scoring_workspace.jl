@@ -67,14 +67,20 @@ end
 #############################################################################
 
 """
-    prepare_training_data(psms::DataFramePSMContainer, config::ScoringConfig)
+    prepare_training_data!(psms::DataFramePSMContainer, config::ScoringConfig)
 
-Prepare training data from the PSM container.
-In-memory: returns psms unchanged (all data already available).
-Future OOM: would sample PSMs from files and return a DataFramePSMContainer.
+Prepare training data from the PSM container (mutates `psms` in place).
+In-memory: assigns pairs, sorts for memory locality, and initializes MBR columns.
+Future OOM: would handle pairing/sorting/initialization per-file or during sampling.
 """
-function prepare_training_data(psms::DataFramePSMContainer, ::ScoringConfig)
-    return psms
+function prepare_training_data!(psms::DataFramePSMContainer, config::ScoringConfig)
+    # Assign target-decoy pairs
+    assign_pairs!(psms, config.pairing)
+    # Sort for memory locality in MBR feature computation (summarize_precursors!)
+    sort_container!(psms, [:pair_id, :isotopes_captured, :precursor_idx, :ms_file_idx])
+    # Initialize MBR columns
+    initialize_mbr_columns!(psms, config.mbr_update)
+    return nothing
 end
 
 #############################################################################
@@ -105,3 +111,32 @@ get_all_models(ws::InMemoryScoringWorkspace) = ws.models
 
 # Container access (for finalize_scoring! and other top-level ops)
 get_psms(ws::InMemoryScoringWorkspace) = ws.psms
+
+#############################################################################
+# Phase-Dispatched Accessors (unify training/prediction fold access)
+#############################################################################
+
+get_phase_view(ws::InMemoryScoringWorkspace, ::TrainingPhase, fold::UInt8) = get_training_view(ws, fold)
+get_phase_view(ws::InMemoryScoringWorkspace, ::PredictionPhase, fold::UInt8) = get_test_view(ws, fold)
+
+get_phase_indices(ws::InMemoryScoringWorkspace, ::TrainingPhase, fold::UInt8) = ws.train_indices[fold]
+get_phase_indices(ws::InMemoryScoringWorkspace, ::PredictionPhase, fold::UInt8) = ws.fold_indices[fold]
+
+get_phase_output(ws::InMemoryScoringWorkspace, ::TrainingPhase) = ws.prob_train
+get_phase_output(ws::InMemoryScoringWorkspace, ::PredictionPhase) = ws.prob_test
+
+init_fold_models(ws::InMemoryScoringWorkspace, ::TrainingPhase, ::UInt8, n::Int) = Vector{Any}(undef, n)
+init_fold_models(ws::InMemoryScoringWorkspace, ::PredictionPhase, fold::UInt8, ::Int) = ws.models[fold]
+
+commit_fold!(ws::InMemoryScoringWorkspace, ::TrainingPhase, fold::UInt8, models::Vector{Any}) = (ws.models[fold] = models)
+commit_fold!(ws::InMemoryScoringWorkspace, ::PredictionPhase, ::UInt8, ::Vector{Any}) = nothing
+
+function store_final_predictions!(ws::InMemoryScoringWorkspace, fold::UInt8, ::PairBasedMBR)
+    idx = ws.fold_indices[fold]
+    ws.MBR_estimates[idx] = collect(Float32, get_column(get_test_view(ws, fold), :trace_prob))
+end
+
+function store_final_predictions!(ws::InMemoryScoringWorkspace, fold::UInt8, ::NoMBR)
+    idx = ws.fold_indices[fold]
+    ws.prob_test[idx] = collect(Float32, get_column(get_test_view(ws, fold), :trace_prob))
+end
