@@ -644,6 +644,14 @@ function _finalize_scoring_arrow!(container::ArrowFilePSMContainer, strategy::Pa
         data_df[!, :trace_prob] = scores_df.nonMBR_trace_prob
         data_df[!, :MBR_boosted_trace_prob] = scores_df.trace_prob
 
+        # Copy MBR feature columns from sidecar to data file
+        # These are needed by select_mbr_features() and apply_mbr_filter!()
+        for col in (:MBR_max_pair_prob, :MBR_best_irt_diff, :MBR_rv_coefficient,
+                    :MBR_log2_weight_ratio, :MBR_log2_explained_ratio,
+                    :MBR_is_best_decoy, :MBR_num_runs, :MBR_is_missing)
+            data_df[!, col] = scores_df[!, col]
+        end
+
         writeArrow(group.data_path, data_df)
         offset += n
     end
