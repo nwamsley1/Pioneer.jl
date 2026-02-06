@@ -68,33 +68,50 @@ function score_precursor_isotope_traces(
     max_psms_in_memory::Int64,
     n_quantile_bins::Int64,
     q_value_threshold::Float32 = 0.01f0,  # Default to 1% if not specified
-    ms1_scoring::Bool = true
+    ms1_scoring::Bool = true,
+    force_oom::Bool = false,
+    max_training_psms::Int64 = 5_000_000
 )
     # Step 1: Count PSMs and determine processing approach
     psms_count = get_psms_count(file_paths)
 
-    # HARDCODED: Always use in-memory processing (OOM path disabled)
-    if false  # psms_count >= max_psms_in_memory
-        # Case 1: Out-of-memory processing with default LightGBM (DISABLED)
-        @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
-        best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
+    # Determine if OOM processing should be used
+    use_oom = force_oom || (psms_count >= max_psms_in_memory)
+
+    if use_oom
+        # Case 1: Out-of-memory processing with default LightGBM
+        @user_info "Using out-of-memory processing for $psms_count PSMs"
+        if force_oom && psms_count < max_psms_in_memory
+            @user_info "  (forced OOM mode for testing - would normally use in-memory)"
+        end
+
+        # Build fold -> file paths mapping for OOM processing
+        fold_file_paths = build_fold_file_mapping(file_paths)
+
+        # Sample PSMs for training
+        best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_training_psms)
 
         # Add quantile-binned features before training
         features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
         add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
 
-        # Use a ModelConfig (AdvancedLightGBM by default) for OOM path
+        # Create memory strategy with fold file mapping
+        memory = OutOfMemoryProcessing(max_training_psms, fold_file_paths)
+
         model_config = create_default_advanced_lightgbm_config(ms1_scoring)
-        models = score_precursor_isotope_traces_out_of_memory!(
-            best_psms,
-            file_paths,
-            precursors,
+        config = build_scoring_config(
             model_config,
             match_between_runs,
             max_q_value_lightgbm_rescore,
-            max_q_value_mbr_itr,
             min_PEP_neg_threshold_itr
         )
+
+        # Add required columns
+        best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
+        best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
+        best_psms[!,:decoy] = best_psms[!,:target].==false
+
+        models = percolator_scoring!(best_psms, config; memory=memory, show_progress=true)
     else
         # In-memory processing - load PSMs first
         best_psms = load_psms_for_lightgbm(second_pass_folder)
@@ -477,6 +494,30 @@ function sample_psms_for_lightgbm(quant_psms_folder::String, psms_count::Integer
     end
 
     return result_df
+end
+
+"""
+    build_fold_file_mapping(file_paths::Vector{String}) -> Dict{UInt8, Vector{String}}
+
+Build mapping from CV fold to file paths for OOM processing.
+Parses fold number from filenames like "*_fold0.arrow" or "*_fold1.arrow".
+"""
+function build_fold_file_mapping(file_paths::Vector{String})
+    fold_file_paths = Dict{UInt8, Vector{String}}()
+
+    for fpath in file_paths
+        # Extract fold from filename (e.g., "*_fold0.arrow" -> 0)
+        fold_match = match(r"_fold(\d)\.arrow$", fpath)
+        if fold_match !== nothing
+            fold = parse(UInt8, fold_match.captures[1])
+            if !haskey(fold_file_paths, fold)
+                fold_file_paths[fold] = String[]
+            end
+            push!(fold_file_paths[fold], fpath)
+        end
+    end
+
+    return fold_file_paths
 end
 
 """

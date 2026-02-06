@@ -76,6 +76,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # MS1 scoring parameter
     ms1_scoring::Bool
 
+    # OOM scoring parameters
+    force_oom::Bool
+    max_training_psms::Int64
+
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
         ml_params = params.optimization.machine_learning
@@ -116,7 +120,11 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Int64(get(ml_params, :max_psms_for_comparison, 100000)),
 
             # MS1 scoring parameter
-            Bool(global_params.ms1_scoring)
+            Bool(global_params.ms1_scoring),
+
+            # OOM scoring parameters with defaults
+            Bool(get(ml_params, :force_oom, false)),
+            Int64(get(ml_params, :max_training_psms, 5_000_000))
         )
     end
 end
@@ -404,7 +412,9 @@ function summarize_results!(
                 params.max_psms_in_memory,
                 params.n_quantile_bins,
                 params.q_value_threshold,
-                params.ms1_scoring
+                params.ms1_scoring,
+                params.force_oom,
+                params.max_training_psms
             )
         end
         #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"

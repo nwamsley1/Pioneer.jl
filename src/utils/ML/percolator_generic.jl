@@ -125,10 +125,10 @@ function compute_global_qvalues!(file_paths::Vector{String})
 
     # Write back to each file
     for (i, fpath) in enumerate(file_paths)
-        df = DataFrame(Arrow.Table(fpath))
+        df = DataFrame(Arrow.Table(fpath); copycols=true)
         start_idx, end_idx = file_ranges[i]
         df.q_value = q_values[start_idx:end_idx]
-        Arrow.write(fpath, df)
+        writeArrow(fpath, df)
     end
 end
 
@@ -544,7 +544,7 @@ function percolator_scoring_impl!(::AbstractPSMContainer, config::ScoringConfig,
 
         # Pass 1: Predict on each file
         for fpath in test_files
-            df = DataFrame(Arrow.Table(fpath))
+            df = DataFrame(Arrow.Table(fpath); copycols=true)
             psms = DataFramePSMContainer(df, Val(:unsafe))
 
             # Initialize MBR columns if needed
@@ -554,7 +554,7 @@ function percolator_scoring_impl!(::AbstractPSMContainer, config::ScoringConfig,
 
             # Apply each iteration's model
             for (itr, _) in enumerate(iteration_rounds)
-                if !has_mbr_support(config.mbr_update) && itr > (mbr_start_iter - 1)
+                if itr > (mbr_start_iter - 1)
                     break
                 end
 
@@ -563,19 +563,27 @@ function percolator_scoring_impl!(::AbstractPSMContainer, config::ScoringConfig,
                 set_column!(psms, :trace_prob, probs)
             end
 
-            # Write predictions back
-            Arrow.write(fpath, to_dataframe(psms))
+            # Write predictions back (use writeArrow to avoid mmap deadlock)
+            writeArrow(fpath, to_dataframe(psms))
 
             # Update progress
             !isnothing(pbar) && update(pbar)
         end
 
         # Pass 2: Compute global q-values across all test files
+        @user_info "Computing global q-values for fold $(test_fold)..."
         compute_global_qvalues!(test_files)
+        @user_info "  Global q-values complete"
 
         # MBR: Collect pair statistics, then apply
         if has_mbr_support(config.mbr_update)
+            @user_info "Computing MBR features (this may take a while)..."
             compute_and_apply_mbr_features_oom!(test_files, config.mbr_update)
+            @user_info "  MBR features complete"
+
+            @user_info "Finalizing MBR scoring..."
+            finalize_mbr_scoring_oom!(test_files, fold_models[mbr_start_iter], config.mbr_update)
+            @user_info "  MBR scoring finalized"
         end
     end
 
@@ -593,14 +601,67 @@ function compute_and_apply_mbr_features_oom!(file_paths::Vector{String}, strateg
     pair_stats = collect_pair_statistics_oom(file_paths, strategy.q_cutoff)
 
     # Apply MBR features to each file
-    for fpath in file_paths
-        df = DataFrame(Arrow.Table(fpath))
+    for (file_num, fpath) in enumerate(file_paths)
+        @user_info "  Applying MBR features: file $file_num/$(length(file_paths))"
+        df = DataFrame(Arrow.Table(fpath); copycols=true)
         apply_mbr_features_from_stats!(df, pair_stats, strategy.q_cutoff)
-        Arrow.write(fpath, df)
+        writeArrow(fpath, df)
     end
 end
 
 function compute_and_apply_mbr_features_oom!(::Vector{String}, ::NoMBR)
+    return nothing
+end
+
+"""
+    finalize_mbr_scoring_oom!(file_paths, mbr_model, strategy::PairBasedMBR)
+
+Finalize MBR scoring for OOM pipeline. Mirrors the in-memory `finalize_scoring!` logic:
+1. Collect baseline `trace_prob` and `q_value` across all files (written by Pass 1 + Pass 2)
+2. Compute pass mask and probability threshold from baseline q-values
+3. Re-predict with MBR-aware model, write `MBR_boosted_trace_prob` and `MBR_transfer_candidate`
+"""
+function finalize_mbr_scoring_oom!(file_paths::Vector{String}, mbr_model, strategy::PairBasedMBR)
+    # Collect baseline predictions and q-values across all files
+    all_baseline_probs = Float32[]
+    all_qvals = Float64[]
+    file_ranges = Tuple{Int,Int}[]
+
+    for fpath in file_paths
+        tbl = Arrow.Table(fpath)
+        start_idx = length(all_baseline_probs) + 1
+        append!(all_baseline_probs, tbl.trace_prob)
+        append!(all_qvals, tbl.q_value)
+        push!(file_ranges, (start_idx, length(all_baseline_probs)))
+    end
+
+    # Determine passing threshold from baseline (mirrors finalize_scoring!)
+    pass_mask = all_qvals .<= strategy.q_cutoff
+    has_passing = any(pass_mask)
+    prob_thresh = has_passing ? minimum(all_baseline_probs[pass_mask]) : typemax(Float32)
+
+    # Re-predict with MBR model and write finalized columns
+    for (i, fpath) in enumerate(file_paths)
+        df = DataFrame(Arrow.Table(fpath); copycols=true)
+        psms = DataFramePSMContainer(df, Val(:unsafe))
+
+        # Re-predict using MBR-aware model (now with real MBR features)
+        mbr_probs = predict_scores(mbr_model, psms)
+
+        # Set MBR_boosted_trace_prob (trace_prob stays as baseline)
+        df[!, :MBR_boosted_trace_prob] = mbr_probs
+
+        # Compute transfer candidates for this file's rows
+        start_idx, end_idx = file_ranges[i]
+        file_pass_mask = pass_mask[start_idx:end_idx]
+        transfer_candidates = .!file_pass_mask .& (df.MBR_max_pair_prob .>= prob_thresh)
+        df[!, :MBR_transfer_candidate] = transfer_candidates
+
+        writeArrow(fpath, df)
+    end
+end
+
+function finalize_mbr_scoring_oom!(::Vector{String}, ::Any, ::NoMBR)
     return nothing
 end
 
@@ -653,7 +714,8 @@ function collect_pair_statistics_oom(file_paths::Vector{String}, q_cutoff::Float
     # Key: (pair_id, isotopes_captured)
     pair_stats = Dict{Tuple{UInt32, Tuple{Int8, Int8}}, PairStatisticsOOM}()
 
-    for fpath in file_paths
+    for (file_num, fpath) in enumerate(file_paths)
+        @user_info "  Collecting pair statistics: file $file_num/$(length(file_paths))"
         tbl = Arrow.Table(fpath)
         n = length(tbl.pair_id)
 
