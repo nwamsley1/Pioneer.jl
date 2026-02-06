@@ -230,6 +230,7 @@ function _create_scores_sidecar(n::Int, ::PairBasedMBR)
     return DataFrame(
         trace_prob              = zeros(Float32, n),
         q_value                 = zeros(Float64, n),
+        nonMBR_trace_prob       = zeros(Float32, n),
         MBR_max_pair_prob       = zeros(Float32, n),
         MBR_best_irt_diff       = zeros(Float32, n),
         MBR_log2_weight_ratio   = zeros(Float32, n),
@@ -473,25 +474,222 @@ get_all_models(ws::ArrowFileScoringWorkspace) = get_all_models(ws.inner)
 # Container access — returns sampled DataFramePSMContainer
 get_psms(ws::ArrowFileScoringWorkspace) = get_psms(ws.inner)
 
-# Phase-dispatched accessors
+# Phase-dispatched accessors (TrainingPhase delegates to inner sampled workspace;
+# PredictionPhase is handled by the specialized process_fold_iterations! method)
 get_phase_view(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8) = get_phase_view(ws.inner, phase, fold)
-get_phase_view(ws::ArrowFileScoringWorkspace, phase::PredictionPhase, fold::UInt8) = get_phase_view(ws.inner, phase, fold)
-
 get_phase_indices(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8) = get_phase_indices(ws.inner, phase, fold)
-get_phase_indices(ws::ArrowFileScoringWorkspace, phase::PredictionPhase, fold::UInt8) = get_phase_indices(ws.inner, phase, fold)
-
 get_phase_output(ws::ArrowFileScoringWorkspace, phase::TrainingPhase) = get_phase_output(ws.inner, phase)
-get_phase_output(ws::ArrowFileScoringWorkspace, phase::PredictionPhase) = get_phase_output(ws.inner, phase)
-
 init_fold_models(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8, n::Int) = init_fold_models(ws.inner, phase, fold, n)
-init_fold_models(ws::ArrowFileScoringWorkspace, phase::PredictionPhase, fold::UInt8, n::Int) = init_fold_models(ws.inner, phase, fold, n)
-
 commit_fold!(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8, models::Vector{Any}) = commit_fold!(ws.inner, phase, fold, models)
-commit_fold!(ws::ArrowFileScoringWorkspace, phase::PredictionPhase, fold::UInt8, models::Vector{Any}) = commit_fold!(ws.inner, phase, fold, models)
 
-function store_final_predictions!(ws::ArrowFileScoringWorkspace, fold::UInt8, mbr::PairBasedMBR)
-    store_final_predictions!(ws.inner, fold, mbr)
+# store_final_predictions! — no-op for ArrowFileScoringWorkspace
+# Predictions are already written to sidecar files during process_fold_iterations!
+store_final_predictions!(::ArrowFileScoringWorkspace, ::UInt8, ::PairBasedMBR) = nothing
+store_final_predictions!(::ArrowFileScoringWorkspace, ::UInt8, ::NoMBR) = nothing
+
+#############################################################################
+# Workspace-level finalize_scoring! — ArrowFileScoringWorkspace
+#############################################################################
+
+finalize_scoring!(ws::ArrowFileScoringWorkspace, strategy::PairBasedMBR) =
+    _finalize_scoring_arrow!(ws.container, strategy)
+finalize_scoring!(ws::ArrowFileScoringWorkspace, strategy::NoMBR) =
+    _finalize_scoring_arrow!(ws.container, strategy)
+
+#############################################################################
+# OOM Prediction Phase (ArrowFileScoringWorkspace)
+#############################################################################
+
+"""
+    process_fold_iterations!(::PredictionPhase, workspace::ArrowFileScoringWorkspace, ...)
+
+OOM prediction for a single fold: iterate over all Arrow files, filter to this
+fold's PSMs, apply pre-trained models, write predictions to sidecars.
+
+MBR features are computed per-fold across all files between iterations, since
+pairs span multiple MS runs.
+"""
+function process_fold_iterations!(
+    ::PredictionPhase,
+    workspace::ArrowFileScoringWorkspace,
+    fold::UInt8,
+    iteration_rounds::Vector{Int},
+    config::ScoringConfig,
+    mbr_start_iter::Int,
+    pbar
+)
+    models = get_all_models(workspace)
+    container = workspace.container
+
+    for itr in eachindex(iteration_rounds)
+        # Early exit for non-MBR mode
+        if !has_mbr_support(config.mbr_update) && itr > (mbr_start_iter - 1)
+            break
+        end
+
+        # Per-file prediction for this fold
+        for group in container.file_groups
+            data_df = DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
+            scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
+
+            fold_mask = data_df.cv_fold .== fold
+            any(fold_mask) || continue
+
+            # Build temp container with data + scores columns for prediction
+            fold_df = data_df[fold_mask, :]
+            for col in names(scores_df)
+                fold_df[!, Symbol(col)] = scores_df[fold_mask, col]
+            end
+            temp = DataFramePSMContainer(fold_df, Val(:unsafe))
+
+            preds = predict_scores(models[fold][itr], temp)
+            scores_df.trace_prob[fold_mask] .= preds
+
+            # Store baseline at pre-MBR iteration
+            if itr == mbr_start_iter - 1
+                scores_df.nonMBR_trace_prob[fold_mask] .= preds
+            end
+
+            writeArrow(group.scores_path, scores_df)
+        end
+
+        # Cross-file MBR for this fold
+        if itr >= mbr_start_iter - 1 && has_mbr_support(config.mbr_update)
+            _compute_mbr_for_fold!(container, fold, config.mbr_update)
+        end
+
+        !isnothing(pbar) && update(pbar)
+    end
 end
-function store_final_predictions!(ws::ArrowFileScoringWorkspace, fold::UInt8, mbr::NoMBR)
-    store_final_predictions!(ws.inner, fold, mbr)
+
+#############################################################################
+# Cross-file MBR computation (per-fold)
+#############################################################################
+
+"""
+    _compute_mbr_for_fold!(container, fold, strategy::PairBasedMBR)
+
+Load MBR-relevant columns for a single fold from ALL files into one DataFrame,
+run `summarize_precursors!`, distribute results back per-file.
+
+`summarize_precursors!` groups by `(pair_id, isotopes_captured)` and needs
+all PSMs for a pair together. Pairs span files because MBR = match between runs.
+Filtering by fold ensures we only update MBR features for the held-out test set
+of this fold.
+"""
+function _compute_mbr_for_fold!(container::ArrowFilePSMContainer, fold::UInt8, strategy::PairBasedMBR)
+    mbr_data_cols = [:pair_id, :isotopes_captured, :ms_file_idx, :weight,
+                      :log2_intensity_explained, :decoy, :irt_pred, :irt_obs, :weights, :irts]
+    mbr_score_cols = [:trace_prob, :q_value, :MBR_max_pair_prob, :MBR_best_irt_diff,
+                      :MBR_log2_weight_ratio, :MBR_log2_explained_ratio,
+                      :MBR_rv_coefficient, :MBR_is_best_decoy, :MBR_num_runs,
+                      :MBR_transfer_candidate, :MBR_is_missing]
+
+    # 1. Collect MBR-relevant columns for this fold from all files
+    dfs = DataFrame[]
+    # Track per-file fold masks and boundaries for write-back
+    file_masks = BitVector[]
+    file_offsets = Int[]  # offset into the concatenated fold-filtered DataFrame
+    offset = 0
+    for group in container.file_groups
+        data_tbl = Arrow.Table(group.data_path)
+        scores_tbl = Arrow.Table(group.scores_path)
+
+        # Filter to this fold
+        cv_folds = collect(data_tbl.cv_fold)
+        fold_mask = cv_folds .== fold
+        push!(file_masks, fold_mask)
+        n_fold = sum(fold_mask)
+        n_fold == 0 && (push!(file_offsets, offset); continue)
+
+        df = DataFrame(col => collect(getproperty(data_tbl, col))[fold_mask] for col in mbr_data_cols)
+        for col in mbr_score_cols
+            df[!, col] = collect(getproperty(scores_tbl, col))[fold_mask]
+        end
+        push!(dfs, df)
+        push!(file_offsets, offset)
+        offset += n_fold
+    end
+
+    isempty(dfs) && return nothing
+    global_df = vcat(dfs...); dfs = nothing
+
+    # 2. Compute q-values (needed by summarize_precursors! for MBR threshold)
+    targets = .!global_df.decoy
+    get_qvalues!(global_df.trace_prob, targets, global_df.q_value)
+
+    # 3. Run existing summarize_precursors!
+    summarize_precursors!(global_df, q_cutoff=strategy.q_cutoff)
+
+    # 4. Write MBR columns back to per-file sidecars (fold rows only)
+    for (i, group) in enumerate(container.file_groups)
+        n_fold = sum(file_masks[i])
+        n_fold == 0 && continue
+        rows = (file_offsets[i]+1):(file_offsets[i]+n_fold)
+
+        scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
+        for col in mbr_score_cols
+            scores_df[file_masks[i], col] = global_df[rows, col]
+        end
+        writeArrow(group.scores_path, scores_df)
+    end
+    global_df = nothing
+end
+
+#############################################################################
+# Finalization — merge final scores back into data files
+#############################################################################
+
+"""
+    _finalize_scoring_arrow!(container, strategy::PairBasedMBR)
+
+Two-pass finalization for PairBasedMBR:
+1. Collect nonMBR baseline + targets from all files, compute global q-values
+   to find the probability threshold for transfer candidates
+2. Merge final columns (trace_prob, MBR_boosted_trace_prob, MBR_transfer_candidate)
+   back into the data Arrow files
+"""
+function _finalize_scoring_arrow!(container::ArrowFilePSMContainer, strategy::PairBasedMBR)
+    # Pass 1: Collect nonMBR baseline + targets from all files
+    all_probs = Float32[]
+    all_targets = Bool[]
+    for group in container.file_groups
+        scores_tbl = Arrow.Table(group.scores_path)
+        append!(all_probs, collect(scores_tbl.nonMBR_trace_prob))
+        data_tbl = Arrow.Table(group.data_path)
+        append!(all_targets, collect(data_tbl.target))
+    end
+    qvals = similar(all_probs)
+    get_qvalues!(all_probs, all_targets, qvals)
+    pass_mask = qvals .<= strategy.q_cutoff
+    prob_thresh = any(pass_mask) ? minimum(all_probs[pass_mask]) : typemax(Float32)
+
+    # Pass 2: Merge final columns into data files
+    offset = 0
+    for group in container.file_groups
+        n = group.n_rows; rows = (offset+1):(offset+n)
+        data_df = DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
+        scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
+
+        # Transfer candidates: didn't pass on baseline but best pair prob exceeds threshold
+        file_pass = pass_mask[rows]
+        transfer = .!file_pass .& (scores_df.MBR_max_pair_prob .>= prob_thresh)
+        data_df[!, :MBR_transfer_candidate] = transfer
+
+        # Final probability columns
+        data_df[!, :trace_prob] = scores_df.nonMBR_trace_prob
+        data_df[!, :MBR_boosted_trace_prob] = scores_df.trace_prob
+
+        writeArrow(group.data_path, data_df)
+        offset += n
+    end
+end
+
+function _finalize_scoring_arrow!(container::ArrowFilePSMContainer, ::NoMBR)
+    for group in container.file_groups
+        data_df = DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
+        scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
+        data_df[!, :trace_prob] = scores_df.trace_prob
+        writeArrow(group.data_path, data_df)
+    end
 end
