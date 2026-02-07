@@ -123,7 +123,7 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Bool(global_params.ms1_scoring),
 
             # OOM scoring parameters
-            Bool(get(ml_params, :force_oom, false)),
+            Bool(get(ml_params, :force_oom, true)),
             Int64(get(ml_params, :max_training_psms, ml_params.max_psms_in_memory))
         )
     end
