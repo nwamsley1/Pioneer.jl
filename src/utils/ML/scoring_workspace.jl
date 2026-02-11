@@ -600,17 +600,15 @@ function _update_pair_state!(state::MBRPairState, ref::MBRRunRef)
 end
 
 """
-    _build_mbr_pair_dict(fold_groups) -> (pair_dict, all_probs, all_targets)
+    _build_mbr_pair_dict(fold_groups) -> (pair_dict, temp_refs)
 
 Pass 1: Stream through fold files one at a time, building:
 - `pair_dict`: maps (pair_id, isotopes_captured) → MBRPairState
-- `all_probs`: flat vector of trace_prob for q-value computation
-- `all_targets`: flat vector of target labels
+- `temp_refs`: per-file sorted temp Arrow files with (trace_prob, target) for FDR computation
 """
 function _build_mbr_pair_dict(fold_groups::Vector{ArrowFileGroup})
     pair_dict = Dict{MBRPairKey, MBRPairState}()
-    all_probs = Float32[]
-    all_targets = Bool[]
+    temp_refs = PSMFileReference[]
 
     for group in fold_groups
         n = group.n_rows
@@ -632,11 +630,23 @@ function _build_mbr_pair_dict(fold_groups::Vector{ArrowFileGroup})
         irts_col = data_tbl.irts
         trace_prob_col = scores_tbl.trace_prob
 
-        # Append to global vectors for q-value computation
-        for i in 1:n
-            push!(all_probs, trace_prob_col[i])
-            push!(all_targets, !decoy_col[i])
+        # Write per-file sorted temp Arrow for FDR computation
+        probs = Vector{Float32}(undef, n)
+        targets = Vector{Bool}(undef, n)
+        @inbounds for i in 1:n
+            probs[i] = trace_prob_col[i]
+            targets[i] = !decoy_col[i]
         end
+        # Sort by trace_prob descending
+        perm = sortperm(probs; rev=true)
+        probs .= probs[perm]
+        targets .= targets[perm]
+        temp_path = tempname() * "_fdr_sort.arrow"
+        temp_df = DataFrame(trace_prob=probs, target=targets)
+        writeArrow(temp_path, temp_df)
+        ref = PSMFileReference(temp_path)
+        mark_sorted!(ref, :trace_prob)
+        push!(temp_refs, ref)
 
         # Data is sorted by (pair_id, isotopes_captured, precursor_idx, ms_file_idx).
         # Within this file there's only one ms_file_idx, so rows with the same
@@ -661,7 +671,7 @@ function _build_mbr_pair_dict(fold_groups::Vector{ArrowFileGroup})
             end
 
             # Build MBRRunRef from the best PSM in this block
-            ref = MBRRunRef(
+            run_ref = MBRRunRef(
                 UInt32(msfile_col[best_i]),
                 Float32(best_prob),
                 collect(Float32, weights_col[best_i]),
@@ -675,28 +685,48 @@ function _build_mbr_pair_dict(fold_groups::Vector{ArrowFileGroup})
 
             # Update pair state
             state = get!(MBRPairState, pair_dict, key)
-            _update_pair_state!(state, ref)
+            _update_pair_state!(state, run_ref)
 
             i = j
         end
     end
 
-    return pair_dict, all_probs, all_targets
+    return pair_dict, temp_refs
 end
 
 """
-    _compute_prob_threshold(all_probs, all_qvalues, q_cutoff) -> Float32
+    _compute_prob_threshold_from_merged(merged_path, q_cutoff) -> Float32
 
-Find the minimum probability among PSMs that pass the q-value cutoff.
+Stream through a merged Arrow file (sorted by trace_prob descending) doing a
+single forward FDR pass to find the minimum probability where FDR ≤ q_cutoff.
+The Arrow file is memory-mapped, so this uses O(1) heap memory.
+Cleans up the merged file after reading.
 """
-function _compute_prob_threshold(all_probs::Vector{Float32}, all_qvalues::Vector{Float64}, q_cutoff::Float32)
-    thresh = typemax(Float32)
-    @inbounds for i in eachindex(all_probs)
-        if all_qvalues[i] <= q_cutoff && all_probs[i] < thresh
-            thresh = all_probs[i]
+function _compute_prob_threshold_from_merged(merged_path::String, q_cutoff::Float32)::Float32
+    tbl = Arrow.Table(merged_path)
+    probs = tbl.trace_prob
+    targets = tbl.target
+    n = length(probs)
+
+    n_targets = 0
+    n_decoys = 0
+    prob_threshold = typemax(Float32)
+
+    @inbounds for i in 1:n
+        if targets[i]
+            n_targets += 1
+        else
+            n_decoys += 1
+        end
+        if n_targets > 0 && n_decoys / n_targets <= q_cutoff
+            prob_threshold = probs[i]  # last update = minimum prob passing
         end
     end
-    return thresh
+
+    tbl = nothing  # release mmap before deleting
+    GC.gc(false)
+    rm(merged_path, force=true)
+    return prob_threshold
 end
 
 """
@@ -712,7 +742,7 @@ function _set_runs_passing!(pair_dict::Dict{MBRPairKey, MBRPairState}, prob_thre
 end
 
 """
-    _apply_mbr_features!(fold_groups, pair_dict, prob_threshold, all_qvalues)
+    _apply_mbr_features!(fold_groups, pair_dict, prob_threshold)
 
 Pass 2: Stream through fold files, compute MBR features for each PSM
 using the pair_dict, and write updated scores back to sidecars.
@@ -720,11 +750,8 @@ using the pair_dict, and write updated scores back to sidecars.
 function _apply_mbr_features!(
     fold_groups::Vector{ArrowFileGroup},
     pair_dict::Dict{MBRPairKey, MBRPairState},
-    prob_threshold::Float32,
-    all_qvalues::Vector{Float64}
+    prob_threshold::Float32
 )
-    global_offset = 0  # tracks position in all_probs/all_qvalues
-
     for group in fold_groups
         n = group.n_rows
         if n == 0
@@ -744,11 +771,6 @@ function _apply_mbr_features!(
         irt_obs_col = data_tbl.irt_obs
         weights_col = data_tbl.weights
         irts_col = data_tbl.irts
-
-        # Write q-values from global computation
-        for i in 1:n
-            scores_df.q_value[i] = all_qvalues[global_offset + i]
-        end
 
         # Compute MBR features per PSM
         for i in 1:n
@@ -803,7 +825,6 @@ function _apply_mbr_features!(
         end
 
         writeArrow(group.scores_path, scores_df)
-        global_offset += n
     end
 end
 
@@ -826,25 +847,31 @@ end
     summarize_precursors!(fold_groups::Vector{ArrowFileGroup}; q_cutoff=0.01f0)
 
 OOM-streaming dispatch of MBR feature computation. Two-pass algorithm:
-- Pass 1: Build pair dictionary (best 2 runs per pair) + collect probs/targets
-- Between: Compute q-values and probability threshold
+- Pass 1: Build pair dictionary + write per-file sorted temp Arrow files
+- Between: Merge sorted files → stream for prob threshold (O(1) memory)
 - Pass 2: Apply MBR features per PSM using pair dictionary
 """
 function summarize_precursors!(fold_groups::Vector{ArrowFileGroup}; q_cutoff::Float32 = 0.01f0)
     isempty(fold_groups) && return nothing
 
-    # Pass 1: build pair dict and collect probs/targets
-    pair_dict, all_probs, all_targets = _build_mbr_pair_dict(fold_groups)
+    # Pass 1: build pair dict + write per-file sorted temp files
+    pair_dict, temp_refs = _build_mbr_pair_dict(fold_groups)
     isempty(pair_dict) && return nothing
 
-    # Between passes: q-values + threshold
-    all_qvalues = Vector{Float64}(undef, length(all_probs))
-    get_qvalues!(all_probs, all_targets, all_qvalues)
-    prob_threshold = _compute_prob_threshold(all_probs, all_qvalues, q_cutoff)
+    # Between passes: merge sorted files → stream for prob_threshold
+    merged_path = tempname() * "_fdr_merged.arrow"
+    stream_sorted_merge(temp_refs, merged_path, :trace_prob; reverse=true)
+
+    # Cleanup per-file temp files
+    for ref in temp_refs
+        rm(file_path(ref), force=true)
+    end
+
+    prob_threshold = _compute_prob_threshold_from_merged(merged_path, q_cutoff)
     _set_runs_passing!(pair_dict, prob_threshold)
 
-    # Pass 2: apply MBR features
-    _apply_mbr_features!(fold_groups, pair_dict, prob_threshold, all_qvalues)
+    # Pass 2: apply MBR features (no q-value writing)
+    _apply_mbr_features!(fold_groups, pair_dict, prob_threshold)
 
     return nothing
 end
