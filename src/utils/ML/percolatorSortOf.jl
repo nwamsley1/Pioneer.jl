@@ -62,10 +62,6 @@ function update_pair_statistics(current_stats, new_prob::Float32)
     ))
 end
 
-@inline function irt_residual(psms::AbstractDataFrame, idx::Integer)
-    return Float32(psms.irt_pred[idx] - psms.irt_obs[idx])
-end
-
 """
     sort_of_percolator!(psms, features, match_between_runs; kwargs...) -> Models
 
@@ -265,86 +261,6 @@ function dropVectorColumns!(df)
     select!(df, Not(to_drop))
 end
 
-function MBR_rv_coefficient(weights_A::AbstractVector{<:Real},
-    times_A::AbstractVector{<:Real},
-    weights_B::AbstractVector{<:Real},
-    times_B::AbstractVector{<:Real})
 
-    # Construct two Nx2 matrices, each row is (weight, time)
-    X = hcat(collect(weights_A), collect(times_A))
-    Y = hcat(collect(weights_B), collect(times_B))
-
-    # Compute cross-products (Gram matrices)
-    Sx = X' * X
-    Sy = Y' * Y
-
-    # Numerator: trace(Sx * Sy)
-    numerator = tr(Sx * Sy)
-
-    # Denominator: sqrt( trace(Sx*Sx)* trace(Sy*Sy) )
-    denominator = sqrt(tr(Sx * Sx) * tr(Sy * Sy))
-
-    # Protect against zero in denominator (e.g. if X or Y is all zeros)
-    if denominator == 0
-        return 0.0
-    end
-
-    return numerator / denominator
-end
-
-function pad_equal_length(x::AbstractVector, y::AbstractVector)
-
-    function pad(data, d)
-        left  = div(d, 2)
-        right = d - left        # put extra on the right if d is odd
-        padded_data = vcat(zeros(eltype(data), left), data, zeros(eltype(data), right))
-        return padded_data
-    end
-
-    d = length(y) - length(x)
-    if d == 0
-        # No padding needed
-        return (x, y)
-    elseif d > 0
-        # Pad x
-        return (pad(x, d), y)
-    else
-        # Pad y
-        return (x, pad(y, abs(d)))
-    end
-end
-
-
-function pad_rt_equal_length(x::AbstractVector, y::AbstractVector)
-
-    function pad(data, n, d, rt_step)
-        left  = div(d, 2)
-        right = d - left        # put extra on the right if d is odd
-        padded_data = vcat(zeros(eltype(data), left), data, zeros(eltype(data), right))
-        @inbounds @fastmath for i in range(1, left)
-            padded_data[i] = padded_data[left+1] - (rt_step * ((left+1) - i))
-        end
-        @inbounds @fastmath for i in range(1, right)
-            padded_data[i+left+n] = padded_data[left+n] + (rt_step * i)
-        end
-        return padded_data
-    end
-
-    nx = length(x)
-    ny = length(y)
-    d = ny - nx
-    rt_step_x = (x[end] - x[1]) / nx
-    rt_step_y = (y[end] - y[1]) / ny
-    rt_step = nx > 1 ? rt_step_x : rt_step_y
-
-    if d == 0
-        # No padding needed
-        return (x, y)
-    elseif d > 0
-        # Pad x
-        return (pad(x, nx, d, rt_step), y)
-    else
-        # Pad y
-        return (x, pad(y, ny, abs(d), rt_step))
-    end
-end
+# MBR utility functions (irt_residual, MBR_rv_coefficient, pad_equal_length,
+# pad_rt_equal_length) are defined in mbr_update.jl (loaded earlier in include order)
