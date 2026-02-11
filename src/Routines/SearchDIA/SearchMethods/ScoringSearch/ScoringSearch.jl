@@ -568,6 +568,10 @@ function summarize_results!(
 
             # Sidecar sort+merge for new spline (on filtered data)
             sidecar_refs = write_score_sidecars(passing_refs, [recalc_score_col, :target]; temp_prefix="recalc_sidecar")
+
+            if isempty(sidecar_refs)
+                @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
+            else
             sort_file_by_keys!(sidecar_refs, recalc_score_col, :target; reverse=[true, true])
             stream_sorted_merge(sidecar_refs, results.merged_quant_path, recalc_score_col, :target;
                                batch_size=10_000_000, reverse=[true, true])
@@ -582,6 +586,7 @@ function summarize_results!(
                 add_interpolated_column(recalc_qval_col, recalc_score_col, new_qval_spline)
 
             passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
+            end # if !isempty(sidecar_refs)
         end
 
         # Update search context with passing PSM paths
