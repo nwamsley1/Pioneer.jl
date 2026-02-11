@@ -239,8 +239,8 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
         @user_info "ML Training Dataset: $n_targets targets, $n_decoys decoys (total: $(nrows(resolved_psms)) PSMs)"
     end
 
-    # Progress tracking
-    total_progress_steps = length(get_cv_folds(workspace)) * iterations_to_run
+    # Progress tracking (2 phases × n_folds × iterations_per_fold)
+    total_progress_steps = 2 * length(get_cv_folds(workspace)) * iterations_to_run
     pbar = show_progress ? ProgressBar(total=total_progress_steps) : nothing
 
     Random.seed!(1776)
