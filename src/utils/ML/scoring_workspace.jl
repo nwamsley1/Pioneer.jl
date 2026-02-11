@@ -522,71 +522,343 @@ function process_fold_iterations!(
 end
 
 #############################################################################
-# Cross-file MBR computation (per-fold)
+# Cross-file MBR computation (per-fold) — streaming 2-pass algorithm
 #############################################################################
+
+"""
+    MBRRunRef
+
+Stores the data needed from a single PSM (the best in a particular run)
+to compute MBR features for PSMs in other runs.
+"""
+struct MBRRunRef
+    ms_file_idx::UInt32
+    trace_prob::Float32
+    weights::Vector{Float32}
+    irts::Vector{Float32}
+    weight::Float32
+    log2_intensity_explained::Float32
+    irt_pred::Float32
+    irt_obs::Float32
+    decoy::Bool
+end
+
+"""
+    MBRPairState
+
+Mutable state for one (pair_id, isotopes_captured) group, accumulated
+across all fold files during Pass 1.
+
+- `best1`/`best2`: top-2 run references (from different runs)
+- `run_best_probs`: per-run best trace_prob (for counting runs_passing)
+- `runs_passing`: filled between passes (runs with best_prob >= threshold)
+"""
+mutable struct MBRPairState
+    best1::Union{Nothing, MBRRunRef}
+    best2::Union{Nothing, MBRRunRef}
+    run_best_probs::Dict{UInt32, Float32}
+    runs_passing::Int32
+end
+
+MBRPairState() = MBRPairState(nothing, nothing, Dict{UInt32, Float32}(), Int32(0))
+
+const MBRPairKey = Tuple{UInt32, Tuple{Int8, Int8}}
+
+"""
+    _update_pair_state!(state, ref::MBRRunRef)
+
+Update the top-2 run references for a pair state with a new candidate.
+"""
+function _update_pair_state!(state::MBRPairState, ref::MBRRunRef)
+    # Update per-run best prob
+    existing = get(state.run_best_probs, ref.ms_file_idx, -Inf32)
+    if ref.trace_prob > existing
+        state.run_best_probs[ref.ms_file_idx] = ref.trace_prob
+    end
+
+    # Update top-2 across runs
+    if state.best1 === nothing
+        state.best1 = ref
+    elseif ref.ms_file_idx == state.best1.ms_file_idx
+        # Same run as best1: update if better
+        if ref.trace_prob > state.best1.trace_prob
+            state.best1 = ref
+        end
+    elseif ref.trace_prob > state.best1.trace_prob
+        # New best from different run: shift best1 → best2
+        state.best2 = state.best1
+        state.best1 = ref
+    elseif state.best2 === nothing || ref.ms_file_idx == state.best2.ms_file_idx
+        # No best2 yet, or same run as best2: update if better
+        if state.best2 === nothing || ref.trace_prob > state.best2.trace_prob
+            state.best2 = ref
+        end
+    elseif ref.trace_prob > state.best2.trace_prob
+        # Better than best2 from a different run
+        state.best2 = ref
+    end
+end
+
+"""
+    _build_mbr_pair_dict(fold_groups) -> (pair_dict, all_probs, all_targets)
+
+Pass 1: Stream through fold files one at a time, building:
+- `pair_dict`: maps (pair_id, isotopes_captured) → MBRPairState
+- `all_probs`: flat vector of trace_prob for q-value computation
+- `all_targets`: flat vector of target labels
+"""
+function _build_mbr_pair_dict(fold_groups::Vector{ArrowFileGroup})
+    pair_dict = Dict{MBRPairKey, MBRPairState}()
+    all_probs = Float32[]
+    all_targets = Bool[]
+
+    for group in fold_groups
+        n = group.n_rows
+        n == 0 && continue
+
+        # Read data columns
+        data_tbl = Arrow.Table(group.data_path)
+        scores_tbl = Arrow.Table(group.scores_path)
+
+        pair_id_col = data_tbl.pair_id
+        iso_col = data_tbl.isotopes_captured
+        msfile_col = data_tbl.ms_file_idx
+        weight_col = data_tbl.weight
+        l2ie_col = data_tbl.log2_intensity_explained
+        decoy_col = data_tbl.decoy
+        irt_pred_col = data_tbl.irt_pred
+        irt_obs_col = data_tbl.irt_obs
+        weights_col = data_tbl.weights
+        irts_col = data_tbl.irts
+        trace_prob_col = scores_tbl.trace_prob
+
+        # Append to global vectors for q-value computation
+        for i in 1:n
+            push!(all_probs, trace_prob_col[i])
+            push!(all_targets, !decoy_col[i])
+        end
+
+        # Data is sorted by (pair_id, isotopes_captured, precursor_idx, ms_file_idx).
+        # Within this file there's only one ms_file_idx, so rows with the same
+        # (pair_id, isotopes_captured) are contiguous.
+        # Scan for best PSM per (pair_id, isotopes_captured) in this file.
+        i = 1
+        while i <= n
+            pid = pair_id_col[i]
+            iso = iso_col[i]
+            key = (UInt32(pid), (Int8(iso[1]), Int8(iso[2])))::MBRPairKey
+
+            # Find best trace_prob in this contiguous block
+            best_i = i
+            best_prob = trace_prob_col[i]
+            j = i + 1
+            while j <= n && pair_id_col[j] == pid && iso_col[j] == iso
+                if trace_prob_col[j] > best_prob
+                    best_prob = trace_prob_col[j]
+                    best_i = j
+                end
+                j += 1
+            end
+
+            # Build MBRRunRef from the best PSM in this block
+            ref = MBRRunRef(
+                UInt32(msfile_col[best_i]),
+                Float32(best_prob),
+                collect(Float32, weights_col[best_i]),
+                collect(Float32, irts_col[best_i]),
+                Float32(weight_col[best_i]),
+                Float32(l2ie_col[best_i]),
+                Float32(irt_pred_col[best_i]),
+                Float32(irt_obs_col[best_i]),
+                Bool(decoy_col[best_i])
+            )
+
+            # Update pair state
+            state = get!(MBRPairState, pair_dict, key)
+            _update_pair_state!(state, ref)
+
+            i = j
+        end
+    end
+
+    return pair_dict, all_probs, all_targets
+end
+
+"""
+    _compute_prob_threshold(all_probs, all_qvalues, q_cutoff) -> Float32
+
+Find the minimum probability among PSMs that pass the q-value cutoff.
+"""
+function _compute_prob_threshold(all_probs::Vector{Float32}, all_qvalues::Vector{Float64}, q_cutoff::Float32)
+    thresh = typemax(Float32)
+    @inbounds for i in eachindex(all_probs)
+        if all_qvalues[i] <= q_cutoff && all_probs[i] < thresh
+            thresh = all_probs[i]
+        end
+    end
+    return thresh
+end
+
+"""
+    _set_runs_passing!(pair_dict, prob_threshold)
+
+Precompute `runs_passing` for each pair state: count of runs whose
+best trace_prob >= prob_threshold.
+"""
+function _set_runs_passing!(pair_dict::Dict{MBRPairKey, MBRPairState}, prob_threshold::Float32)
+    for state in values(pair_dict)
+        state.runs_passing = Int32(count(p >= prob_threshold for p in values(state.run_best_probs)))
+    end
+end
+
+"""
+    _apply_mbr_features!(fold_groups, pair_dict, prob_threshold, all_qvalues)
+
+Pass 2: Stream through fold files, compute MBR features for each PSM
+using the pair_dict, and write updated scores back to sidecars.
+"""
+function _apply_mbr_features!(
+    fold_groups::Vector{ArrowFileGroup},
+    pair_dict::Dict{MBRPairKey, MBRPairState},
+    prob_threshold::Float32,
+    all_qvalues::Vector{Float64}
+)
+    global_offset = 0  # tracks position in all_probs/all_qvalues
+
+    for group in fold_groups
+        n = group.n_rows
+        if n == 0
+            continue
+        end
+
+        # Read data + scores
+        data_tbl = Arrow.Table(group.data_path)
+        scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
+
+        pair_id_col = data_tbl.pair_id
+        iso_col = data_tbl.isotopes_captured
+        msfile_col = data_tbl.ms_file_idx
+        weight_col = data_tbl.weight
+        l2ie_col = data_tbl.log2_intensity_explained
+        irt_pred_col = data_tbl.irt_pred
+        irt_obs_col = data_tbl.irt_obs
+        weights_col = data_tbl.weights
+        irts_col = data_tbl.irts
+
+        # Write q-values from global computation
+        for i in 1:n
+            scores_df.q_value[i] = all_qvalues[global_offset + i]
+        end
+
+        # Compute MBR features per PSM
+        for i in 1:n
+            pid = pair_id_col[i]
+            iso = iso_col[i]
+            key = (UInt32(pid), (Int8(iso[1]), Int8(iso[2])))::MBRPairKey
+
+            state = get(pair_dict, key, nothing)
+            if state === nothing
+                _set_missing_mbr!(scores_df, i)
+                continue
+            end
+
+            # Choose reference: if this PSM's run == best1's run, use best2; else use best1
+            ms_idx = UInt32(msfile_col[i])
+            ref = if state.best1 !== nothing && ms_idx == state.best1.ms_file_idx
+                state.best2
+            else
+                state.best1
+            end
+
+            # Count MBR_num_runs: runs_passing minus current run if it passes
+            current_run_passes = get(state.run_best_probs, ms_idx, -Inf32) >= prob_threshold
+            mbr_num_runs = state.runs_passing - Int32(current_run_passes)
+
+            if ref === nothing || mbr_num_runs == 0
+                _set_missing_mbr!(scores_df, i)
+                scores_df.MBR_num_runs[i] = mbr_num_runs
+                continue
+            end
+
+            # Compute MBR features (same math as in-memory summarize_precursors!)
+            best_log2_weights = log2.(ref.weights)
+            best_iRTs = ref.irts
+            cur_weights_vec = collect(Float32, weights_col[i])
+            cur_irts_vec = collect(Float32, irts_col[i])
+            current_log2_weights = log2.(cur_weights_vec)
+
+            best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, current_log2_weights)
+            best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_iRTs, cur_irts_vec)
+
+            scores_df.MBR_max_pair_prob[i] = ref.trace_prob
+            best_residual = ref.irt_pred - ref.irt_obs
+            current_residual = Float32(irt_pred_col[i]) - Float32(irt_obs_col[i])
+            scores_df.MBR_best_irt_diff[i] = abs(best_residual - current_residual)
+            scores_df.MBR_rv_coefficient[i] = MBR_rv_coefficient(best_log2_weights_padded, best_iRTs_padded, weights_padded, iRTs_padded)
+            scores_df.MBR_log2_weight_ratio[i] = log2(Float32(weight_col[i]) / ref.weight)
+            scores_df.MBR_log2_explained_ratio[i] = Float32(l2ie_col[i]) - ref.log2_intensity_explained
+            scores_df.MBR_is_best_decoy[i] = ref.decoy
+            scores_df.MBR_num_runs[i] = mbr_num_runs
+            scores_df.MBR_is_missing[i] = false
+        end
+
+        writeArrow(group.scores_path, scores_df)
+        global_offset += n
+    end
+end
+
+"""
+    _set_missing_mbr!(scores_df, i)
+
+Set missing/default MBR feature values for a single PSM row.
+"""
+@inline function _set_missing_mbr!(scores_df::DataFrame, i::Int)
+    scores_df.MBR_best_irt_diff[i]        = -1.0f0
+    scores_df.MBR_rv_coefficient[i]       = -1.0f0
+    scores_df.MBR_is_best_decoy[i]        = true
+    scores_df.MBR_log2_weight_ratio[i]    = -1.0f0
+    scores_df.MBR_log2_explained_ratio[i] = -1.0f0
+    scores_df.MBR_max_pair_prob[i]        = -1.0f0
+    scores_df.MBR_is_missing[i]           = true
+end
+
+"""
+    summarize_precursors!(fold_groups::Vector{ArrowFileGroup}; q_cutoff=0.01f0)
+
+OOM-streaming dispatch of MBR feature computation. Two-pass algorithm:
+- Pass 1: Build pair dictionary (best 2 runs per pair) + collect probs/targets
+- Between: Compute q-values and probability threshold
+- Pass 2: Apply MBR features per PSM using pair dictionary
+"""
+function summarize_precursors!(fold_groups::Vector{ArrowFileGroup}; q_cutoff::Float32 = 0.01f0)
+    isempty(fold_groups) && return nothing
+
+    # Pass 1: build pair dict and collect probs/targets
+    pair_dict, all_probs, all_targets = _build_mbr_pair_dict(fold_groups)
+    isempty(pair_dict) && return nothing
+
+    # Between passes: q-values + threshold
+    all_qvalues = Vector{Float64}(undef, length(all_probs))
+    get_qvalues!(all_probs, all_targets, all_qvalues)
+    prob_threshold = _compute_prob_threshold(all_probs, all_qvalues, q_cutoff)
+    _set_runs_passing!(pair_dict, prob_threshold)
+
+    # Pass 2: apply MBR features
+    _apply_mbr_features!(fold_groups, pair_dict, prob_threshold, all_qvalues)
+
+    return nothing
+end
 
 """
     _compute_mbr_for_fold!(container, fold, strategy::PairBasedMBR)
 
-Load MBR-relevant columns for a single fold from its per-fold files into one
-DataFrame, run `summarize_precursors!`, distribute results back per-file.
-
-`summarize_precursors!` groups by `(pair_id, isotopes_captured)` and needs
-all PSMs for a pair together. Pairs span files because MBR = match between runs.
+OOM streaming MBR: delegates to the 2-pass `summarize_precursors!` dispatch
+that processes fold files one at a time.
 """
 function _compute_mbr_for_fold!(container::ArrowFilePSMContainer, fold::UInt8, strategy::PairBasedMBR)
-    mbr_data_cols = [:pair_id, :isotopes_captured, :ms_file_idx, :weight,
-                      :log2_intensity_explained, :decoy, :irt_pred, :irt_obs, :weights, :irts]
-    mbr_score_cols = [:trace_prob, :q_value, :MBR_max_pair_prob, :MBR_best_irt_diff,
-                      :MBR_log2_weight_ratio, :MBR_log2_explained_ratio,
-                      :MBR_rv_coefficient, :MBR_is_best_decoy, :MBR_num_runs,
-                      :MBR_transfer_candidate, :MBR_is_missing]
-
-    # 1. Collect MBR-relevant columns for this fold (files are already per-fold)
     fold_groups = get_file_groups_for_fold(container, fold)
-    dfs = DataFrame[]
-    file_row_counts = Int[]  # number of rows per file for write-back
-    for group in fold_groups
-        data_tbl = Arrow.Table(group.data_path)
-        scores_tbl = Arrow.Table(group.scores_path)
-
-        n = group.n_rows
-        push!(file_row_counts, n)
-        n == 0 && continue
-
-        df = DataFrame([col => collect(getproperty(data_tbl, col)) for col in mbr_data_cols])
-
-        for col in mbr_score_cols
-            df[!, col] = collect(getproperty(scores_tbl, col))
-        end
-        push!(dfs, df)
-    end
-
-    isempty(dfs) && return nothing
-    global_df = vcat(dfs...); dfs = nothing
-
-    # 2. Compute q-values (needed by summarize_precursors! for MBR threshold)
-    targets = .!global_df.decoy
-    get_qvalues!(global_df.trace_prob, targets, global_df.q_value)
-
-    # 3. Run existing summarize_precursors!
-    summarize_precursors!(global_df, q_cutoff=strategy.q_cutoff)
-
-    # 4. Write MBR columns back to per-file sidecars
-    offset = 0
-    for (i, group) in enumerate(fold_groups)
-        n = file_row_counts[i]
-        n == 0 && continue
-        rows = (offset+1):(offset+n)
-
-        scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
-        for col in mbr_score_cols
-            scores_df[!, col] = global_df[rows, col]
-        end
-        writeArrow(group.scores_path, scores_df)
-        offset += n
-    end
-    global_df = nothing
+    isempty(fold_groups) && return nothing
+    summarize_precursors!(fold_groups, q_cutoff=strategy.q_cutoff)
 end
 
 #############################################################################
