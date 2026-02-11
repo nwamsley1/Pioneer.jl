@@ -79,6 +79,7 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # OOM scoring parameters
     force_oom::Bool
     max_training_psms::Int64
+    max_mbr_training_candidates::Int64
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
@@ -124,7 +125,8 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
 
             # OOM scoring parameters
             Bool(get(ml_params, :force_oom, true)),
-            Int64(get(ml_params, :max_training_psms, ml_params.max_psms_in_memory))
+            Int64(get(ml_params, :max_training_psms, ml_params.max_psms_in_memory)),
+            Int64(get(ml_params, :max_mbr_training_candidates, 1_000_000))
         )
     end
 end
@@ -456,52 +458,9 @@ function summarize_results!(
         second_pass_paths = merged_psm_paths
         second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
-        # Step 2: Apply MBR filtering and calculate precursor probabilities
-        #@debug_l1 "Step 2: Applying MBR filtering and calculating precursor probabilities..."
+        # Step 2: Apply MBR filtering and calculate precursor probabilities (per-file OOM)
         step2_time = @elapsed begin
-            # Merge all second pass PSMs for experiment-wide calculations
-            merged_scores_path = joinpath(temp_folder, "merged_trace_scores.arrow")
-            sort_file_by_keys!(second_pass_refs, :trace_prob, :target; reverse=[true, true])
-            stream_sorted_merge(second_pass_refs, merged_scores_path, :trace_prob, :target;
-                               reverse=[true, true])
-
-            merged_df = DataFrame(Arrow.Table(merged_scores_path))
-            sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
-
-            if hasproperty(merged_df, :MBR_boosted_trace_prob)
-                # Apply MBR filter to MBR_boosted_trace_prob column (modifies in place)
-                apply_mbr_filter!(merged_df, params)
-
-                # Aggregate MBR-boosted scores to precursor level (per-run)
-                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                           :MBR_boosted_trace_prob => (p -> begin
-                               trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                               trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
-                               Float32(trace_prob)
-                           end) => :MBR_boosted_prec_prob)
-
-                # Also aggregate non-MBR scores for protein inference (steps 11+)
-                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                           :trace_prob => (p -> begin
-                               trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                               trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
-                               Float32(trace_prob)
-                           end) => :prec_prob)
-            else
-                # No MBR: only aggregate base probabilities to precursor level (per-run)
-                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                           :trace_prob => (p -> begin
-                               trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                               trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
-                               Float32(trace_prob)
-                           end) => :prec_prob)
-            end
-            # Note: global_prob calculation moved to after best trace filtering (Step 5)
-            # Write updated data back to individual files (now merged per MS run)
-            for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
-                sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
-                write_arrow_file(ref, sub_df)
-            end
+            apply_mbr_filter_and_aggregate_per_file!(second_pass_refs, valid_file_indices, params)
         end
         #@debug_l1 "Step 2 completed in $(round(step2_time, digits=2)) seconds"
 
