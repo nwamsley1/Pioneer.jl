@@ -896,35 +896,52 @@ end
     _finalize_scoring_arrow!(container, strategy::PairBasedMBR)
 
 Two-pass finalization for PairBasedMBR:
-1. Collect nonMBR baseline + targets from all files, compute global q-values
-   to find the probability threshold for transfer candidates
+1. Streaming sort-merge of nonMBR baseline + targets to compute prob_thresh (O(1) memory)
 2. Merge final columns (trace_prob, MBR_boosted_trace_prob, MBR_transfer_candidate)
-   back into the data Arrow files
+   back into the data Arrow files, using prob_thresh for transfer candidate determination
 """
 function _finalize_scoring_arrow!(container::ArrowFilePSMContainer, strategy::PairBasedMBR)
-    # Pass 1: Collect nonMBR baseline + targets from all files
-    all_probs = Float32[]
-    all_targets = Bool[]
+    # Pass 1: Compute prob_thresh via streaming sort-merge (O(1) memory)
+    temp_refs = PSMFileReference[]
     for group in container.file_groups
+        n = group.n_rows
+        n == 0 && continue
         scores_tbl = Arrow.Table(group.scores_path)
-        append!(all_probs, collect(scores_tbl.nonMBR_trace_prob))
         data_tbl = Arrow.Table(group.data_path)
-        append!(all_targets, collect(data_tbl.target))
+        probs = Vector{Float32}(undef, n)
+        targets = Vector{Bool}(undef, n)
+        @inbounds for i in 1:n
+            probs[i] = scores_tbl.nonMBR_trace_prob[i]
+            targets[i] = data_tbl.target[i]
+        end
+        perm = sortperm(probs; rev=true)
+        probs .= probs[perm]
+        targets .= targets[perm]
+        temp_path = tempname() * "_finalize_fdr_sort.arrow"
+        writeArrow(temp_path, DataFrame(trace_prob=probs, target=targets))
+        ref = PSMFileReference(temp_path)
+        mark_sorted!(ref, :trace_prob)
+        push!(temp_refs, ref)
     end
-    qvals = similar(all_probs)
-    get_qvalues!(all_probs, all_targets, qvals)
-    pass_mask = qvals .<= strategy.q_cutoff
-    prob_thresh = any(pass_mask) ? minimum(all_probs[pass_mask]) : typemax(Float32)
+
+    if isempty(temp_refs)
+        prob_thresh = typemax(Float32)
+    else
+        merged_path = tempname() * "_finalize_fdr_merged.arrow"
+        stream_sorted_merge(temp_refs, merged_path, :trace_prob; reverse=true)
+        for ref in temp_refs
+            rm(file_path(ref), force=true)
+        end
+        prob_thresh = _compute_prob_threshold_from_merged(merged_path, strategy.q_cutoff)
+    end
 
     # Pass 2: Merge final columns into data files
-    offset = 0
     for group in container.file_groups
-        n = group.n_rows; rows = (offset+1):(offset+n)
         data_df = DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
         scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
 
         # Transfer candidates: didn't pass on baseline but best pair prob exceeds threshold
-        file_pass = pass_mask[rows]
+        file_pass = scores_df.nonMBR_trace_prob .>= prob_thresh
         transfer = .!file_pass .& (scores_df.MBR_max_pair_prob .>= prob_thresh)
         data_df[!, :MBR_transfer_candidate] = transfer
 
@@ -941,7 +958,6 @@ function _finalize_scoring_arrow!(container::ArrowFilePSMContainer, strategy::Pa
         end
 
         writeArrow(group.data_path, data_df)
-        offset += n
     end
 end
 
