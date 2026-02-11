@@ -490,27 +490,23 @@ function process_fold_iterations!(
             break
         end
 
-        # Per-file prediction for this fold
-        for group in container.file_groups
-            data_df = DataFrame(Arrow.Table(group.data_path))#DataFrame(Tables.columntable(Arrow.Table(group.data_path)))
+        # Per-file prediction for this fold (files are already per-fold)
+        for group in get_file_groups_for_fold(container, fold)
+            data_df = DataFrame(Arrow.Table(group.data_path))
             scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
 
-            fold_mask = data_df.cv_fold .== fold
-            any(fold_mask) || continue
-
             # Build temp container with data + scores columns for prediction
-            fold_df = data_df[fold_mask, :]
             for col in names(scores_df)
-                fold_df[!, Symbol(col)] = scores_df[fold_mask, col]
+                data_df[!, Symbol(col)] = scores_df[!, col]
             end
-            temp = DataFramePSMContainer(fold_df, Val(:unsafe))
+            temp = DataFramePSMContainer(data_df, Val(:unsafe))
 
             preds = predict_scores(models[fold][itr], temp)
-            scores_df.trace_prob[fold_mask] .= preds
+            scores_df.trace_prob .= preds
 
             # Store baseline at pre-MBR iteration
             if itr == mbr_start_iter - 1
-                scores_df.nonMBR_trace_prob[fold_mask] .= preds
+                scores_df.nonMBR_trace_prob .= preds
             end
 
             writeArrow(group.scores_path, scores_df)
@@ -532,13 +528,11 @@ end
 """
     _compute_mbr_for_fold!(container, fold, strategy::PairBasedMBR)
 
-Load MBR-relevant columns for a single fold from ALL files into one DataFrame,
-run `summarize_precursors!`, distribute results back per-file.
+Load MBR-relevant columns for a single fold from its per-fold files into one
+DataFrame, run `summarize_precursors!`, distribute results back per-file.
 
 `summarize_precursors!` groups by `(pair_id, isotopes_captured)` and needs
 all PSMs for a pair together. Pairs span files because MBR = match between runs.
-Filtering by fold ensures we only update MBR features for the held-out test set
-of this fold.
 """
 function _compute_mbr_for_fold!(container::ArrowFilePSMContainer, fold::UInt8, strategy::PairBasedMBR)
     mbr_data_cols = [:pair_id, :isotopes_captured, :ms_file_idx, :weight,
@@ -548,31 +542,24 @@ function _compute_mbr_for_fold!(container::ArrowFilePSMContainer, fold::UInt8, s
                       :MBR_rv_coefficient, :MBR_is_best_decoy, :MBR_num_runs,
                       :MBR_transfer_candidate, :MBR_is_missing]
 
-    # 1. Collect MBR-relevant columns for this fold from all files
+    # 1. Collect MBR-relevant columns for this fold (files are already per-fold)
+    fold_groups = get_file_groups_for_fold(container, fold)
     dfs = DataFrame[]
-    # Track per-file fold masks and boundaries for write-back
-    file_masks = BitVector[]
-    file_offsets = Int[]  # offset into the concatenated fold-filtered DataFrame
-    offset = 0
-    for group in container.file_groups
+    file_row_counts = Int[]  # number of rows per file for write-back
+    for group in fold_groups
         data_tbl = Arrow.Table(group.data_path)
         scores_tbl = Arrow.Table(group.scores_path)
 
-        # Filter to this fold
-        cv_folds = collect(data_tbl.cv_fold)
-        fold_mask = cv_folds .== fold
-        push!(file_masks, fold_mask)
-        n_fold = sum(fold_mask)
-        n_fold == 0 && (push!(file_offsets, offset); continue)
+        n = group.n_rows
+        push!(file_row_counts, n)
+        n == 0 && continue
 
-        df = DataFrame([col => collect(getproperty(data_tbl, col))[fold_mask] for col in mbr_data_cols])
+        df = DataFrame([col => collect(getproperty(data_tbl, col)) for col in mbr_data_cols])
 
         for col in mbr_score_cols
-            df[!, col] = collect(getproperty(scores_tbl, col))[fold_mask]
+            df[!, col] = collect(getproperty(scores_tbl, col))
         end
         push!(dfs, df)
-        push!(file_offsets, offset)
-        offset += n_fold
     end
 
     isempty(dfs) && return nothing
@@ -585,17 +572,19 @@ function _compute_mbr_for_fold!(container::ArrowFilePSMContainer, fold::UInt8, s
     # 3. Run existing summarize_precursors!
     summarize_precursors!(global_df, q_cutoff=strategy.q_cutoff)
 
-    # 4. Write MBR columns back to per-file sidecars (fold rows only)
-    for (i, group) in enumerate(container.file_groups)
-        n_fold = sum(file_masks[i])
-        n_fold == 0 && continue
-        rows = (file_offsets[i]+1):(file_offsets[i]+n_fold)
+    # 4. Write MBR columns back to per-file sidecars
+    offset = 0
+    for (i, group) in enumerate(fold_groups)
+        n = file_row_counts[i]
+        n == 0 && continue
+        rows = (offset+1):(offset+n)
 
         scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
         for col in mbr_score_cols
-            scores_df[file_masks[i], col] = global_df[rows, col]
+            scores_df[!, col] = global_df[rows, col]
         end
         writeArrow(group.scores_path, scores_df)
+        offset += n
     end
     global_df = nothing
 end
