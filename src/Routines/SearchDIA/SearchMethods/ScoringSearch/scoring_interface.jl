@@ -151,6 +151,351 @@ function apply_mbr_filter!(
 end
 
 #==========================================================
+OOM Streaming MBR Filter + Per-File Precursor Aggregation
+==========================================================#
+
+"""
+    _aggregate_trace_to_precursor_probs!(df, has_mbr)
+
+Per-file Bayesian aggregation of trace-level → precursor-level probabilities.
+Groups by (precursor_idx, ms_file_idx). Since ms_file_idx is constant within
+a single file, this is effectively grouping by precursor_idx alone.
+"""
+function _aggregate_trace_to_precursor_probs!(df::DataFrame, has_mbr::Bool)
+    prob_agg = p -> begin
+        trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+        clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
+    end
+    if has_mbr && hasproperty(df, :MBR_boosted_trace_prob)
+        transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
+                   :MBR_boosted_trace_prob => prob_agg => :MBR_boosted_prec_prob)
+    end
+    transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
+               :trace_prob => prob_agg => :prec_prob)
+end
+
+"""
+    _compute_ftr_threshold_streaming(merged_path, target_ftr) -> (threshold, n_passing)
+
+Stream through a merged Arrow file (sorted by score desc) computing FTR.
+Returns the minimum score where FTR ≤ target_ftr and the count of candidates
+passing at that threshold. Cleans up the merged file after reading.
+
+Same pattern as _compute_prob_threshold_from_merged (scoring_workspace.jl).
+"""
+function _compute_ftr_threshold_streaming(merged_path::String, target_ftr::Float64)
+    tbl = Arrow.Table(merged_path)
+    scores = tbl.score
+    bad_flags = tbl.is_bad_transfer
+    n = length(scores)
+
+    n_total = 0
+    n_bad = 0
+    threshold = typemax(Float64)
+    n_passing = 0
+
+    @inbounds for i in 1:n
+        n_total += 1
+        if bad_flags[i]
+            n_bad += 1
+        end
+        if n_total > 0 && n_bad / n_total <= target_ftr
+            threshold = Float64(scores[i])
+            n_passing = n_total
+        end
+    end
+
+    # Release mmap before deleting (same pattern as scoring_workspace.jl)
+    tbl = nothing
+    GC.gc(false)
+    rm(merged_path, force=true)
+    return threshold, n_passing
+end
+
+"""
+    apply_mbr_filter_and_aggregate_per_file!(refs, valid_file_indices, params)
+
+OOM-safe MBR filtering and precursor probability aggregation.
+Uses a 4-phase streaming approach:
+  Phase 1: SAMPLE — reservoir-sample candidates from files for training
+  Phase 2: TRAIN  — train per-fold Probit + LightGBM on bounded sample
+  Phase 3: EVAL   — predict all candidates streaming, compute FTR thresholds, select best method
+  Phase 4: APPLY  — re-predict + apply threshold + aggregate precursor probs per file
+
+At no point is more than one file's data in memory (beyond the bounded training sample).
+"""
+function apply_mbr_filter_and_aggregate_per_file!(
+    refs::Vector{PSMFileReference},
+    valid_file_indices::Vector{Int64},
+    params
+)
+    has_mbr = false
+    # Quick check: does the first non-empty file have MBR columns?
+    for ref in refs
+        tbl = Arrow.Table(file_path(ref))
+        if length(tbl) > 0
+            has_mbr = hasproperty(tbl, :MBR_boosted_trace_prob)
+            break
+        end
+    end
+
+    if !has_mbr
+        # No MBR: just aggregate per-file and return
+        for ref in refs
+            df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+            _aggregate_trace_to_precursor_probs!(df, false)
+            write_arrow_file(ref, df)
+        end
+        return nothing
+    end
+
+    # Training columns — only what select_mbr_features + model training actually need
+    training_columns = [
+        :trace_prob, :irt_error, :ms1_ms2_rt_diff,
+        :MBR_max_pair_prob, :MBR_best_irt_diff, :MBR_rv_coefficient,
+        :MBR_log2_weight_ratio, :MBR_log2_explained_ratio,
+        :MBR_boosted_trace_prob,
+        :cv_fold,
+        :target, :decoy, :MBR_is_best_decoy
+    ]
+
+    max_candidates = params.max_mbr_training_candidates
+
+    #--------------------------------------------------------------
+    # Phase 1: SAMPLE — stream files, reservoir-sample candidates
+    #--------------------------------------------------------------
+    sample_df = DataFrame()
+    n_candidates_total = 0
+    rng = MersenneTwister(1844)
+
+    for ref in refs
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+        mask = hasproperty(df, :MBR_transfer_candidate) ? df.MBR_transfer_candidate : falses(nrow(df))
+        n_cand = sum(mask)
+        n_cand == 0 && continue
+        n_candidates_total += n_cand
+
+        cols_available = filter(c -> hasproperty(df, c), training_columns)
+        file_candidates = df[mask, cols_available]
+
+        if nrow(sample_df) == 0
+            sample_df = file_candidates
+        else
+            append!(sample_df, file_candidates)
+        end
+        # Downsample if over budget
+        if nrow(sample_df) > max_candidates
+            keep = randperm(rng, nrow(sample_df))[1:max_candidates]
+            sample_df = sample_df[sort(keep), :]
+        end
+    end
+
+    # Handle case with no MBR candidates at all
+    if n_candidates_total == 0
+        @user_warn "No MBR transfer candidates found - returning original probabilities unchanged"
+        for ref in refs
+            df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+            df[!, :MBR_candidate] = falses(nrow(df))
+            df[!, :MBR_transfer_q_value] = Vector{Union{Missing, Float32}}(missing, nrow(df))
+            _aggregate_trace_to_precursor_probs!(df, true)
+            write_arrow_file(ref, df)
+        end
+        return nothing
+    end
+
+    #--------------------------------------------------------------
+    # Phase 2: TRAIN — per-fold models on bounded sample
+    #--------------------------------------------------------------
+    sample_labels = (
+        (sample_df.target .& coalesce.(sample_df.MBR_is_best_decoy, false)) .|
+        (sample_df.decoy .& .!coalesce.(sample_df.MBR_is_best_decoy, false))
+    )
+
+    feature_cols = select_mbr_features(sample_df)
+    feature_data = sample_df[:, feature_cols]
+    folds = sort(unique(sample_df.cv_fold))
+
+    # Train Probit: test_fold => (model, valid_cols)
+    probit_models = Dict{eltype(folds), Any}()
+    probit_valid_cols = Dict{eltype(folds), Vector{Symbol}}()
+    probit_ok = true
+    try
+        for fold in folds
+            train_mask = sample_df.cv_fold .!= fold
+            model, vcols = train_probit_model_df(feature_data[train_mask, :], sample_labels[train_mask], params)
+            probit_models[fold] = model
+            probit_valid_cols[fold] = vcols
+        end
+    catch e
+        @user_warn "Probit training failed: $(typeof(e)) — $(e)"
+        probit_ok = false
+    end
+
+    # Train LightGBM: test_fold => booster
+    lgbm_models = Dict{eltype(folds), Any}()
+    lgbm_ok = true
+    try
+        for fold in folds
+            train_mask = sample_df.cv_fold .!= fold
+            lgbm_models[fold] = train_lightgbm_model_df(feature_data[train_mask, :], sample_labels[train_mask], params)
+        end
+    catch e
+        @user_warn "LightGBM training failed: $(typeof(e)) — $(e)"
+        lgbm_ok = false
+    end
+
+    sample_df = nothing; feature_data = nothing  # free training data
+
+    #--------------------------------------------------------------
+    # Phase 3: EVAL — predict all candidates, compute FTR thresholds
+    #--------------------------------------------------------------
+    method_names = String["Threshold"]
+    probit_ok && push!(method_names, "Probit")
+    lgbm_ok && push!(method_names, "LightGBM")
+    method_temp_refs = Dict(m => PSMFileReference[] for m in method_names)
+
+    # Single pass through all files — predict candidates with all methods
+    for ref in refs
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+        mask = hasproperty(df, :MBR_transfer_candidate) ? df.MBR_transfer_candidate : falses(nrow(df))
+        n_cand = sum(mask)
+        n_cand == 0 && continue
+
+        cand_indices = findall(mask)
+        cand_features = df[cand_indices, feature_cols]
+
+        is_bad = (
+            (df.target[cand_indices] .& coalesce.(df.MBR_is_best_decoy[cand_indices], false)) .|
+            (df.decoy[cand_indices] .& .!coalesce.(df.MBR_is_best_decoy[cand_indices], false))
+        )
+
+        for method_name in method_names
+            scores = if method_name == "Threshold"
+                Float64.(df.MBR_boosted_trace_prob[cand_indices])
+            elseif method_name == "Probit"
+                out = zeros(Float64, n_cand)
+                for fold in folds
+                    fm = df.cv_fold[cand_indices] .== fold
+                    any(fm) || continue
+                    out[fm] = predict_probit_model_df(probit_models[fold], cand_features[fm, :], probit_valid_cols[fold])
+                end
+                out
+            else  # LightGBM
+                out = zeros(Float64, n_cand)
+                for fold in folds
+                    fm = df.cv_fold[cand_indices] .== fold
+                    any(fm) || continue
+                    out[fm] = lightgbm_predict(lgbm_models[fold], cand_features[fm, :])
+                end
+                out
+            end
+
+            # Sort by score desc, write temp Arrow
+            perm = sortperm(scores; rev=true)
+            temp_path = tempname() * "_mbr_ftr_$(method_name).arrow"
+            writeArrow(temp_path, DataFrame(score=scores[perm], is_bad_transfer=is_bad[perm]))
+            tref = PSMFileReference(temp_path)
+            mark_sorted!(tref, :score)
+            push!(method_temp_refs[method_name], tref)
+        end
+    end
+
+    # For each method: merge → stream FTR → threshold + n_passing
+    method_results = Dict{String, Tuple{Float64, Int}}()
+    for method_name in method_names
+        trefs = method_temp_refs[method_name]
+        if isempty(trefs)
+            method_results[method_name] = (typemax(Float64), 0)
+            continue
+        end
+        merged_path = tempname() * "_mbr_ftr_merged_$(method_name).arrow"
+        stream_sorted_merge(trefs, merged_path, :score; reverse=true)
+        for tref in trefs
+            rm(file_path(tref), force=true)
+        end
+        threshold, n_passing = _compute_ftr_threshold_streaming(
+            merged_path, Float64(params.max_MBR_false_transfer_rate))
+        method_results[method_name] = (threshold, n_passing)
+    end
+
+    # Select best method (most passing candidates)
+    best_method = method_names[argmax([method_results[m][2] for m in method_names])]
+    best_threshold = method_results[best_method][1]
+
+    @user_info "MBR Method Selection:"
+    for method_name in method_names
+        _, n_pass = method_results[method_name]
+        marker = method_name == best_method ? " ✓" : ""
+        @user_info "  $(method_name): $(n_pass)/$(n_candidates_total) pass ($(round(100*n_pass/n_candidates_total, digits=1))%)$marker"
+    end
+
+    #--------------------------------------------------------------
+    # Phase 4: APPLY — re-predict + threshold + aggregate per file
+    #--------------------------------------------------------------
+    for ref in refs
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+        cand_mask = hasproperty(df, :MBR_transfer_candidate) ? df.MBR_transfer_candidate : falses(nrow(df))
+        n_cand = sum(cand_mask)
+
+        if n_cand > 0
+            cand_indices = findall(cand_mask)
+
+            # Re-predict with best method
+            if best_method == "Threshold"
+                for row in cand_indices
+                    if Float64(df.MBR_boosted_trace_prob[row]) < best_threshold
+                        df.MBR_boosted_trace_prob[row] = 0.0f0
+                        df.trace_prob[row] = 0.0f0
+                    end
+                end
+            else
+                cand_features = df[cand_indices, feature_cols]
+                scores = zeros(Float64, n_cand)
+                for fold in folds
+                    fm = df.cv_fold[cand_indices] .== fold
+                    any(fm) || continue
+                    if best_method == "Probit"
+                        scores[fm] = predict_probit_model_df(
+                            probit_models[fold], cand_features[fm, :], probit_valid_cols[fold])
+                    else
+                        scores[fm] = lightgbm_predict(lgbm_models[fold], cand_features[fm, :])
+                    end
+                end
+                for (i, row) in enumerate(cand_indices)
+                    if scores[i] < best_threshold
+                        df.MBR_boosted_trace_prob[row] = 0.0f0
+                        df.trace_prob[row] = 0.0f0
+                    end
+                end
+            end
+
+            # Zero out bad transfers regardless of score
+            for row in cand_indices
+                is_bad = (df.target[row] && coalesce(df.MBR_is_best_decoy[row], false)) ||
+                         (df.decoy[row] && !coalesce(df.MBR_is_best_decoy[row], false))
+                if is_bad
+                    df.MBR_boosted_trace_prob[row] = 0.0f0
+                    df.trace_prob[row] = 0.0f0
+                end
+            end
+
+            # Diagnostic columns
+            df[!, :MBR_candidate] = df.MBR_transfer_candidate
+            df[!, :MBR_transfer_q_value] = Vector{Union{Missing, Float32}}(missing, nrow(df))
+        else
+            df[!, :MBR_candidate] = falses(nrow(df))
+            df[!, :MBR_transfer_q_value] = Vector{Union{Missing, Float32}}(missing, nrow(df))
+        end
+
+        # Precursor aggregation (per-file, no merge needed)
+        _aggregate_trace_to_precursor_probs!(df, true)
+        write_arrow_file(ref, df)
+    end
+
+    return nothing
+end
+
+#==========================================================
 Method-Specific Training and Evaluation
 ==========================================================#
 
