@@ -1041,10 +1041,224 @@ function logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
     return 1.0f0 / (1 + exp(-avg))
 end
 
+#==========================================================
+Dictionary + Sidecar Helper Functions for OOM Scoring Pipeline
+==========================================================#
+
 """
-    apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference}, 
+    build_precursor_global_prob_dicts(refs, sqrt_n_runs, has_mbr, n_precursors)
+    → (global_prob_dict, mbr_global_prob_dict, target_dict)
+
+Stream per-file to build precursor_idx → global_prob dictionaries.
+Reads only (precursor_idx, prec_prob, [MBR_boosted_prec_prob], target) via mmap
+instead of loading all 20+ columns.
+
+`n_precursors` is used for `sizehint!()` pre-allocation of all dictionaries,
+obtained via `length(getPrecursors(getSpecLib(search_context)))`.
+"""
+function build_precursor_global_prob_dicts(
+    refs::Vector{PSMFileReference},
+    sqrt_n_runs::Int,
+    has_mbr::Bool,
+    n_precursors::Int
+)
+    # Pre-allocate accumulation dictionaries with known upper bound
+    prob_acc = Dict{UInt32, Vector{Float32}}()
+    sizehint!(prob_acc, n_precursors)
+    target_dict = Dict{UInt32, Bool}()
+    sizehint!(target_dict, n_precursors)
+    mbr_acc = if has_mbr
+        d = Dict{UInt32, Vector{Float32}}()
+        sizehint!(d, n_precursors)
+        d
+    else
+        nothing
+    end
+
+    for ref in refs
+        tbl = Arrow.Table(file_path(ref))
+        n = length(tbl.precursor_idx)
+        n == 0 && continue
+        prec_ids = tbl.precursor_idx
+        prec_probs = tbl.prec_prob
+        targets = tbl.target
+        mbr_probs = has_mbr && hasproperty(tbl, :MBR_boosted_prec_prob) ? tbl.MBR_boosted_prec_prob : nothing
+
+        @inbounds for i in 1:n
+            pid = prec_ids[i]
+            if !haskey(prob_acc, pid)
+                prob_acc[pid] = Float32[]
+                target_dict[pid] = targets[i]
+                has_mbr && mbr_probs !== nothing && (mbr_acc[pid] = Float32[])
+            end
+            push!(prob_acc[pid], prec_probs[i])
+            has_mbr && mbr_probs !== nothing && push!(mbr_acc[pid], mbr_probs[i])
+        end
+    end
+
+    # Compute logodds per precursor
+    global_prob_dict = Dict{UInt32, Float32}()
+    sizehint!(global_prob_dict, length(prob_acc))
+    for (pid, probs) in prob_acc
+        global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
+    end
+
+    mbr_global_prob_dict = Dict{UInt32, Float32}()
+    if has_mbr && mbr_acc !== nothing
+        sizehint!(mbr_global_prob_dict, length(mbr_acc))
+        for (pid, probs) in mbr_acc
+            mbr_global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
+        end
+    end
+
+    return global_prob_dict, mbr_global_prob_dict, target_dict
+end
+
+"""
+    build_global_qval_dict_from_scores(score_dict, target_dict, fdr_scale) → Dict{UInt32, Float32}
+
+Compute global q-values from a score dictionary without any file I/O.
+Replaces get_precursor_global_qval_dict (which loaded a full merged DataFrame).
+"""
+function build_global_qval_dict_from_scores(
+    score_dict::Dict{UInt32, Float32},
+    target_dict::Dict{UInt32, Bool},
+    fdr_scale::Float32
+)
+    n = length(score_dict)
+    pids = collect(keys(score_dict))
+    scores = Float32[score_dict[pid] for pid in pids]
+    targets = Bool[get(target_dict, pid, false) for pid in pids]
+
+    # Sort descending by score
+    perm = sortperm(scores; rev=true)
+    permute!(pids, perm)
+    permute!(scores, perm)
+    permute!(targets, perm)
+
+    # Compute q-values
+    qvals = Vector{Float32}(undef, n)
+    get_qvalues!(scores, targets, qvals; fdr_scale_factor=fdr_scale)
+
+    # Build dictionary
+    qval_dict = Dict{UInt32, Float32}()
+    sizehint!(qval_dict, n)
+    for i in 1:n
+        qval_dict[pids[i]] = qvals[i]
+    end
+    return qval_dict
+end
+
+"""
+    write_score_sidecars(refs, columns; temp_prefix) → Vector{PSMFileReference}
+
+Extract only the named columns from each file into a temporary Arrow sidecar file.
+Uses Arrow mmap to avoid loading all columns. Caller must cleanup returned refs.
+"""
+function write_score_sidecars(
+    refs::Vector{<:FileReference},
+    columns::Vector{Symbol};
+    temp_prefix::String = "sidecar"
+)
+    sidecar_refs = PSMFileReference[]
+    for ref in refs
+        tbl = Arrow.Table(file_path(ref))
+        n = length(Tables.getcolumn(tbl, first(columns)))
+        n == 0 && continue
+
+        # Extract only needed columns (collect to materialize from mmap)
+        col_data = NamedTuple{Tuple(columns)}(Tuple(collect(Tables.getcolumn(tbl, c)) for c in columns))
+        temp_path = tempname() * "_$(temp_prefix).arrow"
+        writeArrow(temp_path, DataFrame(; col_data...))
+        push!(sidecar_refs, PSMFileReference(temp_path))
+    end
+    return sidecar_refs
+end
+
+"""
+    build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
+    → (global_pg_score_dict, pg_name_to_global_pg_score)
+
+Stream per-file protein group files reading only (protein_name, target, entrap_id, pg_score).
+Returns composite-key dictionaries for protein global score computation.
+
+`n_proteins` is used for `sizehint!()` pre-allocation,
+obtained via `length(getProteins(getSpecLib(search_context)))`.
+"""
+function build_protein_global_score_dicts(
+    pg_refs::Vector{ProteinGroupFileReference},
+    sqrt_n_runs::Int,
+    n_proteins::Int
+)
+    # Pre-allocate accumulation dictionary with known upper bound
+    score_acc = Dict{Tuple{String,Bool,UInt8}, Vector{Float32}}()
+    sizehint!(score_acc, n_proteins)
+
+    for ref in pg_refs
+        tbl = Arrow.Table(file_path(ref))
+        n = length(tbl.protein_name)
+        n == 0 && continue
+        @inbounds for i in 1:n
+            key = (tbl.protein_name[i], tbl.target[i], tbl.entrap_id[i])
+            if !haskey(score_acc, key)
+                score_acc[key] = Float32[]
+            end
+            push!(score_acc[key], tbl.pg_score[i])
+        end
+    end
+
+    # Compute global scores via logodds
+    n_observed = length(score_acc)
+    global_pg_score_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
+    sizehint!(global_pg_score_dict, n_observed)
+    pg_name_to_global_pg_score = Dict{ProteinKey, Float32}()
+    sizehint!(pg_name_to_global_pg_score, n_observed)
+
+    for (key, scores) in score_acc
+        gs = logodds(scores, sqrt_n_runs)
+        global_pg_score_dict[key] = gs
+        pg_name_to_global_pg_score[ProteinKey(key[1], key[2], key[3])] = gs
+    end
+
+    return global_pg_score_dict, pg_name_to_global_pg_score
+end
+
+"""
+    build_protein_global_qval_dict(global_pg_score_dict)
+    → Dict{Tuple{String,Bool,UInt8}, Float32}
+
+Compute protein global q-values directly from score dictionary.
+Replaces get_protein_global_qval_dict (which loaded a full merged DataFrame).
+"""
+function build_protein_global_qval_dict(
+    global_pg_score_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
+)
+    n = length(global_pg_score_dict)
+    keys_vec = collect(keys(global_pg_score_dict))
+    scores = Float32[global_pg_score_dict[k] for k in keys_vec]
+    targets = Bool[k[2] for k in keys_vec]
+
+    # Sort by (score desc, target desc) for proper FDR
+    perm = sortperm(collect(zip(scores, targets)); by=x->(-x[1], -x[2]))
+    permute!(keys_vec, perm)
+    permute!(scores, perm)
+    permute!(targets, perm)
+
+    qvals = Vector{Float32}(undef, n)
+    get_qvalues!(scores, targets, qvals)
+
+    qval_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
+    sizehint!(qval_dict, n)
+    for i in 1:n
+        qval_dict[keys_vec[i]] = qvals[i]
+    end
+    return qval_dict
+end
+
+"""
+    apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference},
                         β_fitted::Vector{Float64}, feature_names::Vector{Symbol})
-    
+
 Apply probit regression scores to protein group files.
 Note: This function is called from utils.jl and needs access to calculate_probit_scores.
 """
