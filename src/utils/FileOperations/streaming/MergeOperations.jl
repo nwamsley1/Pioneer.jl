@@ -378,6 +378,37 @@ function _write_batch_typed(
 end
 
 #==========================================================
+Hierarchical Merge Support (FD-safe staging)
+==========================================================#
+
+"""
+    _stage_merge(refs, sort_keys...; max_fanin, reverse, batch_size)
+
+Merge `refs` in groups of `max_fanin` into temporary Arrow files.
+Returns a vector of FileReferences pointing to the staged temp files.
+Used internally to keep the number of simultaneously-open files bounded.
+"""
+function _stage_merge(
+    refs::Vector{<:FileReference},
+    sort_keys::Symbol...;
+    max_fanin::Int,
+    reverse::Union{Bool,Vector{Bool}},
+    batch_size::Int
+)
+    temp_dir = mktempdir()
+    staged_refs = similar(refs, 0)
+    for (i, batch) in enumerate(Iterators.partition(refs, max_fanin))
+        temp_path = joinpath(temp_dir, "stage_$i.arrow")
+        merged_ref = stream_sorted_merge(
+            collect(batch), temp_path, sort_keys...;
+            reverse, batch_size, max_fanin
+        )
+        push!(staged_refs, merged_ref)
+    end
+    return staged_refs
+end
+
+#==========================================================
 Main Stream Sorted Merge Function
 ==========================================================#
 
@@ -417,26 +448,35 @@ stream_sorted_merge(refs, path, :protein, :score, :name; reverse=[false, true, f
 ```
 """
 function stream_sorted_merge(
-    refs::Vector{<:FileReference}, 
+    refs::Vector{<:FileReference},
     output_path::String,
     sort_keys::Symbol...;
     reverse::Union{Bool,Vector{Bool}}=false,
-    batch_size::Int=1_000_000
+    batch_size::Int=1_000_000,
+    max_fanin::Int=64
 )
     # Validate inputs
     isempty(refs) && error("No files to merge")
     isempty(sort_keys) && error("At least one sort key must be specified")
-    
+
+    # Hierarchical merge: stage in batches to avoid FD exhaustion
+    if length(refs) > max_fanin
+        staged_refs = _stage_merge(refs, sort_keys...; max_fanin, reverse, batch_size)
+        return stream_sorted_merge(
+            staged_refs, output_path, sort_keys...;
+            reverse, batch_size, max_fanin
+        )
+    end
+
     # Convert sort_keys to tuple for type stability
     sort_keys_tuple = tuple(sort_keys...)
-    
+
     # Normalize reverse specification
     reverse_vec = _normalize_reverse_spec(reverse, length(sort_keys))
-    
+
     # Determine types from first file
     first_table = Arrow.Table(file_path(first(refs)))
     sort_types = tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
-    
 
     # Dispatch to N-key implementation
     return _stream_sorted_merge_nkey_impl(
@@ -565,10 +605,20 @@ function stream_sorted_merge_chunked(
     sort_keys::Symbol...;
     reverse::Union{Bool,Vector{Bool}}=false,
     batch_size::Int=1_000_000,
-    max_chunk_bytes::Int=1_000_000_000
+    max_chunk_bytes::Int=1_000_000_000,
+    max_fanin::Int=64
 )
     isempty(refs) && error("No files to merge")
     isempty(sort_keys) && error("At least one sort key must be specified")
+
+    # Hierarchical merge: stage in batches to avoid FD exhaustion
+    if length(refs) > max_fanin
+        staged_refs = _stage_merge(refs, sort_keys...; max_fanin, reverse, batch_size)
+        return stream_sorted_merge_chunked(
+            staged_refs, output_dir, group_key, sort_keys...;
+            reverse, batch_size, max_chunk_bytes, max_fanin
+        )
+    end
 
     sort_keys_tuple = tuple(sort_keys...)
     reverse_vec = _normalize_reverse_spec(reverse, length(sort_keys))
