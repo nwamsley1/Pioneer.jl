@@ -457,14 +457,15 @@ function writePrecursorCSV_chunked(
 
     sorted_columns = vcat(wide_columns, file_names)
     n_chunks = length(chunk_refs)
-    n_total_arrow_writes = 0
 
     open(long_precursors_path, "w") do io1
         open(wide_precursors_path, "w") do io2
+            open(wide_precursors_arrow_path, "w") do io_arrow
             headers_written = false
+            pbar = ProgressBar(total=n_chunks)
+            set_description(pbar, "Writing precursor CSV chunks:")
 
             for (ci, chunk_ref) in enumerate(chunk_refs)
-                @user_info "Writing precursor CSV chunk $ci/$n_chunks..."
                 precursors_long = DataFrame(Arrow.Table(file_path(chunk_ref)))
                 n_rows = size(precursors_long, 1)
                 n_rows == 0 && continue
@@ -530,18 +531,13 @@ function writePrecursorCSV_chunked(
                         _sanitize_empty_strings!(subunstack)
                         CSV.write(io2, subunstack[!, sorted_columns], append=true, header=false, delim='\t')
                     end
-                    if iszero(n_total_arrow_writes)
-                        open(wide_precursors_arrow_path, "w") do io
-                            Arrow.write(io, subunstack[!, sorted_columns]; file=false)
-                        end
-                    else
-                        Arrow.append(wide_precursors_arrow_path, subunstack[!, sorted_columns])
-                    end
-                    n_total_arrow_writes += 1
+                    Arrow.write(io_arrow, subunstack[!, sorted_columns]; file=false)
                 end
 
                 precursors_long = nothing  # Free chunk memory
+                update(pbar)
             end
+            end  # io_arrow
         end
     end
     if !write_csv
