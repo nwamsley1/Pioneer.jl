@@ -62,7 +62,7 @@ struct MaxLFQSearchParameters <: SearchParameters
     min_peptides::Int64
 
     # Chunked merge parameters
-    max_chunk_size_mb::Int64
+    max_chunk_size_mb::Float64
 
     # Output parameters
     write_csv::Bool
@@ -84,7 +84,7 @@ struct MaxLFQSearchParameters <: SearchParameters
             Float32(global_params.scoring.q_value_threshold),
             Int64(100000),  # Default batch size
             Int64(protein_inference_params.min_peptides),
-            Int64(get(maxLFQ_params, :max_chunk_size_mb, 1024)),
+            Float64(get(maxLFQ_params, :max_chunk_size_mb, 1024)),
             Bool(output_params.write_csv),
             Bool(output_params.delete_temp),
             params  # Store full parameters
@@ -189,7 +189,7 @@ function summarize_results!(
 
         # Chunked merge: split into protein-group-aligned chunks bounded by max_chunk_size_mb
         chunk_dir = joinpath(temp_folder, "merge_chunks")
-        max_chunk_bytes = Int(params.max_chunk_size_mb) * 1_000_000
+        max_chunk_bytes = round(Int, params.max_chunk_size_mb * 1_000_000)
         @user_info "Chunked merge (max_chunk_size=$(params.max_chunk_size_mb) MB)..."
         @time chunk_refs = stream_sorted_merge_chunked(
             psm_refs, chunk_dir, :inferred_protein_group, sort_keys...;
