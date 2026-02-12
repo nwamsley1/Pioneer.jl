@@ -635,6 +635,7 @@ function _stream_sorted_merge_chunked_impl(
     current_chunk_bytes::Int64 = 0
     prev_group = nothing      # group_key value of the most recently queued row
     rows_processed = 0
+    rows_with_missing_group = 0
 
     while !isempty(heap)
         heap_entry = pop!(heap)
@@ -643,9 +644,12 @@ function _stream_sorted_merge_chunked_impl(
 
         # Read this row's group key
         row_group = Tables.getcolumn(tables[src_table_idx], group_key)[src_row_idx]
+        if ismissing(row_group)
+            rows_with_missing_group += 1
+        end
 
         # Chunk split check: group changed AND chunk exceeds size limit AND chunk is non-empty
-        if prev_group !== nothing && row_group != prev_group &&
+        if prev_group !== nothing && !isequal(row_group, prev_group) &&
            current_chunk_bytes >= max_chunk_bytes && n_writes_in_chunk > 0
             # Flush any pending rows to current chunk before splitting
             if row_idx > 1
@@ -693,6 +697,10 @@ function _stream_sorted_merge_chunked_impl(
         _write_batch_typed(chunk_path(), batch_df, n_writes_in_chunk, final_rows)
     end
     push!(chunk_paths, chunk_path())
+
+    if rows_with_missing_group > 0
+        @warn "Chunked merge: $rows_with_missing_group / $rows_processed rows had missing $group_key (shared peptides — filtered downstream by LFQ)"
+    end
 
     # Create output references
     ref_type = typeof(first(refs))
