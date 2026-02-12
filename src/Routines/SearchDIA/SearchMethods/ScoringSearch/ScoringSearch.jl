@@ -197,58 +197,6 @@ function get_precursor_global_qval_spline(merged_path::String, params::ScoringSe
 end
 
 """
-    get_precursor_global_qval_dict(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
-    -> Dict{UInt32, Float32}
-
-Calculate global q-values at the precursor level and return as dictionary mapping.
-
-Since global_prob is calculated per precursor (one value per precursor_idx across all runs),
-each precursor should have exactly one global q-value. This function:
-1. Loads merged PSM data
-2. Reduces to one row per precursor_idx
-3. Calculates q-values on the reduced dataset
-4. Returns Dict{precursor_idx => global_qval}
-
-This approach is more accurate than spline interpolation since we have exact values for each precursor.
-"""
-function get_precursor_global_qval_dict(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
-    # Determine which score column to use
-    score_col = params.match_between_runs ? :MBR_boosted_global_prob : :global_prob
-
-    # Load merged PSMs
-    merged_table = Arrow.Table(merged_path)
-    df = DataFrame(merged_table)
-
-    # Reduce to one row per precursor
-    # All rows for the same precursor should have the same global_prob, so we just take the first
-    precursor_df = combine(groupby(df, :precursor_idx)) do group
-        (global_prob = first(group[!, score_col]),
-         target = first(group.target))
-    end
-
-    # Sort by global_prob descending for q-value calculation
-    sort!(precursor_df, :global_prob, rev=true)
-
-    # Calculate q-values using standard FDR calculation
-    n = nrow(precursor_df)
-    qvals = Vector{Float32}(undef, n)
-
-    # Use library FDR scale factor
-    fdr_scale = getLibraryFdrScaleFactor(search_context)
-
-    # Calculate q-values
-    get_qvalues!(precursor_df.global_prob, precursor_df.target, qvals; fdr_scale_factor=fdr_scale)
-
-    # Create dictionary mapping precursor_idx -> global_qval
-    qval_dict = Dict{UInt32, Float32}()
-    for i in 1:n
-        qval_dict[precursor_df.precursor_idx[i]] = qvals[i]
-    end
-
-    return qval_dict
-end
-
-"""
 Create experiment-wide precursor q-value spline (all precursors).
 """
 function get_precursor_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
@@ -281,65 +229,6 @@ function get_protein_global_qval_spline(merged_path::String, params::ScoringSear
         merged_path, :global_pg_score, true;
         min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
     )
-end
-
-"""
-    get_protein_global_qval_dict(merged_path::String, params::ScoringSearchParameters)
-    -> (Dict{ProteinKey, Float32}, Dict{Tuple{String,Bool,UInt8}, Float32})
-
-Calculate global q-values at the protein group level and return both dictionaries.
-
-Since global_pg_score is calculated per protein group (one value per (protein_name, target, entrap_id)
-across all files), each protein group should have exactly one global q-value. This function:
-1. Loads merged protein group data
-2. Reduces to one row per protein group
-3. Calculates q-values on the reduced dataset
-4. Returns TWO dictionaries:
-   - pg_name_to_global_pg_score: ProteinKey => global_pg_score (for Step 24)
-   - global_pg_score_to_qval_dict: Tuple => global_pg_qval (for Step 24)
-
-This approach is more accurate than spline interpolation since we have exact values for each protein group.
-"""
-function get_protein_global_qval_dict(merged_path::String, params::ScoringSearchParameters)
-    # Load merged protein groups (already has global_pg_score column from Step 16)
-    merged_table = Arrow.Table(merged_path)
-    df = DataFrame(merged_table)
-
-    # Reduce to one row per protein group
-    # All rows for the same protein group should have the same global_pg_score
-    protein_group_df = combine(groupby(df, [:protein_name, :target, :entrap_id])) do group
-        (global_pg_score = first(group.global_pg_score),)
-    end
-
-    # Sort by global_pg_score descending for q-value calculation
-    sort!(protein_group_df, [:global_pg_score,:target], rev=[true,true])
-
-    # Calculate q-values using standard FDR calculation
-    n = nrow(protein_group_df)
-    qvals = Vector{Float32}(undef, n)
-
-    # Calculate q-values (no FDR scale factor for proteins)
-    get_qvalues!(protein_group_df.global_pg_score, protein_group_df.target, qvals)
-
-    # Build BOTH dictionaries in one pass (efficient!)
-    pg_name_to_global_pg_score = Dict{ProteinKey, Float32}()
-    global_pg_score_to_qval_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
-
-    for i in 1:n
-        protein_name = protein_group_df.protein_name[i]
-        target = protein_group_df.target[i]
-        entrap_id = protein_group_df.entrap_id[i]
-
-        # Dictionary 1: ProteinKey -> global_pg_score (for Step 24)
-        key_struct = ProteinKey(protein_name, target, entrap_id)
-        pg_name_to_global_pg_score[key_struct] = protein_group_df.global_pg_score[i]
-
-        # Dictionary 2: Tuple -> global_pg_qval (for Step 24)
-        key_tuple = (protein_name, target, entrap_id)
-        global_pg_score_to_qval_dict[key_tuple] = qvals[i]
-    end
-
-    return pg_name_to_global_pg_score, global_pg_score_to_qval_dict
 end
 
 """
@@ -514,23 +403,14 @@ function summarize_results!(
             global_qval_dict = build_global_qval_dict_from_scores(score_dict_for_qval, target_dict, fdr_scale)
             results.precursor_global_qval_dict[] = global_qval_dict
 
-            # A3: Write lightweight score sidecars for q-value spline computation (~8 bytes/row)
+            # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
             score_col = has_mbr ? :MBR_boosted_prec_prob : :prec_prob
-            sidecar_refs = write_score_sidecars(filtered_refs, [score_col, :target]; temp_prefix="qval_sidecar")
-
-            # A4: Sort + merge sidecars (tiny files — 2 columns only)
-            sort_file_by_keys!(sidecar_refs, score_col, :target; reverse=[true, true])
-            stream_sorted_merge(sidecar_refs, results.merged_quant_path, score_col, :target;
-                               batch_size=10_000_000, reverse=[true, true])
-            for ref in sidecar_refs; rm(file_path(ref), force=true); end
-
-            # A5: Build q-value spline + PEP interpolation from merged sidecar
-            qval_spline = get_qvalue_spline(results.merged_quant_path, score_col, false;
-                min_pep_points_per_bin=params.precursor_q_value_interpolation_points_per_bin,
-                fdr_scale_factor=fdr_scale)
+            spline_result = build_qvalue_spline_from_refs(filtered_refs, score_col, results.merged_quant_path;
+                compute_pep=true, min_pep_points_per_bin=params.precursor_q_value_interpolation_points_per_bin,
+                fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
+            qval_spline = spline_result.qval_spline
             results.precursor_qval_interp[] = qval_spline
-            results.precursor_pep_interp[] = get_pep_interpolation(results.merged_quant_path, score_col;
-                fdr_scale_factor=fdr_scale)
+            results.precursor_pep_interp[] = spline_result.pep_interp
 
             # Phase B — Single per-file pipeline combining Steps 5+10
             global_qval_col = has_mbr ? :MBR_boosted_global_qval : :global_qval
@@ -566,27 +446,17 @@ function summarize_results!(
             recalc_score_col = has_mbr_cols ? :MBR_boosted_prec_prob : :prec_prob
             recalc_qval_col = has_mbr_cols ? :MBR_boosted_qval : :qval
 
-            # Sidecar sort+merge for new spline (on filtered data)
-            sidecar_refs = write_score_sidecars(passing_refs, [recalc_score_col, :target]; temp_prefix="recalc_sidecar")
-
-            if isempty(sidecar_refs)
+            # Sidecar lifecycle for new spline (on filtered data)
+            spline_result = build_qvalue_spline_from_refs(passing_refs, recalc_score_col, results.merged_quant_path;
+                min_pep_points_per_bin=params.precursor_q_value_interpolation_points_per_bin,
+                fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
+            if spline_result === nothing
                 @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
             else
-            sort_file_by_keys!(sidecar_refs, recalc_score_col, :target; reverse=[true, true])
-            stream_sorted_merge(sidecar_refs, results.merged_quant_path, recalc_score_col, :target;
-                               batch_size=10_000_000, reverse=[true, true])
-            for ref in sidecar_refs; rm(file_path(ref), force=true); end
-
-            new_qval_spline = get_qvalue_spline(
-                results.merged_quant_path, recalc_score_col, false;
-                min_pep_points_per_bin=params.precursor_q_value_interpolation_points_per_bin,
-                fdr_scale_factor=getLibraryFdrScaleFactor(search_context))
-
-            recalc_pipeline = TransformPipeline() |>
-                add_interpolated_column(recalc_qval_col, recalc_score_col, new_qval_spline)
-
-            passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
-            end # if !isempty(sidecar_refs)
+                recalc_pipeline = TransformPipeline() |>
+                    add_interpolated_column(recalc_qval_col, recalc_score_col, spline_result.qval_spline)
+                passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
+            end
         end
 
         # Update search context with passing PSM paths
@@ -660,19 +530,13 @@ function summarize_results!(
             global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)
             search_context.global_pg_score_to_qval_dict[] = global_pg_qval_dict
 
-            # D3: Write score sidecars for experiment-wide PG spline
+            # D3-D5: Sidecar lifecycle → PG spline + PEP interpolation
             sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
-            pg_sidecar_refs = write_score_sidecars(pg_refs, [:pg_score, :target]; temp_prefix="pg_sidecar")
-
-            # D4: Sort + merge sidecars
-            sort_file_by_keys!(pg_sidecar_refs, :pg_score, :target; reverse=[true, true])
-            stream_sorted_merge(pg_sidecar_refs, sorted_pg_scores_path, :pg_score, :target;
-                               batch_size=1_000_000, reverse=[true, true])
-            for ref in pg_sidecar_refs; rm(file_path(ref), force=true); end
-
-            # D5: Build PG spline + PEP interpolation
-            search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
-            search_context.pg_score_to_pep[] = get_protein_pep_interpolation(sorted_pg_scores_path, params)
+            spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
+                batch_size=1_000_000, compute_pep=true,
+                min_pep_points_per_bin=params.pg_q_value_interpolation_points_per_bin, temp_prefix="pg_sidecar")
+            search_context.pg_score_to_qval[] = spline_result.qval_spline
+            search_context.pg_score_to_pep[] = spline_result.pep_interp
 
             # Phase B — Single per-file pipeline combining Steps 16+23
             protein_combined_pipeline = TransformPipeline() |>
@@ -688,13 +552,10 @@ function summarize_results!(
             apply_pipeline!(pg_refs, protein_combined_pipeline)
 
             # Post-filtering recalculation of pg_qval on filtered data
-            pg_sidecar_refs = write_score_sidecars(pg_refs, [:pg_score, :target]; temp_prefix="pg_recalc")
-            sort_file_by_keys!(pg_sidecar_refs, :pg_score, :target; reverse=[true, true])
-            stream_sorted_merge(pg_sidecar_refs, sorted_pg_scores_path, :pg_score, :target;
-                               batch_size=1_000_000, reverse=[true, true])
-            for ref in pg_sidecar_refs; rm(file_path(ref), force=true); end
-
-            search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
+            spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
+                batch_size=1_000_000, min_pep_points_per_bin=params.pg_q_value_interpolation_points_per_bin,
+                temp_prefix="pg_recalc")
+            search_context.pg_score_to_qval[] = spline_result.qval_spline
 
             recalc_pg_pipeline = TransformPipeline() |>
                 add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[])
