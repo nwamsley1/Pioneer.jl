@@ -389,9 +389,10 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
     
     # Main processing logic (inlined from original LFQ function)
+    nfiles = length(unique(prot[!, :ms_file_idx]))
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
     n_writes = append ? 1 : 0  # When appending, skip the initial file creation/deletion
-    is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
+    @assert issorted(prot[!, :inferred_protein_group], rev=true) "LFQ input must be sorted by :inferred_protein_group (descending)"
 
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx, :inferred_protein_group]
@@ -427,38 +428,23 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             [:target, :entrapment_group_id, :species, :inferred_protein_group]
         )
         ngroups = length(gpsms)
-        nfiles = length(unique(prot[!,:ms_file_idx]))
         nrows = nfiles*ngroups
         
-        # Pre-allocate the batch
+        # Pre-allocate the batch with missing values
         out = Dict(
-            :target => Vector{Union{Missing, Bool}}(undef, nrows),
-            :entrap_id => Vector{Union{Missing, UInt8}}(undef, nrows),
-            :species => Vector{Union{Missing, String}}(undef, nrows),
-            :protein => Vector{Union{Missing, String}}(undef, nrows),
-            :peptides => Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}(undef, nrows),
-            :log2_abundance => zeros(Union{Missing, Float32}, nrows),
-            :experiments => zeros(Union{Missing, UInt32}, nrows),
-            :global_qval => zeros(Union{Missing, Float32}, nrows),
-            :qval => zeros(Union{Missing, Float32}, nrows),
-            :pg_pep => zeros(Union{Missing, Float32}, nrows),
-            :pg_score => zeros(Union{Missing, Float32}, nrows),
-            :global_pg_score => zeros(Union{Missing, Float32}, nrows),
+            :target => Vector{Union{Missing, Bool}}(missing, nrows),
+            :entrap_id => Vector{Union{Missing, UInt8}}(missing, nrows),
+            :species => Vector{Union{Missing, String}}(missing, nrows),
+            :protein => Vector{Union{Missing, String}}(missing, nrows),
+            :peptides => Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}(missing, nrows),
+            :log2_abundance => Vector{Union{Missing, Float32}}(missing, nrows),
+            :experiments => Vector{Union{Missing, UInt32}}(missing, nrows),
+            :global_qval => Vector{Union{Missing, Float32}}(missing, nrows),
+            :qval => Vector{Union{Missing, Float32}}(missing, nrows),
+            :pg_pep => Vector{Union{Missing, Float32}}(missing, nrows),
+            :pg_score => Vector{Union{Missing, Float32}}(missing, nrows),
+            :global_pg_score => Vector{Union{Missing, Float32}}(missing, nrows),
         )
-        for i in range(1, nrows)
-            out[:target][i] = missing
-            out[:entrap_id][i] = missing
-            out[:species][i] = missing
-            out[:protein][i] = missing
-            out[:peptides][i] = missing
-            out[:experiments][i] = missing
-            out[:log2_abundance][i] = missing
-            out[:global_qval][i] = missing
-            out[:qval][i] = missing
-            out[:pg_pep][i] = missing
-            out[:pg_score][i] = missing
-            out[:global_pg_score][i] = missing
-        end
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
             getProtAbundance(protein[:inferred_protein_group], 
