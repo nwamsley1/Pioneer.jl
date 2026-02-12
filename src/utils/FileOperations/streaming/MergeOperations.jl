@@ -612,7 +612,7 @@ function _stream_sorted_merge_chunked_impl(
     table_sizes = [length(Tables.getcolumn(table, 1)) for table in tables]
     total_source_bytes = sum(filesize(file_path(ref)) for ref in refs)
     total_source_rows = sum(table_sizes)
-    estimated_bytes_per_row = total_source_rows > 0 ? total_source_bytes ÷ total_source_rows : 0
+    estimated_bytes_per_row = total_source_rows > 0 ? total_source_bytes / total_source_rows : 0.0
     table_indices = ones(Int64, length(tables))
 
     batch_df = create_typed_dataframe(first(tables), batch_size)
@@ -635,7 +635,7 @@ function _stream_sorted_merge_chunked_impl(
 
     row_idx = 1
     n_writes_in_chunk = 0
-    current_chunk_bytes::Int64 = 0
+    current_chunk_bytes = 0.0
     prev_group = nothing      # group_key value of the most recently queued row
     rows_processed = 0
     rows_with_missing_group = 0
@@ -666,7 +666,7 @@ function _stream_sorted_merge_chunked_impl(
             push!(chunk_paths, chunk_path())
             chunk_idx += 1
             n_writes_in_chunk = 0
-            current_chunk_bytes = 0
+            current_chunk_bytes = 0.0
         end
 
         # Add row to batch
