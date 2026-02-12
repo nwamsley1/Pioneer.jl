@@ -414,9 +414,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             initial_rows = nrow(subdf)
         end
         
-        # Log batch status after filtering
         if nrow(subdf) == 0
-            @user_warn "Batch filtered to 0 rows" batch_start=batch_start_idx batch_end=batch_end_idx
             continue  # Skip empty batches
         end
         
@@ -546,12 +544,14 @@ function LFQ_chunked(
     isfile(protein_quant_path) && rm(protein_quant_path)
 
     n_chunks = length(chunk_refs)
+    pbar = ProgressBar(total=n_chunks)
+    set_description(pbar, "MaxLFQ chunks:")
     for (ci, chunk_ref) in enumerate(chunk_refs)
-        @user_info "MaxLFQ chunk $ci/$n_chunks..."
         # First chunk creates file (append=false), subsequent chunks append
         LFQ(chunk_ref, protein_quant_path, quant_col,
             file_id_to_parsed_name, q_value_threshold;
             batch_size=batch_size, append=(ci > 1))
+        update(pbar)
     end
     return nothing
 end
