@@ -610,6 +610,9 @@ function _stream_sorted_merge_chunked_impl(
     end
 
     table_sizes = [length(Tables.getcolumn(table, 1)) for table in tables]
+    total_source_bytes = sum(filesize(file_path(ref)) for ref in refs)
+    total_source_rows = sum(table_sizes)
+    estimated_bytes_per_row = total_source_rows > 0 ? total_source_bytes ÷ total_source_rows : 0
     table_indices = ones(Int64, length(tables))
 
     batch_df = create_typed_dataframe(first(tables), batch_size)
@@ -648,9 +651,9 @@ function _stream_sorted_merge_chunked_impl(
             rows_with_missing_group += 1
         end
 
-        # Chunk split check: group changed AND chunk exceeds size limit AND chunk is non-empty
+        # Chunk split check: group changed AND chunk exceeds size limit AND chunk has data
         if prev_group !== nothing && !isequal(row_group, prev_group) &&
-           current_chunk_bytes >= max_chunk_bytes && n_writes_in_chunk > 0
+           current_chunk_bytes >= max_chunk_bytes && (n_writes_in_chunk > 0 || row_idx > 1)
             # Flush any pending rows to current chunk before splitting
             if row_idx > 1
                 pending = row_idx - 1
@@ -670,6 +673,7 @@ function _stream_sorted_merge_chunked_impl(
         sorted_tuples[row_idx] = (src_table_idx, src_row_idx)
         prev_group = row_group
         rows_processed += 1
+        current_chunk_bytes += estimated_bytes_per_row
 
         # Advance source table cursor
         table_indices[src_table_idx] += 1
