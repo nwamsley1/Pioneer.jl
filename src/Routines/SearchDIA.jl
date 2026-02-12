@@ -349,15 +349,19 @@ function SearchDIA(params_path::String)
             ("MaxLFQ", MaxLFQSearch())
         ]
 
-        # Execute each search phase and record timing
+        # Execute each search phase and record timing + peak RSS delta
+        rss_deltas = Dict{String, Float64}()
         for (name, search) in searches
             @user_info "Executing $name..."
+            rss_before = peak_rss()
             search_timing = @timed execute_search(search, SEARCH_CONTEXT, params)
+            rss_after = peak_rss()
             timings[name] = search_timing
+            rss_deltas[name] = (rss_after - rss_before) / (1024^3)
         end
 
         # === Generate performance report ===
-        print_performance_report(timings, MS_TABLE_PATHS, SEARCH_CONTEXT)
+        print_performance_report(timings, MS_TABLE_PATHS, SEARCH_CONTEXT, rss_deltas)
         
     catch e
         error_msg = try
@@ -435,21 +439,22 @@ end
 """
 Helper function to print formatted performance metrics
 """
-function print_performance_report(timings, ms_table_paths, search_context)
+function print_performance_report(timings, ms_table_paths, search_context, rss_deltas=Dict{String,Float64}())
     # Header
-    @user_print "\n" * repeat("=", 90)
+    @user_print "\n" * repeat("=", 102)
     @user_print "DIA Search Performance Report"
-    @user_print repeat("=", 90)
+    @user_print repeat("=", 102)
 
     # Detailed analysis
     @user_print "\nDetailed Step Analysis:"
-    @user_print repeat("-", 90)
-    @user_print rpad("Step", 30) * " " * 
+    @user_print repeat("-", 102)
+    @user_print rpad("Step", 30) * " " *
             rpad("Time (s)", 12) * " " *
-            rpad("Memory (GB)", 12) * " " * 
+            rpad("Memory (GB)", 12) * " " *
             rpad("GC Time (s)", 12) * " " *
-            rpad("GC %", 12)
-    @user_print repeat("-", 90)
+            rpad("GC %", 12) * " " *
+            rpad("Peak RSS +", 12)
+    @user_print repeat("-", 102)
 
     # Calculate totals
     peak_memory = peak_rss()
@@ -470,28 +475,30 @@ function print_performance_report(timings, ms_table_paths, search_context)
         total_memory += timing.bytes
         total_gc += gc_s
 
+        rss_delta_str = haskey(rss_deltas, step) ? @sprintf("%.2f GB", rss_deltas[step]) : "-"
         @user_print rpad(step, 30) * " " *
             rpad(@sprintf("%.2f", time_s), 12) * " " *
             rpad(@sprintf("%.2f", mem_gb), 12) * " " *
             rpad(@sprintf("%.2f", gc_s), 12) * " " *
-            rpad(@sprintf("%.1f", gc_pct), 12)
+            rpad(@sprintf("%.1f", gc_pct), 12) * " " *
+            rpad(rss_delta_str, 12)
     end
 
     # Print summary statistics
     print_summary_statistics(
         total_time, total_memory, peak_memory, total_gc,
         length(timings), length(ms_table_paths),
-        search_context
+        search_context, rss_deltas
     )
 end
 
 """
 Helper function to print summary statistics
 """
-function print_summary_statistics(total_time, total_memory, peak_memory, total_gc, 
-                                n_steps, n_files, search_context)
+function print_summary_statistics(total_time, total_memory, peak_memory, total_gc,
+                                n_steps, n_files, search_context, rss_deltas=Dict{String,Float64}())
     # Print totals
-    @user_print repeat("-", 90)
+    @user_print repeat("-", 102)
     @user_print rpad("TOTAL", 30) * " " *
             rpad(@sprintf("%.2f", total_time), 12) * " " *
             rpad(@sprintf("%.2f", total_memory/(1024^3)), 12) * " " *
@@ -500,18 +507,22 @@ function print_summary_statistics(total_time, total_memory, peak_memory, total_g
 
     # Memory summary
     @user_print "\nMemory Usage Summary:"
-    @user_print repeat("-", 90)
+    @user_print repeat("-", 102)
     current_mem = Sys.total_memory() / 1024^3
     @user_print "Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB"
     @user_print "Peak  Memory Allocated: $(round(peak_memory/1024^3, digits=2)) GB"
     @user_print "Total Available Memory: $(round(current_mem, digits=2)) GB"
-    
+    if !isempty(rss_deltas)
+        peak_step = argmax(rss_deltas)
+        @user_print "Peak RSS Step: $peak_step (+$(@sprintf("%.2f", rss_deltas[peak_step])) GB)"
+    end
+
     # Runtime summary
     @user_print "\nRuntime Summary:"
-    @user_print repeat("-", 90)
+    @user_print repeat("-", 102)
     @user_print "Total Runtime: $(round(total_time/60, digits=2)) minutes"
     @user_print "Average Runtime per Step: $(round(total_time/n_steps, digits=2)) seconds"
     @user_print "Average Runtime per Raw File: $(round(total_time/n_files, digits=2)) seconds"
-    @user_print "\n" * repeat("=", 90)
+    @user_print "\n" * repeat("=", 102)
     @user_print "Huber δ: " * string(getHuberDelta(search_context))
 end

@@ -1176,6 +1176,52 @@ function write_score_sidecars(
 end
 
 """
+    build_qvalue_spline_from_refs(refs, score_col, merged_path; ...) → Union{Nothing, NamedTuple}
+
+Encapsulates the full sidecar lifecycle: write → sort → merge → cleanup → spline computation.
+Returns `nothing` if all files are empty, otherwise returns `(; qval_spline, pep_interp)`.
+`pep_interp` is `nothing` when `compute_pep=false`.
+
+Uses `try/finally` to guarantee sidecar cleanup even on error.
+"""
+function build_qvalue_spline_from_refs(
+    refs::Vector{<:FileReference},
+    score_col::Symbol,
+    merged_path::String;
+    batch_size::Int = 10_000_000,
+    compute_pep::Bool = false,
+    min_pep_points_per_bin::Int = 100,
+    fdr_scale_factor::Float32 = 1.0f0,
+    temp_prefix::String = "sidecar"
+)
+    sidecar_refs = write_score_sidecars(refs, [score_col, :target]; temp_prefix=temp_prefix)
+    isempty(sidecar_refs) && return nothing
+
+    try
+        sort_file_by_keys!(sidecar_refs, score_col, :target; reverse=[true, true])
+        stream_sorted_merge(sidecar_refs, merged_path, score_col, :target;
+                           batch_size=batch_size, reverse=[true, true])
+    finally
+        for ref in sidecar_refs
+            rm(file_path(ref), force=true)
+        end
+    end
+
+    qval_spline = get_qvalue_spline(merged_path, score_col, false;
+        min_pep_points_per_bin=min_pep_points_per_bin,
+        fdr_scale_factor=fdr_scale_factor)
+
+    pep_interp = if compute_pep
+        get_pep_interpolation(merged_path, score_col;
+            fdr_scale_factor=fdr_scale_factor)
+    else
+        nothing
+    end
+
+    return (; qval_spline, pep_interp)
+end
+
+"""
     build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
     → (global_pg_score_dict, pg_name_to_global_pg_score)
 
