@@ -540,9 +540,168 @@ function _stream_sorted_merge_nkey_impl(
     
     # Create output reference
     output_ref = create_reference(output_path, typeof(first(refs)))
-    
+
     # Mark as sorted - heap-based merge maintains sort order for all cases
     mark_sorted!(output_ref, sort_keys...)
-    
+
     return output_ref
+end
+
+"""
+    stream_sorted_merge_chunked(refs, output_dir, group_key, sort_keys...;
+                                reverse, batch_size, max_chunk_bytes)
+
+Like `stream_sorted_merge` but splits the merged output into multiple chunk
+files, each not exceeding `max_chunk_bytes`.  Chunk boundaries are placed only
+at `group_key` transitions so every chunk contains only complete groups.
+Each chunk always gets at least one complete group even if it exceeds the limit.
+
+Returns `Vector{<:FileReference}` — one per chunk, each marked as sorted.
+"""
+function stream_sorted_merge_chunked(
+    refs::Vector{<:FileReference},
+    output_dir::String,
+    group_key::Symbol,
+    sort_keys::Symbol...;
+    reverse::Union{Bool,Vector{Bool}}=false,
+    batch_size::Int=1_000_000,
+    max_chunk_bytes::Int=1_000_000_000
+)
+    isempty(refs) && error("No files to merge")
+    isempty(sort_keys) && error("At least one sort key must be specified")
+
+    sort_keys_tuple = tuple(sort_keys...)
+    reverse_vec = _normalize_reverse_spec(reverse, length(sort_keys))
+
+    first_table = Arrow.Table(file_path(first(refs)))
+    sort_types = tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
+
+    return _stream_sorted_merge_chunked_impl(
+        refs, output_dir, group_key, sort_keys_tuple, sort_types,
+        reverse_vec, batch_size, max_chunk_bytes
+    )
+end
+
+function _stream_sorted_merge_chunked_impl(
+    refs::Vector{<:FileReference},
+    output_dir::String,
+    group_key::Symbol,
+    sort_keys::NTuple{N,Symbol},
+    sort_types::NTuple{M,Type},
+    reverse_vec::Vector{Bool},
+    batch_size::Int,
+    max_chunk_bytes::Int
+) where {N, M}
+    # Validate
+    for ref in refs
+        validate_exists(ref)
+        if !is_sorted_by(ref, sort_keys...)
+            error("File $(file_path(ref)) is not sorted by the required keys: $(sort_keys)")
+        end
+    end
+
+    tables = [Arrow.Table(file_path(ref)) for ref in refs]
+    for (i, table) in enumerate(tables)
+        available_columns = Set(Tables.columnnames(table))
+        for key in sort_keys
+            key ∉ available_columns && throw(BoundsError("Column $key not found in file $(file_path(refs[i]))"))
+        end
+        group_key ∉ available_columns && throw(BoundsError("Group key $group_key not found in file $(file_path(refs[i]))"))
+    end
+
+    table_sizes = [length(Tables.getcolumn(table, 1)) for table in tables]
+    table_indices = ones(Int64, length(tables))
+
+    batch_df = create_typed_dataframe(first(tables), batch_size)
+    sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, batch_size)
+
+    heap_tuple_type = Tuple{sort_types..., Int64}
+    heap = _create_typed_heap(heap_tuple_type, reverse_vec)
+
+    for (i, table) in enumerate(tables)
+        if table_sizes[i] > 0
+            _add_to_nkey_heap!(heap, table, i, 1, sort_keys)
+        end
+    end
+
+    # Chunking state
+    mkpath(output_dir)
+    chunk_paths = String[]
+    chunk_idx = 1
+    chunk_path() = joinpath(output_dir, @sprintf("chunk_%04d.arrow", chunk_idx))
+
+    row_idx = 1
+    n_writes_in_chunk = 0
+    current_chunk_bytes::Int64 = 0
+    prev_group = nothing      # group_key value of the most recently queued row
+    rows_processed = 0
+
+    while !isempty(heap)
+        heap_entry = pop!(heap)
+        src_table_idx = heap_entry[end]
+        src_row_idx = table_indices[src_table_idx]
+
+        # Read this row's group key
+        row_group = Tables.getcolumn(tables[src_table_idx], group_key)[src_row_idx]
+
+        # Chunk split check: group changed AND chunk exceeds size limit AND chunk is non-empty
+        if prev_group !== nothing && row_group != prev_group &&
+           current_chunk_bytes >= max_chunk_bytes && n_writes_in_chunk > 0
+            # Flush any pending rows to current chunk before splitting
+            if row_idx > 1
+                pending = row_idx - 1
+                _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, pending)
+                _write_batch_typed(chunk_path(), batch_df, n_writes_in_chunk, pending)
+                n_writes_in_chunk += 1
+                row_idx = 1
+            end
+            # Finalize current chunk, start new one
+            push!(chunk_paths, chunk_path())
+            chunk_idx += 1
+            n_writes_in_chunk = 0
+            current_chunk_bytes = 0
+        end
+
+        # Add row to batch
+        sorted_tuples[row_idx] = (src_table_idx, src_row_idx)
+        prev_group = row_group
+        rows_processed += 1
+
+        # Advance source table cursor
+        table_indices[src_table_idx] += 1
+        next_src_row = table_indices[src_table_idx]
+        if next_src_row <= table_sizes[src_table_idx]
+            _add_to_nkey_heap!(heap, tables[src_table_idx], src_table_idx, next_src_row, sort_keys)
+        end
+
+        row_idx += 1
+
+        # Write batch when full
+        if row_idx > batch_size
+            _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, batch_size)
+            _write_batch_typed(chunk_path(), batch_df, n_writes_in_chunk, batch_size)
+            n_writes_in_chunk += 1
+            row_idx = 1
+            current_chunk_bytes = isfile(chunk_path()) ? filesize(chunk_path()) : 0
+        end
+    end
+
+    # Write final partial batch
+    if row_idx > 1
+        final_rows = row_idx - 1
+        _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, final_rows)
+        _write_batch_typed(chunk_path(), batch_df, n_writes_in_chunk, final_rows)
+    end
+    push!(chunk_paths, chunk_path())
+
+    # Create output references
+    ref_type = typeof(first(refs))
+    chunk_refs = map(chunk_paths) do path
+        ref = create_reference(path, ref_type)
+        mark_sorted!(ref, sort_keys...)
+        ref
+    end
+
+    @user_info "Chunked merge: $(length(chunk_refs)) chunk(s), $rows_processed total rows"
+    return chunk_refs
 end

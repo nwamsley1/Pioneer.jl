@@ -162,7 +162,8 @@
         "min_peptides": 1
     },
     "maxLFQ": {
-        "run_to_run_normalization": false
+        "run_to_run_normalization": false,
+        "max_chunk_size_mb": 1024
     },
     "output": {
         "write_csv": true,

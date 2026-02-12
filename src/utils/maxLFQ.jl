@@ -371,7 +371,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             quant_col::Symbol,
             file_id_to_parsed_name::Vector{String},
             q_value_threshold::Float32;
-            batch_size = 100000)
+            batch_size = 100000,
+            append::Bool = false)
     
     # Use eager DataFrame loading (allows editing for filtering)
     prot = DataFrame(Tables.columntable(Arrow.Table(file_path(prot_ref))))
@@ -389,7 +390,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     
     # Main processing logic (inlined from original LFQ function)
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
-    n_writes = 0
+    n_writes = append ? 1 : 0  # When appending, skip the initial file creation/deletion
     is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
 
     while batch_start_idx <= size(prot, 1)
@@ -539,6 +540,35 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     return nothing
 end
 
+
+"""
+    LFQ_chunked(chunk_refs, protein_quant_path, quant_col, file_id_to_parsed_name, q_value_threshold; batch_size)
+
+Process a vector of chunk FileReferences independently for MaxLFQ protein quantification.
+Each chunk is loaded one at a time (~1 GB), processed, and results are appended to a single
+output Arrow file.  Memory is bounded by the chunk size rather than total dataset size.
+"""
+function LFQ_chunked(
+    chunk_refs::Vector{<:Any},  # Vector of FileReferences
+    protein_quant_path::String,
+    quant_col::Symbol,
+    file_id_to_parsed_name::Vector{String},
+    q_value_threshold::Float32;
+    batch_size::Int = 100000
+)
+    # Remove any pre-existing output
+    isfile(protein_quant_path) && rm(protein_quant_path)
+
+    n_chunks = length(chunk_refs)
+    for (ci, chunk_ref) in enumerate(chunk_refs)
+        @user_info "MaxLFQ chunk $ci/$n_chunks..."
+        # First chunk creates file (append=false), subsequent chunks append
+        LFQ(chunk_ref, protein_quant_path, quant_col,
+            file_id_to_parsed_name, q_value_threshold;
+            batch_size=batch_size, append=(ci > 1))
+    end
+    return nothing
+end
 
 function countPeptides(peptides::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}})
     
