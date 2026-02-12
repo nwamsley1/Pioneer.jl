@@ -62,7 +62,8 @@ function train_model(model::ProbitScorer, psms::AbstractPSMContainer,
     data_chunks = Iterators.partition(1:n, chunk_size)
 
     beta = zeros(Float64, length(features))
-    beta = ProbitRegression(beta, Matrix{Float64}(X), y, data_chunks;
+    X_df = DataFrame(Matrix{Float64}(X), features)
+    beta = ProbitRegression(beta, X_df, y, data_chunks;
                            max_iter=model.max_iter)
 
     return ProbitModel(beta, features)
@@ -84,7 +85,8 @@ function predict_scores(model::ProbitModel, psms::AbstractPSMContainer)
     chunk_size = max(1, n ÷ (10 * Threads.nthreads()))
     data_chunks = Iterators.partition(1:n, chunk_size)
     X = get_feature_matrix(psms, model.features)
-    ModelPredictProbs!(scores, Matrix{Float64}(X), model.beta, data_chunks)
+    X_df = DataFrame(Matrix{Float64}(X), model.features)
+    ModelPredictProbs!(scores, X_df, model.beta, data_chunks)
     return scores
 end
 
