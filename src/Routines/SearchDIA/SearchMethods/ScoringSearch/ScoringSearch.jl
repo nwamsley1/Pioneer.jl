@@ -48,7 +48,7 @@ Parameters for scoring search.
 """
 struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # LightGBM parameters
-    max_psms_in_memory::Int64
+    max_psm_memory_mb::Float64
     min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
     precursor_q_value_interpolation_points_per_bin::Int64
@@ -78,7 +78,6 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
 
     # OOM scoring parameters
     force_oom::Bool
-    max_training_psms::Int64
     max_mbr_training_candidates::Int64
 
     function ScoringSearchParameters(params::PioneerParameters)
@@ -95,7 +94,7 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
         end
         
         new{typeof(isotope_trace_type)}(
-            Int64(ml_params.max_psms_in_memory),
+            Float64(ml_params.max_psm_memory_mb),
             Float32(ml_params.min_trace_prob),
             Int64(ml_params.spline_points),
             Int64(ml_params.interpolation_points),
@@ -125,7 +124,6 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
 
             # OOM scoring parameters
             Bool(get(ml_params, :force_oom, false)),
-            Int64(get(ml_params, :max_training_psms, ml_params.max_psms_in_memory)),
             Int64(get(ml_params, :max_mbr_training_candidates, 1_000_000))
         )
     end
@@ -251,6 +249,31 @@ function get_protein_pep_interpolation(merged_path::String, params::ScoringSearc
 end
 
 """
+    estimate_max_rows(memory_mb::Float64, sample_file::String)
+
+Estimate the maximum number of rows that fit in `memory_mb` given the schema of `sample_file`.
+"""
+function estimate_max_rows(memory_mb::Float64, sample_file::String)
+    tbl = Arrow.Table(sample_file)
+    bytes_per_row = 0
+    for name in Tables.columnnames(tbl)
+        col = Tables.getcolumn(tbl, name)
+        T = eltype(col)
+        T_inner = Base.nonmissingtype(T)
+        if isbitstype(T_inner)
+            bytes_per_row += sizeof(T_inner)
+        else
+            bytes_per_row += 64  # conservative estimate for strings / non-bits types
+        end
+        if T !== T_inner
+            bytes_per_row += 1  # missing indicator
+        end
+    end
+    bytes_per_row = max(bytes_per_row, 1)
+    return max(floor(Int64, memory_mb * 1024 * 1024 / bytes_per_row), 1000)
+end
+
+"""
 Process all results to get final protein scores.
 """
 function summarize_results!(
@@ -292,6 +315,8 @@ function summarize_results!(
         end
 
         step1_time = @elapsed begin
+            max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
+            @user_info "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
             score_precursor_isotope_traces(
                 second_pass_folder,
                 valid_fold_paths,
@@ -300,12 +325,11 @@ function summarize_results!(
                 params.max_q_value_lightgbm_rescore,
                 params.max_q_value_mbr_itr,
                 params.min_PEP_neg_threshold_itr,
-                params.max_psms_in_memory,
+                max_psms,
                 params.n_quantile_bins,
                 params.q_value_threshold,
                 params.ms1_scoring,
-                params.force_oom,
-                params.max_training_psms
+                params.force_oom
             )
         end
         #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
@@ -499,9 +523,11 @@ function summarize_results!(
             qc_folder = joinpath(dirname(temp_folder), "qc_plots")
             !isdir(qc_folder) && mkdir(qc_folder)
 
+            max_pgs = estimate_max_rows(params.max_psm_memory_mb, file_path(first(pg_refs)))
+            @user_info "Memory budget $(params.max_psm_memory_mb) MB → max_protein_groups = $max_pgs"
             perform_protein_probit_regression(
                 pg_refs,
-                params.max_psms_in_memory,
+                max_pgs,
                 qc_folder,
                 getPrecursors(getSpecLib(search_context));
                 protein_to_cv_fold = protein_to_cv_fold,
