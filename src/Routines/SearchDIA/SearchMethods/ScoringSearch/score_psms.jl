@@ -21,6 +21,8 @@ PSM sampling and scoring
 
 # Constant for model selection threshold
 const MAX_FOR_MODEL_SELECTION = 200_000
+# Minimum PSM count before OOM path is allowed — datasets below this always use in-memory scoring
+const MIN_PSMS_FOR_OOM = 100_000
 # Backward-compatible alias used in discussions/documentation
 const MAX_FOR_MODEL_SELECTION_PSMS = MAX_FOR_MODEL_SELECTION
 
@@ -54,7 +56,6 @@ Main entry point for PSM scoring with automatic model selection based on dataset
 - `q_value_threshold`: Q-value threshold for model comparison (default: 0.01)
 - `ms1_scoring`: Whether to include MS1 scoring features (default: true)
 - `force_oom`: Force out-of-memory processing regardless of PSM count (default: false)
-- `max_training_psms`: Maximum PSMs to sample for training in OOM mode (default: 50M)
 
 # Returns
 - Trained LightGBM models or nothing for probit regression
@@ -71,16 +72,15 @@ function score_precursor_isotope_traces(
     n_quantile_bins::Int64,
     q_value_threshold::Float32 = 0.01f0,
     ms1_scoring::Bool = true,
-    force_oom::Bool = false,
-    max_training_psms::Int64 = Int64(50_000_000)
+    force_oom::Bool = false
 )
     # Step 1: Count PSMs and determine processing approach
     psms_count = get_psms_count(file_paths)
 
-    if force_oom || psms_count >= max_psms_in_memory
+    if force_oom || (psms_count >= max_psms_in_memory && psms_count >= MIN_PSMS_FOR_OOM)
         # Case 1: Out-of-memory processing with ArrowFilePSMContainer + trait-based percolator_scoring!
         @user_info "Using out-of-memory processing for $psms_count PSMs"
-        max_training = force_oom ? typemax(Int) : max_training_psms
+        max_training = max(max_psms_in_memory, MIN_PSMS_FOR_OOM)
 
         model_config = create_default_advanced_lightgbm_config(ms1_scoring)
         config = build_scoring_config(model_config, match_between_runs,
