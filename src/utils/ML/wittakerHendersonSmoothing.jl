@@ -15,6 +15,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+const CHOLMOD_LOCK = ReentrantLock()
+
 """
     whitsmddw(x, y, w, λ; d=2)
 
@@ -58,8 +60,12 @@ function whitsmddw(x::AbstractVector{Float32},
     # Initialize
     prob = LinearProblem(Symmetric(M), b)
 
-    # Solve for z
-    sol = solve(prob, CHOLMODFactorization())
+    # CHOLMOD is not thread-safe — serialize access to prevent EXCEPTION_ACCESS_VIOLATION.
+    # If this lock becomes a bottleneck, replace with pre-allocated dense buffers per thread
+    # or a direct pentadiagonal solver (the Whittaker-Henderson system with d=2 is always pentadiagonal).
+    sol = lock(CHOLMOD_LOCK) do
+        solve(prob, CHOLMODFactorization())
+    end
 
     # Downstream requires Float32
     z = Float32.(sol.u)
