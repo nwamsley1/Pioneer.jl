@@ -163,7 +163,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Int64(score_params.max_iterations),
             Float32(score_params.max_q_value_probit_rescore),
             #Float32(score_params.max_PEP),
-            0.7f0,
+            0.6f0,
             
             Int64(1000), # Default min_inference_points
             Float32(rt_params.min_probability),
