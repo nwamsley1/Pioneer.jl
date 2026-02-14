@@ -49,7 +49,9 @@ Dictionary mapping precursor indices to NamedTuple containing:
 function get_best_precursors_accross_runs(
                          psms_paths::Vector{String},
                          prec_mzs::AbstractVector{Float32},
-                         rt_irt::Dict{Int64, RtConversionModel};
+                         rt_irt::Dict{Int64, RtConversionModel},
+                         precursor_is_decoy::AbstractVector{Bool};
+                         fdr_scale_factor::Float32 = 1.0f0,
                          max_q_val::Float32 = 0.01f0
                          )
 
@@ -155,6 +157,9 @@ function get_best_precursors_accross_runs(
             if haskey(prec_to_best_prob, precursor_idx)
                 # Update variance calculation
                 best_prob, best_ms_file_idx, best_scan_idx, best_irt, mean_irt, var_irt, n, mz = prec_to_best_prob[precursor_idx] 
+                if n == 0
+                    continue
+                end
                 var_irt += (irt - mean_irt/n)^2
                 prec_to_best_prob[precursor_idx] = (
                     best_prob = best_prob, 
@@ -215,6 +220,32 @@ function get_best_precursors_accross_runs(
     # Handle case where no valid files were processed
     if isempty(prec_to_best_prob)
         @warn "No valid PSM files found for cross-run analysis"
+        return prec_to_best_prob
+    end
+
+    # Compute precursor-level global q-values from best probabilities.
+    # This replaces the previous union of precursor passes from individual files.
+    precursor_ids = collect(keys(prec_to_best_prob))
+    precursor_probs = [prec_to_best_prob[pid].best_prob for pid in precursor_ids]
+    precursor_targets = [!precursor_is_decoy[pid] for pid in precursor_ids]
+
+    sort_order = sortperm(precursor_probs, rev=true)
+    sorted_ids = precursor_ids[sort_order]
+    sorted_probs = precursor_probs[sort_order]
+    sorted_targets = precursor_targets[sort_order]
+
+    global_qvals = Vector{Float32}(undef, length(sorted_ids))
+    get_qvalues!(sorted_probs, sorted_targets, global_qvals; fdr_scale_factor=fdr_scale_factor)
+
+    passing_precursors = Set{UInt32}(
+        sorted_ids[i] for i in eachindex(sorted_ids)
+        if sorted_targets[i] && global_qvals[i] <= max_q_val
+    )
+
+    filter!(x -> x in passing_precursors, prec_to_best_prob)
+
+    if isempty(prec_to_best_prob)
+        @warn "No precursors passed global q-value filtering for cross-run analysis"
         return prec_to_best_prob
     end
 

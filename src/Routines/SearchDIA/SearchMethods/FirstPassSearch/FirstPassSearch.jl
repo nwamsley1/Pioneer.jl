@@ -549,10 +549,13 @@ function summarize_results!(
         end
         
         # Get best precursors from valid files only
+        precursors = getPrecursors(getSpecLib(search_context))
         return get_best_precursors_accross_runs(
             valid_psms_paths,
-            getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
+            getMz(precursors),#[:mz],
             valid_rt_irt,
+            getIsDecoy(precursors),
+            fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
             max_q_val=params.max_q_val_for_irt
         )
     end
