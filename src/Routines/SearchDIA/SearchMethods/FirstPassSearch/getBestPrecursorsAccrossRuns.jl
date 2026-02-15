@@ -239,7 +239,7 @@ function get_best_precursors_accross_runs(
 
     passing_precursors = Set{UInt32}(
         precursor_ids[i] for i in eachindex(precursor_ids)
-        if global_qvals[i] <= 0.01
+        if global_qvals[i] <= 0.02
     )
 
     @info "Global precursor q-value filter summary" max_q_val=max_q_val n_total=length(precursor_ids) n_passing=length(passing_precursors)
