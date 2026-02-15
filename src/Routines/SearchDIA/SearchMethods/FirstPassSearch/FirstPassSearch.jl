@@ -452,6 +452,7 @@ function process_file!(
             score = Float32[], 
             prob = Float32[],
             scan_count = UInt32[],
+            PEP = Float16[],
             fwhm = Float32[]  # Add this to prevent missing column error
         )
         results.psms[] = empty_psms
@@ -493,7 +494,7 @@ function process_search_results!(
     Arrow.write(
         temp_path,
         select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
-            :irt_predicted, :q_value, :score, :prob, :scan_count])
+            :irt_predicted, :q_value, :score, :prob, :scan_count, :PEP])
     )
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 
