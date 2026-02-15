@@ -28,7 +28,7 @@ Identify and collect best precursor matches across multiple runs for retention t
 - `psms_paths`: Paths to PSM files from first pass search
 - `prec_mzs`: Vector of precursor m/z values
 - `rt_irt`: Dictionary mapping file indices to RT-iRT conversion models
-- `max_q_val`: Maximum q-value threshold for considering PSMs
+- `max_q_val`: Maximum q-value threshold for considering PSMs during iRT variance estimation
 
 # Returns
 Dictionary mapping precursor indices to NamedTuple containing:
@@ -43,7 +43,7 @@ Dictionary mapping precursor indices to NamedTuple containing:
 
 # Process
 1. First pass: Collects best matches and calculates mean iRT for each precursor accross the runs 
-2. Filters to top N precursors by probability
+2. Applies precursor-level filters (PEP <= 0.5 OR global q-value <= 0.2 OR run-specific q-value <= 0.1)
 3. Second pass: Calculates iRT variance for remaining precursors
 """
 function get_best_precursors_accross_runs(
@@ -54,6 +54,10 @@ function get_best_precursors_accross_runs(
                          fdr_scale_factor::Float32 = 1.0f0,
                          max_q_val::Float32 = 0.01f0
                          )
+
+    GLOBAL_PRECURSOR_QVAL_THRESHOLD = 0.2f0
+    RUN_SPECIFIC_PRECURSOR_QVAL_THRESHOLD = 0.1f0
+    PRECURSOR_PEP_THRESHOLD = 0.5f0
 
     function readPSMs!(
         prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
@@ -66,21 +70,32 @@ function get_best_precursors_accross_runs(
                                                     mz::Float32}},
         precursor_idxs::AbstractVector{UInt32},
         q_values::AbstractVector{Float16},
+        peps::AbstractVector{Float16},
         probs::AbstractVector{Float32},
         rts::AbstractVector{Float32},
         scan_idxs::AbstractVector{UInt32},
         ms_file_idxs::AbstractVector{UInt32},
         rt_irt::RtConversionModel,
-        max_q_val::Float32)
+        max_q_val::Float32,
+        run_specific_qval_pass::Set{UInt32},
+        pep_pass::Set{UInt32})
 
         for row in eachindex(precursor_idxs)
             # Extract current PSM information
             q_value = q_values[row]
+            pep = peps[row]
             precursor_idx = precursor_idxs[row]
             prob = probs[row]
             irt =  rt_irt(rts[row])
             scan_idx = UInt32(scan_idxs[row])
             ms_file_idx = UInt32(ms_file_idxs[row])
+
+            if q_value <= RUN_SPECIFIC_PRECURSOR_QVAL_THRESHOLD
+                push!(run_specific_qval_pass, precursor_idx)
+            end
+            if pep <= PRECURSOR_PEP_THRESHOLD
+                push!(pep_pass, precursor_idx)
+            end
 
             # Initialize running statistics
             passed_q_val = (q_value <= max_q_val)
@@ -185,6 +200,8 @@ function get_best_precursors_accross_runs(
                                                         mz::Float32}}()
 
     # First pass: collect best matches and mean iRT
+    run_specific_qval_pass = Set{UInt32}()
+    pep_pass = Set{UInt32}()
 
     #n_precursors_vec = Vector{UInt64}()
     for psms_path in psms_paths #For each data frame 
@@ -208,12 +225,15 @@ function get_best_precursors_accross_runs(
             prec_to_best_prob,
             psms[:precursor_idx],
             psms[:q_value],
+            psms[:PEP],
             psms[:prob],
             psms[:rt],
             psms[:scan_idx],
             psms[:ms_file_idx],
             rt_irt[file_idx],
-            max_q_val
+            max_q_val,
+            run_specific_qval_pass,
+            pep_pass
         )
     end
     
@@ -237,12 +257,14 @@ function get_best_precursors_accross_runs(
         fdr_scale_factor=fdr_scale_factor
     )
 
-    passing_precursors = Set{UInt32}(
+    global_qval_pass = Set{UInt32}(
         precursor_ids[i] for i in eachindex(precursor_ids)
-        if global_qvals[i] <= 0.25
+        if global_qvals[i] <= GLOBAL_PRECURSOR_QVAL_THRESHOLD
     )
 
-    @info "Global precursor q-value filter summary" max_q_val=max_q_val n_total=length(precursor_ids) n_passing=length(passing_precursors)
+    passing_precursors = union(global_qval_pass, run_specific_qval_pass, pep_pass)
+
+    @info "Precursor filter summary" max_q_val=max_q_val n_total=length(precursor_ids) n_global_qval_pass=length(global_qval_pass) n_run_specific_qval_pass=length(run_specific_qval_pass) n_pep_pass=length(pep_pass) n_passing=length(passing_precursors)
 
     # NOTE: Dictionaries.filter! predicates are evaluated on entries, not keys.
     # Explicitly filter by key to avoid accidentally dropping all entries.
@@ -253,7 +275,7 @@ function get_best_precursors_accross_runs(
     end
 
     if isempty(prec_to_best_prob)
-        @warn "No precursors passed global q-value filtering for cross-run analysis"
+        @warn "No precursors passed precursor-level filtering for cross-run analysis"
         return prec_to_best_prob
     end
 
