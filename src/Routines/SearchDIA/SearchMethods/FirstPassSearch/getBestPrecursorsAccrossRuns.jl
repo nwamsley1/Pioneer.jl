@@ -237,19 +237,20 @@ function get_best_precursors_accross_runs(
         fdr_scale_factor=fdr_scale_factor
     )
 
-    finite_qvals = [q for q in global_qvals if isfinite(q)]
-    if !isempty(finite_qvals)
-        @info "Global precursor q-values before filtering" min_qval=minimum(finite_qvals) max_qval=maximum(finite_qvals)
-    else
-        @warn "Global precursor q-values before filtering are non-finite"
-    end
-
     passing_precursors = Set{UInt32}(
         precursor_ids[i] for i in eachindex(precursor_ids)
-        if global_qvals[i] <= 0.10
+        if global_qvals[i] <= 0.01
     )
 
-    filter!(x -> x in passing_precursors, prec_to_best_prob)
+    @info "Global precursor q-value filter summary" max_q_val=max_q_val n_total=length(precursor_ids) n_passing=length(passing_precursors)
+
+    # NOTE: Dictionaries.filter! predicates are evaluated on entries, not keys.
+    # Explicitly filter by key to avoid accidentally dropping all entries.
+    for pid in collect(keys(prec_to_best_prob))
+        if !(pid in passing_precursors)
+            delete!(prec_to_best_prob, pid)
+        end
+    end
 
     if isempty(prec_to_best_prob)
         @warn "No precursors passed global q-value filtering for cross-run analysis"
