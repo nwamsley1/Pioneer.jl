@@ -56,7 +56,7 @@ function get_best_precursors_accross_runs(
                          )
 
     const GLOBAL_PRECURSOR_QVAL_THRESHOLD = 0.2f0
-    const RUN_SPECIFIC_PRECURSOR_QVAL_THRESHOLD = 0.1f0
+    const RUN_SPECIFIC_PRECURSOR_QVAL_THRESHOLD = 0.0f0
     const PRECURSOR_PEP_THRESHOLD = 0.5f0
 
     function readPSMs!(
