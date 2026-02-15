@@ -229,19 +229,24 @@ function get_best_precursors_accross_runs(
     precursor_probs = [prec_to_best_prob[pid].best_prob for pid in precursor_ids]
     precursor_targets = [!precursor_is_decoy[pid] for pid in precursor_ids]
 
-    sort_order = sortperm(precursor_probs, rev=true)
-    sorted_ids = precursor_ids[sort_order]
-    sorted_probs = precursor_probs[sort_order]
-    sorted_targets = precursor_targets[sort_order]
+    global_qvals = Vector{Float32}(undef, length(precursor_ids))
+    get_qvalues!(
+        precursor_probs,
+        precursor_targets,
+        global_qvals;
+        fdr_scale_factor=fdr_scale_factor
+    )
 
-    global_qvals = Vector{Float32}(undef, length(sorted_ids))
-    get_qvalues!(sorted_probs, sorted_targets, global_qvals; fdr_scale_factor=fdr_scale_factor)
-
-    @info "first global q_val:" global_qvals[1]
+    finite_qvals = [q for q in global_qvals if isfinite(q)]
+    if !isempty(finite_qvals)
+        @info "Global precursor q-values before filtering" min_qval=minimum(finite_qvals) max_qval=maximum(finite_qvals)
+    else
+        @warn "Global precursor q-values before filtering are non-finite"
+    end
 
     passing_precursors = Set{UInt32}(
-        sorted_ids[i] for i in eachindex(sorted_ids)
-        if sorted_targets[i] && global_qvals[i] <= 0.05f0
+        precursor_ids[i] for i in eachindex(precursor_ids)
+        if global_qvals[i] <= 0.10
     )
 
     filter!(x -> x in passing_precursors, prec_to_best_prob)
