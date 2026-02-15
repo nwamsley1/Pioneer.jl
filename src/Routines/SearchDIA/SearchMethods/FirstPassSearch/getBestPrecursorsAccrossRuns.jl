@@ -237,9 +237,11 @@ function get_best_precursors_accross_runs(
     global_qvals = Vector{Float32}(undef, length(sorted_ids))
     get_qvalues!(sorted_probs, sorted_targets, global_qvals; fdr_scale_factor=fdr_scale_factor)
 
+    @info "first global q_val:" global_qvals[1]
+
     passing_precursors = Set{UInt32}(
         sorted_ids[i] for i in eachindex(sorted_ids)
-        if sorted_targets[i] && global_qvals[i] <= 0.01f0
+        if sorted_targets[i] && global_qvals[i] <= 0.05f0
     )
 
     filter!(x -> x in passing_precursors, prec_to_best_prob)
