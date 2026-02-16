@@ -141,7 +141,7 @@
             "max_diff": 0.01
         },
         "machine_learning": {
-            "max_psm_memory_mb": 500,
+            "max_psm_memory_mb": 2000,
             "force_oom": false,
             "min_trace_prob": 0.75,
             "max_q_value_mbr_itr": 0.20,
