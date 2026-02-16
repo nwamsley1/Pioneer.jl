@@ -41,7 +41,7 @@ function train_model(model::LightGBMScorer, psms::AbstractPSMContainer,
         bagging_freq = get(hp, :bagging_fraction, 0.25) < 1 ? 1 : 0,
         min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
         min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
-        is_unbalance = true
+        is_unbalance = false
     )
 
     # Convert to DataFrame for LightGBM
