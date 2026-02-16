@@ -724,8 +724,7 @@ function _compute_prob_threshold_from_merged(merged_path::String, q_cutoff::Floa
     end
 
     tbl = nothing  # release mmap before deleting
-    GC.gc(false)
-    rm(merged_path, force=true)
+    safeRm(merged_path, nothing; force=true)
     return prob_threshold
 end
 
@@ -863,8 +862,9 @@ function summarize_precursors!(fold_groups::Vector{ArrowFileGroup}; q_cutoff::Fl
     stream_sorted_merge(temp_refs, merged_path, :trace_prob; reverse=true)
 
     # Cleanup per-file temp files
+    GC.gc(false)
     for ref in temp_refs
-        rm(file_path(ref), force=true)
+        safeRm(file_path(ref), nothing; force=true)
     end
 
     prob_threshold = _compute_prob_threshold_from_merged(merged_path, q_cutoff)
@@ -929,8 +929,9 @@ function _finalize_scoring_arrow!(container::ArrowFilePSMContainer, strategy::Pa
     else
         merged_path = tempname() * "_finalize_fdr_merged.arrow"
         stream_sorted_merge(temp_refs, merged_path, :trace_prob; reverse=true)
+        GC.gc(false)
         for ref in temp_refs
-            rm(file_path(ref), force=true)
+            safeRm(file_path(ref), nothing; force=true)
         end
         prob_thresh = _compute_prob_threshold_from_merged(merged_path, strategy.q_cutoff)
     end

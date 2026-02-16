@@ -207,8 +207,7 @@ function _compute_ftr_threshold_streaming(merged_path::String, target_ftr::Float
 
     # Release mmap before deleting (same pattern as scoring_workspace.jl)
     tbl = nothing
-    GC.gc(false)
-    rm(merged_path, force=true)
+    safeRm(merged_path, nothing; force=true)
     return threshold, n_passing
 end
 
@@ -410,8 +409,9 @@ function apply_mbr_filter_and_aggregate_per_file!(
         end
         merged_path = tempname() * "_mbr_ftr_merged_$(method_name).arrow"
         stream_sorted_merge(trefs, merged_path, :score; reverse=true)
+        GC.gc(false)
         for tref in trefs
-            rm(file_path(tref), force=true)
+            safeRm(file_path(tref), nothing; force=true)
         end
         threshold, n_passing = _compute_ftr_threshold_streaming(
             merged_path, Float64(params.max_MBR_false_transfer_rate))
@@ -1202,8 +1202,9 @@ function build_qvalue_spline_from_refs(
         stream_sorted_merge(sidecar_refs, merged_path, score_col, :target;
                            batch_size=batch_size, reverse=[true, true])
     finally
+        GC.gc(false)
         for ref in sidecar_refs
-            rm(file_path(ref), force=true)
+            safeRm(file_path(ref), nothing; force=true)
         end
     end
 
