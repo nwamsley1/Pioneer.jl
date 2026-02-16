@@ -4,32 +4,29 @@ CurrentModule = Pioneer
 
 ## Introduction
 
-Pioneer and its companion tool Altimeter are an open-source and performant solution for analysis of protein MS data acquired by data-independent acquisition (DIA). Poineer includes routines for searching DIA experments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides from the library in the data. 
+Pioneer and its companion tool Altimeter are an open-source and performant solution for analysis of protein MS data acquired by data-independent acquisition (DIA). Poineer includes routines for searching DIA experments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides from the library in the data.
 
-## Design Goals
+## Key Features
 
-- **Open-Source:** Pioneer is completely open source. 
-- **Cross-Platform:** Pioneer and the vendor-specific file conversion tool run on Linux, MacOS, and Windows
-- **High-Performance:** Pioneer achieves high sensitivity, FDR control, quantitative precision and accuracy on benhcmark datat-sets 
-- **Scalability:** Memory consumption and speed should remain constant as the number of raw files in an anslysis grows. Pioneer should scale to very large experiments with hundreds to thousands of raw files (experimental)
-- **Fast:** Pioneer searches data several times faster than it can be aquired and faster than state-of-the-art search tools.
+* **Isotope-Aware DIA Analysis**: Narrow isolation windows distort fragment ion isotope distributions because the quadrupole partially transmits precursor isotopic envelopes. Pioneer addresses this by estimating a quadrupole transmission efficiency function for each scan and re-isotoping library spectra accordingly, using methods from [Goldfarb et al.](https://pmc.ncbi.nlm.nih.gov/articles/PMC6166224/). This correction is critical for accurate matching and quantification in narrow-window DIA.
 
-## Features
-Pioneer and Altimeter build on previous search engines and introduce several new concepts:
+* **Altimeter: Collision Energy-Independent Spectral Libraries**: Altimeter predicts coefficients for B-splines that model total rather than monoisotopic fragment ion intensities as a function of normalized collision energy (NCE). Evaluating the splines at a given NCE produces a complete spectrum, so a single library works across different instruments and acquisition settings. Pioneer calibrates the optimal NCE per data file automatically.
 
-* **Spectral Library Prediction with Koina**: Using [Koina](https://koina.wilhelmlab.org/) Pioneer can construct fully predicted spectral libraries given an internet connection and a FASTA file with protein sequences. Pioneer uses Chronologer to predict peptide retention times and is optimized to use Altimeter for fragment ion intensity predictions.
+* **Intensity-Aware Fragment Index**: Pioneer implements a fast fragment index search inspired by [MSFragger](https://pubmed.ncbi.nlm.nih.gov/28394336/) and [Sage](https://pubmed.ncbi.nlm.nih.gov/37819886/). Pioneer's implementation uniquely leverages accurate fragment intensity predictions from in silico libraries—indexing only the highest-ranked fragments—to improve both speed and specificity of candidate identification.
 
-* **Collision Energy Independent Spectral Libraries**: Rather than predicting a single intensity value for each fragment ion, Altimeter predicts 4 B-spline coefficients. Evaluating the fragment splines at a given collision energy gives a fragment ion intensity. Pioneer calibrates the library to find the optimal collision energy value to use for each MS data file in an experiment. In this way, it is possible to use a single spectral library for different instruments and scan settings. 
+* **Spectral Deconvolution with Robust Regression**: Pioneer explains each observed mass spectrum as a linear combination of template spectra from the library. To reduce quantitative bias from interfering signals in chimeric spectra, Pioneer minimizes the [pseudo-Huber](https://en.wikipedia.org/wiki/Huber_loss) loss rather than squared error. For other examples of linear regression applied to DIA analyses, see [Specter](https://pubmed.ncbi.nlm.nih.gov/29608554/) and [Chimerys](https://www.biorxiv.org/content/10.1101/2024.05.27.596040v2).
 
-* **Fragment Isotope Correction**: Fragment isotope distributions depend on precursor isotope distributions as distorted by quadrupole mass filtering. Altimeter addresses this by predicting total fragment ion intensities rather than monoisotopic ones. Pioneer then accurately re-isotopes these library spectra using methods from [Goldfarb et al.](https://pmc.ncbi.nlm.nih.gov/articles/PMC6166224/). This is particularly important for narrow-window DIA methods where precursor isotopic envelopes frequently straddle multiple windows.
+* **Dual-Window Quantification**: In narrow-window DIA, a precursor's isotopic envelope is split across adjacent windows. Pioneer normalizes quantification by the isolated precursor fraction and combines signal from adjacent windows for denser chromatographic sampling and improved quantitative accuracy.
 
-* **Qaudrupole Transmission Modeling**: For narrow-window data, Pioneer can optionally estimate a quadrupole-transmission efficiency function for more accurate re-isotoping. 
+* **Match Between Runs**: Pioneer transfers peptide identifications across runs with false transfer rate (FTR) control, increasing coverage in large-scale experiments.
 
-* **Intensity-Aware Fragment Index Search**: Pioneer implements a fast fragment index search inspired by [MSFragger](https://pubmed.ncbi.nlm.nih.gov/28394336/) and [Sage](https://pubmed.ncbi.nlm.nih.gov/37819886/). Pioneer's implementation uniquely leverages accurate fragment intensity predictions from in silico libraries to improve both speed and specificity of the search.
+* **Spectral Library Prediction via Koina**: Using [Koina](https://koina.wilhelmlab.org/), Pioneer constructs fully predicted spectral libraries from a FASTA file and an internet connection. Pioneer uses Chronologer for retention time prediction and Altimeter for fragment ion intensity prediction.
 
-* **Linear Regression onto Library Templates**: Pioneer explains each observed mass spectrum as a linear combination of template spectra from the library. To reduce quantitative bias from interfering signals, Pioneer minimizes the [pseudo-Huber](https://en.wikipedia.org/wiki/Huber_loss) loss rather than squared error. This provides robust quantification even in complex spectra. For other examples of linear regression applied to DIA analyses, see [Specter](https://pubmed.ncbi.nlm.nih.gov/29608554/) and [Chimerys](https://www.biorxiv.org/content/10.1101/2024.05.27.596040v2).
+## Performance
 
-* **Scalability**: Pioneer was designed to scale to large experiments with many MS data files. Memory consumption remains constant as the number of data files in an experiment grows large. 
+- **Speed**: 2–6x faster than DIA-NN and AlphaDIA on benchmark datasets
+- **FDR Control**: Conservative false discovery rate control validated by entrapment analysis
+- **Scalability**: Memory consumption remains constant as the number of raw files grows, scaling to experiments with hundreds of runs
 
 ## Quick Links
 
@@ -41,14 +38,19 @@ Pioneer is developed and maintained by:
 - Nathan Wamsley ([Major Lab](https://majorlab.wustl.edu/)/[Goldfarb Lab](https://goldfarblab.wustl.edu/), Washington University)
 - Dennis Goldfarb ([Goldfarb Lab](https://goldfarblab.wustl.edu/), Washington University)
 
+## Citation
+If you use Pioneer or Altimeter in your research, please cite:
+
+> Wamsley, N. T., Wilkerson, E. M., Major, M., & Goldfarb, D. "Pioneer and Altimeter: Fast Analysis of DIA Proteomics Data Optimized for Narrow Isolation Windows." *bioRxiv* (2025). DOI: [forthcoming]
+
 ## Contact
 For questions about Pioneer or to collaborate, please contact:
 - Nathan Wamsley (wamsleynathan@gmail.com)
 - Dennis Goldfarb (dennis.goldfarb@wustl.edu)
 
-For toubleshooting use the [Issues page](https://github.com/nwamsley1/Pioneer.jl/issues) on github. To critique methods or propose features use the [Discussions page](https://github.com/nwamsley1/Pioneer.jl/discussions).
+For troubleshooting use the [Issues page](https://github.com/nwamsley1/Pioneer.jl/issues) on GitHub. To critique methods or propose features use the [Discussions page](https://github.com/nwamsley1/Pioneer.jl/discussions).
 
-## Exported Methods 
+## Exported Methods
 ```@index
 ```
 
