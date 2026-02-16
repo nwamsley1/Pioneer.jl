@@ -44,12 +44,12 @@ end
 const ADVANCED_FEATURE_SET = [
     :missed_cleavage,
     :Mox,
-    #:prec_mz_qbin,     # Quantile-binned version of :prec_mz
-    :prec_mz,
+    :prec_mz_qbin,     # Quantile-binned version of :prec_mz
+    #:prec_mz,
     :sequence_length,
     :charge,
-    #:irt_pred_qbin,    # Quantile-binned version of :irt_pred
-    :irt_pred,
+    :irt_pred_qbin,    # Quantile-binned version of :irt_pred
+    #:irt_pred,
     :irt_error,
     :irt_diff,
     :max_y_ions,
@@ -74,11 +74,11 @@ const ADVANCED_FEATURE_SET = [
     :max_matched_ratio,
     :err_norm,
     :poisson,
-    #:weight_qbin,      # Quantile-binned version of :weight
-    :weight,
+    :weight_qbin,      # Quantile-binned version of :weight
+    #:weight,
     :log2_intensity_explained,
-    #:tic_qbin,         # Quantile-binned version of :tic
-    :tic,
+    :tic_qbin,         # Quantile-binned version of :tic
+    #:tic,
     :num_scans,
     :smoothness,
     
@@ -106,9 +106,9 @@ const ADVANCED_FEATURE_SET = [
 
 const REDUCED_FEATURE_SET = [
     # Core peptide properties
-    :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
+    :missed_cleavage, :Mox, :prec_mz_qbin, :sequence_length, :charge,
     # RT features
-    :irt_pred, :irt_error, :irt_diff,
+    :irt_pred_qbin, :irt_error, :irt_diff,
     :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
     #:ms1_irt_diff,
     # Spectral features
@@ -118,7 +118,7 @@ const REDUCED_FEATURE_SET = [
     :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
     :max_matched_residual, :max_unmatched_residual, :max_gof,
     :fitted_spectral_contrast, :spectral_contrast, :max_matched_ratio,
-    :err_norm, :poisson, :weight, :log2_intensity_explained, :tic, :num_scans,
+    :err_norm, :poisson, :weight_qbin, :log2_intensity_explained, :tic_qbin, :num_scans,
     :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
     # MS1 features
     :weight_ms1,
