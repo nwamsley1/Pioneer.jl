@@ -64,7 +64,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## Labs
 Pioneer is developed in the [Major Lab](https://majorlab.wustl.edu/) and [Goldfarb Lab](https://goldfarblab.wustl.edu/) at Washington University in St. Louis.
 
-<a href="https://majorlab.wustl.edu/"><img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/majorlab.png" width="125px"/></a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://goldfarblab.wustl.edu/"><img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/goldfarb.png" width="125px"/></a>
+<a href="https://majorlab.wustl.edu/"><img src="figures/majorlab.png" width="125px"/></a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://goldfarblab.wustl.edu/"><img src="figures/goldfarb.png" width="125px"/></a>
 <br>
 
 ## ASMS 2025
