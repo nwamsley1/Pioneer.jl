@@ -275,9 +275,15 @@ function summarize_results!(
             all_file_names
         )
 
-        # Cleanup chunk files (temp_data deletion handles this too, but be explicit)
+        # Cleanup chunk files — GC first to release Arrow mmap handles (NFS silly-rename fix)
         if isdir(chunk_dir)
-            rm(chunk_dir; recursive=true, force=true)
+            GC.gc(false)
+            try
+                rm(chunk_dir; recursive=true, force=true)
+            catch e
+                # On NFS, stale .nfs* handles may linger; temp_data deletion below will retry
+                @debug "merge_chunks cleanup deferred" exception=e
+            end
         end
 
         if params.delete_temp
