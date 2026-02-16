@@ -51,6 +51,12 @@ pioneer search search_params.json
 
 `params-predict` and `params-search` write template JSON files. Review and edit these configurations before running `predict` or `search`. See the [Parameter Configuration](https://nwamsley1.github.io/Pioneer.jl/docs/stable/user_guide/parameters/) guide for available options.
 
+## Current Limitations
+
+- **Variable modifications:** Only oxidation of methionine (Unimod:35) is currently supported as a variable PTM
+- **Digestion:** Fully enzymatic digestion only (no semi-enzymatic or non-specific searches)
+- **Interface:** Command-line only; no graphical user interface yet
+
 ## Regression Tests
 
 Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers end-to-end searches on real datasets and the results are published as browsable reports.

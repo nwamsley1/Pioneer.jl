@@ -28,6 +28,12 @@ Pioneer and its companion tool Altimeter are an open-source and performant solut
 - **FDR Control**: Conservative false discovery rate control validated by entrapment analysis
 - **Scalability**: Memory consumption remains constant as the number of raw files grows, scaling to experiments with hundreds of runs
 
+## Current Limitations
+
+- **Variable modifications:** Only oxidation of methionine (Unimod:35) is currently supported as a variable PTM
+- **Digestion:** Fully enzymatic digestion only (no semi-enzymatic or non-specific searches)
+- **Interface:** Command-line only; no graphical user interface yet
+
 ## Quick Links
 
 - [Installation Guide](@ref)
