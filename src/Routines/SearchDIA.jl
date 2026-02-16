@@ -346,7 +346,7 @@ function SearchDIA(params_path::String)
             ("Second Pass Search", SecondPassSearch()),
             ("Scoring", ScoringSearch()),
             ("Chromatogram Integration", IntegrateChromatogramSearch()),
-            ("MaxLFQ", MaxLFQSearch())
+            ("Quantification & Output", MaxLFQSearch())
         ]
 
         # Execute each search phase and record timing + peak RSS delta
