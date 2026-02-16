@@ -338,6 +338,7 @@ function summarize_results!(
         # After ML scoring, we merge fold0 and fold1 files back together
         # This simplifies downstream processing which expects one file per MS run
         merged_psm_paths = String[]
+        fold_paths_to_delete = String[]
         for (idx, base_path) in valid_file_data
             fold0_path = "$(base_path)_fold0.arrow"
             fold1_path = "$(base_path)_fold1.arrow"
@@ -361,10 +362,16 @@ function summarize_results!(
                 # Update search context with merged path
                 setSecondPassPsms!(getMSData(search_context), idx, merged_path)
 
-                # Delete fold files to save disk space (merged file now contains all data)
-                isfile(fold0_path) && rm(fold0_path)
-                isfile(fold1_path) && rm(fold1_path)
+                # Collect fold file paths for batch deletion after loop
+                isfile(fold0_path) && push!(fold_paths_to_delete, fold0_path)
+                isfile(fold1_path) && push!(fold_paths_to_delete, fold1_path)
             end
+        end
+
+        # Release all mmap handles with a single GC, then batch-delete (Windows EACCES fix)
+        GC.gc(false)
+        for fpath in fold_paths_to_delete
+            safeRm(fpath, nothing)
         end
 
         # Create references for second pass PSMs (now using merged files)
