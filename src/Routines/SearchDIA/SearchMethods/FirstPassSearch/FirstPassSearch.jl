@@ -550,12 +550,14 @@ function summarize_results!(
         
         # Get best precursors from valid files only
         precursors = getPrecursors(getSpecLib(search_context))
+        fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         return get_best_precursors_accross_runs(
             valid_psms_paths,
             getMz(precursors),
             valid_rt_irt,
             getIsDecoy(precursors),
-            max_q_val=params.max_q_val_for_irt
+            max_q_val=params.max_q_val_for_irt,
+            fdr_scale_factor=fdr_scale_factor
         )
     end
     # Map retention times

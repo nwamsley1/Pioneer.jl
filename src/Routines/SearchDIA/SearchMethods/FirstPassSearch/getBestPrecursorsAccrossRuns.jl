@@ -17,11 +17,14 @@
 
 """
     get_best_precursors_accross_runs(psms_paths, prec_mzs, rt_irt, prec_is_decoy;
-                                    max_q_val=0.01f0, min_pep=Float16(0.5))
+                                    max_q_val=0.01f0, min_pep=Float16(0.9),
+                                    fdr_scale_factor=1.0f0)
     -> Dictionary{UInt32, NamedTuple}
 
 Identify and collect best precursor matches across multiple runs for retention time calibration.
-Uses PEP-based filtering: any precursor with PEP ≤ min_pep in at least one run is kept.
+Pools PSMs from all runs and computes a **global PEP** via isotonic regression (`get_PEP!`),
+giving a more stable score→PEP mapping than per-run estimates. A precursor passes if its
+minimum global PEP across all runs is ≤ the threshold.
 
 # Arguments
 - `psms_paths`: Paths to PSM files from first pass search
@@ -29,7 +32,8 @@ Uses PEP-based filtering: any precursor with PEP ≤ min_pep in at least one run
 - `rt_irt`: Dictionary mapping file indices to RT-iRT conversion models
 - `prec_is_decoy`: Boolean vector indicating decoy status per precursor index
 - `max_q_val`: Maximum q-value threshold for iRT statistics
-- `min_pep`: PEP threshold — precursors with PEP ≤ this in any run pass to second pass
+- `min_pep`: Global PEP threshold — precursors with min global PEP ≤ this pass to second pass
+- `fdr_scale_factor`: Scale factor for library target/decoy ratio correction
 
 # Returns
 Dictionary mapping precursor indices to NamedTuple containing:
@@ -43,9 +47,10 @@ Dictionary mapping precursor indices to NamedTuple containing:
 - `mz`: Precursor m/z value
 
 # Process
-1. First pass: Collects best matches and mean iRT; builds set of PEP-passing precursors
-2. Filters to precursors that achieved PEP ≤ min_pep in at least one run
-3. Second pass: Calculates iRT variance for remaining precursors
+1. First pass: Collects best matches, mean iRT, and pools (precursor_idx, prob) for global PEP
+2. Computes global PEP via isotonic regression on pooled data
+3. Filters to precursors whose minimum global PEP ≤ min_pep
+4. Second pass: Calculates iRT variance for remaining precursors
 """
 function get_best_precursors_accross_runs(
                          psms_paths::Vector{String},
@@ -53,7 +58,8 @@ function get_best_precursors_accross_runs(
                          rt_irt::Dict{Int64, RtConversionModel},
                          prec_is_decoy::AbstractVector{Bool};
                          max_q_val::Float32 = 0.01f0,
-                         min_pep::Float16 = Float16(0.5)
+                         min_pep::Float16 = Float16(0.9),
+                         fdr_scale_factor::Float32 = 1.0f0
                          )
 
     function readPSMs!(
@@ -182,9 +188,10 @@ function get_best_precursors_accross_runs(
                                                         n::Union{Missing, UInt16}, 
                                                         mz::Float32}}()
 
-    # First pass: collect best matches, mean iRT, and PEP-passing precursors
+    # First pass: collect best matches, mean iRT, and pool (precursor_idx, prob) for global PEP
 
-    pep_passing_precs = Set{UInt32}()
+    pooled_precursor_idxs = Vector{UInt32}()
+    pooled_probs = Vector{Float32}()
     n_valid_files = 0
     for psms_path in psms_paths #For each data frame
         psms = Arrow.Table(psms_path)
@@ -215,13 +222,12 @@ function get_best_precursors_accross_runs(
             max_q_val
         )
 
-        # Collect precursors with PEP ≤ threshold in this run
-        pep_col = psms[:PEP]
+        # Pool (precursor_idx, prob) for global PEP computation
         prec_col = psms[:precursor_idx]
+        prob_col = psms[:prob]
         for i in eachindex(prec_col)
-            if pep_col[i] <= min_pep
-                push!(pep_passing_precs, prec_col[i])
-            end
+            push!(pooled_precursor_idxs, prec_col[i])
+            push!(pooled_probs, prob_col[i])
         end
     end
 
@@ -231,15 +237,54 @@ function get_best_precursors_accross_runs(
         return prec_to_best_prob
     end
 
+    # Compute global PEP via isotonic regression on pooled data
+    n_pooled = length(pooled_probs)
+
+    # Derive target labels from prec_is_decoy
+    pooled_targets = Vector{Bool}(undef, n_pooled)
+    for i in eachindex(pooled_precursor_idxs)
+        pooled_targets[i] = !prec_is_decoy[pooled_precursor_idxs[i]]
+    end
+
+    global_peps = Vector{Float32}(undef, n_pooled)
+    get_PEP!(pooled_probs, pooled_targets, global_peps;
+             doSort=true, fdr_scale_factor=fdr_scale_factor)
+
+    # Global q-values for diagnostics
+    global_qvals = Vector{Float32}(undef, n_pooled)
+    get_qvalues!(pooled_probs, pooled_targets, global_qvals;
+                 doSort=true, fdr_scale_factor=fdr_scale_factor)
+
+    n_targets = count(pooled_targets)
+    n_decoys = n_pooled - n_targets
+    n_1pct = count(<=(0.01f0), global_qvals)
+    n_5pct = count(<=(0.05f0), global_qvals)
+    @info "Global PEP: pooled $n_pooled PSMs ($n_targets targets, $n_decoys decoys) from $n_valid_files files"
+    @info "  PSMs at 1% global FDR: $n_1pct, at 5% global FDR: $n_5pct"
+
+    # For each precursor, keep its minimum global PEP across all runs
+    prec_min_global_pep = Dictionary{UInt32, Float32}()
+    for i in eachindex(pooled_precursor_idxs)
+        pid = pooled_precursor_idxs[i]
+        gpep = global_peps[i]
+        if haskey(prec_min_global_pep, pid)
+            if gpep < prec_min_global_pep[pid]
+                prec_min_global_pep[pid] = gpep
+            end
+        else
+            insert!(prec_min_global_pep, pid, gpep)
+        end
+    end
+
     # Diagnostics: pre-filter counts
     n_pre_filter = length(prec_to_best_prob)
     n_pre_targets = count(pid -> !prec_is_decoy[pid], keys(prec_to_best_prob))
     n_pre_decoys = n_pre_filter - n_pre_targets
     @info "Pre-filter pool: $n_pre_filter precursors ($n_pre_targets targets, $n_pre_decoys decoys)"
 
-    # Filter to precursors that passed PEP ≤ min_pep in at least one run
+    # Filter: keep only precursors with min global PEP ≤ threshold
     for key in collect(keys(prec_to_best_prob))
-        if !(key in pep_passing_precs)
+        if !haskey(prec_min_global_pep, key) || prec_min_global_pep[key] > Float32(min_pep)
             delete!(prec_to_best_prob, key)
         end
     end
@@ -250,7 +295,7 @@ function get_best_precursors_accross_runs(
     n_removed = n_pre_filter - n_post_filter
     n_removed_targets = n_pre_targets - n_post_targets
     n_removed_decoys = n_pre_decoys - n_post_decoys
-    @info "PEP ≤ $(min_pep) filter: kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
+    @info "Global PEP ≤ $(min_pep) filter: kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
           "removed $n_removed ($n_removed_targets targets, $n_removed_decoys decoys)"
 
     # Second pass: calculate iRT variance for remaining precursors
