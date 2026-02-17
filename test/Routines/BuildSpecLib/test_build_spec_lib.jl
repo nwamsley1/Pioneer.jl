@@ -219,9 +219,9 @@ function verify_fragment_counts(
     precursors_file = joinpath(lib_dir, "precursors_table.arrow")
     precursors = Arrow.Table(precursors_file)
     
-    # Load fragments from JLD2 files
-    fragments_file = joinpath(lib_dir, "detailed_fragments.jld2")
-    indices_file = joinpath(lib_dir, "precursor_to_fragment_indices.jld2")
+    # Load fragments from serialized files
+    fragments_file = joinpath(lib_dir, "detailed_fragments.jls")
+    indices_file = joinpath(lib_dir, "precursor_to_fragment_indices.jls")
     
     if !isfile(fragments_file) || !isfile(indices_file)
         @warn "Fragment files not found in $lib_dir"
@@ -229,8 +229,8 @@ function verify_fragment_counts(
     end
     
     # Load the fragment data
-    fragments = load(fragments_file)["data"]
-    pid_to_fid = load(indices_file)["pid_to_fid"]
+    fragments = deserialize_from_jls(fragments_file)
+    pid_to_fid = deserialize_from_jls(indices_file)
     
     all_valid = true
     
