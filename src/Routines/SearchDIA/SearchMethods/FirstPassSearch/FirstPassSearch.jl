@@ -443,15 +443,16 @@ function process_file!(
         # Create an empty but properly structured DataFrame to avoid downstream errors
         empty_psms = DataFrame(
             ms_file_idx = UInt32[],
-            scan_idx = UInt32[], 
+            scan_idx = UInt32[],
             precursor_idx = UInt32[],
             rt = Float32[],
             irt_predicted = Float32[],
             q_value = Float32[],
-            score = Float32[], 
+            score = Float32[],
             prob = Float32[],
             scan_count = UInt32[],
-            fwhm = Float32[]  # Add this to prevent missing column error
+            fwhm = Float32[],  # Add this to prevent missing column error
+            PEP = Float16[]
         )
         results.psms[] = empty_psms
         
@@ -492,7 +493,7 @@ function process_search_results!(
     Arrow.write(
         temp_path,
         select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
-            :irt_predicted, :q_value, :score, :prob, :scan_count])
+            :irt_predicted, :q_value, :score, :prob, :scan_count, :PEP])
     )
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 
@@ -548,10 +549,12 @@ function summarize_results!(
         end
         
         # Get best precursors from valid files only
+        precursors = getPrecursors(getSpecLib(search_context))
         return get_best_precursors_accross_runs(
             valid_psms_paths,
-            getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
+            getMz(precursors),
             valid_rt_irt,
+            getIsDecoy(precursors),
             max_q_val=params.max_q_val_for_irt
         )
     end

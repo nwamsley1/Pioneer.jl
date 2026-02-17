@@ -16,19 +16,20 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    get_best_precursors_accross_runs(psms_paths::Vector{String}, 
-                                    prec_mzs::AbstractVector{Float32},
-                                    rt_irt::Dict{Int64, RtConversionModel};
-                                    max_q_val::Float32=0.01f0) 
+    get_best_precursors_accross_runs(psms_paths, prec_mzs, rt_irt, prec_is_decoy;
+                                    max_q_val=0.01f0, min_pep=Float16(0.5))
     -> Dictionary{UInt32, NamedTuple}
 
 Identify and collect best precursor matches across multiple runs for retention time calibration.
+Uses PEP-based filtering: any precursor with PEP ≤ min_pep in at least one run is kept.
 
 # Arguments
 - `psms_paths`: Paths to PSM files from first pass search
 - `prec_mzs`: Vector of precursor m/z values
 - `rt_irt`: Dictionary mapping file indices to RT-iRT conversion models
-- `max_q_val`: Maximum q-value threshold for considering PSMs
+- `prec_is_decoy`: Boolean vector indicating decoy status per precursor index
+- `max_q_val`: Maximum q-value threshold for iRT statistics
+- `min_pep`: PEP threshold — precursors with PEP ≤ this in any run pass to second pass
 
 # Returns
 Dictionary mapping precursor indices to NamedTuple containing:
@@ -42,15 +43,17 @@ Dictionary mapping precursor indices to NamedTuple containing:
 - `mz`: Precursor m/z value
 
 # Process
-1. First pass: Collects best matches and calculates mean iRT for each precursor accross the runs 
-2. Filters to top N precursors by probability
+1. First pass: Collects best matches and mean iRT; builds set of PEP-passing precursors
+2. Filters to precursors that achieved PEP ≤ min_pep in at least one run
 3. Second pass: Calculates iRT variance for remaining precursors
 """
 function get_best_precursors_accross_runs(
                          psms_paths::Vector{String},
                          prec_mzs::AbstractVector{Float32},
-                         rt_irt::Dict{Int64, RtConversionModel};
-                         max_q_val::Float32 = 0.01f0
+                         rt_irt::Dict{Int64, RtConversionModel},
+                         prec_is_decoy::AbstractVector{Bool};
+                         max_q_val::Float32 = 0.01f0,
+                         min_pep::Float16 = Float16(0.5)
                          )
 
     function readPSMs!(
@@ -179,26 +182,27 @@ function get_best_precursors_accross_runs(
                                                         n::Union{Missing, UInt16}, 
                                                         mz::Float32}}()
 
-    # First pass: collect best matches and mean iRT
+    # First pass: collect best matches, mean iRT, and PEP-passing precursors
 
-    n_precursors_vec = Vector{UInt64}()
-    for psms_path in psms_paths #For each data frame 
+    pep_passing_precs = Set{UInt32}()
+    n_valid_files = 0
+    for psms_path in psms_paths #For each data frame
         psms = Arrow.Table(psms_path)
-        
+
         # Get the original file index from the PSM data
         if isempty(psms[:ms_file_idx])
             continue  # Skip empty files
         end
         file_idx = first(psms[:ms_file_idx])  # All PSMs in a file should have the same ms_file_idx
-        
+
         # Check if RT model exists for this file
         if !haskey(rt_irt, file_idx)
             @warn "No RT model found for file index $file_idx, skipping"
             continue
         end
 
-        push!(n_precursors_vec, length(psms[:precursor_idx]))
-        #One row for each precursor 
+        n_valid_files += 1
+        #One row for each precursor
         readPSMs!(
             prec_to_best_prob,
             psms[:precursor_idx],
@@ -210,24 +214,44 @@ function get_best_precursors_accross_runs(
             rt_irt[file_idx],
             max_q_val
         )
+
+        # Collect precursors with PEP ≤ threshold in this run
+        pep_col = psms[:PEP]
+        prec_col = psms[:precursor_idx]
+        for i in eachindex(prec_col)
+            if pep_col[i] <= min_pep
+                push!(pep_passing_precs, prec_col[i])
+            end
+        end
     end
-    
+
     # Handle case where no valid files were processed
-    if isempty(n_precursors_vec)
+    if n_valid_files == 0
         @warn "No valid PSM files found for cross-run analysis"
         return prec_to_best_prob
     end
-    
-    max_precursors = maximum(n_precursors_vec)
-    # Filter to top N precursors by probability
-    sort!(prec_to_best_prob, by = x->x[:best_prob], alg=PartialQuickSort(1:max_precursors), rev = true);
-    N = 0
+
+    # Diagnostics: pre-filter counts
+    n_pre_filter = length(prec_to_best_prob)
+    n_pre_targets = count(pid -> !prec_is_decoy[pid], keys(prec_to_best_prob))
+    n_pre_decoys = n_pre_filter - n_pre_targets
+    @info "Pre-filter pool: $n_pre_filter precursors ($n_pre_targets targets, $n_pre_decoys decoys)"
+
+    # Filter to precursors that passed PEP ≤ min_pep in at least one run
     for key in collect(keys(prec_to_best_prob))
-        N += 1
-        if N > max_precursors
+        if !(key in pep_passing_precs)
             delete!(prec_to_best_prob, key)
         end
     end
+
+    n_post_filter = length(prec_to_best_prob)
+    n_post_targets = count(pid -> !prec_is_decoy[pid], keys(prec_to_best_prob))
+    n_post_decoys = n_post_filter - n_post_targets
+    n_removed = n_pre_filter - n_post_filter
+    n_removed_targets = n_pre_targets - n_post_targets
+    n_removed_decoys = n_pre_decoys - n_post_decoys
+    @info "PEP ≤ $(min_pep) filter: kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
+          "removed $n_removed ($n_removed_targets targets, $n_removed_decoys decoys)"
 
     # Second pass: calculate iRT variance for remaining precursors
     for psms_path in psms_paths #For each data frame 
