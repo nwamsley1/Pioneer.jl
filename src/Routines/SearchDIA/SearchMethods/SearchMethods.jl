@@ -568,7 +568,11 @@ function setDataOutDir!(s::SearchContext, dir::String)
 
     temp_data_dir = joinpath(dir, "temp_data")
     # Delete previous temp data if it exists
-    rm(temp_data_dir, recursive=true, force=true)
+    try
+        rm(temp_data_dir, recursive=true, force=true)
+    catch e
+        @warn "Could not fully remove previous temp_data" exception=e
+    end
     !isdir(temp_data_dir) && mkdir(temp_data_dir)
 
     s.data_out_dir[] = dir

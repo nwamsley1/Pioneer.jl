@@ -290,7 +290,11 @@ function summarize_results!(
             @user_info "Removing temporary data..."
             temp_path = joinpath(getDataOutDir(search_context), "temp_data")
             GC.gc()
-            isdir(temp_path) && rm(temp_path; recursive=true, force=true)
+            try
+                isdir(temp_path) && rm(temp_path; recursive=true, force=true)
+            catch e
+                @warn "Could not fully remove temp_data (NFS stale handles?)" exception=e
+            end
         end
 
     catch e
