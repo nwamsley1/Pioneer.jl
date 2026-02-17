@@ -303,7 +303,37 @@ include("test/UnitTests/ScoringSearch/test_protein_inference.jl")
 - File I/O dominates for large experiments
 - Thread-safe operations in score_psms.jl
 
-## Recent Changes (2025-01)
+## Recent Changes
+
+### Trait-Based ML Scoring System (February 2025)
+
+The PSM scoring system was refactored to use a trait-based architecture for better composability and extensibility. The core implementation lives in `src/utils/ML/` with ScoringSearch using it via `sort_of_percolator!()`.
+
+**New Architecture**:
+```julia
+# 6 independent traits combined into ScoringConfig
+ScoringConfig{M,P,T,F,I,B}
+├── model::PSMScoringModel         # LightGBMScorer, ProbitScorer
+├── pairing::PairingStrategy       # RandomPairing, NoPairing
+├── training_data::TrainingDataStrategy  # QValueNegativeMining, AllDataSelection
+├── feature_selection::FeatureSelectionStrategy  # IterativeFeatureSelection
+├── iteration_scheme::IterationScheme  # FixedIterationScheme
+└── mbr_update::MBRUpdateStrategy  # PairBasedMBR, NoMBR
+```
+
+**Key Files**:
+- `src/utils/ML/scoring_traits.jl` - Trait type definitions
+- `src/utils/ML/scoring_config.jl` - ScoringConfig combining traits
+- `src/utils/ML/percolator_generic.jl` - Main `percolator_scoring!()` entry point
+- `src/utils/ML/psm_container.jl` - AbstractPSMContainer data abstraction
+- `src/utils/ML/pairing.jl` - Pairing strategy implementations
+
+**Integration with ScoringSearch**:
+- `sort_of_percolator!()` in `percolatorSortOf.jl` builds a `ScoringConfig` from parameters
+- Delegates to `percolator_scoring!(psms, config)` for actual scoring
+- Model comparison in `score_psms.jl` uses `build_scoring_config()` from `model_config.jl`
+
+**See**: `src/utils/ML/CLAUDE.md` for detailed trait-based architecture documentation.
 
 ### Automatic Model Selection Feature (January 2025)
 - **Four-Model Comparison**: Added automatic comparison of SimpleLightGBM, AdvancedLightGBM, ProbitRegression, and SuperSimplified models

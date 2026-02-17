@@ -55,11 +55,14 @@ struct MaxLFQSearchParameters <: SearchParameters
     n_rt_bins::Int64
     spline_n_knots::Int64
     run_to_run_normalization::Bool
-    
+
     # LFQ parameters
     q_value_threshold::Float32
     batch_size::Int64
     min_peptides::Int64
+
+    # Chunked merge parameters
+    max_chunk_size_mb::Float64
 
     # Output parameters
     write_csv::Bool
@@ -73,7 +76,7 @@ struct MaxLFQSearchParameters <: SearchParameters
         global_params = params.global_settings
         maxLFQ_params = params.maxLFQ
         protein_inference_params = params.protein_inference
-        
+
         new(
             Int64(norm_params.n_rt_bins),
             Int64(norm_params.spline_n_knots),
@@ -81,6 +84,7 @@ struct MaxLFQSearchParameters <: SearchParameters
             Float32(global_params.scoring.q_value_threshold),
             Int64(100000),  # Default batch size
             Int64(protein_inference_params.min_peptides),
+            Float64(get(maxLFQ_params, :max_chunk_size_mb, 1024)),
             Bool(output_params.write_csv),
             Bool(output_params.delete_temp),
             params  # Store full parameters
@@ -177,30 +181,36 @@ function summarize_results!(
         end
         
         psm_refs = [PSMFileReference(path) for path in existing_passing_psm_paths]
-        
+
         # Ensure all PSM files are sorted correctly for MaxLFQ
         sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
         sort_file_by_keys!(psm_refs, :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx;
                            reverse=[true, true, true, true], parallel=true )
-        
-        # Use reference-based merge with 4 sort keys (all descending)
-        @time merged_psm_ref = stream_sorted_merge(psm_refs, precursors_long_path, sort_keys...;
-                                           batch_size=1000000, reverse=true)
 
-        # Verify the merged file is sorted (reference-based merge guarantees this)
+        # Chunked merge: split into protein-group-aligned chunks bounded by max_chunk_size_mb
+        chunk_dir = joinpath(temp_folder, "merge_chunks")
+        max_chunk_bytes = round(Int, params.max_chunk_size_mb * 1_000_000)
+        @user_info "Chunked merge (max_chunk_size=$(params.max_chunk_size_mb) MB)..."
+        @time chunk_refs = stream_sorted_merge_chunked(
+            psm_refs, chunk_dir, :inferred_protein_group, sort_keys...;
+            batch_size=1_000_000, reverse=true, max_chunk_bytes=max_chunk_bytes
+        )
 
-        # Add FileReference validation for MaxLFQ input
-        validate_maxlfq_input(merged_psm_ref)
-        
+        # Validate first chunk has required columns for MaxLFQ
+        validate_maxlfq_input(first(chunk_refs))
+
         # Validate MaxLFQ parameters
         validate_maxlfq_parameters(Dict(
             :q_value_threshold => params.q_value_threshold,
             :batch_size => params.batch_size,
             :min_peptides => params.min_peptides
         ))
-        # Create wide format precursor table
-        precursors_wide_path = writePrecursorCSV(
-            precursors_long_path,
+
+        # Chunked precursor CSV writing (bounded memory per chunk)
+        @user_info "Writing precursor tables..."
+        precursors_wide_path = writePrecursorCSV_chunked(
+            chunk_refs,
+            getDataOutDir(search_context),
             all_file_names,
             params.run_to_run_normalization,
             getProteins(getSpecLib(search_context)),
@@ -209,25 +219,23 @@ function summarize_results!(
         )
 
         @user_info "Performing MaxLFQ..."
-        # Perform MaxLFQ protein quantification
+        # Chunked MaxLFQ protein quantification (bounded memory per chunk)
         precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
-
-        # Use FileReference-based LFQ with TransformPipeline preprocessing
-        LFQ(
-            merged_psm_ref,  # Use FileReference instead of DataFrame
+        LFQ_chunked(
+            chunk_refs,
             protein_long_path,
             precursor_quant_col,
-            all_file_names,  # Use all file names to maintain proper index mapping
+            all_file_names,
             params.q_value_threshold,
             batch_size = params.batch_size
         )
-        
+
         # Create FileReference for output metadata tracking
         protein_ref = ProteinQuantFileReference(protein_long_path)
         @user_info "MaxLFQ completed - output_file: $protein_long_path, n_protein_groups: $(n_protein_groups(protein_ref)), n_experiments: $(n_experiments(protein_ref))"
 
         @user_info "Writing protein group results..."
-        # Create wide format protein table
+        # Create wide format protein table (protein groups table is small, no chunking needed)
         precursors = getPrecursors(getSpecLib(search_context))
         proteins_wide_path = writeProteinGroupsCSV(
             results.proteins_long_path,
@@ -239,6 +247,19 @@ function summarize_results!(
             getProteins(getSpecLib(search_context)),
             write_csv = params.write_csv
         )
+
+        # Stream-concatenate chunks into precursors_long.arrow for QC plots
+        @user_info "Concatenating chunks to precursors_long.arrow..."
+        for (i, chunk_ref) in enumerate(chunk_refs)
+            tbl = Arrow.Table(file_path(chunk_ref))
+            if i == 1
+                open(precursors_long_path, "w") do io
+                    Arrow.write(io, tbl; file=false)
+                end
+            else
+                Arrow.append(precursors_long_path, tbl)
+            end
+        end
 
         @user_info "Creating QC plots..."
         # Create QC plots
@@ -254,12 +275,26 @@ function summarize_results!(
             all_file_names
         )
 
+        # Cleanup chunk files — GC first to release Arrow mmap handles (NFS silly-rename fix)
+        if isdir(chunk_dir)
+            GC.gc(false)
+            try
+                rm(chunk_dir; recursive=true, force=true)
+            catch e
+                # On NFS, stale .nfs* handles may linger; temp_data deletion below will retry
+                @debug "merge_chunks cleanup deferred" exception=e
+            end
+        end
 
         if params.delete_temp
             @user_info "Removing temporary data..."
             temp_path = joinpath(getDataOutDir(search_context), "temp_data")
             GC.gc()
-            isdir(temp_path) && rm(temp_path; recursive=true, force=true)
+            try
+                isdir(temp_path) && rm(temp_path; recursive=true, force=true)
+            catch e
+                @warn "Could not fully remove temp_data (NFS stale handles?)" exception=e
+            end
         end
 
     catch e

@@ -48,7 +48,7 @@ Parameters for scoring search.
 """
 struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # LightGBM parameters
-    max_psms_in_memory::Int64
+    max_psm_memory_mb::Float64
     min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
     precursor_q_value_interpolation_points_per_bin::Int64
@@ -76,6 +76,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # MS1 scoring parameter
     ms1_scoring::Bool
 
+    # OOM scoring parameters
+    force_oom::Bool
+    max_mbr_training_candidates::Int64
+
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
         ml_params = params.optimization.machine_learning
@@ -90,7 +94,7 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
         end
         
         new{typeof(isotope_trace_type)}(
-            Int64(ml_params.max_psms_in_memory),
+            Float64(ml_params.max_psm_memory_mb),
             Float32(ml_params.min_trace_prob),
             Int64(ml_params.spline_points),
             Int64(ml_params.interpolation_points),
@@ -116,7 +120,11 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Int64(get(ml_params, :max_psms_for_comparison, 100000)),
 
             # MS1 scoring parameter
-            Bool(global_params.ms1_scoring)
+            Bool(global_params.ms1_scoring),
+
+            # OOM scoring parameters
+            Bool(get(ml_params, :force_oom, false)),
+            Int64(get(ml_params, :max_mbr_training_candidates, 1_000_000))
         )
     end
 end
@@ -187,58 +195,6 @@ function get_precursor_global_qval_spline(merged_path::String, params::ScoringSe
 end
 
 """
-    get_precursor_global_qval_dict(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
-    -> Dict{UInt32, Float32}
-
-Calculate global q-values at the precursor level and return as dictionary mapping.
-
-Since global_prob is calculated per precursor (one value per precursor_idx across all runs),
-each precursor should have exactly one global q-value. This function:
-1. Loads merged PSM data
-2. Reduces to one row per precursor_idx
-3. Calculates q-values on the reduced dataset
-4. Returns Dict{precursor_idx => global_qval}
-
-This approach is more accurate than spline interpolation since we have exact values for each precursor.
-"""
-function get_precursor_global_qval_dict(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
-    # Determine which score column to use
-    score_col = params.match_between_runs ? :MBR_boosted_global_prob : :global_prob
-
-    # Load merged PSMs
-    merged_table = Arrow.Table(merged_path)
-    df = DataFrame(merged_table)
-
-    # Reduce to one row per precursor
-    # All rows for the same precursor should have the same global_prob, so we just take the first
-    precursor_df = combine(groupby(df, :precursor_idx)) do group
-        (global_prob = first(group[!, score_col]),
-         target = first(group.target))
-    end
-
-    # Sort by global_prob descending for q-value calculation
-    sort!(precursor_df, :global_prob, rev=true)
-
-    # Calculate q-values using standard FDR calculation
-    n = nrow(precursor_df)
-    qvals = Vector{Float32}(undef, n)
-
-    # Use library FDR scale factor
-    fdr_scale = getLibraryFdrScaleFactor(search_context)
-
-    # Calculate q-values
-    get_qvalues!(precursor_df.global_prob, precursor_df.target, qvals; fdr_scale_factor=fdr_scale)
-
-    # Create dictionary mapping precursor_idx -> global_qval
-    qval_dict = Dict{UInt32, Float32}()
-    for i in 1:n
-        qval_dict[precursor_df.precursor_idx[i]] = qvals[i]
-    end
-
-    return qval_dict
-end
-
-"""
 Create experiment-wide precursor q-value spline (all precursors).
 """
 function get_precursor_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
@@ -274,65 +230,6 @@ function get_protein_global_qval_spline(merged_path::String, params::ScoringSear
 end
 
 """
-    get_protein_global_qval_dict(merged_path::String, params::ScoringSearchParameters)
-    -> (Dict{ProteinKey, Float32}, Dict{Tuple{String,Bool,UInt8}, Float32})
-
-Calculate global q-values at the protein group level and return both dictionaries.
-
-Since global_pg_score is calculated per protein group (one value per (protein_name, target, entrap_id)
-across all files), each protein group should have exactly one global q-value. This function:
-1. Loads merged protein group data
-2. Reduces to one row per protein group
-3. Calculates q-values on the reduced dataset
-4. Returns TWO dictionaries:
-   - pg_name_to_global_pg_score: ProteinKey => global_pg_score (for Step 24)
-   - global_pg_score_to_qval_dict: Tuple => global_pg_qval (for Step 24)
-
-This approach is more accurate than spline interpolation since we have exact values for each protein group.
-"""
-function get_protein_global_qval_dict(merged_path::String, params::ScoringSearchParameters)
-    # Load merged protein groups (already has global_pg_score column from Step 16)
-    merged_table = Arrow.Table(merged_path)
-    df = DataFrame(merged_table)
-
-    # Reduce to one row per protein group
-    # All rows for the same protein group should have the same global_pg_score
-    protein_group_df = combine(groupby(df, [:protein_name, :target, :entrap_id])) do group
-        (global_pg_score = first(group.global_pg_score),)
-    end
-
-    # Sort by global_pg_score descending for q-value calculation
-    sort!(protein_group_df, [:global_pg_score,:target], rev=[true,true])
-
-    # Calculate q-values using standard FDR calculation
-    n = nrow(protein_group_df)
-    qvals = Vector{Float32}(undef, n)
-
-    # Calculate q-values (no FDR scale factor for proteins)
-    get_qvalues!(protein_group_df.global_pg_score, protein_group_df.target, qvals)
-
-    # Build BOTH dictionaries in one pass (efficient!)
-    pg_name_to_global_pg_score = Dict{ProteinKey, Float32}()
-    global_pg_score_to_qval_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
-
-    for i in 1:n
-        protein_name = protein_group_df.protein_name[i]
-        target = protein_group_df.target[i]
-        entrap_id = protein_group_df.entrap_id[i]
-
-        # Dictionary 1: ProteinKey -> global_pg_score (for Step 24)
-        key_struct = ProteinKey(protein_name, target, entrap_id)
-        pg_name_to_global_pg_score[key_struct] = protein_group_df.global_pg_score[i]
-
-        # Dictionary 2: Tuple -> global_pg_qval (for Step 24)
-        key_tuple = (protein_name, target, entrap_id)
-        global_pg_score_to_qval_dict[key_tuple] = qvals[i]
-    end
-
-    return pg_name_to_global_pg_score, global_pg_score_to_qval_dict
-end
-
-"""
 Create experiment-wide protein q-value spline (all protein groups).
 """
 function get_protein_qval_spline(merged_path::String, params::ScoringSearchParameters)
@@ -349,6 +246,31 @@ function get_protein_pep_interpolation(merged_path::String, params::ScoringSearc
     return get_pep_interpolation(
         merged_path, :pg_score;
     )
+end
+
+"""
+    estimate_max_rows(memory_mb::Float64, sample_file::String)
+
+Estimate the maximum number of rows that fit in `memory_mb` given the schema of `sample_file`.
+"""
+function estimate_max_rows(memory_mb::Float64, sample_file::String)
+    tbl = Arrow.Table(sample_file)
+    bytes_per_row = 0
+    for name in Tables.columnnames(tbl)
+        col = Tables.getcolumn(tbl, name)
+        T = eltype(col)
+        T_inner = Base.nonmissingtype(T)
+        if isbitstype(T_inner)
+            bytes_per_row += sizeof(T_inner)
+        else
+            bytes_per_row += 64  # conservative estimate for strings / non-bits types
+        end
+        if T !== T_inner
+            bytes_per_row += 1  # missing indicator
+        end
+    end
+    bytes_per_row = max(bytes_per_row, 1)
+    return max(floor(Int64, memory_mb * 1024 * 1024 / bytes_per_row), 1000)
 end
 
 """
@@ -376,81 +298,89 @@ function summarize_results!(
         # Filter to only include valid (non-failed) files
         valid_file_data = get_valid_file_paths(search_context, getSecondPassPsms)
         valid_file_indices = [idx for (idx, _) in valid_file_data]
-        valid_second_pass_psms = [path for (_, path) in valid_file_data]
-        
+
         # Check if any valid files remain
-        if isempty(valid_second_pass_psms)
+        if isempty(valid_file_data)
             @user_warn "No valid files for ScoringSearch - all files failed in previous search methods"
             return nothing
         end
-        
+
+        # Get all fold-split file paths for LightGBM training and downstream processing
+        # SecondPassSearch now writes separate files per CV fold: *_fold0.arrow, *_fold1.arrow
+        valid_fold_paths = get_valid_fold_file_paths(search_context)
+
+        if isempty(valid_fold_paths)
+            @user_warn "No valid fold-split PSM files found for ScoringSearch"
+            return nothing
+        end
+
         step1_time = @elapsed begin
+            max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
+            @user_info "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
             score_precursor_isotope_traces(
                 second_pass_folder,
-                valid_second_pass_psms,
+                valid_fold_paths,
                 getPrecursors(getSpecLib(search_context)),
                 params.match_between_runs,
                 params.max_q_value_lightgbm_rescore,
                 params.max_q_value_mbr_itr,
                 params.min_PEP_neg_threshold_itr,
-                params.max_psms_in_memory,
+                max_psms,
                 params.n_quantile_bins,
                 params.q_value_threshold,
-                params.ms1_scoring
+                params.ms1_scoring,
+                params.force_oom
             )
         end
         #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
 
-        # Create references for second pass PSMs (only valid files)
-        second_pass_paths = valid_second_pass_psms
+        # Step 1b: Merge fold files back into single files per MS run
+        # After ML scoring, we merge fold0 and fold1 files back together
+        # This simplifies downstream processing which expects one file per MS run
+        merged_psm_paths = String[]
+        fold_paths_to_delete = String[]
+        for (idx, base_path) in valid_file_data
+            fold0_path = "$(base_path)_fold0.arrow"
+            fold1_path = "$(base_path)_fold1.arrow"
+            merged_path = "$(base_path).arrow"
+
+            # Collect data from both folds
+            fold_dfs = DataFrame[]
+            if isfile(fold0_path)
+                push!(fold_dfs, DataFrame(Arrow.Table(fold0_path)))
+            end
+            if isfile(fold1_path)
+                push!(fold_dfs, DataFrame(Arrow.Table(fold1_path)))
+            end
+
+            if !isempty(fold_dfs)
+                # Merge and write combined file
+                combined_df = vcat(fold_dfs...)
+                writeArrow(merged_path, combined_df)
+                push!(merged_psm_paths, merged_path)
+
+                # Update search context with merged path
+                setSecondPassPsms!(getMSData(search_context), idx, merged_path)
+
+                # Collect fold file paths for batch deletion after loop
+                isfile(fold0_path) && push!(fold_paths_to_delete, fold0_path)
+                isfile(fold1_path) && push!(fold_paths_to_delete, fold1_path)
+            end
+        end
+
+        # Release all mmap handles with a single GC, then batch-delete (Windows EACCES fix)
+        GC.gc(false)
+        for fpath in fold_paths_to_delete
+            safeRm(fpath, nothing)
+        end
+
+        # Create references for second pass PSMs (now using merged files)
+        second_pass_paths = merged_psm_paths
         second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
-        # Step 2: Apply MBR filtering and calculate precursor probabilities
-        #@debug_l1 "Step 2: Applying MBR filtering and calculating precursor probabilities..."
+        # Step 2: Apply MBR filtering and calculate precursor probabilities (per-file OOM)
         step2_time = @elapsed begin
-            # Merge all second pass PSMs for experiment-wide calculations
-            merged_scores_path = joinpath(temp_folder, "merged_trace_scores.arrow")
-            sort_file_by_keys!(second_pass_refs, :trace_prob, :target; reverse=[true, true])
-            stream_sorted_merge(second_pass_refs, merged_scores_path, :trace_prob, :target;
-                               reverse=[true, true])
-
-            merged_df = DataFrame(Arrow.Table(merged_scores_path))
-            sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
-
-            if hasproperty(merged_df, :MBR_boosted_trace_prob)
-                # Apply MBR filter to MBR_boosted_trace_prob column (modifies in place)
-                apply_mbr_filter!(merged_df, params)
-
-                # Aggregate MBR-boosted scores to precursor level (per-run)
-                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                           :MBR_boosted_trace_prob => (p -> begin
-                               trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                               trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
-                               Float32(trace_prob)
-                           end) => :MBR_boosted_prec_prob)
-
-                # Also aggregate non-MBR scores for protein inference (steps 11+)
-                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                           :trace_prob => (p -> begin
-                               trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                               trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
-                               Float32(trace_prob)
-                           end) => :prec_prob)
-            else
-                # No MBR: only aggregate base probabilities to precursor level (per-run)
-                transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
-                           :trace_prob => (p -> begin
-                               trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
-                               trace_prob = clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
-                               Float32(trace_prob)
-                           end) => :prec_prob)
-            end
-            # Note: global_prob calculation moved to after best trace filtering (Step 5)
-            # Write updated data back to individual files
-            for (file_idx, ref) in zip(valid_file_indices, second_pass_refs)
-                sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
-                write_arrow_file(ref, sub_df)
-            end
+            apply_mbr_filter_and_aggregate_per_file!(second_pass_refs, valid_file_indices, params)
         end
         #@debug_l1 "Step 2 completed in $(round(step2_time, digits=2)) seconds"
 
@@ -458,7 +388,7 @@ function summarize_results!(
         #@debug_l1 "Step 3: Finding best isotope traces..."
         step3_time = @elapsed begin
             best_traces = get_best_traces(
-                valid_second_pass_psms,
+                second_pass_paths,
                 params.min_best_trace_prob
             )
         end
@@ -481,216 +411,84 @@ function summarize_results!(
         end
         #@debug_l1 "Step 4 completed in $(round(step4_time, digits=2)) seconds"
 
-        # Step 5: Calculate global probabilities from best traces
-        #@debug_l1 "Step 5: Calculating global probabilities from best traces..."
-        step5_time = @elapsed begin
-            # Merge filtered (best-trace-only) PSMs for global probability calculations
-            merged_best_traces_path = joinpath(temp_folder, "merged_best_traces.arrow")
-            sort_file_by_keys!(filtered_refs, :precursor_idx)
-            stream_sorted_merge(filtered_refs, merged_best_traces_path, :precursor_idx)
-
-            merged_df = DataFrame(Arrow.Table(merged_best_traces_path))
+        # Steps 5-10 (combined): Build dictionaries + sidecar splines + single pipeline pass
+        # Replaces 6 separate sort-merge-load-split cycles with:
+        #   - Streaming dict accumulation for global_prob (reads ~12 bytes/row)
+        #   - In-memory q-value computation from dicts (no I/O)
+        #   - Lightweight 2-column sidecar files for spline computation
+        #   - Single per-file pipeline combining all column additions + filtering
+        step5_10_time = @elapsed begin
             sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
+            fdr_scale = getLibraryFdrScaleFactor(search_context)
+            has_mbr = params.match_between_runs
 
-            if hasproperty(merged_df, :MBR_boosted_prec_prob)
-                # Calculate global probabilities from MBR-boosted precursor probabilities
-                transform!(groupby(merged_df, :precursor_idx),
-                           :MBR_boosted_prec_prob => (p -> logodds(p, sqrt_n_runs)) => :MBR_boosted_global_prob)
+            # Pre-allocation size from spectral library
+            n_precursors = length(getPrecursors(getSpecLib(search_context)))
 
-                # Also calculate global probabilities from non-MBR precursor probabilities for protein inference
-                transform!(groupby(merged_df, :precursor_idx),
-                           :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
-            else
-                # No MBR: only calculate global probabilities from base precursor probabilities
-                transform!(groupby(merged_df, :precursor_idx),
-                           :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+            # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
+            global_prob_dict, mbr_global_prob_dict, target_dict =
+                build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, has_mbr, n_precursors)
+
+            # A2: Compute global q-value dict from global_prob dict (NO file I/O)
+            score_dict_for_qval = has_mbr ? mbr_global_prob_dict : global_prob_dict
+            global_qval_dict = build_global_qval_dict_from_scores(score_dict_for_qval, target_dict, fdr_scale)
+            results.precursor_global_qval_dict[] = global_qval_dict
+
+            # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
+            score_col = has_mbr ? :MBR_boosted_prec_prob : :prec_prob
+            spline_result = build_qvalue_spline_from_refs(filtered_refs, score_col, results.merged_quant_path;
+                compute_pep=true, min_pep_points_per_bin=params.precursor_q_value_interpolation_points_per_bin,
+                fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
+            qval_spline = spline_result.qval_spline
+            results.precursor_qval_interp[] = qval_spline
+            results.precursor_pep_interp[] = spline_result.pep_interp
+
+            # Phase B — Single per-file pipeline combining Steps 5+10
+            global_qval_col = has_mbr ? :MBR_boosted_global_qval : :global_qval
+            qval_col = has_mbr ? :MBR_boosted_qval : :qval
+
+            combined_pipeline = TransformPipeline() |>
+                add_dict_column(:global_prob, :precursor_idx, global_prob_dict)
+
+            if has_mbr
+                combined_pipeline = combined_pipeline |>
+                    add_dict_column(:MBR_boosted_global_prob, :precursor_idx, mbr_global_prob_dict)
             end
 
-            # Write updated data back to individual files
-            for (file_idx, ref) in zip(valid_file_indices, filtered_refs)
-                sub_df = merged_df[merged_df.ms_file_idx .== file_idx, :]
-                write_arrow_file(ref, sub_df)
-            end
-        end
-        #@debug_l1 "Step 5 completed in $(round(step5_time, digits=2)) seconds"
+            combined_pipeline = combined_pipeline |>
+                add_dict_column(global_qval_col, :precursor_idx, global_qval_dict) |>
+                add_interpolated_column(qval_col, score_col, qval_spline) |>
+                add_interpolated_column(:pep, score_col, results.precursor_pep_interp[]) |>
+                filter_by_multiple_thresholds([
+                    (global_qval_col, params.q_value_threshold),
+                    (qval_col, params.q_value_threshold)
+                ])
 
-        # Step 6: Merge PSMs by global_prob for global q-values
-        #@debug_l1 "Step 6: Merging PSM scores by global_prob..."
-        step6_time = @elapsed begin
-            if params.match_between_runs
-                sort_file_by_keys!(filtered_refs, :MBR_boosted_global_prob, :target; reverse=[true, true])
-                stream_sorted_merge(filtered_refs, results.merged_quant_path, :MBR_boosted_global_prob, :target;
-                                   batch_size=10_000_000, reverse=[true,true])
-            else
-                sort_file_by_keys!(filtered_refs, :global_prob, :target; reverse=[true, true])
-                stream_sorted_merge(filtered_refs, results.merged_quant_path, :global_prob, :target;
-                                   batch_size=10_000_000, reverse=[true,true])
-            end
-        end
-        #@debug_l1 "Step 6 completed in $(round(step6_time, digits=2)) seconds"
-
-        # Step 7: Calculate global precursor q-values
-        #@debug_l1 "Step 7: Calculating global precursor q-values..."
-        step7_time = @elapsed begin
-            results.precursor_global_qval_dict[] = get_precursor_global_qval_dict(results.merged_quant_path, params, search_context)
-        end
-        #@debug_l1 "Step 7 completed in $(round(step7_time, digits=2)) seconds"
-
-        # Step 8: Merge PSMs by prec_prob for experiment-wide q-values
-        #@debug_l1 "Step 8: Re-sorting and merging PSMs by prec_prob..."
-        step8_time = @elapsed begin
-            if params.match_between_runs
-                sort_file_by_keys!(filtered_refs, :MBR_boosted_prec_prob, :target; reverse=[true,true])
-                stream_sorted_merge(filtered_refs, results.merged_quant_path, :MBR_boosted_prec_prob, :target;
-                                   batch_size=10_000_000, reverse=[true,true])
-            else
-                sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true,true])
-                stream_sorted_merge(filtered_refs, results.merged_quant_path, :prec_prob, :target;
-                                   batch_size=10_000_000, reverse=[true,true])
-            end
-        end
-        #@debug_l1 "Step 8 completed in $(round(step8_time, digits=2)) seconds"
-
-        # Step 9: Calculate experiment-wide precursor q-values and PEPs
-        #@debug_l1 "Step 9: Calculating experiment-wide precursor q-values and PEPs..."
-        step9_time = @elapsed begin
-            qval_interp = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
-            results.precursor_qval_interp[] = qval_interp
-            results.precursor_pep_interp[]  = get_precursor_pep_interpolation(results.merged_quant_path, params, search_context)
-        end
-        #@debug_l1 "Step 9 completed in $(round(step9_time, digits=2)) seconds"
-
-        # Step 10: Filter PSMs by q-value thresholds
-        #@debug_l1 "Step 10: Filtering PSMs by q-value thresholds..."
-        step10_time = @elapsed begin
-            if params.match_between_runs
-                qvalue_filter_pipeline = TransformPipeline() |>
-                    add_dict_column(:MBR_boosted_global_qval, :precursor_idx, results.precursor_global_qval_dict[]) |>
-                    add_interpolated_column(:MBR_boosted_qval, :MBR_boosted_prec_prob, results.precursor_qval_interp[]) |>
-                    add_interpolated_column(:pep, :MBR_boosted_prec_prob, results.precursor_pep_interp[]) |>
-                    filter_by_multiple_thresholds([
-                        (:MBR_boosted_global_qval, params.q_value_threshold),
-                        (:MBR_boosted_qval, params.q_value_threshold)
-                    ])
-            else
-                qvalue_filter_pipeline = TransformPipeline() |>
-                    add_dict_column(:global_qval, :precursor_idx, results.precursor_global_qval_dict[]) |>
-                    add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
-                    add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
-                    filter_by_multiple_thresholds([
-                        (:global_qval, params.q_value_threshold),
-                        (:qval, params.q_value_threshold)
-                    ])
-            end
-
-            passing_refs = apply_pipeline_batch(
-                filtered_refs,
-                qvalue_filter_pipeline,
-                passing_psms_folder
-            )
+            passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
         end
 
-        #@debug_l1 "Step 10 completed in $(round(step10_time, digits=2)) seconds"
-
-        # Step 11: Re-calculate q-values using filtered data
-        #@debug_l1 "Step 11: Re-calculate q-values using filtered data..."
+        # Step 11: Re-calculate q-values using filtered data (sidecar-based)
         step11_time = @elapsed begin
-            # Check if MBR columns exist (more robust than checking params flag)
-            sample_df = DataFrame(Arrow.Table(file_path(passing_refs[1])))
-            has_mbr_cols = hasproperty(sample_df, :MBR_boosted_prec_prob)
+            # Determine score column from filtered data
+            sample_tbl = Arrow.Table(file_path(passing_refs[1]))
+            has_mbr_cols = hasproperty(sample_tbl, :MBR_boosted_prec_prob)
+            sample_tbl = nothing
 
-            if has_mbr_cols
-                # Part A: Recalculate MBR_boosted_qval using MBR-boosted prec_prob
-                # Sort by MBR-boosted prec_prob
-                sort_file_by_keys!(passing_refs, :MBR_boosted_prec_prob, :target; reverse=[true,true])
+            recalc_score_col = has_mbr_cols ? :MBR_boosted_prec_prob : :prec_prob
+            recalc_qval_col = has_mbr_cols ? :MBR_boosted_qval : :qval
 
-                # Merge by MBR-boosted prec_prob
-                stream_sorted_merge(passing_refs, results.merged_quant_path, :MBR_boosted_prec_prob, :target;
-                                    batch_size=10_000_000, reverse=[true,true])
-
-                # Calculate q-value spline using MBR-boosted precursor scores
-                qval_interp = get_qvalue_spline(
-                    results.merged_quant_path, :MBR_boosted_prec_prob, false;
-                    min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
-                    fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
-                )
-
-                # Recalculate MBR_boosted_qval column from MBR-boosted scores
-                recalculate_qvalue_pipeline = TransformPipeline() |>
-                    add_interpolated_column(:MBR_boosted_qval, :MBR_boosted_prec_prob, qval_interp)
-
-                passing_refs = apply_pipeline_batch(
-                    passing_refs,
-                    recalculate_qvalue_pipeline,
-                    passing_psms_folder
-                )
-
-                # Part B: Recalculate MBR_boosted_global_qval using MBR-boosted global_prob
-                # Merge passing PSMs to calculate global q-values at precursor level
-                #=
-                stream_sorted_merge(passing_refs, results.merged_quant_path, :precursor_idx;
-                                    batch_size=10_000_000)
-
-                # Calculate global q-value dictionary using MBR-boosted global scores
-                global_qval_dict = get_precursor_global_qval_dict(results.merged_quant_path, params, search_context)
-
-                # Recalculate MBR_boosted_global_qval column via dictionary lookup
-                recalculate_global_qvalue_pipeline = TransformPipeline() |>
-                    add_dict_column(:MBR_boosted_global_qval, :precursor_idx, global_qval_dict)
-
-                passing_refs = apply_pipeline_batch(
-                    passing_refs,
-                    recalculate_global_qvalue_pipeline,
-                    passing_psms_folder
-                )
-                =#
+            # Sidecar lifecycle for new spline (on filtered data)
+            spline_result = build_qvalue_spline_from_refs(passing_refs, recalc_score_col, results.merged_quant_path;
+                min_pep_points_per_bin=params.precursor_q_value_interpolation_points_per_bin,
+                fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
+            if spline_result === nothing
+                @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
             else
-                # Non-MBR mode: recalculate standard q-values
-                # Sort by prec_prob
-                sort_file_by_keys!(passing_refs, :prec_prob, :target; reverse=[true,true])
-
-                # Merge by prec_prob
-                stream_sorted_merge(passing_refs, results.merged_quant_path, :prec_prob, :target;
-                                    batch_size=10_000_000, reverse=[true,true])
-
-                # Calculate q-value spline
-                qval_interp = get_qvalue_spline(
-                    results.merged_quant_path, :prec_prob, false;
-                    min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
-                    fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
-                )
-
-                # Recalculate qval column
-                recalculate_qvalue_pipeline = TransformPipeline() |>
-                    add_interpolated_column(:qval, :prec_prob, qval_interp)
-
-                passing_refs = apply_pipeline_batch(
-                    passing_refs,
-                    recalculate_qvalue_pipeline,
-                    passing_psms_folder
-                )
-
-                #=
-                # Merge passing PSMs to calculate global q-values at precursor level
-                stream_sorted_merge(passing_refs, results.merged_quant_path, :precursor_idx;
-                                    batch_size=10_000_000)
-
-                # Calculate global q-value dictionary
-                global_qval_dict = get_precursor_global_qval_dict(results.merged_quant_path, params, search_context)
-
-                # Recalculate global_qval column via dictionary lookup
-                recalculate_global_qvalue_pipeline = TransformPipeline() |>
-                    add_dict_column(:global_qval, :precursor_idx, global_qval_dict)
-
-                passing_refs = apply_pipeline_batch(
-                    passing_refs,
-                    recalculate_global_qvalue_pipeline,
-                    passing_psms_folder
-                )
-                =#
+                recalc_pipeline = TransformPipeline() |>
+                    add_interpolated_column(recalc_qval_col, recalc_score_col, spline_result.qval_spline)
+                passing_refs = apply_pipeline_batch(passing_refs, recalc_pipeline, passing_psms_folder)
             end
         end
-        #@debug_l1 "Step 11 completed in $(round(step11_time, digits=2)) seconds"
 
         # Update search context with passing PSM paths
         for (file_idx, ref) in zip(valid_file_indices, passing_refs)
@@ -732,9 +530,11 @@ function summarize_results!(
             qc_folder = joinpath(dirname(temp_folder), "qc_plots")
             !isdir(qc_folder) && mkdir(qc_folder)
 
+            max_pgs = estimate_max_rows(params.max_psm_memory_mb, file_path(first(pg_refs)))
+            @user_info "Memory budget $(params.max_psm_memory_mb) MB → max_protein_groups = $max_pgs"
             perform_protein_probit_regression(
                 pg_refs,
-                params.max_psms_in_memory,
+                max_pgs,
                 qc_folder,
                 getPrecursors(getSpecLib(search_context));
                 protein_to_cv_fold = protein_to_cv_fold,
@@ -742,94 +542,59 @@ function summarize_results!(
             )
         end
 
-        # Step 16: Calculate global protein scores
-        step16_time = @elapsed begin
-            # Merge all protein groups (like precursor Step 5)
-            # Note: file_idx already exists from Step 13 protein inference
-            sort_file_by_keys!(pg_refs, :protein_name, :target, :entrap_id)
-            merged_pg_temp_path = joinpath(temp_folder, "merged_pg_for_global_scores.arrow")
-            stream_sorted_merge(pg_refs, merged_pg_temp_path, :protein_name, :target, :entrap_id)
-
-            # Load merged data and calculate global_pg_score via transform!
-            merged_df = DataFrame(Arrow.Table(merged_pg_temp_path))
+        # Steps 16-23 (combined): Build protein dicts + sidecar splines + single pipeline pass
+        # Replaces 4 separate sort-merge-load-split cycles with:
+        #   - Streaming dict accumulation for global_pg_score (reads ~20 bytes/row)
+        #   - In-memory q-value computation from dicts (no I/O)
+        #   - Lightweight 2-column sidecar files for spline computation
+        #   - Single per-file pipeline combining all column additions + filtering
+        step16_23_time = @elapsed begin
             sqrt_n_runs = floor(Int, sqrt(length(pg_refs)))
 
-            # Add global_pg_score column using transform! (same as precursor approach)
-            transform!(groupby(merged_df, [:protein_name, :target, :entrap_id]),
-                       :pg_score => (scores -> logodds(scores, sqrt_n_runs)) => :global_pg_score)
+            # Pre-allocation size from spectral library
+            n_proteins = length(getProteins(getSpecLib(search_context)))
 
-            # Write updated data back to individual files
-            for (idx, ref) in enumerate(pg_refs)
-                sub_df = merged_df[merged_df.file_idx .== idx, :]
-                write_arrow_file(ref, sub_df)
-            end
-        end
-
-        # Step 17: Sort protein groups by global_pg_score
-        step17_time = @elapsed begin
-            sort_file_by_keys!(pg_refs, :global_pg_score, :target; reverse=[true, true])
-        end
-
-        # Step 18: Merge protein groups for global q-values
-        step18_time = @elapsed begin
-            sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
-            stream_sorted_merge(pg_refs, sorted_pg_scores_path, :global_pg_score, :target;
-                               batch_size=1000000, reverse=[true,true])
-        end
-
-        # Step 19: Calculate global protein q-values and build dictionaries
-        step19_time = @elapsed begin
-            pg_name_to_global_pg_score, global_pg_score_to_qval_dict =
-                get_protein_global_qval_dict(sorted_pg_scores_path, params)
-
+            # D1: Stream per-file PGs to build global_pg_score dict (~20 bytes/row read)
+            global_pg_score_dict, pg_name_to_global_pg_score =
+                build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
             search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
-            search_context.global_pg_score_to_qval_dict[] = global_pg_score_to_qval_dict
-        end
 
-        # Step 20: Sort protein groups by pg_score
-        step20_time = @elapsed begin
-            sort_file_by_keys!(pg_refs, :pg_score, :target; reverse=[true, true])
-        end
+            # D2: Compute global PG q-value dict from score dict (NO file I/O)
+            global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)
+            search_context.global_pg_score_to_qval_dict[] = global_pg_qval_dict
 
-        # Step 21: Merge protein groups for experiment-wide q-values
-        step21_time = @elapsed begin
-            stream_sorted_merge(pg_refs, sorted_pg_scores_path, :pg_score, :target;
-                               batch_size=1000000, reverse=[true,true])
-        end
+            # D3-D5: Sidecar lifecycle → PG spline + PEP interpolation
+            sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
+            spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
+                batch_size=1_000_000, compute_pep=true,
+                min_pep_points_per_bin=params.pg_q_value_interpolation_points_per_bin, temp_prefix="pg_sidecar")
+            search_context.pg_score_to_qval[] = spline_result.qval_spline
+            search_context.pg_score_to_pep[] = spline_result.pep_interp
 
-        # Step 22: Calculate experiment-wide protein q-values and PEPs
-        step22_time = @elapsed begin
-            search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
-            search_context.pg_score_to_pep[]  = get_protein_pep_interpolation(sorted_pg_scores_path, params)
-        end
-
-        # Step 23: Add q-values and passing flags to protein groups
-        step23_time = @elapsed begin
-            protein_qval_pipeline = TransformPipeline() |>
-                add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], search_context.global_pg_score_to_qval_dict[]) |>
+            # Phase B — Single per-file pipeline combining Steps 16+23
+            protein_combined_pipeline = TransformPipeline() |>
+                add_dict_column_composite_key(:global_pg_score, [:protein_name, :target, :entrap_id], global_pg_score_dict) |>
+                add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], global_pg_qval_dict) |>
                 add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
-                add_interpolated_column(:pg_pep, :pg_score, search_context.pg_score_to_pep[]) |> 
+                add_interpolated_column(:pg_pep, :pg_score, search_context.pg_score_to_pep[]) |>
                 filter_by_multiple_thresholds([
                     (:global_pg_qval, params.q_value_threshold),
                     (:pg_qval, params.q_value_threshold)
-                ]) 
-            apply_pipeline!(pg_refs, protein_qval_pipeline)
+                ])
+
+            apply_pipeline!(pg_refs, protein_combined_pipeline)
+
+            # Post-filtering recalculation of pg_qval on filtered data
+            spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
+                batch_size=1_000_000, min_pep_points_per_bin=params.pg_q_value_interpolation_points_per_bin,
+                temp_prefix="pg_recalc")
+            search_context.pg_score_to_qval[] = spline_result.qval_spline
+
+            recalc_pg_pipeline = TransformPipeline() |>
+                add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[])
+
+            pg_refs = apply_pipeline_batch(pg_refs, recalc_pg_pipeline, passing_proteins_folder)
         end
-
-        sort_file_by_keys!(pg_refs, :pg_score, :target; reverse=[true, true])
-        stream_sorted_merge(pg_refs, sorted_pg_scores_path, :pg_score, :target;
-                    batch_size=1000000, reverse=[true,true])
-
-        search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
-
-        recalculate_experiment_wide_qvalue = TransformPipeline() |>
-            add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[])
-
-        pg_refs = apply_pipeline_batch(
-                pg_refs,
-                recalculate_experiment_wide_qvalue,
-                passing_proteins_folder
-            )
 
         # Step 24: Update PSMs with final protein scores
         step24_time = @elapsed begin
@@ -841,12 +606,11 @@ function summarize_results!(
             )
         end
         # Summary of all step times
-        total_time = step1_time + step2_time + step3_time + step4_time + step5_time +
-                    step6_time + step7_time + step8_time + step9_time + step10_time +
-                    step11_time + step12_time + step13_time + step14_time + step15_time +
-                    step16_time + step17_time + step18_time + step19_time + step20_time +
-                    step21_time + step22_time + step23_time + step24_time
-    
+        total_time = step1_time + step2_time + step3_time + step4_time +
+                    step5_10_time + step11_time +
+                    step12_time + step13_time + step14_time + step15_time +
+                    step16_23_time + step24_time
+
         @user_info "ScoringSearch completed - Total time: $(round(total_time, digits=2)) seconds"
 
         best_traces = nothing # Free memory

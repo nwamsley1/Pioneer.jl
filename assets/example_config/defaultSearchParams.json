@@ -141,7 +141,8 @@
             "max_diff": 0.01
         },
         "machine_learning": {
-            "max_psms_in_memory": 50000000,
+            "max_psm_memory_mb": 2000,
+            "force_oom": false,
             "min_trace_prob": 0.75,
             "max_q_value_mbr_itr": 0.20,
             "min_PEP_neg_threshold_itr": 0.90,
@@ -152,14 +153,16 @@
             "validation_split_ratio": 0.2,
             "qvalue_threshold": 0.01,
             "min_psms_for_comparison": 1000,
-            "max_psms_for_comparison": 100000
+            "max_psms_for_comparison": 100000,
+            "max_mbr_training_candidates": 1000000
         }
     },
     "proteinInference": {
         "min_peptides": 1
     },
     "maxLFQ": {
-        "run_to_run_normalization": false
+        "run_to_run_normalization": false,
+        "max_chunk_size_mb": 1024
     },
     "output": {
         "write_csv": true,

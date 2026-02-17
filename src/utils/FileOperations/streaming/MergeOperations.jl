@@ -164,6 +164,24 @@ function fillColumn!(
     end
 end
 
+"""
+Specialized fillColumn! for AbstractArray types (handles List columns with array elements).
+This handles columns where each row contains an array (e.g., SubArray{Float32, ...}).
+No type assertion needed - Julia's dispatch ensures type safety.
+"""
+function fillColumn!(
+    batch_col::Vector{A},
+    col::Symbol,
+    sorted_tuples::Vector{Tuple{Int64, Int64}},
+    tables::Vector{Arrow.Table},
+    n_rows::Int
+) where {A<:AbstractArray}
+    for i in 1:n_rows
+        table_idx, row_idx = sorted_tuples[i]
+        batch_col[i] = tables[table_idx][col][row_idx]
+    end
+end
+
 # Generic fillColumn! implementations (fallback)
 function _fillColumn!(col::Vector{T}, col_symbol::Symbol, 
                      sorted_tuples::Vector{Tuple{Int64, Int64}},
@@ -192,18 +210,42 @@ Type-Stable DataFrame Creation
 ==========================================================#
 
 """
+    unwrap_array_eltype(col_type)
+
+Unwrap nested array types to get the scalar element type.
+E.g., SubArray{Float32, ...} -> Float32, Vector{Int32} -> Int32
+Strings are not unwrapped as they are valid scalar types.
+"""
+function unwrap_array_eltype(col_type)
+    # Don't unwrap strings - they are valid scalar types
+    if col_type <: AbstractString
+        return col_type
+    end
+
+    # Unwrap array types to get the inner element type
+    while col_type isa DataType && col_type <: AbstractArray
+        col_type = eltype(col_type)
+    end
+
+    return col_type
+end
+
+"""
 Create a type-stable empty DataFrame with pre-allocated vectors.
 Types are determined from the schema of the first table.
+
+Note: Array element types (e.g., SubArray{Float32, ...}) are preserved as-is,
+since some Arrow columns store array data per row (List columns).
 """
 function create_typed_dataframe(reference_table::Arrow.Table, batch_size::Int)
     df = DataFrame()
     col_names = Tables.columnnames(reference_table)
-    
+
     for col_name in col_names
         col_type = eltype(Tables.getcolumn(reference_table, col_name))
-        
-        # Create appropriately typed vector
-        if col_type <: Union && Missing <: col_type
+
+        # Create appropriately typed vector (preserve array types as-is)
+        if col_type isa Union && Missing <: col_type
             # Handle Union{Missing, T} types
             non_missing_types = Base.uniontypes(col_type)
             actual_type = first(t for t in non_missing_types if t !== Missing)
@@ -212,7 +254,7 @@ function create_typed_dataframe(reference_table::Arrow.Table, batch_size::Int)
             df[!, col_name] = Vector{col_type}(undef, batch_size)
         end
     end
-    
+
     return df
 end
 
@@ -336,6 +378,37 @@ function _write_batch_typed(
 end
 
 #==========================================================
+Hierarchical Merge Support (FD-safe staging)
+==========================================================#
+
+"""
+    _stage_merge(refs, sort_keys...; max_fanin, reverse, batch_size)
+
+Merge `refs` in groups of `max_fanin` into temporary Arrow files.
+Returns a vector of FileReferences pointing to the staged temp files.
+Used internally to keep the number of simultaneously-open files bounded.
+"""
+function _stage_merge(
+    refs::Vector{<:FileReference},
+    sort_keys::Symbol...;
+    max_fanin::Int,
+    reverse::Union{Bool,Vector{Bool}},
+    batch_size::Int
+)
+    temp_dir = mktempdir()
+    staged_refs = similar(refs, 0)
+    for (i, batch) in enumerate(Iterators.partition(refs, max_fanin))
+        temp_path = joinpath(temp_dir, "stage_$i.arrow")
+        merged_ref = stream_sorted_merge(
+            collect(batch), temp_path, sort_keys...;
+            reverse, batch_size, max_fanin
+        )
+        push!(staged_refs, merged_ref)
+    end
+    return staged_refs
+end
+
+#==========================================================
 Main Stream Sorted Merge Function
 ==========================================================#
 
@@ -375,26 +448,35 @@ stream_sorted_merge(refs, path, :protein, :score, :name; reverse=[false, true, f
 ```
 """
 function stream_sorted_merge(
-    refs::Vector{<:FileReference}, 
+    refs::Vector{<:FileReference},
     output_path::String,
     sort_keys::Symbol...;
     reverse::Union{Bool,Vector{Bool}}=false,
-    batch_size::Int=1_000_000
+    batch_size::Int=1_000_000,
+    max_fanin::Int=64
 )
     # Validate inputs
     isempty(refs) && error("No files to merge")
     isempty(sort_keys) && error("At least one sort key must be specified")
-    
+
+    # Hierarchical merge: stage in batches to avoid FD exhaustion
+    if length(refs) > max_fanin
+        staged_refs = _stage_merge(refs, sort_keys...; max_fanin, reverse, batch_size)
+        return stream_sorted_merge(
+            staged_refs, output_path, sort_keys...;
+            reverse, batch_size, max_fanin
+        )
+    end
+
     # Convert sort_keys to tuple for type stability
     sort_keys_tuple = tuple(sort_keys...)
-    
+
     # Normalize reverse specification
     reverse_vec = _normalize_reverse_spec(reverse, length(sort_keys))
-    
+
     # Determine types from first file
     first_table = Arrow.Table(file_path(first(refs)))
     sort_types = tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
-    
 
     # Dispatch to N-key implementation
     return _stream_sorted_merge_nkey_impl(
@@ -498,9 +580,190 @@ function _stream_sorted_merge_nkey_impl(
     
     # Create output reference
     output_ref = create_reference(output_path, typeof(first(refs)))
-    
+
     # Mark as sorted - heap-based merge maintains sort order for all cases
     mark_sorted!(output_ref, sort_keys...)
-    
+
     return output_ref
+end
+
+"""
+    stream_sorted_merge_chunked(refs, output_dir, group_key, sort_keys...;
+                                reverse, batch_size, max_chunk_bytes)
+
+Like `stream_sorted_merge` but splits the merged output into multiple chunk
+files, each not exceeding `max_chunk_bytes`.  Chunk boundaries are placed only
+at `group_key` transitions so every chunk contains only complete groups.
+Each chunk always gets at least one complete group even if it exceeds the limit.
+
+Returns `Vector{<:FileReference}` — one per chunk, each marked as sorted.
+"""
+function stream_sorted_merge_chunked(
+    refs::Vector{<:FileReference},
+    output_dir::String,
+    group_key::Symbol,
+    sort_keys::Symbol...;
+    reverse::Union{Bool,Vector{Bool}}=false,
+    batch_size::Int=1_000_000,
+    max_chunk_bytes::Int=1_000_000_000,
+    max_fanin::Int=64
+)
+    isempty(refs) && error("No files to merge")
+    isempty(sort_keys) && error("At least one sort key must be specified")
+
+    # Hierarchical merge: stage in batches to avoid FD exhaustion
+    if length(refs) > max_fanin
+        staged_refs = _stage_merge(refs, sort_keys...; max_fanin, reverse, batch_size)
+        return stream_sorted_merge_chunked(
+            staged_refs, output_dir, group_key, sort_keys...;
+            reverse, batch_size, max_chunk_bytes, max_fanin
+        )
+    end
+
+    sort_keys_tuple = tuple(sort_keys...)
+    reverse_vec = _normalize_reverse_spec(reverse, length(sort_keys))
+
+    first_table = Arrow.Table(file_path(first(refs)))
+    sort_types = tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
+
+    return _stream_sorted_merge_chunked_impl(
+        refs, output_dir, group_key, sort_keys_tuple, sort_types,
+        reverse_vec, batch_size, max_chunk_bytes
+    )
+end
+
+function _stream_sorted_merge_chunked_impl(
+    refs::Vector{<:FileReference},
+    output_dir::String,
+    group_key::Symbol,
+    sort_keys::NTuple{N,Symbol},
+    sort_types::NTuple{M,Type},
+    reverse_vec::Vector{Bool},
+    batch_size::Int,
+    max_chunk_bytes::Int
+) where {N, M}
+    # Validate
+    for ref in refs
+        validate_exists(ref)
+        if !is_sorted_by(ref, sort_keys...)
+            error("File $(file_path(ref)) is not sorted by the required keys: $(sort_keys)")
+        end
+    end
+
+    tables = [Arrow.Table(file_path(ref)) for ref in refs]
+    for (i, table) in enumerate(tables)
+        available_columns = Set(Tables.columnnames(table))
+        for key in sort_keys
+            key ∉ available_columns && throw(BoundsError("Column $key not found in file $(file_path(refs[i]))"))
+        end
+        group_key ∉ available_columns && throw(BoundsError("Group key $group_key not found in file $(file_path(refs[i]))"))
+    end
+
+    table_sizes = [length(Tables.getcolumn(table, 1)) for table in tables]
+    total_source_bytes = sum(filesize(file_path(ref)) for ref in refs)
+    total_source_rows = sum(table_sizes)
+    estimated_bytes_per_row = total_source_rows > 0 ? total_source_bytes / total_source_rows : 0.0
+    table_indices = ones(Int64, length(tables))
+
+    batch_df = create_typed_dataframe(first(tables), batch_size)
+    sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, batch_size)
+
+    heap_tuple_type = Tuple{sort_types..., Int64}
+    heap = _create_typed_heap(heap_tuple_type, reverse_vec)
+
+    for (i, table) in enumerate(tables)
+        if table_sizes[i] > 0
+            _add_to_nkey_heap!(heap, table, i, 1, sort_keys)
+        end
+    end
+
+    # Chunking state
+    mkpath(output_dir)
+    chunk_paths = String[]
+    chunk_idx = 1
+    chunk_path() = joinpath(output_dir, @sprintf("chunk_%04d.arrow", chunk_idx))
+
+    row_idx = 1
+    n_writes_in_chunk = 0
+    current_chunk_bytes = 0.0
+    prev_group = nothing      # group_key value of the most recently queued row
+    rows_processed = 0
+    rows_with_missing_group = 0
+
+    while !isempty(heap)
+        heap_entry = pop!(heap)
+        src_table_idx = heap_entry[end]
+        src_row_idx = table_indices[src_table_idx]
+
+        # Read this row's group key
+        row_group = Tables.getcolumn(tables[src_table_idx], group_key)[src_row_idx]
+        if ismissing(row_group)
+            rows_with_missing_group += 1
+        end
+
+        # Chunk split check: group changed AND chunk exceeds size limit AND chunk has data
+        if prev_group !== nothing && !isequal(row_group, prev_group) &&
+           current_chunk_bytes >= max_chunk_bytes && (n_writes_in_chunk > 0 || row_idx > 1)
+            # Flush any pending rows to current chunk before splitting
+            if row_idx > 1
+                pending = row_idx - 1
+                _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, pending)
+                _write_batch_typed(chunk_path(), batch_df, n_writes_in_chunk, pending)
+                n_writes_in_chunk += 1
+                row_idx = 1
+            end
+            # Finalize current chunk, start new one
+            push!(chunk_paths, chunk_path())
+            chunk_idx += 1
+            n_writes_in_chunk = 0
+            current_chunk_bytes = 0.0
+        end
+
+        # Add row to batch
+        sorted_tuples[row_idx] = (src_table_idx, src_row_idx)
+        prev_group = row_group
+        rows_processed += 1
+        current_chunk_bytes += estimated_bytes_per_row
+
+        # Advance source table cursor
+        table_indices[src_table_idx] += 1
+        next_src_row = table_indices[src_table_idx]
+        if next_src_row <= table_sizes[src_table_idx]
+            _add_to_nkey_heap!(heap, tables[src_table_idx], src_table_idx, next_src_row, sort_keys)
+        end
+
+        row_idx += 1
+
+        # Write batch when full
+        if row_idx > batch_size
+            _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, batch_size)
+            _write_batch_typed(chunk_path(), batch_df, n_writes_in_chunk, batch_size)
+            n_writes_in_chunk += 1
+            row_idx = 1
+            current_chunk_bytes = isfile(chunk_path()) ? filesize(chunk_path()) : 0
+        end
+    end
+
+    # Write final partial batch
+    if row_idx > 1
+        final_rows = row_idx - 1
+        _fill_batch_columns_nkey!(batch_df, tables, sorted_tuples, final_rows)
+        _write_batch_typed(chunk_path(), batch_df, n_writes_in_chunk, final_rows)
+    end
+    push!(chunk_paths, chunk_path())
+
+    if rows_with_missing_group > 0
+        @warn "Chunked merge: $rows_with_missing_group / $rows_processed rows had missing $group_key (shared peptides — filtered downstream by LFQ)"
+    end
+
+    # Create output references
+    ref_type = typeof(first(refs))
+    chunk_refs = map(chunk_paths) do path
+        ref = create_reference(path, ref_type)
+        mark_sorted!(ref, sort_keys...)
+        ref
+    end
+
+    @user_info "Chunked merge: $(length(chunk_refs)) chunk(s), $rows_processed total rows"
+    return chunk_refs
 end
