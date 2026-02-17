@@ -209,6 +209,20 @@ function get_best_precursors_accross_runs(
         end
 
         n_valid_files += 1
+
+        # Per-file PSM count diagnostics
+        pep_col = psms[:PEP]
+        target_col = [!prec_is_decoy[pid] for pid in psms[:precursor_idx]]
+        n_total = length(pep_col)
+        fname = basename(psms_path)
+        parts = String[]
+        for thresh in (Float16(0.1), Float16(0.5), Float16(0.75), Float16(0.9))
+            nt = count(i -> pep_col[i] <= thresh && target_col[i], eachindex(pep_col))
+            nd = count(i -> pep_col[i] <= thresh && !target_col[i], eachindex(pep_col))
+            push!(parts, "≤$thresh: T=$nt D=$nd")
+        end
+        @info "File $fname: $n_total total PSMs | if filtered — " * join(parts, " | ") * "\n"
+
         #One row for each precursor
         readPSMs!(
             prec_to_best_prob,
@@ -259,8 +273,8 @@ function get_best_precursors_accross_runs(
     n_decoys = n_pooled - n_targets
     n_1pct = count(<=(0.01f0), global_qvals)
     n_5pct = count(<=(0.05f0), global_qvals)
-    @info "Global PEP: pooled $n_pooled PSMs ($n_targets targets, $n_decoys decoys) from $n_valid_files files"
-    @info "  PSMs at 1% global FDR: $n_1pct, at 5% global FDR: $n_5pct"
+    @info "Global PEP: pooled $n_pooled PSMs ($n_targets targets, $n_decoys decoys) from $n_valid_files files\n"
+    @info "  PSMs at 1% global FDR: $n_1pct, at 5% global FDR: $n_5pct\n"
 
     # For each precursor, keep its minimum global PEP across all runs
     prec_min_global_pep = Dictionary{UInt32, Float32}()
@@ -280,7 +294,16 @@ function get_best_precursors_accross_runs(
     n_pre_filter = length(prec_to_best_prob)
     n_pre_targets = count(pid -> !prec_is_decoy[pid], keys(prec_to_best_prob))
     n_pre_decoys = n_pre_filter - n_pre_targets
-    @info "Pre-filter pool: $n_pre_filter precursors ($n_pre_targets targets, $n_pre_decoys decoys)"
+    @info "Pre-filter pool: $n_pre_filter precursors ($n_pre_targets targets, $n_pre_decoys decoys)\n"
+
+    # Global unique precursors by min global PEP threshold
+    parts = String[]
+    for thresh in (0.1f0, 0.5f0, 0.75f0, 0.9f0)
+        nt = count(pid -> prec_min_global_pep[pid] <= thresh && !prec_is_decoy[pid], keys(prec_min_global_pep))
+        nd = count(pid -> prec_min_global_pep[pid] <= thresh && prec_is_decoy[pid], keys(prec_min_global_pep))
+        push!(parts, "≤$thresh: T=$nt D=$nd")
+    end
+    @info "Global unique precursors by min global PEP — " * join(parts, " | ") * "\n"
 
     # Filter: keep only precursors with min global PEP ≤ threshold
     for key in collect(keys(prec_to_best_prob))
@@ -296,7 +319,7 @@ function get_best_precursors_accross_runs(
     n_removed_targets = n_pre_targets - n_post_targets
     n_removed_decoys = n_pre_decoys - n_post_decoys
     @info "Global PEP ≤ $(min_pep) filter: kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
-          "removed $n_removed ($n_removed_targets targets, $n_removed_decoys decoys)"
+          "removed $n_removed ($n_removed_targets targets, $n_removed_decoys decoys)\n"
 
     # Second pass: calculate iRT variance for remaining precursors
     for psms_path in psms_paths #For each data frame 

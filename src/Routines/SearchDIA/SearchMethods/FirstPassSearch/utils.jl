@@ -234,7 +234,8 @@ Note: Assumes psms is sorted by retention time in ascending order.
 function get_best_psms!(psms::DataFrame,
                         prec_mz::Arrow.Primitive{T, Vector{T}};
                         max_PEP::Float32 = 0.9f0,
-                        fdr_scale_factor::Float32 = 1.0f0
+                        fdr_scale_factor::Float32 = 1.0f0,
+                        file_name::String = ""
 ) where {T<:AbstractFloat}
 
     #highest scoring psm for a given precursor
@@ -305,14 +306,18 @@ function get_best_psms!(psms::DataFrame,
     # Will use PEP for final filter
     get_PEP!(psms[!,:score], psms[!,:target], psms[!,:PEP]; doSort=false, fdr_scale_factor=fdr_scale_factor);
 
-    n = size(psms, 1)
-    select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target])
-
-    first_fail = searchsortedfirst(psms[!,:PEP], Float16(max_PEP))
-    if first_fail <= n
-        deleteat!(psms, first_fail:n)
+    # Per-file PEP diagnostics (no filtering — all PSMs pass to global pool)
+    pep_col = psms[!,:PEP]
+    target_col = psms[!,:target]
+    fname_tag = isempty(file_name) ? "" : " [$file_name]"
+    for thresh in (Float16(0.1), Float16(0.5), Float16(0.75), Float16(0.9))
+        mask = pep_col .<= thresh
+        nt = count(i -> mask[i] && target_col[i], eachindex(mask))
+        nd = count(i -> mask[i] && !target_col[i], eachindex(mask))
+        @info "Per-file PEP$fname_tag ≤$thresh: T=$nt D=$nd"
     end
-    #println("unique IDs prefilter: ", n, " ", first_fail, "\n\n")
+
+    select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target])
 
     mz = zeros(T, size(psms, 1));
     precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}

@@ -249,14 +249,16 @@ function process_file!(
             psms::DataFrame,
             precursor_mzs::AbstractVector,
             params::FirstPassSearchParameters,
-            search_context::SearchContext
+            search_context::SearchContext;
+            file_name::String=""
         )
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
             get_best_psms!(
                 psms,
                 precursor_mzs,
                 max_PEP=params.max_PEP,
-                fdr_scale_factor=fdr_scale_factor
+                fdr_scale_factor=fdr_scale_factor,
+                file_name=file_name
             )
         end
 
@@ -271,7 +273,8 @@ function process_file!(
             psms,
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
             params,
-            search_context
+            search_context,
+            file_name=getParsedFileName(search_context, ms_file_idx)
         )
         return psms
     end
@@ -557,6 +560,7 @@ function summarize_results!(
             valid_rt_irt,
             getIsDecoy(precursors),
             max_q_val=params.max_q_val_for_irt,
+            min_pep=Float16(params.max_PEP),
             fdr_scale_factor=fdr_scale_factor
         )
     end
