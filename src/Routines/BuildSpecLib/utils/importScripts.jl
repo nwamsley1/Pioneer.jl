@@ -54,6 +54,7 @@ function importSpecLibScripts()
     include("build/build_lib.jl")
     include("build/build_index.jl")
     include("build/build_poin_lib.jl")
+    include("build/partition_library.jl")
 
 
     include("chronologer/chronologer_types.jl")

@@ -247,6 +247,10 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     failed_files::Set{Int64}
     file_failure_reasons::Dict{Int64, String}
 
+    # Batched library support
+    reduced_library::Base.Ref{Union{Nothing, SpectralLibrary}}
+    params::Base.Ref{Any}  # PioneerParameters, stored for batch loading
+
     # Constructor
     function SearchContext(
         spec_lib::L,
@@ -254,7 +258,8 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
         mass_spec_data_reference::M,
         n_threads::Int64,
         n_precursors::Int64,
-        buffer_size::Int64
+        buffer_size::Int64;
+        params::Any = nothing
     ) where {L<:SpectralLibrary,M<:MassSpecDataReference}
         N = length(temp_structures)
         new{N,L,M}(
@@ -264,9 +269,9 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, MassErrorModel}(),
             Dict{Int64, MassErrorModel}(),
             Dict{Int64, NceModel}(), Ref(100000.0f0), 10.0f0,
-            Dict{Int64, RtConversionModel}(), 
-            Dict{Int64, RtConversionModel}(), 
-            Ref{Dictionary}(), 
+            Dict{Int64, RtConversionModel}(),
+            Dict{Int64, RtConversionModel}(),
+            Ref{Dictionary}(),
             Ref{Vector{String}}(),
             Dict{Int64, Float32}(),
             Dict{UInt32, Float32}(),
@@ -275,7 +280,9 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             n_threads, n_precursors, buffer_size,
             0, 0, 1.0f0,  # Initialize library stats with defaults
             Set{Int64}(),  # Initialize failed_files
-            Dict{Int64, String}()  # Initialize file_failure_reasons
+            Dict{Int64, String}(),  # Initialize file_failure_reasons
+            Ref{Union{Nothing, SpectralLibrary}}(nothing),  # reduced_library
+            Ref{Any}(params)  # params
         )
     end
 end
@@ -563,4 +570,93 @@ Check if results exist for a search method.
 """
 function has_results(ctx::SearchContext, ::Type{T}) where T<:SearchMethod
     return haskey(ctx.method_results, T)
+end
+
+#==========================================================
+Batched Library Support
+==========================================================#
+
+"""
+    isBatchedLibrary(ctx::SearchContext) -> Bool
+
+Check if the search context is using a batched spectral library.
+"""
+isBatchedLibrary(ctx::SearchContext) = isa(getSpecLib(ctx), BatchedSpectralLibrary)
+
+"""
+    getReducedLibrary(ctx::SearchContext) -> Union{Nothing, SpectralLibrary}
+
+Get the reduced library created after FirstPassSearch, or nothing if not yet created.
+"""
+getReducedLibrary(ctx::SearchContext) = ctx.reduced_library[]
+
+"""
+    setReducedLibrary!(ctx::SearchContext, lib::SpectralLibrary)
+
+Set the reduced library after FirstPassSearch.
+"""
+setReducedLibrary!(ctx::SearchContext, lib::SpectralLibrary) = (ctx.reduced_library[] = lib)
+
+"""
+    getParams(ctx::SearchContext) -> Any
+
+Get the PioneerParameters stored in the context for batch loading.
+"""
+getParams(ctx::SearchContext) = ctx.params[]
+
+"""
+    setParams!(ctx::SearchContext, params::Any)
+
+Set the PioneerParameters for batch loading.
+"""
+setParams!(ctx::SearchContext, params::Any) = (ctx.params[] = params)
+
+"""
+    getActiveLibrary(ctx::SearchContext) -> SpectralLibrary
+
+Get the library to use for searching. Returns reduced library if available,
+otherwise returns the main spectral library.
+
+This should be used by search methods after FirstPassSearch.
+"""
+function getActiveLibrary(ctx::SearchContext)
+    reduced = getReducedLibrary(ctx)
+    return reduced !== nothing ? reduced : getSpecLib(ctx)
+end
+
+"""
+    hasReducedLibrary(ctx::SearchContext) -> Bool
+
+Check if a reduced library has been created.
+"""
+hasReducedLibrary(ctx::SearchContext) = ctx.reduced_library[] !== nothing
+
+"""
+    getActivePrecursors(ctx::SearchContext) -> LibraryPrecursors
+
+Get precursors from the active library (reduced if available, otherwise main library).
+Use this in methods after FirstPassSearch.
+"""
+function getActivePrecursors(ctx::SearchContext)
+    return getPrecursors(getActiveLibrary(ctx))
+end
+
+"""
+    getActiveFragmentLookupTable(ctx::SearchContext) -> LibraryFragmentLookup
+
+Get fragment lookup table from the active library (reduced if available, otherwise main library).
+Use this in methods after FirstPassSearch.
+"""
+function getActiveFragmentLookupTable(ctx::SearchContext)
+    return getFragmentLookupTable(getActiveLibrary(ctx))
+end
+
+"""
+    getActiveProteins(ctx::SearchContext) -> LibraryProteins
+
+Get proteins from the active library (reduced if available, otherwise main library).
+Proteins are shared across all library types.
+"""
+function getActiveProteins(ctx::SearchContext)
+    return getProteins(getActiveLibrary(ctx))
 end

@@ -40,7 +40,7 @@ DataFrame of filtered PSMs containing:
 """
 function get_best_psms(search_context::SearchContext, q_value_threshold::Float32)
     prec_dict = getPrecursorDict(search_context)
-    is_decoy = getIsDecoy(getPrecursors(getSpecLib(search_context)))#[:is_decoy]
+    is_decoy = getIsDecoy(getActivePrecursors(search_context))#[:is_decoy]
     
     N = length(prec_dict)
     df = DataFrame(
@@ -310,12 +310,12 @@ function select_transitions_for_huber!(
         getIonTemplates(search_data),
         RTIndexedTransitionSelection(),
         params.prec_estimation,
-        getFragmentLookupTable(getSpecLib(search_context)),
+        getActiveFragmentLookupTable(search_context),
         nce_model,
         getPrecIds(search_data),
-        getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-        getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
-        getSulfurCount(getPrecursors(getSpecLib(search_context))),#[:sulfur_count],
+        getMz(getActivePrecursors(search_context)),#[:mz],
+        getCharge(getActivePrecursors(search_context)),#[:prec_charge],
+        getSulfurCount(getActivePrecursors(search_context)),#[:sulfur_count],
         getIsoSplines(search_data),
         getQuadTransmissionFunction(
             getQuadTransmissionModel(search_context, ms_file_idx),

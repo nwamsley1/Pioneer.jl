@@ -596,6 +596,23 @@ function summarize_results!(
     end
 
     setPrecursorDict!(search_context, precursor_dict)
+
+    # Create reduced library for batched searches
+    if isBatchedLibrary(search_context)
+        passing_ids = collect(keys(precursor_dict))
+
+        @info "Creating reduced library from $(length(passing_ids)) passing precursors"
+
+        pioneer_params = getParams(search_context)
+        if pioneer_params !== nothing
+            reduced_lib = create_reduced_library(getSpecLib(search_context), passing_ids, pioneer_params)
+            setReducedLibrary!(search_context, reduced_lib)
+            @info "Reduced library created successfully"
+        else
+            @warn "Cannot create reduced library: PioneerParameters not stored in SearchContext"
+        end
+    end
+
     # Calculate RT indices
     create_rt_indices!(search_context, results, precursor_dict, params)
     

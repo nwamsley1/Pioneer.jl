@@ -314,16 +314,25 @@ function partition_scans(indexed_data::IndexedMassSpecData, n_threads; ms_order_
 end
 
 """
-    initSearchContext(spec_lib, iso_splines, ms_data_reference, n_threads, n_precursors, buffer_size)
+    initSearchContext(spec_lib, iso_splines, ms_data_reference, n_threads, buffer_size; params=nothing)
 
 Initialize a new search context with simple library search structures.
+
+# Arguments
+- `spec_lib`: Spectral library
+- `iso_splines`: Isotope spline model
+- `ms_data_reference`: Mass spec data reference
+- `n_threads`: Number of threads
+- `buffer_size`: Buffer size for temp structures
+- `params`: Optional PioneerParameters for batched library support
 """
 function initSearchContext(
     spec_lib::SpectralLibrary,
     iso_splines::IsotopeSplineModel,
     ms_data_reference::MassSpecDataReference,
     n_threads::Int64,
-    buffer_size::Int64
+    buffer_size::Int64;
+    params::Any = nothing
 )
     n_precursors = length(getPrecursors(spec_lib))
     temp_structures = initSimpleSearchContexts(
@@ -332,15 +341,16 @@ function initSearchContext(
         n_threads,
         buffer_size
     )
-    
-    # Create SearchContext
+
+    # Create SearchContext with params for batched library support
     search_context = SearchContext(
         spec_lib,
         temp_structures,
         ms_data_reference,
         n_threads,
         n_precursors,
-        buffer_size
+        buffer_size;
+        params = params
     )
     
     # Calculate target/decoy statistics from library

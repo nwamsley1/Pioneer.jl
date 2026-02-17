@@ -275,12 +275,12 @@ function build_chromatograms(
                 getIonTemplates(search_data),
                 RTIndexedTransitionSelection(),
                 params.prec_estimation,
-                getFragmentLookupTable(getSpecLib(search_context)),
+                getActiveFragmentLookupTable(search_context),
                 nce_model,
                 precs_temp,
-                getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-                getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
-                getSulfurCount(getPrecursors(getSpecLib(search_context))),#[:sulfur_count],
+                getMz(getActivePrecursors(search_context)),#[:mz],
+                getCharge(getActivePrecursors(search_context)),#[:prec_charge],
+                getSulfurCount(getActivePrecursors(search_context)),#[:sulfur_count],
                 getIsoSplines(search_data),
                 quad_func,
                 getPrecursorTransmission(search_data),
@@ -459,7 +459,7 @@ function build_chromatograms(
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
     ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
-    precursors = getPrecursors(getSpecLib(search_context))
+    precursors = getActivePrecursors(search_context)
     seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
     pids = [pid for pid in precursors_passing]
     pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
@@ -701,7 +701,7 @@ function process_final_psms!(
     filter!(row -> !isnan(row.peak_area::Float32), psms)
     filter!(row -> row.peak_area::Float32 > 0.0, psms)
     # Add columns
-    precursors = getPrecursors(getSpecLib(search_context))
+    precursors = getActivePrecursors(search_context)
     n = size(psms, 1)
     accession_numbers = Vector{String}(undef, n)
     ms_file_idxs = Vector{UInt16}(undef, n)

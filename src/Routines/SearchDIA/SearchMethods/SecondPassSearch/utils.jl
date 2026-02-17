@@ -198,12 +198,12 @@ function process_scans!(
                 getIonTemplates(search_data),
                 RTIndexedTransitionSelection(),
                 params.prec_estimation,
-                getFragmentLookupTable(getSpecLib(search_context)),
+                getActiveFragmentLookupTable(search_context),
                 nce_model,
                 getPrecIds(search_data),
-                getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-                getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
-                getSulfurCount(getPrecursors(getSpecLib(search_context))),#[:sulfur_count],
+                getMz(getActivePrecursors(search_context)),#[:mz],
+                getCharge(getActivePrecursors(search_context)),#[:prec_charge],
+                getSulfurCount(getActivePrecursors(search_context)),#[:sulfur_count],
                 getIsoSplines(search_data),
                 getQuadTransmissionFunction(
                     getQuadTransmissionModel(search_context, ms_file_idx),
@@ -356,7 +356,7 @@ function process_scans!(
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
     ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
-    precursors = getPrecursors(getSpecLib(search_context))
+    precursors = getActivePrecursors(search_context)
     pair_ids = getPairIdx(precursors)
     pair_id_dict = Dictionary{
         UInt32, #pair_id
@@ -835,14 +835,14 @@ function add_features!(psms::DataFrame,
                                     prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}
                                     )
 
-    precursor_sequence = getSequence(getPrecursors(getSpecLib(search_context)))#[:sequence],
-    structural_mods = getStructuralMods(getPrecursors(getSpecLib(search_context)))#[:structural_mods],
-    prec_mz = getMz(getPrecursors(getSpecLib(search_context)))#[:mz],
-    prec_irt = getIrt(getPrecursors(getSpecLib(search_context)))#[:irt],
-    prec_charge = getCharge(getPrecursors(getSpecLib(search_context)))#[:prec_charge],
-    entrap_group_ids = getEntrapmentGroupId(getPrecursors(getSpecLib(search_context)))
-    precursor_missed_cleavage = getMissedCleavages(getPrecursors(getSpecLib(search_context)))#[:missed_cleavages],
-    precursor_pair_idxs = getPairIdx(getPrecursors(getSpecLib(search_context)))
+    precursor_sequence = getSequence(getActivePrecursors(search_context))#[:sequence],
+    structural_mods = getStructuralMods(getActivePrecursors(search_context))#[:structural_mods],
+    prec_mz = getMz(getActivePrecursors(search_context))#[:mz],
+    prec_irt = getIrt(getActivePrecursors(search_context))#[:irt],
+    prec_charge = getCharge(getActivePrecursors(search_context))#[:prec_charge],
+    entrap_group_ids = getEntrapmentGroupId(getActivePrecursors(search_context))
+    precursor_missed_cleavage = getMissedCleavages(getActivePrecursors(search_context))#[:missed_cleavages],
+    precursor_pair_idxs = getPairIdx(getActivePrecursors(search_context))
     #filter!(x -> x.best_scan, psms);
     filter!(x->x.weight>0, psms);
     #filter!(x->x.data_points>0, psms)

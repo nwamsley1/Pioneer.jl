@@ -281,6 +281,7 @@ function importScripts()
     
     # Library building
     safe_include!(joinpath(root_path, "build", "build_poin_lib.jl"))
+    safe_include!(joinpath(root_path, "build", "partition_library.jl"))
     
     # Chronologer Methods
     safe_include!(joinpath(root_path, "chronologer", "pair_decoys.jl"))

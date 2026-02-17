@@ -536,5 +536,7 @@ function __init__()
 end
 
 export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams, convertMzML, # ParseSpecLib, GetParseSpecLibParams, # COMMENTED OUT: ParseSpecLib has loading issues
+       partition_library_simple, partition_library_to_batches, # Batched library utilities
+       load_library_config, BatchedLibraryConfig, get_batch_idx, get_local_idx, get_prec_idx, # Batched library types/functions
        @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
 end

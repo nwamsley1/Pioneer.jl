@@ -327,7 +327,7 @@ function process_file!(
 
             # Check if we have any passing precursors for MS1 scoring
             if !isempty(precursors_passing)
-                precursors = getPrecursors(getSpecLib(search_context));
+                precursors = getActivePrecursors(search_context);
                 seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
                 pids = [pid for pid in precursors_passing]
                 pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
@@ -452,9 +452,9 @@ function process_search_results!(
         # Add basic search columns (RT, charge, target/decoy status)
         add_second_search_columns!(psms, 
             getRetentionTimes(spectra),
-            getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge], 
-            getIsDecoy(getPrecursors(getSpecLib(search_context))),#[:is_decoy],
-            getPrecursors(getSpecLib(search_context))
+            getCharge(getActivePrecursors(search_context)),#[:prec_charge], 
+            getIsDecoy(getActivePrecursors(search_context)),#[:is_decoy],
+            getActivePrecursors(search_context)
             );
 
         # Determine which precursor isotopes are captured in each scan's isolation window
@@ -464,9 +464,9 @@ function process_search_results!(
             getQuadTransmissionModel(search_context, ms_file_idx),
             getSearchData(search_context),
             psms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
-            getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
+            getCharge(getActivePrecursors(search_context)),#[:prec_charge],
+            getMz(getActivePrecursors(search_context)),#[:mz],
+            getSulfurCount(getActivePrecursors(search_context)),
             getCenterMzs(spectra),
             getIsolationWidthMzs(spectra)
         )

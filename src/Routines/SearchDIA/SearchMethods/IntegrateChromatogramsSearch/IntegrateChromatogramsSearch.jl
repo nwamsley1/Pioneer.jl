@@ -265,9 +265,9 @@ function process_file!(
             getQuadTransmissionModel(search_context, ms_file_idx),
             getSearchData(search_context),
             chromatograms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
+            getCharge(getActivePrecursors(search_context)),
+            getMz(getActivePrecursors(search_context)),
+            getSulfurCount(getActivePrecursors(search_context)),
             getCenterMzs(spectra),
             getIsolationWidthMzs(spectra)
         )

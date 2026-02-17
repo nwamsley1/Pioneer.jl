@@ -318,7 +318,8 @@ function SearchDIA(params_path::String)
                 parseIsoXML(isotope_spline_path()),
                 ArrowTableReference(MS_TABLE_PATHS),
                 Threads.nthreads(),
-                250000 # Default temp array batch size
+                250000; # Default temp array batch size
+                params = params  # Pass params for batched library support
             )
             setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
 

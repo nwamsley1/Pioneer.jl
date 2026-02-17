@@ -211,11 +211,22 @@ function getPSMS(
 end
 
 function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:ParameterTuningSearchParameters}
+    spec_lib = getSpecLib(search_context)
+
+    # Handle batched library - iterate through all batches
+    if isa(spec_lib, BatchedSpectralLibrary)
+        return _library_search_all_batches(
+            spectra, search_context, search_parameters, ms_file_idx,
+            true  # use_presearch = true for ParameterTuningSearch
+        )
+    end
+
+    # Standard non-batched search
     return vcat(LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
-                    getPresearchFragmentIndex(getSpecLib(search_context)),
-                    getSpecLib(search_context),
+                    getPresearchFragmentIndex(spec_lib),
+                    spec_lib,
                     getSearchData(search_context),
                     getQuadTransmissionModel(search_context, ms_file_idx),
                     getMassErrorModel(search_context, ms_file_idx),
@@ -227,12 +238,22 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
 end
 
 function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:SearchParameters}
+    spec_lib = getSpecLib(search_context)
 
+    # Handle batched library - iterate through all batches
+    if isa(spec_lib, BatchedSpectralLibrary)
+        return _library_search_all_batches(
+            spectra, search_context, search_parameters, ms_file_idx,
+            false  # use_presearch = false for other SearchParameters
+        )
+    end
+
+    # Standard non-batched search
     return vcat(LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
-                    getFragmentIndex(getSpecLib(search_context)),
-                    getSpecLib(search_context),
+                    getFragmentIndex(spec_lib),
+                    spec_lib,
                     getSearchData(search_context),
                     getQuadTransmissionModel(search_context, ms_file_idx),
                     getMassErrorModel(search_context, ms_file_idx),
@@ -249,11 +270,20 @@ function library_search(
     search_parameters::P,
     ms_file_idx::Int64) where {P<:NceTuningSearchParameters}
 
+    spec_lib = getSpecLib(search_context)
+
+    # Handle batched library - iterate through all batches
+    if isa(spec_lib, BatchedSpectralLibrary)
+        return _library_search_all_batches_nce_tuning(
+            spectra, search_context, search_parameters, ms_file_idx
+        )
+    end
+
     return LibrarySearchNceTuning(
         spectra,
         UInt32(ms_file_idx),
-        getFragmentIndex(getSpecLib(search_context)),
-        getSpecLib(search_context),
+        getFragmentIndex(spec_lib),
+        spec_lib,
         getSearchData(search_context),
         getQuadTransmissionModel(search_context, ms_file_idx),
         getMassErrorModel(search_context, ms_file_idx),
@@ -262,6 +292,138 @@ function library_search(
         search_parameters.nce_grid,
         getIrtErrors(search_context)[ms_file_idx]
     )
+end
+
+#==========================================================
+Batched Library Search Support
+==========================================================#
+
+"""
+    _library_search_all_batches(
+        spectra::MassSpecData,
+        search_context::SearchContext,
+        search_parameters::P,
+        ms_file_idx::Int64,
+        use_presearch::Bool
+    ) -> DataFrame
+
+Execute library search across all batches of a batched library, merging results.
+"""
+function _library_search_all_batches(
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    search_parameters::P,
+    ms_file_idx::Int64,
+    use_presearch::Bool
+) where {P<:FragmentIndexSearchParameters}
+
+    batched_lib = getSpecLib(search_context)::BatchedSpectralLibrary
+    params = getParams(search_context)
+
+    all_psms = DataFrame[]
+
+    for batch_idx in 1:getNBatches(batched_lib)
+        # Load batch
+        load_batch!(batched_lib, batch_idx, params)
+
+        # Get fragment index based on search type
+        frag_index = use_presearch ?
+            getPresearchFragmentIndex(batched_lib) :
+            getFragmentIndex(batched_lib)
+
+        # Get iRT tolerance based on search type
+        irt_tol = if hasmethod(getIRTTol, Tuple{typeof(search_parameters)})
+            getIRTTol(search_parameters)
+        else
+            getIrtErrors(search_context)[ms_file_idx]
+        end
+
+        # Search this batch
+        batch_psms = vcat(LibrarySearch(
+            spectra,
+            UInt32(ms_file_idx),
+            frag_index,
+            batched_lib,  # Will use current_batch via forwarding methods
+            getSearchData(search_context),
+            getQuadTransmissionModel(search_context, ms_file_idx),
+            getMassErrorModel(search_context, ms_file_idx),
+            getRtIrtModel(search_context, ms_file_idx),
+            search_parameters,
+            getNceModel(search_context, ms_file_idx),
+            irt_tol
+        )...)
+
+        if !isempty(batch_psms)
+            push!(all_psms, batch_psms)
+        end
+    end
+
+    # Unload final batch
+    unload_current_batch!(batched_lib)
+
+    # Merge results
+    if isempty(all_psms)
+        return DataFrame()
+    end
+
+    return vcat(all_psms...)
+end
+
+"""
+    _library_search_all_batches_nce_tuning(
+        spectra::MassSpecData,
+        search_context::SearchContext,
+        search_parameters::P,
+        ms_file_idx::Int64
+    ) -> DataFrame
+
+Execute NCE tuning library search across all batches of a batched library.
+"""
+function _library_search_all_batches_nce_tuning(
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    search_parameters::P,
+    ms_file_idx::Int64
+) where {P<:NceTuningSearchParameters}
+
+    batched_lib = getSpecLib(search_context)::BatchedSpectralLibrary
+    params = getParams(search_context)
+
+    all_psms = DataFrame[]
+
+    for batch_idx in 1:getNBatches(batched_lib)
+        # Load batch
+        load_batch!(batched_lib, batch_idx, params)
+
+        # Search this batch
+        batch_psms = LibrarySearchNceTuning(
+            spectra,
+            UInt32(ms_file_idx),
+            getFragmentIndex(batched_lib),
+            batched_lib,
+            getSearchData(search_context),
+            getQuadTransmissionModel(search_context, ms_file_idx),
+            getMassErrorModel(search_context, ms_file_idx),
+            getRtIrtModel(search_context, ms_file_idx),
+            search_parameters,
+            search_parameters.nce_grid,
+            getIrtErrors(search_context)[ms_file_idx]
+        )
+
+        if !isempty(batch_psms)
+            push!(all_psms, batch_psms)
+        end
+    end
+
+    # Unload final batch
+    unload_current_batch!(batched_lib)
+
+    # Merge results
+    if isempty(all_psms)
+        return DataFrame()
+    end
+
+    return vcat(all_psms...)
 end
 
 function LibrarySearch(

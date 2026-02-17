@@ -388,7 +388,7 @@ function summarize_results!(
             score_precursor_isotope_traces(
                 second_pass_folder,
                 valid_second_pass_psms,
-                getPrecursors(getSpecLib(search_context)),
+                getActivePrecursors(search_context),
                 params.match_between_runs,
                 params.max_q_value_lightgbm_rescore,
                 params.max_q_value_mbr_itr,
@@ -700,7 +700,7 @@ function summarize_results!(
         # Step 12: Count protein peptides
         step12_time = @elapsed begin
             protein_to_possible_peptides = count_protein_peptides(
-                getPrecursors(getSpecLib(search_context))
+                getActivePrecursors(search_context)
             )
         end
 
@@ -709,7 +709,7 @@ function summarize_results!(
             pg_refs, psm_to_pg_mapping = perform_protein_inference_pipeline(
                 passing_refs,
                 passing_proteins_folder,
-                getPrecursors(getSpecLib(search_context)),
+                getActivePrecursors(search_context),
                 protein_to_possible_peptides,
                 min_peptides = params.min_peptides
             )
@@ -723,7 +723,7 @@ function summarize_results!(
         step14_time = @elapsed begin
             # Get PSM paths from passing_refs (these are the high-quality PSMs)
             psm_paths = [file_path(ref) for ref in passing_refs]
-            protein_to_cv_fold = build_protein_cv_fold_mapping(psm_paths, getPrecursors(getSpecLib(search_context)))
+            protein_to_cv_fold = build_protein_cv_fold_mapping(psm_paths, getActivePrecursors(search_context))
         end
 
         # Step 15: Perform protein probit regression
@@ -736,7 +736,7 @@ function summarize_results!(
                 pg_refs,
                 params.max_psms_in_memory,
                 qc_folder,
-                getPrecursors(getSpecLib(search_context));
+                getActivePrecursors(search_context);
                 protein_to_cv_fold = protein_to_cv_fold,
                 ms1_scoring = params.ms1_scoring
             )

@@ -203,7 +203,7 @@ function summarize_results!(
             precursors_long_path,
             all_file_names,
             params.run_to_run_normalization,
-            getProteins(getSpecLib(search_context)),
+            getActiveProteins(search_context),
             params.params.global_settings.match_between_runs,
             write_csv = params.write_csv
         )
@@ -228,7 +228,7 @@ function summarize_results!(
 
         @user_info "Writing protein group results..."
         # Create wide format protein table
-        precursors = getPrecursors(getSpecLib(search_context))
+        precursors = getActivePrecursors(search_context)
         proteins_wide_path = writeProteinGroupsCSV(
             results.proteins_long_path,
             getSequence(precursors),
@@ -236,7 +236,7 @@ function summarize_results!(
             getStructuralMods(precursors),
             getCharge(precursors),
             all_file_names,
-            getProteins(getSpecLib(search_context)),
+            getActiveProteins(search_context),
             write_csv = params.write_csv
         )
 

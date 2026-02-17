@@ -15,6 +15,129 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+using JSON
+
+#==========================================================
+Batched Library Loading Support
+==========================================================#
+
+"""
+    load_library_config(config_path::String) -> BatchedLibraryConfig
+
+Load batched library configuration from JSON file.
+"""
+function load_library_config(config_path::String)::BatchedLibraryConfig
+    config_data = JSON.parsefile(config_path)
+
+    batch_ranges = [(Float32(r[1]), Float32(r[2])) for r in config_data["batch_mz_ranges"]]
+    batch_min_charges = [Int(c) for c in config_data["batch_min_charges"]]
+
+    return BatchedLibraryConfig(
+        Int(config_data["n_batches"]),
+        Int(config_data["n_precursors"]),
+        Int(config_data["batch_size"]),
+        batch_ranges,
+        batch_min_charges,
+        String(config_data["library_base_path"]),
+        Bool(config_data["is_batched"])
+    )
+end
+
+"""
+    save_library_config(config_path::String, config::BatchedLibraryConfig)
+
+Save batched library configuration to JSON file.
+"""
+function save_library_config(config_path::String, config::BatchedLibraryConfig)
+    config_data = Dict(
+        "n_batches" => config.n_batches,
+        "n_precursors" => config.n_precursors,
+        "batch_size" => config.batch_size,
+        "batch_mz_ranges" => config.batch_mz_ranges,
+        "batch_min_charges" => config.batch_min_charges,
+        "library_base_path" => config.library_base_path,
+        "is_batched" => config.is_batched
+    )
+    open(config_path, "w") do f
+        JSON.print(f, config_data, 2)
+    end
+end
+
+"""
+    get_batch_path(config::BatchedLibraryConfig, batch_idx::Int) -> String
+
+Get the directory path for a specific batch.
+"""
+function get_batch_path(config::BatchedLibraryConfig, batch_idx::Int)::String
+    return joinpath(config.library_base_path, "batch_$batch_idx")
+end
+
+"""
+    loadBatchedSpectralLibrary(lib_dir::String, config::BatchedLibraryConfig, params::PioneerParameters)
+
+Load a batched spectral library. Only loads shared data initially; batches are loaded on demand.
+
+No dictionary needed for precursor->batch mapping! The config contains batch_size,
+so we can compute batch_idx = (prec_idx - 1) ÷ batch_size + 1 in O(1).
+"""
+function loadBatchedSpectralLibrary(
+    lib_dir::String,
+    config::BatchedLibraryConfig,
+    params::PioneerParameters
+)::BatchedSpectralLibrary
+
+    # Load shared protein data
+    proteins = Arrow.Table(joinpath(lib_dir, "proteins_table.arrow"))
+
+    return BatchedSpectralLibrary(
+        config,
+        0,  # No batch loaded initially
+        nothing,
+        SetProteins(proteins)
+    )
+end
+
+"""
+    load_batch!(lib::BatchedSpectralLibrary, batch_idx::Int, params::PioneerParameters)
+
+Load a specific batch into memory. Unloads any previously loaded batch first.
+"""
+function load_batch!(lib::BatchedSpectralLibrary, batch_idx::Int, params::PioneerParameters)
+    # Check if already loaded
+    if lib.current_batch_idx == batch_idx && lib.current_batch !== nothing
+        return nothing
+    end
+
+    # Unload current batch
+    unload_current_batch!(lib)
+
+    # Load new batch using existing loadSpectralLibrary_internal for the batch directory
+    batch_path = get_batch_path(lib.config, batch_idx)
+    lib.current_batch = loadSpectralLibrary_internal(batch_path, params)
+    lib.current_batch_idx = batch_idx
+
+    @info "Loaded batch $batch_idx of $(lib.config.n_batches)"
+
+    return nothing
+end
+
+"""
+    unload_current_batch!(lib::BatchedSpectralLibrary)
+
+Unload the current batch to free memory.
+"""
+function unload_current_batch!(lib::BatchedSpectralLibrary)
+    if lib.current_batch !== nothing
+        lib.current_batch = nothing
+        lib.current_batch_idx = 0
+        GC.gc()  # Trigger garbage collection to free memory
+    end
+    return nothing
+end
+
+#==========================================================
+Internal Library Loading (Renamed from loadSpectralLibrary)
+==========================================================#
 
 #=
 function load_detailed_frags(filename::String)
@@ -59,7 +182,38 @@ end
 =#
 
 
-function loadSpectralLibrary(SPEC_LIB_DIR::String,
+"""
+    loadSpectralLibrary(SPEC_LIB_DIR::String, params::PioneerParameters) -> SpectralLibrary
+
+Load a spectral library from the given directory. Automatically detects whether this is a
+batched library (has library_config.json) or a monolithic library.
+
+For batched libraries, returns a BatchedSpectralLibrary that loads batches on demand.
+For monolithic libraries, returns a FragmentIndexLibrary or SplineFragmentIndexLibrary.
+"""
+function loadSpectralLibrary(SPEC_LIB_DIR::String, params::PioneerParameters)
+    # Check for batched library
+    config_path = joinpath(SPEC_LIB_DIR, "library_config.json")
+
+    if isfile(config_path)
+        config = load_library_config(config_path)
+        if config.is_batched
+            @info "Detected batched spectral library with $(config.n_batches) batches"
+            return loadBatchedSpectralLibrary(SPEC_LIB_DIR, config, params)
+        end
+    end
+
+    # Original monolithic loading
+    return loadSpectralLibrary_internal(SPEC_LIB_DIR, params)
+end
+
+"""
+    loadSpectralLibrary_internal(SPEC_LIB_DIR::String, params::PioneerParameters)
+
+Internal function to load a monolithic (non-batched) spectral library.
+This is also used to load individual batches within a batched library.
+"""
+function loadSpectralLibrary_internal(SPEC_LIB_DIR::String,
                              params::PioneerParameters)
     f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"))
     f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
