@@ -217,6 +217,8 @@ function get_best_precursors_accross_runs(
         pep_col = psms[:PEP]
         target_col = [!prec_is_decoy[pid] for pid in psms[:precursor_idx]]
         n_total = length(pep_col)
+        n_total_targets = count(target_col)
+        n_total_decoys = n_total - n_total_targets
         fname = basename(psms_path)
         parts = String[]
         for thresh in (Float16(0.1), Float16(0.5), Float16(0.75), Float16(0.9))
@@ -224,7 +226,7 @@ function get_best_precursors_accross_runs(
             nd = count(i -> pep_col[i] <= thresh && !target_col[i], eachindex(pep_col))
             push!(parts, "≤$thresh: T=$nt D=$nd")
         end
-        @info "File $fname: $n_total total PSMs | if filtered — " * join(parts, " | ") * "\n"
+        @info "File $fname: $n_total total PSMs (T=$n_total_targets D=$n_total_decoys) | if filtered — " * join(parts, " | ") * "\n"
 
         # Track per-file PSM count at PEP ≤ 0.9 for count cap
         n_at_09 = count(i -> pep_col[i] <= Float16(0.9), eachindex(pep_col))
