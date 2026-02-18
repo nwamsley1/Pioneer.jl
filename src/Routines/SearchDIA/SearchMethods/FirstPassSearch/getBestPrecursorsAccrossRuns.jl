@@ -16,15 +16,31 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
+Log-odds average of top-N probabilities, converted back to probability space.
+Mirrors ScoringSearch/scoring_interface.jl:logodds for first pass use.
+"""
+function _logodds_combine(probs::Vector{Float32}, top_n::Int)::Float32
+    isempty(probs) && return 0.0f0
+    n = min(length(probs), top_n)
+    sorted = sort(probs; rev=true)
+    selected = @view sorted[1:n]
+    eps = 1f-6
+    lo = log.(clamp.(selected, 0.1f0, 1 - eps) ./ (1 .- clamp.(selected, 0.1f0, 1 - eps)))
+    avg = sum(lo) / n
+    return 1.0f0 / (1 + exp(-avg))
+end
+
+"""
     get_best_precursors_accross_runs(psms_paths, prec_mzs, rt_irt, prec_is_decoy;
                                     max_q_val=0.01f0, fdr_scale_factor=1.0f0,
                                     global_pep_threshold=0.5f0)
     -> Dictionary{UInt32, NamedTuple}
 
 Identify and collect best precursor matches across multiple runs for retention time calibration.
-Pools PSMs from all runs and computes a **global PEP** via isotonic regression (`get_PEP!`),
-giving a more stable score→PEP mapping than per-run estimates. Filters precursors by keeping
-only those whose minimum global PEP across runs is ≤ `global_pep_threshold`.
+Combines per-run probabilities via **log-odds averaging** (`_logodds_combine`) to produce a
+single global probability per precursor, then computes global PEP via isotonic regression
+on the unique precursors. Uses `top_n = floor(sqrt(n_files))` best per-file probabilities.
+Filters precursors by keeping only those whose global PEP is ≤ `global_pep_threshold`.
 
 # Arguments
 - `psms_paths`: Paths to PSM files from first pass search
@@ -47,10 +63,11 @@ Dictionary mapping precursor indices to NamedTuple containing:
 - `mz`: Precursor m/z value
 
 # Process
-1. First pass: Collects best matches, mean iRT, pools (precursor_idx, prob) for global PEP
-2. Computes global PEP via isotonic regression on pooled data
-3. Filters precursors by min global PEP ≤ global_pep_threshold
-4. Second pass: Calculates iRT variance for remaining precursors
+1. First pass: Collects best matches, mean iRT, and best prob per precursor per file
+2. Computes global prob per precursor via log-odds averaging of per-file best probs
+3. Computes global PEP via isotonic regression on unique precursors
+4. Filters precursors by global PEP ≤ global_pep_threshold
+5. Second pass: Calculates iRT variance for remaining precursors
 """
 function get_best_precursors_accross_runs(
                          psms_paths::Vector{String},
@@ -188,10 +205,9 @@ function get_best_precursors_accross_runs(
                                                         n::Union{Missing, UInt16},
                                                         mz::Float32}}()
 
-    # First pass: collect best matches, mean iRT, and pool (precursor_idx, prob) for global PEP
+    # First pass: collect best matches, mean iRT, and best prob per precursor per file
 
-    pooled_precursor_idxs = Vector{UInt32}()
-    pooled_probs = Vector{Float32}()
+    prec_probs_by_run = Dictionary{UInt32, Vector{Float32}}()
     n_valid_files = 0
     for psms_path in psms_paths #For each data frame
         psms = Arrow.Table(psms_path)
@@ -238,12 +254,25 @@ function get_best_precursors_accross_runs(
             max_q_val
         )
 
-        # Pool (precursor_idx, prob) for global PEP computation
+        # Collect best prob per precursor from this file for log-odds combining
         prec_col = psms[:precursor_idx]
         prob_col = psms[:prob]
+        file_best = Dictionary{UInt32, Float32}()
         for i in eachindex(prec_col)
-            push!(pooled_precursor_idxs, prec_col[i])
-            push!(pooled_probs, prob_col[i])
+            pid = prec_col[i]
+            p = prob_col[i]
+            if haskey(file_best, pid)
+                file_best[pid] = max(file_best[pid], p)
+            else
+                insert!(file_best, pid, p)
+            end
+        end
+        for (pid, p) in pairs(file_best)
+            if haskey(prec_probs_by_run, pid)
+                push!(prec_probs_by_run[pid], p)
+            else
+                insert!(prec_probs_by_run, pid, Float32[p])
+            end
         end
     end
 
@@ -253,43 +282,40 @@ function get_best_precursors_accross_runs(
         return prec_to_best_prob
     end
 
-    # Compute global PEP via isotonic regression on pooled data
-    n_pooled = length(pooled_probs)
+    # Compute global probability per precursor via log-odds averaging
+    sqrt_n_files = max(1, floor(Int, sqrt(n_valid_files)))
+    n_unique = length(prec_probs_by_run)
 
-    # Derive target labels from prec_is_decoy
-    pooled_targets = Vector{Bool}(undef, n_pooled)
-    for i in eachindex(pooled_precursor_idxs)
-        pooled_targets[i] = !prec_is_decoy[pooled_precursor_idxs[i]]
+    global_prec_idxs = Vector{UInt32}(undef, n_unique)
+    global_probs = Vector{Float32}(undef, n_unique)
+    global_targets = Vector{Bool}(undef, n_unique)
+    for (i, (pid, probs)) in enumerate(pairs(prec_probs_by_run))
+        global_prec_idxs[i] = pid
+        global_probs[i] = _logodds_combine(probs, sqrt_n_files)
+        global_targets[i] = !prec_is_decoy[pid]
     end
 
-    global_peps = Vector{Float32}(undef, n_pooled)
-    get_PEP!(pooled_probs, pooled_targets, global_peps;
+    # PEP via isotonic regression on unique precursors (not pooled PSMs)
+    global_peps = Vector{Float32}(undef, n_unique)
+    get_PEP!(global_probs, global_targets, global_peps;
              doSort=true, fdr_scale_factor=fdr_scale_factor)
 
     # Global q-values for diagnostics
-    global_qvals = Vector{Float32}(undef, n_pooled)
-    get_qvalues!(pooled_probs, pooled_targets, global_qvals;
+    global_qvals = Vector{Float32}(undef, n_unique)
+    get_qvalues!(global_probs, global_targets, global_qvals;
                  doSort=true, fdr_scale_factor=fdr_scale_factor)
 
-    n_targets = count(pooled_targets)
-    n_decoys = n_pooled - n_targets
+    n_targets = count(global_targets)
+    n_decoys = n_unique - n_targets
     n_1pct = count(<=(0.01f0), global_qvals)
     n_5pct = count(<=(0.05f0), global_qvals)
-    @info "Global PEP: pooled $n_pooled PSMs ($n_targets targets, $n_decoys decoys) from $n_valid_files files\n"
-    @info "  PSMs at 1% global FDR: $n_1pct, at 5% global FDR: $n_5pct\n"
+    @info "Global PEP (log-odds): $n_unique unique precursors ($n_targets targets, $n_decoys decoys) from $n_valid_files files (top_n=$sqrt_n_files)\n"
+    @info "  Precursors at 1% global FDR: $n_1pct, at 5% global FDR: $n_5pct\n"
 
-    # For each precursor, keep its minimum global PEP across all runs
+    # Build global PEP dictionary (one value per precursor)
     prec_min_global_pep = Dictionary{UInt32, Float32}()
-    for i in eachindex(pooled_precursor_idxs)
-        pid = pooled_precursor_idxs[i]
-        gpep = global_peps[i]
-        if haskey(prec_min_global_pep, pid)
-            if gpep < prec_min_global_pep[pid]
-                prec_min_global_pep[pid] = gpep
-            end
-        else
-            insert!(prec_min_global_pep, pid, gpep)
-        end
+    for i in eachindex(global_prec_idxs)
+        insert!(prec_min_global_pep, global_prec_idxs[i], global_peps[i])
     end
 
     # Diagnostics: pre-filter counts
