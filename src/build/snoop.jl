@@ -24,7 +24,7 @@ end
 
 # search
 maybe_run("GetSearchParams") do
-    GetSearchParams(
+    Pioneer.GetSearchParams(
         joinpath(data_dir, "ecoli_test", "altimeter_ecoli.poin"),
         joinpath(data_dir, "ecoli_test", "raw"),
         mktempdir(),
@@ -33,12 +33,12 @@ end
 
 # predict
 maybe_run("GetBuildLibParams") do
-    GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
+    Pioneer.GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
 end
 
 # empirical
 maybe_run("GetParseSpecLibParams") do
-    GetParseSpecLibParams("test_lib", mktempdir())
+    Pioneer.GetParseSpecLibParams("test_lib", mktempdir())
 end
 
 
@@ -46,7 +46,7 @@ end
 # Empirical libraries
 ##########################################
 maybe_run("ParseSpecLib") do
-    ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
+    Pioneer.ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
 end
 
 
@@ -57,11 +57,11 @@ end
 
 # Build a tiny Prosit library and search it with low memory thresholds
 maybe_run("BuildSpecLib") do
-    BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
+    Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
 end
 # Build a tiny Altimeter library
 maybe_run("BuildSpecLib") do
-    BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_altimeter.json"))
+    Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_altimeter.json"))
 end
 
 
@@ -70,9 +70,9 @@ end
 ##########################################
 
 maybe_run("SearchDIA") do
-    SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))         # prosit
-    SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))      # altimeter + MBR
-    SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter_OOM.json"))  # altimeter + MBR + OOM
+    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))         # prosit
+    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))      # altimeter + MBR
+    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter_OOM.json"))  # altimeter + MBR + OOM
 end
 
 
@@ -80,5 +80,5 @@ end
 # ConvertMzML
 ##########################################
 maybe_run("convertMzML") do
-    convertMzML(joinpath(data_dir, "precompile", "convert_example.mzML"))
+    Pioneer.convertMzML(joinpath(data_dir, "precompile", "convert_example.mzML"))
 end
