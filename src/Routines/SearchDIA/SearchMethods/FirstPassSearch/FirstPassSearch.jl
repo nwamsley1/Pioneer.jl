@@ -107,7 +107,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     n_train_rounds_probit::Int64
     max_iter_probit::Int64
     max_q_value_probit_rescore::Float32
-    max_PEP::Float32
+    global_pep_threshold::Float32
     # RT parameters
     min_inference_points::Int64
     max_q_val_for_irt::Float32
@@ -161,7 +161,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Int64(score_params.n_train_rounds),
             Int64(score_params.max_iterations),
             Float32(score_params.max_q_value_probit_rescore),
-            Float32(score_params.max_PEP),
+            Float32(score_params.global_pep_threshold),
 
             Int64(1000), # Default min_inference_points
             Float32(rt_params.min_probability),
@@ -254,7 +254,6 @@ function process_file!(
             get_best_psms!(
                 psms,
                 precursor_mzs,
-                max_PEP=params.max_PEP,
                 fdr_scale_factor=fdr_scale_factor
             )
         end
@@ -556,7 +555,8 @@ function summarize_results!(
             valid_rt_irt,
             getIsDecoy(precursors),
             max_q_val=params.max_q_val_for_irt,
-            fdr_scale_factor=fdr_scale_factor
+            fdr_scale_factor=fdr_scale_factor,
+            global_pep_threshold=params.global_pep_threshold
         )
     end
     # Map retention times

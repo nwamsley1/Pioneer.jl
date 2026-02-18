@@ -213,14 +213,13 @@ end
 
 """
     get_best_psms!(psms::DataFrame, prec_mz::Arrow.Primitive{T, Vector{T}};
-                   max_PEP::Float32=0.9f0, fdr_scale_factor::Float32=1.0f0) where {T<:AbstractFloat}
+                   fdr_scale_factor::Float32=1.0f0) where {T<:AbstractFloat}
 
 Processes PSMs to identify the best matches and calculate peak characteristics.
 
 # Arguments
 - `psms`: DataFrame containing peptide-spectrum matches
 - `prec_mz`: Vector of precursor m/z values
-- `max_PEP`: Per-file PEP threshold for pre-filtering PSMs before Arrow output
 - `fdr_scale_factor`: Scale factor to correct for library target/decoy ratio
 
 # Modifies PSMs DataFrame to add:
@@ -233,7 +232,6 @@ Note: Assumes psms is sorted by retention time in ascending order.
 """
 function get_best_psms!(psms::DataFrame,
                         prec_mz::Arrow.Primitive{T, Vector{T}};
-                        max_PEP::Float32 = 0.9f0,
                         fdr_scale_factor::Float32 = 1.0f0
 ) where {T<:AbstractFloat}
 
@@ -307,10 +305,10 @@ function get_best_psms!(psms::DataFrame,
 
     select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target])
 
-    # Per-file PEP pre-filter: keep 2× the rows where PEP ≤ max_PEP to bound
+    # Per-file PEP pre-filter: keep 2× the rows where PEP ≤ 0.9 to bound
     # Arrow file size while retaining enough tail for accurate global PEP.
     n = size(psms, 1)
-    first_fail = searchsortedfirst(psms[!,:PEP], Float16(max_PEP))
+    first_fail = searchsortedfirst(psms[!,:PEP], Float16(0.9))
     keep = min(2 * (first_fail - 1), n)
     if keep < n
         deleteat!(psms, (keep + 1):n)

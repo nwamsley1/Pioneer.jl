@@ -18,14 +18,13 @@
 """
     get_best_precursors_accross_runs(psms_paths, prec_mzs, rt_irt, prec_is_decoy;
                                     max_q_val=0.01f0, fdr_scale_factor=1.0f0,
-                                    count_cap_multiplier=1.0)
+                                    global_pep_threshold=0.5f0)
     -> Dictionary{UInt32, NamedTuple}
 
 Identify and collect best precursor matches across multiple runs for retention time calibration.
 Pools PSMs from all runs and computes a **global PEP** via isotonic regression (`get_PEP!`),
-giving a more stable score→PEP mapping than per-run estimates. Uses a hybrid count-cap filter:
-precursors are ranked by ascending global PEP (best first) and the top N are kept, where
-N = count_cap_multiplier × max(per-file PSM count at PEP ≤ 0.9).
+giving a more stable score→PEP mapping than per-run estimates. Filters precursors by keeping
+only those whose minimum global PEP across runs is ≤ `global_pep_threshold`.
 
 # Arguments
 - `psms_paths`: Paths to PSM files from first pass search
@@ -34,7 +33,7 @@ N = count_cap_multiplier × max(per-file PSM count at PEP ≤ 0.9).
 - `prec_is_decoy`: Boolean vector indicating decoy status per precursor index
 - `max_q_val`: Maximum q-value threshold for iRT statistics
 - `fdr_scale_factor`: Scale factor for library target/decoy ratio correction
-- `count_cap_multiplier`: Multiplier for count cap (default 1.0 matches v0.6.6 baseline)
+- `global_pep_threshold`: Maximum global PEP for precursor selection (default 0.5)
 
 # Returns
 Dictionary mapping precursor indices to NamedTuple containing:
@@ -48,10 +47,9 @@ Dictionary mapping precursor indices to NamedTuple containing:
 - `mz`: Precursor m/z value
 
 # Process
-1. First pass: Collects best matches, mean iRT, pools (precursor_idx, prob) for global PEP,
-   and tracks per-file PSM counts at PEP ≤ 0.9 for count cap
+1. First pass: Collects best matches, mean iRT, pools (precursor_idx, prob) for global PEP
 2. Computes global PEP via isotonic regression on pooled data
-3. Ranks precursors by min global PEP, keeps top N = count_cap_multiplier × max(per-file PSMs at PEP ≤ 0.9)
+3. Filters precursors by min global PEP ≤ global_pep_threshold
 4. Second pass: Calculates iRT variance for remaining precursors
 """
 function get_best_precursors_accross_runs(
@@ -61,7 +59,7 @@ function get_best_precursors_accross_runs(
                          prec_is_decoy::AbstractVector{Bool};
                          max_q_val::Float32 = 0.01f0,
                          fdr_scale_factor::Float32 = 1.0f0,
-                         count_cap_multiplier::Float64 = 1.0
+                         global_pep_threshold::Float32 = 0.5f0
                          )
 
     function readPSMs!(
@@ -195,7 +193,6 @@ function get_best_precursors_accross_runs(
     pooled_precursor_idxs = Vector{UInt32}()
     pooled_probs = Vector{Float32}()
     n_valid_files = 0
-    max_psms_at_threshold = 0  # Track max per-file PSM count at PEP ≤ 0.9 for count cap
     for psms_path in psms_paths #For each data frame
         psms = Arrow.Table(psms_path)
 
@@ -227,10 +224,6 @@ function get_best_precursors_accross_runs(
             push!(parts, "≤$thresh: T=$nt D=$nd")
         end
         @info "File $fname: $n_total total PSMs (T=$n_total_targets D=$n_total_decoys) | if filtered — " * join(parts, " | ") * "\n"
-
-        # Track per-file PSM count at PEP ≤ 0.9 for count cap
-        n_at_09 = count(i -> pep_col[i] <= Float16(0.9), eachindex(pep_col))
-        max_psms_at_threshold = max(max_psms_at_threshold, n_at_09)
 
         #One row for each precursor
         readPSMs!(
@@ -314,20 +307,9 @@ function get_best_precursors_accross_runs(
     end
     @info "Global unique precursors by min global PEP — " * join(parts, " | ") * "\n"
 
-    # Count-cap filter: rank by global PEP, keep top N
-    max_precursors = round(Int, count_cap_multiplier * max_psms_at_threshold)
-    sorted_pids = sort(collect(keys(prec_min_global_pep)), by=pid -> prec_min_global_pep[pid])
-    @info "Count cap: max_precursors = $max_precursors ($count_cap_multiplier × $max_psms_at_threshold from best file)\n"
-
-    # Build set of precursors to keep (top N by ascending global PEP)
-    keep_set = Set{UInt32}()
-    for i in 1:min(max_precursors, length(sorted_pids))
-        push!(keep_set, sorted_pids[i])
-    end
-
-    # Delete precursors not in keep set
+    # Global PEP threshold filter: keep precursors with min global PEP ≤ threshold
     for key in collect(keys(prec_to_best_prob))
-        if !(key in keep_set)
+        if !haskey(prec_min_global_pep, key) || prec_min_global_pep[key] > global_pep_threshold
             delete!(prec_to_best_prob, key)
         end
     end
@@ -338,10 +320,8 @@ function get_best_precursors_accross_runs(
     n_removed = n_pre_filter - n_post_filter
     n_removed_targets = n_pre_targets - n_post_targets
     n_removed_decoys = n_pre_decoys - n_post_decoys
-    pep_cutoff = max_precursors < length(sorted_pids) ? prec_min_global_pep[sorted_pids[max_precursors]] : NaN32
-    @info "Count-cap filter: kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
-          "removed $n_removed ($n_removed_targets targets, $n_removed_decoys decoys), " *
-          "effective PEP cutoff ≈ $pep_cutoff\n"
+    @info "Global PEP filter (≤$global_pep_threshold): kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
+          "removed $n_removed ($n_removed_targets targets, $n_removed_decoys decoys)\n"
 
     # Second pass: calculate iRT variance for remaining precursors
     for psms_path in psms_paths #For each data frame
