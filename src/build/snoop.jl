@@ -10,7 +10,10 @@ function maybe_run(f, name)
         try
             f()
         catch e
-            @user_warn "Error executing $name during precompile of $cmd " exception=(e, catch_backtrace()) 
+            bt = catch_backtrace()
+            target_cmd = cmd === nothing ? "<all>" : cmd
+            @user_warn "Error executing $name during precompile of $target_cmd: $(sprint(showerror, e))"
+            @warn "Precompile exception details for $name" exception=(e, bt)
         end
     end
 end
