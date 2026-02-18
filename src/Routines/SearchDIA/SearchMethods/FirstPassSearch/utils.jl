@@ -305,11 +305,11 @@ function get_best_psms!(psms::DataFrame,
 
     select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target])
 
-    # Per-file PEP pre-filter: keep 2× the rows where PEP ≤ 0.99 to bound
+    # Per-file PEP pre-filter: keep rows where PEP ≤ 0.95 to bound
     # Arrow file size while retaining enough tail for accurate global PEP.
     n = size(psms, 1)
-    first_fail = searchsortedfirst(psms[!,:PEP], Float16(0.99))
-    keep = min(2 * (first_fail - 1), n)
+    first_fail = searchsortedfirst(psms[!,:PEP], Float16(0.95))
+    keep = first_fail - 1
     if keep < n
         deleteat!(psms, (keep + 1):n)
     end

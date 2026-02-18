@@ -234,7 +234,7 @@ function get_best_precursors_accross_runs(
         n_total_decoys = n_total - n_total_targets
         fname = basename(psms_path)
         parts = String[]
-        for thresh in (Float16(0.1), Float16(0.5), Float16(0.75), Float16(0.9))
+        for thresh in (Float16(0.1), Float16(0.5), Float16(0.75), Float16(0.9), Float16(0.95))
             nt = count(i -> pep_col[i] <= thresh && target_col[i], eachindex(pep_col))
             nd = count(i -> pep_col[i] <= thresh && !target_col[i], eachindex(pep_col))
             push!(parts, "≤$thresh: T=$nt D=$nd")
