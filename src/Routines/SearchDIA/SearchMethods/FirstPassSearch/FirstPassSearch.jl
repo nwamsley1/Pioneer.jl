@@ -560,7 +560,7 @@ function summarize_results!(
             valid_rt_irt,
             getIsDecoy(precursors),
             max_q_val=params.max_q_val_for_irt,
-            min_pep=Float16(params.max_PEP),
+            min_pep=Float16(0.5),
             fdr_scale_factor=fdr_scale_factor
         )
     end

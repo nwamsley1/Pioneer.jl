@@ -254,6 +254,12 @@ function process_scans!(
             resize_arrays!(search_data, weights)
         end
 
+        # Safety check: ensure buffers can hold Hs.n columns even if
+        # idToCol.size and Hs.n diverge in an edge case
+        if Hs.n > length(getComplexSpectralScores(search_data))
+            resize_arrays!(search_data, weights)
+        end
+
         initialize_weights!(search_data, weights, precursor_weights)
         
         # Solve deconvolution problem
@@ -587,18 +593,27 @@ Temporarry array management functions
 """
     resize_arrays!(search_data::SearchDataStructures, weights::Vector{Float32})
 
-Resize working arrays when needed for larger deconvolution problems.
+Resize all per-scan working arrays when needed for larger deconvolution problems.
 
-Expands:
-- weights array
-- spectral scores
-- unscored PSMs array
+Expands weights, spectral scores, and unscored PSMs for all PSM variants
+(Complex, Simple, Ms1) so that buffers stay in sync regardless of which
+search method triggered the resize.
 """
 function resize_arrays!(search_data::SearchDataStructures, weights::Vector{Float32})
     new_entries = getIdToCol(search_data).size - length(weights) + 1000
     resize!(weights, length(weights) + new_entries)
+
+    # Complex buffers (SecondPassSearch MS2 path)
     resize!(getComplexSpectralScores(search_data), length(getComplexSpectralScores(search_data)) + new_entries)
     append!(getComplexUnscoredPsms(search_data), [eltype(getComplexUnscoredPsms(search_data))() for _ in 1:new_entries])
+
+    # Simple buffers (used by other search methods sharing the same SearchDataStructures)
+    resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
+    append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+
+    # Ms1 buffers (SecondPassSearch MS1 path)
+    resize!(getMs1SpectralScores(search_data), length(getMs1SpectralScores(search_data)) + new_entries)
+    append!(getMs1UnscoredPsms(search_data), [eltype(getMs1UnscoredPsms(search_data))() for _ in 1:new_entries])
 end
 
 """
