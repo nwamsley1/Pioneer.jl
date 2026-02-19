@@ -33,7 +33,7 @@ end
 """
     get_best_precursors_accross_runs(psms_paths, prec_mzs, rt_irt, prec_is_decoy;
                                     max_q_val=0.01f0, fdr_scale_factor=1.0f0,
-                                    global_pep_threshold=0.75f0)
+                                    global_pep_threshold=0.5f0)
     -> Dictionary{UInt32, NamedTuple}
 
 Identify and collect best precursor matches across multiple runs for retention time calibration.
@@ -49,7 +49,7 @@ Filters precursors by keeping only those whose global PEP is ≤ `global_pep_thr
 - `prec_is_decoy`: Boolean vector indicating decoy status per precursor index
 - `max_q_val`: Maximum q-value threshold for iRT statistics
 - `fdr_scale_factor`: Scale factor for library target/decoy ratio correction
-- `global_pep_threshold`: Maximum global PEP for precursor selection (default 0.75)
+- `global_pep_threshold`: Maximum global PEP for precursor selection (default 0.5)
 
 # Returns
 Dictionary mapping precursor indices to NamedTuple containing:
@@ -76,7 +76,7 @@ function get_best_precursors_accross_runs(
                          prec_is_decoy::AbstractVector{Bool};
                          max_q_val::Float32 = 0.01f0,
                          fdr_scale_factor::Float32 = 1.0f0,
-                         global_pep_threshold::Float32 = 0.75f0
+                         global_pep_threshold::Float32 = 0.5f0
                          )
 
     function readPSMs!(
@@ -239,7 +239,7 @@ function get_best_precursors_accross_runs(
             nd = count(i -> pep_col[i] <= thresh && !target_col[i], eachindex(pep_col))
             push!(parts, "≤$thresh: T=$nt D=$nd")
         end
-        @info "File $fname: $n_total total PSMs (T=$n_total_targets D=$n_total_decoys) | if filtered — " * join(parts, " | ") * "\n"
+        @user_info "File $fname: $n_total total PSMs (T=$n_total_targets D=$n_total_decoys) | if filtered — " * join(parts, " | ")
 
         #One row for each precursor
         readPSMs!(
@@ -309,8 +309,8 @@ function get_best_precursors_accross_runs(
     n_decoys = n_unique - n_targets
     n_1pct = count(<=(0.01f0), global_qvals)
     n_5pct = count(<=(0.05f0), global_qvals)
-    @info "Global PEP (log-odds): $n_unique unique precursors ($n_targets targets, $n_decoys decoys) from $n_valid_files files (top_n=$sqrt_n_files)\n"
-    @info "  Precursors at 1% global FDR: $n_1pct, at 5% global FDR: $n_5pct\n"
+    @user_info "Global PEP (log-odds): $n_unique unique precursors ($n_targets targets, $n_decoys decoys) from $n_valid_files files (top_n=$sqrt_n_files)"
+    @user_info "  Precursors at 1% global FDR: $n_1pct, at 5% global FDR: $n_5pct"
 
     # Build global PEP dictionary (one value per precursor)
     prec_min_global_pep = Dictionary{UInt32, Float32}()
@@ -322,7 +322,7 @@ function get_best_precursors_accross_runs(
     n_pre_filter = length(prec_to_best_prob)
     n_pre_targets = count(pid -> !prec_is_decoy[pid], keys(prec_to_best_prob))
     n_pre_decoys = n_pre_filter - n_pre_targets
-    @info "Pre-filter pool: $n_pre_filter precursors ($n_pre_targets targets, $n_pre_decoys decoys)\n"
+    @user_info "Pre-filter pool: $n_pre_filter precursors ($n_pre_targets targets, $n_pre_decoys decoys)"
 
     # Global unique precursors by min global PEP threshold
     parts = String[]
@@ -331,7 +331,7 @@ function get_best_precursors_accross_runs(
         nd = count(pid -> prec_min_global_pep[pid] <= thresh && prec_is_decoy[pid], keys(prec_min_global_pep))
         push!(parts, "≤$thresh: T=$nt D=$nd")
     end
-    @info "Global unique precursors by min global PEP — " * join(parts, " | ") * "\n"
+    @user_info "Global unique precursors by min global PEP — " * join(parts, " | ")
 
     # Global PEP threshold filter: keep precursors with min global PEP ≤ threshold
     for key in collect(keys(prec_to_best_prob))
@@ -346,8 +346,8 @@ function get_best_precursors_accross_runs(
     n_removed = n_pre_filter - n_post_filter
     n_removed_targets = n_pre_targets - n_post_targets
     n_removed_decoys = n_pre_decoys - n_post_decoys
-    @info "Global PEP filter (≤$global_pep_threshold): kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
-          "removed $n_removed ($n_removed_targets targets, $n_removed_decoys decoys)\n"
+    @user_info "Global PEP filter (≤$global_pep_threshold): kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
+          "removed $n_removed ($n_removed_targets targets, $n_removed_decoys decoys)"
 
     # Second pass: calculate iRT variance for remaining precursors
     for psms_path in psms_paths #For each data frame
