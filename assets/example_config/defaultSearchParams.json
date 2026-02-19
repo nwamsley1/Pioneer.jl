@@ -78,7 +78,7 @@
             "max_iterations": 20,
             "max_q_value_probit_rescore": 0.05,
             "max_PEP": 0.9,
-            "global_pep_threshold": 0.5
+            "global_pep_threshold": 0.75
         },
         "irt_mapping": {
             "max_prob_to_impute_irt": 0.75,

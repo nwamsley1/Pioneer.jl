@@ -33,7 +33,7 @@ end
 """
     get_best_precursors_accross_runs(psms_paths, prec_mzs, rt_irt, prec_is_decoy;
                                     max_q_val=0.01f0, fdr_scale_factor=1.0f0,
-                                    global_pep_threshold=0.5f0)
+                                    global_pep_threshold=0.75f0)
     -> Dictionary{UInt32, NamedTuple}
 
 Identify and collect best precursor matches across multiple runs for retention time calibration.
@@ -49,7 +49,7 @@ Filters precursors by keeping only those whose global PEP is ≤ `global_pep_thr
 - `prec_is_decoy`: Boolean vector indicating decoy status per precursor index
 - `max_q_val`: Maximum q-value threshold for iRT statistics
 - `fdr_scale_factor`: Scale factor for library target/decoy ratio correction
-- `global_pep_threshold`: Maximum global PEP for precursor selection (default 0.5)
+- `global_pep_threshold`: Maximum global PEP for precursor selection (default 0.75)
 
 # Returns
 Dictionary mapping precursor indices to NamedTuple containing:
@@ -76,7 +76,7 @@ function get_best_precursors_accross_runs(
                          prec_is_decoy::AbstractVector{Bool};
                          max_q_val::Float32 = 0.01f0,
                          fdr_scale_factor::Float32 = 1.0f0,
-                         global_pep_threshold::Float32 = 0.5f0
+                         global_pep_threshold::Float32 = 0.75f0
                          )
 
     function readPSMs!(
