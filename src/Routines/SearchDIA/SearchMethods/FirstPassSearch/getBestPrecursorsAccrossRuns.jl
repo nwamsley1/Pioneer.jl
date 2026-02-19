@@ -40,7 +40,9 @@ Identify and collect best precursor matches across multiple runs for retention t
 Combines per-run probabilities via **log-odds averaging** (`_logodds_combine`) to produce a
 single global probability per precursor, then computes global PEP via isotonic regression
 on the unique precursors. Uses `top_n = floor(sqrt(n_files))` best per-file probabilities.
-Filters precursors by keeping only those whose global PEP is ≤ `global_pep_threshold`.
+Uses a hybrid min-floor + global PEP threshold: keeps whichever is larger between
+the number passing `global_pep_threshold` and the max per-file PSM count at PEP ≤ 0.9.
+This prevents over-filtering sparse/SCP experiments while preserving gains for large ones.
 
 # Arguments
 - `psms_paths`: Paths to PSM files from first pass search
@@ -66,7 +68,7 @@ Dictionary mapping precursor indices to NamedTuple containing:
 1. First pass: Collects best matches, mean iRT, and best prob per precursor per file
 2. Computes global prob per precursor via log-odds averaging of per-file best probs
 3. Computes global PEP via isotonic regression on unique precursors
-4. Filters precursors by global PEP ≤ global_pep_threshold
+4. Hybrid filter: keeps max(n_passing_threshold, max_per_file_PEP09_count) precursors by global PEP rank
 5. Second pass: Calculates iRT variance for remaining precursors
 """
 function get_best_precursors_accross_runs(
@@ -208,6 +210,7 @@ function get_best_precursors_accross_runs(
     # First pass: collect best matches, mean iRT, and best prob per precursor per file
 
     prec_probs_by_run = Dictionary{UInt32, Vector{Float32}}()
+    per_file_pep09_counts = Int[]
     n_valid_files = 0
     for psms_path in psms_paths #For each data frame
         psms = Arrow.Table(psms_path)
@@ -240,6 +243,10 @@ function get_best_precursors_accross_runs(
             push!(parts, "≤$thresh: T=$nt D=$nd")
         end
         @user_info "File $fname: $n_total total PSMs (T=$n_total_targets D=$n_total_decoys) | if filtered — " * join(parts, " | ")
+
+        # Count unique precursors at PEP ≤ 0.9 for this file (for min-floor calculation)
+        n_pep_09 = count(p -> p <= Float16(0.9), pep_col)
+        push!(per_file_pep09_counts, n_pep_09)
 
         #One row for each precursor
         readPSMs!(
@@ -333,11 +340,27 @@ function get_best_precursors_accross_runs(
     end
     @user_info "Global unique precursors by min global PEP — " * join(parts, " | ")
 
-    # Global PEP threshold filter: keep precursors with min global PEP ≤ threshold
-    for key in collect(keys(prec_to_best_prob))
-        if !haskey(prec_min_global_pep, key) || prec_min_global_pep[key] > global_pep_threshold
-            delete!(prec_to_best_prob, key)
-        end
+    # Hybrid min-floor + global PEP threshold filter
+    # Floor = max per-file PSMs at PEP ≤ 0.9 (ensures sparse experiments keep enough precursors)
+    min_precursors = isempty(per_file_pep09_counts) ? 0 : maximum(per_file_pep09_counts)
+
+    # Count how many pass the global PEP threshold
+    n_passing_threshold = count(pid -> haskey(prec_min_global_pep, pid) &&
+        prec_min_global_pep[pid] <= global_pep_threshold, keys(prec_to_best_prob))
+
+    # Keep whichever is larger: threshold-based count or floor
+    n_to_keep = max(n_passing_threshold, min_precursors)
+    floor_dominated = min_precursors > n_passing_threshold
+    @user_info "Hybrid filter: min-floor=$min_precursors (max per-file at PEP≤0.9), " *
+          "threshold-based=$n_passing_threshold (global PEP≤$global_pep_threshold) → " *
+          "keeping $n_to_keep ($(floor_dominated ? "floor dominates" : "threshold dominates"))"
+
+    # Sort all precursor keys by global PEP ascending, delete those beyond n_to_keep
+    all_keys = collect(keys(prec_to_best_prob))
+    sort!(all_keys, by = pid -> get(prec_min_global_pep, pid, Inf32))
+    keys_to_delete = Set(all_keys[min(n_to_keep + 1, length(all_keys) + 1):end])
+    for key in keys_to_delete
+        delete!(prec_to_best_prob, key)
     end
 
     n_post_filter = length(prec_to_best_prob)
@@ -346,7 +369,7 @@ function get_best_precursors_accross_runs(
     n_removed = n_pre_filter - n_post_filter
     n_removed_targets = n_pre_targets - n_post_targets
     n_removed_decoys = n_pre_decoys - n_post_decoys
-    @user_info "Global PEP filter (≤$global_pep_threshold): kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
+    @user_info "Post-filter: kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
           "removed $n_removed ($n_removed_targets targets, $n_removed_decoys decoys)"
 
     # Second pass: calculate iRT variance for remaining precursors
