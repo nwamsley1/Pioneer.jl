@@ -45,9 +45,11 @@ end
 ##########################################
 # Empirical libraries
 ##########################################
-maybe_run("ParseSpecLib") do
-    Pioneer.ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
-end
+# ParseSpecLib is currently disabled in importScripts.jl due EmpiricalLibrary loading issues.
+# Keep this precompile target disabled until ParseSpecLib is re-enabled in the module.
+# maybe_run("ParseSpecLib") do
+#     Pioneer.ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
+# end
 
 
 
