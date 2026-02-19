@@ -54,6 +54,15 @@ jobs:
         with:
           fallback: "dev"
 
+      - name: Install Rosetta 2 (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          if /usr/sbin/pkgutil --pkg-info com.apple.pkg.RosettaUpdateAuto >/dev/null 2>&1; then
+            echo "Rosetta 2 already installed"
+          else
+            sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+          fi
+
       - name: Normalize versions
         id: norm
         uses: ./.github/actions/normalize-versions
