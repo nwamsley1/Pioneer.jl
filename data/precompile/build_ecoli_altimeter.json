@@ -63,9 +63,10 @@
     "fasta_header_regex_genes": [" GN=(\\S+)"],
     "fasta_header_regex_proteins": ["^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="],
     "fasta_header_regex_organisms": [" OS=([^ ]+.*?) [^ ]+="],
+    "library_path": "./data/precompile/ecoli_small_altimeter",
     "out_dir": "./data/precompile",
-    "lib_name": "ecoli_small_prosit",
-    "new_lib_name": "ecoli_small_prosit",
-    "out_name": "ecoli_small_prosit.tsv",
+    "lib_name": "ecoli_small_altimeter",
+    "new_lib_name": "ecoli_small_altimeter",
+    "out_name": "ecoli_small_altimeter.tsv",
     "predict_fragments": true
 }
