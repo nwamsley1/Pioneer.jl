@@ -16,6 +16,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 using Test
+using DataFrames
 using Dictionaries
 
 # Include only the protein inference functions
@@ -816,6 +817,41 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
             @test length(result.peptide_to_protein) == 0
         end
 
+    end
+
+    @testset "Protein Group MBR-Only Feature" begin
+        psms = DataFrame(
+            inferred_protein_group = ["P1", "P1", "P1", "P2", "P2"],
+            target = [true, true, true, true, true],
+            entrap_id = UInt8[0, 0, 0, 0, 0],
+            precursor_idx = UInt32[1, 1, 2, 3, 4],
+            sequence = ["AAA", "AAA", "BBB", "CCC", "DDD"],
+            use_for_protein_quant = [true, true, true, true, true],
+            MBR_boosted_prec_prob = Float32[0.95, 0.60, 0.90, 0.91, 0.89],
+            missed_cleavage = Int8[0, 0, 0, 0, 1],
+            Mox = Int8[0, 0, 0, 0, 0],
+            MBR_transfer_candidate = [true, false, true, true, false]
+        )
+
+        protein_groups = Pioneer.group_psms_by_protein(psms)
+
+        @test hasproperty(protein_groups, :all_precursors_mbr)
+
+        p1 = protein_groups[protein_groups.protein_name .== "P1", :]
+        p2 = protein_groups[protein_groups.protein_name .== "P2", :]
+        @test nrow(p1) == 1
+        @test nrow(p2) == 1
+
+        # P1 has two quantified precursors (1,2), and both are MBR at precursor-level.
+        # Precursor 1 has mixed row-level flags, so this validates precursor-level aggregation.
+        @test p1.all_precursors_mbr[1] == true
+        # P2 has a quantified precursor that is not MBR.
+        @test p2.all_precursors_mbr[1] == false
+
+        # When no MBR-candidate column exists, feature should default to false.
+        psms_no_mbr_col = select(psms, Not(:MBR_transfer_candidate))
+        protein_groups_no_mbr_col = Pioneer.group_psms_by_protein(psms_no_mbr_col)
+        @test all(.!protein_groups_no_mbr_col.all_precursors_mbr)
     end
 
 end

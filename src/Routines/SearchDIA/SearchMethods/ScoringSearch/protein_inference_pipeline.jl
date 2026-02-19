@@ -247,7 +247,8 @@ function group_psms_by_protein(df::DataFrame)
             n_peptides = Int64[],
             peptide_list = String[],
             pg_score = Float32[],
-            any_common_peps = Bool[]
+            any_common_peps = Bool[],
+            all_precursors_mbr = Bool[]
         )
     end
 
@@ -263,19 +264,21 @@ function group_psms_by_protein(df::DataFrame)
     
     # Aggregate to protein groups
     protein_groups = combine(grouped) do gdf
+        quant_mask = (gdf.use_for_protein_quant .== true)
+
         # Get unique peptides that are used for quantification
-        quant_peptides = unique(gdf[gdf.use_for_protein_quant .== true, :sequence])
+        quant_peptides = unique(gdf[quant_mask, :sequence])
         n_peptides = length(quant_peptides)
         
         # Calculate initial protein score (log-sum)
-        peptide_probs = gdf[gdf.use_for_protein_quant .== true, prob_col]
+        peptide_probs = gdf[quant_mask, prob_col]
         if isempty(peptide_probs)
             pg_score = 0.0f0
         else
             # Use best probability per peptide
             unique_pep_probs = Float32[]
             for pep in quant_peptides
-                pep_mask = (gdf.sequence .== pep) .& (gdf.use_for_protein_quant .== true)
+                pep_mask = (gdf.sequence .== pep) .& quant_mask
                 if any(pep_mask)
                     push!(unique_pep_probs, maximum(gdf[pep_mask, prob_col]))
                 end
@@ -284,16 +287,39 @@ function group_psms_by_protein(df::DataFrame)
         end        
 
         has_common = any(
-            (gdf.use_for_protein_quant .== true) .&
+            quant_mask .&
             (gdf.missed_cleavage .== 0) .&
             (gdf.Mox .== 0)
         )
+
+        # True only when every quantified precursor in this protein group is an MBR transfer candidate.
+        # We evaluate this at precursor-level (not row-level) to avoid double counting traces.
+        mbr_col = if hasproperty(gdf, :MBR_transfer_candidate)
+            :MBR_transfer_candidate
+        elseif hasproperty(gdf, :MBR_candidate)
+            :MBR_candidate
+        else
+            nothing
+        end
+        all_precursors_mbr = false
+        if (mbr_col !== nothing) && any(quant_mask)
+            precursor_to_mbr = Dict{UInt32, Bool}()
+            quant_precursor_idx = gdf[quant_mask, :precursor_idx]
+            quant_mbr_flags = gdf[quant_mask, mbr_col]
+            for j in eachindex(quant_precursor_idx)
+                precursor = UInt32(quant_precursor_idx[j])
+                is_mbr = Bool(coalesce(quant_mbr_flags[j], false))
+                precursor_to_mbr[precursor] = get(precursor_to_mbr, precursor, false) || is_mbr
+            end
+            all_precursors_mbr = !isempty(precursor_to_mbr) && all(values(precursor_to_mbr))
+        end
         
         DataFrame(
             n_peptides = n_peptides,
             peptide_list = join(quant_peptides, ";"),
             pg_score = pg_score,
-            any_common_peps = has_common
+            any_common_peps = has_common,
+            all_precursors_mbr = all_precursors_mbr
         )
     end
     
