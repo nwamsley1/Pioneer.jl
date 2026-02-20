@@ -211,6 +211,7 @@ function get_best_precursors_accross_runs(
     # First pass: collect best matches, mean iRT, and best prob per precursor per file
 
     prec_probs_by_run = Dictionary{UInt32, Vector{Float32}}()
+    max_per_file_pep09 = 0  # track old metric: max per-file count of PEP≤0.9
     n_valid_files = 0
     for psms_path in psms_paths #For each data frame
         psms = Arrow.Table(psms_path)
@@ -243,6 +244,10 @@ function get_best_precursors_accross_runs(
             push!(parts, "≤$thresh: T=$nt D=$nd")
         end
         @user_info "File $fname: $n_total total PSMs (T=$n_total_targets D=$n_total_decoys) | if filtered — " * join(parts, " | ")
+
+        # Track old metric: max per-file count at PEP≤0.9
+        n_pep09 = count(i -> pep_col[i] <= Float16(0.9), eachindex(pep_col))
+        max_per_file_pep09 = max(max_per_file_pep09, n_pep09)
 
         #One row for each precursor
         readPSMs!(
@@ -363,7 +368,8 @@ function get_best_precursors_accross_runs(
     n_to_keep = max(n_passing_threshold, n_enrichment_based)
     enrichment_dominates = n_enrichment_based > n_passing_threshold
     @user_info "Hybrid filter: enrichment-floor=$n_enrichment_based ((T-D)/(T+D)≥1/3), " *
-          "threshold-based=$n_passing_threshold (global PEP≤$global_pep_threshold) → " *
+          "threshold-based=$n_passing_threshold (global PEP≤$global_pep_threshold), " *
+          "old-metric=$max_per_file_pep09 (max per-file PEP≤0.9) → " *
           "keeping $n_to_keep ($(enrichment_dominates ? "enrichment-floor dominates" : "threshold dominates"))"
 
     # Delete precursors beyond n_to_keep (all_keys already sorted by global PEP)
