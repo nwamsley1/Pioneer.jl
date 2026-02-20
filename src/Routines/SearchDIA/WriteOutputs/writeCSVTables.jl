@@ -458,7 +458,7 @@ function writeProteinGroupsCSV(
                 col_names = names(subunstack)
                 for fname in file_names
                     if fname ∉ col_names
-                        subunstack[!,fname] .= missing
+                        subunstack[!,fname] = Vector{Union{Missing,Float64}}(missing, nrow(subunstack))
                     end
                 end
                 if write_csv

@@ -16,19 +16,43 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    get_best_precursors_accross_runs(psms_paths::Vector{String}, 
-                                    prec_mzs::AbstractVector{Float32},
-                                    rt_irt::Dict{Int64, RtConversionModel};
-                                    max_q_val::Float32=0.01f0) 
+Log-odds average of top-N probabilities, converted back to probability space.
+Mirrors ScoringSearch/scoring_interface.jl:logodds for first pass use.
+"""
+function _logodds_combine(probs::Vector{Float32}, top_n::Int)::Float32
+    isempty(probs) && return 0.0f0
+    n = min(length(probs), top_n)
+    sorted = sort(probs; rev=true)
+    selected = @view sorted[1:n]
+    eps = 1f-6
+    lo = log.(clamp.(selected, 0.1f0, 1 - eps) ./ (1 .- clamp.(selected, 0.1f0, 1 - eps)))
+    avg = sum(lo) / n
+    return 1.0f0 / (1 + exp(-avg))
+end
+
+"""
+    get_best_precursors_accross_runs(psms_paths, prec_mzs, rt_irt, prec_is_decoy;
+                                    max_q_val=0.01f0, fdr_scale_factor=1.0f0,
+                                    global_pep_threshold=0.5f0)
     -> Dictionary{UInt32, NamedTuple}
 
 Identify and collect best precursor matches across multiple runs for retention time calibration.
+Combines per-run probabilities via **log-odds averaging** (`_logodds_combine`) to produce a
+single global probability per precursor, then computes global PEP via isotonic regression
+on the unique precursors. Uses `top_n = floor(sqrt(n_files))` best per-file probabilities.
+Uses a hybrid enrichment-floor + global PEP threshold: keeps whichever is larger between
+the number passing `global_pep_threshold` and the enrichment-based floor (last position in
+the global-PEP-sorted list where cumulative (T-D)/(T+D) ≥ 1/3). This prevents over-filtering
+sparse/SCP experiments while avoiding decoy contamination in large experiments.
 
 # Arguments
 - `psms_paths`: Paths to PSM files from first pass search
 - `prec_mzs`: Vector of precursor m/z values
 - `rt_irt`: Dictionary mapping file indices to RT-iRT conversion models
-- `max_q_val`: Maximum q-value threshold for considering PSMs
+- `prec_is_decoy`: Boolean vector indicating decoy status per precursor index
+- `max_q_val`: Maximum q-value threshold for iRT statistics
+- `fdr_scale_factor`: Scale factor for library target/decoy ratio correction
+- `global_pep_threshold`: Maximum global PEP for precursor selection (default 0.5)
 
 # Returns
 Dictionary mapping precursor indices to NamedTuple containing:
@@ -42,25 +66,30 @@ Dictionary mapping precursor indices to NamedTuple containing:
 - `mz`: Precursor m/z value
 
 # Process
-1. First pass: Collects best matches and calculates mean iRT for each precursor accross the runs 
-2. Filters to top N precursors by probability
-3. Second pass: Calculates iRT variance for remaining precursors
+1. First pass: Collects best matches, mean iRT, and best prob per precursor per file
+2. Computes global prob per precursor via log-odds averaging of per-file best probs
+3. Computes global PEP via isotonic regression on unique precursors
+4. Hybrid filter: keeps max(n_passing_threshold, n_enrichment_based) precursors by global PEP rank
+5. Second pass: Calculates iRT variance for remaining precursors
 """
 function get_best_precursors_accross_runs(
                          psms_paths::Vector{String},
                          prec_mzs::AbstractVector{Float32},
-                         rt_irt::Dict{Int64, RtConversionModel};
-                         max_q_val::Float32 = 0.01f0
+                         rt_irt::Dict{Int64, RtConversionModel},
+                         prec_is_decoy::AbstractVector{Bool};
+                         max_q_val::Float32 = 0.01f0,
+                         fdr_scale_factor::Float32 = 1.0f0,
+                         global_pep_threshold::Float32 = 0.5f0
                          )
 
     function readPSMs!(
-        prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
+        prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32,
                                                     best_ms_file_idx::UInt32,
                                                     best_scan_idx::UInt32,
-                                                    best_irt::Float32, 
-                                                    mean_irt::Union{Missing, Float32}, 
-                                                    var_irt::Union{Missing, Float32}, 
-                                                    n::Union{Missing, UInt16}, 
+                                                    best_irt::Float32,
+                                                    mean_irt::Union{Missing, Float32},
+                                                    var_irt::Union{Missing, Float32},
+                                                    n::Union{Missing, UInt16},
                                                     mz::Float32}},
         precursor_idxs::AbstractVector{UInt32},
         q_values::AbstractVector{Float16},
@@ -91,8 +120,8 @@ function get_best_precursors_accross_runs(
             #Keep a running mean irt for instances below q-val threshold
             if haskey(prec_to_best_prob, precursor_idx)
                 # Update existing precursor entry
-                best_prob, best_ms_file_idx, best_scan_idx, best_irt, old_mean_irt, var_irt, old_n, mz = prec_to_best_prob[precursor_idx] 
-                
+                best_prob, best_ms_file_idx, best_scan_idx, best_irt, old_mean_irt, var_irt, old_n, mz = prec_to_best_prob[precursor_idx]
+
                 # Update best match if current is better
                 if (best_prob < prob)
                     best_prob = prob
@@ -103,13 +132,13 @@ function get_best_precursors_accross_runs(
 
                 # Update running statistics
                 mean_irt += old_mean_irt
-                n += old_n 
+                n += old_n
                 prec_to_best_prob[precursor_idx] = (
-                                                best_prob = best_prob, 
+                                                best_prob = best_prob,
                                                 best_ms_file_idx = best_ms_file_idx,
                                                 best_scan_idx = best_scan_idx,
                                                 best_irt = best_irt,
-                                                mean_irt = mean_irt, 
+                                                mean_irt = mean_irt,
                                                 var_irt = var_irt,
                                                 n = n,
                                                 mz = mz)
@@ -117,9 +146,9 @@ function get_best_precursors_accross_runs(
                 # Create new precursor entry
                 val = (best_prob = prob,
                         best_ms_file_idx = ms_file_idx,
-                        best_scan_idx = scan_idx, 
+                        best_scan_idx = scan_idx,
                         best_irt = irt,
-                        mean_irt = mean_irt, 
+                        mean_irt = mean_irt,
                         var_irt = var_irt,
                         n = n,
                         mz = mz)
@@ -128,13 +157,13 @@ function get_best_precursors_accross_runs(
         end
     end
     function getVariance!(
-        prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
+        prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32,
                                                     best_ms_file_idx::UInt32,
                                                     best_scan_idx::UInt32,
-                                                    best_irt::Float32, 
-                                                    mean_irt::Union{Missing, Float32}, 
-                                                    var_irt::Union{Missing, Float32}, 
-                                                    n::Union{Missing, UInt16}, 
+                                                    best_irt::Float32,
+                                                    mean_irt::Union{Missing, Float32},
+                                                    var_irt::Union{Missing, Float32},
+                                                    n::Union{Missing, UInt16},
                                                     mz::Float32}},
         precursor_idxs::AbstractVector{UInt32},
         q_values::AbstractVector{Float16},
@@ -154,14 +183,14 @@ function get_best_precursors_accross_runs(
             end
             if haskey(prec_to_best_prob, precursor_idx)
                 # Update variance calculation
-                best_prob, best_ms_file_idx, best_scan_idx, best_irt, mean_irt, var_irt, n, mz = prec_to_best_prob[precursor_idx] 
+                best_prob, best_ms_file_idx, best_scan_idx, best_irt, mean_irt, var_irt, n, mz = prec_to_best_prob[precursor_idx]
                 var_irt += (irt - mean_irt/n)^2
                 prec_to_best_prob[precursor_idx] = (
-                    best_prob = best_prob, 
+                    best_prob = best_prob,
                     best_ms_file_idx= best_ms_file_idx,
                     best_scan_idx = best_scan_idx,
                     best_irt = best_irt,
-                    mean_irt = mean_irt, 
+                    mean_irt = mean_irt,
                     var_irt = var_irt,
                     n = n,
                     mz = mz)
@@ -170,35 +199,57 @@ function get_best_precursors_accross_runs(
         end
     end
     # Initialize dictionary to store best precursor matches
-    prec_to_best_prob = Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
+    prec_to_best_prob = Dictionary{UInt32, @NamedTuple{ best_prob::Float32,
                                                         best_ms_file_idx::UInt32,
                                                         best_scan_idx::UInt32,
-                                                        best_irt::Float32, 
-                                                        mean_irt::Union{Missing, Float32}, 
-                                                        var_irt::Union{Missing, Float32}, 
-                                                        n::Union{Missing, UInt16}, 
+                                                        best_irt::Float32,
+                                                        mean_irt::Union{Missing, Float32},
+                                                        var_irt::Union{Missing, Float32},
+                                                        n::Union{Missing, UInt16},
                                                         mz::Float32}}()
 
-    # First pass: collect best matches and mean iRT
+    # First pass: collect best matches, mean iRT, and best prob per precursor per file
 
-    n_precursors_vec = Vector{UInt64}()
-    for psms_path in psms_paths #For each data frame 
+    prec_probs_by_run = Dictionary{UInt32, Vector{Float32}}()
+    max_per_file_pep09 = 0  # track old metric: max per-file count of PEP≤0.9
+    n_valid_files = 0
+    for psms_path in psms_paths #For each data frame
         psms = Arrow.Table(psms_path)
-        
+
         # Get the original file index from the PSM data
         if isempty(psms[:ms_file_idx])
             continue  # Skip empty files
         end
         file_idx = first(psms[:ms_file_idx])  # All PSMs in a file should have the same ms_file_idx
-        
+
         # Check if RT model exists for this file
         if !haskey(rt_irt, file_idx)
             @warn "No RT model found for file index $file_idx, skipping"
             continue
         end
 
-        push!(n_precursors_vec, length(psms[:precursor_idx]))
-        #One row for each precursor 
+        n_valid_files += 1
+
+        # Per-file PSM count diagnostics
+        pep_col = psms[:PEP]
+        target_col = [!prec_is_decoy[pid] for pid in psms[:precursor_idx]]
+        n_total = length(pep_col)
+        n_total_targets = count(target_col)
+        n_total_decoys = n_total - n_total_targets
+        fname = basename(psms_path)
+        parts = String[]
+        for thresh in (Float16(0.1), Float16(0.5), Float16(0.75), Float16(0.9), Float16(0.95))
+            nt = count(i -> pep_col[i] <= thresh && target_col[i], eachindex(pep_col))
+            nd = count(i -> pep_col[i] <= thresh && !target_col[i], eachindex(pep_col))
+            push!(parts, "≤$thresh: T=$nt D=$nd")
+        end
+        @user_info "File $fname: $n_total total PSMs (T=$n_total_targets D=$n_total_decoys) | if filtered — " * join(parts, " | ")
+
+        # Track old metric: max per-file count at PEP≤0.9
+        n_pep09 = count(i -> pep_col[i] <= Float16(0.9), eachindex(pep_col))
+        max_per_file_pep09 = max(max_per_file_pep09, n_pep09)
+
+        #One row for each precursor
         readPSMs!(
             prec_to_best_prob,
             psms[:precursor_idx],
@@ -210,41 +261,148 @@ function get_best_precursors_accross_runs(
             rt_irt[file_idx],
             max_q_val
         )
-    end
-    
-    # Handle case where no valid files were processed
-    if isempty(n_precursors_vec)
-        @warn "No valid PSM files found for cross-run analysis"
-        return prec_to_best_prob
-    end
-    
-    max_precursors = maximum(n_precursors_vec)
-    # Filter to top N precursors by probability
-    sort!(prec_to_best_prob, by = x->x[:best_prob], alg=PartialQuickSort(1:max_precursors), rev = true);
-    N = 0
-    for key in collect(keys(prec_to_best_prob))
-        N += 1
-        if N > max_precursors
-            delete!(prec_to_best_prob, key)
+
+        # Collect best prob per precursor from this file for log-odds combining
+        prec_col = psms[:precursor_idx]
+        prob_col = psms[:prob]
+        file_best = Dictionary{UInt32, Float32}()
+        for i in eachindex(prec_col)
+            pid = prec_col[i]
+            p = prob_col[i]
+            if haskey(file_best, pid)
+                file_best[pid] = max(file_best[pid], p)
+            else
+                insert!(file_best, pid, p)
+            end
+        end
+        for (pid, p) in pairs(file_best)
+            if haskey(prec_probs_by_run, pid)
+                push!(prec_probs_by_run[pid], p)
+            else
+                insert!(prec_probs_by_run, pid, Float32[p])
+            end
         end
     end
 
+    # Handle case where no valid files were processed
+    if n_valid_files == 0
+        @warn "No valid PSM files found for cross-run analysis"
+        return prec_to_best_prob
+    end
+
+    # Compute global probability per precursor via log-odds averaging
+    sqrt_n_files = max(1, floor(Int, sqrt(n_valid_files)))
+    n_unique = length(prec_probs_by_run)
+
+    global_prec_idxs = Vector{UInt32}(undef, n_unique)
+    global_probs = Vector{Float32}(undef, n_unique)
+    global_targets = Vector{Bool}(undef, n_unique)
+    for (i, (pid, probs)) in enumerate(pairs(prec_probs_by_run))
+        global_prec_idxs[i] = pid
+        global_probs[i] = _logodds_combine(probs, sqrt_n_files)
+        global_targets[i] = !prec_is_decoy[pid]
+    end
+
+    # PEP via isotonic regression on unique precursors (not pooled PSMs)
+    global_peps = Vector{Float32}(undef, n_unique)
+    get_PEP!(global_probs, global_targets, global_peps;
+             doSort=true, fdr_scale_factor=fdr_scale_factor)
+
+    # Global q-values for diagnostics
+    global_qvals = Vector{Float32}(undef, n_unique)
+    get_qvalues!(global_probs, global_targets, global_qvals;
+                 doSort=true, fdr_scale_factor=fdr_scale_factor)
+
+    n_targets = count(global_targets)
+    n_decoys = n_unique - n_targets
+    n_1pct = count(<=(0.01f0), global_qvals)
+    n_5pct = count(<=(0.05f0), global_qvals)
+    @user_info "Global PEP (log-odds): $n_unique unique precursors ($n_targets targets, $n_decoys decoys) from $n_valid_files files (top_n=$sqrt_n_files)"
+    @user_info "  Precursors at 1% global FDR: $n_1pct, at 5% global FDR: $n_5pct"
+
+    # Build global PEP dictionary (one value per precursor)
+    prec_min_global_pep = Dictionary{UInt32, Float32}()
+    for i in eachindex(global_prec_idxs)
+        insert!(prec_min_global_pep, global_prec_idxs[i], global_peps[i])
+    end
+
+    # Diagnostics: pre-filter counts
+    n_pre_filter = length(prec_to_best_prob)
+    n_pre_targets = count(pid -> !prec_is_decoy[pid], keys(prec_to_best_prob))
+    n_pre_decoys = n_pre_filter - n_pre_targets
+    @user_info "Pre-filter pool: $n_pre_filter precursors ($n_pre_targets targets, $n_pre_decoys decoys)"
+
+    # Global unique precursors by min global PEP threshold
+    parts = String[]
+    for thresh in (0.1f0, 0.5f0, 0.75f0, 0.9f0)
+        nt = count(pid -> prec_min_global_pep[pid] <= thresh && !prec_is_decoy[pid], keys(prec_min_global_pep))
+        nd = count(pid -> prec_min_global_pep[pid] <= thresh && prec_is_decoy[pid], keys(prec_min_global_pep))
+        push!(parts, "≤$thresh: T=$nt D=$nd")
+    end
+    @user_info "Global unique precursors by min global PEP — " * join(parts, " | ")
+
+    # Sort all precursor keys by global PEP ascending (best first)
+    all_keys = collect(keys(prec_to_best_prob))
+    sort!(all_keys, by = pid -> get(prec_min_global_pep, pid, Inf32))
+
+    # Enrichment-based floor: find max precursors where cumulative (T-D)/(T+D) ≥ 1/3
+    cum_t = 0
+    cum_d = 0
+    n_enrichment_based = 0
+    for (i, pid) in enumerate(all_keys)
+        if !prec_is_decoy[pid]
+            cum_t += 1
+        else
+            cum_d += 1
+        end
+        if (cum_t - cum_d) / (cum_t + cum_d) >= 1.0f0/3.0f0
+            n_enrichment_based = i
+        end
+    end
+
+    # Count how many pass the global PEP threshold
+    n_passing_threshold = count(pid -> haskey(prec_min_global_pep, pid) &&
+        prec_min_global_pep[pid] <= global_pep_threshold, keys(prec_to_best_prob))
+
+    # Keep whichever is larger
+    n_to_keep = max(n_passing_threshold, n_enrichment_based)
+    enrichment_dominates = n_enrichment_based > n_passing_threshold
+    @user_info "Hybrid filter: enrichment-floor=$n_enrichment_based ((T-D)/(T+D)≥1/3), " *
+          "threshold-based=$n_passing_threshold (global PEP≤$global_pep_threshold), " *
+          "old-metric=$max_per_file_pep09 (max per-file PEP≤0.9) → " *
+          "keeping $n_to_keep ($(enrichment_dominates ? "enrichment-floor dominates" : "threshold dominates"))"
+
+    # Delete precursors beyond n_to_keep (all_keys already sorted by global PEP)
+    keys_to_delete = Set(all_keys[min(n_to_keep + 1, length(all_keys) + 1):end])
+    for key in keys_to_delete
+        delete!(prec_to_best_prob, key)
+    end
+
+    n_post_filter = length(prec_to_best_prob)
+    n_post_targets = count(pid -> !prec_is_decoy[pid], keys(prec_to_best_prob))
+    n_post_decoys = n_post_filter - n_post_targets
+    n_removed = n_pre_filter - n_post_filter
+    n_removed_targets = n_pre_targets - n_post_targets
+    n_removed_decoys = n_pre_decoys - n_post_decoys
+    @user_info "Post-filter: kept $n_post_filter ($n_post_targets targets, $n_post_decoys decoys), " *
+          "removed $n_removed ($n_removed_targets targets, $n_removed_decoys decoys)"
+
     # Second pass: calculate iRT variance for remaining precursors
-    for psms_path in psms_paths #For each data frame 
+    for psms_path in psms_paths #For each data frame
         psms = Arrow.Table(psms_path)
-        
+
         # Get the original file index from the PSM data
         if isempty(psms[:ms_file_idx])
             continue  # Skip empty files
         end
         file_idx = first(psms[:ms_file_idx])  # All PSMs in a file should have the same ms_file_idx
-        
+
         # Check if RT model exists for this file
         if !haskey(rt_irt, file_idx)
             continue  # Skip files without RT models (already warned in first pass)
         end
-        
-        #One row for each precursor 
+
+        #One row for each precursor
         getVariance!(
             prec_to_best_prob,
             psms[:precursor_idx],
@@ -253,8 +411,8 @@ function get_best_precursors_accross_runs(
             rt_irt[file_idx],
             max_q_val
         )
-    end 
+    end
 
-    
+
     return prec_to_best_prob #[(prob, idx) for (idx, prob) in sort(collect(top_probs), rev=true)]
 end

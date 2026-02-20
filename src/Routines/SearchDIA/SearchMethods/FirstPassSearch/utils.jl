@@ -212,15 +212,14 @@ end
 
 
 """
-    get_best_psms!(psms::DataFrame, prec_mz::Arrow.Primitive{T, Vector{T}}; 
-                   max_PEP::Float32=0.9f0, fdr_scale_factor::Float32=1.0f0) where {T<:AbstractFloat}
+    get_best_psms!(psms::DataFrame, prec_mz::Arrow.Primitive{T, Vector{T}};
+                   fdr_scale_factor::Float32=1.0f0) where {T<:AbstractFloat}
 
 Processes PSMs to identify the best matches and calculate peak characteristics.
 
 # Arguments
 - `psms`: DataFrame containing peptide-spectrum matches
 - `prec_mz`: Vector of precursor m/z values
-- `max_PEP`: Maximum local FDR threshold for filtering PSMs
 - `fdr_scale_factor`: Scale factor to correct for library target/decoy ratio
 
 # Modifies PSMs DataFrame to add:
@@ -233,7 +232,6 @@ Note: Assumes psms is sorted by retention time in ascending order.
 """
 function get_best_psms!(psms::DataFrame,
                         prec_mz::Arrow.Primitive{T, Vector{T}};
-                        max_PEP::Float32 = 0.9f0,
                         fdr_scale_factor::Float32 = 1.0f0
 ) where {T<:AbstractFloat}
 
@@ -305,14 +303,34 @@ function get_best_psms!(psms::DataFrame,
     # Will use PEP for final filter
     get_PEP!(psms[!,:score], psms[!,:target], psms[!,:PEP]; doSort=false, fdr_scale_factor=fdr_scale_factor);
 
-    n = size(psms, 1)
     select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target])
 
-    first_fail = searchsortedfirst(psms[!,:PEP], Float16(max_PEP))
-    if first_fail <= n
-        deleteat!(psms, first_fail:n)
+    # Per-file pre-filter: keep whichever is more rows between
+    # (a) PEP ≤ 0.95  and  (b) enrichment floor where cumulative (T-D)/(T+D) ≥ 0.3.
+    # Data is sorted by score desc / PEP asc, so we walk forward for both.
+    n = size(psms, 1)
+    first_fail = searchsortedfirst(psms[!,:PEP], Float16(0.95))
+    n_pep = first_fail - 1
+
+    target_col = psms[!,:target]
+    cum_t = 0
+    cum_d = 0
+    n_enrichment = 0
+    for i in 1:n
+        if target_col[i]
+            cum_t += 1
+        else
+            cum_d += 1
+        end
+        if (cum_t - cum_d) / (cum_t + cum_d) >= 0.3f0
+            n_enrichment = i
+        end
     end
-    #println("unique IDs prefilter: ", n, " ", first_fail, "\n\n")
+
+    keep = max(n_pep, n_enrichment)
+    if keep < n
+        deleteat!(psms, (keep + 1):n)
+    end
 
     mz = zeros(T, size(psms, 1));
     precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
