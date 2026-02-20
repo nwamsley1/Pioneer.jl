@@ -42,7 +42,7 @@ single global probability per precursor, then computes global PEP via isotonic r
 on the unique precursors. Uses `top_n = floor(sqrt(n_files))` best per-file probabilities.
 Uses a hybrid enrichment-floor + global PEP threshold: keeps whichever is larger between
 the number passing `global_pep_threshold` and the enrichment-based floor (last position in
-the global-PEP-sorted list where cumulative (T-D)/(T+D) ≥ 0.75). This prevents over-filtering
+the global-PEP-sorted list where cumulative (T-D)/(T+D) ≥ 0.5). This prevents over-filtering
 sparse/SCP experiments while avoiding decoy contamination in large experiments.
 
 # Arguments
@@ -340,7 +340,7 @@ function get_best_precursors_accross_runs(
     all_keys = collect(keys(prec_to_best_prob))
     sort!(all_keys, by = pid -> get(prec_min_global_pep, pid, Inf32))
 
-    # Enrichment-based floor: find max precursors where cumulative (T-D)/(T+D) ≥ 0.75
+    # Enrichment-based floor: find max precursors where cumulative (T-D)/(T+D) ≥ 0.5
     cum_t = 0
     cum_d = 0
     n_enrichment_based = 0
@@ -350,7 +350,7 @@ function get_best_precursors_accross_runs(
         else
             cum_d += 1
         end
-        if (cum_t - cum_d) / (cum_t + cum_d) >= 0.75f0
+        if (cum_t - cum_d) / (cum_t + cum_d) >= 0.5f0
             n_enrichment_based = i
         end
     end
@@ -362,7 +362,7 @@ function get_best_precursors_accross_runs(
     # Keep whichever is larger
     n_to_keep = max(n_passing_threshold, n_enrichment_based)
     enrichment_dominates = n_enrichment_based > n_passing_threshold
-    @user_info "Hybrid filter: enrichment-floor=$n_enrichment_based ((T-D)/(T+D)≥0.75), " *
+    @user_info "Hybrid filter: enrichment-floor=$n_enrichment_based ((T-D)/(T+D)≥0.5), " *
           "threshold-based=$n_passing_threshold (global PEP≤$global_pep_threshold) → " *
           "keeping $n_to_keep ($(enrichment_dominates ? "enrichment-floor dominates" : "threshold dominates"))"
 
