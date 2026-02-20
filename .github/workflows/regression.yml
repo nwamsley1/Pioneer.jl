@@ -978,7 +978,7 @@ jobs:
 
       - name: Comment regression report on pull request
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           CLUSTER_RUN_DIR_MOUNT: ${{ env.CLUSTER_RUN_DIR_MOUNT }}
@@ -1021,7 +1021,7 @@ jobs:
 
       - name: Update release notes with regression report
         if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/'))) && env.REPORT_PAGES_SUBDIR != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           REPORT_PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
           REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
