@@ -2,36 +2,29 @@
 # JSON is already imported in Pioneer.jl, no need to import again
 
 """
-    get_build_default_parameters(simplified::Bool = false)
+    get_build_default_parameters()
 
 Load default parameters for library building from JSON file.
-
-Parameters:
-- simplified: If true, loads simplified defaults, otherwise loads full defaults
 
 Returns:
 - Dict containing default parameters for library building
 """
-function get_build_default_parameters(simplified::Bool = false)
-    # Determine which JSON file to load
-    json_filename = simplified ? "defaultBuildLibParamsSimplified.json" : "defaultBuildLibParams.json"
-    
-    # Use asset_path to find the JSON file
-    json_path = asset_path("example_config", json_filename)
-    
-    # Load and parse JSON
+function get_build_default_parameters()
+    # Always load full defaults
+    json_path = asset_path("example_config", "defaultBuildLibParams.json")
+
     if !isfile(json_path)
         error("Default build parameters file not found: $json_path")
     end
-    
+
     defaults = JSON.parsefile(json_path, dicttype=Dict{String,Any})
-    
+
     # Remove user-specific sections that must be provided by user
     user_specific_keys = ["fasta_paths", "fasta_names", "library_path", "calibration_raw_file"]
     for key in user_specific_keys
         delete!(defaults, key)
     end
-    
+
     return defaults
 end
 

@@ -312,8 +312,8 @@
             # Verify output files were created
             @test isfile(joinpath(temp_dir, "fragments_table.arrow"))
             @test isfile(joinpath(temp_dir, "prec_to_frag.arrow"))
-            @test isfile(joinpath(temp_dir, "frag_name_to_idx.jld2"))
-            @test isfile(joinpath(temp_dir, "ion_annotations.jld2"))
+            @test isfile(joinpath(temp_dir, "frag_name_to_idx.jls"))
+            @test isfile(joinpath(temp_dir, "ion_annotations.jls"))
             
             # Verify result dictionary
             @test length(result) == length(ion_set)

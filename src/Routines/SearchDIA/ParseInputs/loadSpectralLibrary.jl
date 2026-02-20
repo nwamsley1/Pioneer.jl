@@ -75,12 +75,32 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     # This message will be captured by the logging system when SearchDIA runs
     # println("Loading spectral library from $SPEC_LIB_DIR into main memory...")
     spec_lib = Dict{String, Any}()
-    detailed_frags = load_detailed_frags(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))
-    prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["pid_to_fid"]
+
+    # Load detailed fragments (load_detailed_frags handles backwards compatibility)
+    detailed_frags = load_detailed_frags(joinpath(SPEC_LIB_DIR, "detailed_fragments.jls"))
+
+    # Load precursor-to-fragment indices with backwards compatibility
+    prec_frag_ranges = if isfile(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jls"))
+        deserialize_from_jls(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jls"))
+    elseif isfile(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jld2"))
+        @warn "Loading legacy JLD2 format for precursor_to_fragment_indices. Consider rebuilding library."
+        load(joinpath(SPEC_LIB_DIR, "precursor_to_fragment_indices.jld2"))["pid_to_fid"]
+    else
+        error("precursor_to_fragment_indices file not found in $SPEC_LIB_DIR")
+    end
+
     library_fragment_lookup_table = nothing
     if (eltype(detailed_frags).name == (eltype(Vector{SplineDetailedFrag{4, Float32}}(undef, 0)).name))
         try
-            spl_knots = load(joinpath(SPEC_LIB_DIR,"spline_knots.jld2"))["spl_knots"]
+            # Load spline knots with backwards compatibility
+            spl_knots = if isfile(joinpath(SPEC_LIB_DIR, "spline_knots.jls"))
+                deserialize_from_jls(joinpath(SPEC_LIB_DIR, "spline_knots.jls"))
+            elseif isfile(joinpath(SPEC_LIB_DIR, "spline_knots.jld2"))
+                @warn "Loading legacy JLD2 format for spline_knots. Consider rebuilding library."
+                load(joinpath(SPEC_LIB_DIR, "spline_knots.jld2"))["spl_knots"]
+            else
+                error("spline_knots file not found in $SPEC_LIB_DIR")
+            end
             library_fragment_lookup_table = SplineFragmentLookup(
                 detailed_frags,
                 prec_frag_ranges,
@@ -88,7 +108,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
                 3
             )
         catch e
-            @user_warn "Could not load `spline_knots.jld2`"
+            @user_warn "Could not load spline_knots"
             throw(e)
         end
 

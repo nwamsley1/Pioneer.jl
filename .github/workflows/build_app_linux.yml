@@ -10,6 +10,12 @@ on:
       - main
       - develop
   workflow_dispatch:
+    inputs:
+      force_installer:
+        description: "Force .deb packaging/upload for manual runs"
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     outputs:
       version:
@@ -142,7 +148,8 @@ jobs:
           "$pioneer_root/pioneer" params-predict "$dummy" "$dummy" --params-path "$dummy/params.json"
           rm -rf "$dummy"
           
-      - name: Package Linux .deb
+      - name: Package Linux .deb (release tags or forced dispatch)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
         run: |
           mkdir -p deb/usr/local/Pioneer
           cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
@@ -174,10 +181,15 @@ jobs:
           cd build/Pioneer_${{ matrix.identifier }}/Applications
           zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
 
-      - name: Upload artifacts
+      - name: Upload zipped binaries
         uses: actions/upload-artifact@v5
         with:
           name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}
-          path: |
-            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
-            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
+          path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
+
+      - name: Upload .deb (release tags or forced dispatch)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
+        uses: actions/upload-artifact@v5
+        with:
+          name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}-deb
+          path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb

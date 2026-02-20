@@ -402,8 +402,8 @@ function parse_koina_fragments(
         DataFrame((start_idx = UInt64[frag_idx - 1],))
     )
 
-    jldsave(joinpath(out_dir, "frag_name_to_idx.jld2"); frag_name_to_idx)
-    jldsave(joinpath(out_dir, "ion_annotations.jld2"); ion_annotation_to_features_dict)
+    serialize_to_jls(joinpath(out_dir, "frag_name_to_idx.jls"), frag_name_to_idx)
+    serialize_to_jls(joinpath(out_dir, "ion_annotations.jls"), ion_annotation_to_features_dict)
     return ion_annotation_to_features_dict
 end
 
@@ -942,7 +942,7 @@ function parse_altimeter_fragments(
         DataFrame((start_idx = UInt64[frag_idx - 1],))
     )
 
-    jldsave(joinpath(out_dir, "frag_name_to_idx.jld2"); ion_dictionary)
-    jldsave(joinpath(out_dir, "ion_annotations.jld2"); ion_annotation_to_features_dict)
+    serialize_to_jls(joinpath(out_dir, "frag_name_to_idx.jls"), ion_dictionary)
+    serialize_to_jls(joinpath(out_dir, "ion_annotations.jls"), ion_annotation_to_features_dict)
     return ion_annotation_to_features_dict
 end

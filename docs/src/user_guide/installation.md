@@ -1,22 +1,28 @@
 # Installation Guide
 
 ## System Requirements
-* **Julia**: 1.10 or higher
 * **CPU**: Multiple cores and threads recommended. Increasing the number of threads reduces computation time.
-* **RAM**: >=16GB recommended. RAM availability should exceed the spectral library size by at least 4GB. For searching against the yeast proteome, as little as 6-8 GB may suffice.  
-* **Storage**: SSD recommended. Available disk space at least double the total size of the `.arrow` formmated raw files to search. The `.arrow` files are usually ~1/2 the size of the vendor files. 
+* **RAM**: >=16GB recommended. RAM availability should exceed the spectral library size by at least 4GB. For searching against the yeast proteome, as little as 6-8 GB may suffice.
+* **Storage**: SSD recommended. Available disk space at least double the total size of the `.arrow` formatted raw files to search. The `.arrow` files are usually ~1/2 the size of the vendor files.
 * **Operating System**: Windows, Linux, or macOS
 
 ## Installation
 
 ### End-User Installation
-1. Download the installer for your operating system from the [releases page](https://github.com/nwamsley1/Pioneer.jl/releases).
+1. Download the installer for your operating system from the [releases page](https://github.com/nwamsley1/Pioneer.jl/releases):
+   * **Windows** – `.msi` installer
+   * **macOS** – `.pkg` installer (signed and notarized); separate builds for Intel and Apple Silicon
+   * **Linux** – `.deb` package
 2. Run the installer. It places a `pioneer` executable on your `PATH`.
 3. On first launch:
    * **macOS** – Gatekeeper verifies the binary and the first run can take about a minute. Zipped binaries require manual Gatekeeper approval and are not recommended.
 4. Verify the installation:
    ```bash
    pioneer --help
+   ```
+5. Use `--threads N` to control the number of worker threads:
+   ```bash
+   pioneer search --threads 8 ...
    ```
 
 ### Docker
@@ -39,7 +45,7 @@ Run Pioneer in a container without installing dependencies.
 ### Development Setup
 To work on Pioneer itself, set up a local development environment.
 
-1. Install Julia 1.10 or higher from [julia.org](https://julialang.org/downloads/).
+1. Install **Julia 1.10** or higher from [julialang.org](https://julialang.org/downloads/) (only required for development; compiled releases bundle their own runtime).
 2. Clone the repository:
    ```bash
    git clone https://github.com/nwamsley1/Pioneer.jl.git
@@ -78,11 +84,12 @@ To work on Pioneer itself, set up a local development environment.
 | `convert-raw`    | `PioneerConverter` |
 | `convert-mzml`   | `convertMzML`      |
 
-!!! note "'note'"
+!!! note
     `Revise` enables hot reloading of code during development.
 
 ### PioneerConverter
 Detailed installation and usage instructions for PioneerConverter are available in its [documentation](https://github.com/nwamsley1/PioneerConverter).
+Common `convert-raw` options are `--output-dir`, `--skip-existing`, `--concurrent-files`, and `--threads-per-file`. For full option details, run `pioneer convert-raw --help`.
 
 ### Next Steps
 

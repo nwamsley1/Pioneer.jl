@@ -10,6 +10,12 @@ on:
       - main
       - develop
   workflow_dispatch:
+    inputs:
+      force_installer:
+        description: "Force MSI packaging/upload for manual runs"
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     outputs:
       version:
@@ -162,7 +168,8 @@ jobs:
           "msi_version=$clean" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "MSI_VERSION=$clean"
 
-      - name: Package Windows MSI
+      - name: Package Windows MSI (release tags or forced dispatch)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
         shell: pwsh
         run: |
           $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
@@ -220,10 +227,15 @@ jobs:
           Compress-Archive -Path "$pioneerRoot\*" `
                            -DestinationPath "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip"
 
-      - name: Upload artifacts
+      - name: Upload zipped binaries
         uses: actions/upload-artifact@v5
         with:
           name: Pioneer-${{ matrix.identifier }}
-          path: |
-            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi
-            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
+          path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
+
+      - name: Upload MSI (release tags or forced dispatch)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
+        uses: actions/upload-artifact@v5
+        with:
+          name: Pioneer-${{ matrix.identifier }}-msi
+          path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi
