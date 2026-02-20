@@ -45,7 +45,7 @@ See the [Installation Guide](https://nwamsley1.github.io/Pioneer.jl/docs/stable/
 ```bash
 pioneer params-predict lib_dir fasta_dir --params-path=predict_params.json
 pioneer predict predict_params.json
-pioneer convert-raw raw_dir
+pioneer convert-raw raw_dir --output-dir arrow_dir --skip-existing
 pioneer params-search library.poin ms_data_dir results_dir --params-path=search_params.json
 pioneer search search_params.json
 ```

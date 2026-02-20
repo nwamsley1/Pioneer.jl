@@ -89,6 +89,7 @@ To work on Pioneer itself, set up a local development environment.
 
 ### PioneerConverter
 Detailed installation and usage instructions for PioneerConverter are available in its [documentation](https://github.com/nwamsley1/PioneerConverter).
+Common `convert-raw` options are `--output-dir`, `--skip-existing`, `--concurrent-files`, and `--threads-per-file`. For full option details, run `pioneer convert-raw --help`.
 
 ### Next Steps
 
