@@ -221,7 +221,7 @@ jobs:
                            -DestinationPath "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: Pioneer-${{ matrix.identifier }}
           path: |

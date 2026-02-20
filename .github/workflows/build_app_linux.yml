@@ -175,7 +175,7 @@ jobs:
           zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}
           path: |
