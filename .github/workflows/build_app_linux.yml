@@ -87,7 +87,9 @@ jobs:
       - name: Compile application
         run: |
           julia --threads auto --project=dev -e '
+            using Preferences;
             using PackageCompiler;
+            set_preferences!(joinpath(pwd(), "Project.toml"), "HostCPUFeatures", "allow_runtime_invalidation" => true; force=true);
             create_app(
               ".",
               "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
