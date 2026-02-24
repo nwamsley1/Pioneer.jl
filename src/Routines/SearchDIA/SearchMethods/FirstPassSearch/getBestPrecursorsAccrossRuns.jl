@@ -15,6 +15,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# Global post-filter constants
+const GLOBAL_QVALUE_THRESHOLD = 0.20f0   # cumulative D/T cutoff
+const GLOBAL_MIN_PRECURSORS   = 50_000   # hard minimum floor
+
 """
 Log-odds average of top-N probabilities, converted back to probability space.
 Mirrors ScoringSearch/scoring_interface.jl:logodds for first pass use.
@@ -40,10 +44,11 @@ Identify and collect best precursor matches across multiple runs for retention t
 Combines per-run probabilities via **log-odds averaging** (`_logodds_combine`) to produce a
 single global probability per precursor, then computes global PEP via isotonic regression
 on the unique precursors. Uses `top_n = floor(sqrt(n_files))` best per-file probabilities.
-Uses a hybrid enrichment-floor + global PEP threshold: keeps whichever is larger between
-the number passing `global_pep_threshold` and the enrichment-based floor (last position in
-the global-PEP-sorted list where cumulative (T-D)/(T+D) ≥ 1/3). This prevents over-filtering
-sparse/SCP experiments while avoiding decoy contamination in large experiments.
+Uses a hybrid q-value floor + global PEP threshold + hard minimum: keeps the largest of
+(a) the number passing `global_pep_threshold`, (b) q-value floor (last position in the
+global-PEP-sorted list where cumulative D/T ≤ 0.20), and (c) a hard minimum of 50,000
+precursors. This prevents over-filtering sparse/SCP experiments while avoiding decoy
+contamination in large experiments.
 
 # Arguments
 - `psms_paths`: Paths to PSM files from first pass search
@@ -69,7 +74,7 @@ Dictionary mapping precursor indices to NamedTuple containing:
 1. First pass: Collects best matches, mean iRT, and best prob per precursor per file
 2. Computes global prob per precursor via log-odds averaging of per-file best probs
 3. Computes global PEP via isotonic regression on unique precursors
-4. Hybrid filter: keeps max(n_passing_threshold, n_enrichment_based) precursors by global PEP rank
+4. Hybrid filter: keeps max(n_passing_threshold, n_qvalue_based, 50_000) precursors by global PEP rank
 5. Second pass: Calculates iRT variance for remaining precursors
 """
 function get_best_precursors_accross_runs(
@@ -345,18 +350,18 @@ function get_best_precursors_accross_runs(
     all_keys = collect(keys(prec_to_best_prob))
     sort!(all_keys, by = pid -> get(prec_min_global_pep, pid, Inf32))
 
-    # Enrichment-based floor: find max precursors where cumulative (T-D)/(T+D) ≥ 1/3
+    # Q-value floor: find last position where cumulative D/T ≤ 0.20
     cum_t = 0
     cum_d = 0
-    n_enrichment_based = 0
+    n_qvalue_based = 0
     for (i, pid) in enumerate(all_keys)
         if !prec_is_decoy[pid]
             cum_t += 1
         else
             cum_d += 1
         end
-        if (cum_t - cum_d) / (cum_t + cum_d) >= 1.0f0/3.0f0
-            n_enrichment_based = i
+        if cum_t > 0 && cum_d / cum_t <= GLOBAL_QVALUE_THRESHOLD
+            n_qvalue_based = i
         end
     end
 
@@ -364,13 +369,22 @@ function get_best_precursors_accross_runs(
     n_passing_threshold = count(pid -> haskey(prec_min_global_pep, pid) &&
         prec_min_global_pep[pid] <= global_pep_threshold, keys(prec_to_best_prob))
 
-    # Keep whichever is larger
-    n_to_keep = max(n_passing_threshold, n_enrichment_based)
-    enrichment_dominates = n_enrichment_based > n_passing_threshold
-    @user_info "Hybrid filter: enrichment-floor=$n_enrichment_based ((T-D)/(T+D)≥1/3), " *
+    # Hard minimum floor (or all precursors if fewer exist)
+    n_min_floor = min(GLOBAL_MIN_PRECURSORS, length(all_keys))
+
+    # Keep whichever is largest
+    n_to_keep = max(n_passing_threshold, n_qvalue_based, n_min_floor)
+    winner = if n_passing_threshold >= n_qvalue_based && n_passing_threshold >= n_min_floor
+        "threshold dominates"
+    elseif n_qvalue_based >= n_min_floor
+        "qvalue-floor dominates"
+    else
+        "min-floor dominates"
+    end
+    @user_info "Hybrid filter: qvalue-floor=$n_qvalue_based (D/T≤$GLOBAL_QVALUE_THRESHOLD), " *
           "threshold-based=$n_passing_threshold (global PEP≤$global_pep_threshold), " *
-          "old-metric=$max_per_file_pep09 (max per-file PEP≤0.9) → " *
-          "keeping $n_to_keep ($(enrichment_dominates ? "enrichment-floor dominates" : "threshold dominates"))"
+          "old-metric=$max_per_file_pep09 (max per-file PEP≤0.9), " *
+          "min-floor=$n_min_floor → keeping $n_to_keep ($winner)"
 
     # Delete precursors beyond n_to_keep (all_keys already sorted by global PEP)
     keys_to_delete = Set(all_keys[min(n_to_keep + 1, length(all_keys) + 1):end])
