@@ -19,7 +19,7 @@ Pioneer and its companion tool, Altimeter, are an open-source and performant sol
 
 The Pioneer manuscript is available on bioRxiv:
 
-*Pioneer: Fast and Open-Source Analysis of Data-Independent Acquisition Proteomics Experiments*. bioRxiv (2026).
+*Pioneer and Altimeter: Fast Analysis of DIA Proteomics Data Optimized for Narrow Isolation Windows*. bioRxiv (2026).
 
 https://www.biorxiv.org/content/10.64898/2026.02.16.706201v2
 
