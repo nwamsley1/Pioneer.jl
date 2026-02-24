@@ -16,7 +16,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # Global post-filter constants
-const GLOBAL_QVALUE_THRESHOLD = 0.20f0   # cumulative D/T cutoff
+const GLOBAL_QVALUE_THRESHOLD = 0.15f0   # cumulative D/T cutoff
 const GLOBAL_MIN_PRECURSORS   = 50_000   # hard minimum floor
 
 """
@@ -46,7 +46,7 @@ single global probability per precursor, then computes global PEP via isotonic r
 on the unique precursors. Uses `top_n = floor(sqrt(n_files))` best per-file probabilities.
 Uses a hybrid q-value floor + global PEP threshold + hard minimum: keeps the largest of
 (a) the number passing `global_pep_threshold`, (b) q-value floor (last position in the
-global-PEP-sorted list where cumulative D/T ≤ 0.20), and (c) a hard minimum of 50,000
+global-PEP-sorted list where cumulative D/T ≤ 0.15), and (c) a hard minimum of 50,000
 precursors. This prevents over-filtering sparse/SCP experiments while avoiding decoy
 contamination in large experiments.
 

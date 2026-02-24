@@ -96,7 +96,7 @@ The first search uses a hybrid filter to decide how many precursors to carry for
 
 **Global post-filter** (applied after cross-run global PEP computation): keeps the largest of three counts:
 - Precursors with global PEP ≤ `global_pep_threshold` (default 0.5, JSON-configurable)
-- Precursors where cumulative decoy/target ratio ≤ `GLOBAL_QVALUE_THRESHOLD` (0.20)
+- Precursors where cumulative decoy/target ratio ≤ `GLOBAL_QVALUE_THRESHOLD` (0.15)
 - `GLOBAL_MIN_PRECURSORS` (50,000, or all precursors if fewer exist)
 
 The hard minimum floors ensure sparse datasets (e.g. single-cell proteomics) always retain enough precursors for second-pass scoring, while the q-value floors prevent decoy contamination in large experiments.
