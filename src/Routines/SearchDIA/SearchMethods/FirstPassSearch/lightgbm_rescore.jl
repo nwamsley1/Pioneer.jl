@@ -1,0 +1,350 @@
+"""
+LightGBM-based cross-validated rescoring of first-pass PSMs.
+
+After per-file probit scoring, this pools PSMs across files and trains a
+LightGBM model using 2-fold cross-validation (train fold 0 → predict fold 1,
+train fold 1 → predict fold 0). The improved probabilities replace the probit
+scores and feed into `get_best_precursors_accross_runs`.
+"""
+
+const FIRST_PASS_LGBM_FEATURES = [
+    :spectral_contrast, :city_block, :entropy_score, :scribe,
+    :charge2, :poisson, :irt_error, :missed_cleavage, :Mox,
+    :TIC, :y_count, :err_norm, :spectrum_peak_count
+]
+
+const FIRST_PASS_LGBM_SAMPLE_SIZE = 1_000_000
+const FIRST_PASS_LGBM_TRAIN_QVAL = 0.01f0
+
+"""
+    _log_psm_diagnostics(targets, q_values, label)
+
+Log target counts at multiple q-value thresholds for pooled PSMs.
+"""
+function _log_psm_diagnostics(targets::AbstractVector{Bool},
+                              q_values::AbstractVector,
+                              label::String)
+    thresholds = (0.01f0, 0.05f0, 0.10f0, 0.15f0)
+    parts = String[]
+    for t in thresholds
+        nt = count(i -> targets[i] && Float32(q_values[i]) <= t, eachindex(targets))
+        push!(parts, "q≤$(t): $nt")
+    end
+    @user_info "  PSM targets ($label): " * join(parts, " | ")
+end
+
+"""
+    _compute_global_precursor_diagnostics(all_psms, all_psms_paths, valid_indices,
+                                          prec_is_decoy, fdr_scale_factor, label)
+
+Replicate the log-odds global probability calculation from
+`get_best_precursors_accross_runs` and log diagnostics at multiple FDR thresholds.
+"""
+function _compute_global_precursor_diagnostics(
+    all_psms::DataFrame,
+    all_psms_paths::Vector{String},
+    valid_indices::Vector{Int},
+    prec_is_decoy::AbstractVector{Bool},
+    fdr_scale_factor::Float32,
+    label::String
+)
+    # Collect best prob per precursor per file
+    prec_probs_by_run = Dictionary{UInt32, Vector{Float32}}()
+    n_valid_files = 0
+
+    for ms_file_idx in valid_indices
+        path = all_psms_paths[ms_file_idx]
+        if isempty(path)
+            continue
+        end
+
+        file_mask = all_psms.ms_file_idx .== UInt32(ms_file_idx)
+        if !any(file_mask)
+            continue
+        end
+        n_valid_files += 1
+
+        prec_col = all_psms.precursor_idx[file_mask]
+        prob_col = all_psms.prob[file_mask]
+
+        file_best = Dictionary{UInt32, Float32}()
+        for i in eachindex(prec_col)
+            pid = prec_col[i]
+            p = prob_col[i]
+            if haskey(file_best, pid)
+                file_best[pid] = max(file_best[pid], p)
+            else
+                insert!(file_best, pid, p)
+            end
+        end
+        for (pid, p) in pairs(file_best)
+            if haskey(prec_probs_by_run, pid)
+                push!(prec_probs_by_run[pid], p)
+            else
+                insert!(prec_probs_by_run, pid, Float32[p])
+            end
+        end
+    end
+
+    if n_valid_files == 0
+        @user_info "  Global precursors ($label): no valid files"
+        return
+    end
+
+    sqrt_n_files = max(1, floor(Int, sqrt(n_valid_files)))
+    n_unique = length(prec_probs_by_run)
+
+    global_probs = Vector{Float32}(undef, n_unique)
+    global_targets = Vector{Bool}(undef, n_unique)
+    for (i, (pid, probs)) in enumerate(pairs(prec_probs_by_run))
+        global_probs[i] = _logodds_combine(probs, sqrt_n_files)
+        global_targets[i] = !prec_is_decoy[pid]
+    end
+
+    # Global q-values
+    global_qvals = Vector{Float32}(undef, n_unique)
+    get_qvalues!(global_probs, global_targets, global_qvals;
+                 doSort=true, fdr_scale_factor=fdr_scale_factor)
+
+    # Global PEP
+    global_peps = Vector{Float32}(undef, n_unique)
+    get_PEP!(global_probs, global_targets, global_peps;
+             doSort=true, fdr_scale_factor=fdr_scale_factor)
+
+    n_targets = count(global_targets)
+    n_decoys = n_unique - n_targets
+
+    # FDR thresholds
+    fdr_parts = String[]
+    for t in (0.01f0, 0.05f0, 0.10f0, 0.15f0)
+        n = count(<=(t), global_qvals)
+        push!(fdr_parts, "$(round(Int, t*100))%: $n")
+    end
+
+    # Global PEP thresholds
+    pep_parts = String[]
+    for t in (0.1f0, 0.5f0, 0.75f0, 0.9f0)
+        nt = count(i -> global_peps[i] <= t && global_targets[i], eachindex(global_peps))
+        nd = count(i -> global_peps[i] <= t && !global_targets[i], eachindex(global_peps))
+        push!(pep_parts, "≤$t: T=$nt D=$nd")
+    end
+
+    @user_info "  Global precursors ($label): $n_unique unique ($n_targets T, $n_decoys D) " *
+        "from $n_valid_files files (top_n=$sqrt_n_files)"
+    @user_info "    FDR: " * join(fdr_parts, " | ")
+    @user_info "    PEP: " * join(pep_parts, " | ")
+end
+
+"""
+    _log_feature_importances(models, features)
+
+Log gain-based feature importances averaged across CV fold models.
+"""
+function _log_feature_importances(models::Vector{LightGBMModel},
+                                  features::Vector{Symbol})
+    # Collect gain vectors from each fold
+    all_gains = Vector{Vector{Float64}}()
+    for m in models
+        imp = importance(m)
+        if imp !== nothing
+            push!(all_gains, Float64[last(x) for x in imp])
+        end
+    end
+    if isempty(all_gains)
+        return
+    end
+
+    n_features = length(features)
+    avg_gains = zeros(Float64, n_features)
+    for gains in all_gains
+        for j in 1:min(length(gains), n_features)
+            avg_gains[j] += gains[j]
+        end
+    end
+    avg_gains ./= length(all_gains)
+
+    # Sort by importance descending
+    order = sortperm(avg_gains; rev=true)
+    total = sum(avg_gains)
+    parts = String[]
+    for idx in order
+        g = avg_gains[idx]
+        pct = total > 0 ? round(g / total * 100; digits=1) : 0.0
+        push!(parts, "$(features[idx])=$(round(g; digits=1)) ($(pct)%)")
+    end
+    @user_info "  Feature importance (gain): " * join(parts, ", ")
+end
+
+"""
+    rescore_first_pass_with_lightgbm!(search_context, fdr_scale_factor)
+
+Read all first-pass Arrow files, pool PSMs, train 2-fold CV LightGBM models,
+rescore all PSMs, and write updated Arrow files back.
+"""
+function rescore_first_pass_with_lightgbm!(
+    search_context::SearchContext,
+    fdr_scale_factor::Float32
+)
+    # Collect paths from all valid files
+    all_psms_paths = getFirstPassPsms(getMSData(search_context))
+    valid_indices = get_valid_file_indices(search_context)
+    valid_paths = [all_psms_paths[i] for i in valid_indices]
+
+    if isempty(valid_paths)
+        @user_warn "LightGBM rescore: no valid first-pass files, skipping"
+        return
+    end
+
+    # 1. Read & pool all per-file Arrow files into a single DataFrame
+    dfs = DataFrame[]
+    for path in valid_paths
+        tbl = Arrow.Table(path)
+        if isempty(tbl[:ms_file_idx])
+            continue
+        end
+        push!(dfs, DataFrame(tbl))
+    end
+
+    if isempty(dfs)
+        @user_warn "LightGBM rescore: all files empty, skipping"
+        return
+    end
+
+    all_psms = vcat(dfs...; cols=:intersect)
+    dfs = nothing # free memory
+
+    # 2. Determine which features are actually present
+    available_features = Symbol[f for f in FIRST_PASS_LGBM_FEATURES if hasproperty(all_psms, f)]
+
+    if length(available_features) < 3
+        @user_warn "LightGBM rescore: only $(length(available_features)) features available, skipping"
+        return
+    end
+
+    # 3. Add cv_fold column from library
+    precursors = getPrecursors(getSpecLib(search_context))
+    all_psms[!, :cv_fold] = UInt8[getCvFold(precursors, pid) for pid in all_psms.precursor_idx]
+
+    # Derive target column from library if not present
+    if !hasproperty(all_psms, :target)
+        is_decoy = getIsDecoy(precursors)
+        all_psms[!, :target] = Bool[!is_decoy[pid] for pid in all_psms.precursor_idx]
+    end
+
+    n_total = nrow(all_psms)
+    n_targets_pre = count(all_psms.target)
+    prec_is_decoy = getIsDecoy(precursors)
+
+    # ── Before-rescore diagnostics ──
+    @user_info "LightGBM rescore: $n_total pooled PSMs ($n_targets_pre targets)"
+    _log_psm_diagnostics(all_psms.target, all_psms.q_value, "probit")
+    _compute_global_precursor_diagnostics(
+        all_psms, all_psms_paths, valid_indices,
+        prec_is_decoy, fdr_scale_factor, "probit")
+
+    # 4. Sample for training (keep all for prediction)
+    n_sample = min(FIRST_PASS_LGBM_SAMPLE_SIZE, n_total)
+    if n_sample < n_total
+        sample_idx = sort(randperm(n_total)[1:n_sample])
+        sample_psms = all_psms[sample_idx, :]
+    else
+        sample_psms = all_psms
+    end
+
+    # 5. Cross-validated training & prediction (2-fold CV)
+    new_probs = Vector{Float32}(undef, n_total)
+    fill!(new_probs, 0.5f0)
+
+    folds = sort(unique(all_psms.cv_fold))
+    if length(folds) < 2
+        @user_warn "LightGBM rescore: fewer than 2 CV folds found, skipping"
+        return
+    end
+
+    trained_models = LightGBMModel[]
+
+    for test_fold in folds
+        # Training data: other folds in the sample, with quality filter
+        train_mask = (sample_psms.cv_fold .!= test_fold) .& (
+            ((sample_psms.target) .& (sample_psms.q_value .<= FIRST_PASS_LGBM_TRAIN_QVAL)) .|
+            (.!sample_psms.target)
+        )
+
+        n_train_targets = count(train_mask .& sample_psms.target)
+        n_train_decoys = count(train_mask .& .!sample_psms.target)
+
+        if n_train_targets < 100 || n_train_decoys < 100
+            @user_warn "LightGBM rescore fold $test_fold: insufficient training data " *
+                "(targets=$n_train_targets, decoys=$n_train_decoys), skipping all rescoring"
+            return
+        end
+
+        # Build and train model
+        classifier = build_lightgbm_classifier(
+            num_iterations = 250,
+            max_depth = 6,
+            num_leaves = 31,
+            learning_rate = 0.05,
+            feature_fraction = 0.8,
+            bagging_fraction = 0.8,
+            bagging_freq = 1,
+            min_data_in_leaf = 50,
+            min_gain_to_split = 0.0
+        )
+
+        train_data = sample_psms[train_mask, available_features]
+        train_labels = sample_psms[train_mask, :target]
+
+        model = fit_lightgbm_model(classifier, train_data, train_labels)
+        push!(trained_models, model)
+
+        # Predict on ALL PSMs in the test fold
+        test_mask = all_psms.cv_fold .== test_fold
+        test_data = all_psms[test_mask, available_features]
+        preds = predict(model, test_data)
+
+        new_probs[test_mask] .= preds
+    end
+
+    # Log feature importances (averaged across folds)
+    _log_feature_importances(trained_models, available_features)
+
+    # 6. Update scores: replace prob, recompute q_value and PEP
+    all_psms[!, :prob] = new_probs
+
+    # Recompute q-values (must stay Float16 for downstream readPSMs! compatibility)
+    q_values = Vector{Float32}(undef, n_total)
+    get_qvalues!(new_probs, all_psms.target, q_values;
+                 doSort=true, fdr_scale_factor=fdr_scale_factor)
+    all_psms[!, :q_value] = Float16.(q_values)
+
+    # Recompute PEP
+    pep_values = Vector{Float16}(undef, n_total)
+    get_PEP!(new_probs, all_psms.target, pep_values;
+             doSort=true, fdr_scale_factor=fdr_scale_factor)
+    all_psms[!, :PEP] = pep_values
+
+    # ── After-rescore diagnostics ──
+    _log_psm_diagnostics(all_psms.target, all_psms.q_value, "LightGBM")
+    _compute_global_precursor_diagnostics(
+        all_psms, all_psms_paths, valid_indices,
+        prec_is_decoy, fdr_scale_factor, "LightGBM")
+
+    # 7. Write back to per-file Arrow files
+    select!(all_psms, Not(:cv_fold))
+
+    grouped = groupby(all_psms, :ms_file_idx)
+    for (key, file_psms) in pairs(grouped)
+        ms_file_idx = Int(key.ms_file_idx)
+        if ms_file_idx < 1 || ms_file_idx > length(all_psms_paths)
+            continue
+        end
+        path = all_psms_paths[ms_file_idx]
+        if isempty(path)
+            continue
+        end
+        Arrow.write(path, file_psms)
+    end
+
+    return
+end

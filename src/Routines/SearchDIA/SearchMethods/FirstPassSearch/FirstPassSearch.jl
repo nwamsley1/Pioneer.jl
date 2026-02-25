@@ -354,10 +354,10 @@ function process_file!(
                 fdr_scale_factor=fdr_scale_factor
             )
         end
-        # Process scores
-       
-        select!(psms, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
-            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target])
+        # Process scores — keep feature columns for downstream LightGBM rescoring
+        lgbm_cols = Symbol[f for f in FIRST_PASS_LGBM_FEATURES if hasproperty(psms, f)]
+        select!(psms, unique(vcat(lgbm_cols, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
+            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target])))
         get_probs!(psms, psms[!,:score])
     end
 
@@ -441,16 +441,17 @@ function process_file!(
         # Create an empty but properly structured DataFrame to avoid downstream errors
         empty_psms = DataFrame(
             ms_file_idx = UInt32[],
-            scan_idx = UInt32[], 
+            scan_idx = UInt32[],
             precursor_idx = UInt32[],
             rt = Float32[],
             irt_predicted = Float32[],
             q_value = Float32[],
-            score = Float32[], 
+            score = Float32[],
             prob = Float32[],
             scan_count = UInt32[],
-            fwhm = Float32[],  # Add this to prevent missing column error
-            PEP = Float16[]
+            fwhm = Float32[],
+            PEP = Float16[],
+            target = Bool[]
         )
         results.psms[] = empty_psms
         
@@ -488,10 +489,11 @@ function process_search_results!(
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     temp_path = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms", parsed_fname * ".arrow")
     psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
+    lgbm_cols = Symbol[f for f in FIRST_PASS_LGBM_FEATURES if hasproperty(psms, f)]
     Arrow.write(
         temp_path,
-        select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
-            :irt_predicted, :q_value, :score, :prob, :scan_count, :PEP])
+        select!(psms, unique(vcat([:ms_file_idx, :scan_idx, :precursor_idx, :rt,
+            :irt_predicted, :q_value, :score, :prob, :scan_count, :PEP, :target], lgbm_cols)))
     )
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 
@@ -562,7 +564,12 @@ function summarize_results!(
     # Map retention times
     all_psms_paths = getFirstPassPsms(getMSData(search_context))
     map_retention_times!(search_context, params, all_psms_paths)
-    # Process precursors
+
+    # LightGBM rescoring of first-pass PSMs (cross-validated)
+    fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+    rescore_first_pass_with_lightgbm!(search_context, fdr_scale_factor)
+
+    # Process precursors (now uses LightGBM-rescored probabilities)
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
 
     if false==true#params.match_between_runs==true
