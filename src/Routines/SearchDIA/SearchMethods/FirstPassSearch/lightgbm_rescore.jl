@@ -279,17 +279,17 @@ function rescore_first_pass_with_lightgbm!(
             return
         end
 
-        # Build and train model
+        # Build and train model (matches SimpleLightGBM second-pass config)
         classifier = build_lightgbm_classifier(
-            num_iterations = 250,
-            max_depth = 6,
-            num_leaves = 31,
-            learning_rate = 0.05,
+            num_iterations = 300,
+            max_depth = 4,
+            num_leaves = 15,
+            learning_rate = 0.1,
             feature_fraction = 0.8,
             bagging_fraction = 0.8,
             bagging_freq = 1,
-            min_data_in_leaf = 50,
-            min_gain_to_split = 0.0
+            min_data_in_leaf = 20,
+            min_gain_to_split = 0.1
         )
 
         train_data = sample_psms[train_mask, available_features]
