@@ -180,15 +180,6 @@ function getIntensity(
 end
 
 getIntensity(f::DetailedFrag{T}) where {T<:AbstractFloat} = f.intensity
-
-# Example usage
-function save_detailed_frags(filename::String, data::Vector{<:DetailedFrag})
-    jldsave(filename; data)
-end
-
-#function load_detailed_frags(filename::String)
-#    return load(filename, "data")
-#end
 ArrowTypes.arrowname(::Type{DetailedFrag{Float32}}) = :DetailedFrag
 ArrowTypes.JuliaType(::Val{:DetailedFrag}) = DetailedFrag
 
@@ -257,13 +248,7 @@ Fragment ion with spline coefficients for intensity prediction across collision 
     rank::UInt8
     sulfur_count::UInt8
 end
-# Example usage
-function save_detailed_frags(filename::String, data::Vector{<:SplineDetailedFrag})
-    jldsave(filename; data)
-end
-#function load_detailed_frags(filename::String)
-#    return load(filename, "data")
-#end
+
 #=
 function load_detailed_frags(filename::String)
     # Define base abstract type if it doesn't exist
@@ -298,58 +283,43 @@ end
 =#
 
 function load_detailed_frags(filename::String)
-
-    # Define base abstract type if it doesn't exist
-    if !isdefined(Main, :AltimeterFragment)
-        @eval Main abstract type AltimeterFragment{T<:AbstractFloat} end
+    # Determine paths for new (.jls) and legacy (.jld2) formats
+    jls_path = if endswith(filename, ".jld2")
+        replace(filename, ".jld2" => ".jls")
+    elseif endswith(filename, ".jls")
+        filename
+    else
+        filename * ".jls"
     end
 
-    # Define SplineDetailedFrag type if it doesn't exist in workspace
-    #=
-    if !isdefined(Main, :SplineDetailedFrag)
-        #@eval Main struct Pioneer.SplineDetailedFrag{N,T<:AbstractFloat} <: AltimeterFragment{T}
-        @eval Main struct SplineDetailedFrag{N,T<:AbstractFloat} <: AltimeterFragment{T}
-            prec_id::UInt32
-            mz::T
-            intensity::NTuple{N,T}
-            ion_type::UInt16
-            is_y::Bool
-            is_b::Bool
-            is_p::Bool
-            is_isotope::Bool
-            frag_charge::UInt8
-            ion_position::UInt8
-            prec_charge::UInt8
-            rank::UInt8
-            sulfur_count::UInt8
+    jld2_path = if endswith(filename, ".jls")
+        replace(filename, ".jls" => ".jld2")
+    elseif endswith(filename, ".jld2")
+        filename
+    else
+        filename * ".jld2"
+    end
+
+    # Try new .jls format first
+    if isfile(jls_path)
+        return deserialize_from_jls(jls_path)
+    end
+
+    # Fall back to legacy .jld2 format with warning
+    if isfile(jld2_path)
+        @warn "Loading legacy JLD2 format from $jld2_path. Consider rebuilding library for better performance."
+
+        # Define base abstract type if it doesn't exist (for JLD2 type reconstruction)
+        if !isdefined(Main, :AltimeterFragment)
+            @eval Main abstract type AltimeterFragment{T<:AbstractFloat} end
+        end
+
+        return jldopen(jld2_path, "r") do file
+            read(file, "data")
         end
     end
-    =#
-    jldopen(filename, "r") do file
-        data = read(file, "data")
-        #if eltype(data) == DetailedFrag{Float32}
-            return data
-        #=    
-        else
-            # Convert the loaded data to Pioneer.SplineDetailedFrag
-            map(x -> Pioneer.SplineDetailedFrag{4,Float32}(
-                x.prec_id,
-                x.mz,
-                x.intensity,
-                x.ion_type,
-                x.is_y,
-                x.is_b,
-                x.is_p,
-                x.is_isotope,
-                x.frag_charge,
-                x.ion_position,
-                x.prec_charge,
-                x.rank,
-                x.sulfur_count
-            ), data)
-        end
-        =#
-    end
+
+    error("Fragment file not found: $jls_path or $jld2_path")
 end
 
 ArrowTypes.arrowname(::Type{SplineDetailedFrag{4, Float32}}) = :DetailedFrag

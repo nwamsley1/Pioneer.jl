@@ -10,6 +10,12 @@ on:
       - main
       - develop
   workflow_dispatch:
+    inputs:
+      force_pkg:
+        description: "Force pkg signing/notarization/upload for manual runs"
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     outputs:
       version:
@@ -53,6 +59,15 @@ jobs:
         uses: ./.github/actions/determine-version
         with:
           fallback: "dev"
+
+      - name: Install Rosetta 2 (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          if /usr/sbin/pkgutil --pkg-info com.apple.pkg.RosettaUpdateAuto >/dev/null 2>&1; then
+            echo "Rosetta 2 already installed"
+          else
+            sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+          fi
 
       - name: Normalize versions
         id: norm
@@ -201,8 +216,8 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
-      - name: Codesign & package macOS app (release tags only)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && startsWith(github.ref, 'refs/tags/v')
+      - name: Codesign & package macOS app (release tags or forced dispatch)
+        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
         env:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
           PKG_SIGN_IDENTITY: ${{ secrets.PKG_SIGN_IDENTITY }}
@@ -272,8 +287,8 @@ jobs:
           rm PioneerUnsigned.pkg
 
 
-      - name: Notarize macOS package (release tags only)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && startsWith(github.ref, 'refs/tags/v')
+      - name: Notarize macOS package (release tags or forced dispatch)
+        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
         timeout-minutes: 240
         env:
           AC_USERNAME: ${{ secrets.NOTARIZE_APPLE_ID }}
@@ -308,8 +323,8 @@ jobs:
           fi
           echo "Notarization successful at $(date)"
 
-      - name: Staple notarization ticket (release tags only)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && startsWith(github.ref, 'refs/tags/v')
+      - name: Staple notarization ticket (release tags or forced dispatch)
+        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
         run: |
           xcrun stapler staple \
             Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg
@@ -319,8 +334,8 @@ jobs:
           cd build/Pioneer_${{ matrix.identifier }}/Applications
           zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
 
-      - name: Validate signed pkg (release tags only)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && startsWith(github.ref, 'refs/tags/v')
+      - name: Validate signed pkg (release tags or forced dispatch)
+        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
         run: |
           PKG="Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg"
           echo "Validating pkg with spctl: $PKG"
@@ -341,8 +356,8 @@ jobs:
           name: Pioneer-${{ matrix.identifier }}
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
 
-      - name: Upload signed package (release tags only)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && startsWith(github.ref, 'refs/tags/v')
+      - name: Upload signed package (release tags or forced dispatch)
+        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
         uses: actions/upload-artifact@v5
         with:
           name: Pioneer-${{ matrix.identifier }}-pkg

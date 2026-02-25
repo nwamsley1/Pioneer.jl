@@ -59,8 +59,8 @@ Creates the following files in `spec_lib_path`:
 - presearch_f_index_fragments.arrow: Presearch fragment index
 - presearch_f_index_rt_bins.arrow: Presearch retention time bins
 - presearch_f_index_fragment_bins.arrow: Presearch fragment m/z bins
-- detailed_fragments.jld2: Detailed fragment information
-- precursor_to_fragment_indices.jld2: Mapping of precursors to fragment indices
+- detailed_fragments.jls: Detailed fragment information
+- precursor_to_fragment_indices.jls: Mapping of precursors to fragment indices
 """
 function buildPionLib(spec_lib_path::String,
                       y_start_index::UInt8,
@@ -180,13 +180,13 @@ function buildPionLib(spec_lib_path::String,
     model_type
     );
     
-    save_detailed_frags(
-        joinpath(spec_lib_path, "detailed_fragments.jld2"),
+    serialize_to_jls(
+        joinpath(spec_lib_path, "detailed_fragments.jls"),
         detailed_frags
     )
 
-    jldsave(
-        joinpath(spec_lib_path, "precursor_to_fragment_indices.jld2");
+    serialize_to_jls(
+        joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"),
         pid_to_fid
     )
 
@@ -255,8 +255,8 @@ Creates the following files in `spec_lib_path`:
 - presearch_f_index_fragments.arrow: Presearch fragment index
 - presearch_f_index_rt_bins.arrow: Presearch retention time bins
 - presearch_f_index_fragment_bins.arrow: Presearch fragment m/z bins
-- detailed_fragments.jld2: Detailed fragment information
-- precursor_to_fragment_indices.jld2: Mapping of precursors to fragment indices
+- detailed_fragments.jls: Detailed fragment information
+- precursor_to_fragment_indices.jls: Mapping of precursors to fragment indices
 """
 function buildPionLib(spec_lib_path::String,
                       y_start_index::UInt8,
@@ -376,13 +376,13 @@ function buildPionLib(spec_lib_path::String,
     model_type
     );
     
-    save_detailed_frags(
-        joinpath(spec_lib_path, "detailed_fragments.jld2"),
+    serialize_to_jls(
+        joinpath(spec_lib_path, "detailed_fragments.jls"),
         detailed_frags
     )
 
-    jldsave(
-        joinpath(spec_lib_path, "precursor_to_fragment_indices.jld2");
+    serialize_to_jls(
+        joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"),
         pid_to_fid
     )
 

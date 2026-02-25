@@ -16,29 +16,42 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-Save detailed fragment information to file.
+Save detailed fragment information to file using Julia Serialization with Zlib compression.
 """
 function save_detailed_frags(filepath::String, fragments::Vector{T}) where T <: AbstractKoinaFragment
-    if !endswith(filepath, ".jld2")
-        throw(ArgumentError("Output file must have .jld2 extension"))
+    # Ensure .jls extension
+    if !endswith(filepath, ".jls")
+        filepath = replace(filepath, ".jld2" => ".jls")
+        if !endswith(filepath, ".jls")
+            filepath = filepath * ".jls"
+        end
     end
-    
+
     # Ensure directory exists
     mkpath(dirname(filepath))
-    
-    jldsave(filepath; fragments)
+
+    serialize_to_jls(filepath, fragments)
 end
 
 """
-Read fragments from a saved file.
+Read fragments from a saved file. Supports both new .jls and legacy .jld2 formats.
 """
-function read_detailed_frags(filepath::String)::Vector{AbstractKoinaFragment}
-    if !isfile(filepath)
-        error("Fragment file not found: $filepath")
+function read_detailed_frags(filepath::String)
+    # Try .jls first
+    jls_path = replace(filepath, ".jld2" => ".jls")
+    if isfile(jls_path)
+        return deserialize_from_jls(jls_path)
     end
-    
-    data = load(filepath)
-    return data["fragments"]
+
+    # Fall back to legacy .jld2
+    if isfile(filepath) && endswith(filepath, ".jld2")
+        @warn "Loading legacy JLD2 format. Consider rebuilding library."
+        data = load(filepath)
+        # Handle both key names used historically
+        return haskey(data, "fragments") ? data["fragments"] : data["data"]
+    end
+
+    error("Fragment file not found: $jls_path or $filepath")
 end
 
 """

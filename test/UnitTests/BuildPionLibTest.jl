@@ -283,33 +283,31 @@ end
         @test isfile(joinpath(test_dir, "presearch_f_index_fragments.arrow"))
         @test isfile(joinpath(test_dir, "presearch_f_index_rt_bins.arrow"))
         @test isfile(joinpath(test_dir, "presearch_f_index_fragment_bins.arrow"))
-        @test isfile(joinpath(test_dir, "detailed_fragments.jld2"))
-        @test isfile(joinpath(test_dir, "precursor_to_fragment_indices.jld2"))
-        
+        @test isfile(joinpath(test_dir, "detailed_fragments.jls"))
+        @test isfile(joinpath(test_dir, "precursor_to_fragment_indices.jls"))
+
         # Load and verify structure of output files
         f_index_fragments = Arrow.Table(joinpath(test_dir, "f_index_fragments.arrow"))
         @test hasproperty(f_index_fragments, :IndexFragment)
         @test length(f_index_fragments.IndexFragment) > 0
-        
+
         f_index_rt_bins = Arrow.Table(joinpath(test_dir, "f_index_rt_bins.arrow"))
         @test hasproperty(f_index_rt_bins, :FragIndexBin)
         @test length(f_index_rt_bins.FragIndexBin) > 0
-        
+
         f_index_fragment_bins = Arrow.Table(joinpath(test_dir, "f_index_fragment_bins.arrow"))
         @test hasproperty(f_index_fragment_bins, :FragIndexBin)
         @test length(f_index_fragment_bins.FragIndexBin) > 0
-        
+
         # Verify detailed fragments file contains the expected data
-        detailed_fragments_data = load(joinpath(test_dir, "detailed_fragments.jld2"))
-        @test haskey(detailed_fragments_data, "data")
-        @test detailed_fragments_data["data"] isa Vector
-        @test length(detailed_fragments_data["data"]) > 0
-        
+        detailed_fragments_data = deserialize_from_jls(joinpath(test_dir, "detailed_fragments.jls"))
+        @test detailed_fragments_data isa Vector
+        @test length(detailed_fragments_data) > 0
+
         # Verify precursor to fragment indices mapping
-        pid_to_fid_data = load(joinpath(test_dir, "precursor_to_fragment_indices.jld2"))
-        @test haskey(pid_to_fid_data, "pid_to_fid")
-        @test pid_to_fid_data["pid_to_fid"] isa Vector{UInt64}
-        @test length(pid_to_fid_data["pid_to_fid"]) == length(precursors_table.mz) + 1
+        pid_to_fid_data = deserialize_from_jls(joinpath(test_dir, "precursor_to_fragment_indices.jls"))
+        @test pid_to_fid_data isa Vector{UInt64}
+        @test length(pid_to_fid_data) == length(precursors_table.mz) + 1
         
         # Test with SplineCoefficientModel
         spline_model_type = SplineCoefficientModel("test_spline_model")
@@ -368,13 +366,12 @@ end
         )
         
         @test spline_result === nothing
-        @test isfile(joinpath(spline_test_dir, "detailed_fragments.jld2"))
-        
+        @test isfile(joinpath(spline_test_dir, "detailed_fragments.jls"))
+
         # Verify spline fragments contain coefficients
-        spline_fragments_data = load(joinpath(spline_test_dir, "detailed_fragments.jld2"))
-        @test haskey(spline_fragments_data, "data")
-        @test spline_fragments_data["data"] isa Vector
-        @test eltype(spline_fragments_data["data"]) <: SplineDetailedFrag{3, Float32}
+        spline_fragments_data = deserialize_from_jls(joinpath(spline_test_dir, "detailed_fragments.jls"))
+        @test spline_fragments_data isa Vector
+        @test eltype(spline_fragments_data) <: SplineDetailedFrag{3, Float32}
         
 
 
@@ -396,24 +393,24 @@ end
             "prec_to_frag.arrow",
             "precursors.arrow",
             "other_file.txt",  # This should not be removed
-            "detailed_fragments.jld2"  # This should not be removed
+            "detailed_fragments.jls"  # This should not be removed
         ]
-        
+
         for file in test_files
             touch(joinpath(test_dir, file))
         end
-        
+
         # Call the function
         cleanUpLibrary(test_dir)
-        
+
         # Check that specified files were removed
         @test !isfile(joinpath(test_dir, "fragments_table.arrow"))
         @test !isfile(joinpath(test_dir, "prec_to_frag.arrow"))
         @test !isfile(joinpath(test_dir, "precursors.arrow"))
-        
+
         # Files not in the removal list should remain
         @test isfile(joinpath(test_dir, "other_file.txt"))
-        @test isfile(joinpath(test_dir, "detailed_fragments.jld2"))
+        @test isfile(joinpath(test_dir, "detailed_fragments.jls"))
         
         # Clean up
         rm(test_dir, recursive=true)

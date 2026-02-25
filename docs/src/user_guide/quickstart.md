@@ -11,10 +11,10 @@ Pioneer operates on MS/MS data stored in the [Apache Arrow IPC format](https://a
 Use the bundled [PioneerConverter](https://github.com/nwamsley1/PioneerConverter) via the CLI to convert Thermo RAW files:
 
 ```bash
-pioneer convert-raw /path/to/raw/or/folder
+pioneer convert-raw /path/to/raw/or/folder --output-dir /path/to/arrow --skip-existing
 ```
 
-This subcommand accepts either a single `.raw` file or a directory of files. See the [PioneerConverter repository](https://github.com/nwamsley1/PioneerConverter) for additional options such as thread count and output paths.
+This subcommand accepts either a single `.raw` file or a directory of files. Common options are `--output-dir`, `--skip-existing`, `--concurrent-files`, and `--threads-per-file`. For all options, run `pioneer convert-raw --help`.
 
 ## MzML to Arrow IPC (Sciex)
 For mzML-formatted data, use:
@@ -44,7 +44,7 @@ pioneer params-predict lib_dir fasta_dir --params-path=predict_params.json
 # - Set calibration file if available for automatic m/z range detection
 
 pioneer predict predict_params.json
-pioneer convert-raw raw_dir
+pioneer convert-raw raw_dir --output-dir arrow_dir --skip-existing
 pioneer params-search library.poin ms_data_dir results_dir --params-path=search_params.json
 pioneer search search_params.json
 ```

@@ -56,27 +56,39 @@ function predict_fragments(
     batch_start_idxs = collect(one(UInt32):UInt32(batch_size*koina_pool_size):UInt32(nprecs))
 
     rm(frags_out_path, force=true)
-    
+
+    # Track knot_vector across batches (only set by SplineCoefficientModel)
+    knot_vector = nothing
+
     for start_idx in ProgressBar(batch_start_idxs)
         stop_idx = min(start_idx + batch_size*koina_pool_size - 1, nrow(peptides_df))
         batch_df = peptides_df[start_idx:stop_idx, :]
-        
-        # Generate predictions for batch
-        frags_out = predict_fragments_batch(
+
+        # Generate predictions for batch - returns tuple (DataFrame, knot_vector or nothing)
+        (frags_out, batch_knot_vector) = predict_fragments_batch(
             batch_df,
             model_type,
             instrument_type,
             batch_size,
             max_koina_batches,
             start_idx,
-            
         )
+
+        # Capture knot_vector from first batch (if model provides one)
+        if knot_vector === nothing && batch_knot_vector !== nothing
+            knot_vector = batch_knot_vector
+        end
 
         # Write or append results
         if start_idx == 1
-            # Create file in stream format to support appending
+            # Create file in stream format with metadata (knot_vector stored once, not per-row)
+            metadata = if knot_vector !== nothing
+                ["knot_vector" => JSON.json(knot_vector)]
+            else
+                String[]
+            end
             open(frags_out_path, "w") do io
-                Arrow.write(io, frags_out; file=false)  # file=false creates stream format
+                Arrow.write(io, frags_out; file=false, metadata=metadata)
             end
         else
             Arrow.append(frags_out_path, frags_out)
@@ -86,6 +98,7 @@ end
 
 """
 Fragment prediction for instrument-specific models (e.g., UniSpec, AlphaPeptDeep).
+Returns a tuple of (DataFrame, Nothing) for polymorphism with SplineCoefficientModel.
 """
 function predict_fragments_batch(
     peptides_df::DataFrame,
@@ -94,7 +107,7 @@ function predict_fragments_batch(
     batch_size::Int,
     concurrent_koina_requests::Int,
     first_prec_idx::UInt32
-)::DataFrame
+)::Tuple{DataFrame, Nothing}
     # Verify instrument compatibility
     if instrument_type ∉ MODEL_CONFIGS[model.name].instruments
         error("Invalid instrument: $instrument_type for model $(model.name). Valid names are ", MODEL_CONFIGS[model.name].instruments)
@@ -114,11 +127,11 @@ function predict_fragments_batch(
     for (i, response) in enumerate(responses)
         batch_result = parse_koina_batch(model, response)
         start_idx = (i-1) * batch_size + 1 + first_prec_idx - 1
-        
+
         # Add precursor indices
         batch_df = batch_result.fragments
         n_precursors_in_batch = UInt32(fld(size( batch_df , 1), batch_result.frags_per_precursor))
-        batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)), 
+        batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)),
                                                 inner=batch_result.frags_per_precursor)
         # Filter and sort fragments
         filter_fragments!(batch_df, model)
@@ -127,14 +140,15 @@ function predict_fragments_batch(
 
     # Combine and filter results
     fragments_df = vcat(batch_dfs...)
-    
+
     sort_fragments!(fragments_df)
 
-    return fragments_df
+    return (fragments_df, nothing)
 end
 
 """
 Fragment prediction for instrument-agnostic models (e.g., Prosit).
+Returns a tuple of (DataFrame, Nothing) for polymorphism with SplineCoefficientModel.
 """
 function predict_fragments_batch(
     peptides_df::DataFrame,
@@ -143,7 +157,7 @@ function predict_fragments_batch(
     batch_size::Int,
     concurrent_koina_requests::Int,
     first_prec_idx::UInt32
-)::DataFrame
+)::Tuple{DataFrame, Nothing}
     # Prepare batches (no instrument type needed)
     json_batches = prepare_koina_batch(
         model,
@@ -159,11 +173,11 @@ function predict_fragments_batch(
     for (i, response) in enumerate(responses)
         batch_result = parse_koina_batch(model, response)
         start_idx = (i-1) * batch_size + 1 + first_prec_idx - 1
-        
+
         # Add precursor indices
         batch_df = batch_result.fragments
         n_precursors_in_batch = UInt32(fld(size( batch_df , 1), batch_result.frags_per_precursor))
-        batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)), 
+        batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)),
                                                 inner=batch_result.frags_per_precursor)
         # Filter and sort fragments
         filter_fragments!(batch_df, model)
@@ -173,11 +187,12 @@ function predict_fragments_batch(
     fragments_df = vcat(batch_dfs...)
     sort_fragments!(fragments_df)
 
-    return fragments_df
+    return (fragments_df, nothing)
 end
 
 """
 Fragment prediction for spline coefficient models (e.g., Altimeter).
+Returns a tuple of (DataFrame, Vector{Float32}) where the second element is the knot_vector.
 """
 function predict_fragments_batch(
     peptides_df::DataFrame,
@@ -186,7 +201,7 @@ function predict_fragments_batch(
     batch_size::Int,
     concurrent_koina_requests::Int,
     first_prec_idx::UInt32
-)::DataFrame
+)::Tuple{DataFrame, Vector{Float32}}
     # Similar to InstrumentSpecificModel but handles spline coefficients
     json_batches = prepare_koina_batch(
         model,
@@ -199,14 +214,14 @@ function predict_fragments_batch(
 
     batch_dfs = []
     knot_vectors = []
-    
+
     for (i, response) in enumerate(responses)
         batch_result = parse_koina_batch(model, response)
         start_idx = (i-1) * batch_size + 1 + first_prec_idx - 1
-        
+
         batch_df = batch_result.fragments
         n_precursors_in_batch = UInt32(fld(size( batch_df , 1), batch_result.frags_per_precursor))
-        batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)), 
+        batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)),
                                                 inner=batch_result.frags_per_precursor)
         filter_fragments!(batch_df, model)
         push!(batch_dfs, batch_df)
@@ -214,18 +229,14 @@ function predict_fragments_batch(
     end
 
     fragments_df = vcat(batch_dfs...)
-    
+
     # Verify knot vectors are consistent
     if !all(k == first(knot_vectors) for k in knot_vectors)
         error("Inconsistent knot vectors across batches")
     end
-    
-    # Store knot vector with the data
-    fragments_df[!, :knot_vector] .= Ref(first(knot_vectors))
-    #For altimeter fragments are already sorted 
-    #sort_fragments!(f)
 
-    return fragments_df
+    # Return DataFrame and knot_vector separately (knot_vector stored as Arrow metadata, not per-row)
+    return (fragments_df, first(knot_vectors))
 end
 
 """

@@ -154,6 +154,7 @@ function importScripts()
     include_files!(
         joinpath(package_root, "src", "utils"),
         [
+            "serialization.jl",
             "isotopes.jl",
             "isotopeSplines.jl",
             "maxLFQ.jl",
