@@ -34,6 +34,8 @@ struct SimpleScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     matched_rank2::Bool
     matched_rank3::Bool
     matched_rank4::Bool
+    longest_y::UInt8
+    longest_b::UInt8
     #Basic Metrics
     poisson::L
     error::H
@@ -200,6 +202,8 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             unscored_PSMs[i].matched_rank2,
             unscored_PSMs[i].matched_rank3,
             unscored_PSMs[i].matched_rank4,
+            unscored_PSMs[i].longest_y,
+            unscored_PSMs[i].longest_b,
 
             Float16(getPoisson(expected_matches, total_ions)),
             unscored_PSMs[i].error,

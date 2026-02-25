@@ -302,6 +302,16 @@ function process_file!(
         psms[!, :irt_error] = Float16.(abs.(psms[!, :irt_observed] .- psms[!, :irt_predicted]))
         psms[!, :charge2] = UInt8.(psms[!, :charge] .== 2)
         psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
+        # Tier 2: Derived features
+        psms[!, :y_fraction] = Float16.(psms[!, :y_count] ./ max.(psms[!, :y_count] .+ psms[!, :b_count], UInt8(1)))
+        prec_lengths = getLength(getPrecursors(getSpecLib(search_context)))
+        psms[!, :peptide_length] = UInt8[prec_lengths[pid] for pid in psms[!, :precursor_idx]]
+        prec_mzs_vec = getMz(getPrecursors(getSpecLib(search_context)))
+        psms[!, :precursor_mz] = Float32[prec_mzs_vec[pid] for pid in psms[!, :precursor_idx]]
+        # Tier 4: Spectrum-level features
+        psms[!, :log2_base_peak_intensity] = Float16[log2(Float32(getBasePeakIntensity(spectra, sid))) for sid in psms[!, :scan_idx]]
+        iso_widths = Float32[Float32(coalesce(getIsolationWidthMz(spectra, sid), 25f0)) for sid in psms[!, :scan_idx]]
+        psms[!, :peak_density] = Float16.(Float32.(psms[!, :spectrum_peak_count]) ./ iso_widths)
     end
 
     """
@@ -313,13 +323,16 @@ function process_file!(
         search_context::SearchContext)
         column_names = [
             :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
-            :charge2, :poisson, :irt_error,
+            :matched_ratio, :charge2, :poisson, :irt_error,
             :missed_cleavage,
             :Mox,
             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
-            :b_count,
-            :matched_rank1, :matched_rank2, :matched_rank3, :matched_rank4,
-            :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
+            :b_count, :y_count, :topn,
+            :matched_rank2, :matched_rank3, :matched_rank4,
+            :longest_y, :longest_b,
+            :y_fraction, :peptide_length, :precursor_mz,
+            :log2_base_peak_intensity, :peak_density,
+            :TIC, :err_norm, :spectrum_peak_count, :intercept
         ]
 
         # Avoid singular error if no peaks were ignored
@@ -412,13 +425,11 @@ function process_file!(
                 results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
                 append!(results.ms1_ppm_errs, Float32[])
             end
-            select!(results.psms[] , Not(:log2_summed_intensity))
         else
             #ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)
             #Default to MS2 pattern
             results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
             append!(results.ms1_ppm_errs, Float32[])
-            select!(results.psms[] , Not(:log2_summed_intensity))
         end
     catch e
         # Get file name for debugging
