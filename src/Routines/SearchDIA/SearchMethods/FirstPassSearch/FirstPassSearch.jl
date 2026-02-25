@@ -313,11 +313,12 @@ function process_file!(
         search_context::SearchContext)
         column_names = [
             :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
-            :charge2, :poisson, :irt_error, 
+            :charge2, :poisson, :irt_error,
             :missed_cleavage,
             :Mox,
             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
             :b_count,
+            :matched_rank1, :matched_rank2, :matched_rank3, :matched_rank4,
             :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
         ]
 

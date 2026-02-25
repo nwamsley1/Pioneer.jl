@@ -19,17 +19,25 @@ abstract type UnscoredPSM{T<:AbstractFloat} <: PSM end
 
 struct SimpleUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     best_rank::UInt8 #Highest ranking predicted framgent that was observed
-    topn::UInt8 #How many of the topN predicted fragments were observed. 
+    topn::UInt8 #How many of the topN predicted fragments were observed.
     b_count::UInt8
     y_count::UInt8
     p_count::UInt8
     i_count::UInt8
+    matched_rank1::Bool
+    matched_rank2::Bool
+    matched_rank3::Bool
+    matched_rank4::Bool
     intensity::T
     error::T
     precursor_idx::UInt32
 end
 
-SimpleUnscoredPSM{Float32}() = SimpleUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(Float32), zero(Float32), UInt32(0))
+SimpleUnscoredPSM{Float32}() = SimpleUnscoredPSM(
+    UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8),
+    false, false, false, false,
+    zero(Float32), zero(Float32), UInt32(0)
+)
 #LXTandem(::Type{Float64}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float64(0), zero(UInt8), Float64(0), Float64(0), UInt32(0), UInt32(0))
 #SimpleUnscoredPSM() = SimpleUnscoredPSM(Float32)
 
@@ -87,13 +95,17 @@ function ScoreFragmentMatches!(results::Vector{P},
 end
 
 function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::FragmentMatch{T}, errdist::MassErrorModel, m_rank::Int64) where {T<:Real}
-    
+
     best_rank = score.best_rank
     topn = score.topn
     b_count = score.b_count
     y_count = score.y_count
     p_count = score.p_count
     i_count = score.i_count
+    matched_rank1 = score.matched_rank1
+    matched_rank2 = score.matched_rank2
+    matched_rank3 = score.matched_rank3
+    matched_rank4 = score.matched_rank4
     intensity = score.intensity
     error = score.error
     precursor_idx = prec_id
@@ -115,6 +127,13 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
             p_count += 1
         end
 
+        # Track whether top-ranked predicted fragments were matched
+        pr = match.predicted_rank
+        matched_rank1 = matched_rank1 | (pr == 0x01)
+        matched_rank2 = matched_rank2 | (pr == 0x02)
+        matched_rank3 = matched_rank3 | (pr == 0x03)
+        matched_rank4 = matched_rank4 | (pr == 0x04)
+
     else
         i_count += 1
     end
@@ -129,9 +148,13 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
         best_rank,
         topn,
         b_count,
-        y_count, 
+        y_count,
         p_count,
         i_count,
+        matched_rank1,
+        matched_rank2,
+        matched_rank3,
+        matched_rank4,
         intensity,
         error,
         precursor_idx

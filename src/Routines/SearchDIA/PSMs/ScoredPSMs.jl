@@ -24,13 +24,17 @@ struct SimpleScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     #Ion Count Statistics
     best_rank::UInt8 #Highest ranking predicted framgent that was observed
-    topn::UInt8 #How many of the topN predicted fragments were observed. 
+    topn::UInt8 #How many of the topN predicted fragments were observed.
 
     b_count::UInt8
     y_count::UInt8
     p_count::UInt8
     i_count::UInt8
-    #Basic Metrics 
+    matched_rank1::Bool
+    matched_rank2::Bool
+    matched_rank3::Bool
+    matched_rank4::Bool
+    #Basic Metrics
     poisson::L
     error::H
 
@@ -192,10 +196,14 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             unscored_PSMs[i].y_count,
             unscored_PSMs[i].p_count,
             unscored_PSMs[i].i_count,
+            unscored_PSMs[i].matched_rank1,
+            unscored_PSMs[i].matched_rank2,
+            unscored_PSMs[i].matched_rank3,
+            unscored_PSMs[i].matched_rank4,
 
             Float16(getPoisson(expected_matches, total_ions)),
             unscored_PSMs[i].error,
-            
+
             spectral_scores[scores_idx].scribe,
             spectral_scores[scores_idx].city_block,
             spectral_scores[scores_idx].spectral_contrast,
