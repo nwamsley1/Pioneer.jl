@@ -88,10 +88,27 @@ Most parameters should not be changed, but the following may need adjustment.
 | `scoring_settings.max_iterations` | Int | Maximum iterations for scoring optimization (default: 20) |
 | `scoring_settings.max_q_value_probit_rescore` | Float | Maximum q-value threshold for semi-supervised learning during probit regression (default: 0.05) |
 | `scoring_settings.max_PEP` | Float | Maximum local FDR threshold for passing the first search (default: 0.9) |
+| `scoring_settings.global_pep_threshold` | Float | Maximum global PEP for precursor selection in cross-run aggregation (default: 0.5) |
 | `irt_mapping.max_prob_to_impute_irt` | Float | If probability of the PSM is less than x in the first-pass search, then impute iRT for the precursor with globally determined value from the other runs (default: 0.75) |
 | `irt_mapping.fwhm_nstd` | Float | Number of standard deviations of the FWHM to add to the retention time tolerance (default: 4) |
 | `irt_mapping.irt_nstd` | Int | Number of standard deviations of run-to-run iRT tolerance to add to the retention time tolerance (default: 4) |
 | `irt_mapping.plot_rt_alignment` | Boolean | Whether to generate RT alignment diagnostic plots (default: false) |
+
+#### First Search Filter Constants
+
+The first search uses a hybrid filter to decide how many precursors to carry forward from each stage. These are hardcoded constants (not JSON-configurable) because they should rarely need adjustment.
+
+**Per-file pre-filter** (applied per MS file before cross-run aggregation): keeps the largest of three counts:
+- PSMs with PEP ≤ 0.95
+- PSMs where cumulative decoy/target ratio ≤ `PERFILE_QVALUE_THRESHOLD` (0.50)
+- `PERFILE_MIN_PSMS` (10,000, or all PSMs if fewer exist)
+
+**Global post-filter** (applied after cross-run global PEP computation): keeps the largest of three counts:
+- Precursors with global PEP ≤ `global_pep_threshold` (default 0.5, JSON-configurable)
+- Precursors where cumulative decoy/target ratio ≤ `GLOBAL_QVALUE_THRESHOLD` (0.15)
+- `GLOBAL_MIN_PRECURSORS` (50,000, or all precursors if fewer exist)
+
+The hard minimum floors ensure sparse datasets (e.g. single-cell proteomics) always retain enough precursors for second-pass scoring, while the q-value floors prevent decoy contamination in large experiments.
 
 ### Quantification Search Parameters
 
