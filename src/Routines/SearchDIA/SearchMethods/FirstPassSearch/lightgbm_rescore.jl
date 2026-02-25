@@ -9,14 +9,9 @@ scores and feed into `get_best_precursors_accross_runs`.
 
 const FIRST_PASS_LGBM_FEATURES = [
     :spectral_contrast, :city_block, :entropy_score, :scribe,
-    :percent_theoretical_ignored, :matched_ratio, :log2_summed_intensity,
     :charge2, :poisson, :irt_error, :missed_cleavage, :Mox,
-    :b_count, :y_count, :topn,
-    :matched_rank2, :matched_rank3, :matched_rank4,
-    :longest_y, :longest_b,
-    :y_fraction, :peptide_length, :precursor_mz,
-    :log2_base_peak_intensity, :peak_density,
-    :TIC, :err_norm, :spectrum_peak_count
+    :b_count, :matched_rank1, :matched_rank2, :matched_rank3, :matched_rank4,
+    :TIC, :y_count, :err_norm, :spectrum_peak_count
 ]
 
 const FIRST_PASS_LGBM_SAMPLE_SIZE = 1_000_000

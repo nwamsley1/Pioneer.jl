@@ -28,8 +28,6 @@ struct SimpleUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     matched_rank2::Bool
     matched_rank3::Bool
     matched_rank4::Bool
-    longest_y::UInt8
-    longest_b::UInt8
     intensity::T
     error::T
     precursor_idx::UInt32
@@ -38,7 +36,6 @@ end
 SimpleUnscoredPSM{Float32}() = SimpleUnscoredPSM(
     UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8),
     false, false, false, false,
-    zero(UInt8), zero(UInt8),
     zero(Float32), zero(Float32), UInt32(0)
 )
 #LXTandem(::Type{Float64}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float64(0), zero(UInt8), Float64(0), Float64(0), UInt32(0), UInt32(0))
@@ -109,8 +106,6 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
     matched_rank2 = score.matched_rank2
     matched_rank3 = score.matched_rank3
     matched_rank4 = score.matched_rank4
-    longest_y = score.longest_y
-    longest_b = score.longest_b
     intensity = score.intensity
     error = score.error
     precursor_idx = prec_id
@@ -126,14 +121,8 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
 
         if getIonType(match) == one(UInt8)
             b_count += 1
-            if getFragInd(match) > longest_b
-                longest_b = getFragInd(match)
-            end
         elseif getIonType(match) == UInt8(2)
             y_count += 1
-            if getFragInd(match) > longest_y
-                longest_y = getFragInd(match)
-            end
         elseif getIonType(match) == UInt8(3)
             p_count += 1
         end
@@ -166,8 +155,6 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
         matched_rank2,
         matched_rank3,
         matched_rank4,
-        longest_y,
-        longest_b,
         intensity,
         error,
         precursor_idx
