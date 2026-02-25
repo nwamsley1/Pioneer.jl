@@ -15,6 +15,8 @@ const FIRST_PASS_LGBM_FEATURES = [
 
 const FIRST_PASS_LGBM_SAMPLE_SIZE = 1_000_000
 const FIRST_PASS_LGBM_TRAIN_QVAL = 0.01f0
+const FIRST_PASS_LGBM_ITER_SCHEME = [150, 300, 300]
+const FIRST_PASS_LGBM_MIN_PEP_THRESHOLD = 0.90f0
 
 """
     _log_psm_diagnostics(targets, q_values, label)
@@ -176,6 +178,64 @@ function _log_feature_importances(models::Vector{LightGBMModel},
 end
 
 """
+    _select_first_pass_training_data(sample_psms, iter_prob, iter_qval,
+                                      test_fold, iteration, min_pep_threshold,
+                                      max_q_value) -> (BitVector, Vector{Bool})
+
+Select training data for one iteration of first-pass LightGBM rescoring.
+Returns (train_mask, train_labels) where train_labels may relabel low-confidence
+targets as negatives (negative mining). Inline equivalent of `QValueNegativeMining`.
+"""
+function _select_first_pass_training_data(
+    sample_psms::DataFrame,
+    iter_prob::Vector{Float32},
+    iter_qval::Vector{Float32},
+    test_fold::UInt8,
+    iteration::Int,
+    min_pep_threshold::Float32,
+    max_q_value::Float32
+)
+    other_fold = sample_psms.cv_fold .!= test_fold
+
+    if iteration == 1
+        # Iteration 1: use all data from the other fold, no filtering
+        train_mask = other_fold
+        train_labels = Vector{Bool}(sample_psms.target[train_mask])
+        return train_mask, train_labels
+    end
+
+    # Iteration 2+: negative mining on the other fold
+    fold_indices = findall(other_fold)
+    fold_probs = iter_prob[fold_indices]
+    fold_targets = Vector{Bool}(sample_psms.target[fold_indices])
+
+    # Compute PEP to relabel worst-scoring targets as negatives
+    order = sortperm(fold_probs; rev=true)
+    sorted_scores = fold_probs[order]
+    sorted_targets = fold_targets[order]
+    peps = Vector{Float32}(undef, length(order))
+    get_PEP!(sorted_scores, sorted_targets, peps; doSort=false)
+
+    idx_cutoff = findfirst(>=(min_pep_threshold), peps)
+    if idx_cutoff !== nothing
+        worst_idxs = order[idx_cutoff:end]
+        fold_targets[worst_idxs] .= false
+    end
+
+    # Filter: keep all decoys + targets with q-value <= threshold
+    fold_qvals = iter_qval[fold_indices]
+    keep = BitVector([(!t) || (t && q <= max_q_value)
+                      for (t, q) in zip(fold_targets, fold_qvals)])
+
+    # Build full-size mask
+    train_mask = falses(nrow(sample_psms))
+    train_mask[fold_indices[keep]] .= true
+
+    train_labels = fold_targets[keep]
+    return train_mask, train_labels
+end
+
+"""
     rescore_first_pass_with_lightgbm!(search_context, fdr_scale_factor)
 
 Read all first-pass Arrow files, pool PSMs, train 2-fold CV LightGBM models,
@@ -251,7 +311,7 @@ function rescore_first_pass_with_lightgbm!(
         sample_psms = all_psms
     end
 
-    # 5. Cross-validated training & prediction (2-fold CV)
+    # 5. Cross-validated training & prediction (2-fold CV, iterative with negative mining)
     new_probs = Vector{Float32}(undef, n_total)
     fill!(new_probs, 0.5f0)
 
@@ -264,44 +324,75 @@ function rescore_first_pass_with_lightgbm!(
     trained_models = LightGBMModel[]
 
     for test_fold in folds
-        # Training data: other folds in the sample, with quality filter
-        train_mask = (sample_psms.cv_fold .!= test_fold) .& (
-            ((sample_psms.target) .& (sample_psms.q_value .<= FIRST_PASS_LGBM_TRAIN_QVAL)) .|
-            (.!sample_psms.target)
-        )
+        # Initialize per-fold iteration vectors from probit scores
+        # Use sample_psms indices for training-side prob/qval tracking
+        iter_prob = Vector{Float32}(sample_psms.prob)
+        iter_qval = Vector{Float32}(sample_psms.q_value)
 
-        n_train_targets = count(train_mask .& sample_psms.target)
-        n_train_decoys = count(train_mask .& .!sample_psms.target)
+        local final_model::LightGBMModel
 
-        if n_train_targets < 100 || n_train_decoys < 100
-            @user_warn "LightGBM rescore fold $test_fold: insufficient training data " *
-                "(targets=$n_train_targets, decoys=$n_train_decoys), skipping all rescoring"
-            return
+        for (itr, num_round) in enumerate(FIRST_PASS_LGBM_ITER_SCHEME)
+            train_mask, train_labels = _select_first_pass_training_data(
+                sample_psms, iter_prob, iter_qval,
+                test_fold, itr,
+                FIRST_PASS_LGBM_MIN_PEP_THRESHOLD,
+                FIRST_PASS_LGBM_TRAIN_QVAL
+            )
+
+            n_train_targets = count(train_labels)
+            n_train_decoys = length(train_labels) - n_train_targets
+
+            if n_train_targets < 100 || n_train_decoys < 100
+                @user_warn "LightGBM rescore fold $test_fold iter $itr: insufficient training data " *
+                    "(targets=$n_train_targets, decoys=$n_train_decoys), skipping all rescoring"
+                return
+            end
+
+            @user_info "  Fold $test_fold iter $itr/$( length(FIRST_PASS_LGBM_ITER_SCHEME)): " *
+                "$n_train_targets targets, $n_train_decoys decoys, $num_round rounds"
+
+            # Build and train fresh model (matches SimpleLightGBM second-pass config)
+            classifier = build_lightgbm_classifier(
+                num_iterations = num_round,
+                max_depth = 4,
+                num_leaves = 15,
+                learning_rate = 0.1,
+                feature_fraction = 0.8,
+                bagging_fraction = 0.8,
+                bagging_freq = 1,
+                min_data_in_leaf = 20,
+                min_gain_to_split = 0.1
+            )
+
+            train_data = sample_psms[train_mask, available_features]
+            model = fit_lightgbm_model(classifier, train_data, train_labels)
+            final_model = model
+
+            # If not the last iteration, predict on the training fold's sample data
+            # to update iter_prob/iter_qval for the next iteration's negative mining
+            if itr < length(FIRST_PASS_LGBM_ITER_SCHEME)
+                train_fold_mask = sample_psms.cv_fold .!= test_fold
+                train_fold_data = sample_psms[train_fold_mask, available_features]
+                train_fold_preds = predict(model, train_fold_data)
+
+                iter_prob[train_fold_mask] .= train_fold_preds
+
+                # Recompute q-values on the training fold for negative mining
+                tf_indices = findall(train_fold_mask)
+                tf_probs = iter_prob[tf_indices]
+                tf_targets = Vector{Bool}(sample_psms.target[tf_indices])
+                tf_qvals = Vector{Float32}(undef, length(tf_indices))
+                get_qvalues!(tf_probs, tf_targets, tf_qvals; doSort=true)
+                iter_qval[tf_indices] .= tf_qvals
+            end
         end
 
-        # Build and train model (matches SimpleLightGBM second-pass config)
-        classifier = build_lightgbm_classifier(
-            num_iterations = 300,
-            max_depth = 4,
-            num_leaves = 15,
-            learning_rate = 0.1,
-            feature_fraction = 0.8,
-            bagging_fraction = 0.8,
-            bagging_freq = 1,
-            min_data_in_leaf = 20,
-            min_gain_to_split = 0.1
-        )
+        push!(trained_models, final_model)
 
-        train_data = sample_psms[train_mask, available_features]
-        train_labels = sample_psms[train_mask, :target]
-
-        model = fit_lightgbm_model(classifier, train_data, train_labels)
-        push!(trained_models, model)
-
-        # Predict on ALL PSMs in the test fold
+        # Predict on ALL PSMs in the test fold using the final model
         test_mask = all_psms.cv_fold .== test_fold
         test_data = all_psms[test_mask, available_features]
-        preds = predict(model, test_data)
+        preds = predict(final_model, test_data)
 
         new_probs[test_mask] .= preds
     end
