@@ -300,12 +300,12 @@ end
         @test length(f_index_fragment_bins.FragIndexBin) > 0
 
         # Verify detailed fragments file contains the expected data
-        detailed_fragments_data = deserialize_from_jls(joinpath(test_dir, "detailed_fragments.jls"))
+        detailed_fragments_data = Pioneer.deserialize_from_jls(joinpath(test_dir, "detailed_fragments.jls"))
         @test detailed_fragments_data isa Vector
         @test length(detailed_fragments_data) > 0
 
         # Verify precursor to fragment indices mapping
-        pid_to_fid_data = deserialize_from_jls(joinpath(test_dir, "precursor_to_fragment_indices.jls"))
+        pid_to_fid_data = Pioneer.deserialize_from_jls(joinpath(test_dir, "precursor_to_fragment_indices.jls"))
         @test pid_to_fid_data isa Vector{UInt64}
         @test length(pid_to_fid_data) == length(precursors_table.mz) + 1
         
@@ -369,7 +369,7 @@ end
         @test isfile(joinpath(spline_test_dir, "detailed_fragments.jls"))
 
         # Verify spline fragments contain coefficients
-        spline_fragments_data = deserialize_from_jls(joinpath(spline_test_dir, "detailed_fragments.jls"))
+        spline_fragments_data = Pioneer.deserialize_from_jls(joinpath(spline_test_dir, "detailed_fragments.jls"))
         @test spline_fragments_data isa Vector
         @test eltype(spline_fragments_data) <: SplineDetailedFrag{3, Float32}
         
