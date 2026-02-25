@@ -29,7 +29,7 @@ function _logodds_combine(probs::Vector{Float32}, top_n::Int)::Float32
     sorted = sort(probs; rev=true)
     selected = @view sorted[1:n]
     eps = 1f-6
-    lo = log.(clamp.(selected, 0.1f0, 1 - eps) ./ (1 .- clamp.(selected, 0.1f0, 1 - eps)))
+    lo = log.(clamp.(selected, 1f-4, 1 - eps) ./ (1 .- clamp.(selected, 1f-4, 1 - eps)))
     avg = sum(lo) / n
     return 1.0f0 / (1 + exp(-avg))
 end

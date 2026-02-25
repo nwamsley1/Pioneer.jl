@@ -314,10 +314,10 @@ function process_file!(
         column_names = [
             :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
             :charge2, :poisson, :irt_error, 
-            :missed_cleavage, 
+            :missed_cleavage,
             :Mox,
             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
-            #:b_count, might be good for non-tryptic enzymes
+            :b_count,
             :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
         ]
 

@@ -1036,7 +1036,7 @@ function logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
     selected = sorted[1:n]
     eps = 1f-6
     # Convert to log-odds, clip to avoid Inf or negative contribution
-    logodds = log.(clamp.(selected, 0.1f0, 1 - eps) ./ (1 .- clamp.(selected, 0.1f0, 1 - eps)))
+    logodds = log.(clamp.(selected, 1f-4, 1 - eps) ./ (1 .- clamp.(selected, 1f-4, 1 - eps)))
     avg = sum(logodds) / n
     return 1.0f0 / (1 + exp(-avg))
 end
