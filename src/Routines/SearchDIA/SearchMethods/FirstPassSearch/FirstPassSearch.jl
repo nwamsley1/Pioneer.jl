@@ -117,6 +117,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     fwhm_nstd::Float32
     irt_nstd::Float32
     plot_rt_alignment::Bool
+    benchmark_results_path::String
     prec_estimation::P
 
     function FirstPassSearchParameters(params::PioneerParameters)
@@ -171,6 +172,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Float32(irt_mapping_params.fwhm_nstd),   # Default fwhm_nstd
             Float32(irt_mapping_params.irt_nstd),   # Default irt_nstd
             Bool(hasproperty(irt_mapping_params, :plot_rt_alignment) ? irt_mapping_params.plot_rt_alignment : false),
+            String(hasproperty(first_params, :benchmark_results) ? first_params.benchmark_results : ""),
             prec_estimation
         )
     end
@@ -567,7 +569,28 @@ function summarize_results!(
 
     # LightGBM rescoring of first-pass PSMs (cross-validated)
     fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+
+    # Snapshot probit-based global probs before LightGBM overwrites the Arrow files
+    probit_global_probs = if !isempty(params.benchmark_results_path)
+        prec_is_decoy = getIsDecoy(getPrecursors(getSpecLib(search_context)))
+        _build_pioneer_global_probs(
+            getFirstPassPsms(getMSData(search_context)),
+            get_valid_file_indices(search_context),
+            prec_is_decoy, fdr_scale_factor)
+    else
+        nothing
+    end
+
     rescore_first_pass_with_lightgbm!(search_context, fdr_scale_factor)
+
+    # Optional: compare first-pass results with DIA-NN benchmark
+    if !isempty(params.benchmark_results_path)
+        qc_folder = joinpath(getDataOutDir(search_context), "qc_plots")
+        compare_first_pass_with_diann(
+            search_context, fdr_scale_factor,
+            params.benchmark_results_path, qc_folder,
+            params.global_pep_threshold, probit_global_probs)
+    end
 
     # Process precursors (now uses LightGBM-rescored probabilities)
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)

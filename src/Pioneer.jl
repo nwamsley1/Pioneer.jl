@@ -49,6 +49,7 @@ using LaTeXStrings, Printf
 using Dates
 using InlineStrings
 using HTTP
+using Parquet2
 
 
 # Simple console logger - detailed logging handled by custom logging system
