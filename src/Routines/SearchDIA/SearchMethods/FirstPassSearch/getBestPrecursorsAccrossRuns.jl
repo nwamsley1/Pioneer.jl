@@ -248,7 +248,7 @@ function get_best_precursors_accross_runs(
             nd = count(i -> pep_col[i] <= thresh && !target_col[i], eachindex(pep_col))
             push!(parts, "≤$thresh: T=$nt D=$nd")
         end
-        @user_info "File $fname: $n_total total PSMs (T=$n_total_targets D=$n_total_decoys) | if filtered — " * join(parts, " | ")
+        @debug_l1 "File $fname: $n_total total PSMs (T=$n_total_targets D=$n_total_decoys) | if filtered — " * join(parts, " | ")
 
         # Track old metric: max per-file count at PEP≤0.9
         n_pep09 = count(i -> pep_col[i] <= Float16(0.9), eachindex(pep_col))
@@ -344,7 +344,7 @@ function get_best_precursors_accross_runs(
         nd = count(pid -> prec_min_global_pep[pid] <= thresh && prec_is_decoy[pid], keys(prec_min_global_pep))
         push!(parts, "≤$thresh: T=$nt D=$nd")
     end
-    @user_info "Global unique precursors by min global PEP — " * join(parts, " | ")
+    @debug_l1 "Global unique precursors by min global PEP — " * join(parts, " | ")
 
     # Sort all precursor keys by global PEP ascending (best first)
     all_keys = collect(keys(prec_to_best_prob))
