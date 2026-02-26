@@ -13,22 +13,25 @@ Returns:
 - Dict containing default parameters
 """
 function get_default_parameters(simplified::Bool = false)
-    # Determine which JSON file to load
-    json_filename = simplified ? "defaultSearchParamsSimplified.json" : "defaultSearchParams.json"
-    
-    # Use asset_path to find the JSON file
-    json_path = asset_path("example_config", json_filename)
-    
-    # Load and parse JSON
-    if !isfile(json_path)
-        error("Default parameters file not found: $json_path")
+    # Always load full defaults as the base
+    full_path = asset_path("example_config", "defaultSearchParams.json")
+    if !isfile(full_path)
+        error("Default parameters file not found: $full_path")
     end
-    
-    defaults = JSON.parsefile(json_path, dicttype=Dict{String,Any})
-    
+    defaults = JSON.parsefile(full_path, dicttype=Dict{String,Any})
+
+    # If simplified, overlay simplified values on top
+    if simplified
+        simplified_path = asset_path("example_config", "defaultSearchParamsSimplified.json")
+        if isfile(simplified_path)
+            simplified_overrides = JSON.parsefile(simplified_path, dicttype=Dict{String,Any})
+            defaults = merge_with_defaults(simplified_overrides, defaults)
+        end
+    end
+
     # Remove user-specific sections that should not have defaults
     delete!(defaults, "paths")
-    
+
     return defaults
 end
 

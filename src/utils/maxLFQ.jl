@@ -371,7 +371,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             quant_col::Symbol,
             file_id_to_parsed_name::Vector{String},
             q_value_threshold::Float32;
-            batch_size = 100000)
+            batch_size = 100000,
+            append::Bool = false)
     
     # Use eager DataFrame loading (allows editing for filtering)
     prot = DataFrame(Tables.columntable(Arrow.Table(file_path(prot_ref))))
@@ -388,9 +389,10 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
     
     # Main processing logic (inlined from original LFQ function)
+    nfiles = length(unique(prot[!, :ms_file_idx]))
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
-    n_writes = 0
-    is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
+    n_writes = append ? 1 : 0  # When appending, skip the initial file creation/deletion
+    @assert issorted(prot[!, :inferred_protein_group], rev=true) "LFQ input must be sorted by :inferred_protein_group (descending)"
 
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx, :inferred_protein_group]
@@ -412,9 +414,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             initial_rows = nrow(subdf)
         end
         
-        # Log batch status after filtering
         if nrow(subdf) == 0
-            @user_warn "Batch filtered to 0 rows" batch_start=batch_start_idx batch_end=batch_end_idx
             continue  # Skip empty batches
         end
         
@@ -426,38 +426,23 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             [:target, :entrapment_group_id, :species, :inferred_protein_group]
         )
         ngroups = length(gpsms)
-        nfiles = length(unique(prot[!,:ms_file_idx]))
         nrows = nfiles*ngroups
         
-        # Pre-allocate the batch
+        # Pre-allocate the batch with missing values
         out = Dict(
-            :target => Vector{Union{Missing, Bool}}(undef, nrows),
-            :entrap_id => Vector{Union{Missing, UInt8}}(undef, nrows),
-            :species => Vector{Union{Missing, String}}(undef, nrows),
-            :protein => Vector{Union{Missing, String}}(undef, nrows),
-            :peptides => Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}(undef, nrows),
-            :log2_abundance => zeros(Union{Missing, Float32}, nrows),
-            :experiments => zeros(Union{Missing, UInt32}, nrows),
-            :global_qval => zeros(Union{Missing, Float32}, nrows),
-            :qval => zeros(Union{Missing, Float32}, nrows),
-            :pg_pep => zeros(Union{Missing, Float32}, nrows),
-            :pg_score => zeros(Union{Missing, Float32}, nrows),
-            :global_pg_score => zeros(Union{Missing, Float32}, nrows),
+            :target => Vector{Union{Missing, Bool}}(missing, nrows),
+            :entrap_id => Vector{Union{Missing, UInt8}}(missing, nrows),
+            :species => Vector{Union{Missing, String}}(missing, nrows),
+            :protein => Vector{Union{Missing, String}}(missing, nrows),
+            :peptides => Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}(missing, nrows),
+            :log2_abundance => Vector{Union{Missing, Float32}}(missing, nrows),
+            :experiments => Vector{Union{Missing, UInt32}}(missing, nrows),
+            :global_qval => Vector{Union{Missing, Float32}}(missing, nrows),
+            :qval => Vector{Union{Missing, Float32}}(missing, nrows),
+            :pg_pep => Vector{Union{Missing, Float32}}(missing, nrows),
+            :pg_score => Vector{Union{Missing, Float32}}(missing, nrows),
+            :global_pg_score => Vector{Union{Missing, Float32}}(missing, nrows),
         )
-        for i in range(1, nrows)
-            out[:target][i] = missing
-            out[:entrap_id][i] = missing
-            out[:species][i] = missing
-            out[:protein][i] = missing
-            out[:peptides][i] = missing
-            out[:experiments][i] = missing
-            out[:log2_abundance][i] = missing
-            out[:global_qval][i] = missing
-            out[:qval][i] = missing
-            out[:pg_pep][i] = missing
-            out[:pg_score][i] = missing
-            out[:global_pg_score][i] = missing
-        end
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
             getProtAbundance(protein[:inferred_protein_group], 
@@ -539,6 +524,37 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     return nothing
 end
 
+
+"""
+    LFQ_chunked(chunk_refs, protein_quant_path, quant_col, file_id_to_parsed_name, q_value_threshold; batch_size)
+
+Process a vector of chunk FileReferences independently for MaxLFQ protein quantification.
+Each chunk is loaded one at a time (~1 GB), processed, and results are appended to a single
+output Arrow file.  Memory is bounded by the chunk size rather than total dataset size.
+"""
+function LFQ_chunked(
+    chunk_refs::Vector{<:Any},  # Vector of FileReferences
+    protein_quant_path::String,
+    quant_col::Symbol,
+    file_id_to_parsed_name::Vector{String},
+    q_value_threshold::Float32;
+    batch_size::Int = 100000
+)
+    # Remove any pre-existing output
+    isfile(protein_quant_path) && rm(protein_quant_path)
+
+    n_chunks = length(chunk_refs)
+    pbar = ProgressBar(total=n_chunks)
+    set_description(pbar, "MaxLFQ chunks:")
+    for (ci, chunk_ref) in enumerate(chunk_refs)
+        # First chunk creates file (append=false), subsequent chunks append
+        LFQ(chunk_ref, protein_quant_path, quant_col,
+            file_id_to_parsed_name, q_value_threshold;
+            batch_size=batch_size, append=(ci > 1))
+        update(pbar)
+    end
+    return nothing
+end
 
 function countPeptides(peptides::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}})
     

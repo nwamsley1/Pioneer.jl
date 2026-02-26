@@ -137,6 +137,16 @@ if "%SUBCOMMAND%"=="" (
     exit /b 1
 )
 
+rem Auto-set GC threads to half of user threads (mark threads, 1 sweep thread)
+if "%JULIA_NUM_THREADS%"=="auto" (
+    set /a _THREAD_COUNT=%NUMBER_OF_PROCESSORS%
+) else (
+    set /a _THREAD_COUNT=%JULIA_NUM_THREADS%
+)
+set /a _GC_MARK_THREADS=(_THREAD_COUNT + 1) / 2
+if %_GC_MARK_THREADS% LSS 1 set _GC_MARK_THREADS=1
+set JULIA_NUM_GC_THREADS=%_GC_MARK_THREADS%,1
+
 rem Map aliases to canonical executable names
 if /I "%SUBCOMMAND%"=="search" set SUBCOMMAND=SearchDIA
 if /I "%SUBCOMMAND%"=="predict" set SUBCOMMAND=BuildSpecLib
