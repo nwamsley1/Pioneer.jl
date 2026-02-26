@@ -1,66 +1,55 @@
 """
-    buildPionLib(spec_lib_path::String,
-                y_start_index::UInt8,
-                y_start::UInt8,
-                b_start_index::UInt8,
-                b_start::UInt8,
-                include_p_index::Bool,
-                include_p::Bool,
-                include_isotope::Bool,
-                include_immonium::Bool,
-                include_internal::Bool,
-                include_neutral_diff::Bool,
-                max_frag_charge::UInt8,
-                max_frag_rank::UInt8,
-                min_frag_intensity::Float32,
-                rank_to_score::Vector{UInt8},
-                frag_bounds::FragBoundModel,
-                frag_bin_tol_ppm::Float32,
-                rt_bin_tol_ppm::Float32,
-                model_type::KoinaModelType = InstrumentSpecificModel("default"))
+    fragment_likelihood_weights_uint8(intensities; M, N, d, α) → Vector{UInt8}
 
-Build a Pioneer spectral library from preprocessed fragment and precursor data.
+Compute likelihood-ratio Δ_i weights for fragments and quantize to UInt8.
+
+Uses global ε-clamped normalization: derives ε = (1-α)/(α·exp(255/M)) so that
+M × Δ_max = 255. M is a config parameter (target fragments per precursor), not
+the actual number of fragments. This preserves absolute score differences between
+precursors — a precursor with all highly-detectable fragments scores near 255,
+while one with weak fragments scores proportionally less.
 
 # Parameters
-- `spec_lib_path`: Path to the directory containing input files and where output files will be written
-- `y_start_index`: Minimum index for y-ions to include in the fragment index
-- `y_start`: Minimum index for y-ions to include in detailed fragments
-- `b_start_index`: Minimum index for b-ions to include in the fragment index
-- `b_start`: Minimum index for b-ions to include in detailed fragments
-- `include_p_index`: Whether to include precursor ions in the fragment index
-- `include_p`: Whether to include precursor ions in detailed fragments
-- `include_isotope`: Whether to include isotope peaks 
-- `include_immonium`: Whether to include immonium ions
-- `include_internal`: Whether to include internal fragment ions
-- `include_neutral_diff`: Whether to include fragments with neutral losses
-- `max_frag_charge`: Maximum fragment charge state to include
-- `max_frag_rank`: Maximum number of fragments per precursor (ranked by intensity)
-- `min_frag_intensity`: Minimum relative intensity threshold for fragments
-- `rank_to_score`: Vector mapping intensity rank to scoring value
-- `frag_bounds`: Model defining minimum and maximum fragment m/z bounds
-- `frag_bin_tol_ppm`: Fragment binning tolerance in parts per million
-- `rt_bin_tol_ppm`: Retention time binning tolerance in parts per million
-- `model_type`: Type of prediction model used (default: InstrumentSpecificModel("default"))
+- `intensities`: Predicted fragment intensities (any positive reals)
+- `M`: Target number of indexed fragments per precursor (sets UInt8 scale)
+- `N`: Total precursor ion count (~100 default; higher values reduce score differentiation)
+- `d`: Detection limit in ions (1 for Astral, 3-10 for Orbitrap)
+- `α`: Random m/z coincidence probability (~0.002 for ±10 ppm)
+"""
+function fragment_likelihood_weights_uint8(
+    intensities::AbstractVector{<:Real};
+    M::Int, N::Int, d::Int, α::Float64
+)::Vector{UInt8}
+    n_frags = length(intensities)
+    n_frags == 0 && return UInt8[]
 
-# Returns
-- `nothing`: Results are written to files in `spec_lib_path`
+    # Renormalize to probabilities
+    total = sum(Float64, intensities)
+    if total ≤ 0
+        return fill(UInt8(max(1, 255 ÷ M)), n_frags)
+    end
+    p = Float64.(intensities) ./ total
 
-# Input Files
-Requires the following files in `spec_lib_path`:
-- fragments_table.arrow: Table of fragment data
-- prec_to_frag.arrow: Table mapping precursors to fragments
-- precursors_table.arrow: Table of precursor data
+    # Derive ε so M × Δ_max = 255 (M is config param, not n_frags)
+    ε = (1.0 - α) / (α * exp(255.0 / M))
 
-# Output Files
-Creates the following files in `spec_lib_path`:
-- f_index_fragments.arrow: Fragment index
-- f_index_rt_bins.arrow: Retention time bins
-- f_index_fragment_bins.arrow: Fragment m/z bins
-- presearch_f_index_fragments.arrow: Presearch fragment index
-- presearch_f_index_rt_bins.arrow: Presearch retention time bins
-- presearch_f_index_fragment_bins.arrow: Presearch fragment m/z bins
-- detailed_fragments.jls: Detailed fragment information
-- precursor_to_fragment_indices.jls: Mapping of precursors to fragment indices
+    Δ = Vector{Float64}(undef, n_frags)
+    for i in 1:n_frags
+        p_miss = clamp(cdf(Binomial(N, p[i]), d - 1), ε, 1.0 - 1e-15)
+        p_detect = 1.0 - p_miss
+        w_plus = log(p_detect / α)
+        w_minus = log(p_miss / (1.0 - α))
+        Δ[i] = max(0.0, w_plus - w_minus)
+    end
+
+    return UInt8[clamp(round(Int, Δ[i]), 1, 255) for i in 1:n_frags]
+end
+
+"""
+    buildPionLib(spec_lib_path, ..., model_type::KoinaModelType)
+
+Build a Pioneer spectral library from preprocessed fragment and precursor data.
+KoinaModelType overload — for standard intensity prediction models (Prosit, UniSpec, etc.)
 """
 function buildPionLib(spec_lib_path::String,
                       y_start_index::UInt8,
@@ -81,7 +70,13 @@ function buildPionLib(spec_lib_path::String,
                       frag_bounds::FragBoundModel,
                       frag_bin_tol_ppm::Float32,
                       rt_bin_tol_ppm::Float32,
-                      model_type::KoinaModelType,
+                      model_type::KoinaModelType;
+                      lr_M::Int = 7,
+                      lr_N::Int = 100,
+                      lr_d::Int = 1,
+                      lr_alpha::Float64 = 0.002,
+                      lr_ref_nce::Float64 = 27.0,
+                      use_likelihood_ratio::Bool = false
                       )
     fragments_table, prec_to_frag, precursors_table = nothing, nothing, nothing
     try
@@ -120,7 +115,12 @@ function buildPionLib(spec_lib_path::String,
         include_neutral_diff,
         max_frag_charge,
         frag_bounds,
-        rank_to_score
+        rank_to_score,
+        use_likelihood_ratio ? fragments_table[:intensity] : nothing,
+        lr_M,
+        lr_N,
+        lr_d,
+        lr_alpha
     );
 
     #println("Build fragment index...")
@@ -277,19 +277,45 @@ function buildPionLib(spec_lib_path::String,
                       frag_bounds::FragBoundModel,
                       frag_bin_tol_ppm::Float32,
                       rt_bin_tol_ppm::Float32,
-                      model_type::SplineCoefficientModel,
+                      model_type::SplineCoefficientModel;
+                      lr_M::Int = 7,
+                      lr_N::Int = 100,
+                      lr_d::Int = 1,
+                      lr_alpha::Float64 = 0.002,
+                      lr_ref_nce::Float64 = 27.0,
+                      use_likelihood_ratio::Bool = false
                       )
     fragments_table, prec_to_frag, precursors_table = nothing, nothing, nothing
     try
         fragments_table = Arrow.Table(joinpath(spec_lib_path,"fragments_table.arrow"));
         prec_to_frag = Arrow.Table(joinpath(spec_lib_path,"prec_to_frag.arrow"));
         precursors_table = Arrow.Table(joinpath(spec_lib_path,"precursors_table.arrow"));
-    catch e 
+    catch e
         @error "could not find library..."
         return nothing
     end
 
-    #Simple fragments that go into the fragment index 
+    # Evaluate spline coefficients at reference NCE to get intensities for LR scoring
+    # Same splevl call pattern as SearchDIA (LibraryIon.jl:332)
+    spline_intensities = nothing
+    if use_likelihood_ratio
+        knots_path = joinpath(spec_lib_path, "spline_knots.jls")
+        if isfile(knots_path)
+            spl_knots = deserialize_from_jls(knots_path)
+            knots = Tuple(spl_knots)
+            coefficients_col = fragments_table[:coefficients]
+            n_frags = length(coefficients_col)
+            ref_nce_f32 = Float32(lr_ref_nce)
+            spline_intensities = Vector{Float32}(undef, n_frags)
+            for i in 1:n_frags
+                spline_intensities[i] = max(0f0, splevl(ref_nce_f32, knots, coefficients_col[i], 3))
+            end
+        else
+            @warn "spline_knots.jls not found, falling back to rank-based scoring"
+        end
+    end
+
+    #Simple fragments that go into the fragment index
     #println("Get index fragments...")
     simple_frags = getSimpleFrags(
         fragments_table[:mz],
@@ -315,7 +341,12 @@ function buildPionLib(spec_lib_path::String,
         include_neutral_diff,
         max_frag_charge,
         frag_bounds,
-        rank_to_score
+        rank_to_score,
+        spline_intensities,
+        lr_M,
+        lr_N,
+        lr_d,
+        lr_alpha
     );
 
     #println("Build fragment index...")
@@ -618,60 +649,130 @@ function getSimpleFrags(
     max_frag_charge::UInt8,
     frag_bounds::FragBoundModel,
     rank_to_score::Vector{UInt8},
+    frag_intensity::Union{Nothing, AbstractVector{<:Real}} = nothing,
+    lr_M::Int = 7,
+    lr_N::Int = 100,
+    lr_d::Int = 1,
+    lr_alpha::Float64 = 0.002
     )
-    if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
-        #println("mistake")
-    end
     #Maximum ranked fragment that can be included in the fragment index
     max_rank_index = length(rank_to_score)
-    #Number of precursors 
+    #Number of precursors
     n_precursors = UInt32(length(precursor_mz))
     simple_frags = Vector{SimpleFrag{Float32}}(undef, n_precursors*max_rank_index)
     simple_frag_idx = 0
-    for pid in range(one(UInt32), n_precursors)
-        prec_mz = precursor_mz[pid]
-        frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
-        rank = 1
-        for frag_idx in range(frag_start_idx, frag_stop_idx)
-            if fragFilter(
-                    frag_is_y[frag_idx],
-                    frag_is_b[frag_idx],
-                    frag_is_p[frag_idx],
-                    frag_index[frag_idx],
-                    frag_charge[frag_idx],
-                    frag_isotope[frag_idx],
-                    frag_internal[frag_idx],
-                    frag_immonium[frag_idx],
-                    frag_neutral_diff[frag_idx],
-                    frag_mz[frag_idx],
-                    frag_bounds,
-                    prec_mz,
-                    y_start,
-                    b_start,
-                    include_p,
-                    include_isotope,
-                    include_immonium,
-                    include_internal,
-                    include_neutral_diff,
-                    max_frag_charge)==false
-                continue
+
+    if frag_intensity !== nothing
+        # Likelihood-ratio scoring path
+        # Pre-allocate buffers for collecting fragments per precursor
+        selected_frag_idxs = Vector{Int}(undef, max_rank_index)
+        selected_intensities = Vector{Float64}(undef, max_rank_index)
+
+        for pid in range(one(UInt32), n_precursors)
+            prec_mz = precursor_mz[pid]
+            frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
+
+            # Phase 1: collect filtered fragment indices and intensities
+            n_selected = 0
+            for frag_idx in range(frag_start_idx, frag_stop_idx)
+                if fragFilter(
+                        frag_is_y[frag_idx],
+                        frag_is_b[frag_idx],
+                        frag_is_p[frag_idx],
+                        frag_index[frag_idx],
+                        frag_charge[frag_idx],
+                        frag_isotope[frag_idx],
+                        frag_internal[frag_idx],
+                        frag_immonium[frag_idx],
+                        frag_neutral_diff[frag_idx],
+                        frag_mz[frag_idx],
+                        frag_bounds,
+                        prec_mz,
+                        y_start,
+                        b_start,
+                        include_p,
+                        include_isotope,
+                        include_immonium,
+                        include_internal,
+                        include_neutral_diff,
+                        max_frag_charge)==false
+                    continue
+                end
+                n_selected += 1
+                selected_frag_idxs[n_selected] = frag_idx
+                selected_intensities[n_selected] = Float64(frag_intensity[frag_idx])
+                if n_selected >= max_rank_index
+                    break
+                end
             end
-            simple_frag_idx += 1
-            simple_frags[simple_frag_idx] = SimpleFrag(
-                frag_mz[frag_idx],
-                pid,
-                precursor_mz[pid],
-                precursor_irt[pid],
-                precursor_charge[pid],
-                rank_to_score[rank]
+
+            # Phase 2: compute likelihood ratio weights
+            weights = fragment_likelihood_weights_uint8(
+                @view(selected_intensities[1:n_selected]);
+                M=lr_M, N=lr_N, d=lr_d, α=lr_alpha
             )
-            rank += 1
-            if rank > max_rank_index
-                break
+
+            # Phase 3: create SimpleFrags with LR weights
+            for i in 1:n_selected
+                frag_idx = selected_frag_idxs[i]
+                simple_frag_idx += 1
+                simple_frags[simple_frag_idx] = SimpleFrag(
+                    frag_mz[frag_idx],
+                    pid,
+                    precursor_mz[pid],
+                    precursor_irt[pid],
+                    precursor_charge[pid],
+                    weights[i]
+                )
             end
         end
-
+    else
+        # Original rank-based scoring path
+        for pid in range(one(UInt32), n_precursors)
+            prec_mz = precursor_mz[pid]
+            frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
+            rank = 1
+            for frag_idx in range(frag_start_idx, frag_stop_idx)
+                if fragFilter(
+                        frag_is_y[frag_idx],
+                        frag_is_b[frag_idx],
+                        frag_is_p[frag_idx],
+                        frag_index[frag_idx],
+                        frag_charge[frag_idx],
+                        frag_isotope[frag_idx],
+                        frag_internal[frag_idx],
+                        frag_immonium[frag_idx],
+                        frag_neutral_diff[frag_idx],
+                        frag_mz[frag_idx],
+                        frag_bounds,
+                        prec_mz,
+                        y_start,
+                        b_start,
+                        include_p,
+                        include_isotope,
+                        include_immonium,
+                        include_internal,
+                        include_neutral_diff,
+                        max_frag_charge)==false
+                    continue
+                end
+                simple_frag_idx += 1
+                simple_frags[simple_frag_idx] = SimpleFrag(
+                    frag_mz[frag_idx],
+                    pid,
+                    precursor_mz[pid],
+                    precursor_irt[pid],
+                    precursor_charge[pid],
+                    rank_to_score[rank]
+                )
+                rank += 1
+                if rank > max_rank_index
+                    break
+                end
+            end
+        end
     end
+
     return simple_frags[1:simple_frag_idx]
 end
 

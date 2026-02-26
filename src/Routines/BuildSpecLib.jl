@@ -358,27 +358,49 @@ function BuildSpecLib(params_path::String)
         # Build final indices
         dual_println("\nBuilding final library indices...")
         index_timing = @timed begin
+            # Extract likelihood-ratio scoring config (with defaults for backwards compatibility)
+            _lp = _params.library_params
+            _fragment_scoring = get(_lp, "fragment_scoring", "rank_based")
+            _use_lr = _fragment_scoring == "likelihood_ratio"
+            _lr_M = Int(get(_lp, "likelihood_ratio_M", 7))
+            _lr_N = Int(get(_lp, "likelihood_ratio_N", 100))
+            _lr_d = Int(get(_lp, "likelihood_ratio_d", 1))
+            _lr_alpha = Float64(get(_lp, "likelihood_ratio_alpha", 0.002))
+            _lr_ref_nce = Float64(get(_lp, "likelihood_ratio_ref_nce", 27.0))
+
+            if _use_lr
+                dual_println("  Using likelihood-ratio fragment scoring (M=$_lr_M, N=$_lr_N, d=$_lr_d, α=$_lr_alpha)")
+            else
+                dual_println("  Using rank-based fragment scoring")
+            end
+
             buildPionLib(
                 lib_dir,
-                UInt8(_params.library_params["y_start_index"]),
-                UInt8(_params.library_params["y_start"]),
-                UInt8(_params.library_params["b_start_index"]),
-                UInt8(_params.library_params["b_start"]),
-                _params.library_params["include_p_index"],
-                _params.library_params["include_p"],
-                _params.library_params["include_isotope"],
-                _params.library_params["include_immonium"],
-                _params.library_params["include_internal"],
-                _params.library_params["include_neutral_diff"],
-                UInt8(_params.library_params["max_frag_charge"]),
-                UInt8(_params.library_params["max_frag_rank"]),
-                Float32(_params.library_params["length_to_frag_count_multiple"]),
-                Float32(_params.library_params["min_frag_intensity"]),
-                UInt8.(_params.library_params["rank_to_score"]),
+                UInt8(_lp["y_start_index"]),
+                UInt8(_lp["y_start"]),
+                UInt8(_lp["b_start_index"]),
+                UInt8(_lp["b_start"]),
+                _lp["include_p_index"],
+                _lp["include_p"],
+                _lp["include_isotope"],
+                _lp["include_immonium"],
+                _lp["include_internal"],
+                _lp["include_neutral_diff"],
+                UInt8(_lp["max_frag_charge"]),
+                UInt8(_lp["max_frag_rank"]),
+                Float32(_lp["length_to_frag_count_multiple"]),
+                Float32(_lp["min_frag_intensity"]),
+                UInt8.(_lp["rank_to_score"]),
                 frag_bounds,
-                Float32(_params.library_params["frag_bin_tol_ppm"]),
-                Float32(_params.library_params["rt_bin_tol"]),
-                koina_model_type
+                Float32(_lp["frag_bin_tol_ppm"]),
+                Float32(_lp["rt_bin_tol"]),
+                koina_model_type;
+                lr_M = _lr_M,
+                lr_N = _lr_N,
+                lr_d = _lr_d,
+                lr_alpha = _lr_alpha,
+                lr_ref_nce = _lr_ref_nce,
+                use_likelihood_ratio = _use_lr
             )          
 
             nothing

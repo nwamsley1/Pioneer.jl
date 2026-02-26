@@ -24,7 +24,7 @@ Per-precursor normalization (scaling each precursor's Δ sum to 255) is wrong be
 
 ### The problem with raw Δ values
 
-For any reasonable N (e.g., 10000), the Binomial CDF gives astronomically small P(miss) values for dominant fragments. For example, a fragment with p = 0.3 of total intensity gives P(miss) ≈ 10^{-1300}. The log-likelihood ratio Δ then becomes enormous (~3000), far exceeding UInt8 range.
+For large N (e.g., 10000), the Binomial CDF gives astronomically small P(miss) values for most fragments, reducing score differentiation. The default N=100 provides good differentiation across typical fragment intensity distributions while still being physically motivated.
 
 ### Solution: Derive ε from the UInt8 budget
 
@@ -63,7 +63,7 @@ All in `defaultBuildLibParams.json` under `library_params`:
 |-----------|---------|-------------|
 | `fragment_scoring` | `"rank_based"` | Scoring mode: `"rank_based"` (original) or `"likelihood_ratio"` (new) |
 | `likelihood_ratio_M` | `7` | Target fragments per precursor (sets UInt8 scale via ε derivation) |
-| `likelihood_ratio_N` | `10000` | Total precursor ion count (~10k for Astral MS2) |
+| `likelihood_ratio_N` | `100` | Total precursor ion count (default 100; higher values reduce score differentiation) |
 | `likelihood_ratio_d` | `1` | Detection limit in ions (1 for Astral, 3-10 for Orbitrap) |
 | `likelihood_ratio_alpha` | `0.002` | Random m/z coincidence probability (~0.002 for ±10 ppm) |
 | `likelihood_ratio_ref_nce` | `27.0` | Reference NCE for evaluating Altimeter spline coefficients |
@@ -139,7 +139,7 @@ Add five new positional parameters after `rank_to_score`:
     # New: likelihood ratio scoring (optional)
     frag_intensity::Union{Nothing, AbstractVector{<:Real}} = nothing,
     lr_M::Int = 7,
-    lr_N::Int = 10000,
+    lr_N::Int = 100,
     lr_d::Int = 1,
     lr_alpha::Float64 = 0.002
 ```
@@ -185,7 +185,7 @@ In `assets/example_config/defaultBuildLibParams.json`, inside `library_params`:
         "rank_to_score": [8, 4, 4, 2, 2, 1, 1],
         "fragment_scoring": "likelihood_ratio",
         "likelihood_ratio_M": 7,
-        "likelihood_ratio_N": 10000,
+        "likelihood_ratio_N": 100,
         "likelihood_ratio_d": 1,
         "likelihood_ratio_alpha": 0.002,
         "likelihood_ratio_ref_nce": 27.0,
