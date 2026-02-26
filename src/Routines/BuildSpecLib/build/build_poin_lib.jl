@@ -42,12 +42,12 @@ function fragment_likelihood_weights_uint8(
         return fill(UInt8(max(1, 255 ÷ M)), n_frags)
     end
 
-    # Per-precursor normalization: scale so sum = 255
+    # Per-precursor normalization: scale so sum ≤ 255 (floor guarantees no overflow)
     scale = 255.0 / Δ_sum
     # Max individual score: ensures no single match passes the threshold
     max_individual = K * (255 ÷ M) - 1  # e.g., 5*36-1 = 179 for M=7
 
-    return UInt8[clamp(round(Int, Δ[i] * scale), 0, max_individual) for i in 1:n_frags]
+    return UInt8[clamp(floor(Int, Δ[i] * scale), 0, max_individual) for i in 1:n_frags]
 end
 
 """
