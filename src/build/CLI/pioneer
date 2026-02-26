@@ -107,6 +107,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Auto-set GC threads to half of user threads (mark threads, 1 sweep thread)
+if [[ "$JULIA_NUM_THREADS" =~ ^[0-9]+$ ]]; then
+    _THREAD_COUNT="$JULIA_NUM_THREADS"
+else
+    # "auto" or unset — detect CPU count
+    if command -v nproc &>/dev/null; then
+        _THREAD_COUNT=$(nproc)
+    elif command -v sysctl &>/dev/null; then
+        _THREAD_COUNT=$(sysctl -n hw.logicalcpu 2>/dev/null || echo 1)
+    else
+        _THREAD_COUNT=1
+    fi
+fi
+_GC_MARK_THREADS=$(( (_THREAD_COUNT + 1) / 2 ))
+if [ "$_GC_MARK_THREADS" -lt 1 ]; then
+    _GC_MARK_THREADS=1
+fi
+export JULIA_NUM_GC_THREADS="${_GC_MARK_THREADS},1"
+
 # Check if subcommand was provided
 if [[ -z "$SUBCOMMAND" ]]; then
     echo "Error: Subcommand required"

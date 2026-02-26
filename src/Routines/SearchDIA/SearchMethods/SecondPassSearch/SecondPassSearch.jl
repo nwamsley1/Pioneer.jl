@@ -576,14 +576,23 @@ function process_search_results!(
 
         # Only save results if we have actual PSMs
         if nrow(psms) > 0
-            # Save processed results
-            temp_path = joinpath(
-                getDataOutDir(search_context), "temp_data",
-                "second_pass_psms",
-                getParsedFileName(search_context, ms_file_idx) * ".arrow"
-            )
-            writeArrow(temp_path, psms)
-            setSecondPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
+            # Save processed results - split by CV fold for memory-efficient ML training
+            base_name = getParsedFileName(search_context, ms_file_idx)
+            base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
+
+            # Split and write by cv_fold
+            for fold in UInt8[0, 1]
+                fold_mask = psms.cv_fold .== fold
+                if any(fold_mask)
+                    fold_path = joinpath(base_dir, "$(base_name)_fold$(fold).arrow")
+                    writeArrow(fold_path, psms[fold_mask, :])
+                end
+            end
+
+            # Store base path (without fold suffix) for reference
+            # Downstream code uses getSecondPassPsmsFold() to construct fold-specific paths
+            setSecondPassPsms!(getMSData(search_context), ms_file_idx,
+                              joinpath(base_dir, base_name))
         else
             # No PSMs found - mark as empty but don't fail
             @debug_l2 "No PSMs found for file $ms_file_idx in SecondPassSearch, setting empty path"

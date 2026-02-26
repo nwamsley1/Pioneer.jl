@@ -117,8 +117,11 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
             end
         end
     else
-        # For Linux/MacOS, use the simple approach
-        Arrow.write(fpath, df)
+        # For Linux/MacOS, use temp file approach for safety
+        # This avoids Bus errors when writing to a file that may still be memory-mapped
+        tpath = tempname() * ".arrow"
+        Arrow.write(tpath, df)
+        mv(tpath, fpath, force=true)
     end
     return nothing
 end

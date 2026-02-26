@@ -52,7 +52,8 @@
             "n_train_rounds": 2,
             "max_iterations": 20,
             "max_q_value_probit_rescore": 0.05,
-            "max_PEP": 0.9
+            "max_PEP": 0.9,
+            "global_pep_threshold": 0.5
         }
     },
     "quant_search": {

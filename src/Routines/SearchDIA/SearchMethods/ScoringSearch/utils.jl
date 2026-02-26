@@ -766,11 +766,10 @@ function perform_protein_probit_regression(
         end
     end
     
-    # Set protein group limit to 5x the precursor limit
-    max_protein_groups_in_memory_limit = 5 * max_psms_in_memory
+    # Caller now passes a PG-schema-aware row budget directly
+    max_protein_groups_in_memory_limit = max(max_psms_in_memory, 100_000)
 
-    # HARDCODED: Always use in-memory processing (OOM path disabled)
-    if false  # total_protein_groups > max_protein_groups_in_memory_limit
+    if total_protein_groups > max_protein_groups_in_memory_limit
         #Need to implement safety checks for minimal number of targets/decoys in each split (DISABLED) 
         
         # Check if we should skip scoring in OOM path

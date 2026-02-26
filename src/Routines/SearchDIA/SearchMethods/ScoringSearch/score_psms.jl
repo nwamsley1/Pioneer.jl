@@ -21,6 +21,8 @@ PSM sampling and scoring
 
 # Constant for model selection threshold
 const MAX_FOR_MODEL_SELECTION = 200_000
+# Minimum PSM count before OOM path is allowed — datasets below this always use in-memory scoring
+const MIN_PSMS_FOR_OOM = 100_000
 # Backward-compatible alias used in discussions/documentation
 const MAX_FOR_MODEL_SELECTION_PSMS = MAX_FOR_MODEL_SELECTION
 
@@ -53,6 +55,7 @@ Main entry point for PSM scoring with automatic model selection based on dataset
 - `n_quantile_bins`: Number of quantile bins for feature discretization (1-65535)
 - `q_value_threshold`: Q-value threshold for model comparison (default: 0.01)
 - `ms1_scoring`: Whether to include MS1 scoring features (default: true)
+- `force_oom`: Force out-of-memory processing regardless of PSM count (default: false)
 
 # Returns
 - Trained LightGBM models or nothing for probit regression
@@ -67,34 +70,28 @@ function score_precursor_isotope_traces(
     min_PEP_neg_threshold_itr::Float32,
     max_psms_in_memory::Int64,
     n_quantile_bins::Int64,
-    q_value_threshold::Float32 = 0.01f0,  # Default to 1% if not specified
-    ms1_scoring::Bool = true
+    q_value_threshold::Float32 = 0.01f0,
+    ms1_scoring::Bool = true,
+    force_oom::Bool = false
 )
     # Step 1: Count PSMs and determine processing approach
     psms_count = get_psms_count(file_paths)
 
-    # HARDCODED: Always use in-memory processing (OOM path disabled)
-    if false  # psms_count >= max_psms_in_memory
-        # Case 1: Out-of-memory processing with default LightGBM (DISABLED)
-        @user_info "Using out-of-memory processing for $psms_count PSMs (≥ $max_psms_in_memory)"
-        best_psms = sample_psms_for_lightgbm(second_pass_folder, psms_count, max_psms_in_memory)
+    if force_oom || (psms_count >= max_psms_in_memory && psms_count >= MIN_PSMS_FOR_OOM)
+        # Case 1: Out-of-memory processing with ArrowFilePSMContainer + trait-based percolator_scoring!
+        @user_info "Using out-of-memory processing for $psms_count PSMs"
+        max_training = max(max_psms_in_memory, MIN_PSMS_FOR_OOM)
 
-        # Add quantile-binned features before training
-        features_to_bin = [:prec_mz, :irt_pred, :weight, :tic]
-        add_quantile_binned_features!(best_psms, features_to_bin, n_quantile_bins)
-
-        # Use a ModelConfig (AdvancedLightGBM by default) for OOM path
         model_config = create_default_advanced_lightgbm_config(ms1_scoring)
-        models = score_precursor_isotope_traces_out_of_memory!(
-            best_psms,
-            file_paths,
-            precursors,
-            model_config,
-            match_between_runs,
-            max_q_value_lightgbm_rescore,
-            max_q_value_mbr_itr,
-            min_PEP_neg_threshold_itr
-        )
+        config = build_scoring_config(model_config, match_between_runs,
+                                       max_q_value_lightgbm_rescore,
+                                       min_PEP_neg_threshold_itr)
+
+        container = ArrowFilePSMContainer(file_paths; max_training_psms=max_training)
+        models = percolator_scoring!(container, config; show_progress=true, verbose=true)
+
+        # _finalize_scoring_arrow! already wrote trace_prob, MBR_boosted_trace_prob,
+        # and MBR_transfer_candidate back to the data files. No write_scored_psms_to_files! needed.
     else
         # In-memory processing - load PSMs first
         best_psms = load_psms_for_lightgbm(second_pass_folder)
@@ -127,11 +124,10 @@ function score_precursor_isotope_traces(
         # Write scored PSMs to files
         write_scored_psms_to_files!(best_psms, file_paths)
     end
-    
+
     # Clean up
-    best_psms = nothing
     GC.gc()
-    
+
     return models
 end
 
@@ -196,7 +192,6 @@ function select_psm_scoring_model(
                     best_model_config = config
                 end
             catch e
-                throw(e)
                 @user_warn "Failed to train $(config.name):"
                 # Show error type and message without data
                 if isa(e, MethodError)
@@ -307,14 +302,14 @@ function score_precursor_isotope_traces_in_memory(
 )
     
     if model_config.model_type == :lightgbm
-        return train_lightgbm_model_in_memory(
+        return train_lightgbm_model(
             best_psms, file_paths, precursors, model_config,
             match_between_runs, max_q_value_lightgbm_rescore,
             max_q_value_mbr_itr, min_PEP_neg_threshold_itr,
             show_progress
         )
     elseif model_config.model_type == :probit
-        return train_probit_model_in_memory(
+        return train_probit_model(
             best_psms, file_paths, precursors, model_config, match_between_runs,
             min_PEP_neg_threshold_itr
         )
@@ -324,18 +319,36 @@ function score_precursor_isotope_traces_in_memory(
 end
 
 """
-    train_lightgbm_model_in_memory(...) -> Models
+    train_lightgbm_model(best_psms, file_paths, precursors, model_config,
+                         match_between_runs, max_q_value_lightgbm_rescore,
+                         max_q_value_mbr_itr, min_PEP_neg_threshold_itr;
+                         show_progress=true) -> Models
 
 Trains LightGBM model using configuration from ModelConfig.
+Delegates to trait-based percolator_scoring! with a ScoringConfig.
+
+# Arguments
+- `best_psms::DataFrame`: PSMs to score
+- `file_paths::Vector{String}`: Paths to PSM files (unused, kept for API compatibility)
+- `precursors::LibraryPrecursors`: Library precursor information
+- `model_config::ModelConfig`: Model configuration
+- `match_between_runs::Bool`: Whether to enable MBR
+- `max_q_value_lightgbm_rescore::Float32`: Q-value threshold
+- `max_q_value_mbr_itr::Float32`: MBR q-value threshold (unused in current implementation)
+- `min_PEP_neg_threshold_itr::Float32`: PEP threshold for negative mining
+- `show_progress::Bool`: Whether to show progress bars
+
+# Returns
+- Dictionary of trained models per CV fold
 """
-function train_lightgbm_model_in_memory(
+function train_lightgbm_model(
     best_psms::DataFrame,
-    file_paths::Vector{String},
+    ::Vector{String},  # file_paths - unused
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
     max_q_value_lightgbm_rescore::Float32,
-    max_q_value_mbr_itr::Float32,
+    ::Float32,  # max_q_value_mbr_itr - unused in current implementation
     min_PEP_neg_threshold_itr::Float32,
     show_progress::Bool = true
 )
@@ -343,54 +356,30 @@ function train_lightgbm_model_in_memory(
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
     best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
     best_psms[!,:decoy] = best_psms[!,:target].==false
-    
-    # Get features and hyperparams from config
-    features = [f for f in model_config.features if hasproperty(best_psms, f)]
-    if match_between_runs
-        append!(features, [
-            #:MBR_num_runs,
-            :MBR_max_pair_prob,
-            :MBR_log2_weight_ratio,
-            :MBR_log2_explained_ratio,
-            :MBR_rv_coefficient,
-            #:MBR_best_irt_diff,
-            :MBR_is_missing
-        ])
-    end
 
-    # Diagnostic: Report which quantile-binned features are being used
-    qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
-    if !isempty(qbin_features)
-        for qbin_feat in qbin_features
-            n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-        end
-    end
-
-    hp = model_config.hyperparams
-    return sort_of_percolator_in_memory!(
-        best_psms, features, match_between_runs;
-        max_q_value_lightgbm_rescore, max_q_value_mbr_itr,
-        min_PEP_neg_threshold_itr,
-        feature_fraction = get(hp, :feature_fraction, 0.5),
-        min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
-        min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
-        bagging_fraction = get(hp, :bagging_fraction, 0.25),
-        max_depth = get(hp, :max_depth, 10),
-        num_leaves = get(hp, :num_leaves, 63),
-        learning_rate = get(hp, :learning_rate, 0.05),
-        iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
-        show_progress = show_progress
+    # Build ScoringConfig from ModelConfig
+    config = build_scoring_config(
+        model_config,
+        match_between_runs,
+        max_q_value_lightgbm_rescore,
+        min_PEP_neg_threshold_itr
     )
+
+    # Delegate to trait-based implementation
+    return percolator_scoring!(best_psms, config; show_progress=show_progress)
 end
 
+
 """
-    train_probit_model_in_memory(...) -> Nothing
+    train_probit_model(best_psms, file_paths, precursors, model_config,
+                        match_between_runs, min_PEP_neg_threshold_itr) -> Nothing
 
 Trains probit regression model using configuration from ModelConfig.
+Uses the trait-based percolator_scoring! with ProbitScorer.
 """
-function train_probit_model_in_memory(
+function train_probit_model(
     best_psms::DataFrame,
-    file_paths::Vector{String},
+    ::Vector{String},  # file_paths - unused
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
@@ -400,31 +389,21 @@ function train_probit_model_in_memory(
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
     best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
     best_psms[!,:decoy] = best_psms[!,:target].==false
-    
-    # Get features from config
-    features = [f for f in model_config.features if hasproperty(best_psms, f)]
 
-    # Diagnostic: Report which quantile-binned features are being used
-    qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
-    if !isempty(qbin_features)
-        for qbin_feat in qbin_features
-            n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-            col_type = eltype(best_psms[!, qbin_feat])
-        end
-    end
-
-    probit_regression_scoring_cv!(
-        best_psms,
-        file_paths,
-        features,
-        match_between_runs;
-        neg_mining_pep_threshold = min_PEP_neg_threshold_itr
+    # Build ScoringConfig for probit
+    config = build_scoring_config(
+        model_config,
+        match_between_runs,
+        0.01f0,  # max_q_value - probit doesn't use this
+        min_PEP_neg_threshold_itr
     )
-    
-    # File writing removed - will be done at higher level
-    
+
+    # Delegate to trait-based implementation
+    percolator_scoring!(best_psms, config; show_progress=false)
+
     return nothing  # Probit doesn't return models
 end
+
 
 """
      get_psms_count(quant_psms_folder::String)::Integer
@@ -450,58 +429,36 @@ function get_psms_count(file_paths::Vector{String})
     return psms_count
 end
 
-
 """
-    sample_psms_for_lightgbm(quant_psms_folder::String, psms_count::Integer max_psms::Integer) -> DataFrame
+    load_psms_for_lightgbm(quant_psms_folder::String; fold::Union{Nothing,UInt8}=nothing) -> DataFrame
 
-Sample PSMs from multiple files for LightGBM model training.
+Load PSMs from Arrow files for LightGBM model training.
 
 # Arguments
 - `quant_psms_folder`: Folder containing PSM Arrow files
-- `psms_count`: number of psms across all the arrow files
-- `max_psms`: Maximum number of PSMs to sample for training
+- `fold`: Optional CV fold to load (0 or 1). If nothing, loads all fold files.
 
-# Process
-1. Proportionally samples from each file
-2. Combines samples into single DataFrame
+# Returns
+- DataFrame containing loaded PSMs
+
+# Behavior
+When `fold` is specified, only loads files ending with `_fold{fold}.arrow`.
+When `fold` is nothing, loads all files ending with `.arrow` (both fold files).
+
+# Memory Benefit
+Loading only a single fold reduces memory usage by ~50% during ML training,
+as each fold contains approximately half the PSMs.
 """
-function sample_psms_for_lightgbm(quant_psms_folder::String, psms_count::Integer, max_psms::Integer)
-
-    file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
-
-    # Initialize an empty DataFrame to store the results
-    result_df = DataFrame()
-
-    for file_path in file_paths
-        # Read the Arrow table
-        arrow_table = Arrow.Table(file_path)
-        
-        # Get the number of rows
-        num_rows = length(arrow_table[1])
-        
-        # Calculate the number of rows to sample (1/N'th of the total)
-        sample_size = min(ceil(Int, (num_rows/psms_count)*max_psms), num_rows) #ceil(Int, num_rows / N)
-
-        # Generate sorted random indices for sampling
-        sampled_indices = sort!(sample(MersenneTwister(1776), 1:num_rows, sample_size, replace=false))
-        
-        # Sample the rows and convert to DataFrame
-        sampled_df = DataFrame(arrow_table)[sampled_indices, :]
-        
-        # Append to the result DataFrame
-        append!(result_df, sampled_df)
+function load_psms_for_lightgbm(quant_psms_folder::String; fold::Union{Nothing,UInt8}=nothing)
+    if fold !== nothing
+        # Load only specified fold
+        file_paths = [f for f in readdir(quant_psms_folder, join=true)
+                      if endswith(f, "_fold$(fold).arrow")]
+    else
+        # Load all fold files
+        file_paths = [f for f in readdir(quant_psms_folder, join=true)
+                      if endswith(f, ".arrow")]
     end
-
-    return result_df
-end
-
-"""
-     get_psms_count(quant_psms_folder::String)::Integer
-
-Loads all PSMs from multiple files for LightGBM model training.
-"""
-function load_psms_for_lightgbm(quant_psms_folder::String)
-    file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
     return DataFrame(Tables.columntable(Arrow.Table(file_paths)))
 end
 
@@ -755,118 +712,84 @@ function probit_regression_scoring_cv!(
     return nothing
 end
 
-# DISABLED: Out-of-memory processing - hardcoded to always use in-memory approach
-# This function is commented out in favor of always using in-memory processing.
-# Preserved for potential future use if needed for extremely large datasets.
-#=
-"""
-    score_precursor_isotope_traces_out_of_memory!(best_psms::DataFrame, file_paths::Vector{String},
-                                  precursors::LibraryPrecursors) -> Dictionary{UInt8, LightGBMModel}
-
-Train LightGBM models for PSM scoring. Only a subset of psms are kept in memory
-
-# Arguments
-- `best_psms`: Sample of high-quality PSMs for training
-- `file_paths`: Paths to PSM files
-- `precursors`: Library precursor information
-
-# Returns
-Trained LightGBM models or simplified model if insufficient PSMs.
-"""
-function score_precursor_isotope_traces_out_of_memory!(
-    best_psms::DataFrame,
-    file_paths::Vector{String},
-    precursors::LibraryPrecursors,
-    model_config::ModelConfig,
-    match_between_runs::Bool,
-    max_q_value_lightgbm_rescore::Float32,
-    max_q_value_mbr_itr::Float32,
-    min_PEP_neg_threshold_itr::Float32
-)
-    file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
-    # Features from model_config; do not include :target
-    features = [f for f in model_config.features if hasproperty(best_psms, f)];
-    if match_between_runs
-        append!(features, [
-            :MBR_rv_coefficient,
-            :MBR_best_irt_diff,
-            #:MBR_num_runs,
-            :MBR_max_pair_prob,
-            :MBR_log2_weight_ratio,
-            :MBR_log2_explained_ratio,
-            :MBR_is_missing
-            ])
-    end
-
-    # Diagnostic: Report which quantile-binned features are being used
-    qbin_features = filter(f -> endswith(string(f), "_qbin"), features)
-    if !isempty(qbin_features)
-        @user_info "OOM LightGBM using $(length(qbin_features)) quantile-binned features: $(join(string.(qbin_features), ", "))"
-        for qbin_feat in qbin_features
-            n_unique = length(unique(skipmissing(best_psms[!, qbin_feat])))
-            @user_info "  $qbin_feat: $n_unique unique values in training sample"
-        end
-    end
-
-    best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
-    best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
-    best_psms[!,:decoy] = best_psms[!,:target].==false;
-
-    # Hyperparameters from model_config
-    hp = model_config.hyperparams
-    models = sort_of_percolator_out_of_memory!(
-                            best_psms,
-                            file_paths,
-                            features,
-                            match_between_runs;
-                            max_q_value_lightgbm_rescore,
-                            max_q_value_mbr_itr,
-                            min_PEP_neg_threshold_itr,
-                            feature_fraction = get(hp, :feature_fraction, 0.5),
-                            min_data_in_leaf = get(hp, :min_data_in_leaf, 500),
-                            min_gain_to_split = get(hp, :min_gain_to_split, 0.5),
-                            bagging_fraction = get(hp, :bagging_fraction, 0.25),
-                            max_depth = get(hp, :max_depth, 10),
-                            num_leaves = get(hp, :num_leaves, 63),
-                            learning_rate = get(hp, :learning_rate, 0.05),
-                            iter_scheme = get(hp, :iter_scheme, [100, 200, 200]),
-                            print_importance = false);
-    return models;#best_psms
-end
-=#
 
 """
     write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})
 
-Write scored PSMs back to Arrow files, grouped by ms_file_idx.
+Write scored PSMs back to Arrow files, grouped by ms_file_idx and cv_fold.
 This function is separated from scoring to allow model comparison without file I/O.
 
+Supports both single-file-per-MS-run format (legacy) and fold-split format.
+For fold-split files (containing "_fold" in path), groups by (ms_file_idx, cv_fold).
+For legacy files, groups by ms_file_idx only.
+
 # Arguments
-- `psms`: DataFrame containing scored PSMs with ms_file_idx column
+- `psms`: DataFrame containing scored PSMs with ms_file_idx column (and cv_fold for fold-split)
 - `file_paths`: Vector of file paths for valid files only
 """
 function write_scored_psms_to_files!(psms::DataFrame, file_paths::Vector{String})
     dropVectorColumns!(psms) # avoids writing issues
-    
-    # Create mapping from unique ms_file_idx values to file paths
-    unique_file_indices = unique(psms[:, :ms_file_idx])
-    sort!(unique_file_indices)
-    
-    # Check that we have enough file paths for all file indices
-    if length(file_paths) != length(unique_file_indices)
-        error("Mismatch: $(length(file_paths)) file paths provided but $(length(unique_file_indices)) unique file indices found in PSM data")
-    end
-    
-    # Create mapping: original file index → output file path
-    index_to_path = Dict(zip(unique_file_indices, file_paths))
-    
-    for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
-        file_idx = ms_file_idx[:ms_file_idx]
-        if haskey(index_to_path, file_idx)
-            fpath = index_to_path[file_idx]
-            writeArrow(fpath, gpsms)
-        else
-            @warn "No output path found for file index $file_idx, skipping"
+
+    # Detect if we're using fold-split files
+    is_fold_split = any(p -> occursin("_fold", p), file_paths)
+
+    if is_fold_split && hasproperty(psms, :cv_fold)
+        # Fold-split mode: create mapping from (ms_file_idx, cv_fold) -> file_path
+        # Parse fold number from file paths
+        path_to_key = Dict{String, Tuple{UInt32, UInt8}}()
+        for fpath in file_paths
+            # Extract fold number from path (e.g., "*_fold0.arrow" -> 0)
+            fold_match = match(r"_fold(\d)\.arrow$", fpath)
+            if fold_match !== nothing
+                fold_num = parse(UInt8, fold_match.captures[1])
+                # Read the file to get its ms_file_idx value
+                orig_df = DataFrame(Arrow.Table(fpath))
+                if nrow(orig_df) > 0
+                    ms_idx = first(orig_df.ms_file_idx)
+                    path_to_key[fpath] = (ms_idx, fold_num)
+                end
+            end
+        end
+
+        # Create reverse mapping: (ms_file_idx, cv_fold) -> file_path
+        key_to_path = Dict{Tuple{UInt32, UInt8}, String}()
+        for (fpath, key) in path_to_key
+            key_to_path[key] = fpath
+        end
+
+        # Write PSMs grouped by (ms_file_idx, cv_fold)
+        for (key, gpsms) in pairs(groupby(psms, [:ms_file_idx, :cv_fold]))
+            ms_idx = key[:ms_file_idx]
+            cv_fold = key[:cv_fold]
+            lookup_key = (ms_idx, cv_fold)
+            if haskey(key_to_path, lookup_key)
+                fpath = key_to_path[lookup_key]
+                writeArrow(fpath, gpsms)
+            else
+                @warn "No output path found for ms_file_idx=$ms_idx, cv_fold=$cv_fold, skipping"
+            end
+        end
+    else
+        # Legacy mode: group by ms_file_idx only
+        unique_file_indices = unique(psms[:, :ms_file_idx])
+        sort!(unique_file_indices)
+
+        # Check that we have enough file paths for all file indices
+        if length(file_paths) != length(unique_file_indices)
+            error("Mismatch: $(length(file_paths)) file paths provided but $(length(unique_file_indices)) unique file indices found in PSM data")
+        end
+
+        # Create mapping: original file index → output file path
+        index_to_path = Dict(zip(unique_file_indices, file_paths))
+
+        for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
+            file_idx = ms_file_idx[:ms_file_idx]
+            if haskey(index_to_path, file_idx)
+                fpath = index_to_path[file_idx]
+                writeArrow(fpath, gpsms)
+            else
+                @warn "No output path found for file index $file_idx, skipping"
+            end
         end
     end
 end

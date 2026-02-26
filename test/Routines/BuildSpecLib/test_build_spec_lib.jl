@@ -229,8 +229,8 @@ function verify_fragment_counts(
     end
     
     # Load the fragment data
-    fragments = deserialize_from_jls(fragments_file)
-    pid_to_fid = deserialize_from_jls(indices_file)
+    fragments = Pioneer.deserialize_from_jls(fragments_file)
+    pid_to_fid = Pioneer.deserialize_from_jls(indices_file)
     
     all_valid = true
     

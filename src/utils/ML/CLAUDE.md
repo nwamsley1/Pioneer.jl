@@ -1,102 +1,330 @@
-# SpectralLinearRegression.jl Optimization Analysis
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with the ML utilities module.
 
 ## Overview
-This document analyzes the adaptive convergence criteria implementation in `spectralLinearRegression.jl`, specifically focusing on the relative tolerance calculation for the Huber solver.
 
-## Current Implementation Analysis
+The ML module provides machine learning utilities for Pioneer.jl, including:
+- **PSM Scoring**: Trait-based semi-supervised learning for peptide-spectrum match scoring
+- **FDR Control**: Q-value and PEP estimation utilities
+- **Regression Models**: Probit regression, spectral linear regression, spline fitting
+- **Smoothing**: Whittaker-Henderson smoothing, B-splines
 
-### Relative Tolerance Formula (Line 540)
-```julia
-rel_tol = T(10^(-2 - (log10(min(X₁[col], max_x)) - log10(min_x))))
+## Module Structure
+
+```
+src/utils/ML/
+├── # Trait-Based PSM Scoring System (NEW)
+├── scoring_traits.jl         # 6 trait types defining algorithm components
+├── scoring_config.jl         # ScoringConfig combining traits
+├── psm_container.jl          # AbstractPSMContainer data abstraction
+├── percolator_generic.jl     # Main percolator_scoring!() entry point
+├── pairing.jl                # Target-decoy pairing strategies
+├── model_training.jl         # ML model training (LightGBM, Probit)
+├── training_selection.jl     # Training data selection strategies
+├── feature_selection.jl      # Feature selection strategies
+├── iteration_scheme.jl       # Iteration configuration
+├── mbr_update.jl             # Match-between-runs feature computation
+│
+├── # Legacy/Wrapper
+├── percolatorSortOf.jl       # Legacy wrapper → delegates to percolator_generic.jl
+│
+├── # ML Utilities
+├── lightgbm_utils.jl         # LightGBM API abstraction
+├── probitRegression.jl       # Probit regression implementation
+├── fdrUtilities.jl           # Q-value and PEP calculation
+├── ftrUtilities.jl           # FTR utilities
+│
+├── # Regression & Splines
+├── spectralLinearRegression.jl   # Huber-loss spectral deconvolution
+├── libraryBSpline.jl             # B-spline library models
+├── uniformBasisCubicSpline.jl    # Cubic spline implementation
+├── piecewiseLinearFunction.jl    # Piecewise linear functions
+├── wittakerHendersonSmoothing.jl # Whittaker-Henderson smoothing
+│
+└── CLAUDE.md                 # This file
 ```
 
-Let's break this down mathematically:
+## Trait-Based PSM Scoring Architecture
 
-1. **Dynamic Range**: `min_x = max_x / 1e4`, so `log10(min_x) = log10(max_x) - 4`
+The PSM scoring system uses a trait-based design with 6 independent abstraction points:
 
-2. **Current coefficient**: `x = X₁[col]` (clamped to max_x)
+### Trait Types (scoring_traits.jl)
 
-3. **Formula expansion**:
-   - `log10(min(X₁[col], max_x)) - log10(min_x)`
-   - = `log10(min(X₁[col], max_x)) - (log10(max_x) - 4)`
-   - = `log10(min(X₁[col], max_x)) - log10(max_x) + 4`
-
-4. **Full formula**:
-   - `rel_tol = 10^(-2 - (log10(min(X₁[col], max_x)) - log10(max_x) + 4))`
-   - = `10^(-2 - 4 - (log10(min(X₁[col], max_x)) - log10(max_x)))`
-   - = `10^(-6 - (log10(min(X₁[col], max_x)) - log10(max_x)))`
-
-### Analysis of Current Behavior
-
-When `X₁[col] = max_x`:
-- `log10(min(X₁[col], max_x)) - log10(max_x) = 0`
-- `rel_tol = 10^(-6) = 1e-6` ✓ (close to desired 1e-7)
-
-When `X₁[col] = min_x = max_x/1e4`:
-- `log10(min_x) - log10(max_x) = -4`
-- `rel_tol = 10^(-6 - (-4)) = 10^(-2) = 1e-2` ✗ (should be 1e-3)
-
-## Issues with Current Implementation
-
-1. **Range Mismatch**: The formula gives 1e-6 to 1e-2 instead of the desired 1e-7 to 1e-3
-2. **Complexity**: The formula is harder to understand and debug
-3. **Clamping**: Using `min(X₁[col], max_x)` prevents handling coefficients larger than max_x
-
-## Suggested Alternatives
-
-### Option 1: Direct Linear Interpolation in Log Space
 ```julia
-# Map coefficient magnitude to tolerance
-coeff_magnitude = abs(X₁[col])
-min_coeff = max_x / T(1e4)
+# 1. PSMScoringModel - ML algorithm selection
+abstract type PSMScoringModel end
+├── LightGBMScorer       # Gradient boosting (default)
+└── ProbitScorer         # Probit regression
 
-if coeff_magnitude <= min_coeff
-    newton_rel_tol = T(1e-3)  # Least precise for small coefficients
-elseif coeff_magnitude >= max_x
-    newton_rel_tol = T(1e-7)  # Most precise for large coefficients
-else
-    # Linear interpolation in log space
-    t = (log10(coeff_magnitude) - log10(min_coeff)) / 4  # Since log10(max_x/min_coeff) = 4
-    t = clamp(t, T(0), T(1))
-    # Map t ∈ [0,1] to tolerance ∈ [1e-3, 1e-7]
-    log_tol = -3 - 4*t  # -3 when t=0, -7 when t=1
-    newton_rel_tol = T(10)^log_tol
+# 2. PairingStrategy - Target-decoy pairing
+abstract type PairingStrategy end
+├── RandomPairing        # Random pairs within iRT bins
+└── NoPairing            # No pairing (single-run mode)
+
+# 3. TrainingDataStrategy - Per-iteration data selection
+abstract type TrainingDataStrategy end
+├── QValueNegativeMining # Filter by q-value, convert worst to negatives
+└── AllDataSelection     # Use all data (iteration 1)
+
+# 4. FeatureSelectionStrategy - Feature set selection
+abstract type FeatureSelectionStrategy end
+├── IterativeFeatureSelection  # Base features → add MBR features
+└── StaticFeatureSelection     # Fixed feature set
+
+# 5. IterationScheme - Training iterations
+abstract type IterationScheme end
+├── FixedIterationScheme  # Fixed rounds per iteration [100, 200, 200]
+└── SinglePassScheme      # Single pass (for probit)
+
+# 6. MBRUpdateStrategy - Match-between-runs
+abstract type MBRUpdateStrategy end
+├── PairBasedMBR         # MBR features from paired precursors
+└── NoMBR                # MBR disabled
+```
+
+### Configuration (scoring_config.jl)
+
+```julia
+# Combine all traits into single config
+struct ScoringConfig{M,P,T,F,I,B}
+    model::M              # PSMScoringModel
+    pairing::P            # PairingStrategy
+    training_data::T      # TrainingDataStrategy
+    feature_selection::F  # FeatureSelectionStrategy
+    iteration_scheme::I   # IterationScheme
+    mbr_update::B         # MBRUpdateStrategy
+end
+
+# Create default LightGBM config
+config = default_scoring_config(
+    match_between_runs=true,
+    features=base_features,
+    max_q_value=0.01f0
+)
+
+# Create probit config
+config = probit_scoring_config(features=features)
+```
+
+### PSM Container (psm_container.jl)
+
+```julia
+# Abstract interface for PSM data
+abstract type AbstractPSMContainer end
+
+# DataFrame-backed implementation
+struct DataFramePSMContainer <: AbstractPSMContainer
+    data::DataFrame
+end
+
+# View for train/test splits (no copy)
+struct DataFramePSMContainerView <: AbstractPSMContainer
+    parent::DataFramePSMContainer
+    indices::Vector{Int}
+end
+
+# Required interface methods
+nrows(container)
+get_column(container, :col)
+set_column!(container, :col, data)
+has_column(container, :col)
+get_view(container, indices)
+get_cv_folds(container)
+get_fold_indices(container, fold)
+get_train_indices(container, test_fold)
+to_dataframe(container)
+```
+
+### Main Entry Point (percolator_generic.jl)
+
+```julia
+# Generic scoring function
+models = percolator_scoring!(psms, config; show_progress=true, verbose=false)
+
+# Algorithm flow:
+# 1. assign_pairs!(psms, config.pairing)
+# 2. initialize_mbr_columns!(psms, config.mbr_update)
+# 3. For each CV fold:
+#    a. For each iteration:
+#       - select_training_data(psms_train, config.training_data, itr)
+#       - get_features_for_iteration(config.feature_selection, itr)
+#       - train_model!(config.model, train_data, features, num_rounds)
+#       - predict!(model, test_data)
+#       - update_mbr_features!(psms, config.mbr_update) [if applicable]
+# 4. Return trained models
+```
+
+## Key Files Reference
+
+### percolatorSortOf.jl
+
+Legacy wrapper that constructs a `ScoringConfig` and delegates to `percolator_scoring!`:
+
+```julia
+function sort_of_percolator!(psms::AbstractPSMContainer, features, match_between_runs; kwargs...)
+    # Build ScoringConfig from keyword arguments
+    config = ScoringConfig(
+        LightGBMScorer(hyperparams),
+        RandomPairing(),
+        QValueNegativeMining(max_q_value, min_pep_threshold),
+        IterativeFeatureSelection(base_features, mbr_features, n_iters),
+        FixedIterationScheme(iter_scheme),
+        match_between_runs ? PairBasedMBR(max_q_value) : NoMBR()
+    )
+    return percolator_scoring!(psms, config; show_progress, verbose)
 end
 ```
 
-### Option 2: Simplified Formula Fix
+**Constants kept for backward compatibility:**
+- `PAIRING_RANDOM_SEED = 1844` - Random seed for reproducible pairing
+- `IRT_BIN_SIZE = 1000` - Size of iRT bins for pairing
+
+**Helper functions:**
+- `update_pair_statistics()` - Running statistics for MBR (used by OOM code)
+- `irt_residual()` - Compute iRT residual for MBR features
+- `summarize_precursors!()` - Compute MBR features per pair group
+- `train_booster()` - LightGBM training helper
+- MBR helper functions (pad_equal_length, MBR_rv_coefficient, etc.)
+
+### pairing.jl
+
+Implements `PairingStrategy` trait:
+
 ```julia
-# Fix the current formula to achieve desired range
-# Want: max_x → 1e-7, min_x → 1e-3
-# log10(tolerance) = -3 - 4 * normalized_position
-x_ratio = min(X₁[col], max_x) / min_x  # Range: [1, 1e4]
-normalized_pos = (log10(x_ratio)) / 4   # Range: [0, 1]
-rel_tol = T(10^(-3 - 4 * normalized_pos))
+# Random pairing within iRT bins
+function assign_pairs!(psms::AbstractPSMContainer, strategy::RandomPairing)
+    # 1. Compute iRT bins
+    # 2. Group by (irt_bin, cv_fold, isotopes_captured)
+    # 3. Within each group, shuffle precursors and pair consecutively
+    # Creates pair_id column
+end
+
+# No pairing (each PSM gets unique pair_id)
+function assign_pairs!(psms::AbstractPSMContainer, ::NoPairing)
+    # Assign sequential pair_ids
+end
+
+# Core iRT binning function
+function getIrtBins(irts::AbstractVector{R}, bin_size::Int = 1000)
+    # Returns bin indices based on sorted iRT order
+end
 ```
 
-### Option 3: Power Law Scaling
+### model_training.jl
+
+Implements `PSMScoringModel` trait:
+
 ```julia
-# Use power law for smooth scaling
-x_normalized = clamp(abs(X₁[col]) / max_x, min_x/max_x, T(1))
-# Map [1e-4, 1] to [1e-3, 1e-7] using power law
-alpha = log(1e-3/1e-7) / log(1e-4)  # ≈ 1
-rel_tol = T(1e-7) * (x_normalized)^alpha
+# LightGBM training
+function train_model!(model::LightGBMScorer, data, features, num_rounds)
+    # Uses lightgbm_utils.jl API
+    return fit_lightgbm_model(classifier, features, labels)
+end
+
+# Probit training
+function train_model!(model::ProbitScorer, data, features, num_rounds)
+    # Uses probitRegression.jl
+    return ProbitModel(beta, features)
+end
 ```
 
-## Recommendation
+### fdrUtilities.jl
 
-I recommend **Option 1** (Direct Linear Interpolation) because:
-1. **Clarity**: The logic is explicit and easy to understand
-2. **Correctness**: Guaranteed to produce exact bounds (1e-7 to 1e-3)
-3. **Robustness**: Handles edge cases clearly
-4. **Performance**: Simple calculations with minimal overhead
-5. **Debugging**: Easy to trace and verify behavior
+FDR estimation utilities:
 
-The current formula can be fixed with Option 2, but Option 1 provides better maintainability and clarity for future developers.
+```julia
+# Q-value calculation (in-place)
+get_qvalues!(scores, targets, qvals; doSort=true)
 
-## Implementation Notes
+# PEP calculation (in-place)
+get_PEP!(scores, targets, PEPs; doSort=true)
 
-- The dynamic range of 1e4 is maintained across all approaches
-- All options respect the bounds set by `min_rel_tol` and `max_rel_tol`
-- The first iteration (i=0) continues to use uniform 10% tolerance
-- Consider logging the tolerance values during debugging to verify behavior
+# Combined wrapper
+computeFDR!(scores, targets, qvals, PEPs)
+```
+
+## Common Development Patterns
+
+### Adding a New Pairing Strategy
+
+```julia
+# 1. Define new strategy type
+struct MyPairingStrategy <: PairingStrategy
+    my_param::Float64
+end
+
+# 2. Implement assign_pairs! in pairing.jl
+function assign_pairs!(psms::AbstractPSMContainer, strategy::MyPairingStrategy)
+    # Your pairing logic
+    set_column!(psms, :pair_id, pair_ids)
+    set_column!(psms, :irt_bin_idx, bin_ids)
+end
+```
+
+### Adding a New ML Model
+
+```julia
+# 1. Define new model type
+struct MyMLModel <: PSMScoringModel
+    hyperparams::Dict{Symbol, Any}
+end
+
+# 2. Implement train_model! in model_training.jl
+function train_model!(model::MyMLModel, data, features, num_rounds)
+    # Your training logic
+    return trained_model
+end
+
+# 3. Implement predict!
+function predict!(model::MyTrainedModel, data)
+    # Your prediction logic
+    return probabilities
+end
+```
+
+### Debugging PSM Scoring
+
+```julia
+# Enable verbose logging
+models = percolator_scoring!(psms, config; verbose=true)
+
+# Check intermediate state
+println("Unique pair_ids: ", length(unique(get_column(psms, :pair_id))))
+println("CV folds: ", get_cv_folds(psms))
+
+# Inspect model performance
+for (fold, fold_models) in models
+    println("Fold $fold: $(length(fold_models)) models")
+end
+```
+
+## Memory Management
+
+### In-Memory Processing
+- `DataFramePSMContainer` holds all PSMs in memory
+- `DataFramePSMContainerView` provides zero-copy views for train/test splits
+- Feature matrices are allocated per iteration
+
+### Out-of-Memory Processing (disabled)
+- The OOM approach in `percolatorSortOf.jl` is commented out
+- Uses file-based iteration with `Arrow.Table` streaming
+- Maintains `prec_to_best_score` dictionary for MBR features
+
+## Recent Changes (2025-02)
+
+### Trait-Based Refactoring
+- **New files**: scoring_traits.jl, scoring_config.jl, psm_container.jl, percolator_generic.jl, pairing.jl, model_training.jl, training_selection.jl, feature_selection.jl, iteration_scheme.jl, mbr_update.jl
+- **Removed duplicate functions** from percolatorSortOf.jl:
+  - `getIrtBins()` → now in pairing.jl
+  - `getIrtBins!()` → now in pairing.jl
+  - `assign_random_target_decoy_pairs!()` → now in pairing.jl
+  - `assignPairIds!()` → now in pairing.jl
+  - `assign_pair_ids()` → now in pairing.jl
+- **percolatorSortOf.jl** is now a thin wrapper that builds `ScoringConfig` and calls `percolator_scoring!()`
+
+### Benefits of New Architecture
+1. **Composability**: Mix and match algorithm components
+2. **Testability**: Each trait can be unit tested independently
+3. **Extensibility**: Add new strategies without modifying core code
+4. **Type Safety**: Compile-time dispatch based on config types

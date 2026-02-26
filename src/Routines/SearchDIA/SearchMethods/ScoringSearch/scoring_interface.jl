@@ -151,6 +151,351 @@ function apply_mbr_filter!(
 end
 
 #==========================================================
+OOM Streaming MBR Filter + Per-File Precursor Aggregation
+==========================================================#
+
+"""
+    _aggregate_trace_to_precursor_probs!(df, has_mbr)
+
+Per-file Bayesian aggregation of trace-level → precursor-level probabilities.
+Groups by (precursor_idx, ms_file_idx). Since ms_file_idx is constant within
+a single file, this is effectively grouping by precursor_idx alone.
+"""
+function _aggregate_trace_to_precursor_probs!(df::DataFrame, has_mbr::Bool)
+    prob_agg = p -> begin
+        trace_prob = 1.0f0 - eps(Float32) - exp(sum(log1p.(-p)))
+        clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
+    end
+    if has_mbr && hasproperty(df, :MBR_boosted_trace_prob)
+        transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
+                   :MBR_boosted_trace_prob => prob_agg => :MBR_boosted_prec_prob)
+    end
+    transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
+               :trace_prob => prob_agg => :prec_prob)
+end
+
+"""
+    _compute_ftr_threshold_streaming(merged_path, target_ftr) -> (threshold, n_passing)
+
+Stream through a merged Arrow file (sorted by score desc) computing FTR.
+Returns the minimum score where FTR ≤ target_ftr and the count of candidates
+passing at that threshold. Cleans up the merged file after reading.
+
+Same pattern as _compute_prob_threshold_from_merged (scoring_workspace.jl).
+"""
+function _compute_ftr_threshold_streaming(merged_path::String, target_ftr::Float64)
+    tbl = Arrow.Table(merged_path)
+    scores = tbl.score
+    bad_flags = tbl.is_bad_transfer
+    n = length(scores)
+
+    n_total = 0
+    n_bad = 0
+    threshold = typemax(Float64)
+    n_passing = 0
+
+    @inbounds for i in 1:n
+        n_total += 1
+        if bad_flags[i]
+            n_bad += 1
+        end
+        if n_total > 0 && n_bad / n_total <= target_ftr
+            threshold = Float64(scores[i])
+            n_passing = n_total
+        end
+    end
+
+    # Release mmap before deleting (same pattern as scoring_workspace.jl)
+    tbl = nothing
+    safeRm(merged_path, nothing; force=true)
+    return threshold, n_passing
+end
+
+"""
+    apply_mbr_filter_and_aggregate_per_file!(refs, valid_file_indices, params)
+
+OOM-safe MBR filtering and precursor probability aggregation.
+Uses a 4-phase streaming approach:
+  Phase 1: SAMPLE — reservoir-sample candidates from files for training
+  Phase 2: TRAIN  — train per-fold Probit + LightGBM on bounded sample
+  Phase 3: EVAL   — predict all candidates streaming, compute FTR thresholds, select best method
+  Phase 4: APPLY  — re-predict + apply threshold + aggregate precursor probs per file
+
+At no point is more than one file's data in memory (beyond the bounded training sample).
+"""
+function apply_mbr_filter_and_aggregate_per_file!(
+    refs::Vector{PSMFileReference},
+    valid_file_indices::Vector{Int64},
+    params
+)
+    has_mbr = false
+    # Quick check: does the first non-empty file have MBR columns?
+    for ref in refs
+        tbl = Arrow.Table(file_path(ref))
+        if length(tbl) > 0
+            has_mbr = hasproperty(tbl, :MBR_boosted_trace_prob)
+            break
+        end
+    end
+
+    if !has_mbr
+        # No MBR: just aggregate per-file and return
+        for ref in refs
+            df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+            _aggregate_trace_to_precursor_probs!(df, false)
+            write_arrow_file(ref, df)
+        end
+        return nothing
+    end
+
+    # Training columns — only what select_mbr_features + model training actually need
+    training_columns = [
+        :trace_prob, :irt_error, :ms1_ms2_rt_diff,
+        :MBR_max_pair_prob, :MBR_best_irt_diff, :MBR_rv_coefficient,
+        :MBR_log2_weight_ratio, :MBR_log2_explained_ratio,
+        :MBR_boosted_trace_prob,
+        :cv_fold,
+        :target, :decoy, :MBR_is_best_decoy
+    ]
+
+    max_candidates = params.max_mbr_training_candidates
+
+    #--------------------------------------------------------------
+    # Phase 1: SAMPLE — stream files, reservoir-sample candidates
+    #--------------------------------------------------------------
+    sample_df = DataFrame()
+    n_candidates_total = 0
+    rng = MersenneTwister(1844)
+
+    for ref in refs
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+        mask = hasproperty(df, :MBR_transfer_candidate) ? df.MBR_transfer_candidate : falses(nrow(df))
+        n_cand = sum(mask)
+        n_cand == 0 && continue
+        n_candidates_total += n_cand
+
+        cols_available = filter(c -> hasproperty(df, c), training_columns)
+        file_candidates = df[mask, cols_available]
+
+        if nrow(sample_df) == 0
+            sample_df = file_candidates
+        else
+            append!(sample_df, file_candidates)
+        end
+        # Downsample if over budget
+        if nrow(sample_df) > max_candidates
+            keep = randperm(rng, nrow(sample_df))[1:max_candidates]
+            sample_df = sample_df[sort(keep), :]
+        end
+    end
+
+    # Handle case with no MBR candidates at all
+    if n_candidates_total == 0
+        @user_warn "No MBR transfer candidates found - returning original probabilities unchanged"
+        for ref in refs
+            df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+            df[!, :MBR_candidate] = falses(nrow(df))
+            df[!, :MBR_transfer_q_value] = Vector{Union{Missing, Float32}}(missing, nrow(df))
+            _aggregate_trace_to_precursor_probs!(df, true)
+            write_arrow_file(ref, df)
+        end
+        return nothing
+    end
+
+    #--------------------------------------------------------------
+    # Phase 2: TRAIN — per-fold models on bounded sample
+    #--------------------------------------------------------------
+    sample_labels = (
+        (sample_df.target .& coalesce.(sample_df.MBR_is_best_decoy, false)) .|
+        (sample_df.decoy .& .!coalesce.(sample_df.MBR_is_best_decoy, false))
+    )
+
+    feature_cols = select_mbr_features(sample_df)
+    feature_data = sample_df[:, feature_cols]
+    folds = sort(unique(sample_df.cv_fold))
+
+    # Train Probit: test_fold => (model, valid_cols)
+    probit_models = Dict{eltype(folds), Any}()
+    probit_valid_cols = Dict{eltype(folds), Vector{Symbol}}()
+    probit_ok = true
+    try
+        for fold in folds
+            train_mask = sample_df.cv_fold .!= fold
+            model, vcols = train_probit_model_df(feature_data[train_mask, :], sample_labels[train_mask], params)
+            probit_models[fold] = model
+            probit_valid_cols[fold] = vcols
+        end
+    catch e
+        @user_warn "Probit training failed: $(typeof(e)) — $(e)"
+        probit_ok = false
+    end
+
+    # Train LightGBM: test_fold => booster
+    lgbm_models = Dict{eltype(folds), Any}()
+    lgbm_ok = true
+    try
+        for fold in folds
+            train_mask = sample_df.cv_fold .!= fold
+            lgbm_models[fold] = train_lightgbm_model_df(feature_data[train_mask, :], sample_labels[train_mask], params)
+        end
+    catch e
+        @user_warn "LightGBM training failed: $(typeof(e)) — $(e)"
+        lgbm_ok = false
+    end
+
+    sample_df = nothing; feature_data = nothing  # free training data
+
+    #--------------------------------------------------------------
+    # Phase 3: EVAL — predict all candidates, compute FTR thresholds
+    #--------------------------------------------------------------
+    method_names = String["Threshold"]
+    probit_ok && push!(method_names, "Probit")
+    lgbm_ok && push!(method_names, "LightGBM")
+    method_temp_refs = Dict(m => PSMFileReference[] for m in method_names)
+
+    # Single pass through all files — predict candidates with all methods
+    for ref in refs
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+        mask = hasproperty(df, :MBR_transfer_candidate) ? df.MBR_transfer_candidate : falses(nrow(df))
+        n_cand = sum(mask)
+        n_cand == 0 && continue
+
+        cand_indices = findall(mask)
+        cand_features = df[cand_indices, feature_cols]
+
+        is_bad = (
+            (df.target[cand_indices] .& coalesce.(df.MBR_is_best_decoy[cand_indices], false)) .|
+            (df.decoy[cand_indices] .& .!coalesce.(df.MBR_is_best_decoy[cand_indices], false))
+        )
+
+        for method_name in method_names
+            scores = if method_name == "Threshold"
+                Float64.(df.MBR_boosted_trace_prob[cand_indices])
+            elseif method_name == "Probit"
+                out = zeros(Float64, n_cand)
+                for fold in folds
+                    fm = df.cv_fold[cand_indices] .== fold
+                    any(fm) || continue
+                    out[fm] = predict_probit_model_df(probit_models[fold], cand_features[fm, :], probit_valid_cols[fold])
+                end
+                out
+            else  # LightGBM
+                out = zeros(Float64, n_cand)
+                for fold in folds
+                    fm = df.cv_fold[cand_indices] .== fold
+                    any(fm) || continue
+                    out[fm] = lightgbm_predict(lgbm_models[fold], cand_features[fm, :])
+                end
+                out
+            end
+
+            # Sort by score desc, write temp Arrow
+            perm = sortperm(scores; rev=true)
+            temp_path = tempname() * "_mbr_ftr_$(method_name).arrow"
+            writeArrow(temp_path, DataFrame(score=scores[perm], is_bad_transfer=is_bad[perm]))
+            tref = PSMFileReference(temp_path)
+            mark_sorted!(tref, :score)
+            push!(method_temp_refs[method_name], tref)
+        end
+    end
+
+    # For each method: merge → stream FTR → threshold + n_passing
+    method_results = Dict{String, Tuple{Float64, Int}}()
+    for method_name in method_names
+        trefs = method_temp_refs[method_name]
+        if isempty(trefs)
+            method_results[method_name] = (typemax(Float64), 0)
+            continue
+        end
+        merged_path = tempname() * "_mbr_ftr_merged_$(method_name).arrow"
+        stream_sorted_merge(trefs, merged_path, :score; reverse=true)
+        GC.gc(false)
+        for tref in trefs
+            safeRm(file_path(tref), nothing; force=true)
+        end
+        threshold, n_passing = _compute_ftr_threshold_streaming(
+            merged_path, Float64(params.max_MBR_false_transfer_rate))
+        method_results[method_name] = (threshold, n_passing)
+    end
+
+    # Select best method (most passing candidates)
+    best_method = method_names[argmax([method_results[m][2] for m in method_names])]
+    best_threshold = method_results[best_method][1]
+
+    @user_info "MBR Method Selection:"
+    for method_name in method_names
+        _, n_pass = method_results[method_name]
+        marker = method_name == best_method ? " ✓" : ""
+        @user_info "  $(method_name): $(n_pass)/$(n_candidates_total) pass ($(round(100*n_pass/n_candidates_total, digits=1))%)$marker"
+    end
+
+    #--------------------------------------------------------------
+    # Phase 4: APPLY — re-predict + threshold + aggregate per file
+    #--------------------------------------------------------------
+    for ref in refs
+        df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+        cand_mask = hasproperty(df, :MBR_transfer_candidate) ? df.MBR_transfer_candidate : falses(nrow(df))
+        n_cand = sum(cand_mask)
+
+        if n_cand > 0
+            cand_indices = findall(cand_mask)
+
+            # Re-predict with best method
+            if best_method == "Threshold"
+                for row in cand_indices
+                    if Float64(df.MBR_boosted_trace_prob[row]) < best_threshold
+                        df.MBR_boosted_trace_prob[row] = 0.0f0
+                        df.trace_prob[row] = 0.0f0
+                    end
+                end
+            else
+                cand_features = df[cand_indices, feature_cols]
+                scores = zeros(Float64, n_cand)
+                for fold in folds
+                    fm = df.cv_fold[cand_indices] .== fold
+                    any(fm) || continue
+                    if best_method == "Probit"
+                        scores[fm] = predict_probit_model_df(
+                            probit_models[fold], cand_features[fm, :], probit_valid_cols[fold])
+                    else
+                        scores[fm] = lightgbm_predict(lgbm_models[fold], cand_features[fm, :])
+                    end
+                end
+                for (i, row) in enumerate(cand_indices)
+                    if scores[i] < best_threshold
+                        df.MBR_boosted_trace_prob[row] = 0.0f0
+                        df.trace_prob[row] = 0.0f0
+                    end
+                end
+            end
+
+            # Zero out bad transfers regardless of score
+            for row in cand_indices
+                is_bad = (df.target[row] && coalesce(df.MBR_is_best_decoy[row], false)) ||
+                         (df.decoy[row] && !coalesce(df.MBR_is_best_decoy[row], false))
+                if is_bad
+                    df.MBR_boosted_trace_prob[row] = 0.0f0
+                    df.trace_prob[row] = 0.0f0
+                end
+            end
+
+            # Diagnostic columns
+            df[!, :MBR_candidate] = df.MBR_transfer_candidate
+            df[!, :MBR_transfer_q_value] = Vector{Union{Missing, Float32}}(missing, nrow(df))
+        else
+            df[!, :MBR_candidate] = falses(nrow(df))
+            df[!, :MBR_transfer_q_value] = Vector{Union{Missing, Float32}}(missing, nrow(df))
+        end
+
+        # Precursor aggregation (per-file, no merge needed)
+        _aggregate_trace_to_precursor_probs!(df, true)
+        write_arrow_file(ref, df)
+    end
+
+    return nothing
+end
+
+#==========================================================
 Method-Specific Training and Evaluation
 ==========================================================#
 
@@ -696,10 +1041,271 @@ function logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
     return 1.0f0 / (1 + exp(-avg))
 end
 
+#==========================================================
+Dictionary + Sidecar Helper Functions for OOM Scoring Pipeline
+==========================================================#
+
 """
-    apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference}, 
+    build_precursor_global_prob_dicts(refs, sqrt_n_runs, has_mbr, n_precursors)
+    → (global_prob_dict, mbr_global_prob_dict, target_dict)
+
+Stream per-file to build precursor_idx → global_prob dictionaries.
+Reads only (precursor_idx, prec_prob, [MBR_boosted_prec_prob], target) via mmap
+instead of loading all 20+ columns.
+
+`n_precursors` is used for `sizehint!()` pre-allocation of all dictionaries,
+obtained via `length(getPrecursors(getSpecLib(search_context)))`.
+"""
+function build_precursor_global_prob_dicts(
+    refs::Vector{PSMFileReference},
+    sqrt_n_runs::Int,
+    has_mbr::Bool,
+    n_precursors::Int
+)
+    # Pre-allocate accumulation dictionaries with known upper bound
+    prob_acc = Dict{UInt32, Vector{Float32}}()
+    sizehint!(prob_acc, n_precursors)
+    target_dict = Dict{UInt32, Bool}()
+    sizehint!(target_dict, n_precursors)
+    mbr_acc = if has_mbr
+        d = Dict{UInt32, Vector{Float32}}()
+        sizehint!(d, n_precursors)
+        d
+    else
+        nothing
+    end
+
+    for ref in refs
+        tbl = Arrow.Table(file_path(ref))
+        n = length(tbl.precursor_idx)
+        n == 0 && continue
+        prec_ids = tbl.precursor_idx
+        prec_probs = tbl.prec_prob
+        targets = tbl.target
+        mbr_probs = has_mbr && hasproperty(tbl, :MBR_boosted_prec_prob) ? tbl.MBR_boosted_prec_prob : nothing
+
+        @inbounds for i in 1:n
+            pid = prec_ids[i]
+            if !haskey(prob_acc, pid)
+                prob_acc[pid] = Float32[]
+                target_dict[pid] = targets[i]
+                has_mbr && mbr_probs !== nothing && (mbr_acc[pid] = Float32[])
+            end
+            push!(prob_acc[pid], prec_probs[i])
+            has_mbr && mbr_probs !== nothing && push!(mbr_acc[pid], mbr_probs[i])
+        end
+    end
+
+    # Compute logodds per precursor
+    global_prob_dict = Dict{UInt32, Float32}()
+    sizehint!(global_prob_dict, length(prob_acc))
+    for (pid, probs) in prob_acc
+        global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
+    end
+
+    mbr_global_prob_dict = Dict{UInt32, Float32}()
+    if has_mbr && mbr_acc !== nothing
+        sizehint!(mbr_global_prob_dict, length(mbr_acc))
+        for (pid, probs) in mbr_acc
+            mbr_global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
+        end
+    end
+
+    return global_prob_dict, mbr_global_prob_dict, target_dict
+end
+
+"""
+    build_global_qval_dict_from_scores(score_dict, target_dict, fdr_scale) → Dict{UInt32, Float32}
+
+Compute global q-values from a score dictionary without any file I/O.
+Replaces get_precursor_global_qval_dict (which loaded a full merged DataFrame).
+"""
+function build_global_qval_dict_from_scores(
+    score_dict::Dict{UInt32, Float32},
+    target_dict::Dict{UInt32, Bool},
+    fdr_scale::Float32
+)
+    n = length(score_dict)
+    pids = collect(keys(score_dict))
+    scores = Float32[score_dict[pid] for pid in pids]
+    targets = Bool[get(target_dict, pid, false) for pid in pids]
+
+    # Sort descending by score
+    perm = sortperm(scores; rev=true)
+    permute!(pids, perm)
+    permute!(scores, perm)
+    permute!(targets, perm)
+
+    # Compute q-values
+    qvals = Vector{Float32}(undef, n)
+    get_qvalues!(scores, targets, qvals; fdr_scale_factor=fdr_scale)
+
+    # Build dictionary
+    qval_dict = Dict{UInt32, Float32}()
+    sizehint!(qval_dict, n)
+    for i in 1:n
+        qval_dict[pids[i]] = qvals[i]
+    end
+    return qval_dict
+end
+
+"""
+    write_score_sidecars(refs, columns; temp_prefix) → Vector{PSMFileReference}
+
+Extract only the named columns from each file into a temporary Arrow sidecar file.
+Uses Arrow mmap to avoid loading all columns. Caller must cleanup returned refs.
+"""
+function write_score_sidecars(
+    refs::Vector{<:FileReference},
+    columns::Vector{Symbol};
+    temp_prefix::String = "sidecar"
+)
+    sidecar_refs = PSMFileReference[]
+    for ref in refs
+        tbl = Arrow.Table(file_path(ref))
+        n = length(Tables.getcolumn(tbl, first(columns)))
+        n == 0 && continue
+
+        # Extract only needed columns (collect to materialize from mmap)
+        col_data = NamedTuple{Tuple(columns)}(Tuple(collect(Tables.getcolumn(tbl, c)) for c in columns))
+        temp_path = tempname() * "_$(temp_prefix).arrow"
+        writeArrow(temp_path, DataFrame(; col_data...))
+        push!(sidecar_refs, PSMFileReference(temp_path))
+    end
+    return sidecar_refs
+end
+
+"""
+    build_qvalue_spline_from_refs(refs, score_col, merged_path; ...) → Union{Nothing, NamedTuple}
+
+Encapsulates the full sidecar lifecycle: write → sort → merge → cleanup → spline computation.
+Returns `nothing` if all files are empty, otherwise returns `(; qval_spline, pep_interp)`.
+`pep_interp` is `nothing` when `compute_pep=false`.
+
+Uses `try/finally` to guarantee sidecar cleanup even on error.
+"""
+function build_qvalue_spline_from_refs(
+    refs::Vector{<:FileReference},
+    score_col::Symbol,
+    merged_path::String;
+    batch_size::Int = 10_000_000,
+    compute_pep::Bool = false,
+    min_pep_points_per_bin::Int = 100,
+    fdr_scale_factor::Float32 = 1.0f0,
+    temp_prefix::String = "sidecar"
+)
+    sidecar_refs = write_score_sidecars(refs, [score_col, :target]; temp_prefix=temp_prefix)
+    isempty(sidecar_refs) && return nothing
+
+    try
+        sort_file_by_keys!(sidecar_refs, score_col, :target; reverse=[true, true])
+        stream_sorted_merge(sidecar_refs, merged_path, score_col, :target;
+                           batch_size=batch_size, reverse=[true, true])
+    finally
+        GC.gc(false)
+        for ref in sidecar_refs
+            safeRm(file_path(ref), nothing; force=true)
+        end
+    end
+
+    qval_spline = get_qvalue_spline(merged_path, score_col, false;
+        min_pep_points_per_bin=min_pep_points_per_bin,
+        fdr_scale_factor=fdr_scale_factor)
+
+    pep_interp = if compute_pep
+        get_pep_interpolation(merged_path, score_col;
+            fdr_scale_factor=fdr_scale_factor)
+    else
+        nothing
+    end
+
+    return (; qval_spline, pep_interp)
+end
+
+"""
+    build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
+    → (global_pg_score_dict, pg_name_to_global_pg_score)
+
+Stream per-file protein group files reading only (protein_name, target, entrap_id, pg_score).
+Returns composite-key dictionaries for protein global score computation.
+
+`n_proteins` is used for `sizehint!()` pre-allocation,
+obtained via `length(getProteins(getSpecLib(search_context)))`.
+"""
+function build_protein_global_score_dicts(
+    pg_refs::Vector{ProteinGroupFileReference},
+    sqrt_n_runs::Int,
+    n_proteins::Int
+)
+    # Pre-allocate accumulation dictionary with known upper bound
+    score_acc = Dict{Tuple{String,Bool,UInt8}, Vector{Float32}}()
+    sizehint!(score_acc, n_proteins)
+
+    for ref in pg_refs
+        tbl = Arrow.Table(file_path(ref))
+        n = length(tbl.protein_name)
+        n == 0 && continue
+        @inbounds for i in 1:n
+            key = (tbl.protein_name[i], tbl.target[i], tbl.entrap_id[i])
+            if !haskey(score_acc, key)
+                score_acc[key] = Float32[]
+            end
+            push!(score_acc[key], tbl.pg_score[i])
+        end
+    end
+
+    # Compute global scores via logodds
+    n_observed = length(score_acc)
+    global_pg_score_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
+    sizehint!(global_pg_score_dict, n_observed)
+    pg_name_to_global_pg_score = Dict{ProteinKey, Float32}()
+    sizehint!(pg_name_to_global_pg_score, n_observed)
+
+    for (key, scores) in score_acc
+        gs = logodds(scores, sqrt_n_runs)
+        global_pg_score_dict[key] = gs
+        pg_name_to_global_pg_score[ProteinKey(key[1], key[2], key[3])] = gs
+    end
+
+    return global_pg_score_dict, pg_name_to_global_pg_score
+end
+
+"""
+    build_protein_global_qval_dict(global_pg_score_dict)
+    → Dict{Tuple{String,Bool,UInt8}, Float32}
+
+Compute protein global q-values directly from score dictionary.
+Replaces get_protein_global_qval_dict (which loaded a full merged DataFrame).
+"""
+function build_protein_global_qval_dict(
+    global_pg_score_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
+)
+    n = length(global_pg_score_dict)
+    keys_vec = collect(keys(global_pg_score_dict))
+    scores = Float32[global_pg_score_dict[k] for k in keys_vec]
+    targets = Bool[k[2] for k in keys_vec]
+
+    # Sort by (score desc, target desc) for proper FDR
+    perm = sortperm(collect(zip(scores, targets)); by=x->(-x[1], -x[2]))
+    permute!(keys_vec, perm)
+    permute!(scores, perm)
+    permute!(targets, perm)
+
+    qvals = Vector{Float32}(undef, n)
+    get_qvalues!(scores, targets, qvals)
+
+    qval_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
+    sizehint!(qval_dict, n)
+    for i in 1:n
+        qval_dict[keys_vec[i]] = qvals[i]
+    end
+    return qval_dict
+end
+
+"""
+    apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference},
                         β_fitted::Vector{Float64}, feature_names::Vector{Symbol})
-    
+
 Apply probit regression scores to protein group files.
 Note: This function is called from utils.jl and needs access to calculate_probit_scores.
 """
