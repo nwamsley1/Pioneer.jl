@@ -156,6 +156,7 @@ end
     include("./UnitTests/testIsotopesJun13.jl")
     include("./UnitTests/uniformBassisCubicSpline.jl")
     include("./UnitTests/test_protein_inference.jl")
+    include("./UnitTests/test_protein_group_peak_area_features.jl")
     include("./UnitTests/ChronologerPrepTests.jl")
     include("./UnitTests/FastaDigestTests.jl")
     include("./UnitTests/FastaEntryConstructorsTests.jl")
