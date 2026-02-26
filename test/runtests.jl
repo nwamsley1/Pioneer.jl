@@ -60,6 +60,7 @@ using Pioneer: getIRT, getPrecCharge, getPrecID, getPrecMZ, getScore  # For Buil
 using Pioneer: is_decoy, SplineDetailedFrag  # For FastaDigestTests.jl and BuildPionLibTest.jl
 using Pioneer: PSMFileReference, TransformPipeline, add_column, sort_by, apply_pipeline!  # For file operations tests
 using Pioneer: getFixedMods!
+using Pioneer: harmonize_charge_state_irts!
 # Note: iso_splines is loaded dynamically via parseIsoXML in RazoQuadModel.jl
 
 # Package dependencies that tests use directly
@@ -160,6 +161,7 @@ end
     include("./UnitTests/FastaDigestTests.jl")
     include("./UnitTests/FastaEntryConstructorsTests.jl")
     include("./UnitTests/BuildPionLibTest.jl")
+    include("./UnitTests/test_charge_state_rt_harmonization.jl")
     # include("./utils/FileOperations/test_file_operations_suite.jl")  # File doesn't exist
     include("./UnitTests/RazoQuadModel.jl")
     

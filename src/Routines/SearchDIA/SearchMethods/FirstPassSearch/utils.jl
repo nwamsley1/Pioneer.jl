@@ -574,6 +574,50 @@ PrecToIrtType = Dictionary{UInt32,
 }
 
 """
+    harmonize_charge_state_irts!(precursor_dict::PrecToIrtType, sequence_lookup)
+
+Ensure all charge states for the same peptide sequence share one iRT anchor.
+
+For each sequence, the winning iRT is taken from the charge state with the highest
+`best_prob` in `precursor_dict`. The selected iRT is then assigned to every
+precursor entry for that sequence.
+"""
+function harmonize_charge_state_irts!(
+    precursor_dict::PrecToIrtType,
+    sequence_lookup
+)
+    seq_to_best = Dict{eltype(sequence_lookup), NamedTuple{(:best_prob, :best_irt), Tuple{Float32, Float32}}}()
+
+    for (prec_id, prec_val) in pairs(precursor_dict)
+        seq = sequence_lookup[prec_id]
+        best_prob = prec_val[:best_prob]
+        best_irt = prec_val[:best_irt]
+
+        if !haskey(seq_to_best, seq) || (best_prob > seq_to_best[seq][:best_prob])
+            seq_to_best[seq] = (best_prob = best_prob, best_irt = best_irt)
+        end
+    end
+
+    for (prec_id, prec_val) in pairs(precursor_dict)
+        seq = sequence_lookup[prec_id]
+        shared_irt = seq_to_best[seq][:best_irt]
+
+        precursor_dict[prec_id] = (
+            best_prob = prec_val[:best_prob],
+            best_ms_file_idx = prec_val[:best_ms_file_idx],
+            best_scan_idx = prec_val[:best_scan_idx],
+            best_irt = shared_irt,
+            mean_irt = prec_val[:mean_irt],
+            var_irt = prec_val[:var_irt],
+            n = prec_val[:n],
+            mz = prec_val[:mz]
+        )
+    end
+
+    return nothing
+end
+
+"""
     create_rt_indices!(search_context::SearchContext, results::FirstPassSearchResults,
                       precursor_dict::PrecToIrtType, params::FirstPassSearchParameters)
 
@@ -618,6 +662,10 @@ function create_rt_indices!(
         tol_values = collect(values(irt_errs))
         @debug_l1 "  Summary: min=$(round(minimum(tol_values), digits=3)), max=$(round(maximum(tol_values), digits=3)), median=$(round(median(tol_values), digits=3)) min"
     end
+
+    # Harmonize iRT across charge states for the same peptide sequence.
+    precursors = getPrecursors(getSpecLib(search_context))
+    harmonize_charge_state_irts!(precursor_dict, getSequence(precursors))
 
     # Create precursor to iRT mapping
     prec_to_irt = map(x -> (irt=x[:best_irt], mz=x[:mz]), 
@@ -788,6 +836,5 @@ function mass_err_ms1(ppm_errs::Vector{Float32},
         (Float32(abs(l_bound)), Float32(abs(r_bound)))
     ), pmp_errs_corrected
 end
-
 
 
