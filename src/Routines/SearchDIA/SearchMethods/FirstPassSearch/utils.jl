@@ -57,6 +57,7 @@ function add_main_search_columns!(psms::DataFrame,
                                 prec_is_decoy::Arrow.BoolVector{Bool},
                                 prec_irt::Arrow.Primitive{U, Vector{U}},
                                 prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}},
+                                library_fragment_lookup::LibraryFragmentLookup,
                                 scan_retention_time::AbstractVector{Float32},
                                 tic::AbstractVector{Float32},
                                 masses::AbstractArray;
@@ -75,6 +76,7 @@ function add_main_search_columns!(psms::DataFrame,
     err_norm = zeros(Float16, N);
     targets = zeros(Bool, N);
     spectrum_peak_count = zeros(UInt32, N);
+    fragment_coverage = zeros(Float32, N);
     scan_idx::Vector{UInt32} = psms[!,:scan_idx]
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
     error::Vector{Float32} = psms[!,:error]
@@ -103,6 +105,8 @@ function add_main_search_columns!(psms::DataFrame,
                 charge[i] = UInt8(prec_charge[prec_idx]);
                 err_norm[i] = min(Float16.(abs(error[i]/total_ions[i])), Float16(6e4))#Float16(min(abs((error[i])/(total_ions[i])), 6e4))
                 spectrum_peak_count[i] = UInt32(length(masses[scan_idx[i]]))
+                n_library_frags = max(length(getPrecFragRange(library_fragment_lookup, prec_idx)), 1)
+                fragment_coverage[i] = Float32(total_ions[i]) / Float32(n_library_frags)
             end
         end
     end
@@ -118,6 +122,7 @@ function add_main_search_columns!(psms::DataFrame,
     psms[!,:Mox] = Mox
     psms[!,:charge] = charge
     psms[!,:spectrum_peak_count] = spectrum_peak_count
+    psms[!,:fragment_coverage] = fragment_coverage
     psms[!,:score] = zeros(Float32, N);
     psms[!,:q_value] = zeros(Float16, N);
     psms[!,:intercept] = ones(Float16, N)
@@ -788,6 +793,5 @@ function mass_err_ms1(ppm_errs::Vector{Float32},
         (Float32(abs(l_bound)), Float32(abs(r_bound)))
     ), pmp_errs_corrected
 end
-
 
 

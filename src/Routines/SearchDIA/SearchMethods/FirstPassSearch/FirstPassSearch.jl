@@ -291,6 +291,7 @@ function process_file!(
             getIsDecoy(getPrecursors(getSpecLib(search_context))),
             getIrt(getPrecursors(getSpecLib(search_context))),
             getCharge(getPrecursors(getSpecLib(search_context))),
+            getFragmentLookupTable(getSpecLib(search_context)),
             getRetentionTimes(spectra),
             getTICs(spectra),
             getMzArrays(spectra)
@@ -314,6 +315,7 @@ function process_file!(
             :charge2, :poisson, :irt_error, 
             :missed_cleavage, 
             :Mox,
+            :fragment_coverage,
             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
             #:b_count, might be good for non-tryptic enzymes
             :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
@@ -343,7 +345,7 @@ function process_file!(
         catch
             column_names = [
             :spectral_contrast, :city_block, :entropy_score, :scribe,
-            :charge2, :poisson, :irt_error, :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
+            :charge2, :poisson, :irt_error, :fragment_coverage, :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
             ]
             score_main_search_psms!(
                 psms,
@@ -619,4 +621,3 @@ function summarize_results!(
         empty!(results.ms1_mass_plots)
     end
 end
-
