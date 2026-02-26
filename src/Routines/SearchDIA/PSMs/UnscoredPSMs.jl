@@ -24,27 +24,19 @@ struct SimpleUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     y_count::UInt8
     p_count::UInt8
     i_count::UInt8
-    matched_rank1::Bool
-    matched_rank2::Bool
-    matched_rank3::Bool
-    matched_rank4::Bool
     intensity::T
     error::T
     precursor_idx::UInt32
 end
 
-SimpleUnscoredPSM{Float32}() = SimpleUnscoredPSM(
-    UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8),
-    false, false, false, false,
-    zero(Float32), zero(Float32), UInt32(0)
-)
+SimpleUnscoredPSM{Float32}() = SimpleUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(Float32), zero(Float32), UInt32(0))
 #LXTandem(::Type{Float64}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float64(0), zero(UInt8), Float64(0), Float64(0), UInt32(0), UInt32(0))
 #SimpleUnscoredPSM() = SimpleUnscoredPSM(Float32)
 
 struct ComplexUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     best_rank::UInt8 #Highest ranking predicted framgent that was observed
     best_rank_iso::UInt8
-    topn::UInt8 #How many of the topN predicted fragments were observed. 
+    topn::UInt8 #How many of the topN predicted fragments were observed.
     topn_iso::UInt8
     longest_y::UInt8
     longest_b::UInt8
@@ -65,7 +57,7 @@ ComplexUnscoredPSM{Float32}() = ComplexUnscoredPSM(UInt8(255), UInt8(255), zero(
 struct Ms1UnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     m0::Bool #Highest ranking predicted framgent that was observed
     n_iso::UInt8
-    big_iso::UInt8 #How many of the topN predicted fragments were observed. 
+    big_iso::UInt8 #How many of the topN predicted fragments were observed.
     m0_error::Union{Missing,T}
     error::T
     precursor_idx::UInt32
@@ -80,10 +72,10 @@ Ms1UnscoredPSM{Float32}() = Ms1UnscoredPSM(
     zero(UInt32)
 )
 
-function ScoreFragmentMatches!(results::Vector{P}, 
-                                IDtoCOL::ArrayDict{UInt32, UInt16}, 
-                                matches::Vector{M}, 
-                                nmatches::Int64, 
+function ScoreFragmentMatches!(results::Vector{P},
+                                IDtoCOL::ArrayDict{UInt32, UInt16},
+                                matches::Vector{M},
+                                nmatches::Int64,
                                 errdist::MassErrorModel,
                                  m_rank::Int64) where {P<:UnscoredPSM,M<:MatchIon}
     for i in range(1, nmatches)
@@ -102,10 +94,6 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
     y_count = score.y_count
     p_count = score.p_count
     i_count = score.i_count
-    matched_rank1 = score.matched_rank1
-    matched_rank2 = score.matched_rank2
-    matched_rank3 = score.matched_rank3
-    matched_rank4 = score.matched_rank4
     intensity = score.intensity
     error = score.error
     precursor_idx = prec_id
@@ -127,13 +115,6 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
             p_count += 1
         end
 
-        # Track whether top-ranked predicted fragments were matched
-        pr = match.predicted_rank
-        matched_rank1 = matched_rank1 | (pr == 0x01)
-        matched_rank2 = matched_rank2 | (pr == 0x02)
-        matched_rank3 = matched_rank3 | (pr == 0x03)
-        matched_rank4 = matched_rank4 | (pr == 0x04)
-
     else
         i_count += 1
     end
@@ -151,10 +132,6 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
         y_count,
         p_count,
         i_count,
-        matched_rank1,
-        matched_rank2,
-        matched_rank3,
-        matched_rank4,
         intensity,
         error,
         precursor_idx
@@ -162,7 +139,7 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
 end
 
 function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::FragmentMatch{T}, errdist::MassErrorModel, m_rank::Int64) where {T<:Real}
-    
+
     best_rank = score.best_rank
     best_rank_iso = score.best_rank_iso
     topn = score.topn
@@ -240,7 +217,7 @@ function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::
 end
 
 function ModifyFeatures!(score::Ms1UnscoredPSM{T},  prec_id::UInt32, match::PrecursorMatch{T}, errdist::MassErrorModel, m_rank::Int64) where {T<:Real}
-    
+
     m0 = score.m0
     n_iso = score.n_iso
     big_iso = score.big_iso
@@ -248,7 +225,7 @@ function ModifyFeatures!(score::Ms1UnscoredPSM{T},  prec_id::UInt32, match::Prec
     error = score.error
     precursor_idx = prec_id
 
-    n_iso += one(UInt8) 
+    n_iso += one(UInt8)
     if match.iso_idx > big_iso
         big_iso = match.iso_idx
     end

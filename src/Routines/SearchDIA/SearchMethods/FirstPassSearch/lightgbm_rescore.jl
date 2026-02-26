@@ -11,10 +11,10 @@ const FIRST_PASS_LGBM_FEATURES = [
     :spectral_contrast, :city_block, :entropy_score, :scribe,
     :charge2, :poisson, :irt_error, :missed_cleavage, :Mox,
     :b_count, :TIC, :y_count, :err_norm, :spectrum_peak_count,
-    #:sp_raw
+    :sp_raw
 ]
 
-const FIRST_PASS_LGBM_DERIVED_FEATURES = Symbol[#=:gof_chi2, :gof_log_pval=#]
+const FIRST_PASS_LGBM_DERIVED_FEATURES = [:gof_chi2, :gof_log_pval]
 
 const FIRST_PASS_LGBM_SAMPLE_SIZE = 1_000_000
 const FIRST_PASS_LGBM_TRAIN_QVAL = 0.01f0
@@ -356,9 +356,9 @@ function rescore_first_pass_with_lightgbm!(
     end
 
     # 3. Compute derived GOF χ² features from sp_raw (needs target & q_value)
-    #if hasproperty(all_psms, :sp_raw)
-    #    _compute_gof_chi2_features!(all_psms)
-    #end
+    if hasproperty(all_psms, :sp_raw)
+        _compute_gof_chi2_features!(all_psms)
+    end
 
     # 4. Determine which features are actually present (base + derived)
     available_features = Symbol[f for f in vcat(FIRST_PASS_LGBM_FEATURES, FIRST_PASS_LGBM_DERIVED_FEATURES)
