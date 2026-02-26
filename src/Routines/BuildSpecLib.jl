@@ -363,13 +363,14 @@ function BuildSpecLib(params_path::String)
             _fragment_scoring = get(_lp, "fragment_scoring", "rank_based")
             _use_lr = _fragment_scoring == "likelihood_ratio"
             _lr_M = Int(get(_lp, "likelihood_ratio_M", 7))
-            _lr_N = Int(get(_lp, "likelihood_ratio_N", 100))
-            _lr_d = Int(get(_lp, "likelihood_ratio_d", 1))
-            _lr_alpha = Float64(get(_lp, "likelihood_ratio_alpha", 0.002))
+            _lr_N = Int(get(_lp, "likelihood_ratio_N", 200))
+            _lr_d = Int(get(_lp, "likelihood_ratio_d", 10))
+            _lr_alpha = Float64(get(_lp, "likelihood_ratio_alpha", 0.01))
             _lr_ref_nce = Float64(get(_lp, "likelihood_ratio_ref_nce", 27.0))
+            _lr_K = Int(get(_lp, "likelihood_ratio_min_fragments", 5))
 
             if _use_lr
-                dual_println("  Using likelihood-ratio fragment scoring (M=$_lr_M, N=$_lr_N, d=$_lr_d, α=$_lr_alpha)")
+                dual_println("  Using likelihood-ratio fragment scoring (M=$_lr_M, N=$_lr_N, d=$_lr_d, α=$_lr_alpha, K=$_lr_K)")
             else
                 dual_println("  Using rank-based fragment scoring")
             end
@@ -399,6 +400,7 @@ function BuildSpecLib(params_path::String)
                 lr_N = _lr_N,
                 lr_d = _lr_d,
                 lr_alpha = _lr_alpha,
+                lr_K = _lr_K,
                 lr_ref_nce = _lr_ref_nce,
                 use_likelihood_ratio = _use_lr
             )          

@@ -1,24 +1,23 @@
 """
-    fragment_likelihood_weights_uint8(intensities; M, N, d, α) → Vector{UInt8}
+    fragment_likelihood_weights_uint8(intensities; M, N, d, α, K) → Vector{UInt8}
 
 Compute likelihood-ratio Δ_i weights for fragments and quantize to UInt8.
 
-Uses global ε-clamped normalization: derives ε = (1-α)/(α·exp(255/M)) so that
-M × Δ_max = 255. M is a config parameter (target fragments per precursor), not
-the actual number of fragments. This preserves absolute score differences between
-precursors — a precursor with all highly-detectable fragments scores near 255,
-while one with weak fragments scores proportionally less.
+Uses per-precursor normalization: scales so sum of all weights = 255, then clamps
+each individual score to `K × floor(255/M) - 1` to ensure no single fragment match
+can pass the search threshold alone.
 
 # Parameters
 - `intensities`: Predicted fragment intensities (any positive reals)
 - `M`: Target number of indexed fragments per precursor (sets UInt8 scale)
-- `N`: Total precursor ion count (~100 default; higher values reduce score differentiation)
+- `N`: Total precursor ion count (higher → more detection power)
 - `d`: Detection limit in ions (1 for Astral, 3-10 for Orbitrap)
-- `α`: Random m/z coincidence probability (~0.002 for ±10 ppm)
+- `α`: Random m/z coincidence probability (~0.01 for ±10 ppm)
+- `K`: Minimum fragment matches required to pass threshold (default 5)
 """
 function fragment_likelihood_weights_uint8(
     intensities::AbstractVector{<:Real};
-    M::Int, N::Int, d::Int, α::Float64
+    M::Int, N::Int, d::Int, α::Float64, K::Int = 5
 )::Vector{UInt8}
     n_frags = length(intensities)
     n_frags == 0 && return UInt8[]
@@ -30,19 +29,25 @@ function fragment_likelihood_weights_uint8(
     end
     p = Float64.(intensities) ./ total
 
-    # Derive ε so M × Δ_max = 255 (M is config param, not n_frags)
-    ε = (1.0 - α) / (α * exp(255.0 / M))
-
+    ε_floor = 1e-300  # avoid log(0)
     Δ = Vector{Float64}(undef, n_frags)
     for i in 1:n_frags
-        p_miss = clamp(cdf(Binomial(N, p[i]), d - 1), ε, 1.0 - 1e-15)
+        p_miss = clamp(cdf(Binomial(N, p[i]), d - 1), ε_floor, 1.0 - ε_floor)
         p_detect = 1.0 - p_miss
-        w_plus = log(p_detect / α)
-        w_minus = log(p_miss / (1.0 - α))
-        Δ[i] = max(0.0, w_plus - w_minus)
+        Δ[i] = max(0.0, log(p_detect / α) - log(p_miss / (1.0 - α)))
     end
 
-    return UInt8[clamp(round(Int, Δ[i]), 1, 255) for i in 1:n_frags]
+    Δ_sum = sum(Δ)
+    if Δ_sum ≤ 0.0
+        return fill(UInt8(max(1, 255 ÷ M)), n_frags)
+    end
+
+    # Per-precursor normalization: scale so sum = 255
+    scale = 255.0 / Δ_sum
+    # Max individual score: ensures no single match passes the threshold
+    max_individual = K * (255 ÷ M) - 1  # e.g., 5*36-1 = 179 for M=7
+
+    return UInt8[clamp(round(Int, Δ[i] * scale), 0, max_individual) for i in 1:n_frags]
 end
 
 """
@@ -72,9 +77,10 @@ function buildPionLib(spec_lib_path::String,
                       rt_bin_tol_ppm::Float32,
                       model_type::KoinaModelType;
                       lr_M::Int = 7,
-                      lr_N::Int = 100,
-                      lr_d::Int = 1,
-                      lr_alpha::Float64 = 0.002,
+                      lr_N::Int = 200,
+                      lr_d::Int = 10,
+                      lr_alpha::Float64 = 0.01,
+                      lr_K::Int = 5,
                       lr_ref_nce::Float64 = 27.0,
                       use_likelihood_ratio::Bool = false
                       )
@@ -83,13 +89,13 @@ function buildPionLib(spec_lib_path::String,
         fragments_table = Arrow.Table(joinpath(spec_lib_path,"fragments_table.arrow"));
         prec_to_frag = Arrow.Table(joinpath(spec_lib_path,"prec_to_frag.arrow"));
         precursors_table = Arrow.Table(joinpath(spec_lib_path,"precursors_table.arrow"));
-    catch e 
+    catch e
         throw(e)
         @error "could not find library..."
         return nothing
     end
 
-    #Simple fragments that go into the fragment index 
+    #Simple fragments that go into the fragment index
     #println("Get index fragments...")
     simple_frags = getSimpleFrags(
         fragments_table[:mz],
@@ -120,7 +126,8 @@ function buildPionLib(spec_lib_path::String,
         lr_M,
         lr_N,
         lr_d,
-        lr_alpha
+        lr_alpha,
+        lr_K
     );
 
     #println("Build fragment index...")
@@ -279,9 +286,10 @@ function buildPionLib(spec_lib_path::String,
                       rt_bin_tol_ppm::Float32,
                       model_type::SplineCoefficientModel;
                       lr_M::Int = 7,
-                      lr_N::Int = 100,
-                      lr_d::Int = 1,
-                      lr_alpha::Float64 = 0.002,
+                      lr_N::Int = 200,
+                      lr_d::Int = 10,
+                      lr_alpha::Float64 = 0.01,
+                      lr_K::Int = 5,
                       lr_ref_nce::Float64 = 27.0,
                       use_likelihood_ratio::Bool = false
                       )
@@ -346,7 +354,8 @@ function buildPionLib(spec_lib_path::String,
         lr_M,
         lr_N,
         lr_d,
-        lr_alpha
+        lr_alpha,
+        lr_K
     );
 
     #println("Build fragment index...")
@@ -651,9 +660,10 @@ function getSimpleFrags(
     rank_to_score::Vector{UInt8},
     frag_intensity::Union{Nothing, AbstractVector{<:Real}} = nothing,
     lr_M::Int = 7,
-    lr_N::Int = 100,
-    lr_d::Int = 1,
-    lr_alpha::Float64 = 0.002
+    lr_N::Int = 200,
+    lr_d::Int = 10,
+    lr_alpha::Float64 = 0.01,
+    lr_K::Int = 5
     )
     #Maximum ranked fragment that can be included in the fragment index
     max_rank_index = length(rank_to_score)
@@ -709,7 +719,7 @@ function getSimpleFrags(
             # Phase 2: compute likelihood ratio weights
             weights = fragment_likelihood_weights_uint8(
                 @view(selected_intensities[1:n_selected]);
-                M=lr_M, N=lr_N, d=lr_d, α=lr_alpha
+                M=lr_M, N=lr_N, d=lr_d, α=lr_alpha, K=lr_K
             )
 
             # Phase 3: create SimpleFrags with LR weights
