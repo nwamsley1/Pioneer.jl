@@ -30,10 +30,6 @@ struct SimpleScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     y_count::UInt8
     p_count::UInt8
     i_count::UInt8
-    matched_rank1::Bool
-    matched_rank2::Bool
-    matched_rank3::Bool
-    matched_rank4::Bool
     #Basic Metrics
     poisson::L
     error::H
@@ -46,6 +42,7 @@ struct SimpleScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     log2_summed_intensity::L
     entropy_score::L
     percent_theoretical_ignored::L
+    sp_raw::L  # log2(1 + chi-squared GOF statistic)
 
     #Non-scores/Labels
     precursor_idx::UInt32
@@ -59,7 +56,7 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     #Ion Count Statistics
     best_rank::UInt8 #Highest ranking predicted framgent that was observed
     best_rank_iso::UInt8
-    topn::UInt8 #How many of the topN predicted fragments were observed. 
+    topn::UInt8 #How many of the topN predicted fragments were observed.
     topn_iso::UInt8
     longest_y::UInt8
     longest_b::UInt8
@@ -69,7 +66,7 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     non_cannonical_count::UInt8
     isotope_count::UInt8
 
-    #Basic Metrics 
+    #Basic Metrics
     poisson::L
     #hyperscore::L
     log2_intensity_explained::L
@@ -80,9 +77,9 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     fitted_spectral_contrast::L
     gof::L
     max_matched_residual::L
-    max_unmatched_residual::L 
-    fitted_manhattan_distance::L 
-    matched_ratio::L 
+    max_unmatched_residual::L
+    fitted_manhattan_distance::L
+    matched_ratio::L
     percent_theoretical_ignored::L
     scribe::L
     #entropy_score::L
@@ -100,7 +97,7 @@ struct Ms1ScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     m0::Bool #Highest ranking predicted framgent that was observed
     n_iso::UInt8
-    big_iso::UInt8 #How many of the topN predicted fragments were observed. 
+    big_iso::UInt8 #How many of the topN predicted fragments were observed.
     m0_error::Union{Missing,L}
     error::L
 
@@ -109,9 +106,9 @@ struct Ms1ScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     fitted_spectral_contrast::L
     gof::L
     max_matched_residual::L
-    max_unmatched_residual::L 
-    fitted_manhattan_distance::L 
-    matched_ratio::L 
+    max_unmatched_residual::L
+    fitted_manhattan_distance::L
+    matched_ratio::L
     #entropy_score::L
     weight::H
 
@@ -133,8 +130,8 @@ function growScoredPSMs!(scored_psms::Vector{Ms1ScoredPSM{H,L}}, block_size::Int
     scored_psms = append!(scored_psms, Vector{Ms1ScoredPSM{H,L}}(undef, block_size))
 end
 
-function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}}, 
-                unscored_PSMs::Vector{SimpleUnscoredPSM{H}}, 
+function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
+                unscored_PSMs::Vector{SimpleUnscoredPSM{H}},
                 spectral_scores::Vector{SpectralScoresSimple{L}},
                 IDtoCOL::ArrayDict{UInt32, UInt16},
                 expected_matches::Float64,
@@ -179,7 +176,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             skipped += 1
             continue
         end
-        
+
         if start_idx + i - skipped > length(scored_psms)
             growScoredPSMs!(scored_psms, block_size);
         end
@@ -196,10 +193,6 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             unscored_PSMs[i].y_count,
             unscored_PSMs[i].p_count,
             unscored_PSMs[i].i_count,
-            unscored_PSMs[i].matched_rank1,
-            unscored_PSMs[i].matched_rank2,
-            unscored_PSMs[i].matched_rank3,
-            unscored_PSMs[i].matched_rank4,
 
             Float16(getPoisson(expected_matches, total_ions)),
             unscored_PSMs[i].error,
@@ -212,6 +205,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             Float16(log2(unscored_PSMs[i].intensity)),
             spectral_scores[scores_idx].entropy_score,
             spectral_scores[scores_idx].percent_theoretical_ignored,
+            spectral_scores[scores_idx].sp_raw,
 
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(scan_idx)
@@ -222,10 +216,10 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
     return last_val
 end
 
-function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}}, 
-                unscored_PSMs::Vector{ComplexUnscoredPSM{H}}, 
+function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
+                unscored_PSMs::Vector{ComplexUnscoredPSM{H}},
                 spectral_scores::Vector{SpectralScoresComplex{L}},
-                weight::Vector{H}, 
+                weight::Vector{H},
                 IDtoCOL::ArrayDict{UInt32, UInt16},
                 cycle_idx::Int64,
                 expected_matches::Float64,
@@ -249,8 +243,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         function logfac(N)
             N*log(N) - N + (log(N*(1 + 4*N*(1 + 2*N))))/6 + log(π)/2
         end
-        (abs(logfac(max(1, score.b_count))) + 
-        abs(logfac(max(1, score.y_count))) + 
+        (abs(logfac(max(1, score.b_count))) +
+        abs(logfac(max(1, score.y_count))) +
         max(log(score.y_int), 0) + max(log(score.b_int), 0)
         )
     end
@@ -264,7 +258,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
     start_idx = last_val
     skipped = 0
     for i in range(1, n_vals)
-        
+
         passing_filter = (
            (unscored_PSMs[i].y_count) >= min_y_count
         )&(
@@ -278,7 +272,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         )&(
             (unscored_PSMs[i].topn >= min_topn) |  (unscored_PSMs[i].topn_iso >= min_topn)
         )&(
-            (UInt8(unscored_PSMs[i].best_rank) <= max_best_rank) | (UInt8(unscored_PSMs[i].best_rank_iso) <= max_best_rank) 
+            (UInt8(unscored_PSMs[i].best_rank) <= max_best_rank) | (UInt8(unscored_PSMs[i].best_rank_iso) <= max_best_rank)
         )
         #passing_filter = true
         if !passing_filter #Skip this scan
@@ -310,7 +304,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             #Float16(HyperScore(unscored_PSMs[i])),
             Float16(log2((unscored_PSMs[i].b_int + unscored_PSMs[i].y_int)/spectrum_intensity)),
             Float16(log2(unscored_PSMs[i].error)),
-            
+
             spectral_scores[scores_idx].spectral_contrast,
             spectral_scores[scores_idx].fitted_spectral_contrast,
             spectral_scores[scores_idx].gof,
@@ -323,7 +317,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             #spectral_scores[scores_idx].entropy_score,
             weight[scores_idx],
 
-            
+
             UInt32(unscored_PSMs[i].precursor_idx),
             #UInt32(unscored_PSMs[i].ms_file_idx),
             UInt32(cycle_idx),
@@ -334,10 +328,10 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
     return last_val
 end
 
-function Score!(scored_psms::Vector{Ms1ScoredPSM{H, L}}, 
-                unscored_PSMs::Vector{Ms1UnscoredPSM{H}}, 
+function Score!(scored_psms::Vector{Ms1ScoredPSM{H, L}},
+                unscored_PSMs::Vector{Ms1UnscoredPSM{H}},
                 spectral_scores::Vector{SpectralScoresMs1{L}},
-                weight::Vector{H}, 
+                weight::Vector{H},
                 IDtoCOL::ArrayDict{UInt32, UInt16},
                 cycle_idx::Int64,
                 last_val::Int64,
@@ -349,7 +343,7 @@ function Score!(scored_psms::Vector{Ms1ScoredPSM{H, L}},
     start_idx = last_val
     skipped = 0
     for i in range(1, n_vals)
-        
+
         passing_filter = (
            (unscored_PSMs[i].m0) == true
         )&(
@@ -374,7 +368,7 @@ function Score!(scored_psms::Vector{Ms1ScoredPSM{H, L}},
             unscored_PSMs[i].big_iso,
             L(coalesce(unscored_PSMs[i].m0_error, zero(H))),
             Float16(log2(unscored_PSMs[i].error + 1e-6)),
-            
+
             spectral_scores[scores_idx].spectral_contrast,
             spectral_scores[scores_idx].fitted_spectral_contrast,
             spectral_scores[scores_idx].gof,
@@ -385,7 +379,7 @@ function Score!(scored_psms::Vector{Ms1ScoredPSM{H, L}},
             #spectral_scores[scores_idx].entropy_score,
             weight[scores_idx],
 
-            
+
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(cycle_idx),
             UInt32(scan_idx)

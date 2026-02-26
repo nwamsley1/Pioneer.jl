@@ -102,7 +102,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     spec_order::Set{Int64}
     match_between_runs::Bool
     relative_improvement_threshold::Float32
-    
+
     # Scoring parameters
     n_train_rounds_probit::Int64
     max_iter_probit::Int64
@@ -132,7 +132,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
         # Determine precursor estimation strategy
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        
+
         new{typeof(prec_estimation)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             0.0f0,  # No transmission threshold for first pass
@@ -158,7 +158,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Set{Int64}([2]),
             global_params.match_between_runs,
             Float32(frag_params.relative_improvement_threshold),
-            
+
             Int64(score_params.n_train_rounds),
             Int64(score_params.max_iterations),
             Float32(score_params.max_q_value_probit_rescore),
@@ -216,7 +216,7 @@ Process a single MS file in the first pass search.
 """
 function process_file!(
     results::FirstPassSearchResults,
-    params::P, 
+    params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
@@ -263,7 +263,7 @@ function process_file!(
         rt_model = getRtIrtModel(search_context, ms_file_idx)
         # Add columns
         add_psm_columns!(psms, spectra, search_context, rt_model, ms_file_idx)
-        
+
         # Score PSMs
         score_psms!(psms, params, search_context)
         # Get best PSMs
@@ -318,7 +318,6 @@ function process_file!(
             :Mox,
             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
             :b_count,
-            :matched_rank1, :matched_rank2, :matched_rank3, :matched_rank4,
             :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
         ]
 
@@ -328,9 +327,11 @@ function process_file!(
         end
 
 
-        # Select scoring columns
-        select!(psms, vcat(column_names, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
-            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target]))
+        # Select scoring columns — preserve LightGBM features not used by probit
+        lgbm_preserve = Symbol[f for f in FIRST_PASS_LGBM_FEATURES if hasproperty(psms, f)]
+        select!(psms, unique(vcat(column_names, lgbm_preserve,
+            [:ms_file_idx, :score, :precursor_idx, :scan_idx,
+             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target])))
         sort!(psms, [:rt, :precursor_idx])
         # Score PSMs
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
@@ -369,7 +370,7 @@ function process_file!(
         psms = perform_library_search(spectra, search_context, params, ms_file_idx)
         results.psms[] = process_psms!(psms, spectra, search_context, params, ms_file_idx)
 
-        temp_psms = results.psms[] 
+        temp_psms = results.psms[]
         temp_psms = temp_psms[temp_psms[!,:q_value].<=0.001,:]
 
         # Check if we have any PSMs left after filtering
@@ -440,7 +441,7 @@ function process_file!(
             @user_error "Full error details:\n" * sprint(showerror, e, bt)
         catch
         end
-        
+
         # Create an empty but properly structured DataFrame to avoid downstream errors
         empty_psms = DataFrame(
             ms_file_idx = UInt32[],
@@ -457,7 +458,7 @@ function process_file!(
             target = Bool[]
         )
         results.psms[] = empty_psms
-        
+
         # Set default mass error model
         results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
         #rethrow(e)
@@ -501,7 +502,7 @@ function process_search_results!(
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 
     #####
-    #MS1 mass tolerance 
+    #MS1 mass tolerance
     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     # Generate mass error plot
@@ -527,7 +528,7 @@ function summarize_results!(
     params::P,
     search_context::SearchContext
 ) where {P<:FirstPassSearchParameters}
-    
+
     """
     Process precursors and calculate iRT errors.
     """
@@ -541,16 +542,16 @@ function summarize_results!(
         valid_indices = get_valid_file_indices(search_context)
         all_psms_paths = getFirstPassPsms(getMSData(search_context))
         valid_psms_paths = [all_psms_paths[i] for i in valid_indices]
-        
+
         # Create RT-IRT map for valid files only
         all_rt_irt = getRtIrtModel(search_context)
         valid_rt_irt = Dict{Int64, RtConversionModel}(i => all_rt_irt[i] for i in valid_indices if haskey(all_rt_irt, i))
-        
+
         if isempty(valid_psms_paths)
             @user_warn "No valid files for cross-run precursor analysis"
             return Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}()
         end
-        
+
         # Get best precursors from valid files only
         precursors = getPrecursors(getSpecLib(search_context))
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
@@ -599,11 +600,11 @@ function summarize_results!(
     if false==true#params.match_between_runs==true
         #######
         #Each target has a corresponding decoy and vice versa
-        #Add the complement targets/decoys to the precursor dict 
+        #Add the complement targets/decoys to the precursor dict
         #if the `sibling_peptide_scores` parameter is set to true
         #In the target/decoy scoring (see SearchMethods/ScoringSearch)
         #the maximum score for each target/decoy pair is shared accross runs
-        #in an iterative training scheme. 
+        #in an iterative training scheme.
         precursors = getPrecursors(getSpecLib(search_context))
         i = 1
         for (pid, val) in pairs(precursor_dict)
@@ -622,7 +623,7 @@ function summarize_results!(
             else
                 setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[partner_pid])
             end
-            
+
         end
     else
         for (pid, val) in pairs(precursor_dict)
@@ -633,7 +634,7 @@ function summarize_results!(
     setPrecursorDict!(search_context, precursor_dict)
     # Calculate RT indices
     create_rt_indices!(search_context, results, precursor_dict, params)
-    
+
     # Merge mass error plots
     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
     output_path = joinpath(ms1_mass_error_folder, "ms1_mass_error_plots.pdf")
@@ -650,4 +651,3 @@ function summarize_results!(
         empty!(results.ms1_mass_plots)
     end
 end
-

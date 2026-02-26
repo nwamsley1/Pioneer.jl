@@ -10,9 +10,11 @@ scores and feed into `get_best_precursors_accross_runs`.
 const FIRST_PASS_LGBM_FEATURES = [
     :spectral_contrast, :city_block, :entropy_score, :scribe,
     :charge2, :poisson, :irt_error, :missed_cleavage, :Mox,
-    :b_count, :matched_rank1, :matched_rank2, :matched_rank3, :matched_rank4,
-    :TIC, :y_count, :err_norm, :spectrum_peak_count
+    :b_count, :TIC, :y_count, :err_norm, :spectrum_peak_count,
+    #:sp_raw
 ]
+
+const FIRST_PASS_LGBM_DERIVED_FEATURES = Symbol[#=:gof_chi2, :gof_log_pval=#]
 
 const FIRST_PASS_LGBM_SAMPLE_SIZE = 1_000_000
 const FIRST_PASS_LGBM_TRAIN_QVAL = 0.01f0
@@ -237,6 +239,75 @@ function _select_first_pass_training_data(
 end
 
 """
+    _compute_gof_chi2_features!(all_psms)
+
+Derive χ² goodness-of-fit features from the stored `sp_raw` column.
+
+1. Recover S_p from log2 storage: S_p = 2^sp_raw - 1
+2. Compute degrees of freedom: df = max(b_count + y_count - 1, 1)
+3. Estimate proportionality constant ĉ via robust median on high-confidence targets:
+   W_p = S_p / χ²_median(df), where χ²_median(k) ≈ k*(1-2/(9k))³
+   ĉ = median(W_p)
+4. For all PSMs: gof_chi2 = S_p / ĉ
+5. gof_log_pval = log10(ccdf(Chisq(df), gof_chi2)), clamped at -30
+"""
+function _compute_gof_chi2_features!(all_psms::DataFrame)
+    n = nrow(all_psms)
+
+    # Recover S_p from log2(1 + S_p) storage
+    sp_raw_col = Float64.(all_psms.sp_raw)
+    s_p = @. exp2(sp_raw_col) - 1.0
+
+    # Degrees of freedom per PSM
+    df_vec = Int[max(Int(all_psms.b_count[i]) + Int(all_psms.y_count[i]) - 1, 1) for i in 1:n]
+
+    # χ² median approximation: median(χ²_k) ≈ k*(1 - 2/(9k))³
+    function chi2_median_approx(k::Int)
+        kf = Float64(k)
+        kf * (1.0 - 2.0 / (9.0 * kf))^3
+    end
+
+    # Estimate ĉ from high-confidence targets (q ≤ 0.01)
+    good_mask = all_psms.target .& (Float32.(all_psms.q_value) .<= FIRST_PASS_LGBM_TRAIN_QVAL)
+    good_idx = findall(good_mask)
+
+    if length(good_idx) < 50
+        @user_warn "GOF χ² features: only $(length(good_idx)) targets at q≤0.01, skipping"
+        all_psms[!, :gof_chi2] = zeros(Float32, n)
+        all_psms[!, :gof_log_pval] = zeros(Float32, n)
+        return
+    end
+
+    # W_p = S_p / χ²_median(df) for good targets
+    w_p = Float64[s_p[i] / max(chi2_median_approx(df_vec[i]), 1e-10) for i in good_idx]
+    c_hat = median(w_p)
+    c_hat = max(c_hat, 1e-10)  # safety floor
+
+    @user_info "  GOF χ² features: ĉ = $(round(c_hat; digits=4)) from $(length(good_idx)) targets"
+
+    # Compute features for all PSMs
+    gof_chi2 = Vector{Float32}(undef, n)
+    gof_log_pval = Vector{Float32}(undef, n)
+
+    for i in 1:n
+        chi2_val = Float64(s_p[i] / c_hat)
+        gof_chi2[i] = Float32(chi2_val)
+
+        # log10(ccdf(Chisq(df), chi2_val)), clamped at -30
+        df_i = df_vec[i]
+        if chi2_val <= 0.0 || df_i < 1
+            gof_log_pval[i] = 0.0f0
+        else
+            pval = ccdf(Chisq(df_i), chi2_val)
+            gof_log_pval[i] = Float32(max(log10(max(pval, 1e-30)), -30.0))
+        end
+    end
+
+    all_psms[!, :gof_chi2] = gof_chi2
+    all_psms[!, :gof_log_pval] = gof_log_pval
+end
+
+"""
     rescore_first_pass_with_lightgbm!(search_context, fdr_scale_factor)
 
 Read all first-pass Arrow files, pool PSMs, train 2-fold CV LightGBM models,
@@ -274,15 +345,7 @@ function rescore_first_pass_with_lightgbm!(
     all_psms = vcat(dfs...; cols=:intersect)
     dfs = nothing # free memory
 
-    # 2. Determine which features are actually present
-    available_features = Symbol[f for f in FIRST_PASS_LGBM_FEATURES if hasproperty(all_psms, f)]
-
-    if length(available_features) < 3
-        @user_warn "LightGBM rescore: only $(length(available_features)) features available, skipping"
-        return
-    end
-
-    # 3. Add cv_fold column from library
+    # 2. Add cv_fold column from library
     precursors = getPrecursors(getSpecLib(search_context))
     all_psms[!, :cv_fold] = UInt8[getCvFold(precursors, pid) for pid in all_psms.precursor_idx]
 
@@ -290,6 +353,20 @@ function rescore_first_pass_with_lightgbm!(
     if !hasproperty(all_psms, :target)
         is_decoy = getIsDecoy(precursors)
         all_psms[!, :target] = Bool[!is_decoy[pid] for pid in all_psms.precursor_idx]
+    end
+
+    # 3. Compute derived GOF χ² features from sp_raw (needs target & q_value)
+    #if hasproperty(all_psms, :sp_raw)
+    #    _compute_gof_chi2_features!(all_psms)
+    #end
+
+    # 4. Determine which features are actually present (base + derived)
+    available_features = Symbol[f for f in vcat(FIRST_PASS_LGBM_FEATURES, FIRST_PASS_LGBM_DERIVED_FEATURES)
+                                if hasproperty(all_psms, f)]
+
+    if length(available_features) < 3
+        @user_warn "LightGBM rescore: only $(length(available_features)) features available, skipping"
+        return
     end
 
     n_total = nrow(all_psms)
@@ -303,7 +380,7 @@ function rescore_first_pass_with_lightgbm!(
         all_psms, all_psms_paths, valid_indices,
         prec_is_decoy, fdr_scale_factor, "probit")
 
-    # 4. Sample for training (keep all for prediction)
+    # 5. Sample for training (keep all for prediction)
     n_sample = min(FIRST_PASS_LGBM_SAMPLE_SIZE, n_total)
     if n_sample < n_total
         sample_idx = sort(randperm(n_total)[1:n_sample])
@@ -312,7 +389,7 @@ function rescore_first_pass_with_lightgbm!(
         sample_psms = all_psms
     end
 
-    # 5. Cross-validated training & prediction (2-fold CV, iterative with negative mining)
+    # 6. Cross-validated training & prediction (2-fold CV, iterative with negative mining)
     new_probs = Vector{Float32}(undef, n_total)
     fill!(new_probs, 0.5f0)
 
@@ -401,7 +478,7 @@ function rescore_first_pass_with_lightgbm!(
     # Log feature importances (averaged across folds)
     _log_feature_importances(trained_models, available_features)
 
-    # 6. Update scores: replace prob, recompute q_value and PEP
+    # 7. Update scores: replace prob, recompute q_value and PEP
     all_psms[!, :prob] = new_probs
 
     # Recompute q-values (must stay Float16 for downstream readPSMs! compatibility)
@@ -422,8 +499,12 @@ function rescore_first_pass_with_lightgbm!(
         all_psms, all_psms_paths, valid_indices,
         prec_is_decoy, fdr_scale_factor, "LightGBM")
 
-    # 7. Write back to per-file Arrow files
-    select!(all_psms, Not(:cv_fold))
+    # 8. Write back to per-file Arrow files — drop cv_fold and derived GOF columns
+    drop_cols = Symbol[:cv_fold]
+    for f in FIRST_PASS_LGBM_DERIVED_FEATURES
+        hasproperty(all_psms, f) && push!(drop_cols, f)
+    end
+    select!(all_psms, Not(drop_cols))
 
     grouped = groupby(all_psms, :ms_file_idx)
     for (key, file_psms) in pairs(grouped)

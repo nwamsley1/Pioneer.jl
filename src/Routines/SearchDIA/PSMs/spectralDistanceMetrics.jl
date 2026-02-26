@@ -30,13 +30,14 @@ struct SpectralScoresComplex{T<:AbstractFloat} <: SpectralScores{T}
     #entropy_score::T
 end
 
-struct SpectralScoresSimple{T<:AbstractFloat} <: SpectralScores{T} 
+struct SpectralScoresSimple{T<:AbstractFloat} <: SpectralScores{T}
     scribe::T
     city_block::T
     spectral_contrast::T
     matched_ratio::T
     entropy_score::T
     percent_theoretical_ignored::T
+    sp_raw::T  # log2(1 + chi-squared GOF statistic S_p)
 end
 
 struct SpectralScoresMs1{T<:AbstractFloat} <: SpectralScores{T}
@@ -70,12 +71,12 @@ function getDistanceMetrics(H::SparseArray{Ti,T},
             tot_pred_signal += H.nzval[i]
         end
 
-        scribe_best, city_best, cosine_similarity_best, matched_ratio_best, ent_best, next_worst_pos, next_worst_pred_signal, num_matching_peaks = computeMetricsFor(H, col, included)
-        
+        scribe_best, city_best, cosine_similarity_best, matched_ratio_best, ent_best, next_worst_pos, next_worst_pred_signal, num_matching_peaks, sp_raw_best = computeMetricsFor(H, col, included)
+
         percent_theoretical_ignored = 0.0f0
         while (num_matching_peaks > min_frags) && (next_worst_pos > 0)
             deleteat!(included, next_worst_pos)
-            scribe, city, cosine_similarity, matched_ratio, ent, worst_pos, worst_pred_signal, num_matching_peaks = computeMetricsFor(H, col, included)
+            scribe, city, cosine_similarity, matched_ratio, ent, worst_pos, worst_pred_signal, num_matching_peaks, sp_raw_val = computeMetricsFor(H, col, included)
 
             # If ignoring the worst peak doesn't increase the scribe score enough, then we're done
             if (scribe < (scribe_best * relative_improvement_threshold))
@@ -90,6 +91,7 @@ function getDistanceMetrics(H::SparseArray{Ti,T},
             cosine_similarity_best = cosine_similarity
             matched_ratio_best = matched_ratio
             ent_best = ent
+            sp_raw_best = sp_raw_val
             next_worst_pos = worst_pos
             next_worst_pred_signal = worst_pred_signal
         end
@@ -100,7 +102,8 @@ function getDistanceMetrics(H::SparseArray{Ti,T},
                     Float16(cosine_similarity_best),
                     Float16(matched_ratio_best),
                     Float16(ent_best),
-                    Float16(percent_theoretical_ignored / tot_pred_signal)
+                    Float16(percent_theoretical_ignored / tot_pred_signal),
+                    Float16(sp_raw_best)
                 )
 
     end
@@ -149,6 +152,8 @@ function computeMetricsFor(H::SparseArray{Ti,T}, col, included_indices) where {T
     matched_sum = zero(T)
     unmatched_sum = zero(T)
 
+    sp_raw = zero(T)
+
     N = 0
     @inbounds @fastmath for (local_pos, i) in enumerate(included_indices)
         if iszero(H.isotope[i])==false
@@ -171,9 +176,17 @@ function computeMetricsFor(H::SparseArray{Ti,T}, col, included_indices) where {T
         h_val_v2 = H.nzval[i] / total_h
         x_val_v2 = H.x[i] / total_x
 
+        # Chi-squared GOF statistic: S_p = Σ (y_i - y_tot * p'_i)^2 / (y_tot * p'_i)
+        if H.x[i] > 0
+            expected_i = total_x * h_val_v2
+            if expected_i > eps(T)
+                sp_raw += (H.x[i] - expected_i)^2 / expected_i
+            end
+        end
+
         h2_norm_v2 += h_val_v2^2
         x2_norm_v2 += x_val_v2^2
-        
+
         dot_product += h_val_v2 * x_val_v2
 
         diff = x_val_v2 - h_val_v2 # only look for positive difference because it implies there's interference
@@ -210,7 +223,10 @@ function computeMetricsFor(H::SparseArray{Ti,T}, col, included_indices) where {T
     ent_val = -1.0 * getEntropy(H, col, included_indices)
     worst_intensity_ignored = worst_idx > 0 ? H.nzval[worst_idx] : 0.0
 
-    return (scribe_score, city_block_dist, cosine_similarity, matched_ratio, ent_val, worst_pos, worst_intensity_ignored, num_matching_peaks)
+    # Compress S_p for Float16 storage
+    sp_raw = log2(one(T) + sp_raw)
+
+    return (scribe_score, city_block_dist, cosine_similarity, matched_ratio, ent_val, worst_pos, worst_intensity_ignored, num_matching_peaks, sp_raw)
 end
 
 function getDistanceMetrics(w::Vector{T},
