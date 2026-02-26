@@ -231,6 +231,197 @@ function add_quantification_flag(inference_result::InferenceResult)
     return desc => op
 end
 
+function _median_abs_deviation(values::Vector{Float64})::Float64
+    isempty(values) && return 0.0
+    med = Statistics.median(values)
+    abs_devs = Vector{Float64}(undef, length(values))
+    @inbounds for i in eachindex(values)
+        abs_devs[i] = abs(values[i] - med)
+    end
+    return Statistics.median(abs_devs)
+end
+
+"""
+    estimate_peak_area_detection_model(df::DataFrame)
+
+Estimate per-file peak-area detection calibration for protein coverage surprise features.
+Uses unique inferred peptides with valid positive peak_area values.
+"""
+function estimate_peak_area_detection_model(df::DataFrame)
+    default_model = (
+        log_threshold = 0.0f0,
+        sigma_log = 1.0f0,
+        n_unique_peptides = 0,
+        used_fallback = true
+    )
+
+    required_cols = (:use_for_protein_quant, :sequence, :inferred_protein_group, :peak_area)
+    if any(col -> !hasproperty(df, col), required_cols)
+        return default_model
+    end
+
+    n_rows = nrow(df)
+    if n_rows == 0
+        return default_model
+    end
+
+    best_area_by_protein_peptide = Dict{Tuple{String, String}, Float64}()
+
+    for i in 1:n_rows
+        if df.use_for_protein_quant[i] != true
+            continue
+        end
+
+        protein_name = df.inferred_protein_group[i]
+        if ismissing(protein_name)
+            continue
+        end
+
+        area = df.peak_area[i]
+        if ismissing(area)
+            continue
+        end
+
+        area_val = Float64(area)
+        if !isfinite(area_val) || area_val <= 0.0
+            continue
+        end
+
+        key = (String(protein_name), String(df.sequence[i]))
+        if haskey(best_area_by_protein_peptide, key)
+            if area_val > best_area_by_protein_peptide[key]
+                best_area_by_protein_peptide[key] = area_val
+            end
+        else
+            best_area_by_protein_peptide[key] = area_val
+        end
+    end
+
+    if isempty(best_area_by_protein_peptide)
+        return default_model
+    end
+
+    log_areas = Float64[log(area) for area in values(best_area_by_protein_peptide)]
+    log_threshold = Float64(Statistics.quantile(log_areas, 0.05))
+
+    protein_to_log_areas = Dict{String, Vector{Float64}}()
+    for ((protein_name, _), area) in best_area_by_protein_peptide
+        push!(get!(protein_to_log_areas, protein_name, Float64[]), log(area))
+    end
+
+    pooled_residuals = Float64[]
+    for log_vals in values(protein_to_log_areas)
+        if length(log_vals) < 2
+            continue
+        end
+        med = Statistics.median(log_vals)
+        for v in log_vals
+            push!(pooled_residuals, v - med)
+        end
+    end
+
+    sigma_log = 1.0
+    used_fallback = true
+    if !isempty(pooled_residuals)
+        mad_val = _median_abs_deviation(pooled_residuals)
+        if isfinite(mad_val) && mad_val > 0.0
+            sigma_log = clamp(mad_val / 0.6744897501960817, 0.25, 2.5)
+            used_fallback = false
+        end
+    end
+
+    return (
+        log_threshold = Float32(log_threshold),
+        sigma_log = Float32(sigma_log),
+        n_unique_peptides = length(log_areas),
+        used_fallback = used_fallback
+    )
+end
+
+"""
+    add_peak_area_observation_features(calibration)
+
+Add peak-area-based protein coverage surprise features using a log-normal ionization model.
+"""
+function add_peak_area_observation_features(calibration::NamedTuple)
+    desc = "add_peak_area_observation_features"
+
+    op = function(df)
+        if !hasproperty(df, :protein_name)
+            return df
+        end
+
+        n_rows = nrow(df)
+        coverage_miss_pval = Vector{Float32}(undef, n_rows)
+        coverage_miss_surprisal = Vector{Float32}(undef, n_rows)
+        coverage_deficit_z = Vector{Float32}(undef, n_rows)
+        top_area_vs_threshold_z = Vector{Float32}(undef, n_rows)
+
+        log_threshold = Float64(hasproperty(calibration, :log_threshold) ? calibration.log_threshold : 0.0f0)
+        sigma_log = Float64(hasproperty(calibration, :sigma_log) ? calibration.sigma_log : 1.0f0)
+        sigma_log = (isfinite(sigma_log) && sigma_log > 0.0) ? sigma_log : 1.0
+        std_normal = Distributions.Normal()
+
+        has_top_area_col = hasproperty(df, :top_pep_peak_area)
+        has_valid_area_col = hasproperty(df, :has_valid_peak_area)
+        has_n_possible_col = hasproperty(df, :n_possible_peptides)
+        has_n_peptides_col = hasproperty(df, :n_peptides)
+
+        for i in 1:n_rows
+            valid_top_area = has_top_area_col && has_valid_area_col && df.has_valid_peak_area[i] == true
+
+            top_area = if valid_top_area
+                Float64(df.top_pep_peak_area[i])
+            else
+                0.0
+            end
+
+            N_total = if has_n_possible_col
+                max(Int(df.n_possible_peptides[i]), 0)
+            else
+                0
+            end
+            k_obs = if has_n_peptides_col
+                max(Int(df.n_peptides[i]), 0)
+            else
+                0
+            end
+
+            N_add = max(N_total - 1, 0)
+            k_add = max(k_obs - 1, 0)
+
+            if !(valid_top_area && isfinite(top_area) && top_area > 0.0) || N_add == 0
+                coverage_miss_pval[i] = 1.0f0
+                coverage_miss_surprisal[i] = 0.0f0
+                coverage_deficit_z[i] = 0.0f0
+                top_area_vs_threshold_z[i] = 0.0f0
+                continue
+            end
+
+            z_norm = (log(top_area) - log_threshold) / sigma_log
+            z_pair = z_norm / sqrt(2.0)
+            p_other = clamp(Distributions.cdf(std_normal, z_pair), 1e-6, 1.0 - 1e-6)
+
+            pval = Distributions.cdf(Distributions.Binomial(N_add, p_other), min(k_add, N_add))
+            expected = N_add * p_other
+            variance = (N_add * p_other * (1.0 - p_other)) + 1e-6
+
+            coverage_miss_pval[i] = Float32(pval)
+            coverage_miss_surprisal[i] = Float32(-log10(max(pval, 1e-12)))
+            coverage_deficit_z[i] = Float32((k_add - expected) / sqrt(variance))
+            top_area_vs_threshold_z[i] = Float32(z_norm)
+        end
+
+        df.coverage_miss_pval = coverage_miss_pval
+        df.coverage_miss_surprisal = coverage_miss_surprisal
+        df.coverage_deficit_z = coverage_deficit_z
+        df.top_area_vs_threshold_z = top_area_vs_threshold_z
+        return df
+    end
+
+    return desc => op
+end
+
 """
     group_psms_by_protein(df::DataFrame)
 
@@ -247,7 +438,9 @@ function group_psms_by_protein(df::DataFrame)
             n_peptides = Int64[],
             peptide_list = String[],
             pg_score = Float32[],
-            any_common_peps = Bool[]
+            any_common_peps = Bool[],
+            top_pep_peak_area = Float32[],
+            has_valid_peak_area = Bool[]
         )
     end
 
@@ -257,25 +450,27 @@ function group_psms_by_protein(df::DataFrame)
     else
         prob_col = :prec_prob
     end
+    has_peak_area = hasproperty(df, :peak_area)
 
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
     
     # Aggregate to protein groups
     protein_groups = combine(grouped) do gdf
+        quant_mask = gdf.use_for_protein_quant .== true
         # Get unique peptides that are used for quantification
-        quant_peptides = unique(gdf[gdf.use_for_protein_quant .== true, :sequence])
+        quant_peptides = unique(gdf[quant_mask, :sequence])
         n_peptides = length(quant_peptides)
         
         # Calculate initial protein score (log-sum)
-        peptide_probs = gdf[gdf.use_for_protein_quant .== true, prob_col]
+        peptide_probs = gdf[quant_mask, prob_col]
         if isempty(peptide_probs)
             pg_score = 0.0f0
         else
             # Use best probability per peptide
             unique_pep_probs = Float32[]
             for pep in quant_peptides
-                pep_mask = (gdf.sequence .== pep) .& (gdf.use_for_protein_quant .== true)
+                pep_mask = (gdf.sequence .== pep) .& quant_mask
                 if any(pep_mask)
                     push!(unique_pep_probs, maximum(gdf[pep_mask, prob_col]))
                 end
@@ -283,8 +478,40 @@ function group_psms_by_protein(df::DataFrame)
             pg_score = -sum(log.(1.0f0 .- unique_pep_probs))
         end        
 
+        top_pep_peak_area = 0.0f0
+        has_valid_peak_area = false
+        if has_peak_area
+            best_peak_area_by_peptide = Dict{String, Float32}()
+            for i in 1:nrow(gdf)
+                if quant_mask[i] != true
+                    continue
+                end
+                area = gdf.peak_area[i]
+                if ismissing(area)
+                    continue
+                end
+                area_val = Float32(area)
+                if !isfinite(area_val) || area_val <= 0.0f0
+                    continue
+                end
+                pep = gdf.sequence[i]
+                if haskey(best_peak_area_by_peptide, pep)
+                    if area_val > best_peak_area_by_peptide[pep]
+                        best_peak_area_by_peptide[pep] = area_val
+                    end
+                else
+                    best_peak_area_by_peptide[pep] = area_val
+                end
+            end
+
+            if !isempty(best_peak_area_by_peptide)
+                top_pep_peak_area = maximum(values(best_peak_area_by_peptide))
+                has_valid_peak_area = true
+            end
+        end
+
         has_common = any(
-            (gdf.use_for_protein_quant .== true) .&
+            quant_mask .&
             (gdf.missed_cleavage .== 0) .&
             (gdf.Mox .== 0)
         )
@@ -293,7 +520,9 @@ function group_psms_by_protein(df::DataFrame)
             n_peptides = n_peptides,
             peptide_list = join(quant_peptides, ";"),
             pg_score = pg_score,
-            any_common_peps = has_common
+            any_common_peps = has_common,
+            top_pep_peak_area = top_pep_peak_area,
+            has_valid_peak_area = has_valid_peak_area
         )
     end
     
@@ -338,6 +567,10 @@ function add_protein_features(protein_catalog::Dict)
         n_rows = nrow(df)
         n_possible = Vector{Int64}(undef, n_rows)
         peptide_coverage = Vector{Float32}(undef, n_rows)
+        grouped_catalog_cache = Dict{
+            @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
+            Set{String}
+        }()
         
         for i in 1:n_rows
             key = (
@@ -345,19 +578,34 @@ function add_protein_features(protein_catalog::Dict)
                 target = df.target[i],
                 entrap_id = df.entrap_id[i]
             )
-            
-            if haskey(protein_catalog, key)
-                possible_peptides = protein_catalog[key]
-                n_possible[i] = length(possible_peptides)
-                
-                # Calculate coverage
-                if n_possible[i] > 0
-                    peptide_coverage[i] = Float32(df.n_peptides[i]) / Float32(n_possible[i])
-                else
-                    peptide_coverage[i] = 0.0f0
+
+            possible_peptides = if haskey(protein_catalog, key)
+                protein_catalog[key]
+            elseif haskey(grouped_catalog_cache, key)
+                grouped_catalog_cache[key]
+            elseif occursin(';', key.protein_name)
+                merged_peptides = Set{String}()
+                for member in split(key.protein_name, ';')
+                    member_key = (
+                        protein_name = strip(member),
+                        target = key.target,
+                        entrap_id = key.entrap_id
+                    )
+                    if haskey(protein_catalog, member_key)
+                        union!(merged_peptides, protein_catalog[member_key])
+                    end
                 end
+                grouped_catalog_cache[key] = merged_peptides
+                merged_peptides
             else
-                n_possible[i] = 0
+                Set{String}()
+            end
+
+            n_possible[i] = length(possible_peptides)
+
+            if n_possible[i] > 0
+                peptide_coverage[i] = Float32(df.n_peptides[i]) / Float32(n_possible[i])
+            else
                 peptide_coverage[i] = 0.0f0
             end
         end
@@ -433,6 +681,8 @@ function perform_protein_inference_pipeline(
         # Step 4: Create protein groups
         # Reload updated PSMs
         updated_psms = load_dataframe(psm_ref)
+        peak_area_calibration = estimate_peak_area_detection_model(updated_psms)
+        @user_info "Peak-area protein coverage calibration file_idx=$(idx) n_unique_peptides=$(peak_area_calibration.n_unique_peptides) log_threshold=$(peak_area_calibration.log_threshold) sigma_log=$(peak_area_calibration.sigma_log) used_fallback=$(peak_area_calibration.used_fallback)"
         
         # Group by protein
         protein_groups_df = group_psms_by_protein(updated_psms)
@@ -440,7 +690,8 @@ function perform_protein_inference_pipeline(
         # Build post-inference pipeline
         post_inference_pipeline = TransformPipeline() |>
             filter_by_min_peptides(min_peptides) |>
-            add_protein_features(protein_catalog)
+            add_protein_features(protein_catalog) |>
+            add_peak_area_observation_features(peak_area_calibration)
         
         # Apply post-processing
         initial_rows = nrow(protein_groups_df)

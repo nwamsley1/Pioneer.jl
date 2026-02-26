@@ -1031,7 +1031,16 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     end
     
     # Define features to use
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff, :any_common_peps]
+    feature_names = [
+        :pg_score,
+        :peptide_coverage,
+        :n_possible_peptides,
+        :log_binom_coeff,
+        :any_common_peps,
+        :coverage_miss_surprisal,
+        :coverage_deficit_z,
+        :top_area_vs_threshold_z
+    ]
 
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, sampled_protein_groups)
@@ -1105,7 +1114,15 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
     # Define features to use
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps] # :log_binom_coeff]
+    feature_names = [
+        :pg_score,
+        :peptide_coverage,
+        :n_possible_peptides,
+        :any_common_peps,
+        :coverage_miss_surprisal,
+        :coverage_deficit_z,
+        :top_area_vs_threshold_z
+    ] # :log_binom_coeff]
 
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, all_protein_groups)
@@ -2005,9 +2022,14 @@ function perform_probit_analysis_multifold(
 
     # 4. Define features (same as original)
     #feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides] #:any_common_peps]
-    feature_names = [:pg_score, 
-    #:peptide_coverage, :n_possible_peptides,
-    :any_common_peps]
+    feature_names = [
+        :pg_score,
+        #:peptide_coverage, :n_possible_peptides,
+        :any_common_peps,
+        :coverage_miss_surprisal,
+        :coverage_deficit_z,
+        :top_area_vs_threshold_z
+    ]
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, all_protein_groups)
     remove_zero_variance_columns!(feature_names, all_protein_groups)
