@@ -307,7 +307,9 @@ function get_best_psms!(psms::DataFrame,
     # Will use PEP for final filter
     get_PEP!(psms[!,:score], psms[!,:target], psms[!,:PEP]; doSort=false, fdr_scale_factor=fdr_scale_factor);
 
-    select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target])
+    best_psm_cols = [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target]
+    hasproperty(psms, :index_score) && push!(best_psm_cols, :index_score)
+    select!(psms, best_psm_cols)
 
     # Per-file pre-filter: keep the largest of
     # (a) PEP ≤ pep_threshold (default 0.95), (b) q-value floor (cumulative D/T ≤ 0.50), (c) hard minimum 10,000.

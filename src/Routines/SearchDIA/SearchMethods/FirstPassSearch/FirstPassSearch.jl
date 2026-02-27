@@ -371,8 +371,10 @@ function process_file!(
         end
         # Process scores
        
-        select!(psms, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
-            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target])
+        post_score_cols = [:ms_file_idx, :score, :precursor_idx, :scan_idx,
+            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target]
+        hasproperty(psms, :index_score) && push!(post_score_cols, :index_score)
+        select!(psms, post_score_cols)
         get_probs!(psms, psms[!,:score])
     end
 
@@ -503,11 +505,10 @@ function process_search_results!(
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     temp_path = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms", parsed_fname * ".arrow")
     psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
-    Arrow.write(
-        temp_path,
-        select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
-            :irt_predicted, :q_value, :score, :prob, :scan_count, :PEP])
-    )
+    arrow_cols = [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
+        :irt_predicted, :q_value, :score, :prob, :scan_count, :PEP]
+    hasproperty(psms, :index_score) && push!(arrow_cols, :index_score)
+    Arrow.write(temp_path, select!(psms, arrow_cols))
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 
     #####
