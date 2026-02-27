@@ -314,12 +314,12 @@ function process_file!(
         search_context::SearchContext)
         column_names = [
             :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
-            :charge2, :poisson, :irt_error, 
-            :missed_cleavage, 
+            :charge2, :poisson, :irt_error,
+            :missed_cleavage,
             :Mox,
             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
             #:b_count, might be good for non-tryptic enzymes
-            :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
+            :TIC, :y_count, :err_norm, :spectrum_peak_count, :index_score, :intercept
         ]
 
         # Avoid singular error if no peaks were ignored
@@ -327,6 +327,15 @@ function process_file!(
             deleteat!(column_names, findfirst(==(:percent_theoretical_ignored), column_names))
         end
 
+        # Ensure index_score column exists (may be missing from non-first-pass callers)
+        if !hasproperty(psms, :index_score)
+            psms[!, :index_score] = zeros(UInt8, nrow(psms))
+        end
+
+        # Avoid singular error if all index scores are the same
+        if minimum(psms.index_score) == maximum(psms.index_score)
+            deleteat!(column_names, findfirst(==(:index_score), column_names))
+        end
 
         # Select scoring columns
         select!(psms, vcat(column_names, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
@@ -348,6 +357,9 @@ function process_file!(
             :spectral_contrast, :city_block, :entropy_score, :scribe,
             :charge2, :poisson, :irt_error, :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
             ]
+            if hasproperty(psms, :index_score)
+                insert!(column_names, length(column_names), :index_score)
+            end
             score_main_search_psms!(
                 psms,
                 column_names,

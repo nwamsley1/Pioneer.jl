@@ -30,6 +30,7 @@ function searchFragmentIndex(
 
     prec_id = 0
     precursors_passed_scoring = Vector{UInt32}(undef, 250000)
+    index_scores = Vector{UInt8}(undef, 250000)
     rt_bin_idx = 1
     for scan_idx in thread_task
         #if scan_idx % 50 != 0
@@ -72,11 +73,16 @@ function searchFragmentIndex(
             while n <= getPrecursorScores(search_data).matches
                 prec_id += 1
                 if prec_id > length(precursors_passed_scoring)
-                    append!(precursors_passed_scoring, 
+                    append!(precursors_passed_scoring,
                             Vector{eltype(precursors_passed_scoring)}(undef, length(precursors_passed_scoring))
                             )
+                    append!(index_scores,
+                            Vector{UInt8}(undef, length(index_scores))
+                            )
                 end
-                precursors_passed_scoring[prec_id] = getID(getPrecursorScores(search_data), n)
+                id = getID(getPrecursorScores(search_data), n)
+                precursors_passed_scoring[prec_id] = id
+                index_scores[prec_id] = getCount(getPrecursorScores(search_data), id)
                 n += 1
             end
             scan_to_prec_idx[scan_idx] = start_idx:prec_id#stop_idx
@@ -87,7 +93,7 @@ function searchFragmentIndex(
         reset!(getPrecursorScores(search_data))
     end
 
-    return precursors_passed_scoring[1:prec_id]
+    return (precursors_passed_scoring[1:prec_id], index_scores[1:prec_id])
 end
 
 function getPSMS(
@@ -104,21 +110,39 @@ function getPSMS(
     qtm::Q,
     mem::M,
     rt_to_irt_spline::Any,
-    irt_tol::AbstractFloat) where {M<:MassErrorModel, Q<:QuadTransmissionModel, S<:SearchDataStructures, P<:SearchParameters}
+    irt_tol::AbstractFloat;
+    index_scores::Union{Nothing, Vector{UInt8}} = nothing
+    ) where {M<:MassErrorModel, Q<:QuadTransmissionModel, S<:SearchDataStructures, P<:SearchParameters}
 
     msms_counts = Dict{Int64, Int64}()
     last_val = 0
     Hs = SparseArray(UInt32(5000))
     isotopes = zeros(Float32, 5)
     precursor_transmission = zeros(Float32, 5)
+
+    has_index_scores = index_scores !== nothing
+    psm_index_scores = has_index_scores ? zeros(UInt8, length(getScoredPsms(search_data))) : UInt8[]
+    scan_lookup = has_index_scores ? Dict{UInt32, UInt8}() : nothing
+
     for scan_idx in thread_task
         (scan_idx == 0 || scan_idx > length(spectra)) && continue
         ismissing(scan_to_prec_idx[scan_idx]) && continue
+
+        # Build per-scan precursor → index_score lookup
+        if has_index_scores
+            empty!(scan_lookup)
+            prec_range = scan_to_prec_idx[scan_idx]
+            for k in prec_range
+                scan_lookup[precursors_passed_scoring[k]] = index_scores[k]
+            end
+        end
 
         # Scan Filtering
         msn = getMsOrder(spectra, scan_idx)
         msn ∉ getSpecOrder(params) && continue
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1
+
+        old_last_val = last_val
 
         # Ion Template Selection
         ion_idx, _ = selectTransitions!(
@@ -183,14 +207,14 @@ function getPSMS(
             )
 
             last_val = Score!(
-                getScoredPsms(search_data), 
+                getScoredPsms(search_data),
                 getUnscoredPsms(search_data),
                 getSpectralScores(search_data),
                 getIdToCol(search_data),
                 nmatches/(nmatches + nmisses),
                 last_val,
                 Hs.n,
-                Float32(sum(getIntensityArray(spectra, scan_idx))), 
+                Float32(sum(getIntensityArray(spectra, scan_idx))),
                 scan_idx,
                 min_spectral_contrast = getMinSpectralContrast(params),
                 min_log2_matched_ratio = getMinLog2MatchedRatio(params),
@@ -199,6 +223,17 @@ function getPSMS(
                 min_topn = first(getMinTopNofM(params)),
                 block_size = 500000
             )
+
+            # Annotate new PSMs with index scores
+            if has_index_scores && last_val > old_last_val
+                if last_val > length(psm_index_scores)
+                    append!(psm_index_scores, zeros(UInt8, last_val - length(psm_index_scores) + 500000))
+                end
+                for j in (old_last_val+1):last_val
+                    psm_index_scores[j] = get(scan_lookup,
+                        getScoredPsms(search_data)[j].precursor_idx, UInt8(0))
+                end
+            end
         end
         # Reset arrays
         for scan_idx in range(1, Hs.n)
@@ -207,7 +242,11 @@ function getPSMS(
         reset!(getIdToCol(search_data))
         reset!(Hs)
     end
-    return DataFrame(@view(getScoredPsms(search_data)[1:last_val]))
+    df = DataFrame(@view(getScoredPsms(search_data)[1:last_val]))
+    if has_index_scores
+        df[!, :index_score] = psm_index_scores[1:last_val]
+    end
+    return df
 end
 
 function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:ParameterTuningSearchParameters}
@@ -301,10 +340,12 @@ function LibrarySearch(
         end
     end
     
-    precursors_passed_scoring = fetch.(tasks)
+    results = fetch.(tasks)
+    precursors_passed_scoring = [r[1] for r in results]
+    index_scores_passed = [r[2] for r in results]
 
     tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin 
+        Threads.@spawn begin
             thread_id = first(thread_task)
             return getPSMS(
                                 ms_file_idx,
@@ -320,7 +361,8 @@ function LibrarySearch(
                                 qtm,
                                 mem,
                                 rt_to_irt_spline,
-                                irt_tol)
+                                irt_tol;
+                                index_scores = index_scores_passed[thread_id])
         end
     end
 
@@ -380,12 +422,13 @@ function LibrarySearchNceTuning(
                 )
             catch e
                 @user_warn "Fragment index search failed on thread $thread_id: $e"
-                return UInt32[]  # Return empty result on error
+                return (UInt32[], UInt8[])  # Return empty result on error
             end
         end
     end
 
-    precursors_passed_scoring = fetch.(tasks)
+    frag_index_results = fetch.(tasks)
+    precursors_passed_scoring = [r[1] for r in frag_index_results]
 
     # For each NCE value, run getPSMS using the same fragment index results
     all_results = map(nce_grid) do nce

@@ -88,8 +88,9 @@ function countFragMatches(c::Counter{I,C}, min_count::C) where {I,C<:Unsigned}
         if getCount(c, id)>=min_count
                 c.ids[c.matches + 1] = c.ids[i]
                 c.matches += 1
+        else
+                c.counts[id] = zero(Float32);
         end
-        c.counts[id] = zero(Float32);
     end
     return 0#c.matches
 end
