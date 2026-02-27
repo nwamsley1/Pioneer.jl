@@ -309,6 +309,9 @@ function writePrecursorCSV(
                     _sanitize_empty_strings!(subunstack)
                     CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
                 end
+                # Normalize column types for consistent Arrow schema across batches
+                allowmissing!(subunstack)
+
                 if iszero(n_writes)
                     if isfile(wide_precursors_arrow_path)
                         rm(wide_precursors_arrow_path)
@@ -532,6 +535,9 @@ function writePrecursorCSV_chunked(
                         _sanitize_empty_strings!(subunstack)
                         CSV.write(io2, subunstack[!, sorted_columns], append=true, header=false, delim='\t')
                     end
+                    # Normalize column types for consistent Arrow schema across batches
+                    allowmissing!(subunstack)
+
                     if iszero(n_arrow_writes)
                         if isfile(wide_precursors_arrow_path)
                             rm(wide_precursors_arrow_path)
@@ -692,6 +698,9 @@ function writeProteinGroupsCSV(
                 if write_csv
                     CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
                 end
+
+                # Normalize column types for consistent Arrow schema across batches
+                allowmissing!(subunstack)
 
                 if iszero(n_writes)
                     if isfile(wide_protein_groups_arrow)
