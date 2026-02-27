@@ -358,22 +358,28 @@ function BuildSpecLib(params_path::String)
         # Build final indices
         dual_println("\nBuilding final library indices...")
         index_timing = @timed begin
-            # Extract likelihood-ratio scoring config (with defaults for backwards compatibility)
+            # Construct scoring method from config
             _lp = _params.library_params
             _fragment_scoring = get(_lp, "fragment_scoring", "rank_based")
-            _use_lr = _fragment_scoring == "likelihood_ratio"
-            _lr_M = Int(get(_lp, "likelihood_ratio_M", 7))
-            _lr_N = Int(get(_lp, "likelihood_ratio_N", 200))
-            _lr_d = Int(get(_lp, "likelihood_ratio_d", 10))
-            _lr_alpha = Float64(get(_lp, "likelihood_ratio_alpha", 0.01))
-            _lr_ref_nce = Float64(get(_lp, "likelihood_ratio_ref_nce", 27.0))
-            _lr_K = Int(get(_lp, "likelihood_ratio_min_fragments", 5))
+            _max_index_frags = length(_lp["rank_to_score"])
 
-            if _use_lr
+            scoring_method = if _fragment_scoring == "likelihood_ratio"
+                _lr_M = Int(get(_lp, "likelihood_ratio_M", 7))
+                _lr_N = Int(get(_lp, "likelihood_ratio_N", 200))
+                _lr_d = Int(get(_lp, "likelihood_ratio_d", 10))
+                _lr_alpha = Float64(get(_lp, "likelihood_ratio_alpha", 0.01))
+                _lr_K = Int(get(_lp, "likelihood_ratio_min_fragments", 5))
                 dual_println("  Using likelihood-ratio fragment scoring (M=$_lr_M, N=$_lr_N, d=$_lr_d, α=$_lr_alpha, K=$_lr_K)")
+                LikelihoodRatioScoring(_max_index_frags, _lr_M, _lr_N, _lr_d, _lr_alpha, _lr_K)
+            elseif _fragment_scoring == "surprisal"
+                dual_println("  Using surprisal-of-absence fragment scoring (max_frags=$_max_index_frags)")
+                SurprisalScoring(_max_index_frags)
             else
                 dual_println("  Using rank-based fragment scoring")
+                RankBasedScoring(UInt8.(_lp["rank_to_score"]))
             end
+
+            _lr_ref_nce = Float64(get(_lp, "likelihood_ratio_ref_nce", 27.0))
 
             buildPionLib(
                 lib_dir,
@@ -391,18 +397,12 @@ function BuildSpecLib(params_path::String)
                 UInt8(_lp["max_frag_rank"]),
                 Float32(_lp["length_to_frag_count_multiple"]),
                 Float32(_lp["min_frag_intensity"]),
-                UInt8.(_lp["rank_to_score"]),
                 frag_bounds,
                 Float32(_lp["frag_bin_tol_ppm"]),
                 Float32(_lp["rt_bin_tol"]),
-                koina_model_type;
-                lr_M = _lr_M,
-                lr_N = _lr_N,
-                lr_d = _lr_d,
-                lr_alpha = _lr_alpha,
-                lr_K = _lr_K,
-                lr_ref_nce = _lr_ref_nce,
-                use_likelihood_ratio = _use_lr
+                koina_model_type,
+                scoring_method;
+                lr_ref_nce = _lr_ref_nce
             )          
 
             nothing

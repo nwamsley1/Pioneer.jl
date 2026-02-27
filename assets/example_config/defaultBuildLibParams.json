@@ -59,6 +59,7 @@
         "rt_bin_tol": 1.0,
         "frag_bin_tol_ppm": 10.0,
         "rank_to_score": [8, 4, 4, 2, 2, 1, 1],
+        "comment_fragment_scoring": "Valid values: rank_based, likelihood_ratio, surprisal",
         "fragment_scoring": "rank_based",
         "likelihood_ratio_M": 7,
         "likelihood_ratio_N": 200,

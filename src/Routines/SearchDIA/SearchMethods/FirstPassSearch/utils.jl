@@ -235,7 +235,8 @@ Note: Assumes psms is sorted by retention time in ascending order.
 """
 function get_best_psms!(psms::DataFrame,
                         prec_mz::Arrow.Primitive{T, Vector{T}};
-                        fdr_scale_factor::Float32 = 1.0f0
+                        fdr_scale_factor::Float32 = 1.0f0,
+                        pep_threshold::Float32 = 0.95f0
 ) where {T<:AbstractFloat}
 
     #highest scoring psm for a given precursor
@@ -309,10 +310,10 @@ function get_best_psms!(psms::DataFrame,
     select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target])
 
     # Per-file pre-filter: keep the largest of
-    # (a) PEP ≤ 0.95, (b) q-value floor (cumulative D/T ≤ 0.50), (c) hard minimum 10,000.
+    # (a) PEP ≤ pep_threshold (default 0.95), (b) q-value floor (cumulative D/T ≤ 0.50), (c) hard minimum 10,000.
     # Data is sorted by score desc / PEP asc, so we walk forward for both.
     n = size(psms, 1)
-    first_fail = searchsortedfirst(psms[!,:PEP], Float16(0.95))
+    first_fail = searchsortedfirst(psms[!,:PEP], Float16(pep_threshold))
     n_pep = first_fail - 1
 
     target_col = psms[!,:target]

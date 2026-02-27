@@ -42,6 +42,7 @@ using Pioneer: PeptideMod, matchVarMods, add_pair_indices!  # For FastaDigestTes
 using Pioneer: digest_sequence, getFixedMods!, countVarModCombinations  # For FastaDigestTests.jl
 using Pioneer: FastaEntry, parse_fasta, PeptideSequenceSet  # For FastaDigestTests.jl
 using Pioneer: buildFragmentIndex!, FragBoundModel, cleanUpLibrary  # For BuildPionLibTest.jl
+using Pioneer: RankBasedScoring, LikelihoodRatioScoring, SurprisalScoring  # For BuildPionLibTest.jl
 using Pioneer: RazoQuadParams, simmulateQuad, fitRazoQuadModel, MergeBins  # For RazoQuadModel.jl
 using Pioneer: buildPionLib  # For BuildPionLibTest.jl
 using Pioneer: digest_fasta, combine_shared_peptides  # For FastaDigestTests.jl  

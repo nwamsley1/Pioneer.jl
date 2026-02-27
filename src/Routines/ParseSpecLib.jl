@@ -371,14 +371,14 @@ function ParseSpecLib(params_path::String)
         UInt8(params["library_params"]["max_frag_rank"]),
         Float32(params["library_params"]["length_to_frag_count_multiple"]),
         Float32(params["library_params"]["min_frag_intensity"]),
-        UInt8.(params["library_params"]["rank_to_score"]),
         FragBoundModel(
             ImmutablePolynomial(zero(Float32)),
-            ImmutablePolynomial(Float32(10000.0f0)) 
+            ImmutablePolynomial(Float32(10000.0f0))
         ),
         Float32(params["library_params"]["frag_bin_tol_ppm"]),
         Float32(params["library_params"]["rt_bin_tol"]),
-        InstrumentSpecificModel(params["library_params"]["instrument_type"])
+        InstrumentSpecificModel(params["library_params"]["instrument_type"]),
+        RankBasedScoring(UInt8.(params["library_params"]["rank_to_score"]))
     )   
 
     return test_lib

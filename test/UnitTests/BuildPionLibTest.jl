@@ -266,11 +266,11 @@ end
             max_frag_rank,
             length_to_frag_count_multiple,
             min_frag_intensity,
-            rank_to_score,
             frag_bounds,
             frag_bin_tol_ppm,
             rt_bin_tol_ppm,
-            model_type
+            model_type,
+            RankBasedScoring(rank_to_score)
         )
         
         # Check that the function returns nothing
@@ -358,11 +358,11 @@ end
             max_frag_rank,
             length_to_frag_count_multiple,
             min_frag_intensity,
-            rank_to_score,
             frag_bounds,
             frag_bin_tol_ppm,
             rt_bin_tol_ppm,
-            spline_model_type
+            spline_model_type,
+            RankBasedScoring(rank_to_score)
         )
         
         @test spline_result === nothing
@@ -771,7 +771,8 @@ end
         
         # Rank to score mapping
         rank_to_score = UInt8[10, 9, 8, 7, 6]
-        
+        scoring_method = RankBasedScoring(rank_to_score)
+
         # Call function with parameters that should allow all fragments to pass
         simple_frags = getSimpleFrags(
             frag_mz,
@@ -797,7 +798,7 @@ end
             include_neutral_diff,
             max_frag_charge,
             frag_bounds,
-            rank_to_score
+            scoring_method
         )
         
         # All fragments should pass our filters
@@ -853,7 +854,7 @@ end
             include_neutral_diff,
             max_frag_charge,
             frag_bounds,
-            rank_to_score
+            scoring_method
         )
         
         # Only fragment #3 should pass (y-ion with index 3)
@@ -880,7 +881,8 @@ end
         
         # Small rank_to_score array to test rank limiting
         small_rank_to_score = UInt8[10, 9, 8]
-        
+        small_scoring_method = RankBasedScoring(small_rank_to_score)
+
         rank_limited_frags = getSimpleFrags(
             large_frag_mz,
             large_frag_is_y,
@@ -905,7 +907,7 @@ end
             include_neutral_diff,
             max_frag_charge,
             frag_bounds,
-            small_rank_to_score     # Only allow 3 ranks
+            small_scoring_method    # Only allow 3 ranks
         )
         
         # Should only return 3 fragments due to rank limit
