@@ -1253,7 +1253,10 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         :any_common_peps,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
-        :top_weight_vs_threshold_z
+        :top_weight_vs_threshold_z,
+        :singleton_x_coverage_miss_surprisal,
+        :singleton_x_coverage_deficit_z,
+        :singleton_x_top_weight_vs_threshold_z
     ]
 
     # Apply feature filtering
@@ -1338,7 +1341,10 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         :any_common_peps,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
-        :top_weight_vs_threshold_z
+        :top_weight_vs_threshold_z,
+        :singleton_x_coverage_miss_surprisal,
+        :singleton_x_coverage_deficit_z,
+        :singleton_x_top_weight_vs_threshold_z
     ] # :log_binom_coeff]
 
     # Apply feature filtering
@@ -2248,7 +2254,10 @@ function perform_probit_analysis_multifold(
         :any_common_peps,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
-        :top_weight_vs_threshold_z
+        :top_weight_vs_threshold_z,
+        :singleton_x_coverage_miss_surprisal,
+        :singleton_x_coverage_deficit_z,
+        :singleton_x_top_weight_vs_threshold_z
     ]
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, all_protein_groups)

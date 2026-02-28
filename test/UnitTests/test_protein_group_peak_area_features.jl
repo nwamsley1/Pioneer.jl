@@ -80,14 +80,25 @@ using Pioneer
             target = Bool[true, true, true, true, true],
             entrap_id = UInt8[1, 1, 1, 1, 1],
             n_peptides = Int64[1, 1, 6, 1, 1],
+            is_singleton = Bool[true, true, false, true, true],
             n_possible_peptides = Int64[20, 2, 11, 12, 1],
             top_pep_weight = Float32[100.0, 100.0, 10.0, 0.0, 100.0]
         )
 
         (_, op) = Pioneer.add_weight_observation_features(calibration)
         out = op(copy(pg_df))
+        (_, interaction_op) = Pioneer.add_singleton_interaction_features()
+        out = interaction_op(out)
 
-        for col in (:coverage_miss_pval, :coverage_miss_surprisal, :coverage_deficit_z, :top_weight_vs_threshold_z)
+        for col in (
+            :coverage_miss_pval,
+            :coverage_miss_surprisal,
+            :coverage_deficit_z,
+            :top_weight_vs_threshold_z,
+            :singleton_x_coverage_miss_surprisal,
+            :singleton_x_coverage_deficit_z,
+            :singleton_x_top_weight_vs_threshold_z
+        )
             @test hasproperty(out, col)
         end
 
@@ -108,10 +119,26 @@ using Pioneer
         @test out.coverage_miss_surprisal[5] == 0.0f0
         @test out.coverage_deficit_z[5] == 0.0f0
         @test out.top_weight_vs_threshold_z[5] == 0.0f0
+
+        @test out.singleton_x_coverage_miss_surprisal[1] == out.coverage_miss_surprisal[1]
+        @test out.singleton_x_coverage_deficit_z[1] == out.coverage_deficit_z[1]
+        @test out.singleton_x_top_weight_vs_threshold_z[1] == out.top_weight_vs_threshold_z[1]
+        @test out.singleton_x_coverage_miss_surprisal[3] == 0.0f0
+        @test out.singleton_x_coverage_deficit_z[3] == 0.0f0
+        @test out.singleton_x_top_weight_vs_threshold_z[3] == 0.0f0
     end
 
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
-        feature_names = [:pg_score, :is_singleton, :coverage_miss_surprisal, :coverage_deficit_z, :top_weight_vs_threshold_z]
+        feature_names = [
+            :pg_score,
+            :is_singleton,
+            :coverage_miss_surprisal,
+            :coverage_deficit_z,
+            :top_weight_vs_threshold_z,
+            :singleton_x_coverage_miss_surprisal,
+            :singleton_x_coverage_deficit_z,
+            :singleton_x_top_weight_vs_threshold_z
+        ]
         df = DataFrame(pg_score = Float32[0.1, 0.2, 0.3])
 
         Pioneer.remove_zero_variance_columns!(feature_names, df)
