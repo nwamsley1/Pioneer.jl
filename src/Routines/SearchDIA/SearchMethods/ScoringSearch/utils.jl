@@ -184,6 +184,8 @@ function _feature_plot_label(feature::Symbol)
         return "log10(top_pep_weight)"
     elseif feature == :coverage_miss_pval
         return "-log10(coverage_miss_pval)"
+    elseif feature == :coverage_deficit_z
+        return "signed log10(1 + abs(coverage_deficit_z))"
     elseif feature == :has_valid_weight
         return "has_valid_weight"
     else
@@ -215,6 +217,8 @@ function _transform_feature_value(feature::Symbol, value, row_idx::Int)
         return numeric_value > 0.0 ? log10(numeric_value) : nothing
     elseif feature == :coverage_miss_pval
         return -log10(max(numeric_value, 1e-12))
+    elseif feature == :coverage_deficit_z
+        return sign(numeric_value) * log10(1.0 + abs(numeric_value))
     else
         return numeric_value
     end
@@ -233,13 +237,8 @@ function _build_feature_score_scatter_plot(df::AbstractDataFrame, feature::Symbo
 
     target_x = Float64[]
     target_y = Float64[]
-    target_one_hit_x = Float64[]
-    target_one_hit_y = Float64[]
     decoy_x = Float64[]
     decoy_y = Float64[]
-    decoy_one_hit_x = Float64[]
-    decoy_one_hit_y = Float64[]
-    has_n_peptides = hasproperty(df, :n_peptides)
 
     for i in 1:nrow(df)
         score = df.pg_score[i]
@@ -254,28 +253,17 @@ function _build_feature_score_scatter_plot(df::AbstractDataFrame, feature::Symbo
 
         x_value = _transform_feature_value(feature, df[i, feature], i)
         isnothing(x_value) && continue
-        is_one_hit = has_n_peptides && !ismissing(df.n_peptides[i]) && (Int(df.n_peptides[i]) == 1)
 
         if df.target[i] == true
-            if is_one_hit
-                push!(target_one_hit_x, x_value)
-                push!(target_one_hit_y, score_value)
-            else
-                push!(target_x, x_value)
-                push!(target_y, score_value)
-            end
+            push!(target_x, x_value)
+            push!(target_y, score_value)
         else
-            if is_one_hit
-                push!(decoy_one_hit_x, x_value)
-                push!(decoy_one_hit_y, score_value)
-            else
-                push!(decoy_x, x_value)
-                push!(decoy_y, score_value)
-            end
+            push!(decoy_x, x_value)
+            push!(decoy_y, score_value)
         end
     end
 
-    if isempty(target_x) && isempty(target_one_hit_x) && isempty(decoy_x) && isempty(decoy_one_hit_x)
+    if isempty(target_x) && isempty(decoy_x)
         return _build_empty_feature_plot("Protein Feature QC: $(feature)", "No finite feature/score pairs available")
     end
 
@@ -304,20 +292,6 @@ function _build_feature_score_scatter_plot(df::AbstractDataFrame, feature::Symbo
         )
     end
 
-    if !isempty(target_one_hit_x)
-        Plots.scatter!(
-            p,
-            target_one_hit_x,
-            target_one_hit_y;
-            label = "target (1 peptide)",
-            color = :dodgerblue3,
-            alpha = 0.5,
-            markersize = 3.0,
-            markerstrokecolor = :black,
-            markerstrokewidth = 1.0
-        )
-    end
-
     if !isempty(decoy_x)
         Plots.scatter!(
             p,
@@ -328,20 +302,6 @@ function _build_feature_score_scatter_plot(df::AbstractDataFrame, feature::Symbo
             alpha = 0.35,
             markersize = 2.5,
             markerstrokewidth = 0
-        )
-    end
-
-    if !isempty(decoy_one_hit_x)
-        Plots.scatter!(
-            p,
-            decoy_one_hit_x,
-            decoy_one_hit_y;
-            label = "decoy (1 peptide)",
-            color = :firebrick3,
-            alpha = 0.5,
-            markersize = 3.0,
-            markerstrokecolor = :black,
-            markerstrokewidth = 1.0
         )
     end
 
