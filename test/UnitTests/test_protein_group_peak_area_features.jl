@@ -2,16 +2,16 @@ using Test
 using DataFrames
 using Pioneer
 
-@testset "Protein Group Peak-Area Coverage Features" begin
-    @testset "Quant Necessary Columns Include Peak Area" begin
+@testset "Protein Group Weight Coverage Features" begin
+    @testset "Quant Necessary Columns Include Weight" begin
         cols_nombr = Pioneer.get_quant_necessary_columns(false)
         cols_mbr = Pioneer.get_quant_necessary_columns(true)
 
-        @test :peak_area in cols_nombr
-        @test :peak_area in cols_mbr
+        @test :weight in cols_nombr
+        @test :weight in cols_mbr
     end
 
-    @testset "Group PSMs By Protein Adds Peak-Area Summary" begin
+    @testset "Group PSMs By Protein Adds Weight Summary" begin
         psms = DataFrame(
             inferred_protein_group = ["P1", "P1", "P1", "P2"],
             target = Bool[true, true, true, false],
@@ -21,19 +21,19 @@ using Pioneer
             missed_cleavage = Int64[0, 1, 0, 0],
             Mox = Int64[0, 0, 0, 0],
             prec_prob = Float32[0.8, 0.9, 0.6, 0.7],
-            peak_area = Float32[100.0, 80.0, 50.0, 25.0]
+            weight = Float32[100.0, 80.0, 50.0, 25.0]
         )
 
         grouped = Pioneer.group_psms_by_protein(psms)
 
-        @test hasproperty(grouped, :top_pep_peak_area)
-        @test hasproperty(grouped, :has_valid_peak_area)
+        @test hasproperty(grouped, :top_pep_weight)
+        @test hasproperty(grouped, :has_valid_weight)
 
         p1 = grouped[(grouped.protein_name .== "P1") .& grouped.target, :]
         @test nrow(p1) == 1
         @test p1.n_peptides[1] == 2
-        @test p1.top_pep_peak_area[1] == 100.0f0
-        @test p1.has_valid_peak_area[1] == true
+        @test p1.top_pep_weight[1] == 100.0f0
+        @test p1.has_valid_weight[1] == true
     end
 
     @testset "Grouped Protein Catalog Uses Union Peptide Set" begin
@@ -55,15 +55,15 @@ using Pioneer
         @test out.peptide_coverage[1] ≈ (2f0 / 3f0)
     end
 
-    @testset "Peak-Area Calibration Estimates Threshold and Sigma" begin
+    @testset "Weight Calibration Estimates Threshold and Sigma" begin
         psms = DataFrame(
             use_for_protein_quant = Bool[true, true, true, true, false],
             sequence = ["P1A", "P1B", "P2A", "P2B", "P3A"],
             inferred_protein_group = Union{Missing, String}["P1", "P1", "P2", "P2", missing],
-            peak_area = Union{Missing, Float32}[100.0f0, 40.0f0, 80.0f0, 10.0f0, 500.0f0]
+            weight = Union{Missing, Float32}[100.0f0, 40.0f0, 80.0f0, 10.0f0, 500.0f0]
         )
 
-        model = Pioneer.estimate_peak_area_detection_model(psms)
+        model = Pioneer.estimate_weight_detection_model(psms)
 
         @test model.n_unique_peptides == 4
         @test model.log_threshold > 0.0f0
@@ -79,38 +79,38 @@ using Pioneer
             entrap_id = UInt8[1, 1, 1, 1, 1],
             n_peptides = Int64[1, 1, 6, 1, 1],
             n_possible_peptides = Int64[20, 2, 11, 12, 1],
-            top_pep_peak_area = Float32[100.0, 100.0, 10.0, 0.0, 100.0],
-            has_valid_peak_area = Bool[true, true, true, false, true]
+            top_pep_weight = Float32[100.0, 100.0, 10.0, 0.0, 100.0],
+            has_valid_weight = Bool[true, true, true, false, true]
         )
 
-        (_, op) = Pioneer.add_peak_area_observation_features(calibration)
+        (_, op) = Pioneer.add_weight_observation_features(calibration)
         out = op(copy(pg_df))
 
-        for col in (:coverage_miss_pval, :coverage_miss_surprisal, :coverage_deficit_z, :top_area_vs_threshold_z)
+        for col in (:coverage_miss_pval, :coverage_miss_surprisal, :coverage_deficit_z, :top_weight_vs_threshold_z)
             @test hasproperty(out, col)
         end
 
         @test out.coverage_miss_pval[1] < out.coverage_miss_pval[2]
         @test out.coverage_miss_surprisal[1] > out.coverage_miss_surprisal[2]
         @test abs(out.coverage_deficit_z[3]) < 0.25f0
-        @test out.top_area_vs_threshold_z[1] > 0.0f0
-        @test abs(out.top_area_vs_threshold_z[3]) < 1e-5
+        @test out.top_weight_vs_threshold_z[1] > 0.0f0
+        @test abs(out.top_weight_vs_threshold_z[3]) < 1e-5
 
-        # Invalid peak area -> neutral values
+        # Invalid weight -> neutral values
         @test out.coverage_miss_pval[4] == 1.0f0
         @test out.coverage_miss_surprisal[4] == 0.0f0
         @test out.coverage_deficit_z[4] == 0.0f0
-        @test out.top_area_vs_threshold_z[4] == 0.0f0
+        @test out.top_weight_vs_threshold_z[4] == 0.0f0
 
         # N <= 1 -> neutral values
         @test out.coverage_miss_pval[5] == 1.0f0
         @test out.coverage_miss_surprisal[5] == 0.0f0
         @test out.coverage_deficit_z[5] == 0.0f0
-        @test out.top_area_vs_threshold_z[5] == 0.0f0
+        @test out.top_weight_vs_threshold_z[5] == 0.0f0
     end
 
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
-        feature_names = [:pg_score, :coverage_miss_surprisal, :coverage_deficit_z, :top_area_vs_threshold_z]
+        feature_names = [:pg_score, :coverage_miss_surprisal, :coverage_deficit_z, :top_weight_vs_threshold_z]
         df = DataFrame(pg_score = Float32[0.1, 0.2, 0.3])
 
         Pioneer.remove_zero_variance_columns!(feature_names, df)
@@ -121,12 +121,13 @@ using Pioneer
     @testset "Protein Feature QC Plots Are Written" begin
         df = DataFrame(
             target = Bool[true, true, false, false],
-            top_pep_peak_area = Float32[100.0, 20.0, 15.0, 5.0],
-            has_valid_peak_area = Bool[true, true, true, false],
+            pg_score = Float32[0.99, 0.85, 0.20, 0.05],
+            top_pep_weight = Float32[100.0, 20.0, 15.0, 5.0],
+            has_valid_weight = Bool[true, true, true, false],
             coverage_miss_pval = Float32[1e-3, 0.2, 0.6, 1.0],
             coverage_miss_surprisal = Float32[3.0, 0.7, 0.2, 0.0],
             coverage_deficit_z = Float32[-4.5, -1.0, 0.5, 0.0],
-            top_area_vs_threshold_z = Float32[3.0, 1.0, 0.5, 0.0]
+            top_weight_vs_threshold_z = Float32[3.0, 1.0, 0.5, 0.0]
         )
 
         qc_dir = mktempdir()
@@ -134,7 +135,7 @@ using Pioneer
             paths = Pioneer.generate_protein_feature_qc_plots(
                 df,
                 qc_dir;
-                prefix = "protein_peak_area_feature_qc_test"
+                prefix = "protein_weight_feature_qc_test"
             )
 
             @test isfile(paths.combined_pdf)
