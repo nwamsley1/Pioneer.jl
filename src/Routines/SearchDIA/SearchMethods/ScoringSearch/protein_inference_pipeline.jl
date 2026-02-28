@@ -424,6 +424,52 @@ function add_weight_observation_features(calibration::NamedTuple)
 end
 
 """
+    add_singleton_interaction_features()
+
+Add singleton interaction terms for the current coverage-surprise feature family.
+"""
+function add_singleton_interaction_features()
+    desc = "add_singleton_interaction_features"
+
+    op = function(df)
+        if !hasproperty(df, :is_singleton)
+            return df
+        end
+
+        n_rows = nrow(df)
+        singleton_x_coverage_miss_surprisal = Vector{Float32}(undef, n_rows)
+        singleton_x_coverage_deficit_z = Vector{Float32}(undef, n_rows)
+        singleton_x_top_weight_vs_threshold_z = Vector{Float32}(undef, n_rows)
+
+        has_surprisal = hasproperty(df, :coverage_miss_surprisal)
+        has_deficit = hasproperty(df, :coverage_deficit_z)
+        has_threshold = hasproperty(df, :top_weight_vs_threshold_z)
+
+        for i in 1:n_rows
+            is_singleton = !ismissing(df.is_singleton[i]) && (df.is_singleton[i] == true)
+
+            if !is_singleton
+                singleton_x_coverage_miss_surprisal[i] = 0.0f0
+                singleton_x_coverage_deficit_z[i] = 0.0f0
+                singleton_x_top_weight_vs_threshold_z[i] = 0.0f0
+                continue
+            end
+
+            singleton_x_coverage_miss_surprisal[i] = has_surprisal ? Float32(df.coverage_miss_surprisal[i]) : 0.0f0
+            singleton_x_coverage_deficit_z[i] = has_deficit ? Float32(df.coverage_deficit_z[i]) : 0.0f0
+            singleton_x_top_weight_vs_threshold_z[i] = has_threshold ? Float32(df.top_weight_vs_threshold_z[i]) : 0.0f0
+        end
+
+        df.singleton_x_coverage_miss_surprisal = singleton_x_coverage_miss_surprisal
+        df.singleton_x_coverage_deficit_z = singleton_x_coverage_deficit_z
+        df.singleton_x_top_weight_vs_threshold_z = singleton_x_top_weight_vs_threshold_z
+        return df
+    end
+
+    return desc => op
+end
+
+"""
     group_psms_by_protein(df::DataFrame)
 
 Transform PSMs into protein groups by aggregating peptides.
@@ -690,7 +736,8 @@ function perform_protein_inference_pipeline(
         post_inference_pipeline = TransformPipeline() |>
             filter_by_min_peptides(min_peptides) |>
             add_protein_features(protein_catalog) |>
-            add_weight_observation_features(weight_calibration)
+            add_weight_observation_features(weight_calibration) |>
+            add_singleton_interaction_features()
         
         # Apply post-processing
         initial_rows = nrow(protein_groups_df)
