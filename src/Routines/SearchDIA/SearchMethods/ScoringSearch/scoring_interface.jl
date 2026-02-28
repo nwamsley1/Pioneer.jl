@@ -866,7 +866,6 @@ function get_quant_necessary_columns(match_between_runs::Bool)
         :prec_mz,
         qval_cols.pep,  # Always :pep but included for consistency
         :weight,
-        :peak_area,
         :target,
         :rt,
         :irt_obs,
