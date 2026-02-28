@@ -170,41 +170,53 @@ end
 
 function protein_feature_qc_columns()
     return [
-        :top_pep_peak_area,
-        :has_valid_peak_area,
+        :top_pep_weight,
+        :has_valid_weight,
         :coverage_miss_pval,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
-        :top_area_vs_threshold_z
+        :top_weight_vs_threshold_z
     ]
 end
 
-function _collect_numeric_feature_values(col, target_mask::AbstractVector{Bool})
-    vals = Float64[]
-    for i in eachindex(target_mask)
-        if !target_mask[i]
-            continue
-        end
-        v = col[i]
-        if ismissing(v) || (v isa Bool)
-            continue
-        end
-        fv = Float64(v)
-        if isfinite(fv)
-            push!(vals, fv)
-        end
+function _feature_plot_label(feature::Symbol)
+    if feature == :top_pep_weight
+        return "log10(top_pep_weight)"
+    elseif feature == :coverage_miss_pval
+        return "-log10(coverage_miss_pval)"
+    elseif feature == :has_valid_weight
+        return "has_valid_weight"
+    else
+        return String(feature)
     end
-    return vals
 end
 
-function _transform_feature_for_plot(feature::Symbol, vals::Vector{Float64})
-    if feature == :top_pep_peak_area
-        positive_vals = vals[vals .> 0.0]
-        return log10.(positive_vals), "log10(top_pep_peak_area)"
+function _transform_feature_value(feature::Symbol, value, row_idx::Int)
+    if ismissing(value)
+        return nothing
+    end
+
+    if feature == :has_valid_weight
+        base_value = value == true ? 1.0 : 0.0
+        jitter = ((row_idx % 11) - 5) * 0.03
+        return base_value + jitter
+    end
+
+    if value isa Bool
+        return nothing
+    end
+
+    numeric_value = Float64(value)
+    if !isfinite(numeric_value)
+        return nothing
+    end
+
+    if feature == :top_pep_weight
+        return numeric_value > 0.0 ? log10(numeric_value) : nothing
     elseif feature == :coverage_miss_pval
-        return -log10.(max.(vals, 1e-12)), "-log10(coverage_miss_pval)"
+        return -log10(max(numeric_value, 1e-12))
     else
-        return vals, String(feature)
+        return numeric_value
     end
 end
 
@@ -214,110 +226,78 @@ function _build_empty_feature_plot(title::String, message::String)
     return p
 end
 
-function _build_bool_feature_qc_plot(df::AbstractDataFrame, feature::Symbol)
-    target_true = 0
-    target_false = 0
-    decoy_true = 0
-    decoy_false = 0
+function _build_feature_score_scatter_plot(df::AbstractDataFrame, feature::Symbol)
+    if !hasproperty(df, :pg_score)
+        return _build_empty_feature_plot("Protein Feature QC: $(feature)", "No pg_score column available")
+    end
+
+    target_x = Float64[]
+    target_y = Float64[]
+    decoy_x = Float64[]
+    decoy_y = Float64[]
 
     for i in 1:nrow(df)
-        v = df[i, feature]
-        if ismissing(v)
+        score = df.pg_score[i]
+        if ismissing(score)
             continue
         end
-        if df.target[i]
-            if v
-                target_true += 1
-            else
-                target_false += 1
-            end
-        else
-            if v
-                decoy_true += 1
-            else
-                decoy_false += 1
-            end
+
+        score_value = Float64(score)
+        if !isfinite(score_value)
+            continue
         end
+
+        x_value = _transform_feature_value(feature, df[i, feature], i)
+        isnothing(x_value) && continue
+
+        if df.target[i] == true
+            push!(target_x, x_value)
+            push!(target_y, score_value)
+        else
+            push!(decoy_x, x_value)
+            push!(decoy_y, score_value)
+        end
+    end
+
+    if isempty(target_x) && isempty(decoy_x)
+        return _build_empty_feature_plot("Protein Feature QC: $(feature)", "No finite feature/score pairs available")
     end
 
     p = Plots.plot(
         title = "Protein Feature QC: $(feature)",
-        xlabel = "class / value",
-        ylabel = "count",
-        legend = false,
-        size = (900, 400)
+        xlabel = _feature_plot_label(feature),
+        ylabel = "final pg_score",
+        legend = :topright,
+        size = (1000, 600)
     )
-    Plots.bar!(
-        p,
-        ["target:false", "target:true", "decoy:false", "decoy:true"],
-        [target_false, target_true, decoy_false, decoy_true]
-    )
-    return p
-end
 
-function _build_numeric_feature_qc_plot(df::AbstractDataFrame, feature::Symbol)
-    target_mask = df.target .== true
-    decoy_mask = .!target_mask
-
-    target_vals = _collect_numeric_feature_values(df[!, feature], target_mask)
-    decoy_vals = _collect_numeric_feature_values(df[!, feature], decoy_mask)
-    target_plot_vals, x_label = _transform_feature_for_plot(feature, target_vals)
-    decoy_plot_vals, _ = _transform_feature_for_plot(feature, decoy_vals)
-
-    all_vals = vcat(target_plot_vals, decoy_plot_vals)
-    if isempty(all_vals)
-        return _build_empty_feature_plot("Protein Feature QC: $(feature)", "No finite values available")
+    if feature == :has_valid_weight
+        Plots.plot!(p; xticks = ([0.0, 1.0], ["false", "true"]), xlims = (-0.3, 1.3))
     end
 
-    n_bins = clamp(round(Int, sqrt(length(all_vals))), 10, 40)
-    p = Plots.plot(
-        layout = (1, 2),
-        size = (1100, 400),
-        title = ["Protein Feature QC: $(feature)" "Protein Feature QC: $(feature)"],
-        legend = :topright
-    )
-
-    if !isempty(target_plot_vals)
-        Plots.histogram!(
+    if !isempty(target_x)
+        Plots.scatter!(
             p,
-            target_plot_vals;
-            subplot = 1,
-            bins = n_bins,
-            normalize = :pdf,
-            alpha = 0.5,
+            target_x,
+            target_y;
             label = "target",
-            xlabel = x_label,
-            ylabel = "density"
-        )
-        boxplot!(
-            p,
-            fill("target", length(target_plot_vals)),
-            target_plot_vals;
-            subplot = 2,
-            label = false,
-            ylabel = x_label
+            color = :dodgerblue3,
+            alpha = 0.35,
+            markersize = 2.5,
+            markerstrokewidth = 0
         )
     end
 
-    if !isempty(decoy_plot_vals)
-        Plots.histogram!(
+    if !isempty(decoy_x)
+        Plots.scatter!(
             p,
-            decoy_plot_vals;
-            subplot = 1,
-            bins = n_bins,
-            normalize = :pdf,
-            alpha = 0.5,
+            decoy_x,
+            decoy_y;
             label = "decoy",
-            xlabel = x_label,
-            ylabel = "density"
-        )
-        boxplot!(
-            p,
-            fill("decoy", length(decoy_plot_vals)),
-            decoy_plot_vals;
-            subplot = 2,
-            label = false,
-            ylabel = x_label
+            color = :firebrick3,
+            alpha = 0.35,
+            markersize = 2.5,
+            markerstrokewidth = 0
         )
     end
 
@@ -327,7 +307,7 @@ end
 """
     generate_protein_feature_qc_plots(df::AbstractDataFrame, qc_folder::String; prefix="protein_feature_qc")
 
-Write troubleshooting QC plots for protein-group feature distributions.
+Write troubleshooting QC scatter plots for protein-group features against final pg_score.
 Generates per-feature PDFs and a combined multipage PDF in `qc_folder`.
 """
 function generate_protein_feature_qc_plots(
@@ -350,11 +330,7 @@ function generate_protein_feature_qc_plots(
     individual_pdfs = String[]
 
     for feature in features_to_plot
-        plot_obj = if eltype(df[!, feature]) <: Bool
-            _build_bool_feature_qc_plot(df, feature)
-        else
-            _build_numeric_feature_qc_plot(df, feature)
-        end
+        plot_obj = _build_feature_score_scatter_plot(df, feature)
 
         push!(qc_plots, plot_obj)
         feature_pdf = joinpath(qc_folder, "$(prefix)_$(feature).pdf")
@@ -1226,14 +1202,6 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         end
     end
     
-    if !isempty(sampled_protein_groups)
-        generate_protein_feature_qc_plots(
-            sampled_protein_groups,
-            qc_folder;
-            prefix = "protein_peak_area_feature_qc_sampled"
-        )
-    end
-
     n_sampled = sampled_targets + sampled_decoys
     if (n_sampled < 1000) || (sampled_targets < 50) || (sampled_decoys < 50)
         @user_warn "Insufficient sampled protein groups for OOM probit regression: targets=$sampled_targets, decoys=$sampled_decoys"
@@ -1249,7 +1217,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         :any_common_peps,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
-        :top_area_vs_threshold_z
+        :top_weight_vs_threshold_z
     ]
 
     # Apply feature filtering
@@ -1267,8 +1235,17 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     # Fit probit model on sampled data (skip if skip_scoring = true)
     if !skip_scoring
         β_fitted = fit_probit_model(X, y)
+        sampled_protein_groups[!, :pg_score] = Float32.(calculate_probit_scores(X, β_fitted))
     else
         β_fitted = Float64[]  # Empty model when skipping
+    end
+
+    if !isempty(sampled_protein_groups)
+        generate_protein_feature_qc_plots(
+            sampled_protein_groups,
+            qc_folder;
+            prefix = "protein_weight_feature_qc_sampled"
+        )
     end
     
     total_targets, total_decoys = 0, 0
@@ -1323,13 +1300,6 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
                                show_improvement = true)
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
-    if nrow(all_protein_groups) > 0
-        generate_protein_feature_qc_plots(
-            all_protein_groups,
-            qc_folder;
-            prefix = "protein_peak_area_feature_qc"
-        )
-    end
     # Define features to use
     feature_names = [
         :pg_score,
@@ -1338,7 +1308,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         :any_common_peps,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
-        :top_area_vs_threshold_z
+        :top_weight_vs_threshold_z
     ] # :log_binom_coeff]
 
     # Apply feature filtering
@@ -1356,6 +1326,14 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     # Fit probit model
     #β_fitted, X_mean, X_std = fit_probit_model(X, y)
     β_fitted = fit_probit_model(X, y)
+    all_protein_groups[!, :pg_score] = Float32.(calculate_probit_scores(X, β_fitted))
+    if nrow(all_protein_groups) > 0
+        generate_protein_feature_qc_plots(
+            all_protein_groups,
+            qc_folder;
+            prefix = "protein_weight_feature_qc"
+        )
+    end
     # Re-process individual files if references are provided
     if !isempty(pg_refs)
         # Use the new apply_probit_scores! function with references
@@ -2231,14 +2209,6 @@ function perform_probit_analysis_multifold(
     # 3. Assign CV folds to protein groups based on the mapping
     assign_protein_group_cv_folds!(all_protein_groups, protein_to_cv_fold)
 
-    if nrow(all_protein_groups) > 0
-        generate_protein_feature_qc_plots(
-            all_protein_groups,
-            qc_folder;
-            prefix = "protein_peak_area_feature_qc_multifold"
-        )
-    end
-    
     # 3. Check distribution
     fold_counts = Dict{UInt8, Int}()
     for fold in all_protein_groups.cv_fold
@@ -2253,7 +2223,7 @@ function perform_probit_analysis_multifold(
         :any_common_peps,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
-        :top_area_vs_threshold_z
+        :top_weight_vs_threshold_z
     ]
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, all_protein_groups)
@@ -2334,6 +2304,14 @@ function perform_probit_analysis_multifold(
         if old_passing > 0
             percent_improvement = round(100.0 * (new_passing - old_passing) / old_passing, digits=1)
         end
+    end
+
+    if nrow(all_protein_groups) > 0
+        generate_protein_feature_qc_plots(
+            all_protein_groups,
+            qc_folder;
+            prefix = "protein_weight_feature_qc_multifold"
+        )
     end
     
     # 8. Update protein group files if provided
