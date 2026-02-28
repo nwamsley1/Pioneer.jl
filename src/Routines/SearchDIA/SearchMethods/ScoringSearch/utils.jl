@@ -1249,14 +1249,13 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         :peptide_coverage,
         :n_possible_peptides,
         :log_binom_coeff,
-        :is_singleton,
         :any_common_peps,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
         :top_weight_vs_threshold_z,
-        :singleton_x_coverage_miss_surprisal,
-        :singleton_x_coverage_deficit_z,
-        :singleton_x_top_weight_vs_threshold_z
+        :pg_score_x_coverage_miss_surprisal,
+        :pg_score_x_coverage_deficit_z,
+        :pg_score_x_top_weight_vs_threshold_z
     ]
 
     # Apply feature filtering
@@ -1337,14 +1336,13 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         :pg_score,
         :peptide_coverage,
         :n_possible_peptides,
-        :is_singleton,
         :any_common_peps,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
         :top_weight_vs_threshold_z,
-        :singleton_x_coverage_miss_surprisal,
-        :singleton_x_coverage_deficit_z,
-        :singleton_x_top_weight_vs_threshold_z
+        :pg_score_x_coverage_miss_surprisal,
+        :pg_score_x_coverage_deficit_z,
+        :pg_score_x_top_weight_vs_threshold_z
     ] # :log_binom_coeff]
 
     # Apply feature filtering
@@ -2250,14 +2248,13 @@ function perform_probit_analysis_multifold(
     feature_names = [
         :pg_score,
         :peptide_coverage,
-        :is_singleton,
         :any_common_peps,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
         :top_weight_vs_threshold_z,
-        :singleton_x_coverage_miss_surprisal,
-        :singleton_x_coverage_deficit_z,
-        :singleton_x_top_weight_vs_threshold_z
+        :pg_score_x_coverage_miss_surprisal,
+        :pg_score_x_coverage_deficit_z,
+        :pg_score_x_top_weight_vs_threshold_z
     ]
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, all_protein_groups)

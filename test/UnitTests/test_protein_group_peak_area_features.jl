@@ -28,12 +28,10 @@ using Pioneer
         grouped = Pioneer.group_psms_by_protein(psms)
 
         @test hasproperty(grouped, :top_pep_weight)
-        @test hasproperty(grouped, :is_singleton)
 
         p1 = grouped[(grouped.protein_name .== "P1") .& grouped.target, :]
         @test nrow(p1) == 1
         @test p1.n_peptides[1] == 2
-        @test p1.is_singleton[1] == false
         @test p1.top_pep_weight[1] == 100.0f0
     end
 
@@ -80,14 +78,14 @@ using Pioneer
             target = Bool[true, true, true, true, true],
             entrap_id = UInt8[1, 1, 1, 1, 1],
             n_peptides = Int64[1, 1, 6, 1, 1],
-            is_singleton = Bool[true, true, false, true, true],
+            pg_score = Float32[2.0, 1.5, 0.5, 3.0, 1.0],
             n_possible_peptides = Int64[20, 2, 11, 12, 1],
             top_pep_weight = Float32[100.0, 100.0, 10.0, 0.0, 100.0]
         )
 
         (_, op) = Pioneer.add_weight_observation_features(calibration)
         out = op(copy(pg_df))
-        (_, interaction_op) = Pioneer.add_singleton_interaction_features()
+        (_, interaction_op) = Pioneer.add_pg_score_interaction_features()
         out = interaction_op(out)
 
         for col in (
@@ -95,9 +93,9 @@ using Pioneer
             :coverage_miss_surprisal,
             :coverage_deficit_z,
             :top_weight_vs_threshold_z,
-            :singleton_x_coverage_miss_surprisal,
-            :singleton_x_coverage_deficit_z,
-            :singleton_x_top_weight_vs_threshold_z
+            :pg_score_x_coverage_miss_surprisal,
+            :pg_score_x_coverage_deficit_z,
+            :pg_score_x_top_weight_vs_threshold_z
         )
             @test hasproperty(out, col)
         end
@@ -120,24 +118,23 @@ using Pioneer
         @test out.coverage_deficit_z[5] == 0.0f0
         @test out.top_weight_vs_threshold_z[5] == 0.0f0
 
-        @test out.singleton_x_coverage_miss_surprisal[1] == out.coverage_miss_surprisal[1]
-        @test out.singleton_x_coverage_deficit_z[1] == out.coverage_deficit_z[1]
-        @test out.singleton_x_top_weight_vs_threshold_z[1] == out.top_weight_vs_threshold_z[1]
-        @test out.singleton_x_coverage_miss_surprisal[3] == 0.0f0
-        @test out.singleton_x_coverage_deficit_z[3] == 0.0f0
-        @test out.singleton_x_top_weight_vs_threshold_z[3] == 0.0f0
+        @test out.pg_score_x_coverage_miss_surprisal[1] == out.pg_score[1] * out.coverage_miss_surprisal[1]
+        @test out.pg_score_x_coverage_deficit_z[1] == out.pg_score[1] * out.coverage_deficit_z[1]
+        @test out.pg_score_x_top_weight_vs_threshold_z[1] == out.pg_score[1] * out.top_weight_vs_threshold_z[1]
+        @test out.pg_score_x_coverage_miss_surprisal[3] == out.pg_score[3] * out.coverage_miss_surprisal[3]
+        @test out.pg_score_x_coverage_deficit_z[3] == out.pg_score[3] * out.coverage_deficit_z[3]
+        @test out.pg_score_x_top_weight_vs_threshold_z[3] == out.pg_score[3] * out.top_weight_vs_threshold_z[3]
     end
 
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
         feature_names = [
             :pg_score,
-            :is_singleton,
             :coverage_miss_surprisal,
             :coverage_deficit_z,
             :top_weight_vs_threshold_z,
-            :singleton_x_coverage_miss_surprisal,
-            :singleton_x_coverage_deficit_z,
-            :singleton_x_top_weight_vs_threshold_z
+            :pg_score_x_coverage_miss_surprisal,
+            :pg_score_x_coverage_deficit_z,
+            :pg_score_x_top_weight_vs_threshold_z
         ]
         df = DataFrame(pg_score = Float32[0.1, 0.2, 0.3])
 
