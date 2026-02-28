@@ -424,45 +424,44 @@ function add_weight_observation_features(calibration::NamedTuple)
 end
 
 """
-    add_singleton_interaction_features()
+    add_pg_score_interaction_features()
 
-Add singleton interaction terms for the current coverage-surprise feature family.
+Add pg_score interaction terms for the current coverage-surprise feature family.
 """
-function add_singleton_interaction_features()
-    desc = "add_singleton_interaction_features"
+function add_pg_score_interaction_features()
+    desc = "add_pg_score_interaction_features"
 
     op = function(df)
-        if !hasproperty(df, :is_singleton)
+        if !hasproperty(df, :pg_score)
             return df
         end
 
         n_rows = nrow(df)
-        singleton_x_coverage_miss_surprisal = Vector{Float32}(undef, n_rows)
-        singleton_x_coverage_deficit_z = Vector{Float32}(undef, n_rows)
-        singleton_x_top_weight_vs_threshold_z = Vector{Float32}(undef, n_rows)
+        pg_score_x_coverage_miss_surprisal = Vector{Float32}(undef, n_rows)
+        pg_score_x_coverage_deficit_z = Vector{Float32}(undef, n_rows)
+        pg_score_x_top_weight_vs_threshold_z = Vector{Float32}(undef, n_rows)
 
         has_surprisal = hasproperty(df, :coverage_miss_surprisal)
         has_deficit = hasproperty(df, :coverage_deficit_z)
         has_threshold = hasproperty(df, :top_weight_vs_threshold_z)
 
         for i in 1:n_rows
-            is_singleton = !ismissing(df.is_singleton[i]) && (df.is_singleton[i] == true)
-
-            if !is_singleton
-                singleton_x_coverage_miss_surprisal[i] = 0.0f0
-                singleton_x_coverage_deficit_z[i] = 0.0f0
-                singleton_x_top_weight_vs_threshold_z[i] = 0.0f0
-                continue
+            score = df.pg_score[i]
+            pg_score_val = if ismissing(score)
+                0.0f0
+            else
+                score_val = Float32(score)
+                isfinite(score_val) ? score_val : 0.0f0
             end
 
-            singleton_x_coverage_miss_surprisal[i] = has_surprisal ? Float32(df.coverage_miss_surprisal[i]) : 0.0f0
-            singleton_x_coverage_deficit_z[i] = has_deficit ? Float32(df.coverage_deficit_z[i]) : 0.0f0
-            singleton_x_top_weight_vs_threshold_z[i] = has_threshold ? Float32(df.top_weight_vs_threshold_z[i]) : 0.0f0
+            pg_score_x_coverage_miss_surprisal[i] = has_surprisal ? pg_score_val * Float32(df.coverage_miss_surprisal[i]) : 0.0f0
+            pg_score_x_coverage_deficit_z[i] = has_deficit ? pg_score_val * Float32(df.coverage_deficit_z[i]) : 0.0f0
+            pg_score_x_top_weight_vs_threshold_z[i] = has_threshold ? pg_score_val * Float32(df.top_weight_vs_threshold_z[i]) : 0.0f0
         end
 
-        df.singleton_x_coverage_miss_surprisal = singleton_x_coverage_miss_surprisal
-        df.singleton_x_coverage_deficit_z = singleton_x_coverage_deficit_z
-        df.singleton_x_top_weight_vs_threshold_z = singleton_x_top_weight_vs_threshold_z
+        df.pg_score_x_coverage_miss_surprisal = pg_score_x_coverage_miss_surprisal
+        df.pg_score_x_coverage_deficit_z = pg_score_x_coverage_deficit_z
+        df.pg_score_x_top_weight_vs_threshold_z = pg_score_x_top_weight_vs_threshold_z
         return df
     end
 
@@ -483,7 +482,6 @@ function group_psms_by_protein(df::DataFrame)
             target = Bool[],
             entrap_id = UInt8[],
             n_peptides = Int64[],
-            is_singleton = Bool[],
             peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
@@ -563,7 +561,6 @@ function group_psms_by_protein(df::DataFrame)
         
         DataFrame(
             n_peptides = n_peptides,
-            is_singleton = (n_peptides == 1),
             peptide_list = join(quant_peptides, ";"),
             pg_score = pg_score,
             any_common_peps = has_common,
@@ -737,7 +734,7 @@ function perform_protein_inference_pipeline(
             filter_by_min_peptides(min_peptides) |>
             add_protein_features(protein_catalog) |>
             add_weight_observation_features(weight_calibration) |>
-            add_singleton_interaction_features()
+            add_pg_score_interaction_features()
         
         # Apply post-processing
         initial_rows = nrow(protein_groups_df)
