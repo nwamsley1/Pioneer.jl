@@ -245,7 +245,7 @@ end
     estimate_weight_detection_model(df::DataFrame)
 
 Estimate per-file weight calibration for protein coverage surprise features.
-Uses unique inferred peptides with valid positive weight values.
+Uses summed inferred peptide weights with valid positive weight values.
 """
 function estimate_weight_detection_model(df::DataFrame)
     default_model = (
@@ -265,7 +265,7 @@ function estimate_weight_detection_model(df::DataFrame)
         return default_model
     end
 
-    best_weight_by_protein_peptide = Dict{Tuple{String, String}, Float64}()
+    summed_weight_by_protein_peptide = Dict{Tuple{String, String}, Float64}()
 
     for i in 1:n_rows
         if df.use_for_protein_quant[i] != true
@@ -288,24 +288,18 @@ function estimate_weight_detection_model(df::DataFrame)
         end
 
         key = (String(protein_name), String(df.sequence[i]))
-        if haskey(best_weight_by_protein_peptide, key)
-            if weight_val > best_weight_by_protein_peptide[key]
-                best_weight_by_protein_peptide[key] = weight_val
-            end
-        else
-            best_weight_by_protein_peptide[key] = weight_val
-        end
+        summed_weight_by_protein_peptide[key] = get(summed_weight_by_protein_peptide, key, 0.0) + weight_val
     end
 
-    if isempty(best_weight_by_protein_peptide)
+    if isempty(summed_weight_by_protein_peptide)
         return default_model
     end
 
-    log_weights = Float64[log(weight) for weight in values(best_weight_by_protein_peptide)]
+    log_weights = Float64[log(weight) for weight in values(summed_weight_by_protein_peptide)]
     log_threshold = Float64(Statistics.quantile(log_weights, 0.05))
 
     protein_to_log_weights = Dict{String, Vector{Float64}}()
-    for ((protein_name, _), weight) in best_weight_by_protein_peptide
+    for ((protein_name, _), weight) in summed_weight_by_protein_peptide
         push!(get!(protein_to_log_weights, protein_name, Float64[]), log(weight))
     end
 
@@ -481,7 +475,7 @@ function group_psms_by_protein(df::DataFrame)
         top_pep_weight = 0.0f0
         has_valid_weight = false
         if has_weight
-            best_weight_by_peptide = Dict{String, Float32}()
+            summed_weight_by_peptide = Dict{String, Float32}()
             for i in 1:nrow(gdf)
                 if quant_mask[i] != true
                     continue
@@ -495,17 +489,11 @@ function group_psms_by_protein(df::DataFrame)
                     continue
                 end
                 pep = gdf.sequence[i]
-                if haskey(best_weight_by_peptide, pep)
-                    if weight_val > best_weight_by_peptide[pep]
-                        best_weight_by_peptide[pep] = weight_val
-                    end
-                else
-                    best_weight_by_peptide[pep] = weight_val
-                end
+                summed_weight_by_peptide[pep] = get(summed_weight_by_peptide, pep, 0.0f0) + weight_val
             end
 
-            if !isempty(best_weight_by_peptide)
-                top_pep_weight = maximum(values(best_weight_by_peptide))
+            if !isempty(summed_weight_by_peptide)
+                top_pep_weight = maximum(values(summed_weight_by_peptide))
                 has_valid_weight = true
             end
         end
