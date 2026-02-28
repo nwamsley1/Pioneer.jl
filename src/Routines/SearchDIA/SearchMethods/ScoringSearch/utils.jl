@@ -1244,14 +1244,6 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         β_fitted = Float64[]  # Empty model when skipping
     end
 
-    if !isempty(sampled_protein_groups)
-        generate_protein_feature_qc_plots(
-            sampled_protein_groups,
-            qc_folder;
-            prefix = "protein_weight_feature_qc_sampled"
-        )
-    end
-    
     total_targets, total_decoys = 0, 0
     # Process each file
     for ref in pg_refs
@@ -1331,13 +1323,6 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     #β_fitted, X_mean, X_std = fit_probit_model(X, y)
     β_fitted = fit_probit_model(X, y)
     all_protein_groups[!, :pg_score] = Float32.(calculate_probit_scores(X, β_fitted))
-    if nrow(all_protein_groups) > 0
-        generate_protein_feature_qc_plots(
-            all_protein_groups,
-            qc_folder;
-            prefix = "protein_weight_feature_qc"
-        )
-    end
     # Re-process individual files if references are provided
     if !isempty(pg_refs)
         # Use the new apply_probit_scores! function with references
@@ -2310,14 +2295,6 @@ function perform_probit_analysis_multifold(
         end
     end
 
-    if nrow(all_protein_groups) > 0
-        generate_protein_feature_qc_plots(
-            all_protein_groups,
-            qc_folder;
-            prefix = "protein_weight_feature_qc_multifold"
-        )
-    end
-    
     # 8. Update protein group files if provided
     if !isempty(pg_refs)
         apply_probit_scores_multifold!(pg_refs, protein_to_cv_fold, models, feature_names; skip_scoring = skip_scoring)
