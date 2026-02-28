@@ -12,7 +12,7 @@ using Pioneer
         @test :weight in cols_mbr
     end
 
-    @testset "Group PSMs By Protein Sums Weight Within Peptide" begin
+    @testset "Group PSMs By Protein Uses Max Weight Within Peptide" begin
         psms = DataFrame(
             inferred_protein_group = ["P1", "P1", "P1", "P2"],
             target = Bool[true, true, true, false],
@@ -32,7 +32,7 @@ using Pioneer
         p1 = grouped[(grouped.protein_name .== "P1") .& grouped.target, :]
         @test nrow(p1) == 1
         @test p1.n_peptides[1] == 2
-        @test p1.top_pep_weight[1] == 180.0f0
+        @test p1.top_pep_weight[1] == 100.0f0
     end
 
     @testset "Grouped Protein Catalog Uses Union Peptide Set" begin
@@ -54,7 +54,7 @@ using Pioneer
         @test out.peptide_coverage[1] ≈ (2f0 / 3f0)
     end
 
-    @testset "Weight Calibration Uses Summed Peptide Weights" begin
+    @testset "Weight Calibration Uses Max Peptide Weights" begin
         psms = DataFrame(
             use_for_protein_quant = Bool[true, true, true, true, true, false],
             sequence = ["P1A", "P1A", "P1B", "P2A", "P2B", "P3A"],
@@ -64,7 +64,7 @@ using Pioneer
 
         model = Pioneer.estimate_weight_detection_model(psms)
 
-        expected_threshold = Float32(quantile(log.([100.0, 40.0, 80.0, 10.0]), 0.05))
+        expected_threshold = Float32(quantile(log.([60.0, 40.0, 80.0, 10.0]), 0.05))
         @test model.n_unique_peptides == 4
         @test model.log_threshold ≈ expected_threshold
         @test 0.25f0 <= model.sigma_log <= 2.5f0
