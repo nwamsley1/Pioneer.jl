@@ -2243,7 +2243,7 @@ function perform_probit_analysis_multifold(
     #feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides] #:any_common_peps]
     feature_names = [
         :pg_score,
-        #:peptide_coverage, :n_possible_peptides,
+        :peptide_coverage,
         :is_singleton,
         :any_common_peps,
         :coverage_miss_surprisal,
