@@ -437,6 +437,7 @@ function group_psms_by_protein(df::DataFrame)
             target = Bool[],
             entrap_id = UInt8[],
             n_peptides = Int64[],
+            is_singleton = Bool[],
             peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
@@ -516,6 +517,7 @@ function group_psms_by_protein(df::DataFrame)
         
         DataFrame(
             n_peptides = n_peptides,
+            is_singleton = (n_peptides == 1),
             peptide_list = join(quant_peptides, ";"),
             pg_score = pg_score,
             any_common_peps = has_common,

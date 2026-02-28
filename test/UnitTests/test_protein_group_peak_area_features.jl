@@ -28,10 +28,12 @@ using Pioneer
         grouped = Pioneer.group_psms_by_protein(psms)
 
         @test hasproperty(grouped, :top_pep_weight)
+        @test hasproperty(grouped, :is_singleton)
 
         p1 = grouped[(grouped.protein_name .== "P1") .& grouped.target, :]
         @test nrow(p1) == 1
         @test p1.n_peptides[1] == 2
+        @test p1.is_singleton[1] == false
         @test p1.top_pep_weight[1] == 100.0f0
     end
 
@@ -109,7 +111,7 @@ using Pioneer
     end
 
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
-        feature_names = [:pg_score, :coverage_miss_surprisal, :coverage_deficit_z, :top_weight_vs_threshold_z]
+        feature_names = [:pg_score, :is_singleton, :coverage_miss_surprisal, :coverage_deficit_z, :top_weight_vs_threshold_z]
         df = DataFrame(pg_score = Float32[0.1, 0.2, 0.3])
 
         Pioneer.remove_zero_variance_columns!(feature_names, df)
