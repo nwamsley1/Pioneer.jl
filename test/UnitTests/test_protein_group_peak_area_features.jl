@@ -28,13 +28,11 @@ using Pioneer
         grouped = Pioneer.group_psms_by_protein(psms)
 
         @test hasproperty(grouped, :top_pep_weight)
-        @test hasproperty(grouped, :has_valid_weight)
 
         p1 = grouped[(grouped.protein_name .== "P1") .& grouped.target, :]
         @test nrow(p1) == 1
         @test p1.n_peptides[1] == 2
         @test p1.top_pep_weight[1] == 180.0f0
-        @test p1.has_valid_weight[1] == true
     end
 
     @testset "Grouped Protein Catalog Uses Union Peptide Set" begin
@@ -81,8 +79,7 @@ using Pioneer
             entrap_id = UInt8[1, 1, 1, 1, 1],
             n_peptides = Int64[1, 1, 6, 1, 1],
             n_possible_peptides = Int64[20, 2, 11, 12, 1],
-            top_pep_weight = Float32[100.0, 100.0, 10.0, 0.0, 100.0],
-            has_valid_weight = Bool[true, true, true, false, true]
+            top_pep_weight = Float32[100.0, 100.0, 10.0, 0.0, 100.0]
         )
 
         (_, op) = Pioneer.add_weight_observation_features(calibration)
@@ -125,7 +122,6 @@ using Pioneer
             target = Bool[true, true, false, false],
             pg_score = Float32[0.99, 0.85, 0.20, 0.05],
             top_pep_weight = Float32[100.0, 20.0, 15.0, 5.0],
-            has_valid_weight = Bool[true, true, true, false],
             coverage_miss_pval = Float32[1e-3, 0.2, 0.6, 1.0],
             coverage_miss_surprisal = Float32[3.0, 0.7, 0.2, 0.0],
             coverage_deficit_z = Float32[-4.5, -1.0, 0.5, 0.0],
