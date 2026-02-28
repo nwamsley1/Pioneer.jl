@@ -233,8 +233,13 @@ function _build_feature_score_scatter_plot(df::AbstractDataFrame, feature::Symbo
 
     target_x = Float64[]
     target_y = Float64[]
+    target_one_hit_x = Float64[]
+    target_one_hit_y = Float64[]
     decoy_x = Float64[]
     decoy_y = Float64[]
+    decoy_one_hit_x = Float64[]
+    decoy_one_hit_y = Float64[]
+    has_n_peptides = hasproperty(df, :n_peptides)
 
     for i in 1:nrow(df)
         score = df.pg_score[i]
@@ -249,17 +254,28 @@ function _build_feature_score_scatter_plot(df::AbstractDataFrame, feature::Symbo
 
         x_value = _transform_feature_value(feature, df[i, feature], i)
         isnothing(x_value) && continue
+        is_one_hit = has_n_peptides && !ismissing(df.n_peptides[i]) && (Int(df.n_peptides[i]) == 1)
 
         if df.target[i] == true
-            push!(target_x, x_value)
-            push!(target_y, score_value)
+            if is_one_hit
+                push!(target_one_hit_x, x_value)
+                push!(target_one_hit_y, score_value)
+            else
+                push!(target_x, x_value)
+                push!(target_y, score_value)
+            end
         else
-            push!(decoy_x, x_value)
-            push!(decoy_y, score_value)
+            if is_one_hit
+                push!(decoy_one_hit_x, x_value)
+                push!(decoy_one_hit_y, score_value)
+            else
+                push!(decoy_x, x_value)
+                push!(decoy_y, score_value)
+            end
         end
     end
 
-    if isempty(target_x) && isempty(decoy_x)
+    if isempty(target_x) && isempty(target_one_hit_x) && isempty(decoy_x) && isempty(decoy_one_hit_x)
         return _build_empty_feature_plot("Protein Feature QC: $(feature)", "No finite feature/score pairs available")
     end
 
@@ -288,6 +304,20 @@ function _build_feature_score_scatter_plot(df::AbstractDataFrame, feature::Symbo
         )
     end
 
+    if !isempty(target_one_hit_x)
+        Plots.scatter!(
+            p,
+            target_one_hit_x,
+            target_one_hit_y;
+            label = "target (1 peptide)",
+            color = :dodgerblue3,
+            alpha = 0.5,
+            markersize = 3.0,
+            markerstrokecolor = :black,
+            markerstrokewidth = 1.0
+        )
+    end
+
     if !isempty(decoy_x)
         Plots.scatter!(
             p,
@@ -298,6 +328,20 @@ function _build_feature_score_scatter_plot(df::AbstractDataFrame, feature::Symbo
             alpha = 0.35,
             markersize = 2.5,
             markerstrokewidth = 0
+        )
+    end
+
+    if !isempty(decoy_one_hit_x)
+        Plots.scatter!(
+            p,
+            decoy_one_hit_x,
+            decoy_one_hit_y;
+            label = "decoy (1 peptide)",
+            color = :firebrick3,
+            alpha = 0.5,
+            markersize = 3.0,
+            markerstrokecolor = :black,
+            markerstrokewidth = 1.0
         )
     end
 
