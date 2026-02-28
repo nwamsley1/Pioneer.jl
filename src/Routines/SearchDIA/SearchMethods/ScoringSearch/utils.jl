@@ -171,7 +171,6 @@ end
 function protein_feature_qc_columns()
     return [
         :top_pep_weight,
-        :has_valid_weight,
         :coverage_miss_pval,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
@@ -186,8 +185,6 @@ function _feature_plot_label(feature::Symbol)
         return "-log10(coverage_miss_pval)"
     elseif feature == :coverage_deficit_z
         return "signed log10(1 + abs(coverage_deficit_z))"
-    elseif feature == :has_valid_weight
-        return "has_valid_weight"
     else
         return String(feature)
     end
@@ -196,12 +193,6 @@ end
 function _transform_feature_value(feature::Symbol, value, row_idx::Int)
     if ismissing(value)
         return nothing
-    end
-
-    if feature == :has_valid_weight
-        base_value = value == true ? 1.0 : 0.0
-        jitter = ((row_idx % 11) - 5) * 0.03
-        return base_value + jitter
     end
 
     if value isa Bool
@@ -274,10 +265,6 @@ function _build_feature_score_scatter_plot(df::AbstractDataFrame, feature::Symbo
         legend = :topright,
         size = (1000, 600)
     )
-
-    if feature == :has_valid_weight
-        Plots.plot!(p; xticks = ([0.0, 1.0], ["false", "true"]), xlims = (-0.3, 1.3))
-    end
 
     if !isempty(target_x)
         Plots.scatter!(
@@ -383,6 +370,50 @@ function filter_ms1_features_if_disabled!(feature_names::Vector{Symbol}, ms1_sco
     end
 
     return feature_names
+end
+
+function log_probit_feature_importance(
+    feature_names::Vector{Symbol},
+    β_fitted::AbstractVector{<:Real},
+    X::Matrix{Float64};
+    context::String = "protein_probit"
+)
+    n_coefficients = max(length(β_fitted) - 1, 0)
+    n_features = min(length(feature_names), size(X, 2), n_coefficients)
+
+    if n_features == 0
+        @user_warn "Protein probit fit produced no feature coefficients to log"
+        return
+    end
+
+    intercept = Float64(β_fitted[1])
+    @user_info "Protein probit model coefficients context=$(context) intercept=$(round(intercept, digits=6)) n_features=$(n_features) importance_metric=abs(coefficient*feature_std)"
+
+    feature_summaries = NamedTuple[]
+    for j in 1:n_features
+        feature_std = Float64(std(view(X, :, j)))
+        coefficient = Float64(β_fitted[j + 1])
+        one_sigma_effect = coefficient * feature_std
+        push!(
+            feature_summaries,
+            (
+                feature = String(feature_names[j]),
+                coefficient = coefficient,
+                abs_coefficient = abs(coefficient),
+                feature_std = feature_std,
+                one_sigma_effect = one_sigma_effect,
+                abs_one_sigma_effect = abs(one_sigma_effect)
+            )
+        )
+    end
+
+    sort!(feature_summaries, by = x -> x.abs_one_sigma_effect, rev = true)
+
+    for (rank, summary) in enumerate(feature_summaries)
+        @user_info "Protein probit feature importance context=$(context) rank=$(rank) feature=$(summary.feature) coefficient=$(round(summary.coefficient, digits=6)) feature_std=$(round(summary.feature_std, digits=6)) one_sigma_effect=$(round(summary.one_sigma_effect, digits=6)) abs_one_sigma_effect=$(round(summary.abs_one_sigma_effect, digits=6))"
+    end
+
+    return
 end
 
 
@@ -1239,6 +1270,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     # Fit probit model on sampled data (skip if skip_scoring = true)
     if !skip_scoring
         β_fitted = fit_probit_model(X, y)
+        log_probit_feature_importance(feature_names, β_fitted, X; context = "protein_probit_oom_sampled")
         sampled_protein_groups[!, :pg_score] = Float32.(calculate_probit_scores(X, β_fitted))
     else
         β_fitted = Float64[]  # Empty model when skipping
@@ -1322,6 +1354,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     # Fit probit model
     #β_fitted, X_mean, X_std = fit_probit_model(X, y)
     β_fitted = fit_probit_model(X, y)
+    log_probit_feature_importance(feature_names, β_fitted, X; context = "protein_probit")
     all_protein_groups[!, :pg_score] = Float32.(calculate_probit_scores(X, β_fitted))
     # Re-process individual files if references are provided
     if !isempty(pg_refs)
@@ -2252,6 +2285,7 @@ function perform_probit_analysis_multifold(
             
             # Fit model
             β_fitted = fit_probit_model(X_train, y_train)
+            log_probit_feature_importance(feature_names, β_fitted, X_train; context = "protein_probit_multifold_fold_$(test_fold)")
             models[test_fold] = β_fitted
         end
     end

@@ -357,17 +357,18 @@ function add_weight_observation_features(calibration::NamedTuple)
         std_normal = Distributions.Normal()
 
         has_top_weight_col = hasproperty(df, :top_pep_weight)
-        has_valid_weight_col = hasproperty(df, :has_valid_weight)
         has_n_possible_col = hasproperty(df, :n_possible_peptides)
         has_n_peptides_col = hasproperty(df, :n_peptides)
 
         for i in 1:n_rows
-            valid_top_weight = has_top_weight_col && has_valid_weight_col && df.has_valid_weight[i] == true
-
-            top_weight = if valid_top_weight
-                Float64(df.top_pep_weight[i])
-            else
-                0.0
+            valid_top_weight = false
+            top_weight = 0.0
+            if has_top_weight_col
+                weight_value = df.top_pep_weight[i]
+                if !ismissing(weight_value)
+                    top_weight = Float64(weight_value)
+                    valid_top_weight = isfinite(top_weight) && top_weight > 0.0
+                end
             end
 
             N_total = if has_n_possible_col
@@ -433,8 +434,7 @@ function group_psms_by_protein(df::DataFrame)
             peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
-            top_pep_weight = Float32[],
-            has_valid_weight = Bool[]
+            top_pep_weight = Float32[]
         )
     end
 
@@ -473,7 +473,6 @@ function group_psms_by_protein(df::DataFrame)
         end        
 
         top_pep_weight = 0.0f0
-        has_valid_weight = false
         if has_weight
             summed_weight_by_peptide = Dict{String, Float32}()
             for i in 1:nrow(gdf)
@@ -494,7 +493,6 @@ function group_psms_by_protein(df::DataFrame)
 
             if !isempty(summed_weight_by_peptide)
                 top_pep_weight = maximum(values(summed_weight_by_peptide))
-                has_valid_weight = true
             end
         end
 
@@ -509,8 +507,7 @@ function group_psms_by_protein(df::DataFrame)
             peptide_list = join(quant_peptides, ";"),
             pg_score = pg_score,
             any_common_peps = has_common,
-            top_pep_weight = top_pep_weight,
-            has_valid_weight = has_valid_weight
+            top_pep_weight = top_pep_weight
         )
     end
     
