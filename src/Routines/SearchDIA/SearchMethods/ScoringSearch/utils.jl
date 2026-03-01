@@ -941,6 +941,258 @@ function count_protein_peptides(precursors::LibraryPrecursors)
     return protein_to_possible_peptides
 end
 
+function empty_protein_peptide_weight_summary()
+    return DataFrame(
+        protein_name = String[],
+        target = Bool[],
+        entrap_id = UInt8[],
+        file_idx = Int64[],
+        sequence = String[],
+        log_weight = Float64[],
+        pg_score = Float32[]
+    )
+end
+
+function summarize_protein_peptide_weights(
+    psms_df::AbstractDataFrame,
+    protein_groups_df::AbstractDataFrame,
+    file_idx::Int64
+)
+    required_pg_columns = (:protein_name, :target, :entrap_id, :pg_score)
+    required_psm_columns = (:inferred_protein_group, :target, :sequence, :use_for_protein_quant, :weight)
+
+    if any(col -> !hasproperty(protein_groups_df, col), required_pg_columns) ||
+       any(col -> !hasproperty(psms_df, col), required_psm_columns)
+        return empty_protein_peptide_weight_summary()
+    end
+
+    entrap_col = if hasproperty(psms_df, :entrap_id)
+        :entrap_id
+    elseif hasproperty(psms_df, :entrapment_group_id)
+        :entrapment_group_id
+    else
+        return empty_protein_peptide_weight_summary()
+    end
+
+    pg_score_lookup = Dict{ProteinKey, Float32}()
+    for i in 1:nrow(protein_groups_df)
+        key = ProteinKey(
+            String(protein_groups_df.protein_name[i]),
+            Bool(protein_groups_df.target[i]),
+            UInt8(protein_groups_df.entrap_id[i])
+        )
+        pg_score_lookup[key] = Float32(protein_groups_df.pg_score[i])
+    end
+
+    best_weight_by_peptide = Dict{Tuple{ProteinKey, String}, Float64}()
+    for i in 1:nrow(psms_df)
+        if psms_df.use_for_protein_quant[i] != true
+            continue
+        end
+
+        protein_name = psms_df.inferred_protein_group[i]
+        if ismissing(protein_name)
+            continue
+        end
+
+        weight = psms_df.weight[i]
+        if ismissing(weight)
+            continue
+        end
+
+        weight_val = Float64(weight)
+        if !isfinite(weight_val) || weight_val <= 0.0
+            continue
+        end
+
+        key = ProteinKey(
+            String(protein_name),
+            Bool(psms_df.target[i]),
+            UInt8(psms_df[i, entrap_col])
+        )
+        if !haskey(pg_score_lookup, key)
+            continue
+        end
+
+        peptide_key = (key, String(psms_df.sequence[i]))
+        if haskey(best_weight_by_peptide, peptide_key)
+            if weight_val > best_weight_by_peptide[peptide_key]
+                best_weight_by_peptide[peptide_key] = weight_val
+            end
+        else
+            best_weight_by_peptide[peptide_key] = weight_val
+        end
+    end
+
+    summary_df = empty_protein_peptide_weight_summary()
+    if isempty(best_weight_by_peptide)
+        return summary_df
+    end
+
+    protein_name = String[]
+    target = Bool[]
+    entrap_id = UInt8[]
+    file_idxs = Int64[]
+    sequence = String[]
+    log_weight = Float64[]
+    pg_score = Float32[]
+
+    for ((protein_key, peptide_sequence), weight_val) in best_weight_by_peptide
+        push!(protein_name, protein_key.name)
+        push!(target, protein_key.is_target)
+        push!(entrap_id, protein_key.entrap_id)
+        push!(file_idxs, file_idx)
+        push!(sequence, peptide_sequence)
+        push!(log_weight, log(weight_val))
+        push!(pg_score, pg_score_lookup[protein_key])
+    end
+
+    summary_df.protein_name = protein_name
+    summary_df.target = target
+    summary_df.entrap_id = entrap_id
+    summary_df.file_idx = file_idxs
+    summary_df.sequence = sequence
+    summary_df.log_weight = log_weight
+    summary_df.pg_score = pg_score
+    return summary_df
+end
+
+function compute_efficiency_topk_deficit_map(peptide_summary::DataFrame)
+    feature_map = Dict{Tuple{Int64, ProteinKey}, Float32}()
+    if nrow(peptide_summary) == 0
+        return feature_map
+    end
+
+    for protein_df in groupby(peptide_summary, [:protein_name, :target, :entrap_id])
+        protein_key = ProteinKey(
+            String(first(protein_df.protein_name)),
+            Bool(first(protein_df.target)),
+            UInt8(first(protein_df.entrap_id))
+        )
+
+        global_sum = Dict{String, Float64}()
+        global_weight = Dict{String, Float64}()
+        run_sum = Dict{Tuple{Int64, String}, Float64}()
+        run_weight = Dict{Tuple{Int64, String}, Float64}()
+
+        run_groups = collect(groupby(protein_df, :file_idx))
+        for run_df in run_groups
+            if nrow(run_df) < 2
+                continue
+            end
+
+            weight_val = max(Float64(first(run_df.pg_score)), 0.0)
+            if !isfinite(weight_val) || weight_val <= 0.0
+                continue
+            end
+
+            run_idx = Int(first(run_df.file_idx))
+            run_mean = Statistics.mean(run_df.log_weight)
+            for i in 1:nrow(run_df)
+                seq = String(run_df.sequence[i])
+                residual = Float64(run_df.log_weight[i]) - run_mean
+                global_sum[seq] = get(global_sum, seq, 0.0) + (weight_val * residual)
+                global_weight[seq] = get(global_weight, seq, 0.0) + weight_val
+                run_sum[(run_idx, seq)] = weight_val * residual
+                run_weight[(run_idx, seq)] = weight_val
+            end
+        end
+
+        all_profiled_sequences = collect(keys(global_weight))
+        for run_df in run_groups
+            run_idx = Int(first(run_df.file_idx))
+            k_obs = nrow(run_df)
+            if k_obs == 0
+                feature_map[(run_idx, protein_key)] = 0.0f0
+                continue
+            end
+
+            loo_efficiency = Dict{String, Float64}()
+            profiled_vals = Float64[]
+            for seq in all_profiled_sequences
+                denom = get(global_weight, seq, 0.0) - get(run_weight, (run_idx, seq), 0.0)
+                if denom > 0.0
+                    eff = (get(global_sum, seq, 0.0) - get(run_sum, (run_idx, seq), 0.0)) / denom
+                    loo_efficiency[seq] = eff
+                    push!(profiled_vals, eff)
+                end
+            end
+
+            if length(profiled_vals) < k_obs
+                feature_map[(run_idx, protein_key)] = 0.0f0
+                continue
+            end
+
+            sort!(profiled_vals, rev = true)
+            topk_profiled_sum = sum(profiled_vals[1:k_obs])
+
+            observed_vals = Float64[]
+            for i in 1:nrow(run_df)
+                seq = String(run_df.sequence[i])
+                push!(observed_vals, get(loo_efficiency, seq, 0.0))
+            end
+            sort!(observed_vals, rev = true)
+            observed_sum = sum(observed_vals)
+
+            feature_map[(run_idx, protein_key)] = Float32(max(topk_profiled_sum - observed_sum, 0.0))
+        end
+    end
+
+    return feature_map
+end
+
+function add_efficiency_topk_deficit_feature!(pg_refs::Vector{ProteinGroupFileReference})
+    if isempty(pg_refs)
+        return
+    end
+
+    peptide_summary = empty_protein_peptide_weight_summary()
+    for (fallback_file_idx, pg_ref) in enumerate(pg_refs)
+        if !exists(pg_ref)
+            continue
+        end
+
+        pg_df = DataFrame(Tables.columntable(Arrow.Table(file_path(pg_ref))))
+        if nrow(pg_df) == 0
+            continue
+        end
+
+        file_idx = hasproperty(pg_df, :file_idx) ? Int(first(pg_df.file_idx)) : fallback_file_idx
+        psm_path = get_corresponding_psm_path(pg_ref)
+        if !isfile(psm_path)
+            continue
+        end
+
+        psms_df = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
+        append!(peptide_summary, summarize_protein_peptide_weights(psms_df, pg_df, file_idx))
+    end
+
+    feature_map = compute_efficiency_topk_deficit_map(peptide_summary)
+
+    for (fallback_file_idx, pg_ref) in enumerate(pg_refs)
+        if !exists(pg_ref)
+            continue
+        end
+
+        transform_and_write!(pg_ref) do df
+            feature_vals = Vector{Float32}(undef, nrow(df))
+            for i in 1:nrow(df)
+                row_file_idx = hasproperty(df, :file_idx) ? Int(df.file_idx[i]) : fallback_file_idx
+                protein_key = ProteinKey(
+                    String(df.protein_name[i]),
+                    Bool(df.target[i]),
+                    UInt8(df.entrap_id[i])
+                )
+                feature_vals[i] = get(feature_map, (row_file_idx, protein_key), 0.0f0)
+            end
+            df[!, :efficiency_topk_deficit] = feature_vals
+            return df
+        end
+    end
+
+    return
+end
+
 
 """
     perform_protein_probit_regression(pg_refs::Vector{ProteinGroupFileReference},
@@ -970,6 +1222,8 @@ function perform_protein_probit_regression(
 )
     # Extract paths for compatibility with existing code
     passing_pg_paths = [file_path(ref) for ref in pg_refs]
+
+    add_efficiency_topk_deficit_feature!(pg_refs)
     
     # First, count the total number of protein groups across all files
     total_protein_groups = 0
@@ -1250,6 +1504,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         :n_possible_peptides,
         :log_binom_coeff,
         :any_common_peps,
+        :efficiency_topk_deficit,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
         :top_weight_vs_threshold_z,
@@ -1337,6 +1592,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         :peptide_coverage,
         :n_possible_peptides,
         :any_common_peps,
+        :efficiency_topk_deficit,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
         :top_weight_vs_threshold_z,
@@ -2249,6 +2505,7 @@ function perform_probit_analysis_multifold(
         :pg_score,
         :peptide_coverage,
         :any_common_peps,
+        :efficiency_topk_deficit,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
         :top_weight_vs_threshold_z,

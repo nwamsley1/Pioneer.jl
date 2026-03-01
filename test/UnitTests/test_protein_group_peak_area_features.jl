@@ -126,9 +126,31 @@ using Pioneer
         @test out.pg_score_x_top_weight_vs_threshold_z[3] == out.pg_score[3] * out.top_weight_vs_threshold_z[3]
     end
 
+    @testset "Efficiency TopK Deficit Prefers Expected Singleton Peptides" begin
+        peptide_summary = DataFrame(
+            protein_name = ["P1", "P1", "P1", "P1", "P1", "P1", "P1", "P1"],
+            target = Bool[true, true, true, true, true, true, true, true],
+            entrap_id = UInt8[1, 1, 1, 1, 1, 1, 1, 1],
+            file_idx = Int64[1, 1, 1, 2, 2, 2, 3, 4],
+            sequence = ["A", "B", "C", "A", "B", "C", "A", "C"],
+            log_weight = log.([100.0, 50.0, 10.0, 120.0, 60.0, 12.0, 110.0, 11.0]),
+            pg_score = Float32[6.0, 6.0, 6.0, 5.0, 5.0, 5.0, 2.0, 2.0]
+        )
+
+        feature_map = Pioneer.compute_efficiency_topk_deficit_map(peptide_summary)
+        protein_key = Pioneer.ProteinKey("P1", true, UInt8(1))
+
+        @test haskey(feature_map, (3, protein_key))
+        @test haskey(feature_map, (4, protein_key))
+        @test feature_map[(3, protein_key)] < 1e-4
+        @test feature_map[(4, protein_key)] > feature_map[(3, protein_key)]
+        @test feature_map[(4, protein_key)] > 0.5f0
+    end
+
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
         feature_names = [
             :pg_score,
+            :efficiency_topk_deficit,
             :coverage_miss_surprisal,
             :coverage_deficit_z,
             :top_weight_vs_threshold_z,
