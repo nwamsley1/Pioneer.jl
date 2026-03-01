@@ -93,6 +93,7 @@ using Pioneer
             :coverage_miss_surprisal,
             :coverage_deficit_z,
             :top_weight_vs_threshold_z,
+            :pg_score_x_efficiency_topk_deficit,
             :pg_score_x_coverage_miss_surprisal,
             :pg_score_x_coverage_deficit_z,
             :pg_score_x_top_weight_vs_threshold_z
@@ -118,9 +119,11 @@ using Pioneer
         @test out.coverage_deficit_z[5] == 0.0f0
         @test out.top_weight_vs_threshold_z[5] == 0.0f0
 
+        @test out.pg_score_x_efficiency_topk_deficit[1] == out.pg_score[1] * out.efficiency_topk_deficit[1]
         @test out.pg_score_x_coverage_miss_surprisal[1] == out.pg_score[1] * out.coverage_miss_surprisal[1]
         @test out.pg_score_x_coverage_deficit_z[1] == out.pg_score[1] * out.coverage_deficit_z[1]
         @test out.pg_score_x_top_weight_vs_threshold_z[1] == out.pg_score[1] * out.top_weight_vs_threshold_z[1]
+        @test out.pg_score_x_efficiency_topk_deficit[3] == out.pg_score[3] * out.efficiency_topk_deficit[3]
         @test out.pg_score_x_coverage_miss_surprisal[3] == out.pg_score[3] * out.coverage_miss_surprisal[3]
         @test out.pg_score_x_coverage_deficit_z[3] == out.pg_score[3] * out.coverage_deficit_z[3]
         @test out.pg_score_x_top_weight_vs_threshold_z[3] == out.pg_score[3] * out.top_weight_vs_threshold_z[3]
@@ -154,6 +157,7 @@ using Pioneer
             :coverage_miss_surprisal,
             :coverage_deficit_z,
             :top_weight_vs_threshold_z,
+            :pg_score_x_efficiency_topk_deficit,
             :pg_score_x_coverage_miss_surprisal,
             :pg_score_x_coverage_deficit_z,
             :pg_score_x_top_weight_vs_threshold_z
