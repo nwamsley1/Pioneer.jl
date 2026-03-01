@@ -274,52 +274,45 @@ function writePrecursorCSV(
     sorted_columns = vcat(wide_columns, file_names)
     open(long_precursors_path,"w") do io1
         open(wide_precursors_path, "w") do io2
-            #Make file headers 
+            #Make file headers
             if write_csv
                 println(io1,join(names(precursors_long),"\t"))
                 println(io2,join(sorted_columns,"\t"))
             end
             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
-            n_writes = 0
-            while batch_start_idx <= n_rows
-                #For the wide format, can't split a precursor between two batches.
-                last_pid = precursors_long[batch_end_idx,:precursor_idx]
-                while batch_end_idx < n_rows
-                    if precursors_long[batch_end_idx + 1,:precursor_idx] != last_pid
-                        break
+            open(Arrow.Writer, wide_precursors_arrow_path; file=false) do arrow_writer
+                while batch_start_idx <= n_rows
+                    #For the wide format, can't split a precursor between two batches.
+                    last_pid = precursors_long[batch_end_idx,:precursor_idx]
+                    while batch_end_idx < n_rows
+                        if precursors_long[batch_end_idx + 1,:precursor_idx] != last_pid
+                            break
+                        end
+                        batch_end_idx += 1
                     end
-                    batch_end_idx += 1
-                end
 
-                subdf =  precursors_long[range(batch_start_idx, batch_end_idx),:]
-                batch_start_idx = batch_end_idx + 1
-                batch_end_idx = min(batch_start_idx + batch_size, n_rows)
-                if write_csv 
-                    _sanitize_empty_strings!(subdf)
-                    CSV.write(io1, subdf, append=true, header=false, delim='\t')
-                end
-                subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
-                col_names = names(subunstack)
-                for fname in file_names
-                    if fname ∉ col_names
-                        subunstack[!,fname] .= Vector{Union{Missing,Float32}}(missing, nrow(subunstack))
+                    subdf =  precursors_long[range(batch_start_idx, batch_end_idx),:]
+                    batch_start_idx = batch_end_idx + 1
+                    batch_end_idx = min(batch_start_idx + batch_size, n_rows)
+                    if write_csv
+                        _sanitize_empty_strings!(subdf)
+                        CSV.write(io1, subdf, append=true, header=false, delim='\t')
                     end
-                end
-                if write_csv
-                    _sanitize_empty_strings!(subunstack)
-                    CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
-                end
-                if iszero(n_writes)
-                    if isfile(wide_precursors_arrow_path)
-                        rm(wide_precursors_arrow_path)
+                    subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
+                    col_names = names(subunstack)
+                    for fname in file_names
+                        if fname ∉ col_names
+                            subunstack[!,fname] .= Vector{Union{Missing,Float32}}(missing, nrow(subunstack))
+                        end
                     end
-                    open(wide_precursors_arrow_path, "w") do io
-                        Arrow.write(io, subunstack[!,sorted_columns]; file=false)  # file=false creates stream format
+                    if write_csv
+                        _sanitize_empty_strings!(subunstack)
+                        CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
                     end
-                else
-                    Arrow.append(wide_precursors_arrow_path,subunstack[!,sorted_columns])
+                    # Normalize column types for consistent Arrow schema across batches
+                    allowmissing!(subunstack)
+                    Arrow.write(arrow_writer, subunstack[!,sorted_columns])
                 end
-                n_writes += 1
             end
         end
     end
@@ -458,95 +451,87 @@ function writePrecursorCSV_chunked(
     sorted_columns = vcat(wide_columns, file_names)
     n_chunks = length(chunk_refs)
 
-    n_arrow_writes = 0
-
     open(long_precursors_path, "w") do io1
         open(wide_precursors_path, "w") do io2
-            headers_written = false
-            pbar = ProgressBar(total=n_chunks)
-            set_description(pbar, "Writing precursor CSV chunks:")
+            open(Arrow.Writer, wide_precursors_arrow_path; file=false) do arrow_writer
+                headers_written = false
+                pbar = ProgressBar(total=n_chunks)
+                set_description(pbar, "Writing precursor CSV chunks:")
 
-            for (ci, chunk_ref) in enumerate(chunk_refs)
-                precursors_long = DataFrame(Arrow.Table(file_path(chunk_ref)))
-                n_rows = size(precursors_long, 1)
-                n_rows == 0 && continue
+                for (ci, chunk_ref) in enumerate(chunk_refs)
+                    precursors_long = DataFrame(Arrow.Table(file_path(chunk_ref)))
+                    n_rows = size(precursors_long, 1)
+                    n_rows == 0 && continue
 
-                # Drop excluded columns (only those that exist)
-                cols_to_drop = intersect(long_columns_exclude, Symbol.(names(precursors_long)))
-                if !isempty(cols_to_drop)
-                    select!(precursors_long, Not(cols_to_drop))
+                    # Drop excluded columns (only those that exist)
+                    cols_to_drop = intersect(long_columns_exclude, Symbol.(names(precursors_long)))
+                    if !isempty(cols_to_drop)
+                        select!(precursors_long, Not(cols_to_drop))
+                    end
+
+                    # Add gene/protein name columns
+                    precursors_long[!, :gene_names] = _map_accession_vector(precursors_long.accession_numbers, gene_map)
+                    precursors_long[!, :protein_names] = _map_accession_vector(precursors_long.accession_numbers, prot_map)
+
+                    # Build rename pairs dynamically
+                    rename_pairs = Pair{Symbol,Symbol}[]
+                    col_names_set = Set(Symbol.(names(precursors_long)))
+                    :new_best_scan ∈ col_names_set && push!(rename_pairs, :new_best_scan => :apex_scan)
+                    :prec_prob ∈ col_names_set && push!(rename_pairs, :prec_prob => :score)
+                    :global_prob ∈ col_names_set && push!(rename_pairs, :global_prob => :global_score)
+                    :isotopes_captured_traces ∈ col_names_set && push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
+                    :precursor_fraction_transmitted_traces ∈ col_names_set && push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
+                    !isempty(rename_pairs) && rename!(precursors_long, rename_pairs)
+
+                    # Reorder columns
+                    available_cols = intersect(requested_cols, Symbol.(names(precursors_long)))
+                    select!(precursors_long, available_cols)
+
+                    # Write headers on first chunk
+                    if !headers_written && write_csv
+                        println(io1, join(names(precursors_long), "\t"))
+                        println(io2, join(sorted_columns, "\t"))
+                        headers_written = true
+                    end
+
+                    # Batch processing within chunk
+                    batch_start_idx, batch_end_idx = 1, min(batch_size + 1, n_rows)
+                    while batch_start_idx <= n_rows
+                        last_pid = precursors_long[batch_end_idx, :precursor_idx]
+                        while batch_end_idx < n_rows
+                            if precursors_long[batch_end_idx + 1, :precursor_idx] != last_pid
+                                break
+                            end
+                            batch_end_idx += 1
+                        end
+
+                        subdf = precursors_long[range(batch_start_idx, batch_end_idx), :]
+                        batch_start_idx = batch_end_idx + 1
+                        batch_end_idx = min(batch_start_idx + batch_size, n_rows)
+
+                        if write_csv
+                            _sanitize_empty_strings!(subdf)
+                            CSV.write(io1, subdf, append=true, header=false, delim='\t')
+                        end
+                        subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
+                        col_names = names(subunstack)
+                        for fname in file_names
+                            if fname ∉ col_names
+                                subunstack[!, fname] .= Vector{Union{Missing, Float32}}(missing, nrow(subunstack))
+                            end
+                        end
+                        if write_csv
+                            _sanitize_empty_strings!(subunstack)
+                            CSV.write(io2, subunstack[!, sorted_columns], append=true, header=false, delim='\t')
+                        end
+                        # Normalize column types for consistent Arrow schema across batches
+                        allowmissing!(subunstack)
+                        Arrow.write(arrow_writer, subunstack[!, sorted_columns])
+                    end
+
+                    precursors_long = nothing  # Free chunk memory
+                    update(pbar)
                 end
-
-                # Add gene/protein name columns
-                precursors_long[!, :gene_names] = _map_accession_vector(precursors_long.accession_numbers, gene_map)
-                precursors_long[!, :protein_names] = _map_accession_vector(precursors_long.accession_numbers, prot_map)
-
-                # Build rename pairs dynamically
-                rename_pairs = Pair{Symbol,Symbol}[]
-                col_names_set = Set(Symbol.(names(precursors_long)))
-                :new_best_scan ∈ col_names_set && push!(rename_pairs, :new_best_scan => :apex_scan)
-                :prec_prob ∈ col_names_set && push!(rename_pairs, :prec_prob => :score)
-                :global_prob ∈ col_names_set && push!(rename_pairs, :global_prob => :global_score)
-                :isotopes_captured_traces ∈ col_names_set && push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
-                :precursor_fraction_transmitted_traces ∈ col_names_set && push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
-                !isempty(rename_pairs) && rename!(precursors_long, rename_pairs)
-
-                # Reorder columns
-                available_cols = intersect(requested_cols, Symbol.(names(precursors_long)))
-                select!(precursors_long, available_cols)
-
-                # Write headers on first chunk
-                if !headers_written && write_csv
-                    println(io1, join(names(precursors_long), "\t"))
-                    println(io2, join(sorted_columns, "\t"))
-                    headers_written = true
-                end
-
-                # Batch processing within chunk
-                batch_start_idx, batch_end_idx = 1, min(batch_size + 1, n_rows)
-                while batch_start_idx <= n_rows
-                    last_pid = precursors_long[batch_end_idx, :precursor_idx]
-                    while batch_end_idx < n_rows
-                        if precursors_long[batch_end_idx + 1, :precursor_idx] != last_pid
-                            break
-                        end
-                        batch_end_idx += 1
-                    end
-
-                    subdf = precursors_long[range(batch_start_idx, batch_end_idx), :]
-                    batch_start_idx = batch_end_idx + 1
-                    batch_end_idx = min(batch_start_idx + batch_size, n_rows)
-
-                    if write_csv
-                        _sanitize_empty_strings!(subdf)
-                        CSV.write(io1, subdf, append=true, header=false, delim='\t')
-                    end
-                    subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
-                    col_names = names(subunstack)
-                    for fname in file_names
-                        if fname ∉ col_names
-                            subunstack[!, fname] .= Vector{Union{Missing, Float32}}(missing, nrow(subunstack))
-                        end
-                    end
-                    if write_csv
-                        _sanitize_empty_strings!(subunstack)
-                        CSV.write(io2, subunstack[!, sorted_columns], append=true, header=false, delim='\t')
-                    end
-                    if iszero(n_arrow_writes)
-                        if isfile(wide_precursors_arrow_path)
-                            rm(wide_precursors_arrow_path)
-                        end
-                        open(wide_precursors_arrow_path, "w") do io
-                            Arrow.write(io, subunstack[!, sorted_columns]; file=false)
-                        end
-                    else
-                        Arrow.append(wide_precursors_arrow_path, subunstack[!, sorted_columns])
-                    end
-                    n_arrow_writes += 1
-                end
-
-                precursors_long = nothing  # Free chunk memory
-                update(pbar)
             end
         end
     end
@@ -635,75 +620,68 @@ function writeProteinGroupsCSV(
     sorted_columns = vcat(wide_columns, file_names)
     open(long_protein_groups_path,"w") do io1
         open(wide_protein_groups_path, "w") do io2
-            #Make file headers 
-            if write_csv 
+            #Make file headers
+            if write_csv
                 println(io1,join(names(protein_groups_long),"\t"))
                 println(io2,join(sorted_columns,"\t"))
             end
             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
-            n_writes = 0
-            while batch_start_idx <= n_rows
-                #For the wide format, can't split a precursor between two batches.
-                last_protein_group = protein_groups_long[batch_end_idx,:protein]
-                while batch_end_idx < n_rows
-                    if  protein_groups_long[batch_end_idx + 1,:protein] != last_protein_group
-                        break
-                    end
-                    batch_end_idx += 1
-                end
-                subdf = protein_groups_long[range(batch_start_idx, batch_end_idx),:]
-                batch_start_idx = batch_end_idx + 1
-                batch_end_idx = min(batch_start_idx + batch_size, n_rows)
-                subdf[!,:modified_sequence] = Vector{String}(undef, size(subdf, 1))
-                for i in range(1, size(subdf, 1))
-                    peptides = subdf[i,:peptides]
-                    modified_sequences = Vector{String}(undef, length(peptides))
-                    for (j, pid) in enumerate(peptides)
-                        if ismissing(pid)
-                            modified_sequences[j] = ""
-                            continue
+            open(Arrow.Writer, wide_protein_groups_arrow; file=false) do arrow_writer
+                while batch_start_idx <= n_rows
+                    #For the wide format, can't split a precursor between two batches.
+                    last_protein_group = protein_groups_long[batch_end_idx,:protein]
+                    while batch_end_idx < n_rows
+                        if  protein_groups_long[batch_end_idx + 1,:protein] != last_protein_group
+                            break
                         end
-                        modified_sequences[j] = getModifiedSequence(
-                            sequences[pid],
-                            isotope_mods[pid],
-                            structural_mods[pid],
-                            precursor_charge[pid])
+                        batch_end_idx += 1
                     end
-                    subdf[i,:modified_sequence] = join(filter(!isempty, modified_sequences),';')
-                end
-                subdf[!,:peptides] = subdf[!,:modified_sequence]
-                select!(subdf, Not([:modified_sequence]))
-                # Replace empty peptide strings with missing to avoid writer edge-cases
-                try
-                    allowmissing!(subdf, :peptides)
-                    replace!(subdf[!, :peptides], "" => missing)
-                catch
-                end
-                if write_csv 
-                    CSV.write(io1, subdf, append=true, header=false, delim='\t')
-                end
-                subunstack = makeWideFormat(subdf)
-                col_names = names(subunstack)
-                for fname in file_names
-                    if fname ∉ col_names
-                        subunstack[!,fname] = Vector{Union{Missing,Float64}}(missing, nrow(subunstack))
+                    subdf = protein_groups_long[range(batch_start_idx, batch_end_idx),:]
+                    batch_start_idx = batch_end_idx + 1
+                    batch_end_idx = min(batch_start_idx + batch_size, n_rows)
+                    subdf[!,:modified_sequence] = Vector{String}(undef, size(subdf, 1))
+                    for i in range(1, size(subdf, 1))
+                        peptides = subdf[i,:peptides]
+                        modified_sequences = Vector{String}(undef, length(peptides))
+                        for (j, pid) in enumerate(peptides)
+                            if ismissing(pid)
+                                modified_sequences[j] = ""
+                                continue
+                            end
+                            modified_sequences[j] = getModifiedSequence(
+                                sequences[pid],
+                                isotope_mods[pid],
+                                structural_mods[pid],
+                                precursor_charge[pid])
+                        end
+                        subdf[i,:modified_sequence] = join(filter(!isempty, modified_sequences),';')
                     end
-                end
-                if write_csv
-                    CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
-                end
+                    subdf[!,:peptides] = subdf[!,:modified_sequence]
+                    select!(subdf, Not([:modified_sequence]))
+                    # Replace empty peptide strings with missing to avoid writer edge-cases
+                    try
+                        allowmissing!(subdf, :peptides)
+                        replace!(subdf[!, :peptides], "" => missing)
+                    catch
+                    end
+                    if write_csv
+                        CSV.write(io1, subdf, append=true, header=false, delim='\t')
+                    end
+                    subunstack = makeWideFormat(subdf)
+                    col_names = names(subunstack)
+                    for fname in file_names
+                        if fname ∉ col_names
+                            subunstack[!,fname] = Vector{Union{Missing,Float64}}(missing, nrow(subunstack))
+                        end
+                    end
+                    if write_csv
+                        CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
+                    end
 
-                if iszero(n_writes)
-                    if isfile(wide_protein_groups_arrow)
-                        rm(wide_protein_groups_arrow)
-                    end
-                    open(wide_protein_groups_arrow, "w") do io
-                        Arrow.write(io, subunstack[!,sorted_columns]; file=false)  # file=false creates stream format
-                    end
-                else
-                    Arrow.append(wide_protein_groups_arrow,subunstack[!,sorted_columns])
+                    # Normalize column types for consistent Arrow schema across batches
+                    allowmissing!(subunstack)
+                    Arrow.write(arrow_writer, subunstack[!,sorted_columns])
                 end
-                n_writes += 1
             end
         end
         if write_csv == false

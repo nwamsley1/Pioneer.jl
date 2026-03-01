@@ -20,7 +20,7 @@ Most parameters should not be changed, but the following may need adjustment.
 
 * `acquisition.quad_transmission.fit_from_data`: Estimate the quad transmission function from the data. Otherwise defaults to symmetric, smooth function.
 
-* `optimization.machine_learning.max_psms_in_memory`: This is the maximum number of PSMs to hold in memory for LightGBM training. These PSMs need to comfortably fit in memory in addition to the spectral library. As a rule of thumb, 7M rows is about 1GB. At the default maximum of 50M rows, the PSMs table will consume about 7GB of memory.
+* `optimization.machine_learning.max_psm_memory_mb`: Memory budget (in MB) for PSMs held in memory during LightGBM training. Pioneer dynamically estimates how many PSMs fit within this budget based on the column sizes of the Arrow file. Default is 2000 MB.
 * During LightGBM training, any missing feature values are replaced with the column median. If a column is entirely missing, the values are filled with zero of the appropriate type.
 
 
@@ -173,7 +173,9 @@ The deconvolution parameters are split into `ms1` and `ms2` sub-objects for sepa
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `machine_learning.max_psms_in_memory` | Int | Maximum number of PSMs to hold in memory for LightGBM training (default: 50000000) |
+| `machine_learning.max_psm_memory_mb` | Real | Memory budget in MB for PSMs held in memory during LightGBM training. Row count is dynamically estimated from Arrow column sizes (default: 2000) |
+| `machine_learning.force_oom` | Boolean | Force out-of-memory processing regardless of dataset size (default: false) |
+| `machine_learning.max_mbr_training_candidates` | Int | Maximum number of candidates for MBR training (default: 1000000) |
 | `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
 | `machine_learning.max_q_value_mbr_itr` | Float | q-value threshold for match-between-runs candidates kept during the iterative training (ITR) stage of LightGBM rescoring (default: 0.20) |
 | `machine_learning.min_PEP_neg_threshold_itr` | Float | Minimum posterior error probability threshold for reclassifying weak target PSMs as negatives during the ITR stage of LightGBM rescoring (default: 0.90) |
@@ -196,6 +198,7 @@ The deconvolution parameters are split into `ms1` and `ms2` sub-objects for sepa
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `run_to_run_normalization` | Boolean | Whether to use run-to-run normalized abundances for precursor and protein quantification (default: false) |
+| `max_chunk_size_mb` | Int | Maximum chunk size in MB for MaxLFQ chunked merge processing (default: 1024) |
 
 ### Output Parameters
 
