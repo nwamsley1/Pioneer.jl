@@ -1253,6 +1253,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         :coverage_miss_surprisal,
         :coverage_deficit_z,
         :top_weight_vs_threshold_z,
+        :pg_score_x_peptide_coverage,
         :pg_score_x_coverage_miss_surprisal,
         :pg_score_x_coverage_deficit_z,
         :pg_score_x_top_weight_vs_threshold_z
@@ -1340,6 +1341,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         :coverage_miss_surprisal,
         :coverage_deficit_z,
         :top_weight_vs_threshold_z,
+        :pg_score_x_peptide_coverage,
         :pg_score_x_coverage_miss_surprisal,
         :pg_score_x_coverage_deficit_z,
         :pg_score_x_top_weight_vs_threshold_z
@@ -2252,6 +2254,7 @@ function perform_probit_analysis_multifold(
         :coverage_miss_surprisal,
         :coverage_deficit_z,
         :top_weight_vs_threshold_z,
+        :pg_score_x_peptide_coverage,
         :pg_score_x_coverage_miss_surprisal,
         :pg_score_x_coverage_deficit_z,
         :pg_score_x_top_weight_vs_threshold_z
