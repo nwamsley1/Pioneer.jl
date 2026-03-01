@@ -168,6 +168,33 @@ function remove_zero_variance_columns!(feature_names::Vector{Symbol}, df::Abstra
     return feature_names
 end
 
+"""
+    protein_probit_feature_names(; include_n_possible_peptides::Bool = false)
+
+Return the protein-group probit predictors. Interaction component features are
+represented through their interaction with `:pg_score`; only `:pg_score` is kept
+as a standalone term.
+"""
+function protein_probit_feature_names(; include_n_possible_peptides::Bool = false)
+    feature_names = Symbol[
+        :pg_score,
+        :peptide_coverage
+    ]
+
+    if include_n_possible_peptides
+        push!(feature_names, :n_possible_peptides)
+    end
+
+    append!(feature_names, [
+        :any_common_peps,
+        :pg_score_x_coverage_miss_surprisal,
+        :pg_score_x_coverage_deficit_z,
+        :pg_score_x_top_weight_vs_threshold_z
+    ])
+
+    return feature_names
+end
+
 function protein_feature_qc_columns()
     return [
         :top_pep_weight,
@@ -1331,19 +1358,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
                                show_improvement = true)
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
-    # Define features to use
-    feature_names = [
-        :pg_score,
-        :peptide_coverage,
-        :n_possible_peptides,
-        :any_common_peps,
-        :coverage_miss_surprisal,
-        :coverage_deficit_z,
-        :top_weight_vs_threshold_z,
-        :pg_score_x_coverage_miss_surprisal,
-        :pg_score_x_coverage_deficit_z,
-        :pg_score_x_top_weight_vs_threshold_z
-    ] # :log_binom_coeff]
+    feature_names = protein_probit_feature_names(include_n_possible_peptides = true)
 
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, all_protein_groups)
@@ -2243,19 +2258,7 @@ function perform_probit_analysis_multifold(
         fold_counts[fold] = get(fold_counts, fold, 0) + 1
     end
 
-    # 4. Define features (same as original)
-    #feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides] #:any_common_peps]
-    feature_names = [
-        :pg_score,
-        :peptide_coverage,
-        :any_common_peps,
-        :coverage_miss_surprisal,
-        :coverage_deficit_z,
-        :top_weight_vs_threshold_z,
-        :pg_score_x_coverage_miss_surprisal,
-        :pg_score_x_coverage_deficit_z,
-        :pg_score_x_top_weight_vs_threshold_z
-    ]
+    feature_names = protein_probit_feature_names()
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, all_protein_groups)
     remove_zero_variance_columns!(feature_names, all_protein_groups)

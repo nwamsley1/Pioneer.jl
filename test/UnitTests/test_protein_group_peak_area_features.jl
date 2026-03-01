@@ -143,6 +143,27 @@ using Pioneer
         @test feature_names == [:pg_score]
     end
 
+    @testset "Protein Probit Keeps Only pg_score as Interaction Standalone" begin
+        @test Pioneer.protein_probit_feature_names() == [
+            :pg_score,
+            :peptide_coverage,
+            :any_common_peps,
+            :pg_score_x_coverage_miss_surprisal,
+            :pg_score_x_coverage_deficit_z,
+            :pg_score_x_top_weight_vs_threshold_z
+        ]
+
+        @test Pioneer.protein_probit_feature_names(include_n_possible_peptides = true) == [
+            :pg_score,
+            :peptide_coverage,
+            :n_possible_peptides,
+            :any_common_peps,
+            :pg_score_x_coverage_miss_surprisal,
+            :pg_score_x_coverage_deficit_z,
+            :pg_score_x_top_weight_vs_threshold_z
+        ]
+    end
+
     @testset "Protein Feature QC Plots Are Written" begin
         df = DataFrame(
             target = Bool[true, true, false, false],
