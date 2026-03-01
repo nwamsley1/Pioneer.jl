@@ -79,7 +79,6 @@ using Pioneer
             entrap_id = UInt8[1, 1, 1, 1, 1],
             n_peptides = Int64[1, 1, 6, 1, 1],
             pg_score = Float32[2.0, 1.5, 0.5, 3.0, 1.0],
-            peptide_coverage = Float32[0.05, 0.5, 0.55, 0.08, 1.0],
             n_possible_peptides = Int64[20, 2, 11, 12, 1],
             top_pep_weight = Float32[100.0, 100.0, 10.0, 0.0, 100.0]
         )
@@ -94,7 +93,6 @@ using Pioneer
             :coverage_miss_surprisal,
             :coverage_deficit_z,
             :top_weight_vs_threshold_z,
-            :pg_score_x_peptide_coverage,
             :pg_score_x_coverage_miss_surprisal,
             :pg_score_x_coverage_deficit_z,
             :pg_score_x_top_weight_vs_threshold_z
@@ -120,11 +118,9 @@ using Pioneer
         @test out.coverage_deficit_z[5] == 0.0f0
         @test out.top_weight_vs_threshold_z[5] == 0.0f0
 
-        @test out.pg_score_x_peptide_coverage[1] == out.pg_score[1] * out.peptide_coverage[1]
         @test out.pg_score_x_coverage_miss_surprisal[1] == out.pg_score[1] * out.coverage_miss_surprisal[1]
         @test out.pg_score_x_coverage_deficit_z[1] == out.pg_score[1] * out.coverage_deficit_z[1]
         @test out.pg_score_x_top_weight_vs_threshold_z[1] == out.pg_score[1] * out.top_weight_vs_threshold_z[1]
-        @test out.pg_score_x_peptide_coverage[3] == out.pg_score[3] * out.peptide_coverage[3]
         @test out.pg_score_x_coverage_miss_surprisal[3] == out.pg_score[3] * out.coverage_miss_surprisal[3]
         @test out.pg_score_x_coverage_deficit_z[3] == out.pg_score[3] * out.coverage_deficit_z[3]
         @test out.pg_score_x_top_weight_vs_threshold_z[3] == out.pg_score[3] * out.top_weight_vs_threshold_z[3]
@@ -136,7 +132,6 @@ using Pioneer
             :coverage_miss_surprisal,
             :coverage_deficit_z,
             :top_weight_vs_threshold_z,
-            :pg_score_x_peptide_coverage,
             :pg_score_x_coverage_miss_surprisal,
             :pg_score_x_coverage_deficit_z,
             :pg_score_x_top_weight_vs_threshold_z
