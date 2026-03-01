@@ -714,8 +714,16 @@ function add_protein_features(protein_catalog::Dict)
         }()
         
         for i in 1:n_rows
+            protein_name_val = df.protein_name[i]
+            if ismissing(protein_name_val)
+                n_possible[i] = 0
+                peptide_coverage[i] = 0.0f0
+                continue
+            end
+
+            protein_name = String(protein_name_val)
             key = (
-                protein_name = df.protein_name[i],
+                protein_name = protein_name,
                 target = df.target[i],
                 entrap_id = df.entrap_id[i]
             )
@@ -724,9 +732,9 @@ function add_protein_features(protein_catalog::Dict)
                 protein_catalog[key]
             elseif haskey(grouped_catalog_cache, key)
                 grouped_catalog_cache[key]
-            elseif occursin(';', key.protein_name)
+            elseif occursin(';', protein_name)
                 merged_peptides = Set{String}()
-                for member in split(key.protein_name, ';')
+                for member in split(protein_name, ';')
                     member_key = (
                         protein_name = strip(member),
                         target = key.target,

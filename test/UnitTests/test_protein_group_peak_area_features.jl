@@ -54,6 +54,26 @@ using Pioneer
         @test out.peptide_coverage[1] ≈ (2f0 / 3f0)
     end
 
+    @testset "Protein Features Handle Missing Protein Name" begin
+        protein_catalog = Dict(
+            (protein_name = "A", target = true, entrap_id = UInt8(1)) => Set(["p1", "p2"])
+        )
+        df = DataFrame(
+            protein_name = Union{Missing, String}[missing, "A"],
+            target = Bool[true, true],
+            entrap_id = UInt8[1, 1],
+            n_peptides = Int64[1, 1]
+        )
+
+        (_, op) = Pioneer.add_protein_features(protein_catalog)
+        out = op(copy(df))
+
+        @test out.n_possible_peptides[1] == 0
+        @test out.peptide_coverage[1] == 0.0f0
+        @test out.n_possible_peptides[2] == 2
+        @test out.peptide_coverage[2] == 0.5f0
+    end
+
     @testset "Weight Calibration Uses Max Peptide Weights" begin
         psms = DataFrame(
             use_for_protein_quant = Bool[true, true, true, true, true, false],
