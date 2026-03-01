@@ -252,7 +252,10 @@ function estimate_weight_detection_model(df::DataFrame)
         log_threshold = 0.0f0,
         sigma_log = 1.0f0,
         n_unique_peptides = 0,
-        used_fallback = true
+        used_fallback = true,
+        coverage_overdispersion_rho = 0.0f0,
+        n_dispersion_proteins = 0,
+        used_dispersion_fallback = true
     )
 
     required_cols = (:use_for_protein_quant, :sequence, :inferred_protein_group, :weight)
@@ -334,7 +337,92 @@ function estimate_weight_detection_model(df::DataFrame)
         log_threshold = Float32(log_threshold),
         sigma_log = Float32(sigma_log),
         n_unique_peptides = length(log_weights),
-        used_fallback = used_fallback
+        used_fallback = used_fallback,
+        coverage_overdispersion_rho = 0.0f0,
+        n_dispersion_proteins = 0,
+        used_dispersion_fallback = true
+    )
+end
+
+"""
+    estimate_weight_coverage_overdispersion(df::DataFrame, calibration::NamedTuple)
+
+Estimate a single file-level beta-binomial overdispersion parameter for the
+weight-based coverage surprise features. Uses target protein groups weighted by
+their raw initial `pg_score`.
+"""
+function estimate_weight_coverage_overdispersion(df::DataFrame, calibration::NamedTuple)
+    default_result = (
+        coverage_overdispersion_rho = 0.0f0,
+        n_dispersion_proteins = 0,
+        used_dispersion_fallback = true
+    )
+
+    required_cols = (:target, :pg_score, :top_pep_weight, :n_possible_peptides, :n_peptides)
+    if any(col -> !hasproperty(df, col), required_cols) || nrow(df) == 0
+        return default_result
+    end
+
+    log_threshold = Float64(hasproperty(calibration, :log_threshold) ? calibration.log_threshold : 0.0f0)
+    sigma_log = Float64(hasproperty(calibration, :sigma_log) ? calibration.sigma_log : 1.0f0)
+    sigma_log = (isfinite(sigma_log) && sigma_log > 0.0) ? sigma_log : 1.0
+    std_normal = Distributions.Normal()
+
+    numerator = 0.0
+    denominator = 0.0
+    n_dispersion_proteins = 0
+
+    for i in 1:nrow(df)
+        if df.target[i] != true
+            continue
+        end
+
+        score_val = Float64(df.pg_score[i])
+        if !isfinite(score_val) || score_val <= 0.0
+            continue
+        end
+
+        top_weight = Float64(df.top_pep_weight[i])
+        if !isfinite(top_weight) || top_weight <= 0.0
+            continue
+        end
+
+        N_total = max(Int(df.n_possible_peptides[i]), 0)
+        k_obs = max(Int(df.n_peptides[i]), 0)
+        N_add = max(N_total - 1, 0)
+        k_add = max(k_obs - 1, 0)
+        if N_add < 2
+            continue
+        end
+
+        z_norm = (log(top_weight) - log_threshold) / sigma_log
+        p_other = clamp(Distributions.cdf(std_normal, z_norm / sqrt(2.0)), 1e-6, 1.0 - 1e-6)
+        binomial_variance = N_add * p_other * (1.0 - p_other)
+        if !isfinite(binomial_variance) || binomial_variance <= 1e-6
+            continue
+        end
+
+        expected = N_add * p_other
+        residual_sq = (k_add - expected)^2
+
+        numerator += score_val * (residual_sq - binomial_variance)
+        denominator += score_val * binomial_variance * (N_add - 1)
+        n_dispersion_proteins += 1
+    end
+
+    if n_dispersion_proteins < 5 || !isfinite(denominator) || denominator <= 0.0
+        return default_result
+    end
+
+    rho = numerator / denominator
+    if !isfinite(rho)
+        return default_result
+    end
+
+    return (
+        coverage_overdispersion_rho = Float32(clamp(rho, 0.0, 0.2)),
+        n_dispersion_proteins = n_dispersion_proteins,
+        used_dispersion_fallback = false
     )
 end
 
@@ -360,6 +448,8 @@ function add_weight_observation_features(calibration::NamedTuple)
         log_threshold = Float64(hasproperty(calibration, :log_threshold) ? calibration.log_threshold : 0.0f0)
         sigma_log = Float64(hasproperty(calibration, :sigma_log) ? calibration.sigma_log : 1.0f0)
         sigma_log = (isfinite(sigma_log) && sigma_log > 0.0) ? sigma_log : 1.0
+        rho = Float64(hasproperty(calibration, :coverage_overdispersion_rho) ? calibration.coverage_overdispersion_rho : 0.0f0)
+        rho = clamp((isfinite(rho) && rho >= 0.0) ? rho : 0.0, 0.0, 0.2)
         std_normal = Distributions.Normal()
 
         has_top_weight_col = hasproperty(df, :top_pep_weight)
@@ -403,9 +493,18 @@ function add_weight_observation_features(calibration::NamedTuple)
             z_pair = z_norm / sqrt(2.0)
             p_other = clamp(Distributions.cdf(std_normal, z_pair), 1e-6, 1.0 - 1e-6)
 
-            pval = Distributions.cdf(Distributions.Binomial(N_add, p_other), min(k_add, N_add))
             expected = N_add * p_other
-            variance = (N_add * p_other * (1.0 - p_other)) + 1e-6
+            binomial_variance = N_add * p_other * (1.0 - p_other)
+
+            pval = if rho > 1e-8 && N_add > 1
+                concentration = (1.0 - rho) / rho
+                alpha = max(p_other * concentration, 1e-6)
+                beta = max((1.0 - p_other) * concentration, 1e-6)
+                Distributions.cdf(Distributions.BetaBinomial(N_add, alpha, beta), min(k_add, N_add))
+            else
+                Distributions.cdf(Distributions.Binomial(N_add, p_other), min(k_add, N_add))
+            end
+            variance = (binomial_variance * (1.0 + (N_add - 1) * rho)) + 1e-6
 
             coverage_miss_pval[i] = Float32(pval)
             coverage_miss_surprisal[i] = Float32(-log10(max(pval, 1e-12)))
@@ -724,17 +823,21 @@ function perform_protein_inference_pipeline(
         # Reload updated PSMs
         updated_psms = load_dataframe(psm_ref)
         weight_calibration = estimate_weight_detection_model(updated_psms)
-        @user_info "Weight protein coverage calibration file_idx=$(idx) n_unique_peptides=$(weight_calibration.n_unique_peptides) log_threshold=$(weight_calibration.log_threshold) sigma_log=$(weight_calibration.sigma_log) used_fallback=$(weight_calibration.used_fallback)"
         
         # Group by protein
         protein_groups_df = group_psms_by_protein(updated_psms)
-        
+        (_, protein_feature_op) = add_protein_features(protein_catalog)
+        protein_groups_df = protein_feature_op(protein_groups_df)
+        coverage_overdispersion = estimate_weight_coverage_overdispersion(protein_groups_df, weight_calibration)
+        weight_calibration = merge(weight_calibration, coverage_overdispersion)
+
         # Build post-inference pipeline
         post_inference_pipeline = TransformPipeline() |>
             filter_by_min_peptides(min_peptides) |>
-            add_protein_features(protein_catalog) |>
             add_weight_observation_features(weight_calibration) |>
             add_pg_score_interaction_features()
+
+        @user_info "Weight protein coverage calibration file_idx=$(idx) n_unique_peptides=$(weight_calibration.n_unique_peptides) log_threshold=$(weight_calibration.log_threshold) sigma_log=$(weight_calibration.sigma_log) rho=$(weight_calibration.coverage_overdispersion_rho) n_dispersion_proteins=$(weight_calibration.n_dispersion_proteins) used_fallback=$(weight_calibration.used_fallback) used_dispersion_fallback=$(weight_calibration.used_dispersion_fallback)"
         
         # Apply post-processing
         initial_rows = nrow(protein_groups_df)

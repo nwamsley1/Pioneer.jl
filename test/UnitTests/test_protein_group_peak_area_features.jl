@@ -69,6 +69,48 @@ using Pioneer
         @test model.log_threshold ≈ expected_threshold
         @test 0.25f0 <= model.sigma_log <= 2.5f0
         @test model.used_fallback == false
+        @test model.coverage_overdispersion_rho == 0.0f0
+        @test model.n_dispersion_proteins == 0
+        @test model.used_dispersion_fallback == true
+    end
+
+    @testset "Coverage Overdispersion Estimate And Penalty Softening" begin
+        calibration = (log_threshold = Float32(log(10.0)), sigma_log = 1.0f0)
+        pg_df = DataFrame(
+            protein_name = ["P1", "P2", "P3", "P4", "P5", "P6"],
+            target = Bool[true, true, true, true, true, true],
+            entrap_id = UInt8[1, 1, 1, 1, 1, 1],
+            n_peptides = Int64[1, 1, 1, 1, 1, 1],
+            pg_score = Float32[6.0, 5.0, 4.0, 3.0, 2.0, 1.0],
+            n_possible_peptides = Int64[10, 10, 10, 10, 10, 10],
+            top_pep_weight = Float32[100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+        )
+
+        overdispersion = Pioneer.estimate_weight_coverage_overdispersion(pg_df, calibration)
+
+        @test 0.0f0 <= overdispersion.coverage_overdispersion_rho <= 0.2f0
+        @test overdispersion.coverage_overdispersion_rho > 0.0f0
+        @test overdispersion.n_dispersion_proteins == 6
+        @test overdispersion.used_dispersion_fallback == false
+
+        single_pg = pg_df[1:1, :]
+        (_, binom_op) = Pioneer.add_weight_observation_features((
+            log_threshold = calibration.log_threshold,
+            sigma_log = calibration.sigma_log,
+            coverage_overdispersion_rho = 0.0f0
+        ))
+        (_, overdisp_op) = Pioneer.add_weight_observation_features((
+            log_threshold = calibration.log_threshold,
+            sigma_log = calibration.sigma_log,
+            coverage_overdispersion_rho = 0.2f0
+        ))
+
+        binom_out = binom_op(copy(single_pg))
+        overdisp_out = overdisp_op(copy(single_pg))
+
+        @test overdisp_out.coverage_miss_pval[1] > binom_out.coverage_miss_pval[1]
+        @test overdisp_out.coverage_miss_surprisal[1] < binom_out.coverage_miss_surprisal[1]
+        @test abs(overdisp_out.coverage_deficit_z[1]) < abs(binom_out.coverage_deficit_z[1])
     end
 
     @testset "Coverage Surprise Features Behave as Expected" begin
