@@ -437,10 +437,12 @@ function add_pg_score_interaction_features()
         end
 
         n_rows = nrow(df)
+        pg_score_x_peptide_coverage = Vector{Float32}(undef, n_rows)
         pg_score_x_coverage_miss_surprisal = Vector{Float32}(undef, n_rows)
         pg_score_x_coverage_deficit_z = Vector{Float32}(undef, n_rows)
         pg_score_x_top_weight_vs_threshold_z = Vector{Float32}(undef, n_rows)
 
+        has_peptide_coverage = hasproperty(df, :peptide_coverage)
         has_surprisal = hasproperty(df, :coverage_miss_surprisal)
         has_deficit = hasproperty(df, :coverage_deficit_z)
         has_threshold = hasproperty(df, :top_weight_vs_threshold_z)
@@ -454,11 +456,13 @@ function add_pg_score_interaction_features()
                 isfinite(score_val) ? score_val : 0.0f0
             end
 
+            pg_score_x_peptide_coverage[i] = has_peptide_coverage ? pg_score_val * Float32(df.peptide_coverage[i]) : 0.0f0
             pg_score_x_coverage_miss_surprisal[i] = has_surprisal ? pg_score_val * Float32(df.coverage_miss_surprisal[i]) : 0.0f0
             pg_score_x_coverage_deficit_z[i] = has_deficit ? pg_score_val * Float32(df.coverage_deficit_z[i]) : 0.0f0
             pg_score_x_top_weight_vs_threshold_z[i] = has_threshold ? pg_score_val * Float32(df.top_weight_vs_threshold_z[i]) : 0.0f0
         end
 
+        df.pg_score_x_peptide_coverage = pg_score_x_peptide_coverage
         df.pg_score_x_coverage_miss_surprisal = pg_score_x_coverage_miss_surprisal
         df.pg_score_x_coverage_deficit_z = pg_score_x_coverage_deficit_z
         df.pg_score_x_top_weight_vs_threshold_z = pg_score_x_top_weight_vs_threshold_z
