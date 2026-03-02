@@ -394,16 +394,26 @@ function add_pg_score_interaction_features()
     desc = "add_pg_score_interaction_features"
 
     op = function(df)
-        n_rows = nrow(df)
+        pg_score = df.pg_score
+        coverage_miss_surprisal = df.coverage_miss_surprisal
+        coverage_deficit_z = df.coverage_deficit_z
+        top_weight_vs_threshold_z = df.top_weight_vs_threshold_z
+
+        n_rows = length(pg_score)
         pg_score_x_coverage_miss_surprisal = Vector{Float32}(undef, n_rows)
         pg_score_x_coverage_deficit_z = Vector{Float32}(undef, n_rows)
         pg_score_x_top_weight_vs_threshold_z = Vector{Float32}(undef, n_rows)
 
-        for i in 1:n_rows
-            pg_score_val = Float32(df.pg_score[i])
-            pg_score_x_coverage_miss_surprisal[i] = pg_score_val * Float32(df.coverage_miss_surprisal[i])
-            pg_score_x_coverage_deficit_z[i] = pg_score_val * Float32(df.coverage_deficit_z[i])
-            pg_score_x_top_weight_vs_threshold_z[i] = pg_score_val * Float32(df.top_weight_vs_threshold_z[i])
+        @inbounds for i in eachindex(
+            pg_score,
+            coverage_miss_surprisal,
+            coverage_deficit_z,
+            top_weight_vs_threshold_z
+        )
+            pg_score_val = Float32(pg_score[i])
+            pg_score_x_coverage_miss_surprisal[i] = pg_score_val * Float32(coverage_miss_surprisal[i])
+            pg_score_x_coverage_deficit_z[i] = pg_score_val * Float32(coverage_deficit_z[i])
+            pg_score_x_top_weight_vs_threshold_z[i] = pg_score_val * Float32(top_weight_vs_threshold_z[i])
         end
 
         df.pg_score_x_coverage_miss_surprisal = pg_score_x_coverage_miss_surprisal
