@@ -457,7 +457,6 @@ function group_psms_by_protein(df::DataFrame)
     else
         prob_col = :prec_prob
     end
-    has_weight = hasproperty(df, :weight)
 
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
@@ -486,33 +485,24 @@ function group_psms_by_protein(df::DataFrame)
         end        
 
         top_pep_weight = 0.0f0
-        if has_weight
-            best_weight_by_peptide = Dict{String, Float32}()
-            for i in 1:nrow(gdf)
-                if quant_mask[i] != true
-                    continue
-                end
-                weight = gdf.weight[i]
-                if ismissing(weight)
-                    continue
-                end
-                weight_val = Float32(weight)
-                if !isfinite(weight_val) || weight_val <= 0.0f0
-                    continue
-                end
-                pep = gdf.sequence[i]
-                if haskey(best_weight_by_peptide, pep)
-                    if weight_val > best_weight_by_peptide[pep]
-                        best_weight_by_peptide[pep] = weight_val
-                    end
-                else
+        best_weight_by_peptide = Dict{String, Float32}()
+        for i in 1:nrow(gdf)
+            if quant_mask[i] != true
+                continue
+            end
+            weight_val = Float32(gdf.weight[i])
+            pep = gdf.sequence[i]
+            if haskey(best_weight_by_peptide, pep)
+                if weight_val > best_weight_by_peptide[pep]
                     best_weight_by_peptide[pep] = weight_val
                 end
+            else
+                best_weight_by_peptide[pep] = weight_val
             end
+        end
 
-            if !isempty(best_weight_by_peptide)
-                top_pep_weight = maximum(values(best_weight_by_peptide))
-            end
+        if !isempty(best_weight_by_peptide)
+            top_pep_weight = maximum(values(best_weight_by_peptide))
         end
 
         has_common = any(
