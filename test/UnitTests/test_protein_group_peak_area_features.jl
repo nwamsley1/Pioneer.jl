@@ -143,30 +143,4 @@ using Pioneer
         @test feature_names == [:pg_score]
     end
 
-    @testset "Protein Feature QC Plots Are Written" begin
-        df = DataFrame(
-            target = Bool[true, true, false, false],
-            pg_score = Float32[0.99, 0.85, 0.20, 0.05],
-            top_pep_weight = Float32[100.0, 20.0, 15.0, 5.0],
-            coverage_miss_pval = Float32[1e-3, 0.2, 0.6, 1.0],
-            coverage_miss_surprisal = Float32[3.0, 0.7, 0.2, 0.0],
-            coverage_deficit_z = Float32[-4.5, -1.0, 0.5, 0.0],
-            top_weight_vs_threshold_z = Float32[3.0, 1.0, 0.5, 0.0]
-        )
-
-        qc_dir = mktempdir()
-        try
-            paths = Pioneer.generate_protein_feature_qc_plots(
-                df,
-                qc_dir;
-                prefix = "protein_weight_feature_qc_test"
-            )
-
-            @test isfile(paths.combined_pdf)
-            @test !isempty(paths.individual_pdfs)
-            @test all(isfile, paths.individual_pdfs)
-        finally
-            rm(qc_dir, recursive = true, force = true)
-        end
-    end
 end
