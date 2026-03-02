@@ -404,6 +404,12 @@ function get_best_psms!(psms::DataFrame,
     hasproperty(psms, :index_score) && push!(best_psm_cols, :index_score)
     hasproperty(psms, :ms1_detected) && push!(best_psm_cols, :ms1_detected)
     hasproperty(psms, :ms1_mass_err) && push!(best_psm_cols, :ms1_mass_err)
+    # Preserve raw probit features for downstream rescoring analysis
+    for feat in [:spectral_contrast, :city_block, :entropy_score, :scribe,
+                 :percent_theoretical_ignored, :charge2, :poisson, :irt_error,
+                 :missed_cleavage, :Mox, :TIC, :y_count, :err_norm, :spectrum_peak_count]
+        hasproperty(psms, feat) && push!(best_psm_cols, feat)
+    end
     select!(psms, best_psm_cols)
 
     # Per-file pre-filter: keep the largest of
@@ -664,7 +670,145 @@ function plot_rt_alignment_firstpass(
 end
 
 
-PrecToIrtType = Dictionary{UInt32, 
+"""
+    apply_ms1_postfilter!(psms, column_names; q_threshold, n_std, fdr_scale_factor, max_iter, max_q_value)
+
+Post-filter that eliminates uncertain target PSMs lacking MS1 precursor validation,
+then rescores remaining PSMs with a fresh probit model trained on cleaner data.
+
+Targets with q_value > q_threshold are eliminated unless they have MS1 support
+(ms1_detected=1 with mass error within ±n_std normalized MADs of the median).
+All decoys are kept for FDR control in the rescore step.
+"""
+function apply_ms1_postfilter!(
+    psms::DataFrame, column_names::Vector{Symbol};
+    q_threshold::Float64, n_std::Float64,
+    fdr_scale_factor::Float32, max_iter::Int64, max_q_value::Float64
+)
+    # 1. Compute q-values from current probit scores
+    get_qvalues!(psms[!,:score], psms[!,:target], psms[!,:q_value];
+                 fdr_scale_factor=fdr_scale_factor)
+
+    # 2. Find 1% FDR targets with MS1 detection
+    good_mask = (psms[!,:q_value] .<= 0.01) .& psms[!,:target] .& (psms[!,:ms1_detected] .== 0x01)
+    n_good = sum(good_mask)
+    if n_good < 100
+        @warn "Too few MS1-detected targets at 1% FDR ($n_good) for MS1 post-filter. Skipping."
+        return 0
+    end
+
+    # 3. Compute MS1 error tolerance using normalized MAD
+    ms1_errors = Float64.(psms[good_mask, :ms1_mass_err])
+    ms1_median = median(ms1_errors)
+    ms1_nmad = mad(ms1_errors, normalize=true)
+    ms1_lo = ms1_median - n_std * ms1_nmad
+    ms1_hi = ms1_median + n_std * ms1_nmad
+
+    # 4. Compute masks
+    is_target = psms[!,:target]
+    is_decoy = .!is_target
+    above_threshold = psms[!,:q_value] .> q_threshold
+    below_threshold = .!above_threshold
+    ms1_detected_mask = psms[!,:ms1_detected] .== 0x01
+    ms1_in_tol = ms1_detected_mask .&
+                 (Float64.(psms[!,:ms1_mass_err]) .>= ms1_lo) .&
+                 (Float64.(psms[!,:ms1_mass_err]) .<= ms1_hi)
+
+    # 5. Detailed diagnostics
+    n_targets = sum(is_target)
+    n_decoys = sum(is_decoy)
+    @info "MS1 post-filter diagnostics (q_threshold=$q_threshold, MS1 tol: $(round(ms1_lo, digits=2)) to $(round(ms1_hi, digits=2)) ppm):"
+    @info "  Total PSMs: $(nrow(psms)) ($n_targets targets, $n_decoys decoys)"
+
+    # Below threshold (safe zone)
+    t_below = sum(below_threshold .& is_target)
+    d_below = sum(below_threshold .& is_decoy)
+    t_below_ms1det = sum(below_threshold .& is_target .& ms1_detected_mask)
+    t_below_ms1tol = sum(below_threshold .& is_target .& ms1_in_tol)
+    d_below_ms1det = sum(below_threshold .& is_decoy .& ms1_detected_mask)
+    d_below_ms1tol = sum(below_threshold .& is_decoy .& ms1_in_tol)
+    @info "  Below q=$q_threshold (kept unconditionally): $t_below targets, $d_below decoys"
+    @info "    MS1 detected: $t_below_ms1det/$t_below targets ($(round(100*t_below_ms1det/max(t_below,1), digits=1))%), " *
+          "$d_below_ms1det/$d_below decoys ($(round(100*d_below_ms1det/max(d_below,1), digits=1))%)"
+    @info "    MS1 in tolerance: $t_below_ms1tol/$t_below targets ($(round(100*t_below_ms1tol/max(t_below,1), digits=1))%), " *
+          "$d_below_ms1tol/$d_below decoys ($(round(100*d_below_ms1tol/max(d_below,1), digits=1))%)"
+
+    # Above threshold (filter zone)
+    t_above = sum(above_threshold .& is_target)
+    d_above = sum(above_threshold .& is_decoy)
+    t_above_ms1det = sum(above_threshold .& is_target .& ms1_detected_mask)
+    t_above_ms1tol = sum(above_threshold .& is_target .& ms1_in_tol)
+    d_above_ms1det = sum(above_threshold .& is_decoy .& ms1_detected_mask)
+    d_above_ms1tol = sum(above_threshold .& is_decoy .& ms1_in_tol)
+    @info "  Above q=$q_threshold (filter zone): $t_above targets, $d_above decoys"
+    @info "    MS1 detected: $t_above_ms1det/$t_above targets ($(round(100*t_above_ms1det/max(t_above,1), digits=1))%), " *
+          "$d_above_ms1det/$d_above decoys ($(round(100*d_above_ms1det/max(d_above,1), digits=1))%)"
+    @info "    MS1 in tolerance: $t_above_ms1tol/$t_above targets ($(round(100*t_above_ms1tol/max(t_above,1), digits=1))%), " *
+          "$d_above_ms1tol/$d_above decoys ($(round(100*d_above_ms1tol/max(d_above,1), digits=1))%)"
+
+    # 6. Determine which PSMs to keep
+    ms1_supported = ms1_in_tol
+    keep = below_threshold .| ms1_supported .| is_decoy
+    n_targets_removed = sum(.!keep .& is_target)
+    n_decoys_removed = sum(.!keep .& is_decoy)  # should be 0
+    @info "  Removed: $n_targets_removed targets, $n_decoys_removed decoys " *
+          "(targets above q=$q_threshold without MS1 support)"
+
+    if n_targets_removed == 0
+        return 0
+    end
+
+    # 7. Filter rows
+    deleteat!(psms, findall(.!keep))
+    @info "  After filter: $(nrow(psms)) PSMs ($(sum(psms[!,:target])) targets, $(sum(.!psms[!,:target])) decoys)"
+
+    # 8. Rescore on cleaned data
+    rescore_psms!(psms, column_names,
+                  max_q_value=max_q_value, max_iter=max_iter,
+                  fdr_scale_factor=fdr_scale_factor)
+
+    return n_targets_removed
+end
+
+"""
+    rescore_psms!(psms, column_names; max_q_value, max_iter, fdr_scale_factor)
+
+Retrain probit model on cleaned PSM data and predict new scores.
+Used after MS1 post-filter to leverage the improved target pool.
+"""
+function rescore_psms!(
+    psms::DataFrame, column_names::Vector{Symbol};
+    max_q_value::Float64 = 0.01, max_iter::Int64 = 50,
+    fdr_scale_factor::Float32 = 1.0f0
+)
+    # Compute q-values from current probit scores
+    get_qvalues!(psms[!,:score], psms[!,:target], psms[!,:q_value];
+                 fdr_scale_factor=fdr_scale_factor)
+
+    # Select training data: targets at q<=threshold + all decoys
+    best_psms = ((psms[!,:q_value] .<= max_q_value) .& psms[!,:target]) .| .!psms[!,:target]
+
+    # Set up chunking for full prediction
+    tasks_per_thread = 10
+    M = size(psms, 1)
+    chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:M, chunk_size)
+
+    # Set up chunking for training subset
+    sub_M = sum(best_psms)
+    sub_chunk_size = max(1, sub_M ÷ (tasks_per_thread * Threads.nthreads()))
+    sub_data_chunks = partition(1:sub_M, sub_chunk_size)
+
+    # Train probit on cleaned training set
+    β = zeros(Float64, length(column_names))
+    β = ProbitRegression(β, psms[best_psms, column_names], psms[best_psms, :target],
+                         sub_data_chunks, max_iter=max_iter)
+
+    # Predict on all remaining PSMs
+    ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks)
+end
+
+PrecToIrtType = Dictionary{UInt32,
     NamedTuple{
         (:best_prob, :best_ms_file_idx, :best_scan_idx, :best_irt, :mean_irt, :var_irt, :n, :mz), 
         Tuple{Float32, UInt32, UInt32, Float32, Union{Missing, Float32}, Union{Missing, Float32}, Union{Missing, UInt16}, Float32}

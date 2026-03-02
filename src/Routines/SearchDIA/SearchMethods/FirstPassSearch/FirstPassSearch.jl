@@ -110,6 +110,9 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     global_pep_threshold::Float32
     perfile_pep_threshold::Float32
     logodds_missing_prior::Float32
+    # MS1 post-filter parameters
+    ms1_filter_q_threshold::Float64    # q-value above which MS1 support required (1.0 = disabled)
+    ms1_filter_nstd::Float64           # number of normalized MADs for MS1 error tolerance
     # RT parameters
     min_inference_points::Int64
     max_q_val_for_irt::Float32
@@ -166,6 +169,9 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Float32(score_params.global_pep_threshold),
             Float32(hasproperty(score_params, :perfile_pep_threshold) ? score_params.perfile_pep_threshold : 0.95),
             Float32(hasproperty(score_params, :logodds_missing_prior) ? score_params.logodds_missing_prior : 0.5),
+
+            Float64(hasproperty(score_params, :ms1_filter_q_threshold) ? score_params.ms1_filter_q_threshold : 1.0),
+            Float64(hasproperty(score_params, :ms1_filter_nstd) ? score_params.ms1_filter_nstd : 3.0),
 
             Int64(1000), # Default min_inference_points
             Float32(rt_params.min_probability),
@@ -403,13 +409,32 @@ function process_file!(
                 fdr_scale_factor=fdr_scale_factor
             )
         end
+
+        # MS1 post-filter: eliminate uncertain targets without MS1 support, then rescore
+        if hasproperty(psms, :ms1_detected) && hasproperty(psms, :ms1_mass_err) && params.ms1_filter_q_threshold < 1.0
+            apply_ms1_postfilter!(
+                psms, column_names,
+                q_threshold = params.ms1_filter_q_threshold,
+                n_std = params.ms1_filter_nstd,
+                fdr_scale_factor = fdr_scale_factor,
+                max_iter = params.max_iter_probit,
+                max_q_value = Float64(params.max_q_value_probit_rescore)
+            )
+        end
+
         # Process scores
-       
+
         post_score_cols = [:ms_file_idx, :score, :precursor_idx, :scan_idx,
             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target]
         hasproperty(psms, :index_score) && push!(post_score_cols, :index_score)
         hasproperty(psms, :ms1_detected) && push!(post_score_cols, :ms1_detected)
         hasproperty(psms, :ms1_mass_err) && push!(post_score_cols, :ms1_mass_err)
+        # Preserve raw probit features for downstream rescoring analysis
+        for feat in [:spectral_contrast, :city_block, :entropy_score, :scribe,
+                     :percent_theoretical_ignored, :charge2, :poisson, :irt_error,
+                     :missed_cleavage, :Mox, :TIC, :y_count, :err_norm, :spectrum_peak_count]
+            hasproperty(psms, feat) && push!(post_score_cols, feat)
+        end
         select!(psms, post_score_cols)
         get_probs!(psms, psms[!,:score])
     end
@@ -546,6 +571,12 @@ function process_search_results!(
     hasproperty(psms, :index_score) && push!(arrow_cols, :index_score)
     hasproperty(psms, :ms1_detected) && push!(arrow_cols, :ms1_detected)
     hasproperty(psms, :ms1_mass_err) && push!(arrow_cols, :ms1_mass_err)
+    # Preserve raw probit features for downstream rescoring analysis
+    for feat in [:spectral_contrast, :city_block, :entropy_score, :scribe,
+                 :percent_theoretical_ignored, :charge2, :poisson, :irt_error,
+                 :missed_cleavage, :Mox, :TIC, :y_count, :err_norm, :spectrum_peak_count]
+        hasproperty(psms, feat) && push!(arrow_cols, feat)
+    end
     Arrow.write(temp_path, select!(psms, arrow_cols))
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 
