@@ -304,7 +304,7 @@ function LibrarySearch(
     precursors_passed_scoring = fetch.(tasks)
 
     tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin 
+        Threads.@spawn begin
             thread_id = first(thread_task)
             return getPSMS(
                                 ms_file_idx,
@@ -324,7 +324,34 @@ function LibrarySearch(
         end
     end
 
-    return fetch.(tasks)
+    psm_results = fetch.(tasks)
+
+    # Fragment correlation pass: re-examine matches without design matrix/scoring
+    corr_tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin
+            thread_id = first(thread_task)
+            return getPSMS(
+                                ms_file_idx,
+                                spectra,
+                                last(thread_task),
+                                getPrecursors(spec_lib),
+                                getFragmentLookupTable(spec_lib),
+                                nce_model,
+                                scan_to_prec_idx,
+                                precursors_passed_scoring[thread_id],
+                                search_data[thread_id],
+                                params,
+                                qtm,
+                                mem,
+                                rt_to_irt_spline,
+                                irt_tol,
+                                FRAGCORR())
+        end
+    end
+
+    fetch.(corr_tasks)
+
+    return psm_results
 end
 
 function LibrarySearchNceTuning(
