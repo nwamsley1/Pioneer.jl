@@ -109,6 +109,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     max_q_value_probit_rescore::Float32
     global_pep_threshold::Float32
     perfile_pep_threshold::Float32
+    logodds_missing_prior::Float32
     # RT parameters
     min_inference_points::Int64
     max_q_val_for_irt::Float32
@@ -164,6 +165,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Float32(score_params.max_q_value_probit_rescore),
             Float32(score_params.global_pep_threshold),
             Float32(hasproperty(score_params, :perfile_pep_threshold) ? score_params.perfile_pep_threshold : 0.95),
+            Float32(hasproperty(score_params, :logodds_missing_prior) ? score_params.logodds_missing_prior : 0.5),
 
             Int64(1000), # Default min_inference_points
             Float32(rt_params.min_probability),
@@ -264,7 +266,14 @@ function process_file!(
         rt_model = getRtIrtModel(search_context, ms_file_idx)
         # Add columns
         add_psm_columns!(psms, spectra, search_context, rt_model, ms_file_idx)
-        
+
+        # MS1 precursor detection
+        add_ms1_detection_columns!(
+            psms, spectra,
+            getMz(getPrecursors(getSpecLib(search_context))),
+            getMs1TolPpm(params)
+        )
+
         # Score PSMs
         score_psms!(psms, params, search_context)
         # Get best PSMs
@@ -322,6 +331,14 @@ function process_file!(
             :TIC, :y_count, :err_norm, :spectrum_peak_count, :index_score, :intercept
         ]
 
+        # Add MS1 detection features if available
+        if hasproperty(psms, :ms1_detected)
+            insert!(column_names, length(column_names), :ms1_detected)
+        end
+        if hasproperty(psms, :ms1_mass_err)
+            insert!(column_names, length(column_names), :ms1_mass_err)
+        end
+
         # Avoid singular error if no peaks were ignored
         if maximum(psms.percent_theoretical_ignored) == 0
             deleteat!(column_names, findfirst(==(:percent_theoretical_ignored), column_names))
@@ -335,6 +352,17 @@ function process_file!(
         # Avoid singular error if all index scores are the same
         if minimum(psms.index_score) == maximum(psms.index_score)
             deleteat!(column_names, findfirst(==(:index_score), column_names))
+        end
+
+        # Avoid singular error if all ms1_detected values are the same
+        if hasproperty(psms, :ms1_detected) && minimum(psms.ms1_detected) == maximum(psms.ms1_detected)
+            idx = findfirst(==(:ms1_detected), column_names)
+            !isnothing(idx) && deleteat!(column_names, idx)
+        end
+        # Avoid singular error if all ms1_mass_err values are the same
+        if hasproperty(psms, :ms1_mass_err) && minimum(psms.ms1_mass_err) == maximum(psms.ms1_mass_err)
+            idx = findfirst(==(:ms1_mass_err), column_names)
+            !isnothing(idx) && deleteat!(column_names, idx)
         end
 
         # Select scoring columns
@@ -360,6 +388,12 @@ function process_file!(
             if hasproperty(psms, :index_score)
                 insert!(column_names, length(column_names), :index_score)
             end
+            if hasproperty(psms, :ms1_detected) && minimum(psms.ms1_detected) != maximum(psms.ms1_detected)
+                insert!(column_names, length(column_names), :ms1_detected)
+            end
+            if hasproperty(psms, :ms1_mass_err) && minimum(psms.ms1_mass_err) != maximum(psms.ms1_mass_err)
+                insert!(column_names, length(column_names), :ms1_mass_err)
+            end
             score_main_search_psms!(
                 psms,
                 column_names,
@@ -374,6 +408,8 @@ function process_file!(
         post_score_cols = [:ms_file_idx, :score, :precursor_idx, :scan_idx,
             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target]
         hasproperty(psms, :index_score) && push!(post_score_cols, :index_score)
+        hasproperty(psms, :ms1_detected) && push!(post_score_cols, :ms1_detected)
+        hasproperty(psms, :ms1_mass_err) && push!(post_score_cols, :ms1_mass_err)
         select!(psms, post_score_cols)
         get_probs!(psms, psms[!,:score])
     end
@@ -508,6 +544,8 @@ function process_search_results!(
     arrow_cols = [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
         :irt_predicted, :q_value, :score, :prob, :scan_count, :PEP]
     hasproperty(psms, :index_score) && push!(arrow_cols, :index_score)
+    hasproperty(psms, :ms1_detected) && push!(arrow_cols, :ms1_detected)
+    hasproperty(psms, :ms1_mass_err) && push!(arrow_cols, :ms1_mass_err)
     Arrow.write(temp_path, select!(psms, arrow_cols))
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 
@@ -572,7 +610,8 @@ function summarize_results!(
             getIsDecoy(precursors),
             max_q_val=params.max_q_val_for_irt,
             fdr_scale_factor=fdr_scale_factor,
-            global_pep_threshold=params.global_pep_threshold
+            global_pep_threshold=params.global_pep_threshold,
+            logodds_missing_prior=params.logodds_missing_prior
         )
     end
     # Map retention times

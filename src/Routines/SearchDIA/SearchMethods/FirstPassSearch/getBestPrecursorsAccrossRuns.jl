@@ -23,14 +23,17 @@ const GLOBAL_MIN_PRECURSORS   = 50_000   # hard minimum floor
 Log-odds average of top-N probabilities, converted back to probability space.
 Mirrors ScoringSearch/scoring_interface.jl:logodds for first pass use.
 """
-function _logodds_combine(probs::Vector{Float32}, top_n::Int)::Float32
+function _logodds_combine(probs::Vector{Float32}, top_n::Int;
+                          prior::Float32 = 0.5f0)::Float32
     isempty(probs) && return 0.0f0
     n = min(length(probs), top_n)
     sorted = sort(probs; rev=true)
     selected = @view sorted[1:n]
     eps = 1f-6
-    lo = log.(clamp.(selected, 0.1f0, 1 - eps) ./ (1 .- clamp.(selected, 0.1f0, 1 - eps)))
-    avg = sum(lo) / n
+    lo = log.(clamp.(selected, 1f-4, 1 - eps) ./ (1 .- clamp.(selected, 1f-4, 1 - eps)))
+    n_missing = top_n - n
+    prior_lo = log(clamp(prior, 1f-4, 1 - eps) / (1 - clamp(prior, 1f-4, 1 - eps)))
+    avg = (sum(lo) + n_missing * prior_lo) / top_n
     return 1.0f0 / (1 + exp(-avg))
 end
 
@@ -84,7 +87,8 @@ function get_best_precursors_accross_runs(
                          prec_is_decoy::AbstractVector{Bool};
                          max_q_val::Float32 = 0.01f0,
                          fdr_scale_factor::Float32 = 1.0f0,
-                         global_pep_threshold::Float32 = 0.5f0
+                         global_pep_threshold::Float32 = 0.5f0,
+                         logodds_missing_prior::Float32 = 0.5f0
                          )
 
     function readPSMs!(
@@ -304,7 +308,7 @@ function get_best_precursors_accross_runs(
     global_targets = Vector{Bool}(undef, n_unique)
     for (i, (pid, probs)) in enumerate(pairs(prec_probs_by_run))
         global_prec_idxs[i] = pid
-        global_probs[i] = _logodds_combine(probs, sqrt_n_files)
+        global_probs[i] = _logodds_combine(probs, sqrt_n_files; prior=logodds_missing_prior)
         global_targets[i] = !prec_is_decoy[pid]
     end
 

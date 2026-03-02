@@ -124,6 +124,99 @@ function add_main_search_columns!(psms::DataFrame,
 end
 
 """
+    add_ms1_detection_columns!(psms, spectra, prec_mzs, ms1_tol_ppm)
+
+Lightweight MS1 precursor detection check. For each PSM, finds the nearest MS1
+scan and binary-searches its m/z array for the precursor monoisotopic m/z.
+
+Adds two columns to `psms`:
+- `ms1_detected::UInt8` — 1 if precursor m/z found in adjacent MS1 scan, 0 otherwise
+- `ms1_mass_err::Float16` — PPM mass error of nearest peak (0 if not detected)
+"""
+function add_ms1_detection_columns!(
+    psms::DataFrame,
+    spectra::MassSpecData,
+    prec_mzs::AbstractVector{Float32},
+    ms1_tol_ppm::Float32
+)
+    N = nrow(psms)
+    ms1_detected = zeros(UInt8, N)
+    ms1_mass_err = zeros(Float16, N)
+
+    scan_idxs = psms[!, :scan_idx]
+    precursor_idxs = psms[!, :precursor_idx]
+
+    # Sort PSM indices by scan_idx for efficient linear MS1 scan tracking
+    sorted_order = sortperm(scan_idxs)
+
+    # Track nearest MS1 scan with running pointers (same pattern as mass_error_search MS1CHROM)
+    prev_ms1 = one(Int)
+    next_ms1 = one(Int)
+    ms1_ptr = one(Int)
+
+    for idx in sorted_order
+        scan_idx = Int(scan_idxs[idx])
+
+        # Advance MS1 pointers past current MS2 scan
+        if scan_idx > next_ms1
+            while ms1_ptr <= length(spectra)
+                if getMsOrder(spectra, ms1_ptr) == 1
+                    prev_ms1 = next_ms1
+                    next_ms1 = ms1_ptr
+                    if ms1_ptr > scan_idx
+                        break
+                    end
+                end
+                ms1_ptr += 1
+            end
+        end
+
+        # Pick nearest MS1 scan
+        nearest_ms1 = abs(next_ms1 - scan_idx) < abs(prev_ms1 - scan_idx) ? next_ms1 : prev_ms1
+
+        # Binary search for precursor m/z in MS1 scan
+        target_mz = prec_mzs[precursor_idxs[idx]]
+        mz_array = getMzArray(spectra, nearest_ms1)
+
+        if !isempty(mz_array)
+            tol = target_mz * ms1_tol_ppm / 1f6
+            lo_mz = target_mz - tol
+            hi_mz = target_mz + tol
+
+            # Find first peak >= lo_mz
+            first_idx = searchsortedfirst(mz_array, lo_mz)
+
+            # Check if any peak falls within [lo_mz, hi_mz]
+            best_err = Inf32
+            found = false
+            j = first_idx
+            while j <= length(mz_array)
+                peak_mz = mz_array[j]
+                if ismissing(peak_mz)
+                    j += 1
+                    continue
+                end
+                Float32(peak_mz) > hi_mz && break
+                err_ppm = (Float32(peak_mz) - target_mz) / (target_mz / 1f6)
+                if abs(err_ppm) < abs(best_err)
+                    best_err = err_ppm
+                    found = true
+                end
+                j += 1
+            end
+
+            if found
+                ms1_detected[idx] = 0x01
+                ms1_mass_err[idx] = Float16(best_err)
+            end
+        end
+    end
+
+    psms[!, :ms1_detected] = ms1_detected
+    psms[!, :ms1_mass_err] = ms1_mass_err
+end
+
+"""
     score_main_search_psms!(psms::DataFrame, column_names::Vector{Symbol};
                            n_train_rounds::Int64=2,
                            max_iter_per_round::Int64=50,
@@ -309,6 +402,8 @@ function get_best_psms!(psms::DataFrame,
 
     best_psm_cols = [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target]
     hasproperty(psms, :index_score) && push!(best_psm_cols, :index_score)
+    hasproperty(psms, :ms1_detected) && push!(best_psm_cols, :ms1_detected)
+    hasproperty(psms, :ms1_mass_err) && push!(best_psm_cols, :ms1_mass_err)
     select!(psms, best_psm_cols)
 
     # Per-file pre-filter: keep the largest of
