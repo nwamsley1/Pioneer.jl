@@ -255,11 +255,6 @@ function estimate_weight_detection_model(df::DataFrame)
         used_fallback = true
     )
 
-    required_cols = (:use_for_protein_quant, :sequence, :inferred_protein_group, :weight)
-    if any(col -> !hasproperty(df, col), required_cols)
-        return default_model
-    end
-
     n_rows = nrow(df)
     if n_rows == 0
         return default_model
@@ -277,15 +272,7 @@ function estimate_weight_detection_model(df::DataFrame)
             continue
         end
 
-        weight = df.weight[i]
-        if ismissing(weight)
-            continue
-        end
-
-        weight_val = Float64(weight)
-        if !isfinite(weight_val) || weight_val <= 0.0
-            continue
-        end
+        weight_val = Float64(df.weight[i])
 
         key = (String(protein_name), String(df.sequence[i]))
         if haskey(best_weight_by_protein_peptide, key)
@@ -347,51 +334,26 @@ function add_weight_observation_features(calibration::NamedTuple)
     desc = "add_weight_observation_features"
 
     op = function(df)
-        if !hasproperty(df, :protein_name)
-            return df
-        end
-
         n_rows = nrow(df)
         coverage_miss_pval = Vector{Float32}(undef, n_rows)
         coverage_miss_surprisal = Vector{Float32}(undef, n_rows)
         coverage_deficit_z = Vector{Float32}(undef, n_rows)
         top_weight_vs_threshold_z = Vector{Float32}(undef, n_rows)
 
-        log_threshold = Float64(hasproperty(calibration, :log_threshold) ? calibration.log_threshold : 0.0f0)
-        sigma_log = Float64(hasproperty(calibration, :sigma_log) ? calibration.sigma_log : 1.0f0)
+        log_threshold = Float64(calibration.log_threshold)
+        sigma_log = Float64(calibration.sigma_log)
         sigma_log = (isfinite(sigma_log) && sigma_log > 0.0) ? sigma_log : 1.0
         std_normal = Distributions.Normal()
 
-        has_top_weight_col = hasproperty(df, :top_pep_weight)
-        has_n_possible_col = hasproperty(df, :n_possible_peptides)
-        has_n_peptides_col = hasproperty(df, :n_peptides)
-
         for i in 1:n_rows
-            valid_top_weight = false
-            top_weight = 0.0
-            if has_top_weight_col
-                weight_value = df.top_pep_weight[i]
-                if !ismissing(weight_value)
-                    top_weight = Float64(weight_value)
-                    valid_top_weight = isfinite(top_weight) && top_weight > 0.0
-                end
-            end
-
-            N_total = if has_n_possible_col
-                max(Int(df.n_possible_peptides[i]), 0)
-            else
-                0
-            end
-            k_obs = if has_n_peptides_col
-                max(Int(df.n_peptides[i]), 0)
-            else
-                0
-            end
+            top_weight = Float64(df.top_pep_weight[i])
+            N_total = max(Int(df.n_possible_peptides[i]), 0)
+            k_obs = max(Int(df.n_peptides[i]), 0)
 
             N_add = max(N_total - 1, 0)
             k_add = max(k_obs - 1, 0)
 
-            if !(valid_top_weight && isfinite(top_weight) && top_weight > 0.0) || N_add == 0
+            if top_weight <= 0.0 || N_add == 0
                 coverage_miss_pval[i] = 1.0f0
                 coverage_miss_surprisal[i] = 0.0f0
                 coverage_deficit_z[i] = 0.0f0
