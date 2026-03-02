@@ -348,31 +348,84 @@ function LibrarySearch(
 
     corr_results = DataFrame[]
     if run_fragcorr
-        @info "Starting FRAGCORR pass ($(length(thread_tasks)) threads)..."
+        expanded = build_expanded_precursor_set(
+            spectra, thread_tasks, scan_to_prec_idx, precursors_passed_scoring)
+        @info "FRAGCORR expanded set: $(length(expanded.prec_ids)) unique precursors"
         corr_tasks = map(thread_tasks) do thread_task
             Threads.@spawn begin
                 thread_id = first(thread_task)
                 return getPSMS(
-                                    ms_file_idx,
-                                    spectra,
-                                    last(thread_task),
-                                    getPrecursors(spec_lib),
-                                    getFragmentLookupTable(spec_lib),
-                                    scan_to_prec_idx,
-                                    precursors_passed_scoring[thread_id],
-                                    search_data[thread_id],
-                                    params,
-                                    qtm,
-                                    mem,
-                                    rt_to_irt_spline,
-                                    irt_tol,
-                                    FRAGCORR())
+                    ms_file_idx,
+                    spectra,
+                    last(thread_task),
+                    getPrecursors(spec_lib),
+                    getFragmentLookupTable(spec_lib),
+                    expanded,
+                    search_data[thread_id],
+                    params,
+                    qtm,
+                    mem,
+                    rt_to_irt_spline,
+                    irt_tol,
+                    FRAGCORR())
             end
         end
         corr_results = fetch.(corr_tasks)
     end
 
     return psm_results, corr_results
+end
+
+"""
+    build_expanded_precursor_set(spectra, thread_tasks, scan_to_prec_idx,
+                                 precursors_passed_scoring; rt_expansion)
+
+Merge fragment-index results across all threads to build per-precursor expanded
+RT windows. For each precursor that passed the fragment index in any scan,
+record (min_observed_RT - rt_expansion, max_observed_RT + rt_expansion).
+Returns an `ExpandedPrecursorSet` sorted by `rt_lows` for binary-search lookup.
+"""
+function build_expanded_precursor_set(
+    spectra::MassSpecData,
+    thread_tasks,
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed_scoring::Vector{Vector{UInt32}};
+    rt_expansion::Float32 = 15.0f0
+)
+    prec_rt_min = Dict{UInt32, Float32}()
+    prec_rt_max = Dict{UInt32, Float32}()
+
+    for thread_task in thread_tasks
+        thread_id = first(thread_task)
+        for scan_idx in last(thread_task)
+            (scan_idx == 0 || scan_idx > length(spectra)) && continue
+            ismissing(scan_to_prec_idx[scan_idx]) && continue
+            rt = Float32(getRetentionTime(spectra, scan_idx))
+            for i in scan_to_prec_idx[scan_idx]
+                pid = precursors_passed_scoring[thread_id][i]
+                if haskey(prec_rt_min, pid)
+                    prec_rt_min[pid] = min(prec_rt_min[pid], rt)
+                    prec_rt_max[pid] = max(prec_rt_max[pid], rt)
+                else
+                    prec_rt_min[pid] = rt
+                    prec_rt_max[pid] = rt
+                end
+            end
+        end
+    end
+
+    n = length(prec_rt_min)
+    ids   = Vector{UInt32}(undef, n)
+    lows  = Vector{Float32}(undef, n)
+    highs = Vector{Float32}(undef, n)
+    for (i, (pid, lo)) in enumerate(prec_rt_min)
+        ids[i]   = pid
+        lows[i]  = lo - rt_expansion
+        highs[i] = prec_rt_max[pid] + rt_expansion
+    end
+
+    order = sortperm(lows)
+    return ExpandedPrecursorSet(ids[order], lows[order], highs[order])
 end
 
 function LibrarySearchNceTuning(

@@ -176,6 +176,18 @@ struct FragCorrScore
 end
 
 """
+Stores an expanded set of precursors eligible for the FRAGCORR pass.
+For each precursor that passed the fragment index in any scan, we record an
+expanded RT window (observed min/max RT ± expansion). Arrays are sorted by `rt_lows`
+for efficient binary-search lookup per scan.
+"""
+struct ExpandedPrecursorSet
+    prec_ids::Vector{UInt32}       # precursor IDs, sorted by rt_low
+    rt_lows::Vector{Float32}       # lower bound of expanded RT window
+    rt_highs::Vector{Float32}      # upper bound of expanded RT window
+end
+
+"""
 Basic search data structure for library searches.
 Contains pre-allocated arrays and intermediate data structures.
 """

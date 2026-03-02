@@ -110,8 +110,8 @@ function _select_transitions_impl!(
         prec_mz = prec_mzs[prec_idx]
         prec_charge = prec_charges[prec_idx]
 
-        # iRT filter (same as Standard)
-        abs(prec_irts[prec_idx] - iRT) > iRT_tol && continue
+        # NOTE: iRT filter removed — RT eligibility is handled by the caller
+        # via ExpandedPrecursorSet. Only the quad window m/z filter applies here.
 
         # Quad window filter (same as Standard)
         mz_low = getPrecMinBound(quad_transmission_func) - NEUTRON * first(isotope_err_bounds) / prec_charge
@@ -151,12 +151,14 @@ end
 
 """
     getPSMS(ms_file_idx, spectra, thread_task, precursors, ion_list,
-            scan_to_prec_idx, precursors_passed_scoring, search_data, params,
-            qtm, mem, rt_to_irt_spline, irt_tol, ::FRAGCORR)
+            expanded, search_data, params, qtm, mem,
+            rt_to_irt_spline, irt_tol, ::FRAGCORR)
 
 Second-pass getPSMS for fragment correlation features.
+Processes ALL MS2 scans (not just those with fragment index hits), using the
+`ExpandedPrecursorSet` to determine which precursors are eligible at each scan's RT.
 Runs selectTransitions! (lightweight, no isotope/intensity prediction) and matchPeaks!
-for each scan but skips buildDesignMatrix! and scoring. Returns raw fragment match data
+but skips buildDesignMatrix! and scoring. Returns raw fragment match data
 grouped by precursor for downstream correlation analysis.
 """
 function getPSMS(
@@ -165,8 +167,7 @@ function getPSMS(
     thread_task::Vector{Int64},
     precursors::LibraryPrecursors,
     ion_list::LibraryFragmentLookup,
-    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-    precursors_passed_scoring::Vector{UInt32},
+    expanded::ExpandedPrecursorSet,
     search_data::S,
     params::P,
     qtm::Q,
@@ -183,16 +184,28 @@ function getPSMS(
     frag_corr_scores = getFragCorrScores(search_data)
 
     # Pre-allocate reusable buffers (no per-scan allocations)
+    eligible_buf = Vector{UInt32}(undef, max(length(expanded.prec_ids), 1))
     trans_prec_buf = Vector{UInt32}(undef, 10000)
     scored_prec_buf = Vector{UInt32}(undef, 10000)
 
     for scan_idx in thread_task
         (scan_idx == 0 || scan_idx > length(spectra)) && continue
-        ismissing(scan_to_prec_idx[scan_idx]) && continue
 
         msn = getMsOrder(spectra, scan_idx)
         msn ∉ getSpecOrder(params) && continue
         n_scans_processed += 1
+
+        # Find eligible precursors for this scan's RT via binary search
+        scan_rt = Float32(getRetentionTime(spectra, scan_idx))
+        n_eligible = 0
+        hi = searchsortedlast(expanded.rt_lows, scan_rt)
+        for j in 1:hi
+            if expanded.rt_highs[j] >= scan_rt
+                n_eligible += 1
+                @inbounds eligible_buf[n_eligible] = expanded.prec_ids[j]
+            end
+        end
+        n_eligible < 1 && continue
 
         # Ion Template Selection — lightweight, no isotope/intensity prediction
         ion_idx, _ = selectTransitions!(
@@ -200,7 +213,7 @@ function getPSMS(
             FragCorrTransitionSelection(),
             getPrecEstimation(params),
             ion_list,
-            scan_to_prec_idx[scan_idx], precursors_passed_scoring,
+            1:n_eligible, eligible_buf,
             getMz(precursors),
             getCharge(precursors),
             getIrt(precursors),
