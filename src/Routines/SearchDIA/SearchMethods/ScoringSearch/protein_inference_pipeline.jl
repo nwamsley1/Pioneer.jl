@@ -400,14 +400,7 @@ function add_pg_score_interaction_features()
         pg_score_x_top_weight_vs_threshold_z = Vector{Float32}(undef, n_rows)
 
         for i in 1:n_rows
-            score = df.pg_score[i]
-            pg_score_val = if ismissing(score)
-                0.0f0
-            else
-                score_val = Float32(score)
-                isfinite(score_val) ? score_val : 0.0f0
-            end
-
+            pg_score_val = Float32(df.pg_score[i])
             pg_score_x_coverage_miss_surprisal[i] = pg_score_val * Float32(df.coverage_miss_surprisal[i])
             pg_score_x_coverage_deficit_z[i] = pg_score_val * Float32(df.coverage_deficit_z[i])
             pg_score_x_top_weight_vs_threshold_z[i] = pg_score_val * Float32(df.top_weight_vs_threshold_z[i])
