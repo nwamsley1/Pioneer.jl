@@ -74,6 +74,7 @@ Holds FWHM statistics, PSM file paths, and model updates.
 struct FirstPassSearchResults <: SearchResults
     fwhms::Dictionary{Int64, @NamedTuple{median_fwhm::Float32,mad_fwhm::Float32}}
     psms::Base.Ref{DataFrame}
+    corr_df::Base.Ref{DataFrame}
     ms1_mass_err_model::Base.Ref{<:MassErrorModel}
     ms1_ppm_errs::Vector{Float32}
     ms1_mass_plots::Vector{Plots.Plot}
@@ -191,12 +192,15 @@ function init_search_results(
 )
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms")
     !isdir(temp_folder) && mkdir(temp_folder)
+    corr_folder = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_corr")
+    !isdir(corr_folder) && mkdir(corr_folder)
     out_dir = getDataOutDir(search_context)
     qc_dir = joinpath(out_dir, "qc_plots")
     ms1_mass_error_plots = joinpath(qc_dir, "ms1_mass_error_plots")
     !isdir(ms1_mass_error_plots ) && mkdir(ms1_mass_error_plots )
     return FirstPassSearchResults(
         Dictionary{Int64, NamedTuple{(:median_fwhm, :mad_fwhm), Tuple{Float32, Float32}}}(),
+        Base.Ref{DataFrame}(),
         Base.Ref{DataFrame}(),
         Base.Ref{MassErrorModel}(),
         Vector{Float32}(),
@@ -363,8 +367,9 @@ function process_file!(
 
     try
         # Get models and update fragment lookup table
-        psms = perform_library_search(spectra, search_context, params, ms_file_idx)
+        psms, corr_df = perform_library_search(spectra, search_context, params, ms_file_idx)
         results.psms[] = process_psms!(psms, spectra, search_context, params, ms_file_idx)
+        results.corr_df[] = corr_df
 
         temp_psms = results.psms[] 
         temp_psms = temp_psms[temp_psms[!,:q_value].<=0.001,:]
@@ -453,7 +458,18 @@ function process_file!(
             PEP = Float16[]
         )
         results.psms[] = empty_psms
-        
+        results.corr_df[] = DataFrame(
+            precursor_idx = UInt32[],
+            scan_idx = UInt32[],
+            intensity_1 = Float32[],
+            intensity_2 = Float32[],
+            intensity_3 = Float32[],
+            intensity_4 = Float32[],
+            intensity_5 = Float32[],
+            rt = Float32[],
+            target = Bool[]
+        )
+
         # Set default mass error model
         results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
         #rethrow(e)
@@ -495,8 +511,16 @@ function process_search_results!(
     )
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 
+    corr_path = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_corr", parsed_fname * ".arrow")
+    corr_df = results.corr_df[]
+    if nrow(corr_df) > 0
+        sort!(corr_df, [:precursor_idx, :scan_idx])
+    end
+    Arrow.write(corr_path, corr_df)
+    setFirstPassCorr!(getMSData(search_context), ms_file_idx, corr_path)
+
     #####
-    #MS1 mass tolerance 
+    #MS1 mass tolerance
     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     # Generate mass error plot
@@ -510,6 +534,7 @@ No cleanup needed between files.
 """
 function reset_results!(results::FirstPassSearchResults)
     empty!(results.psms[])
+    empty!(results.corr_df[])
     resize!(results.ms1_ppm_errs, 0)
     return nothing
 end

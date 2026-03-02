@@ -211,7 +211,7 @@ function getPSMS(
 end
 
 function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:ParameterTuningSearchParameters}
-    return vcat(LibrarySearch(
+    psm_results, _ = LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
                     getPresearchFragmentIndex(getSpecLib(search_context)),
@@ -223,12 +223,30 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
                     search_parameters,
                     getNceModel(search_context, ms_file_idx),
                     getIRTTol(search_parameters),
-                )...)
+                )
+    return vcat(psm_results...)
+end
+
+function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::FirstPassSearchParameters, ms_file_idx::Int64)
+    psm_results, corr_results = LibrarySearch(
+                    spectra,
+                    UInt32(ms_file_idx),
+                    getFragmentIndex(getSpecLib(search_context)),
+                    getSpecLib(search_context),
+                    getSearchData(search_context),
+                    getQuadTransmissionModel(search_context, ms_file_idx),
+                    getMassErrorModel(search_context, ms_file_idx),
+                    getRtIrtModel(search_context, ms_file_idx),
+                    search_parameters,
+                    getNceModel(search_context, ms_file_idx),
+                    getIrtErrors(search_context)[ms_file_idx];
+                    run_fragcorr = true
+                )
+    return vcat(psm_results...), vcat(corr_results...)
 end
 
 function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:SearchParameters}
-
-    return vcat(LibrarySearch(
+    psm_results, _ = LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
                     getFragmentIndex(getSpecLib(search_context)),
@@ -240,7 +258,8 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
                     search_parameters,
                     getNceModel(search_context, ms_file_idx),
                     getIrtErrors(search_context)[ms_file_idx]
-                )...)
+                )
+    return vcat(psm_results...)
 end
 
 function library_search(
@@ -275,7 +294,8 @@ function LibrarySearch(
     rt_to_irt_spline::Any,
     params::P,
     nce_model::NceModel{Float32},
-    irt_tol::AbstractFloat) where {
+    irt_tol::AbstractFloat;
+    run_fragcorr::Bool = false) where {
         M<:MassErrorModel,
         Q<:QuadTransmissionModel,
         S<:SearchDataStructures,
@@ -326,32 +346,33 @@ function LibrarySearch(
 
     psm_results = fetch.(tasks)
 
-    # Fragment correlation pass: re-examine matches without design matrix/scoring
-    corr_tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin
-            thread_id = first(thread_task)
-            return getPSMS(
-                                ms_file_idx,
-                                spectra,
-                                last(thread_task),
-                                getPrecursors(spec_lib),
-                                getFragmentLookupTable(spec_lib),
-                                nce_model,
-                                scan_to_prec_idx,
-                                precursors_passed_scoring[thread_id],
-                                search_data[thread_id],
-                                params,
-                                qtm,
-                                mem,
-                                rt_to_irt_spline,
-                                irt_tol,
-                                FRAGCORR())
+    corr_results = DataFrame[]
+    if run_fragcorr
+        @info "Starting FRAGCORR pass ($(length(thread_tasks)) threads)..."
+        corr_tasks = map(thread_tasks) do thread_task
+            Threads.@spawn begin
+                thread_id = first(thread_task)
+                return getPSMS(
+                                    ms_file_idx,
+                                    spectra,
+                                    last(thread_task),
+                                    getPrecursors(spec_lib),
+                                    getFragmentLookupTable(spec_lib),
+                                    scan_to_prec_idx,
+                                    precursors_passed_scoring[thread_id],
+                                    search_data[thread_id],
+                                    params,
+                                    qtm,
+                                    mem,
+                                    rt_to_irt_spline,
+                                    irt_tol,
+                                    FRAGCORR())
+            end
         end
+        corr_results = fetch.(corr_tasks)
     end
 
-    fetch.(corr_tasks)
-
-    return psm_results
+    return psm_results, corr_results
 end
 
 function LibrarySearchNceTuning(

@@ -105,6 +105,7 @@ struct ArrowTableReference{N} <: MassSpecDataReference
     file_paths::NTuple{N, String}
     file_id_to_name::NTuple{N, String}
     first_pass_psms::Vector{String}
+    first_pass_corr::Vector{String}
     second_pass_psms::Vector{String}
     passing_psms::Vector{String}
     passing_proteins::Vector{String}
@@ -123,8 +124,9 @@ struct ArrowTableReference{N} <: MassSpecDataReference
         end
         n = length(file_paths)
         new{n}(
-            NTuple{n, String}(file_paths), 
+            NTuple{n, String}(file_paths),
             NTuple{n, String}(file_id_to_name),
+            fill("", n),
             fill("", n),
             fill("", n),
             fill("", n),
@@ -142,7 +144,8 @@ struct ArrowTableReference{N} <: MassSpecDataReference
         end
         n = length(file_paths)
         new{n}(
-            NTuple{n, String}(file_paths...), 
+            NTuple{n, String}(file_paths...),
+            fill("", n),
             fill("", n),
             fill("", n),
             fill("", n),
@@ -156,6 +159,21 @@ struct ArrowTableReference{N} <: MassSpecDataReference
 end
 
 
+
+"""
+Stores the observed intensities of the top-5-ranked library fragments for a
+(precursor, scan) pair. Columns are indexed by **library rank**, not sorted by
+magnitude — if a ranked fragment was not matched its slot is zero.
+"""
+struct FragCorrScore
+    precursor_idx::UInt32
+    scan_idx::UInt32
+    intensity_1::Float32
+    intensity_2::Float32
+    intensity_3::Float32
+    intensity_4::Float32
+    intensity_5::Float32
+end
 
 """
 Basic search data structure for library searches.
@@ -183,6 +201,9 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     ms1_scored_psms::Vector{Ms1ScoredPSM{Float32, Float16}}
     ms1_unscored_psms::Vector{Ms1UnscoredPSM{Float32}}
     ms1_spectral_scores::Vector{SpectralScoresMs1{Float16}}
+
+    # Fragment correlation scores
+    frag_corr_scores::Vector{FragCorrScore}
 
     # Working arrays
     Hs::SparseArray
@@ -315,6 +336,8 @@ end
 # Getter methods
 getFileIdToName(ref::ArrowTableReference, index::Int) = ref.file_id_to_name[index]
 getFirstPassPsms(ref::ArrowTableReference, index::Int) = ref.first_pass_psms[index]
+getFirstPassCorr(ref::ArrowTableReference) = ref.first_pass_corr
+getFirstPassCorr(ref::ArrowTableReference, index::Int) = ref.first_pass_corr[index]
 getSecondPassPsms(ref::ArrowTableReference, index::Int) = ref.second_pass_psms[index]
 
 """
@@ -356,6 +379,7 @@ getRtIndex(ref::ArrowTableReference) = ref.rt_index_paths
 # Setter methods
 setFileIdToName!(ref::ArrowTableReference, index::Int, value::String) = ref.file_id_to_name[index] = value
 setFirstPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.first_pass_psms[index] = value
+setFirstPassCorr!(ref::ArrowTableReference, index::Int, value::String) = ref.first_pass_corr[index] = value
 setSecondPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.second_pass_psms[index] = value
 setPassingPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_psms[index] = value
 setPassingProteins!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_proteins[index] = value
@@ -408,6 +432,7 @@ getMs1ScoredPsms(s::SearchDataStructures) = s.ms1_scored_psms
 getMs1UnscoredPsms(s::SearchDataStructures) = s.ms1_unscored_psms
 getMs1SpectralScores(s::SearchDataStructures) = s.ms1_spectral_scores
 
+getFragCorrScores(s::SearchDataStructures) = s.frag_corr_scores
 
 getHs(s::SearchDataStructures) = s.Hs
 getPrecIds(s::SearchDataStructures) = s.prec_ids
