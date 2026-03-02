@@ -1,6 +1,7 @@
 using Test
 using DataFrames
 using Statistics
+using Arrow
 using Pioneer
 
 @testset "Protein Group Weight Coverage Features" begin
@@ -59,7 +60,7 @@ using Pioneer
             use_for_protein_quant = Bool[true, true, true, true, true, false],
             sequence = ["P1A", "P1A", "P1B", "P2A", "P2B", "P3A"],
             inferred_protein_group = Union{Missing, String}["P1", "P1", "P1", "P2", "P2", missing],
-            weight = Union{Missing, Float32}[60.0f0, 40.0f0, 40.0f0, 80.0f0, 10.0f0, 500.0f0]
+            weight = Float32[60.0f0, 40.0f0, 40.0f0, 80.0f0, 10.0f0, 500.0f0]
         )
 
         model = Pioneer.estimate_weight_detection_model(psms)
@@ -126,21 +127,122 @@ using Pioneer
         @test out.pg_score_x_top_weight_vs_threshold_z[3] == out.pg_score[3] * out.top_weight_vs_threshold_z[3]
     end
 
+    @testset "Consensus Rank Builder Ignores MBR Candidates and Uses pg_score Weighting" begin
+        temp_dir = mktempdir()
+
+        try
+            file1 = DataFrame(
+                inferred_protein_group = ["P", "P", "P"],
+                target = Bool[true, true, true],
+                entrap_id = UInt8[1, 1, 1],
+                precursor_idx = UInt32[1, 2, 3],
+                sequence = ["PEP1", "PEP2", "PEP3"],
+                use_for_protein_quant = Bool[true, true, true],
+                MBR_candidate = Bool[false, false, true],
+                missed_cleavage = Int64[0, 0, 0],
+                Mox = Int64[0, 0, 0],
+                prec_prob = Float32[0.99, 0.98, 0.10],
+                MBR_boosted_prec_prob = Float32[0.99, 0.98, 0.995],
+                weight = Float32[100.0, 50.0, 1000.0]
+            )
+
+            file2 = DataFrame(
+                inferred_protein_group = ["P", "P"],
+                target = Bool[true, true],
+                entrap_id = UInt8[1, 1],
+                precursor_idx = UInt32[1, 2],
+                sequence = ["PEP1", "PEP2"],
+                use_for_protein_quant = Bool[true, true],
+                MBR_candidate = Bool[false, false],
+                missed_cleavage = Int64[0, 0],
+                Mox = Int64[0, 0],
+                prec_prob = Float32[0.10, 0.20],
+                MBR_boosted_prec_prob = Float32[0.10, 0.20],
+                weight = Float32[60.0, 120.0]
+            )
+
+            path1 = joinpath(temp_dir, "psms_001.arrow")
+            path2 = joinpath(temp_dir, "psms_002.arrow")
+            Arrow.write(path1, file1)
+            Arrow.write(path2, file2)
+
+            consensus = Pioneer.build_precursor_rank_consensus([
+                Pioneer.PSMFileReference(path1),
+                Pioneer.PSMFileReference(path2)
+            ])
+
+            @test consensus.precursor_rank[("P", true, UInt8(1), UInt32(1))] == 1
+            @test consensus.precursor_rank[("P", true, UInt8(1), UInt32(2))] == 2
+            @test !haskey(consensus.precursor_rank, ("P", true, UInt8(1), UInt32(3)))
+        finally
+            rm(temp_dir, recursive = true, force = true)
+        end
+    end
+
+    @testset "Consensus Rank Support Uses Observed MBR Precursors" begin
+        consensus = (
+            precursor_rank = Dict(
+                ("P", true, UInt8(1), UInt32(11)) => Int32(1),
+                ("P", true, UInt8(1), UInt32(12)) => Int32(5)
+            ),
+        )
+
+        psms = DataFrame(
+            inferred_protein_group = ["P", "P"],
+            target = Bool[true, true],
+            entrap_id = UInt8[1, 1],
+            precursor_idx = UInt32[11, 12],
+            sequence = ["PEP1", "PEP2"],
+            use_for_protein_quant = Bool[true, true],
+            MBR_candidate = Bool[false, true],
+            missed_cleavage = Int64[0, 0],
+            Mox = Int64[0, 0],
+            prec_prob = Float32[0.8, 0.7],
+            MBR_boosted_prec_prob = Float32[0.8, 0.85],
+            weight = Float32[100.0, 90.0]
+        )
+
+        grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
+        @test grouped.consensus_precursor_rank_support[1] ≈ 1.2f0
+
+        (_, interaction_op) = Pioneer.add_consensus_precursor_rank_interaction_feature()
+        out = interaction_op(copy(grouped))
+        @test out.pg_score_x_consensus_precursor_rank_support[1] ==
+              out.pg_score[1] * out.consensus_precursor_rank_support[1]
+    end
+
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
-        feature_names = [
-            :pg_score,
-            :coverage_miss_surprisal,
-            :coverage_deficit_z,
-            :top_weight_vs_threshold_z,
-            :pg_score_x_coverage_miss_surprisal,
-            :pg_score_x_coverage_deficit_z,
-            :pg_score_x_top_weight_vs_threshold_z
-        ]
+        feature_names = Pioneer.protein_probit_feature_names()
         df = DataFrame(pg_score = Float32[0.1, 0.2, 0.3])
 
         Pioneer.remove_zero_variance_columns!(feature_names, df)
 
         @test feature_names == [:pg_score]
+    end
+
+    @testset "Protein Probit Feature Names Include Consensus Support" begin
+        @test Pioneer.protein_probit_feature_names() == [
+            :pg_score,
+            :peptide_coverage,
+            :any_common_peps,
+            :consensus_precursor_rank_support,
+            :pg_score_x_coverage_miss_surprisal,
+            :pg_score_x_coverage_deficit_z,
+            :pg_score_x_top_weight_vs_threshold_z,
+            :pg_score_x_consensus_precursor_rank_support
+        ]
+
+        @test Pioneer.protein_probit_feature_names(include_n_possible_peptides = true) == [
+            :pg_score,
+            :peptide_coverage,
+            :n_possible_peptides,
+            :any_common_peps,
+            :consensus_precursor_rank_support,
+            :pg_score_x_coverage_miss_surprisal,
+            :pg_score_x_coverage_deficit_z,
+            :pg_score_x_top_weight_vs_threshold_z,
+            :pg_score_x_consensus_precursor_rank_support
+        ]
     end
 
 end

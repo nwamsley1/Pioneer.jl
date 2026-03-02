@@ -426,32 +426,183 @@ function add_pg_score_interaction_features()
 end
 
 """
+    add_consensus_precursor_rank_interaction_feature()
+
+Add the interaction term between `pg_score` and the consensus precursor-rank support feature.
+"""
+function add_consensus_precursor_rank_interaction_feature()
+    desc = "add_consensus_precursor_rank_interaction_feature"
+
+    op = function(df)
+        pg_score = df.pg_score
+        consensus_precursor_rank_support = df.consensus_precursor_rank_support
+
+        n_rows = length(pg_score)
+        pg_score_x_consensus_precursor_rank_support = Vector{Float32}(undef, n_rows)
+
+        @inbounds for i in eachindex(pg_score, consensus_precursor_rank_support)
+            pg_score_x_consensus_precursor_rank_support[i] =
+                Float32(pg_score[i]) * Float32(consensus_precursor_rank_support[i])
+        end
+
+        df.pg_score_x_consensus_precursor_rank_support = pg_score_x_consensus_precursor_rank_support
+        return df
+    end
+
+    return desc => op
+end
+
+function _protein_group_probability_column(df::DataFrame)
+    if hasproperty(df, :MBR_boosted_prec_prob)
+        return :MBR_boosted_prec_prob
+    else
+        return :prec_prob
+    end
+end
+
+function _quant_peptides_and_pg_score(
+    gdf::AbstractDataFrame,
+    quant_mask::AbstractVector{Bool},
+    prob_col::Symbol
+)
+    quant_peptides = unique(gdf[quant_mask, :sequence])
+    if isempty(quant_peptides)
+        return quant_peptides, 0.0f0
+    end
+
+    unique_pep_probs = Vector{Float32}(undef, length(quant_peptides))
+    for (i, pep) in pairs(quant_peptides)
+        pep_mask = (gdf.sequence .== pep) .& quant_mask
+        unique_pep_probs[i] = maximum(gdf[pep_mask, prob_col])
+    end
+
+    return quant_peptides, -sum(log.(1.0f0 .- unique_pep_probs))
+end
+
+function _direct_quant_mask(df::AbstractDataFrame)
+    quant_mask = df.use_for_protein_quant .== true
+    if hasproperty(df, :MBR_candidate)
+        return quant_mask .& .!df.MBR_candidate
+    end
+    return quant_mask
+end
+
+"""
+    build_precursor_rank_consensus(psm_refs::Vector{PSMFileReference})
+
+Build a dataset-level precursor rank consensus within each inferred protein group.
+Consensus ranks are derived from direct (non-MBR) quant precursors, while each
+run's vote is weighted by that run's current protein `pg_score`.
+"""
+function build_precursor_rank_consensus(psm_refs::Vector{PSMFileReference})
+    consensus_scores = Dict{Tuple{String, Bool, UInt8, UInt32}, Float64}()
+
+    for psm_ref in psm_refs
+        if !exists(psm_ref)
+            continue
+        end
+
+        df = load_dataframe(psm_ref)
+        prob_col = _protein_group_probability_column(df)
+
+        for gdf in groupby(df, [:inferred_protein_group, :target, :entrap_id])
+            quant_mask = gdf.use_for_protein_quant .== true
+            _, pg_score = _quant_peptides_and_pg_score(gdf, quant_mask, prob_col)
+
+            direct_mask = _direct_quant_mask(gdf)
+            best_weight_by_precursor = Dict{UInt32, Float32}()
+
+            @inbounds for i in eachindex(direct_mask)
+                if !direct_mask[i]
+                    continue
+                end
+
+                precursor_idx = UInt32(gdf.precursor_idx[i])
+                weight_val = Float32(gdf.weight[i])
+                if haskey(best_weight_by_precursor, precursor_idx)
+                    if weight_val > best_weight_by_precursor[precursor_idx]
+                        best_weight_by_precursor[precursor_idx] = weight_val
+                    end
+                else
+                    best_weight_by_precursor[precursor_idx] = weight_val
+                end
+            end
+
+            if isempty(best_weight_by_precursor)
+                continue
+            end
+
+            protein_name = String(gdf.inferred_protein_group[1])
+            target = Bool(gdf.target[1])
+            entrap_id = UInt8(gdf.entrap_id[1])
+
+            ranked_precursors = collect(best_weight_by_precursor)
+            sort!(ranked_precursors, by = x -> (-x.second, x.first))
+
+            for (rank, precursor) in enumerate(ranked_precursors)
+                key = (protein_name, target, entrap_id, precursor.first)
+                consensus_scores[key] = get(consensus_scores, key, 0.0) + (Float64(pg_score) / rank)
+            end
+        end
+    end
+
+    protein_precursor_scores = Dict{Tuple{String, Bool, UInt8}, Vector{Pair{UInt32, Float64}}}()
+    for ((protein_name, target, entrap_id, precursor_idx), score) in consensus_scores
+        protein_key = (protein_name, target, entrap_id)
+        push!(get!(protein_precursor_scores, protein_key, Pair{UInt32, Float64}[]), precursor_idx => score)
+    end
+
+    precursor_rank = Dict{Tuple{String, Bool, UInt8, UInt32}, Int32}()
+    for ((protein_name, target, entrap_id), ranked_precursors) in protein_precursor_scores
+        sort!(ranked_precursors, by = x -> (-x.second, x.first))
+        for (rank, precursor) in enumerate(ranked_precursors)
+            precursor_rank[(protein_name, target, entrap_id, precursor.first)] = Int32(rank)
+        end
+    end
+
+    return (precursor_rank = precursor_rank,)
+end
+
+"""
     group_psms_by_protein(df::DataFrame)
 
 Transform PSMs into protein groups by aggregating peptides.
 Returns a DataFrame with one row per protein group.
 """
-function group_psms_by_protein(df::DataFrame)
+function group_psms_by_protein(
+    df::DataFrame;
+    precursor_consensus::Union{Nothing, NamedTuple} = nothing
+)
     if nrow(df) == 0
         # Return empty protein groups DataFrame with expected schema
-        return DataFrame(
-            protein_name = String[],
-            target = Bool[],
-            entrap_id = UInt8[],
-            n_peptides = Int64[],
-            peptide_list = String[],
-            pg_score = Float32[],
-            any_common_peps = Bool[],
-            top_pep_weight = Float32[]
-        )
+        if precursor_consensus === nothing
+            return DataFrame(
+                protein_name = String[],
+                target = Bool[],
+                entrap_id = UInt8[],
+                n_peptides = Int64[],
+                peptide_list = String[],
+                pg_score = Float32[],
+                any_common_peps = Bool[],
+                top_pep_weight = Float32[]
+            )
+        else
+            return DataFrame(
+                protein_name = String[],
+                target = Bool[],
+                entrap_id = UInt8[],
+                n_peptides = Int64[],
+                peptide_list = String[],
+                pg_score = Float32[],
+                any_common_peps = Bool[],
+                top_pep_weight = Float32[],
+                consensus_precursor_rank_support = Float32[]
+            )
+        end
     end
 
-    # Determine which probability column to use for protein scoring
-    if hasproperty(df, :MBR_boosted_prec_prob)
-        prob_col = :MBR_boosted_prec_prob
-    else
-        prob_col = :prec_prob
-    end
+    prob_col = _protein_group_probability_column(df)
+    consensus_rank = precursor_consensus === nothing ? nothing : precursor_consensus.precursor_rank
 
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
@@ -459,25 +610,8 @@ function group_psms_by_protein(df::DataFrame)
     # Aggregate to protein groups
     protein_groups = combine(grouped) do gdf
         quant_mask = gdf.use_for_protein_quant .== true
-        # Get unique peptides that are used for quantification
-        quant_peptides = unique(gdf[quant_mask, :sequence])
+        quant_peptides, pg_score = _quant_peptides_and_pg_score(gdf, quant_mask, prob_col)
         n_peptides = length(quant_peptides)
-        
-        # Calculate initial protein score (log-sum)
-        peptide_probs = gdf[quant_mask, prob_col]
-        if isempty(peptide_probs)
-            pg_score = 0.0f0
-        else
-            # Use best probability per peptide
-            unique_pep_probs = Float32[]
-            for pep in quant_peptides
-                pep_mask = (gdf.sequence .== pep) .& quant_mask
-                if any(pep_mask)
-                    push!(unique_pep_probs, maximum(gdf[pep_mask, prob_col]))
-                end
-            end
-            pg_score = -sum(log.(1.0f0 .- unique_pep_probs))
-        end        
 
         top_pep_weight = 0.0f0
         best_weight_by_peptide = Dict{String, Float32}()
@@ -500,19 +634,55 @@ function group_psms_by_protein(df::DataFrame)
             top_pep_weight = maximum(values(best_weight_by_peptide))
         end
 
+        consensus_precursor_rank_support = 0.0f0
+        if precursor_consensus !== nothing
+            observed_precursors = Set{UInt32}()
+            for i in eachindex(quant_mask)
+                if quant_mask[i]
+                    push!(observed_precursors, UInt32(gdf.precursor_idx[i]))
+                end
+            end
+
+            if !isempty(observed_precursors)
+                protein_key = (
+                    String(gdf.inferred_protein_group[1]),
+                    Bool(gdf.target[1]),
+                    UInt8(gdf.entrap_id[1])
+                )
+
+                for precursor_idx in observed_precursors
+                    key = (protein_key[1], protein_key[2], protein_key[3], precursor_idx)
+                    if haskey(consensus_rank, key)
+                        consensus_precursor_rank_support += 1.0f0 / Float32(consensus_rank[key])
+                    end
+                end
+            end
+        end
+
         has_common = any(
             quant_mask .&
             (gdf.missed_cleavage .== 0) .&
             (gdf.Mox .== 0)
         )
-        
-        DataFrame(
-            n_peptides = n_peptides,
-            peptide_list = join(quant_peptides, ";"),
-            pg_score = pg_score,
-            any_common_peps = has_common,
-            top_pep_weight = top_pep_weight
-        )
+
+        if precursor_consensus === nothing
+            DataFrame(
+                n_peptides = n_peptides,
+                peptide_list = join(quant_peptides, ";"),
+                pg_score = pg_score,
+                any_common_peps = has_common,
+                top_pep_weight = top_pep_weight
+            )
+        else
+            DataFrame(
+                n_peptides = n_peptides,
+                peptide_list = join(quant_peptides, ";"),
+                pg_score = pg_score,
+                any_common_peps = has_common,
+                top_pep_weight = top_pep_weight,
+                consensus_precursor_rank_support = consensus_precursor_rank_support
+            )
+        end
     end
     
     # Rename the grouping column
@@ -646,8 +816,9 @@ function perform_protein_inference_pipeline(
     # Process each file
     pg_refs = ProteinGroupFileReference[]
     psm_to_pg_mapping = Dict{String, String}()
+    indexed_refs = collect(enumerate(psm_refs))
     
-    for (idx, psm_ref) in ProgressBar(collect(enumerate(psm_refs)))
+    for (idx, psm_ref) in ProgressBar(indexed_refs)
         if !exists(psm_ref)
             continue
         end
@@ -667,36 +838,42 @@ function perform_protein_inference_pipeline(
         # Apply updates to the same PSM file (which now has necessary columns)
         apply_pipeline!(psm_ref, psm_update_pipeline)
         
-        # Step 4: Create protein groups
-        # Reload updated PSMs
+    end
+
+    precursor_consensus = build_precursor_rank_consensus(psm_refs)
+
+    for (idx, psm_ref) in ProgressBar(indexed_refs)
+        if !exists(psm_ref)
+            continue
+        end
+
         updated_psms = load_dataframe(psm_ref)
         weight_calibration = estimate_weight_detection_model(updated_psms)
         @user_info "Weight protein coverage calibration file_idx=$(idx) n_unique_peptides=$(weight_calibration.n_unique_peptides) log_threshold=$(weight_calibration.log_threshold) sigma_log=$(weight_calibration.sigma_log) used_fallback=$(weight_calibration.used_fallback)"
-        
-        # Group by protein
-        protein_groups_df = group_psms_by_protein(updated_psms)
-        
-        # Build post-inference pipeline
+
+        protein_groups_df = group_psms_by_protein(
+            updated_psms;
+            precursor_consensus = precursor_consensus
+        )
+
         post_inference_pipeline = TransformPipeline() |>
             filter_by_min_peptides(min_peptides) |>
             add_protein_features(protein_catalog) |>
             add_weight_observation_features(weight_calibration) |>
-            add_pg_score_interaction_features()
-        
-        # Apply post-processing
+            add_pg_score_interaction_features() |>
+            add_consensus_precursor_rank_interaction_feature()
+
         initial_rows = nrow(protein_groups_df)
         for (desc, op) in post_inference_pipeline.operations
             protein_groups_df = op(protein_groups_df)
             #@debug_l1 "Pipeline operation on protein groups" operation=desc rows_before=initial_rows rows_after=nrow(protein_groups_df)
             initial_rows = nrow(protein_groups_df)
         end
-        
-        # Write protein groups
+
         pg_filename = "protein_groups_$(lpad(idx, 3, '0')).arrow"
         pg_path = joinpath(output_folder, pg_filename)
 
         if nrow(protein_groups_df) > 0
-            # Add file_idx for later merge/split operations
             protein_groups_df[!, :file_idx] = fill(Int64(idx), nrow(protein_groups_df))
             writeArrow(pg_path, protein_groups_df)
             pg_ref = ProteinGroupFileReference(pg_path)
