@@ -228,7 +228,9 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
 end
 
 function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::FirstPassSearchParameters, ms_file_idx::Int64)
-    psm_results, corr_results = LibrarySearch(
+    # Run library search WITHOUT fragcorr — FRAGCORR now runs after scoring
+    # in process_file! using best-PSM-centered RT windows
+    psm_results, _ = LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
                     getFragmentIndex(getSpecLib(search_context)),
@@ -240,9 +242,9 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
                     search_parameters,
                     getNceModel(search_context, ms_file_idx),
                     getIrtErrors(search_context)[ms_file_idx];
-                    run_fragcorr = true
+                    run_fragcorr = false
                 )
-    return vcat(psm_results...), vcat(corr_results...)
+    return vcat(psm_results...)
 end
 
 function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:SearchParameters}
@@ -426,6 +428,87 @@ function build_expanded_precursor_set(
 
     order = sortperm(lows)
     return ExpandedPrecursorSet(ids[order], lows[order], highs[order])
+end
+
+"""
+    build_focused_precursor_set(scored_psms; rt_window=0.25f0)
+
+Build an `ExpandedPrecursorSet` centered on the best scored PSM's RT for each
+precursor. For each unique precursor_idx, finds the PSM with the highest `prob`,
+then creates an RT window of `best_rt ± rt_window` (in minutes).
+
+Returns an `ExpandedPrecursorSet` sorted by `rt_lows` for binary-search lookup.
+"""
+function build_focused_precursor_set(
+    scored_psms::DataFrame;
+    rt_window::Float32 = 0.25f0  # ±15 seconds in minutes
+)
+    # Find best PSM (highest prob) per precursor
+    best_rt = Dict{UInt32, Float32}()
+    best_prob = Dict{UInt32, Float32}()
+
+    for i in 1:nrow(scored_psms)
+        pidx = UInt32(scored_psms.precursor_idx[i])
+        prob = scored_psms.prob[i]
+        if !haskey(best_prob, pidx) || prob > best_prob[pidx]
+            best_prob[pidx] = prob
+            best_rt[pidx]   = scored_psms.rt[i]
+        end
+    end
+
+    n = length(best_rt)
+    ids   = Vector{UInt32}(undef, n)
+    lows  = Vector{Float32}(undef, n)
+    highs = Vector{Float32}(undef, n)
+    for (i, (pid, rt)) in enumerate(best_rt)
+        ids[i]   = pid
+        lows[i]  = rt - rt_window
+        highs[i] = rt + rt_window
+    end
+
+    order = sortperm(lows)
+    @info "FRAGCORR focused set: $n precursors (±$(rt_window*60) sec around best PSM RT)"
+    return ExpandedPrecursorSet(ids[order], lows[order], highs[order])
+end
+
+"""
+    run_fragcorr_pass(spectra, search_context, params, ms_file_idx, expanded)
+
+Run the FRAGCORR fragment correlation collection pass using a pre-built
+`ExpandedPrecursorSet`. Returns a DataFrame of FragCorrScore records.
+"""
+function run_fragcorr_pass(
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    params::P,
+    ms_file_idx::Int64,
+    expanded::ExpandedPrecursorSet
+) where {P<:SearchParameters}
+
+    thread_tasks = partition_scans(spectra, Threads.nthreads())
+
+    corr_tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin
+            thread_id = first(thread_task)
+            return getPSMS(
+                UInt32(ms_file_idx),
+                spectra,
+                last(thread_task),
+                getPrecursors(getSpecLib(search_context)),
+                getFragmentLookupTable(getSpecLib(search_context)),
+                expanded,
+                getSearchData(search_context)[thread_id],
+                params,
+                getQuadTransmissionModel(search_context, ms_file_idx),
+                getMassErrorModel(search_context, ms_file_idx),
+                getRtIrtModel(search_context, ms_file_idx),
+                getIrtErrors(search_context)[ms_file_idx],
+                FRAGCORR())
+        end
+    end
+
+    corr_results = fetch.(corr_tasks)
+    return vcat(corr_results...)
 end
 
 function LibrarySearchNceTuning(

@@ -368,10 +368,14 @@ function process_file!(
     end
 
     try
-        # Get models and update fragment lookup table
-        psms, corr_df = perform_library_search(spectra, search_context, params, ms_file_idx)
+        # Get PSMs from library search (FRAGCORR deferred until after scoring)
+        psms = perform_library_search(spectra, search_context, params, ms_file_idx)
         results.psms[] = process_psms!(psms, spectra, search_context, params, ms_file_idx)
-        results.corr_df[] = corr_df
+
+        # Run focused FRAGCORR: collect correlation data ±15 sec around best PSM RT
+        focused_set = build_focused_precursor_set(results.psms[])
+        results.corr_df[] = run_fragcorr_pass(
+            spectra, search_context, params, ms_file_idx, focused_set)
 
         temp_psms = results.psms[] 
         temp_psms = temp_psms[temp_psms[!,:q_value].<=0.001,:]
