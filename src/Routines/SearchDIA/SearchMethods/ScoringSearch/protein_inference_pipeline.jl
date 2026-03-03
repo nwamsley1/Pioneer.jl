@@ -428,7 +428,8 @@ end
 """
     add_consensus_precursor_rank_interaction_feature()
 
-Add the interaction term between `pg_score` and the consensus precursor-rank support feature.
+Add the interaction terms between `pg_score` and the consensus precursor-rank
+support and enrichment features.
 """
 function add_consensus_precursor_rank_interaction_feature()
     desc = "add_consensus_precursor_rank_interaction_feature"
@@ -436,16 +437,25 @@ function add_consensus_precursor_rank_interaction_feature()
     op = function(df)
         pg_score = df.pg_score
         consensus_precursor_rank_support = df.consensus_precursor_rank_support
+        consensus_precursor_rank_enrichment = df.consensus_precursor_rank_enrichment
 
         n_rows = length(pg_score)
         pg_score_x_consensus_precursor_rank_support = Vector{Float32}(undef, n_rows)
+        pg_score_x_consensus_precursor_rank_enrichment = Vector{Float32}(undef, n_rows)
 
-        @inbounds for i in eachindex(pg_score, consensus_precursor_rank_support)
+        @inbounds for i in eachindex(
+            pg_score,
+            consensus_precursor_rank_support,
+            consensus_precursor_rank_enrichment
+        )
             pg_score_x_consensus_precursor_rank_support[i] =
                 Float32(pg_score[i]) * Float32(consensus_precursor_rank_support[i])
+            pg_score_x_consensus_precursor_rank_enrichment[i] =
+                Float32(pg_score[i]) * Float32(consensus_precursor_rank_enrichment[i])
         end
 
         df.pg_score_x_consensus_precursor_rank_support = pg_score_x_consensus_precursor_rank_support
+        df.pg_score_x_consensus_precursor_rank_enrichment = pg_score_x_consensus_precursor_rank_enrichment
         return df
     end
 
@@ -485,6 +495,14 @@ function _direct_quant_mask(df::AbstractDataFrame)
         return quant_mask .& .!df.MBR_candidate
     end
     return quant_mask
+end
+
+function _harmonic_number(n::Int)
+    total = 0.0f0
+    @inbounds for i in 1:n
+        total += 1.0f0 / Float32(i)
+    end
+    return total
 end
 
 """
@@ -553,14 +571,16 @@ function build_precursor_rank_consensus(psm_refs::Vector{PSMFileReference})
     end
 
     precursor_rank = Dict{Tuple{String, Bool, UInt8, UInt32}, Int32}()
+    protein_rank_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
     for ((protein_name, target, entrap_id), ranked_precursors) in protein_precursor_scores
         sort!(ranked_precursors, by = x -> (-x.second, x.first))
+        protein_rank_count[(protein_name, target, entrap_id)] = Int32(length(ranked_precursors))
         for (rank, precursor) in enumerate(ranked_precursors)
             precursor_rank[(protein_name, target, entrap_id, precursor.first)] = Int32(rank)
         end
     end
 
-    return (precursor_rank = precursor_rank,)
+    return (precursor_rank = precursor_rank, protein_rank_count = protein_rank_count)
 end
 
 """
@@ -596,13 +616,15 @@ function group_psms_by_protein(
                 pg_score = Float32[],
                 any_common_peps = Bool[],
                 top_pep_weight = Float32[],
-                consensus_precursor_rank_support = Float32[]
+                consensus_precursor_rank_support = Float32[],
+                consensus_precursor_rank_enrichment = Float32[]
             )
         end
     end
 
     prob_col = _protein_group_probability_column(df)
     consensus_rank = precursor_consensus === nothing ? nothing : precursor_consensus.precursor_rank
+    protein_rank_count = precursor_consensus === nothing ? nothing : precursor_consensus.protein_rank_count
 
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
@@ -635,6 +657,7 @@ function group_psms_by_protein(
         end
 
         consensus_precursor_rank_support = 0.0f0
+        consensus_precursor_rank_enrichment = 0.0f0
         if precursor_consensus !== nothing
             observed_precursors = Set{UInt32}()
             for i in eachindex(quant_mask)
@@ -649,12 +672,22 @@ function group_psms_by_protein(
                     Bool(gdf.target[1]),
                     UInt8(gdf.entrap_id[1])
                 )
+                matched_precursors = 0
 
                 for precursor_idx in observed_precursors
                     key = (protein_key[1], protein_key[2], protein_key[3], precursor_idx)
                     if haskey(consensus_rank, key)
                         consensus_precursor_rank_support += 1.0f0 / Float32(consensus_rank[key])
+                        matched_precursors += 1
                     end
+                end
+
+                K = haskey(protein_rank_count, protein_key) ? Int(protein_rank_count[protein_key]) : 0
+                if matched_precursors > 0 && K > 0
+                    expected_random_support =
+                        Float32(matched_precursors) * (_harmonic_number(K) / Float32(K))
+                    consensus_precursor_rank_enrichment =
+                        consensus_precursor_rank_support / expected_random_support
                 end
             end
         end
@@ -680,7 +713,8 @@ function group_psms_by_protein(
                 pg_score = pg_score,
                 any_common_peps = has_common,
                 top_pep_weight = top_pep_weight,
-                consensus_precursor_rank_support = consensus_precursor_rank_support
+                consensus_precursor_rank_support = consensus_precursor_rank_support,
+                consensus_precursor_rank_enrichment = consensus_precursor_rank_enrichment
             )
         end
     end

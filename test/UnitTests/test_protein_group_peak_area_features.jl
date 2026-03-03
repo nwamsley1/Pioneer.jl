@@ -185,6 +185,9 @@ using Pioneer
                 ("P", true, UInt8(1), UInt32(11)) => Int32(1),
                 ("P", true, UInt8(1), UInt32(12)) => Int32(5)
             ),
+            protein_rank_count = Dict(
+                ("P", true, UInt8(1)) => Int32(5)
+            ),
         )
 
         psms = DataFrame(
@@ -204,11 +207,50 @@ using Pioneer
 
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
         @test grouped.consensus_precursor_rank_support[1] ≈ 1.2f0
+        @test grouped.consensus_precursor_rank_enrichment[1] ≈ (1.2f0 / ((2.2833333f0 / 5.0f0) * 2.0f0)) atol = 1e-5
 
         (_, interaction_op) = Pioneer.add_consensus_precursor_rank_interaction_feature()
         out = interaction_op(copy(grouped))
         @test out.pg_score_x_consensus_precursor_rank_support[1] ==
               out.pg_score[1] * out.consensus_precursor_rank_support[1]
+        @test out.pg_score_x_consensus_precursor_rank_enrichment[1] ==
+              out.pg_score[1] * out.consensus_precursor_rank_enrichment[1]
+    end
+
+    @testset "Consensus Rank Enrichment Rewards Top Rank Among Many Possibilities" begin
+        consensus = (
+            precursor_rank = Dict(
+                ("P_many", true, UInt8(1), UInt32(101)) => Int32(1),
+                ("P_one", true, UInt8(1), UInt32(201)) => Int32(1)
+            ),
+            protein_rank_count = Dict(
+                ("P_many", true, UInt8(1)) => Int32(10),
+                ("P_one", true, UInt8(1)) => Int32(1)
+            ),
+        )
+
+        psms = DataFrame(
+            inferred_protein_group = ["P_many", "P_one"],
+            target = Bool[true, true],
+            entrap_id = UInt8[1, 1],
+            precursor_idx = UInt32[101, 201],
+            sequence = ["PEP_MANY", "PEP_ONE"],
+            use_for_protein_quant = Bool[true, true],
+            MBR_candidate = Bool[false, false],
+            missed_cleavage = Int64[0, 0],
+            Mox = Int64[0, 0],
+            prec_prob = Float32[0.8, 0.8],
+            weight = Float32[100.0, 100.0]
+        )
+
+        grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
+
+        many = grouped[grouped.protein_name .== "P_many", :]
+        one = grouped[grouped.protein_name .== "P_one", :]
+
+        @test many.consensus_precursor_rank_support[1] == 1.0f0
+        @test one.consensus_precursor_rank_support[1] == 1.0f0
+        @test many.consensus_precursor_rank_enrichment[1] > one.consensus_precursor_rank_enrichment[1]
     end
 
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
@@ -226,13 +268,15 @@ using Pioneer
             :peptide_coverage,
             :any_common_peps,
             :consensus_precursor_rank_support,
+            :consensus_precursor_rank_enrichment,
             :coverage_miss_surprisal,
             :coverage_deficit_z,
             :top_weight_vs_threshold_z,
             :pg_score_x_coverage_miss_surprisal,
             :pg_score_x_coverage_deficit_z,
             :pg_score_x_top_weight_vs_threshold_z,
-            :pg_score_x_consensus_precursor_rank_support
+            :pg_score_x_consensus_precursor_rank_support,
+            :pg_score_x_consensus_precursor_rank_enrichment
         ]
 
         @test Pioneer.protein_probit_feature_names(include_n_possible_peptides = true) == [
@@ -241,13 +285,15 @@ using Pioneer
             :n_possible_peptides,
             :any_common_peps,
             :consensus_precursor_rank_support,
+            :consensus_precursor_rank_enrichment,
             :coverage_miss_surprisal,
             :coverage_deficit_z,
             :top_weight_vs_threshold_z,
             :pg_score_x_coverage_miss_surprisal,
             :pg_score_x_coverage_deficit_z,
             :pg_score_x_top_weight_vs_threshold_z,
-            :pg_score_x_consensus_precursor_rank_support
+            :pg_score_x_consensus_precursor_rank_support,
+            :pg_score_x_consensus_precursor_rank_enrichment
         ]
     end
 

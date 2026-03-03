@@ -181,13 +181,15 @@ function protein_probit_feature_names(; include_n_possible_peptides::Bool = fals
     append!(feature_names, [
         :any_common_peps,
         :consensus_precursor_rank_support,
+        :consensus_precursor_rank_enrichment,
         :coverage_miss_surprisal,
         :coverage_deficit_z,
         :top_weight_vs_threshold_z,
         :pg_score_x_coverage_miss_surprisal,
         :pg_score_x_coverage_deficit_z,
         :pg_score_x_top_weight_vs_threshold_z,
-        :pg_score_x_consensus_precursor_rank_support
+        :pg_score_x_consensus_precursor_rank_support,
+        :pg_score_x_consensus_precursor_rank_enrichment
     ])
 
     return feature_names
