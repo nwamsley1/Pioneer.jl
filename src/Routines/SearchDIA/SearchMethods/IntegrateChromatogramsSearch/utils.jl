@@ -64,8 +64,25 @@ function integrate_precursors(chromatograms::DataFrame,
     grouped_chroms = groupby(chromatograms, chromatogram_keys)
     dtype = Float32
     thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
-    #Maximal size of a chromatogram
-    N = maximum(size(c,1) for c in grouped_chroms) + (2*n_pad)
+    # Compute max group size AND global avg cycle time in one pass
+    max_group_size = 0
+    total_ct = 0.0f0
+    n_multi = 0
+    for c in grouped_chroms
+        gs = size(c, 1)
+        if gs > max_group_size
+            max_group_size = gs
+        end
+        if gs >= 2
+            ct = (c.rt[end] - c.rt[1]) / gs
+            if ct > 0.0f0
+                total_ct += ct
+                n_multi += 1
+            end
+        end
+    end
+    N = max_group_size + (2*n_pad)
+    global_avg_cycle_time = n_multi > 0 ? Float32(total_ct / n_multi) : 1.0f0
 
     group_keys = keys(grouped_chroms)
     tasks = map(thread_tasks) do chunk
@@ -102,6 +119,9 @@ function integrate_precursors(chromatograms::DataFrame,
                 # Note: No sorting needed - chromatograms are pre-sorted by [:precursor_idx, :rt]
                 # Groups from groupby() inherit this ordering
                 avg_cycle_time = (chrom.rt[end] - chrom.rt[1]) /  length(chrom.rt)
+                if avg_cycle_time <= 0.0f0
+                    avg_cycle_time = global_avg_cycle_time
+                end
                 first_pos = findfirst(x->x>0.0, chrom[!,:intensity]) # start from first positive weight
                 last_pos = findlast(x->x>0.0, chrom[!,:intensity]) # end at last positive weight
                 if isnothing(first_pos)

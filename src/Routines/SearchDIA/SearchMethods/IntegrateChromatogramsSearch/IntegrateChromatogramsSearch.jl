@@ -380,8 +380,8 @@ function process_file!(
                 for ri in trace_rows
                     pa = passing_psms[ri, :peak_area]
                     bs = passing_psms[ri, :new_best_scan]
-                    pi = passing_psms[ri, :points_integrated]
-                    @info "[TRACE] IntegrateChromatogram POST-INTEGRATE: ms_file_idx=$ms_file_idx peak_area=$pa new_best_scan=$bs points_integrated=$pi (will be filtered if peak_area==0)"
+                    pts_int = passing_psms[ri, :points_integrated]
+                    @info "[TRACE] IntegrateChromatogram POST-INTEGRATE: ms_file_idx=$ms_file_idx peak_area=$pa new_best_scan=$bs points_integrated=$pts_int (will be filtered if peak_area==0)"
                 end
             end
         end

@@ -29,7 +29,7 @@ struct ScoringSearch <: SearchMethod end
 #==========================================================
 Diagnostic Tracing — set to non-zero UInt32 to trace a specific precursor_idx
 ==========================================================#
-const TRACE_PRECURSOR_IDX = UInt32(6374682)  # Set to UInt32(0) to disable
+const TRACE_PRECURSOR_IDX = UInt32(0)  # Set to UInt32(0) to disable
 
 function trace_precursor(stage::String, precursor_idx::UInt32, info::String)
     TRACE_PRECURSOR_IDX == 0 && return
