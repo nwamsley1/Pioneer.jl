@@ -10,7 +10,7 @@ struct FRAGCORR end
 
 Iterate sorted matches (by `(prec_id, peak_ind)`), detect precursor boundaries,
 and for each precursor group write a `FragCorrScore` whose intensity slots are
-indexed by library rank (1–5). Returns the updated write counter.
+indexed by library rank (1–6). Returns the updated write counter.
 """
 function scoreFragCorr!(
     results::Vector{FragCorrScore},
@@ -24,7 +24,7 @@ function scoreFragCorr!(
 
     # Intensity slots for the current precursor group
     s1 = zero(Float32); s2 = zero(Float32); s3 = zero(Float32)
-    s4 = zero(Float32); s5 = zero(Float32)
+    s4 = zero(Float32); s5 = zero(Float32); s6 = zero(Float32)
 
     current_prec = getPrecID(matches[1])
 
@@ -35,6 +35,7 @@ function scoreFragCorr!(
     elseif rank == 0x03; s3 = getIntensity(matches[1])
     elseif rank == 0x04; s4 = getIntensity(matches[1])
     elseif rank == 0x05; s5 = getIntensity(matches[1])
+    elseif rank == 0x06; s6 = getIntensity(matches[1])
     end
 
     for i in 2:nmatches
@@ -46,12 +47,12 @@ function scoreFragCorr!(
             if last_val > length(results)
                 resize!(results, length(results) + block_size)
             end
-            @inbounds results[last_val] = FragCorrScore(current_prec, scan_idx, s1, s2, s3, s4, s5)
+            @inbounds results[last_val] = FragCorrScore(current_prec, scan_idx, s1, s2, s3, s4, s5, s6)
 
             # Reset for next group
             current_prec = prec_id
             s1 = zero(Float32); s2 = zero(Float32); s3 = zero(Float32)
-            s4 = zero(Float32); s5 = zero(Float32)
+            s4 = zero(Float32); s5 = zero(Float32); s6 = zero(Float32)
         end
 
         rank = getRank(matches[i])
@@ -60,6 +61,7 @@ function scoreFragCorr!(
         elseif rank == 0x03; s3 = getIntensity(matches[i])
         elseif rank == 0x04; s4 = getIntensity(matches[i])
         elseif rank == 0x05; s5 = getIntensity(matches[i])
+        elseif rank == 0x06; s6 = getIntensity(matches[i])
         end
     end
 
@@ -68,7 +70,7 @@ function scoreFragCorr!(
     if last_val > length(results)
         resize!(results, length(results) + block_size)
     end
-    @inbounds results[last_val] = FragCorrScore(current_prec, scan_idx, s1, s2, s3, s4, s5)
+    @inbounds results[last_val] = FragCorrScore(current_prec, scan_idx, s1, s2, s3, s4, s5, s6)
 
     return last_val
 end
@@ -306,7 +308,7 @@ function getPSMS(
                 end
                 @inbounds frag_corr_scores[last_val] = FragCorrScore(
                     trans_prec_buf[i_t], UInt32(scan_idx),
-                    0f0, 0f0, 0f0, 0f0, 0f0
+                    0f0, 0f0, 0f0, 0f0, 0f0, 0f0
                 )
                 i_t += 1
             elseif @inbounds trans_prec_buf[i_t] > scored_prec_buf[i_s]

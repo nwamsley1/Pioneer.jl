@@ -161,7 +161,7 @@ end
 
 
 """
-Stores the observed intensities of the top-5-ranked library fragments for a
+Stores the observed intensities of the top-6-ranked library fragments for a
 (precursor, scan) pair. Columns are indexed by **library rank**, not sorted by
 magnitude — if a ranked fragment was not matched its slot is zero.
 """
@@ -173,6 +173,7 @@ struct FragCorrScore
     intensity_3::Float32
     intensity_4::Float32
     intensity_5::Float32
+    intensity_6::Float32
 end
 
 """

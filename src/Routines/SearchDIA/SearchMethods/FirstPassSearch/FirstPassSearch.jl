@@ -361,7 +361,9 @@ function process_file!(
         # Process scores
        
         select!(psms, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
-            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target])
+            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target,
+            :scribe, :spectral_contrast, :city_block, :entropy_score,
+            :poisson, :y_count, :err_norm])
         get_probs!(psms, psms[!,:score])
     end
 
@@ -507,7 +509,9 @@ function process_search_results!(
     Arrow.write(
         temp_path,
         select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
-            :irt_predicted, :q_value, :score, :prob, :scan_count, :PEP])
+            :irt_predicted, :q_value, :score, :prob, :scan_count, :PEP,
+            :scribe, :spectral_contrast, :city_block, :entropy_score,
+            :poisson, :y_count, :err_norm, :target])
     )
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 

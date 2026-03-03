@@ -18,7 +18,7 @@ using Plots
 # Data Loading
 # ============================================================
 const ARROW_PATH = "/Users/nathanwamsley/Data/MS_DATA/OlsenEclipse/OlsenEclipse_fragcorr_test/temp_data/first_pass_corr/E45H50Y5_2.arrow"
-const INTENSITY_COLS = [:intensity_1, :intensity_2, :intensity_3, :intensity_4, :intensity_5]
+const INTENSITY_COLS = [:intensity_1, :intensity_2, :intensity_3, :intensity_4, :intensity_5, :intensity_6]
 
 function load_fragcorr_data(path::String=ARROW_PATH)
     println("Loading $path ...")
@@ -33,10 +33,11 @@ end
 # Matrix extraction & preprocessing
 # ============================================================
 
-"""Extract n_scans × 5 Float64 intensity matrix from a subtable."""
+"""Extract n_scans × n_frags Float64 intensity matrix from a subtable."""
 function get_intensity_matrix(sub::SubDataFrame)
     n = nrow(sub)
-    X = Matrix{Float64}(undef, n, 5)
+    p = length(INTENSITY_COLS)
+    X = Matrix{Float64}(undef, n, p)
     @inbounds for (j, col) in enumerate(INTENSITY_COLS)
         copyto!(view(X, :, j), sub[!, col])
     end

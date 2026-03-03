@@ -208,6 +208,7 @@ function run_cv_lightgbm(df::DataFrame, features::Vector{Symbol}; n_folds::Int=3
             learning_rate = 0.1,
             max_depth = 4,
             num_leaves = 15,
+            num_class = 1,
             feature_fraction = 0.8,
             min_data_in_leaf = 200,
             min_gain_to_split = 0.5,
