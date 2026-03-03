@@ -221,7 +221,7 @@ function write_protein_probit_training_debug(
         end
     end
 
-    @user_info "Wrote protein probit training debug table" tsv_path=tsv_path columns_path=columns_path n_rows=nrow(debug_df)
+    @user_info "Wrote protein probit training debug table tsv_path=$(tsv_path) columns_path=$(columns_path) n_rows=$(nrow(debug_df))"
     return (tsv_path = tsv_path, columns_path = columns_path)
 end
 
