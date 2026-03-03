@@ -390,7 +390,7 @@ function build_expanded_precursor_set(
     thread_tasks,
     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
     precursors_passed_scoring::Vector{Vector{UInt32}};
-    rt_expansion::Float32 = 15.0f0
+    rt_expansion::Float32 = 0.25f0  # 15 seconds in minutes
 )
     prec_rt_min = Dict{UInt32, Float32}()
     prec_rt_max = Dict{UInt32, Float32}()
