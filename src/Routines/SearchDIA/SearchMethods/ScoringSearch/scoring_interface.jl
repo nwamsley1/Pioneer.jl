@@ -1096,6 +1096,13 @@ function build_precursor_global_prob_dicts(
         end
     end
 
+    # [TRACE] Log accumulated prec_prob values for the target precursor
+    if TRACE_PRECURSOR_IDX != UInt32(0) && haskey(prob_acc, TRACE_PRECURSOR_IDX)
+        probs_vec = prob_acc[TRACE_PRECURSOR_IDX]
+        mbr_vec = (has_mbr && mbr_acc !== nothing && haskey(mbr_acc, TRACE_PRECURSOR_IDX)) ? mbr_acc[TRACE_PRECURSOR_IDX] : nothing
+        @info "[TRACE] build_precursor_global_prob_dicts: precursor_idx=$(TRACE_PRECURSOR_IDX) prec_probs=$probs_vec ($(length(probs_vec)) files) MBR_probs=$mbr_vec sqrt_n_runs=$sqrt_n_runs"
+    end
+
     # Compute logodds per precursor
     global_prob_dict = Dict{UInt32, Float32}()
     sizehint!(global_prob_dict, length(prob_acc))
@@ -1146,6 +1153,15 @@ function build_global_qval_dict_from_scores(
     for i in 1:n
         qval_dict[pids[i]] = qvals[i]
     end
+
+    # [TRACE] Log global_prob and global_qval for the target precursor
+    if TRACE_PRECURSOR_IDX != UInt32(0) && haskey(qval_dict, TRACE_PRECURSOR_IDX)
+        gp = get(score_dict, TRACE_PRECURSOR_IDX, nothing)
+        gq = qval_dict[TRACE_PRECURSOR_IDX]
+        is_tgt = get(target_dict, TRACE_PRECURSOR_IDX, nothing)
+        @info "[TRACE] build_global_qval_dict_from_scores: precursor_idx=$(TRACE_PRECURSOR_IDX) global_prob=$gp global_qval=$gq target=$is_tgt fdr_scale=$fdr_scale"
+    end
+
     return qval_dict
 end
 

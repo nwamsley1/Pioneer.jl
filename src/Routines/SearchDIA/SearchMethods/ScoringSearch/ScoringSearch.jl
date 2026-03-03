@@ -27,6 +27,17 @@ struct ScoringSearch <: SearchMethod end
 # included by importScripts.jl - no need to include them here
 
 #==========================================================
+Diagnostic Tracing — set to non-zero UInt32 to trace a specific precursor_idx
+==========================================================#
+const TRACE_PRECURSOR_IDX = UInt32(6374682)  # Set to UInt32(0) to disable
+
+function trace_precursor(stage::String, precursor_idx::UInt32, info::String)
+    TRACE_PRECURSOR_IDX == 0 && return
+    precursor_idx == TRACE_PRECURSOR_IDX || return
+    @info "[TRACE] $stage: precursor_idx=$precursor_idx $info"
+end
+
+#==========================================================
 Type Definitions 
 ==========================================================#
 
@@ -378,11 +389,48 @@ function summarize_results!(
         second_pass_paths = merged_psm_paths
         second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
+        # [TRACE] Checkpoint after Step 1: trace_prob from LightGBM
+        if TRACE_PRECURSOR_IDX != UInt32(0)
+            for (i, sp) in enumerate(second_pass_paths)
+                tbl = Arrow.Table(sp)
+                pids = tbl.precursor_idx
+                for j in 1:length(pids)
+                    if pids[j] == TRACE_PRECURSOR_IDX
+                        tp = hasproperty(tbl, :trace_prob) ? tbl.trace_prob[j] : missing
+                        pp = hasproperty(tbl, :prec_prob) ? tbl.prec_prob[j] : missing
+                        mbr_tp = hasproperty(tbl, :MBR_boosted_trace_prob) ? tbl.MBR_boosted_trace_prob[j] : missing
+                        iso = hasproperty(tbl, :isotopes_captured) ? tbl.isotopes_captured[j] : missing
+                        tgt = hasproperty(tbl, :target) ? tbl.target[j] : missing
+                        @info "[TRACE] After Step 1 (LightGBM): file=$i trace_prob=$tp prec_prob=$pp MBR_boosted_trace_prob=$mbr_tp isotopes_captured=$iso target=$tgt"
+                    end
+                end
+                tbl = nothing
+            end
+        end
+
         # Step 2: Apply MBR filtering and calculate precursor probabilities (per-file OOM)
         step2_time = @elapsed begin
             apply_mbr_filter_and_aggregate_per_file!(second_pass_refs, valid_file_indices, params)
         end
         #@debug_l1 "Step 2 completed in $(round(step2_time, digits=2)) seconds"
+
+        # [TRACE] Checkpoint after Step 2: prec_prob after aggregation
+        if TRACE_PRECURSOR_IDX != UInt32(0)
+            for (i, ref) in enumerate(second_pass_refs)
+                tbl = Arrow.Table(file_path(ref))
+                pids = tbl.precursor_idx
+                for j in 1:length(pids)
+                    if pids[j] == TRACE_PRECURSOR_IDX
+                        tp = hasproperty(tbl, :trace_prob) ? tbl.trace_prob[j] : missing
+                        pp = hasproperty(tbl, :prec_prob) ? tbl.prec_prob[j] : missing
+                        mbr_pp = hasproperty(tbl, :MBR_boosted_prec_prob) ? tbl.MBR_boosted_prec_prob[j] : missing
+                        iso = hasproperty(tbl, :isotopes_captured) ? tbl.isotopes_captured[j] : missing
+                        @info "[TRACE] After Step 2 (aggregation): file=$i trace_prob=$tp prec_prob=$pp MBR_boosted_prec_prob=$mbr_pp isotopes_captured=$iso"
+                    end
+                end
+                tbl = nothing
+            end
+        end
 
         # Step 3: Find Best Isotope Traces
         #@debug_l1 "Step 3: Finding best isotope traces..."
@@ -410,6 +458,27 @@ function summarize_results!(
             filtered_refs = second_pass_refs
         end
         #@debug_l1 "Step 4 completed in $(round(step4_time, digits=2)) seconds"
+
+        # [TRACE] Checkpoint after Step 4: survival after best_trace filter
+        if TRACE_PRECURSOR_IDX != UInt32(0)
+            found_after_step4 = false
+            for (i, ref) in enumerate(filtered_refs)
+                tbl = Arrow.Table(file_path(ref))
+                pids = tbl.precursor_idx
+                for j in 1:length(pids)
+                    if pids[j] == TRACE_PRECURSOR_IDX
+                        found_after_step4 = true
+                        pp = hasproperty(tbl, :prec_prob) ? tbl.prec_prob[j] : missing
+                        iso = hasproperty(tbl, :isotopes_captured) ? tbl.isotopes_captured[j] : missing
+                        @info "[TRACE] After Step 4 (best_trace filter): SURVIVED in file=$i prec_prob=$pp isotopes_captured=$iso"
+                    end
+                end
+                tbl = nothing
+            end
+            if !found_after_step4
+                @info "[TRACE] After Step 4 (best_trace filter): LOST — precursor_idx=$(TRACE_PRECURSOR_IDX) not in any filtered file"
+            end
+        end
 
         # Steps 5-10 (combined): Build dictionaries + sidecar splines + single pipeline pass
         # Replaces 6 separate sort-merge-load-split cycles with:
@@ -443,6 +512,33 @@ function summarize_results!(
             results.precursor_qval_interp[] = qval_spline
             results.precursor_pep_interp[] = spline_result.pep_interp
 
+            # [TRACE] Checkpoint in Steps 5-10: dictionary values for the target precursor
+            if TRACE_PRECURSOR_IDX != UInt32(0)
+                gp = get(global_prob_dict, TRACE_PRECURSOR_IDX, nothing)
+                mbr_gp = get(mbr_global_prob_dict, TRACE_PRECURSOR_IDX, nothing)
+                gq = get(global_qval_dict, TRACE_PRECURSOR_IDX, nothing)
+                is_tgt = get(target_dict, TRACE_PRECURSOR_IDX, nothing)
+                @info "[TRACE] Steps 5-10 dicts: global_prob=$gp MBR_global_prob=$mbr_gp global_qval=$gq target=$is_tgt fdr_scale=$fdr_scale sqrt_n_runs=$sqrt_n_runs"
+
+                # Also check spline-based qval for the prec_prob values we've seen
+                for (i, ref) in enumerate(filtered_refs)
+                    tbl = Arrow.Table(file_path(ref))
+                    pids = tbl.precursor_idx
+                    for j in 1:length(pids)
+                        if pids[j] == TRACE_PRECURSOR_IDX
+                            sc = has_mbr && hasproperty(tbl, :MBR_boosted_prec_prob) ? tbl.MBR_boosted_prec_prob[j] : tbl.prec_prob[j]
+                            try
+                                spline_qval = qval_spline(Float64(sc))
+                                @info "[TRACE] Steps 5-10 spline: file=$i score=$sc → qval=$spline_qval (threshold=$(params.q_value_threshold))"
+                            catch e
+                                @info "[TRACE] Steps 5-10 spline: file=$i score=$sc → spline error: $e"
+                            end
+                        end
+                    end
+                    tbl = nothing
+                end
+            end
+
             # Phase B — Single per-file pipeline combining Steps 5+10
             global_qval_col = has_mbr ? :MBR_boosted_global_qval : :global_qval
             qval_col = has_mbr ? :MBR_boosted_qval : :qval
@@ -465,6 +561,29 @@ function summarize_results!(
                 ])
 
             passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
+        end
+
+        # [TRACE] Checkpoint after Steps 5-10: survival after dual q-value filter
+        if TRACE_PRECURSOR_IDX != UInt32(0)
+            found_after_filter = false
+            for (i, ref) in enumerate(passing_refs)
+                tbl = Arrow.Table(file_path(ref))
+                pids = tbl.precursor_idx
+                for j in 1:length(pids)
+                    if pids[j] == TRACE_PRECURSOR_IDX
+                        found_after_filter = true
+                        pp = hasproperty(tbl, :prec_prob) ? tbl.prec_prob[j] : missing
+                        gq = hasproperty(tbl, :global_qval) ? tbl.global_qval[j] : (hasproperty(tbl, :MBR_boosted_global_qval) ? tbl.MBR_boosted_global_qval[j] : missing)
+                        qv = hasproperty(tbl, :qval) ? tbl.qval[j] : (hasproperty(tbl, :MBR_boosted_qval) ? tbl.MBR_boosted_qval[j] : missing)
+                        pep = hasproperty(tbl, :pep) ? tbl.pep[j] : missing
+                        @info "[TRACE] After Steps 5-10 (q-value filter): SURVIVED in file=$i prec_prob=$pp global_qval=$gq qval=$qv pep=$pep"
+                    end
+                end
+                tbl = nothing
+            end
+            if !found_after_filter
+                @info "[TRACE] After Steps 5-10 (q-value filter): LOST — precursor_idx=$(TRACE_PRECURSOR_IDX) filtered out by q-value thresholds"
+            end
         end
 
         # Step 11: Re-calculate q-values using filtered data (sidecar-based)
@@ -516,6 +635,28 @@ function summarize_results!(
                            for (file_idx, (psm_path, pg_path)) in zip(valid_file_indices, psm_to_pg_mapping)]
 
             isempty(paired_files) && error("No protein groups created during protein inference")
+        end
+
+        # [TRACE] Checkpoint after Step 13: check if precursor survived protein inference
+        if TRACE_PRECURSOR_IDX != UInt32(0)
+            found_after_protein = false
+            for (i, ref) in enumerate(passing_refs)
+                tbl = Arrow.Table(file_path(ref))
+                if hasproperty(tbl, :precursor_idx)
+                    pids = tbl.precursor_idx
+                    for j in 1:length(pids)
+                        if pids[j] == TRACE_PRECURSOR_IDX
+                            found_after_protein = true
+                            pg = hasproperty(tbl, :inferred_protein_group) ? tbl.inferred_protein_group[j] : missing
+                            @info "[TRACE] After Step 13 (protein inference): PRESENT in file=$i inferred_protein_group=$pg"
+                        end
+                    end
+                end
+                tbl = nothing
+            end
+            if !found_after_protein
+                @info "[TRACE] After Step 13 (protein inference): precursor_idx=$(TRACE_PRECURSOR_IDX) status unchanged (protein inference doesn't remove PSMs)"
+            end
         end
         # Step 14: Build protein CV fold mapping from PSMs
         step14_time = @elapsed begin
