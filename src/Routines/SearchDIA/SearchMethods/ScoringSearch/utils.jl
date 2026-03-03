@@ -193,6 +193,38 @@ function protein_probit_feature_names(; include_n_possible_peptides::Bool = fals
     return feature_names
 end
 
+function write_protein_probit_training_debug(
+    all_protein_groups::DataFrame,
+    feature_names::Vector{Symbol},
+    qc_folder::String
+)
+    isdir(qc_folder) || mkpath(qc_folder)
+
+    debug_df = copy(all_protein_groups)
+    debug_df[!, :protein_probit_label] = copy(all_protein_groups.target)
+    debug_df[!, :protein_probit_fold] = copy(all_protein_groups.cv_fold)
+
+    tsv_path = joinpath(qc_folder, "protein_probit_training_table.tsv")
+    CSV.write(tsv_path, debug_df; delim = '\t')
+
+    columns_path = joinpath(qc_folder, "protein_probit_training_columns.txt")
+    open(columns_path, "w") do io
+        write(io, "label_column: protein_probit_label\n")
+        write(io, "fold_column: protein_probit_fold\n")
+        write(io, "feature_columns:\n")
+        for feature in feature_names
+            write(io, "  - $(feature)\n")
+        end
+        write(io, "all_columns:\n")
+        for col in names(debug_df)
+            write(io, "  - $(col)\n")
+        end
+    end
+
+    @user_info "Wrote protein probit training debug table" tsv_path=tsv_path columns_path=columns_path n_rows=nrow(debug_df)
+    return (tsv_path = tsv_path, columns_path = columns_path)
+end
+
 """
     filter_ms1_features_if_disabled!(feature_names::Vector{Symbol}, ms1_scoring::Bool)
 
@@ -2096,6 +2128,8 @@ function perform_probit_analysis_multifold(
         @user_warn "No valid features remaining for multifold probit regression after filtering"
         return
     end
+
+    write_protein_probit_training_debug(all_protein_groups, feature_names, qc_folder)
     
     # 5. Train probit model for each fold (skip if skip_scoring = true)
     models = Dict{UInt8, Vector{Float64}}()
