@@ -768,7 +768,7 @@ jobs:
           run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
           run_root="${run_root_raw%/}/runs"
           release_tag="${RELEASE_TAG:?RELEASE_TAG not set}"
-          release_dir="${run_root_raw%/}/release/${release_tag}"
+          release_dir="${run_root_raw%/}/metrics/release/${release_tag}"
 
           ssh_options=(
             -o BatchMode=yes
