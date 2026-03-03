@@ -83,12 +83,19 @@ function integrate_precursors(chromatograms::DataFrame,
                 prec_id = precursor_idx[i]
                 iso_set = isotopes_captured[i]
                 apex_scan = apex_scan_idx[i]
+                _is_trace = TRACE_PRECURSOR_IDX != UInt32(0) && prec_id == TRACE_PRECURSOR_IDX
                 # Note: grouped_chroms groups are already sorted by rt (pre-sorted before grouping)
                 if seperateTraces(isotope_trace_type)
-                    (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys ? continue : nothing
+                    if (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys
+                        _is_trace && @info "[TRACE] integrate_precursors: ms_file_idx=$ms_file_idx BAIL-OUT=no_group_key (separate traces, iso=$iso_set)"
+                        continue
+                    end
                     chrom = grouped_chroms[(precursor_idx = prec_id, isotopes_captured = iso_set)]
                 else
-                    (precursor_idx = prec_id,) ∉ group_keys ? continue : nothing
+                    if (precursor_idx = prec_id,) ∉ group_keys
+                        _is_trace && @info "[TRACE] integrate_precursors: ms_file_idx=$ms_file_idx BAIL-OUT=no_group_key (combined traces)"
+                        continue
+                    end
                     chrom = grouped_chroms[(precursor_idx = prec_id,)]
                 end
 
@@ -97,11 +104,22 @@ function integrate_precursors(chromatograms::DataFrame,
                 avg_cycle_time = (chrom.rt[end] - chrom.rt[1]) /  length(chrom.rt)
                 first_pos = findfirst(x->x>0.0, chrom[!,:intensity]) # start from first positive weight
                 last_pos = findlast(x->x>0.0, chrom[!,:intensity]) # end at last positive weight
-                isnothing(first_pos) ? continue : nothing
+                if isnothing(first_pos)
+                    _is_trace && @info "[TRACE] integrate_precursors: ms_file_idx=$ms_file_idx BAIL-OUT=no_positive_intensity n_chrom_rows=$(nrow(chrom)) intensities=$(chrom[!,:intensity])"
+                    continue
+                end
+                if _is_trace
+                    @info "[TRACE] integrate_precursors: ms_file_idx=$ms_file_idx n_chrom_rows=$(nrow(chrom)) first_pos=$first_pos last_pos=$last_pos apex_scan_idx=$apex_scan"
+                    @info "[TRACE]   scan_idxs=$(chrom[!,:scan_idx]) intensities=$(chrom[!,:intensity])"
+                end
                 chrom = view(chrom, first_pos:last_pos, :)
                 if test_print == false
+                    apex_scan_orig = apex_scan
                     apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) # scan first/last
-                    isnothing(apex_scan) ? continue : nothing
+                    if isnothing(apex_scan)
+                        _is_trace && @info "[TRACE] integrate_precursors: ms_file_idx=$ms_file_idx BAIL-OUT=apex_not_found apex_scan_idx=$apex_scan_orig trimmed_scan_idxs=$(chrom[!,:scan_idx])"
+                        continue
+                    end
                 else
                     min_diff = typemax(Int64)
                     nearest_idx = i

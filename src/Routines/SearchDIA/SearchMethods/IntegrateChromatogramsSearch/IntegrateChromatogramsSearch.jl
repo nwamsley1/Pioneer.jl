@@ -227,6 +227,39 @@ function process_file!(
             passing_psms[!, :ms1_best_scan] = zeros(UInt32, nrow(passing_psms))
             passing_psms[!, :ms1_points_integrated] = zeros(UInt32, nrow(passing_psms))
         end
+        # [TRACE] Pre-extraction diagnostics for traced precursor
+        if TRACE_PRECURSOR_IDX != UInt32(0)
+            trace_rows = findall(==(TRACE_PRECURSOR_IDX), passing_psms[!, :precursor_idx])
+            if !isempty(trace_rows)
+                for ri in trace_rows
+                    rt_val = passing_psms[ri, :rt]
+                    irt_val = hasproperty(passing_psms, :irt_obs) ? passing_psms[ri, :irt_obs] : missing
+                    scan_val = passing_psms[ri, :scan_idx]
+                    iso_val = passing_psms[ri, :isotopes_captured]
+                    @info "[TRACE] IntegrateChromatogram PRE-EXTRACT: ms_file_idx=$ms_file_idx precursor_idx=$(TRACE_PRECURSOR_IDX) rt=$rt_val irt_obs=$irt_val scan_idx=$scan_val isotopes_captured=$iso_val"
+                end
+
+                # Check RT index: what iRT does the rt_index have for this precursor?
+                irt_tol = getIrtErrors(search_context)[ms_file_idx]
+                @info "[TRACE] IntegrateChromatogram RT INDEX: ms_file_idx=$ms_file_idx irt_tol=$irt_tol n_rt_bins=$(length(rt_index.rt_bins))"
+                for (bi, bin) in enumerate(rt_index.rt_bins)
+                    for (pid, mz) in bin.prec
+                        if pid == TRACE_PRECURSOR_IDX
+                            @info "[TRACE] IntegrateChromatogram RT INDEX: precursor found in bin $bi (lb=$(bin.lb) ub=$(bin.ub)) mz=$mz"
+                        end
+                    end
+                end
+
+                # Check what iRT the scan maps to
+                scan_val = passing_psms[trace_rows[1], :scan_idx]
+                scan_rt = getRetentionTime(spectra, Int(scan_val))
+                scan_irt = getRtIrtModel(search_context, ms_file_idx)(scan_rt)
+                @info "[TRACE] IntegrateChromatogram SCAN→IRT: scan_idx=$scan_val rt=$scan_rt → irt=$scan_irt (irt_tol=$irt_tol)"
+            else
+                @info "[TRACE] IntegrateChromatogram: precursor_idx=$(TRACE_PRECURSOR_IDX) NOT in passing_psms for ms_file_idx=$ms_file_idx"
+            end
+        end
+
         # Extract chromatograms for all passing PSMs
         # Builds chromatograms using parallel processing across scan ranges
         chromatograms = extract_chromatograms(
@@ -271,6 +304,27 @@ function process_file!(
             getCenterMzs(spectra),
             getIsolationWidthMzs(spectra)
         )
+
+        # [TRACE] Post-extraction diagnostics: what chromatogram data exists for traced precursor?
+        if TRACE_PRECURSOR_IDX != UInt32(0)
+            trace_chrom_rows = findall(==(TRACE_PRECURSOR_IDX), chromatograms[!, :precursor_idx])
+            n_trace_rows = length(trace_chrom_rows)
+            if n_trace_rows > 0
+                n_positive = sum(chromatograms[ri, :intensity] > 0 for ri in trace_chrom_rows)
+                scan_idxs = [chromatograms[ri, :scan_idx] for ri in trace_chrom_rows]
+                rts = [chromatograms[ri, :rt] for ri in trace_chrom_rows]
+                intensities = [chromatograms[ri, :intensity] for ri in trace_chrom_rows]
+                @info "[TRACE] IntegrateChromatogram POST-EXTRACT: ms_file_idx=$ms_file_idx n_chrom_points=$n_trace_rows n_positive=$n_positive"
+                for ri in trace_chrom_rows
+                    inten = chromatograms[ri, :intensity]
+                    si = chromatograms[ri, :scan_idx]
+                    r = chromatograms[ri, :rt]
+                    @info "[TRACE]   chrom point: scan_idx=$si rt=$r intensity=$inten"
+                end
+            else
+                @info "[TRACE] IntegrateChromatogram POST-EXTRACT: ms_file_idx=$ms_file_idx NO chromatogram data for precursor_idx=$(TRACE_PRECURSOR_IDX)"
+            end
+        end
 
         # Pre-sort chromatograms to avoid concurrent sorting in threads
         # Groups will inherit this ordering, eliminating need for per-group sorting
@@ -319,6 +373,19 @@ function process_file!(
                 test_print = true
             )
         end
+        # [TRACE] Post-integration diagnostics: what peak_area was assigned?
+        if TRACE_PRECURSOR_IDX != UInt32(0)
+            trace_rows = findall(==(TRACE_PRECURSOR_IDX), passing_psms[!, :precursor_idx])
+            if !isempty(trace_rows)
+                for ri in trace_rows
+                    pa = passing_psms[ri, :peak_area]
+                    bs = passing_psms[ri, :new_best_scan]
+                    pi = passing_psms[ri, :points_integrated]
+                    @info "[TRACE] IntegrateChromatogram POST-INTEGRATE: ms_file_idx=$ms_file_idx peak_area=$pa new_best_scan=$bs points_integrated=$pi (will be filtered if peak_area==0)"
+                end
+            end
+        end
+
         # Clear chromatograms to free memory
         chromatograms = nothing
 
