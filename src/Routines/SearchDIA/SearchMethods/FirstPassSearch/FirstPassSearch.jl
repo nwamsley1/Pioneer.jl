@@ -363,7 +363,7 @@ function process_file!(
         select!(psms, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target,
             :scribe, :spectral_contrast, :city_block, :entropy_score,
-            :poisson, :y_count, :err_norm])
+            :poisson, :y_count, :err_norm, :missed_cleavage, :Mox])
         get_probs!(psms, psms[!,:score])
     end
 
