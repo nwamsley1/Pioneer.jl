@@ -5,7 +5,7 @@
 #
 # Usage: julia scripts/eigenvalue_rescoring.jl
 
-using Arrow, DataFrames, Statistics, LinearAlgebra, LightGBM, Random, Printf
+using Arrow, DataFrames, Statistics, LinearAlgebra, LightGBM, Random, Printf, SpecialFunctions
 
 ###############################################################################
 # Configuration
@@ -19,6 +19,8 @@ const STANDARD_FEATURES = [
     :scribe, :spectral_contrast, :city_block, :entropy_score,
     :poisson, :y_count, :err_norm, :scan_count,
 ]
+
+const MOX_MC_FEATURES = [:missed_cleavage, :Mox]
 
 const EIGEN_FEATURES = [
     :pearson_lambda1, :pearson_lambda2, :pearson_lambda3,
@@ -531,20 +533,31 @@ end
 # 5. LightGBM Training with 2-Fold CV
 ###############################################################################
 
-function build_classifier(; num_iterations::Int=100)
+# Named hyperparameter configurations
+const HPARAMS = Dict(
+    # Current "advanced" config (matches ScoringSearch AdvancedLightGBM)
+    :advanced => (lr=0.05,  leaves=63, depth=-1, ff=0.5, bf=0.25, mdl=200, mgs=0.0,  l2=0.0),
+    # "Simple" config (matches ScoringSearch SimpleLightGBM — more conservative)
+    :simple   => (lr=0.1,   leaves=15, depth=4,  ff=0.8, bf=0.8,  mdl=20,  mgs=0.1,  l2=0.0),
+    # Moderate: between simple and advanced
+    :moderate => (lr=0.05,  leaves=31, depth=6,  ff=0.7, bf=0.5,  mdl=50,  mgs=0.0,  l2=1.0),
+)
+
+function build_classifier(; num_iterations::Int=100, hparams::Symbol=:advanced)
+    hp = HPARAMS[hparams]
     return LightGBM.LGBMClassification(
         objective        = "binary",
         metric           = ["binary_logloss"],
-        learning_rate    = 0.05,
+        learning_rate    = hp.lr,
         num_iterations   = num_iterations,
-        num_leaves       = 63,
-        max_depth        = -1,
-        feature_fraction = 0.5,
-        bagging_fraction = 0.25,
+        num_leaves       = hp.leaves,
+        max_depth        = hp.depth,
+        feature_fraction = hp.ff,
+        bagging_fraction = hp.bf,
         bagging_freq     = 1,
-        min_data_in_leaf = 200,
-        min_gain_to_split = 0.0,
-        lambda_l2        = 0.0,
+        min_data_in_leaf = hp.mdl,
+        min_gain_to_split = hp.mgs,
+        lambda_l2        = hp.l2,
         max_bin          = 255,
         num_threads      = Threads.nthreads(),
         num_class        = 1,
@@ -588,8 +601,10 @@ function get_qvalues(probs::AbstractVector, targets::AbstractVector{Bool})
     return qvals
 end
 
-function train_lgbm_cv(df::DataFrame, features::Vector{Symbol}; label::String="model")
-    println("  Training LightGBM ($label) with $(length(features)) features, two-pass approach...")
+function train_lgbm_cv(df::DataFrame, features::Vector{Symbol}; label::String="model", hparams::Symbol=:advanced)
+    hp = HPARAMS[hparams]
+    println("  Training LightGBM ($label, $hparams) with $(length(features)) features...")
+    println("    lr=$(hp.lr) leaves=$(hp.leaves) depth=$(hp.depth) ff=$(hp.ff) bf=$(hp.bf) mdl=$(hp.mdl)")
     n = nrow(df)
     m = length(features)
 
@@ -616,7 +631,7 @@ function train_lgbm_cv(df::DataFrame, features::Vector{Symbol}; label::String="m
         X_train = make_feature_matrix(df[train_idx, :], features)
         y_train = Int.(targets[train_idx])
 
-        model = build_classifier(; num_iterations=NUM_ITERATIONS_PASS1)
+        model = build_classifier(; num_iterations=NUM_ITERATIONS_PASS1, hparams=hparams)
         LightGBM.fit!(model, X_train, y_train; verbosity=-1)
 
         # Predict in-sample on training data for pass-1 q-value computation
@@ -645,7 +660,7 @@ function train_lgbm_cv(df::DataFrame, features::Vector{Symbol}; label::String="m
         X_train = make_feature_matrix(df[sel, :], features)
         y_train = Int.(targets[sel])
 
-        model = build_classifier(; num_iterations=NUM_ITERATIONS_PASS2)
+        model = build_classifier(; num_iterations=NUM_ITERATIONS_PASS2, hparams=hparams)
         LightGBM.fit!(model, X_train, y_train; verbosity=-1)
 
         # Predict on held-out test fold — final out-of-fold scores
@@ -676,6 +691,269 @@ function train_lgbm_cv(df::DataFrame, features::Vector{Symbol}; label::String="m
     end
 
     return probs_out
+end
+
+###############################################################################
+# 5b. Probit Regression Training with 2-Fold CV
+###############################################################################
+
+"""
+    train_probit_cv(df, features; label="probit")
+
+Train probit regression with 2-fold CV using Pioneer's IRLS implementation.
+Two-pass approach matching LightGBM: pass 1 trains on all data, pass 2 retrains
+on 1% FDR targets + all decoys.
+"""
+function train_probit_cv(df::DataFrame, features::Vector{Symbol}; label::String="probit")
+    println("  Training Probit ($label) with $(length(features)) features, two-pass approach...")
+    n = nrow(df)
+    m = length(features)
+
+    # CV fold assignment: even/odd precursor_idx
+    folds = UInt8.((df.precursor_idx .% 2) .+ 1)
+
+    # Output probability vector
+    probs_out = zeros(Float64, n)
+    pass1_probs = zeros(Float64, n)
+
+    targets = df.target
+    chunk_size = max(1, n ÷ (10 * Threads.nthreads()))
+
+    # ── Pass 1: Train on all targets + all decoys, predict in-sample ──
+    println("    Pass 1: initial training (all targets + all decoys)...")
+    for fold in UInt8[1, 2]
+        train_idx = findall(folds .!= fold)
+
+        # Build feature DataFrame (probit expects DataFrame input)
+        X_train = DataFrame([Float64.(df[train_idx, f]) for f in features], collect(features))
+        y_train = targets[train_idx]
+
+        # Initialize and train
+        β = zeros(Float64, m)
+        train_chunks = Iterators.partition(1:length(train_idx), max(1, length(train_idx) ÷ (10 * Threads.nthreads())))
+        β = ProbitRegression(β, X_train, y_train, train_chunks; max_iter=30)
+
+        # Predict in-sample (probabilities)
+        scores = zeros(Float64, length(train_idx))
+        ModelPredictProbs!(scores, X_train, β, train_chunks)
+        pass1_probs[train_idx] = scores
+    end
+
+    # Compute q-values from pass-1 predictions
+    pass1_qvals = get_qvalues(pass1_probs, targets)
+    n_pass1_targets = count((pass1_qvals .<= Q_VALUE_CUTOFF) .& targets)
+    println("    Pass 1 targets at $(Q_VALUE_CUTOFF*100)% FDR: $n_pass1_targets")
+
+    # ── Pass 2: Retrain on 1% FDR targets + all decoys, predict out-of-fold ──
+    println("    Pass 2: refined training ($(Q_VALUE_CUTOFF*100)% FDR targets + all decoys)...")
+    for fold in UInt8[1, 2]
+        test_idx  = findall(folds .== fold)
+        train_idx = findall(folds .!= fold)
+
+        # Filter training set
+        train_targets = targets[train_idx]
+        train_qvals   = pass1_qvals[train_idx]
+        keep = .!train_targets .| (train_qvals .<= Q_VALUE_CUTOFF)
+        sel = train_idx[keep]
+
+        X_train = DataFrame([Float64.(df[sel, f]) for f in features], collect(features))
+        y_train = targets[sel]
+
+        β = zeros(Float64, m)
+        train_chunks = Iterators.partition(1:length(sel), max(1, length(sel) ÷ (10 * Threads.nthreads())))
+        β = ProbitRegression(β, X_train, y_train, train_chunks; max_iter=30)
+
+        # Predict on held-out test fold
+        X_test = DataFrame([Float64.(df[test_idx, f]) for f in features], collect(features))
+        test_chunks = Iterators.partition(1:length(test_idx), max(1, length(test_idx) ÷ (10 * Threads.nthreads())))
+        scores = zeros(Float64, length(test_idx))
+        ModelPredictProbs!(scores, X_test, β, test_chunks)
+        probs_out[test_idx] = scores
+    end
+
+    println("    Probit training complete ($(length(features)) features)")
+
+    return probs_out
+end
+
+# Import Pioneer's probit functions — self-contained reimplementation for standalone use
+# These match the implementations in src/utils/ML/probitRegression.jl
+
+function fillZandW!(Z::Vector{T}, W::Vector{T}, η::Vector{T}, y::Vector{Bool},
+                    data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat}
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            @inbounds @fastmath for i in chunk
+                ϕ = exp(-(η[i]^2)/2)/sqrt(2*π)
+                μ = (1 + SpecialFunctions.erf(η[i]/sqrt(2)))/2
+                if y[i]
+                    Z[i] = η[i] + (1 - μ)/ϕ
+                    η[i] = log(μ)
+                else
+                    Z[i] = η[i] - μ/ϕ
+                    η[i] = log1p(-μ)
+                end
+                W[i] = (ϕ^2)/(μ*(1 - μ))
+            end
+        end
+    end
+    fetch.(tasks)
+end
+
+function fillXWX!(XWX::Matrix{T}, X::DataFrame, W::Vector{T}) where {T<:AbstractFloat}
+    @noinline function fillCell(XWX::T, Xi::Vector{R}, Xj::Vector{V}, W::Vector{T}) where {T<:AbstractFloat, R,V<:Real}
+        s = zero(T)
+        @inbounds for i in 1:length(W)
+            s += Xi[i]*W[i]*Xj[i]
+        end
+        return s
+    end
+    for i in 1:size(XWX, 1)
+        tasks = map(1:size(X, 2)) do j
+            Threads.@spawn fillCell(zero(T), X[!, i], X[!, j], W)
+        end
+        for (j, t) in enumerate(tasks)
+            XWX[i, j] = fetch(t)
+        end
+    end
+end
+
+function fillY!(Y::Vector{T}, X::DataFrame, W::Vector{T}, Z::Vector{T}) where {T<:AbstractFloat}
+    @noinline function fillCell(X::Vector{R}, W::Vector{T}, Z::Vector{T}) where {T<:AbstractFloat,R<:Real}
+        s = zero(T)
+        @inbounds for i in 1:length(W)
+            s += X[i]*W[i]*Z[i]
+        end
+        return s
+    end
+    tasks = map(1:size(X, 2)) do col
+        Threads.@spawn fillCell(X[!, col], W, Z)
+    end
+    for (col, t) in enumerate(tasks)
+        Y[col] = fetch(t)
+    end
+end
+
+function fillη!(η::Vector{T}, X::DataFrame, β::Vector{T}, bounds::Tuple{T,T},
+                data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T}
+    # Zero out
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            @inbounds for row in chunk
+                η[row] = zero(T)
+            end
+        end
+    end
+    fetch.(tasks)
+    # Accumulate X*β
+    for col in 1:size(X, 2)
+        Xcol = X[!, col]
+        βc = β[col]
+        tasks = map(data_chunks) do chunk
+            Threads.@spawn begin
+                @inbounds for row in chunk
+                    η[row] += Xcol[row]*βc
+                end
+            end
+        end
+        fetch.(tasks)
+    end
+    # Clamp
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            @inbounds for row in chunk
+                η[row] = max(min(η[row], last(bounds)), first(bounds))
+            end
+        end
+    end
+    fetch.(tasks)
+end
+
+function loglikelihood!(tmpη::Vector{T}, X::DataFrame, β::Vector{T}, y::Vector{Bool},
+                        bounds::Tuple{T,T},
+                        data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat}
+    fillη!(tmpη, X, β, bounds, data_chunks)
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            local_sum = zero(T)
+            @inbounds @fastmath for i in chunk
+                μ = (1 + SpecialFunctions.erf(tmpη[i]/sqrt(2)))/2
+                local_sum += y[i] ? log(μ) : log1p(-μ)
+            end
+            return local_sum
+        end
+    end
+    return sum(fetch.(tasks))
+end
+
+function ProbitRegression(β::Vector{T}, X::DataFrame, y::Vector{Bool},
+                          data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}};
+                          max_iter::Int=30, z_score_bounds::Tuple{Float64,Float64}=(-8.0, 8.0),
+                          tol::T=T(1e-2), step_size::T=one(T)) where {T<:AbstractFloat}
+    W, η, Z = zeros(T, length(y)), zeros(T, length(y)), zeros(T, length(y))
+    Y = zeros(T, size(X, 2))
+    XWX = zeros(T, (size(X, 2), size(X, 2)))
+    old_loss = 0.0
+    β_old = similar(β)
+    tmpη = similar(η)
+
+    for i in 1:max_iter
+        copyto!(β_old, β)
+        fillη!(η, X, β, z_score_bounds, data_chunks)
+        fillZandW!(Z, W, η, y, data_chunks)
+        loss = sum(η)
+        fillXWX!(XWX, X, W)
+        fillY!(Y, X, W, Z)
+        β_new = T.(XWX \ Y)
+        Δβ = β_new .- β
+        step = step_size
+        new_loss = loss
+        while step > T(1e-4)
+            β_trial = β .+ step .* Δβ
+            trial_loss = loglikelihood!(tmpη, X, β_trial, y, z_score_bounds, data_chunks)
+            if trial_loss >= loss
+                β .= β_trial
+                new_loss = trial_loss
+                break
+            end
+            step *= T(0.5)
+        end
+        if step <= T(1e-4)
+            β .+= step .* Δβ
+            new_loss = loglikelihood!(tmpη, X, β, y, z_score_bounds, data_chunks)
+        end
+        if norm(β .- β_old) < tol || abs(new_loss - old_loss) < tol
+            break
+        end
+        old_loss = new_loss
+    end
+    return β
+end
+
+function ModelPredictProbs!(scores::Vector{U}, psms::DataFrame, β::Vector{T},
+                            data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat}
+    fill!(scores, zero(U))
+    for col in 1:size(psms, 2)
+        Xcol = psms[!, col]
+        βc = β[col]
+        tasks = map(data_chunks) do chunk
+            Threads.@spawn begin
+                @inbounds for row in chunk
+                    scores[row] += Xcol[row]*βc
+                end
+            end
+        end
+        fetch.(tasks)
+    end
+    # Convert to probabilities via normal CDF
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            @inbounds for row in chunk
+                scores[row] = (1 + SpecialFunctions.erf(scores[row]/sqrt(2)))/2
+            end
+        end
+    end
+    fetch.(tasks)
 end
 
 ###############################################################################
@@ -857,13 +1135,13 @@ end
 ###############################################################################
 
 function print_results_table(results::Vector{Tuple{String, NamedTuple}}, baseline_key::String)
-    @printf("%-34s %8s %8s %8s\n", "", "1% FDR", "5% FDR", "Hybrid")
-    println("-" ^ 64)
+    @printf("%-36s %8s %8s %8s\n", "", "1% FDR", "5% FDR", "Hybrid")
+    println("-" ^ 68)
 
     for (name, res) in results
-        @printf("%-34s %8d %8d %8d targets\n", name * ":", res.n_01_fdr, res.n_05_fdr, res.hybrid_targets)
+        @printf("%-36s %8d %8d %8d targets\n", name * ":", res.n_01_fdr, res.n_05_fdr, res.hybrid_targets)
     end
-    println("-" ^ 64)
+    println("-" ^ 68)
 
     # Find baseline for gain computation
     base_res = nothing
@@ -883,8 +1161,8 @@ function print_results_table(results::Vector{Tuple{String, NamedTuple}}, baselin
         p01  = base_res.n_01_fdr > 0 ? 100.0 * d01 / base_res.n_01_fdr : 0.0
         p05  = base_res.n_05_fdr > 0 ? 100.0 * d05 / base_res.n_05_fdr : 0.0
         phyb = base_res.hybrid_targets > 0 ? 100.0 * dhyb / base_res.hybrid_targets : 0.0
-        @printf("  Δ %-28s %+7d  %+7d  %+7d\n", name * ":", d01, d05, dhyb)
-        @printf("  %30s %+6.1f%%  %+6.1f%%  %+6.1f%%\n", "", p01, p05, phyb)
+        @printf("  Δ %-30s %+7d  %+7d  %+7d\n", name * ":", d01, d05, dhyb)
+        @printf("  %32s %+6.1f%%  %+6.1f%%  %+6.1f%%\n", "", p01, p05, phyb)
     end
 end
 
@@ -916,28 +1194,61 @@ function main()
     chrom_narrow = nothing
     GC.gc()
 
+    # Check if Mox/missed_cleavage columns are available
+    has_mox_mc = hasproperty(df, :missed_cleavage) && hasproperty(df, :Mox)
+    if has_mox_mc
+        println("\n  Mox and missed_cleavage columns found — will run augmented models")
+    else
+        println("\n  Mox/missed_cleavage not in data — skipping augmented models")
+    end
+
     # Pipeline baseline
     println("\n--- Pipeline Baseline (probit prob) ---")
     gp_pipeline = compute_global_probs(df, :prob, n_files)
     res_pipeline = hybrid_filter(gp_pipeline)
 
-    # Step 5: Train LightGBM models — 6 variants
-    models = [
-        ("LightGBM baseline",       STANDARD_FEATURES,       "baseline"),
-        ("LightGBM + eigen top4",   AUG_EIGEN_TOP4_FEATURES, "aug_eigen_top4"),
-        ("LightGBM + both eigen",   AUG_BOTH_FEATURES,       "aug_both"),
-        ("LightGBM + chrom top3",   AUG_CHROM_TOP3_FEATURES, "aug_chrom_top3"),
-        ("LightGBM + chrom",        AUG_CHROM_FEATURES,      "aug_chrom"),
-        ("LightGBM + all",          AUG_ALL_FEATURES,        "aug_all"),
-    ]
+    # Step 5: Train models
+    # (name, features, col_suffix, model_type, hparams)
+    all_models = Tuple{String, Vector{Symbol}, String, Symbol, Symbol}[]
+
+    # --- Hyperparameter comparison on baseline features ---
+    push!(all_models, ("LGBM adv baseline",   STANDARD_FEATURES, "adv_base",   :lgbm, :advanced))
+    push!(all_models, ("LGBM simple baseline", STANDARD_FEATURES, "simple_base", :lgbm, :simple))
+    push!(all_models, ("LGBM mod baseline",   STANDARD_FEATURES, "mod_base",   :lgbm, :moderate))
+    push!(all_models, ("Probit baseline",     STANDARD_FEATURES, "probit_base", :probit, :advanced))
+
+    # --- Best hparams with augmented features (will pick best after seeing results) ---
+    for hp in [:advanced, :simple, :moderate]
+        hp_tag = string(hp)[1:3]  # "adv", "sim", "mod"
+        push!(all_models, ("LGBM $hp_tag + eigen4",  vcat(STANDARD_FEATURES, EIGEN_TOP4_FEATURES),  "$(hp_tag)_eigen4",  :lgbm, hp))
+        push!(all_models, ("LGBM $hp_tag + chrom3",  vcat(STANDARD_FEATURES, CHROM_TOP3_FEATURES),  "$(hp_tag)_chrom3",  :lgbm, hp))
+    end
+
+    # --- Probit with augmented features ---
+    push!(all_models, ("Probit + eigen4",     vcat(STANDARD_FEATURES, EIGEN_TOP4_FEATURES),  "probit_eigen4",  :probit, :advanced))
+    push!(all_models, ("Probit + chrom3",     vcat(STANDARD_FEATURES, CHROM_TOP3_FEATURES),  "probit_chrom3",  :probit, :advanced))
+    push!(all_models, ("Probit + eigen4+chrom3", vcat(STANDARD_FEATURES, EIGEN_TOP4_FEATURES, CHROM_TOP3_FEATURES), "probit_all_top", :probit, :advanced))
+
+    # --- With Mox/MC variants ---
+    if has_mox_mc
+        push!(all_models, ("LGBM adv + MC/Mox",        vcat(STANDARD_FEATURES, MOX_MC_FEATURES),  "adv_mc",  :lgbm, :advanced))
+        push!(all_models, ("LGBM adv + eigen4 + MC",   vcat(STANDARD_FEATURES, EIGEN_TOP4_FEATURES, MOX_MC_FEATURES),  "adv_eigen4_mc",  :lgbm, :advanced))
+        push!(all_models, ("LGBM adv + chrom3 + MC",   vcat(STANDARD_FEATURES, CHROM_TOP3_FEATURES, MOX_MC_FEATURES),  "adv_chrom3_mc",  :lgbm, :advanced))
+        push!(all_models, ("LGBM adv + all top + MC",  vcat(STANDARD_FEATURES, EIGEN_TOP4_FEATURES, CHROM_TOP3_FEATURES, MOX_MC_FEATURES),  "adv_all_mc",  :lgbm, :advanced))
+        push!(all_models, ("Probit + all top + MC",    vcat(STANDARD_FEATURES, EIGEN_TOP4_FEATURES, CHROM_TOP3_FEATURES, MOX_MC_FEATURES),  "probit_all_mc",  :probit, :advanced))
+    end
 
     model_results = Tuple{String, NamedTuple}[]
     push!(model_results, ("Pipeline (probit)", res_pipeline))
 
-    for (name, features, col_suffix) in models
+    for (name, features, col_suffix, model_type, hp) in all_models
         println("\n--- $name ---")
-        probs = train_lgbm_cv(df, features; label=col_suffix)
-        col_name = Symbol("lgbm_prob_" * col_suffix)
+        if model_type == :lgbm
+            probs = train_lgbm_cv(df, features; label=col_suffix, hparams=hp)
+        else
+            probs = train_probit_cv(df, features; label=col_suffix)
+        end
+        col_name = Symbol("prob_" * col_suffix)
         df[!, col_name] = probs
 
         gp = compute_global_probs(df, col_name, n_files)
@@ -949,11 +1260,11 @@ function main()
     println("\n" * "=" ^ 70)
     println("RESULTS")
     println("=" ^ 70)
-    print_results_table(model_results, "LightGBM baseline")
+    print_results_table(model_results, "LGBM adv baseline")
 
     println("\n--- Hybrid Filter Details ---")
     for (name, res) in model_results
-        @printf("  %-28s  n_qval=%6d  n_pep=%6d  n_floor=%6d  → keep=%6d  targets=%6d\n",
+        @printf("  %-34s  n_qval=%6d  n_pep=%6d  n_floor=%6d  → keep=%6d  targets=%6d\n",
                 name, res.n_qvalue_based, res.n_passing_threshold, res.n_min_floor,
                 res.n_to_keep, res.hybrid_targets)
     end
