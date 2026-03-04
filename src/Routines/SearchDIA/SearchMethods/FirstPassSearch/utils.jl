@@ -308,7 +308,7 @@ function get_best_psms!(psms::DataFrame,
 
     select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target,
         :scribe, :spectral_contrast, :city_block, :entropy_score,
-        :poisson, :y_count, :err_norm])
+        :poisson, :y_count, :err_norm, :missed_cleavage, :Mox])
 
     # Per-file pre-filter: keep the largest of
     # (a) PEP ≤ 0.95, (b) q-value floor (cumulative D/T ≤ 0.50), (c) hard minimum 10,000.

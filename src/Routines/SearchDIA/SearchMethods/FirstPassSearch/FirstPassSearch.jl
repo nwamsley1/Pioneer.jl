@@ -515,7 +515,7 @@ function process_search_results!(
         select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
             :irt_predicted, :q_value, :score, :prob, :scan_count, :PEP,
             :scribe, :spectral_contrast, :city_block, :entropy_score,
-            :poisson, :y_count, :err_norm, :target])
+            :poisson, :y_count, :err_norm, :target, :missed_cleavage, :Mox])
     )
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 
@@ -582,6 +582,7 @@ function summarize_results!(
         # Get best precursors from valid files only
         precursors = getPrecursors(getSpecLib(search_context))
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+        temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
         return get_best_precursors_accross_runs(
             valid_psms_paths,
             getMz(precursors),
@@ -589,7 +590,8 @@ function summarize_results!(
             getIsDecoy(precursors),
             max_q_val=params.max_q_val_for_irt,
             fdr_scale_factor=fdr_scale_factor,
-            global_pep_threshold=params.global_pep_threshold
+            global_pep_threshold=params.global_pep_threshold,
+            temp_folder=temp_folder
         )
     end
     # Map retention times

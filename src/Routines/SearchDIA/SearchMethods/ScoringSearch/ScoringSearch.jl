@@ -503,6 +503,25 @@ function summarize_results!(
             global_qval_dict = build_global_qval_dict_from_scores(score_dict_for_qval, target_dict, fdr_scale)
             results.precursor_global_qval_dict[] = global_qval_dict
 
+            # Diagnostic: write all precursors with global scores before q-value filtering
+            pre_filter_dir = joinpath(temp_folder, "pre_filter_global_scores")
+            !isdir(pre_filter_dir) && mkdir(pre_filter_dir)
+            let pids = collect(keys(global_qval_dict))
+                pre_filter_df = DataFrame(
+                    precursor_idx = pids,
+                    global_prob = Float32[get(global_prob_dict, p, 0.0f0) for p in pids],
+                    global_qval = Float32[global_qval_dict[p] for p in pids],
+                    target = Bool[get(target_dict, p, false) for p in pids]
+                )
+                if has_mbr
+                    pre_filter_df[!, :MBR_boosted_global_prob] = Float32[get(mbr_global_prob_dict, p, 0.0f0) for p in pids]
+                end
+                Arrow.write(joinpath(pre_filter_dir, "global_scores.arrow"), pre_filter_df)
+                n_targets = count(pre_filter_df.target)
+                n_passing = count(r -> r.target && r.global_qval <= params.q_value_threshold, eachrow(pre_filter_df))
+                @info "Pre-filter diagnostic: $(length(pids)) precursors ($n_targets targets, $n_passing pass global q ≤ $(params.q_value_threshold))"
+            end
+
             # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
             score_col = has_mbr ? :MBR_boosted_prec_prob : :prec_prob
             spline_result = build_qvalue_spline_from_refs(filtered_refs, score_col, results.merged_quant_path;

@@ -37,7 +37,8 @@ end
 """
     get_best_precursors_accross_runs(psms_paths, prec_mzs, rt_irt, prec_is_decoy;
                                     max_q_val=0.01f0, fdr_scale_factor=1.0f0,
-                                    global_pep_threshold=0.5f0)
+                                    global_pep_threshold=0.5f0,
+                                    temp_folder=nothing)
     -> Dictionary{UInt32, NamedTuple}
 
 Identify and collect best precursor matches across multiple runs for retention time calibration.
@@ -58,6 +59,8 @@ contamination in large experiments.
 - `max_q_val`: Maximum q-value threshold for iRT statistics
 - `fdr_scale_factor`: Scale factor for library target/decoy ratio correction
 - `global_pep_threshold`: Maximum global PEP for precursor selection (default 0.5)
+- `temp_folder`: If provided, writes an Arrow diagnostic dump of all first-pass global scores
+  to `temp_folder/first_pass_global_scores/global_scores.arrow` before filtering
 
 # Returns
 Dictionary mapping precursor indices to NamedTuple containing:
@@ -84,7 +87,8 @@ function get_best_precursors_accross_runs(
                          prec_is_decoy::AbstractVector{Bool};
                          max_q_val::Float32 = 0.01f0,
                          fdr_scale_factor::Float32 = 1.0f0,
-                         global_pep_threshold::Float32 = 0.5f0
+                         global_pep_threshold::Float32 = 0.5f0,
+                         temp_folder::Union{String,Nothing} = nothing
                          )
 
     function readPSMs!(
@@ -329,6 +333,20 @@ function get_best_precursors_accross_runs(
     prec_min_global_pep = Dictionary{UInt32, Float32}()
     for i in eachindex(global_prec_idxs)
         insert!(prec_min_global_pep, global_prec_idxs[i], global_peps[i])
+    end
+
+    # Diagnostic dump: write first-pass global scores before filtering
+    if temp_folder !== nothing
+        fp_diag_dir = joinpath(temp_folder, "first_pass_global_scores")
+        !isdir(fp_diag_dir) && mkdir(fp_diag_dir)
+        Arrow.write(joinpath(fp_diag_dir, "global_scores.arrow"), DataFrame(
+            precursor_idx = global_prec_idxs,
+            global_prob = global_probs,
+            global_pep = global_peps,
+            global_qval = global_qvals,
+            target = global_targets
+        ))
+        @user_info "First-pass global scores dumped to $fp_diag_dir ($(length(global_prec_idxs)) precursors)"
     end
 
     # Diagnostics: pre-filter counts
