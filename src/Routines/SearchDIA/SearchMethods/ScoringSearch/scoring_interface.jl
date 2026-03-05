@@ -98,7 +98,7 @@ function apply_mbr_filter!(
     end
 
     # Test all methods and store results
-    methods = [ThresholdFilter(), ProbitFilter(), LightGBMFilter()]
+    methods = [ThresholdFilter()]#, ProbitFilter(), LightGBMFilter()]
     results = FilterResult[]
     
     for method in methods
