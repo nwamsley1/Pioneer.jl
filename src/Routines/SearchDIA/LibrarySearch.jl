@@ -436,6 +436,123 @@ function LibrarySearchNceTuning(
     return isempty(nonempty_dfs) ? DataFrame() : vcat(nonempty_dfs...)
 end
 
+"""
+    fragment_index_search_only(spectra, search_context, params, ms_file_idx)
+
+Run only Phase 1 of LibrarySearch (fragment index search) without getPSMS scoring.
+Returns (scan_to_prec_idx, precursors_passed) for direct use in second pass.
+"""
+function fragment_index_search_only(
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    params::P,
+    ms_file_idx::Int64
+) where {P<:FragmentIndexSearchParameters}
+    fragment_index = getFragmentIndex(getSpecLib(search_context))
+    search_data = getSearchData(search_context)
+    qtm = getQuadTransmissionModel(search_context, ms_file_idx)
+    mem = getMassErrorModel(search_context, ms_file_idx)
+    rt_to_irt_spline = getRtIrtModel(search_context, ms_file_idx)
+    irt_tol = haskey(getIrtErrors(search_context), ms_file_idx) ? getIrtErrors(search_context)[ms_file_idx] : Float32(Inf)
+
+    thread_tasks = partition_scans(spectra, Threads.nthreads())
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin
+            thread_id = first(thread_task)
+            return searchFragmentIndex(
+                scan_to_prec_idx,
+                fragment_index,
+                spectra,
+                last(thread_task),
+                search_data[thread_id],
+                params,
+                qtm,
+                mem,
+                rt_to_irt_spline,
+                irt_tol
+            )
+        end
+    end
+
+    per_thread_precs = fetch.(tasks)
+
+    # Merge per-thread precursor lists into a single flat vector with updated ranges
+    total_precs = sum(length, per_thread_precs)
+    precursors_passed = Vector{UInt32}(undef, total_precs)
+    offset = 0
+    for (tid, thread_task) in enumerate(thread_tasks)
+        thread_precs = per_thread_precs[tid]
+        n = length(thread_precs)
+        if n > 0
+            copyto!(precursors_passed, offset + 1, thread_precs, 1, n)
+        end
+        # Update scan_to_prec_idx ranges for this thread's scans
+        for scan_idx in last(thread_task)
+            (scan_idx <= 0 || scan_idx > length(scan_to_prec_idx)) && continue
+            if !ismissing(scan_to_prec_idx[scan_idx])
+                r = scan_to_prec_idx[scan_idx]
+                scan_to_prec_idx[scan_idx] = (first(r) + offset):(last(r) + offset)
+            end
+        end
+        offset += n
+    end
+
+    return scan_to_prec_idx, precursors_passed
+end
+
+"""
+    write_fragment_index_matches(scan_to_prec_idx, precursors_passed, output_path)
+
+Flatten (scan_idx, precursor_idx) pairs from fragment index search and write to Arrow.
+"""
+function write_fragment_index_matches(
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    output_path::String
+)
+    scan_idxs = UInt32[]
+    prec_idxs = UInt32[]
+    for (scan_idx, range) in enumerate(scan_to_prec_idx)
+        ismissing(range) && continue
+        for i in range
+            push!(scan_idxs, UInt32(scan_idx))
+            push!(prec_idxs, precursors_passed[i])
+        end
+    end
+    Arrow.write(output_path, (scan_idx=scan_idxs, precursor_idx=prec_idxs))
+end
+
+"""
+    load_fragment_index_matches(path, n_scans)
+
+Read Arrow file and reconstruct scan_to_prec_idx + precursors_passed vectors.
+"""
+function load_fragment_index_matches(path::String, n_scans::Int)
+    tbl = Arrow.Table(path)
+    scan_idxs = tbl[:scan_idx]
+    prec_idxs = tbl[:precursor_idx]
+
+    precursors_passed = Vector{UInt32}(prec_idxs)
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(missing, n_scans)
+
+    n = length(scan_idxs)
+    n == 0 && return scan_to_prec_idx, precursors_passed
+
+    i = 1
+    while i <= n
+        current_scan = scan_idxs[i]
+        start_idx = i
+        while i <= n && scan_idxs[i] == current_scan
+            i += 1
+        end
+        scan_to_prec_idx[current_scan] = start_idx:(i - 1)
+    end
+
+    return scan_to_prec_idx, precursors_passed
+end
+
 function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
     return Float32(irt - irt_tol), Float32(irt + irt_tol)
 end

@@ -178,75 +178,7 @@ function process_file!(
     spectra::MassSpecData
 ) where {P<:HuberTuningSearchParameters}
 
-    # Check if file should be skipped due to previous failure
-    if check_and_skip_failed_file(search_context, ms_file_idx, "HuberTuningSearch")
-        return results  # Return early with unchanged results
-    end
-
-    if params.huber_override_bool==true
-        return 
-    end
-    try
-        # Get PSMs to tune on
-        best_psms = get_best_psms(search_context, params.q_value_threshold)
-        file_psms = filter(row -> row.ms_file_idx == ms_file_idx, best_psms)
-
-        # Limit PSMs if needed - prioritize scans with most PSMs (densest scans)
-        n_original_psms = nrow(file_psms)
-
-        if n_original_psms > params.max_psms_for_huber
-            # Count PSMs per scan (sort=false for efficiency)
-            psm_counts = combine(
-                groupby(file_psms, :scan_idx, sort=false),
-                nrow => :n_psms
-            )
-
-            # Sort scans by PSM count (descending) - densest scans first
-            sort!(psm_counts, :n_psms, rev=true)
-
-            # Select scans until we reach max_psms_for_huber
-            scans_to_keep = Set{UInt32}()
-            total_psms = 0
-
-            for row in eachrow(psm_counts)
-                push!(scans_to_keep, row.scan_idx)
-                total_psms += row.n_psms
-                if total_psms >= params.max_psms_for_huber
-                    break
-                end
-            end
-
-            # Filter PSMs to selected scans
-            file_psms = filter(row -> row.scan_idx in scans_to_keep, file_psms)
-        end
-
-        isempty(file_psms) && return results
-
-        # Create scan/precursor set and scan indices
-        prec_set = Set(zip(file_psms[!, :precursor_idx], file_psms[!, :scan_idx]))
-        scan_idxs = Set(file_psms[!, :scan_idx])
-        
-        # Create scan mapping
-        scan_to_prec = get_scan_precursor_mapping(file_psms)
-        
-        # Perform Huber tuning search
-        tuning_results = perform_huber_search(
-            spectra,
-            scan_to_prec,
-            #scan_idxs,
-            #prec_set,
-            search_context,
-            params,
-            ms_file_idx
-        )
-        
-        push!(results.tuning_psms, tuning_results)
-        
-    catch e
-        # Handle failures gracefully using helper function
-        handle_search_error!(search_context, ms_file_idx, "HuberTuningSearch", e, createFallbackResults!, results)
-    end
-    
+    # Bypass: no first-pass PSMs available for Huber tuning
     return results
 end
 
@@ -287,36 +219,11 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:HuberTuningSearchParameters}
     
-    if params.huber_override_bool==true
-        default_delta = params.huber_override_delta
-        results.huber_delta[] = default_delta
-        setHuberDelta!(search_context, default_delta)
-        return 
-    end
-    try
-        # Combine all tuning PSMs
-        all_psms = vcat(results.tuning_psms...)
-
-        # Process results to get optimal δ
-        optimal_delta = estimate_optimal_delta(
-            all_psms,
-            params.delta_grid,
-            params.min_pct_diff
-        )
-        search_context.deconvolution_stop_tolerance[] = Float32(quantile(all_psms[!,:weight], 0.01)/100000)
-        # Store results
-        if params.huber_override_bool #If overriding the fit
-            optimal_delta = params.huber_override_delta
-        end
-        results.huber_delta[] = optimal_delta
-        setHuberDelta!(search_context, optimal_delta)
-        
-    catch e
-        @user_warn "Failed to determine optimal Huber delta, using default" exception=e
-        default_delta = params.huber_override_delta
-        results.huber_delta[] = default_delta
-        setHuberDelta!(search_context, default_delta)
-    end
+    # Bypass: hardcode large delta (effectively no Huber clipping)
+    bypass_delta = Float32(1e6)
+    results.huber_delta[] = bypass_delta
+    setHuberDelta!(search_context, bypass_delta)
+    search_context.deconvolution_stop_tolerance[] = Float32(1e-6)
 end
 
 function reset_results!(::HuberTuningSearchResults)

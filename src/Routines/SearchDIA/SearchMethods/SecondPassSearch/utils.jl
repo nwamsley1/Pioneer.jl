@@ -126,6 +126,219 @@ function perform_second_pass_search(
 end
 
 """
+    perform_second_pass_search(spectra, scan_to_prec_idx, precursors_passed,
+                             search_context, params, ms_file_idx, ::MS2CHROM)
+
+Execute second pass search using pre-computed fragment index matches
+instead of RT index. Each scan has its own precursor list.
+"""
+function perform_second_pass_search(
+    spectra::MassSpecData,
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    search_context::SearchContext,
+    params::SecondPassSearchParameters,
+    ms_file_idx::Int64,
+    ::MS2CHROM
+)
+    thread_tasks = partition_scans(spectra, Threads.nthreads())
+
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin
+            thread_id = first(thread_task)
+            search_data = getSearchData(search_context)[thread_id]
+
+            return process_scans_fragindex!(
+                last(thread_task),
+                spectra,
+                scan_to_prec_idx,
+                precursors_passed,
+                search_context,
+                search_data,
+                params,
+                ms_file_idx
+            )
+        end
+    end
+
+    results = Vector{DataFrame}(undef, length(tasks))
+    for (i, t) in enumerate(tasks)
+        try
+            results[i] = fetch(t)
+        catch e
+            bt = catch_backtrace()
+            @user_error "SecondPassSearch (fragindex) task $(i) failed"
+            @user_error sprint(showerror, e, bt)
+            rethrow(e)
+        end
+    end
+    return vcat(results...)
+end
+
+"""
+    process_scans_fragindex!(scan_range, spectra, scan_to_prec_idx, precursors_passed,
+                            search_context, search_data, params, ms_file_idx)
+
+Process scans using fragment index matches. Each scan gets its own precursor list
+from scan_to_prec_idx, eliminating the RT-based caching optimization.
+"""
+function process_scans_fragindex!(
+    scan_range::Vector{Int64},
+    spectra::MassSpecData,
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+    precursors_passed::Vector{UInt32},
+    search_context::SearchContext,
+    search_data::SearchDataStructures,
+    params::SecondPassSearchParameters,
+    ms_file_idx::Int64
+)
+    # Get working arrays
+    Hs = getHs(search_data)
+    weights = getTempWeights(search_data)
+    precursor_weights = getPrecursorWeights(search_data)
+    residuals = getResiduals(search_data)
+    last_val = 0
+    cycle_idx = 0
+
+    nce_model = getNceModel(search_context, ms_file_idx)
+    precursors = getPrecursors(getSpecLib(search_context))
+
+    for scan_idx in scan_range
+        ((scan_idx < 1) || scan_idx > length(spectra)) && continue
+        msn = getMsOrder(spectra, scan_idx)
+        if msn < 2
+            cycle_idx += 1
+        end
+        msn ∉ params.spec_order && continue
+
+        # Skip scans with no fragment index matches
+        ismissing(scan_to_prec_idx[scan_idx]) && continue
+
+        # Select transitions using StandardTransitionSelection with explicit precursor list
+        ion_idx, _ = selectTransitions!(
+            getIonTemplates(search_data),
+            StandardTransitionSelection(),
+            params.prec_estimation,
+            getFragmentLookupTable(getSpecLib(search_context)),
+            nce_model,
+            scan_to_prec_idx[scan_idx],
+            precursors_passed,
+            getMz(precursors),
+            getCharge(precursors),
+            getSulfurCount(precursors),
+            getIrt(precursors),
+            getIsoSplines(search_data),
+            getQuadTransmissionFunction(
+                getQuadTransmissionModel(search_context, ms_file_idx),
+                getCenterMz(spectra, scan_idx),
+                getIsolationWidthMz(spectra, scan_idx)
+            ),
+            getPrecursorTransmission(search_data),
+            getIsotopes(search_data),
+            params.n_frag_isotopes,
+            params.max_frag_rank,
+            Float32(0.0),       # iRT value (not used for filtering)
+            Float32(1e10),      # iRT_tol = effectively infinite (no RT filtering)
+            (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
+            isotope_err_bounds = params.isotope_err_bounds,
+            block_size = 10000
+        )
+
+        ion_idx < 2 && continue
+
+        # Match peaks
+        nmatches, nmisses = matchPeaks!(
+            getIonMatches(search_data),
+            getIonMisses(search_data),
+            getIonTemplates(search_data),
+            ion_idx,
+            getMzArray(spectra, scan_idx),
+            getIntensityArray(spectra, scan_idx),
+            getMassErrorModel(search_context, ms_file_idx),
+            getHighMz(spectra, scan_idx),
+            UInt32(scan_idx),
+            UInt32(ms_file_idx)
+        )
+
+        nmatches ≤ 2 && continue
+
+        # Build design matrix
+        buildDesignMatrix!(
+            Hs,
+            getIonMatches(search_data),
+            getIonMisses(search_data),
+            nmatches,
+            nmisses,
+            getIdToCol(search_data)
+        )
+
+        # Handle weights
+        if getIdToCol(search_data).size > length(weights)
+            resize_arrays!(search_data, weights)
+        end
+
+        initialize_weights!(search_data, weights, precursor_weights)
+
+        # Solve deconvolution
+        initResiduals!(residuals, Hs, weights)
+        solveHuber!(
+            Hs,
+            residuals,
+            weights,
+            getHuberDelta(search_context),
+            params.lambda,
+            params.max_iter_newton,
+            params.max_iter_bisection,
+            params.max_iter_outer,
+            search_context.deconvolution_stop_tolerance[],
+            search_context.deconvolution_stop_tolerance[],
+            params.max_diff,
+            params.reg_type
+        )
+
+        # Update precursor weights
+        update_precursor_weights!(search_data, weights, precursor_weights)
+
+        # Score PSMs
+        getDistanceMetrics(weights, residuals, Hs, getComplexSpectralScores(search_data))
+
+        ScoreFragmentMatches!(
+            getComplexUnscoredPsms(search_data),
+            getIdToCol(search_data),
+            getIonMatches(search_data),
+            nmatches,
+            getMassErrorModel(search_context, ms_file_idx),
+            last(params.min_topn_of_m)
+        )
+
+        last_val = Score!(
+            getComplexScoredPsms(search_data),
+            getComplexUnscoredPsms(search_data),
+            getComplexSpectralScores(search_data),
+            weights,
+            getIdToCol(search_data),
+            cycle_idx,
+            nmatches/(nmatches + nmisses),
+            last_val,
+            Hs.n,
+            Float32(sum(getIntensityArray(spectra, scan_idx))),
+            scan_idx;
+            min_spectral_contrast = params.min_spectral_contrast,
+            min_log2_matched_ratio = params.min_log2_matched_ratio,
+            min_y_count = params.min_y_count,
+            min_frag_count = params.min_frag_count,
+            max_best_rank = params.max_best_rank,
+            min_topn = first(params.min_topn_of_m),
+            block_size = 500000
+        )
+
+        # Reset arrays
+        reset_arrays!(search_data, Hs)
+    end
+    return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
+end
+
+"""
     process_scans!(scan_range::Vector{Int64}, spectra::MassSpecData,
                   rt_index::retentionTimeIndex, search_context::SearchContext,
                   search_data::SearchDataStructures, params::SecondPassSearchParameters,

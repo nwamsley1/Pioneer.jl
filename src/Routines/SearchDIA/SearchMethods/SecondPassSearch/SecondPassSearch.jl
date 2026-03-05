@@ -306,89 +306,27 @@ function process_file!(
     if check_and_skip_failed_file(search_context, ms_file_idx, "SecondPassSearch")
         return results  # Return early with unchanged results
     end
-    
-    try
-        # Get RT index
-        rt_index = buildRtIndex(
-            DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx))),
-            bin_rt_size = 0.1)
 
-        # Perform second pass search
+    try
+        # Load fragment index mapping instead of RT index
+        frag_match_path = getFragmentIndexMatches(getMSData(search_context), ms_file_idx)
+        scan_to_prec_idx, precursors_passed = load_fragment_index_matches(
+            frag_match_path, length(spectra)
+        )
+
+        # Perform second pass search using fragment index matches
         psms = perform_second_pass_search(
             spectra,
-            rt_index,
+            scan_to_prec_idx,
+            precursors_passed,
             search_context,
             params,
             ms_file_idx,
             MS2CHROM()
         )
-        if params.ms1_scoring
-            precursors_passing = unique(psms[!,:precursor_idx])
 
-            # Check if we have any passing precursors for MS1 scoring
-            if !isempty(precursors_passing)
-                precursors = getPrecursors(getSpecLib(search_context));
-                seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
-                pids = [pid for pid in precursors_passing]
-                pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
-                pmz = [getMz(precursors)[pid] for pid in precursors_passing]
-                isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
-                precursors_passing = Set(precursors_passing)
-                # Perform MS1 search (diagnostic timing)
-                ms1_psms = perform_second_pass_search(
-                    spectra,
-                    rt_index,
-                    search_context,
-                    params,
-                    ms_file_idx,
-                    precursors_passing,
-                    isotopes_dict,
-                    MS1CHROM()
-                )
-                pair_idx = getPairIdx(precursors);
-                is_decoy = getIsDecoy(precursors);
-                partner_idx = getPartnerPrecursorIdx(precursors);
-                ms1_psms[!,:pair_idx] = [pair_idx[pid] for pid in ms1_psms[!,:precursor_idx]]
-                ms1_psms_partner = copy(ms1_psms)
-                for i in range(1, size(ms1_psms_partner, 1))
-                    p = partner_idx[ms1_psms_partner[i,:precursor_idx]]
-                    if !ismissing(p)
-                        ms1_psms_partner[i,:precursor_idx] = p
-                    else
-                        ms1_psms_partner[i,:precursor_idx] = 0
-                    end
-                end
-                filter!(x->!iszero(x.precursor_idx), ms1_psms_partner);
-                ms1_psms = vcat([ms1_psms, ms1_psms_partner]...)
-            else
-                # No passing precursors for MS1 scoring
-                @debug_l2 "No passing precursors found for MS1 scoring in file $ms_file_idx. Skipping MS1 isotope calculations."
-                ms1_psms = DataFrame()
-            end
-            #rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
-            #ms1_psms[!,:irt] = zeros(Float32, size(ms1_psms, 1))
-            #ms1_psms[!,:pred_irt] = zeros(Float32, size(ms1_psms, 1))
-            #for i in range(1, size(ms1_psms, 1))
-            #    ms1_psms[i,:irt] = rt_irt_model(getRetentionTime(spectra, ms1_psms[i,:scan_idx]))
-            #    ms1_psms[i,:pred_irt] = getIrt(precursors)[ms1_psms[i,:precursor_idx]]
-            #end
-
-            #ms1_psms[!,:is_decoy_] = [is_decoy[pid] for pid in ms1_psms[!,:precursor_idx]]
-            #end
-                #pprof();
-            #end
-            #println("times ")
-            #println("time.time ", times.time)
-            #println("times.bytes ", times.bytes)
-            #println("times.gctime ", times.gctime)
-            #println("times.gcstats", times.gcstats)
-            #println("loc_conflicts ", times.lock_conflicts)
-            #println("compile_time ", times.compile_time)
-            #println("recompile_time ", times.recompile_time)
-            #println("\n")
-        else
-            ms1_psms = DataFrame()
-        end
+        # MS1 scoring temporarily disabled in bypass mode
+        ms1_psms = DataFrame()
 
         results.psms[] = psms
         results.ms1_psms[] = ms1_psms

@@ -105,6 +105,7 @@ struct ArrowTableReference{N} <: MassSpecDataReference
     file_paths::NTuple{N, String}
     file_id_to_name::NTuple{N, String}
     first_pass_psms::Vector{String}
+    fragment_index_matches::Vector{String}
     second_pass_psms::Vector{String}
     passing_psms::Vector{String}
     passing_proteins::Vector{String}
@@ -123,8 +124,9 @@ struct ArrowTableReference{N} <: MassSpecDataReference
         end
         n = length(file_paths)
         new{n}(
-            NTuple{n, String}(file_paths), 
+            NTuple{n, String}(file_paths),
             NTuple{n, String}(file_id_to_name),
+            fill("", n),
             fill("", n),
             fill("", n),
             fill("", n),
@@ -142,7 +144,8 @@ struct ArrowTableReference{N} <: MassSpecDataReference
         end
         n = length(file_paths)
         new{n}(
-            NTuple{n, String}(file_paths...), 
+            NTuple{n, String}(file_paths...),
+            fill("", n),
             fill("", n),
             fill("", n),
             fill("", n),
@@ -315,6 +318,7 @@ end
 # Getter methods
 getFileIdToName(ref::ArrowTableReference, index::Int) = ref.file_id_to_name[index]
 getFirstPassPsms(ref::ArrowTableReference, index::Int) = ref.first_pass_psms[index]
+getFragmentIndexMatches(ref::ArrowTableReference, index::Int) = ref.fragment_index_matches[index]
 getSecondPassPsms(ref::ArrowTableReference, index::Int) = ref.second_pass_psms[index]
 
 """
@@ -347,6 +351,7 @@ getFilePaths(ref::ArrowTableReference) = ref.file_paths
 
 getFileIdToName(ref::ArrowTableReference) = ref.file_id_to_name
 getFirstPassPsms(ref::ArrowTableReference) = ref.first_pass_psms
+getFragmentIndexMatches(ref::ArrowTableReference) = ref.fragment_index_matches
 getSecondPassPsms(ref::ArrowTableReference) = ref.second_pass_psms
 getPassingPsms(ref::ArrowTableReference) = ref.passing_psms
 getPassingProteins(ref::ArrowTableReference) = ref.passing_proteins
@@ -356,6 +361,7 @@ getRtIndex(ref::ArrowTableReference) = ref.rt_index_paths
 # Setter methods
 setFileIdToName!(ref::ArrowTableReference, index::Int, value::String) = ref.file_id_to_name[index] = value
 setFirstPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.first_pass_psms[index] = value
+setFragmentIndexMatches!(ref::ArrowTableReference, index::Int, value::String) = ref.fragment_index_matches[index] = value
 setSecondPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.second_pass_psms[index] = value
 setPassingPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_psms[index] = value
 setPassingProteins!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_proteins[index] = value
