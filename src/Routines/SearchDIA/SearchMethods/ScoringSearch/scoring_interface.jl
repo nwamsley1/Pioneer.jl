@@ -225,273 +225,15 @@ At no point is more than one file's data in memory (beyond the bounded training 
 """
 function apply_mbr_filter_and_aggregate_per_file!(
     refs::Vector{PSMFileReference},
-    valid_file_indices::Vector{Int64},
-    params
+    ::Vector{Int64},
+    _
 )
-    has_mbr = false
-    # Quick check: does the first non-empty file have MBR columns?
-    for ref in refs
-        tbl = Arrow.Table(file_path(ref))
-        if length(tbl) > 0
-            has_mbr = hasproperty(tbl, :MBR_boosted_trace_prob)
-            break
-        end
-    end
-
-    if !has_mbr
-        # No MBR: just aggregate per-file and return
-        for ref in refs
-            df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-            _aggregate_trace_to_precursor_probs!(df, false)
-            write_arrow_file(ref, df)
-        end
-        return nothing
-    end
-
-    # Training columns — only what select_mbr_features + model training actually need
-    training_columns = [
-        :trace_prob, :irt_error, :ms1_ms2_rt_diff,
-        :MBR_max_pair_prob, :MBR_best_irt_diff, :MBR_rv_coefficient,
-        :MBR_log2_weight_ratio, :MBR_log2_explained_ratio,
-        :MBR_boosted_trace_prob,
-        :cv_fold,
-        :target, :decoy, :MBR_is_best_decoy
-    ]
-
-    max_candidates = params.max_mbr_training_candidates
-
-    #--------------------------------------------------------------
-    # Phase 1: SAMPLE — stream files, reservoir-sample candidates
-    #--------------------------------------------------------------
-    sample_df = DataFrame()
-    n_candidates_total = 0
-    rng = MersenneTwister(1844)
-
+    # Match-between-runs was removed; always do standard per-file precursor aggregation.
     for ref in refs
         df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-        mask = hasproperty(df, :MBR_transfer_candidate) ? df.MBR_transfer_candidate : falses(nrow(df))
-        n_cand = sum(mask)
-        n_cand == 0 && continue
-        n_candidates_total += n_cand
-
-        cols_available = filter(c -> hasproperty(df, c), training_columns)
-        file_candidates = df[mask, cols_available]
-
-        if nrow(sample_df) == 0
-            sample_df = file_candidates
-        else
-            append!(sample_df, file_candidates)
-        end
-        # Downsample if over budget
-        if nrow(sample_df) > max_candidates
-            keep = randperm(rng, nrow(sample_df))[1:max_candidates]
-            sample_df = sample_df[sort(keep), :]
-        end
-    end
-
-    # Handle case with no MBR candidates at all
-    if n_candidates_total == 0
-        @user_warn "No MBR transfer candidates found - returning original probabilities unchanged"
-        for ref in refs
-            df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-            df[!, :MBR_candidate] = falses(nrow(df))
-            df[!, :MBR_transfer_q_value] = Vector{Union{Missing, Float32}}(missing, nrow(df))
-            _aggregate_trace_to_precursor_probs!(df, true)
-            write_arrow_file(ref, df)
-        end
-        return nothing
-    end
-
-    #--------------------------------------------------------------
-    # Phase 2: TRAIN — per-fold models on bounded sample
-    #--------------------------------------------------------------
-    sample_labels = (
-        (sample_df.target .& coalesce.(sample_df.MBR_is_best_decoy, false)) .|
-        (sample_df.decoy .& .!coalesce.(sample_df.MBR_is_best_decoy, false))
-    )
-
-    feature_cols = select_mbr_features(sample_df)
-    feature_data = sample_df[:, feature_cols]
-    folds = sort(unique(sample_df.cv_fold))
-
-    # Train Probit: test_fold => (model, valid_cols)
-    probit_models = Dict{eltype(folds), Any}()
-    probit_valid_cols = Dict{eltype(folds), Vector{Symbol}}()
-    probit_ok = true
-    try
-        for fold in folds
-            train_mask = sample_df.cv_fold .!= fold
-            model, vcols = train_probit_model_df(feature_data[train_mask, :], sample_labels[train_mask], params)
-            probit_models[fold] = model
-            probit_valid_cols[fold] = vcols
-        end
-    catch e
-        @user_warn "Probit training failed: $(typeof(e)) — $(e)"
-        probit_ok = false
-    end
-
-    # Train LightGBM: test_fold => booster
-    lgbm_models = Dict{eltype(folds), Any}()
-    lgbm_ok = true
-    try
-        for fold in folds
-            train_mask = sample_df.cv_fold .!= fold
-            lgbm_models[fold] = train_lightgbm_model_df(feature_data[train_mask, :], sample_labels[train_mask], params)
-        end
-    catch e
-        @user_warn "LightGBM training failed: $(typeof(e)) — $(e)"
-        lgbm_ok = false
-    end
-
-    sample_df = nothing; feature_data = nothing  # free training data
-
-    #--------------------------------------------------------------
-    # Phase 3: EVAL — predict all candidates, compute FTR thresholds
-    #--------------------------------------------------------------
-    method_names = String["Threshold"]
-    probit_ok && push!(method_names, "Probit")
-    lgbm_ok && push!(method_names, "LightGBM")
-    method_temp_refs = Dict(m => PSMFileReference[] for m in method_names)
-
-    # Single pass through all files — predict candidates with all methods
-    for ref in refs
-        df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-        mask = hasproperty(df, :MBR_transfer_candidate) ? df.MBR_transfer_candidate : falses(nrow(df))
-        n_cand = sum(mask)
-        n_cand == 0 && continue
-
-        cand_indices = findall(mask)
-        cand_features = df[cand_indices, feature_cols]
-
-        is_bad = (
-            (df.target[cand_indices] .& coalesce.(df.MBR_is_best_decoy[cand_indices], false)) .|
-            (df.decoy[cand_indices] .& .!coalesce.(df.MBR_is_best_decoy[cand_indices], false))
-        )
-
-        for method_name in method_names
-            scores = if method_name == "Threshold"
-                Float64.(df.MBR_boosted_trace_prob[cand_indices])
-            elseif method_name == "Probit"
-                out = zeros(Float64, n_cand)
-                for fold in folds
-                    fm = df.cv_fold[cand_indices] .== fold
-                    any(fm) || continue
-                    out[fm] = predict_probit_model_df(probit_models[fold], cand_features[fm, :], probit_valid_cols[fold])
-                end
-                out
-            else  # LightGBM
-                out = zeros(Float64, n_cand)
-                for fold in folds
-                    fm = df.cv_fold[cand_indices] .== fold
-                    any(fm) || continue
-                    out[fm] = lightgbm_predict(lgbm_models[fold], cand_features[fm, :])
-                end
-                out
-            end
-
-            # Sort by score desc, write temp Arrow
-            perm = sortperm(scores; rev=true)
-            temp_path = tempname() * "_mbr_ftr_$(method_name).arrow"
-            writeArrow(temp_path, DataFrame(score=scores[perm], is_bad_transfer=is_bad[perm]))
-            tref = PSMFileReference(temp_path)
-            mark_sorted!(tref, :score)
-            push!(method_temp_refs[method_name], tref)
-        end
-    end
-
-    # For each method: merge → stream FTR → threshold + n_passing
-    method_results = Dict{String, Tuple{Float64, Int}}()
-    for method_name in method_names
-        trefs = method_temp_refs[method_name]
-        if isempty(trefs)
-            method_results[method_name] = (typemax(Float64), 0)
-            continue
-        end
-        merged_path = tempname() * "_mbr_ftr_merged_$(method_name).arrow"
-        stream_sorted_merge(trefs, merged_path, :score; reverse=true)
-        GC.gc(false)
-        for tref in trefs
-            safeRm(file_path(tref), nothing; force=true)
-        end
-        threshold, n_passing = _compute_ftr_threshold_streaming(
-            merged_path, Float64(params.max_MBR_false_transfer_rate))
-        method_results[method_name] = (threshold, n_passing)
-    end
-
-    # Select best method (most passing candidates)
-    best_method = method_names[argmax([method_results[m][2] for m in method_names])]
-    best_threshold = method_results[best_method][1]
-
-    @user_info "MBR Method Selection:"
-    for method_name in method_names
-        _, n_pass = method_results[method_name]
-        marker = method_name == best_method ? " ✓" : ""
-        @user_info "  $(method_name): $(n_pass)/$(n_candidates_total) pass ($(round(100*n_pass/n_candidates_total, digits=1))%)$marker"
-    end
-
-    #--------------------------------------------------------------
-    # Phase 4: APPLY — re-predict + threshold + aggregate per file
-    #--------------------------------------------------------------
-    for ref in refs
-        df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-        cand_mask = hasproperty(df, :MBR_transfer_candidate) ? df.MBR_transfer_candidate : falses(nrow(df))
-        n_cand = sum(cand_mask)
-
-        if n_cand > 0
-            cand_indices = findall(cand_mask)
-
-            # Re-predict with best method
-            if best_method == "Threshold"
-                for row in cand_indices
-                    if Float64(df.MBR_boosted_trace_prob[row]) < best_threshold
-                        df.MBR_boosted_trace_prob[row] = 0.0f0
-                        df.trace_prob[row] = 0.0f0
-                    end
-                end
-            else
-                cand_features = df[cand_indices, feature_cols]
-                scores = zeros(Float64, n_cand)
-                for fold in folds
-                    fm = df.cv_fold[cand_indices] .== fold
-                    any(fm) || continue
-                    if best_method == "Probit"
-                        scores[fm] = predict_probit_model_df(
-                            probit_models[fold], cand_features[fm, :], probit_valid_cols[fold])
-                    else
-                        scores[fm] = lightgbm_predict(lgbm_models[fold], cand_features[fm, :])
-                    end
-                end
-                for (i, row) in enumerate(cand_indices)
-                    if scores[i] < best_threshold
-                        df.MBR_boosted_trace_prob[row] = 0.0f0
-                        df.trace_prob[row] = 0.0f0
-                    end
-                end
-            end
-
-            # Zero out bad transfers regardless of score
-            for row in cand_indices
-                is_bad = (df.target[row] && coalesce(df.MBR_is_best_decoy[row], false)) ||
-                         (df.decoy[row] && !coalesce(df.MBR_is_best_decoy[row], false))
-                if is_bad
-                    df.MBR_boosted_trace_prob[row] = 0.0f0
-                    df.trace_prob[row] = 0.0f0
-                end
-            end
-
-            # Diagnostic columns
-            df[!, :MBR_candidate] = df.MBR_transfer_candidate
-            df[!, :MBR_transfer_q_value] = Vector{Union{Missing, Float32}}(missing, nrow(df))
-        else
-            df[!, :MBR_candidate] = falses(nrow(df))
-            df[!, :MBR_transfer_q_value] = Vector{Union{Missing, Float32}}(missing, nrow(df))
-        end
-
-        # Precursor aggregation (per-file, no merge needed)
-        _aggregate_trace_to_precursor_probs!(df, true)
+        _aggregate_trace_to_precursor_probs!(df, false)
         write_arrow_file(ref, df)
     end
-
     return nothing
 end
 
@@ -522,7 +264,7 @@ function train_and_evaluate(method::ThresholdFilter, candidate_data::DataFrame, 
     τ = get_ftr_threshold(
         candidate_data[!, score_column],
         candidate_labels,
-        params.max_MBR_false_transfer_rate
+        params.q_value_threshold
     )
 
     # Handle edge case where threshold is infinite (no valid threshold found)
@@ -561,7 +303,7 @@ function train_and_evaluate(method::ProbitFilter, candidate_data::DataFrame, can
         scores = run_cv_training(method, feature_data, candidate_labels, candidate_data.cv_fold, params)
         
         # Calibrate threshold
-        τ = calibrate_ml_threshold(scores, candidate_labels, Float64(params.max_MBR_false_transfer_rate))
+        τ = calibrate_ml_threshold(scores, candidate_labels, Float64(params.q_value_threshold))
         n_passing = sum(scores .>= τ)  # Higher score = better for probit
         
         
@@ -599,7 +341,7 @@ function train_and_evaluate(method::LightGBMFilter, candidate_data::DataFrame, c
         scores = run_cv_training(method, feature_data, candidate_labels, candidate_data.cv_fold, params)
 
         # Calibrate threshold
-        τ = calibrate_ml_threshold(scores, candidate_labels, Float64(params.max_MBR_false_transfer_rate))
+        τ = calibrate_ml_threshold(scores, candidate_labels, Float64(params.q_value_threshold))
         n_passing = sum(scores .>= τ)  # Higher score = better for LightGBM
 
 
@@ -852,19 +594,16 @@ end
 
 Get the standard columns needed for quantification analysis.
 """
-function get_quant_necessary_columns(match_between_runs::Bool)
-    # Get conditional q-value column names
-    qval_cols = get_qval_column_names(match_between_runs)
-
-    base_cols = [
+function get_quant_necessary_columns()
+    return [
         :precursor_idx,
         :global_prob,
         :prec_prob,
         :trace_prob,
-        qval_cols.global_qval,  # Conditional: :MBR_boosted_global_qval or :global_qval
+        :global_qval,
         :run_specific_qval,
         :prec_mz,
-        qval_cols.pep,  # Always :pep but included for consistency
+        :pep,
         :weight,
         :target,
         :rt,
@@ -874,65 +613,22 @@ function get_quant_necessary_columns(match_between_runs::Bool)
         :isotopes_captured,
         :scan_idx,
         :entrapment_group_id,
-        :ms_file_idx
+        :ms_file_idx,
+        :qval
     ]
-
-    if match_between_runs
-        # Add MBR-specific columns including MBR_boosted_qval
-        return vcat(base_cols, [
-            :MBR_boosted_global_prob,
-            :MBR_boosted_prec_prob,
-            :MBR_boosted_trace_prob,
-            :MBR_candidate,
-            :MBR_transfer_q_value,
-            qval_cols.qval  # Add :MBR_boosted_qval
-        ])
-    else
-        # Add standard qval for non-MBR mode
-        return vcat(base_cols, [qval_cols.qval])  # Add :qval
-    end
 end
 
 """
-    get_qval_column_names(match_between_runs::Bool) -> NamedTuple
+    get_qval_column_names() -> NamedTuple
 
-Returns the appropriate q-value column names based on whether MBR is enabled.
-
-# Arguments
-- `match_between_runs::Bool`: Whether match-between-runs (MBR) is enabled
-
-# Returns
-A NamedTuple with fields:
-- `qval::Symbol`: Precursor q-value column name
-- `global_qval::Symbol`: Global precursor q-value column name
-- `pep::Symbol`: PEP column name (always `:pep`)
-
-# Examples
-```julia
-qval_cols = get_qval_column_names(true)  # MBR enabled
-# Returns: (qval = :MBR_boosted_qval, global_qval = :MBR_boosted_global_qval, pep = :pep)
-
-qval_cols = get_qval_column_names(false)  # MBR disabled
-# Returns: (qval = :qval, global_qval = :global_qval, pep = :pep)
-
-# Usage:
-df_filtered = filter(row -> row[qval_cols.qval] < 0.01, df)
-```
+Returns the q-value column names used by the non-MBR scoring pipeline.
 """
-function get_qval_column_names(match_between_runs::Bool)
-    if match_between_runs
-        return (
-            qval = :MBR_boosted_qval,
-            global_qval = :MBR_boosted_global_qval,
-            pep = :pep
-        )
-    else
-        return (
-            qval = :qval,
-            global_qval = :global_qval,
-            pep = :pep
-        )
-    end
+function get_qval_column_names()
+    return (
+        qval = :qval,
+        global_qval = :global_qval,
+        pep = :pep
+    )
 end
 
 """
@@ -1046,11 +742,11 @@ Dictionary + Sidecar Helper Functions for OOM Scoring Pipeline
 ==========================================================#
 
 """
-    build_precursor_global_prob_dicts(refs, sqrt_n_runs, has_mbr, n_precursors)
-    → (global_prob_dict, mbr_global_prob_dict, target_dict)
+    build_precursor_global_prob_dicts(refs, sqrt_n_runs, n_precursors)
+    → (global_prob_dict, target_dict)
 
 Stream per-file to build precursor_idx → global_prob dictionaries.
-Reads only (precursor_idx, prec_prob, [MBR_boosted_prec_prob], target) via mmap
+Reads only (precursor_idx, prec_prob, target) via mmap
 instead of loading all 20+ columns.
 
 `n_precursors` is used for `sizehint!()` pre-allocation of all dictionaries,
@@ -1059,7 +755,6 @@ obtained via `length(getPrecursors(getSpecLib(search_context)))`.
 function build_precursor_global_prob_dicts(
     refs::Vector{PSMFileReference},
     sqrt_n_runs::Int,
-    has_mbr::Bool,
     n_precursors::Int
 )
     # Pre-allocate accumulation dictionaries with known upper bound
@@ -1067,13 +762,6 @@ function build_precursor_global_prob_dicts(
     sizehint!(prob_acc, n_precursors)
     target_dict = Dict{UInt32, Bool}()
     sizehint!(target_dict, n_precursors)
-    mbr_acc = if has_mbr
-        d = Dict{UInt32, Vector{Float32}}()
-        sizehint!(d, n_precursors)
-        d
-    else
-        nothing
-    end
 
     for ref in refs
         tbl = Arrow.Table(file_path(ref))
@@ -1082,17 +770,14 @@ function build_precursor_global_prob_dicts(
         prec_ids = tbl.precursor_idx
         prec_probs = tbl.prec_prob
         targets = tbl.target
-        mbr_probs = has_mbr && hasproperty(tbl, :MBR_boosted_prec_prob) ? tbl.MBR_boosted_prec_prob : nothing
 
         @inbounds for i in 1:n
             pid = prec_ids[i]
             if !haskey(prob_acc, pid)
                 prob_acc[pid] = Float32[]
                 target_dict[pid] = targets[i]
-                has_mbr && mbr_probs !== nothing && (mbr_acc[pid] = Float32[])
             end
             push!(prob_acc[pid], prec_probs[i])
-            has_mbr && mbr_probs !== nothing && push!(mbr_acc[pid], mbr_probs[i])
         end
     end
 
@@ -1103,15 +788,7 @@ function build_precursor_global_prob_dicts(
         global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
     end
 
-    mbr_global_prob_dict = Dict{UInt32, Float32}()
-    if has_mbr && mbr_acc !== nothing
-        sizehint!(mbr_global_prob_dict, length(mbr_acc))
-        for (pid, probs) in mbr_acc
-            mbr_global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
-        end
-    end
-
-    return global_prob_dict, mbr_global_prob_dict, target_dict
+    return global_prob_dict, target_dict
 end
 
 """

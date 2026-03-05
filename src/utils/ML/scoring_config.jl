@@ -45,12 +45,11 @@ struct ScoringConfig{M<:PSMScoringModel, P<:PairingStrategy, T<:TrainingDataStra
 end
 
 """
-    default_scoring_config(; match_between_runs=true, features=Symbol[], hyperparams=Dict())
+    default_scoring_config(; features=Symbol[], hyperparams=Dict())
 
 Create default LightGBM scoring configuration.
 
 # Arguments
-- `match_between_runs::Bool`: Whether to enable MBR features
 - `features::Vector{Symbol}`: Base feature set
 - `hyperparams::Dict{Symbol,Any}`: LightGBM hyperparameters
 
@@ -58,22 +57,12 @@ Create default LightGBM scoring configuration.
 - `ScoringConfig`: Configured scoring configuration
 """
 function default_scoring_config(;
-    match_between_runs::Bool = true,
     features::Vector{Symbol} = Symbol[],
     hyperparams::Dict{Symbol,Any} = Dict{Symbol,Any}(),
     max_q_value::Float32 = 0.01f0,
     min_pep_threshold::Float32 = 0.90f0
 )
-    # Default MBR features
-    mbr_features = match_between_runs ? [
-        :MBR_max_pair_prob,
-        :MBR_log2_weight_ratio,
-        :MBR_log2_explained_ratio,
-        :MBR_rv_coefficient,
-        :MBR_is_missing
-    ] : Symbol[]
-
-    # Separate base features from MBR features
+    # Match-between-runs has been removed; ignore legacy MBR feature names.
     base_features = [f for f in features if !startswith(String(f), "MBR_")]
 
     # Get iteration scheme from hyperparams
@@ -83,9 +72,9 @@ function default_scoring_config(;
         LightGBMScorer(hyperparams),
         RandomPairing(),
         QValueNegativeMining(max_q_value, min_pep_threshold),
-        IterativeFeatureSelection(base_features, mbr_features, length(iter_scheme)),
+        IterativeFeatureSelection(base_features, Symbol[], length(iter_scheme)),
         FixedIterationScheme(iter_scheme),
-        match_between_runs ? PairBasedMBR(max_q_value) : NoMBR()
+        NoMBR()
     )
 end
 

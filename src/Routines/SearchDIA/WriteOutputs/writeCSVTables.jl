@@ -133,8 +133,7 @@ function writePrecursorCSV(
     long_precursors_path::String,
     file_names::Vector{String},
     normalized::Bool,
-    proteins::LibraryProteins,
-    match_between_runs::Bool;
+    proteins::LibraryProteins;
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
@@ -188,9 +187,8 @@ function writePrecursorCSV(
     if isfile(wide_precursors_arrow_path)
         safeRm(wide_precursors_arrow_path, nothing)
     end
-    # Get conditional q-value column names based on MBR mode
-    global_qval_col = match_between_runs ? :MBR_boosted_global_qval : :global_qval
-    qval_col = match_between_runs ? :MBR_boosted_qval : :qval
+    global_qval_col = :global_qval
+    qval_col = :qval
 
     wide_columns = ["species"
     "gene_names"
@@ -203,7 +201,7 @@ function writePrecursorCSV(
     "isotopic_mods"
     "prec_mz"
     "global_score"
-    String(global_qval_col)  # Conditional: MBR_boosted_global_qval or global_qval
+    String(global_qval_col)
     "use_for_protein_quant"
     "precursor_idx"
     "target"
@@ -249,11 +247,9 @@ function writePrecursorCSV(
         :missed_cleavage,
         :global_score,
         :score,
-        global_qval_col,  # Conditional: MBR_boosted_global_qval or global_qval
-        qval_col,         # Conditional: MBR_boosted_qval or qval
+        global_qval_col,
+        qval_col,
         :pep,
-        :MBR_candidate,
-        :MBR_transfer_q_value,
         :peak_area,
         :peak_area_normalized,
         :points_integrated,
@@ -323,7 +319,7 @@ function writePrecursorCSV(
     return wide_precursors_arrow_path
 end
 """
-    writePrecursorCSV_chunked(chunk_refs, out_dir, file_names, normalized, proteins, match_between_runs; ...)
+    writePrecursorCSV_chunked(chunk_refs, out_dir, file_names, normalized, proteins; ...)
 
 Chunked version of writePrecursorCSV that processes merge chunks one at a time,
 keeping memory bounded to ~1 chunk (~1 GB) instead of loading the full precursors table.
@@ -334,8 +330,7 @@ function writePrecursorCSV_chunked(
     out_dir::String,
     file_names::Vector{String},
     normalized::Bool,
-    proteins::LibraryProteins,
-    match_between_runs::Bool;
+    proteins::LibraryProteins;
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
@@ -390,8 +385,8 @@ function writePrecursorCSV_chunked(
     isfile(wide_precursors_arrow_path) && safeRm(wide_precursors_arrow_path, nothing)
 
     # Column configuration
-    global_qval_col = match_between_runs ? :MBR_boosted_global_qval : :global_qval
-    qval_col = match_between_runs ? :MBR_boosted_qval : :qval
+    global_qval_col = :global_qval
+    qval_col = :qval
 
     wide_columns = ["species"
     "gene_names"
@@ -431,8 +426,6 @@ function writePrecursorCSV_chunked(
         global_qval_col,
         qval_col,
         :pep,
-        :MBR_candidate,
-        :MBR_transfer_q_value,
         :peak_area,
         :peak_area_normalized,
         :points_integrated,

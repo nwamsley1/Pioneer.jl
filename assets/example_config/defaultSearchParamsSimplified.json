@@ -18,7 +18,6 @@
         "scoring": {
             "q_value_threshold": 0.01
         },
-        "match_between_runs": true,
         "ms1_quant": false
     },
     "first_search": {

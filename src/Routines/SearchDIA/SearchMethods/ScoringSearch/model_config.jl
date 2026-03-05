@@ -101,7 +101,7 @@ const ADVANCED_FEATURE_SET = [
     :percent_theoretical_ignored,
     :scribe,
     :max_scribe
-    # MBR features added automatically if match_between_runs=true
+    # Match-between-runs features are no longer used.
 ]
 
 const REDUCED_FEATURE_SET = [
@@ -127,7 +127,7 @@ const REDUCED_FEATURE_SET = [
     :big_iso_ms1, :rt_max_intensity_ms1,
     :rt_diff_max_intensity_ms1,
     :ms1_features_missing
-    # MBR features added automatically if match_between_runs=true
+    # Match-between-runs features are no longer used.
 ]
 
 #=
@@ -146,7 +146,7 @@ const PROBIT_FEATURE_SET = [
     :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
     # MS1 features
     :weight_ms1, :gof_ms1, :error_ms1, :ms1_features_missing
-    # MBR features added automatically if match_between_runs=true
+    # Match-between-runs features are no longer used.
 ]
 =#
 
@@ -439,14 +439,13 @@ end
 #############################################################################
 
 """
-    build_scoring_config(model_config::ModelConfig, match_between_runs, max_q_value, min_pep_threshold) -> ScoringConfig
+    build_scoring_config(model_config::ModelConfig, max_q_value, min_pep_threshold) -> ScoringConfig
 
 Build a ScoringConfig from a ModelConfig and parameters.
 This is the bridge between the existing ModelConfig system and the new trait-based system.
 
 # Arguments
 - `model_config::ModelConfig`: Model configuration from model comparison
-- `match_between_runs::Bool`: Whether MBR is enabled
 - `max_q_value::Float32`: Q-value threshold for training
 - `min_pep_threshold::Float32`: PEP threshold for negative mining
 
@@ -455,7 +454,6 @@ This is the bridge between the existing ModelConfig system and the new trait-bas
 """
 function build_scoring_config(
     model_config::ModelConfig,
-    match_between_runs::Bool,
     max_q_value::Float32,
     min_pep_threshold::Float32
 )
@@ -468,15 +466,8 @@ function build_scoring_config(
         error("Unsupported model type: $(model_config.model_type)")
     end
 
-    # Get features (filter MBR features from base)
+    # Match-between-runs has been removed; ignore any legacy MBR feature names.
     base_features = [f for f in model_config.features if !startswith(String(f), "MBR_")]
-    mbr_features = match_between_runs ? [
-        :MBR_max_pair_prob,
-        :MBR_log2_weight_ratio,
-        :MBR_log2_explained_ratio,
-        :MBR_rv_coefficient,
-        :MBR_is_missing
-    ] : Symbol[]
 
     # Get iteration scheme
     iter_scheme = get(model_config.hyperparams, :iter_scheme, [100, 200, 200])
@@ -485,8 +476,8 @@ function build_scoring_config(
         model,
         RandomPairing(),
         QValueNegativeMining(max_q_value, min_pep_threshold),
-        IterativeFeatureSelection(base_features, mbr_features, length(iter_scheme)),
+        IterativeFeatureSelection(base_features, Symbol[], length(iter_scheme)),
         FixedIterationScheme(iter_scheme),
-        match_between_runs ? PairBasedMBR(max_q_value) : NoMBR()
+        NoMBR()
     )
 end

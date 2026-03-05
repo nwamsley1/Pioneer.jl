@@ -54,12 +54,9 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     precursor_q_value_interpolation_points_per_bin::Int64
     pg_prob_spline_points_per_bin::Int64  # Added based on original struct
     pg_q_value_interpolation_points_per_bin::Int64  # Added based on original struct
-    match_between_runs::Bool
     min_peptides::Int64
     max_q_value_lightgbm_rescore::Float32
-    max_q_value_mbr_itr::Float32
     min_PEP_neg_threshold_itr::Float32
-    max_MBR_false_transfer_rate::Float32
     q_value_threshold::Float32
     isotope_tracetype::I
 
@@ -78,7 +75,6 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
 
     # OOM scoring parameters
     force_oom::Bool
-    max_mbr_training_candidates::Int64
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
@@ -100,12 +96,9 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Int64(ml_params.interpolation_points),
             Int64(ml_params.spline_points),        # Using same value for protein groups
             Int64(ml_params.interpolation_points), # Using same value for protein groups
-            Bool(global_params.match_between_runs),
             Int64(protein_inference_params.min_peptides),
             Float32(global_params.scoring.q_value_threshold),
-            Float32(ml_params.max_q_value_mbr_itr),
             Float32(ml_params.min_PEP_neg_threshold_itr),
-            Float32(global_params.scoring.q_value_threshold),
             Float32(global_params.scoring.q_value_threshold),
             isotope_trace_type,
 
@@ -123,8 +116,7 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Bool(global_params.ms1_scoring),
 
             # OOM scoring parameters
-            Bool(get(ml_params, :force_oom, false)),
-            Int64(get(ml_params, :max_mbr_training_candidates, 1_000_000))
+            Bool(get(ml_params, :force_oom, false))
         )
     end
 end
@@ -185,10 +177,8 @@ Q-value Spline Wrapper Functions
 Create global precursor q-value spline (unique precursors only).
 """
 function get_precursor_global_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
-    # Use MBR-boosted scores when MBR is enabled
-    score_col = params.match_between_runs ? :MBR_boosted_global_prob : :global_prob
     return get_qvalue_spline(
-        merged_path, score_col, true;
+        merged_path, :global_prob, true;
         min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
     )
@@ -198,10 +188,8 @@ end
 Create experiment-wide precursor q-value spline (all precursors).
 """
 function get_precursor_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
-    # Use MBR-boosted scores when MBR is enabled
-    score_col = params.match_between_runs ? :MBR_boosted_prec_prob : :prec_prob
     return get_qvalue_spline(
-        merged_path, score_col, false;
+        merged_path, :prec_prob, false;
         min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
     )
@@ -211,10 +199,8 @@ end
 Create experiment-wide precursor PEP interpolation (all precursors).
 """
 function get_precursor_pep_interpolation(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
-    # Use MBR-boosted scores when MBR is enabled
-    score_col = params.match_between_runs ? :MBR_boosted_prec_prob : :prec_prob
     return get_pep_interpolation(
-        merged_path, score_col;
+        merged_path, :prec_prob;
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
     )
 end
@@ -321,9 +307,7 @@ function summarize_results!(
                 second_pass_folder,
                 valid_fold_paths,
                 getPrecursors(getSpecLib(search_context)),
-                params.match_between_runs,
                 params.max_q_value_lightgbm_rescore,
-                params.max_q_value_mbr_itr,
                 params.min_PEP_neg_threshold_itr,
                 max_psms,
                 params.n_quantile_bins,
@@ -397,7 +381,7 @@ function summarize_results!(
         # Step 4: Process Quantification Results
         #@debug_l1 "Step 4: Processing quantification results..."
         step4_time = @elapsed begin
-            necessary_cols = get_quant_necessary_columns(params.match_between_runs)
+            necessary_cols = get_quant_necessary_columns()
 
             # Note: Removed sorting by global_prob - it will be calculated in Step 5
             quant_processing_pipeline = TransformPipeline() |>
@@ -420,23 +404,21 @@ function summarize_results!(
         step5_10_time = @elapsed begin
             sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
             fdr_scale = getLibraryFdrScaleFactor(search_context)
-            has_mbr = params.match_between_runs
 
             # Pre-allocation size from spectral library
             n_precursors = length(getPrecursors(getSpecLib(search_context)))
 
             # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
-            global_prob_dict, mbr_global_prob_dict, target_dict =
-                build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, has_mbr, n_precursors)
+            global_prob_dict, target_dict =
+                build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
 
             # A2: Compute global q-value dict from global_prob dict (NO file I/O)
-            score_dict_for_qval = has_mbr ? mbr_global_prob_dict : global_prob_dict
-            global_qval_dict = build_global_qval_dict_from_scores(score_dict_for_qval, target_dict, fdr_scale)
+            global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
             results.precursor_global_qval_dict[] = global_qval_dict
 
             # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
-            score_col = has_mbr ? :MBR_boosted_prec_prob : :prec_prob
-            spline_result = build_qvalue_spline_from_refs(filtered_refs, score_col, results.merged_quant_path;
+            score_col = :prec_prob
+            spline_result = build_qvalue_spline_from_refs(filtered_refs, :prec_prob, results.merged_quant_path;
                 compute_pep=true, min_pep_points_per_bin=params.precursor_q_value_interpolation_points_per_bin,
                 fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
             qval_spline = spline_result.qval_spline
@@ -444,20 +426,13 @@ function summarize_results!(
             results.precursor_pep_interp[] = spline_result.pep_interp
 
             # Phase B — Single per-file pipeline combining Steps 5+10
-            global_qval_col = has_mbr ? :MBR_boosted_global_qval : :global_qval
-            qval_col = has_mbr ? :MBR_boosted_qval : :qval
+            global_qval_col = :global_qval
+            qval_col = :qval
 
             combined_pipeline = TransformPipeline() |>
-                add_dict_column(:global_prob, :precursor_idx, global_prob_dict)
-
-            if has_mbr
-                combined_pipeline = combined_pipeline |>
-                    add_dict_column(:MBR_boosted_global_prob, :precursor_idx, mbr_global_prob_dict)
-            end
-
-            combined_pipeline = combined_pipeline |>
+                add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
                 add_dict_column(global_qval_col, :precursor_idx, global_qval_dict) |>
-                add_interpolated_column(qval_col, score_col, qval_spline) |>
+                add_interpolated_column(:qval, score_col, qval_spline) |>
                 add_interpolated_column(:pep, score_col, results.precursor_pep_interp[]) |>
                 filter_by_multiple_thresholds([
                     (global_qval_col, params.q_value_threshold),
@@ -469,13 +444,8 @@ function summarize_results!(
 
         # Step 11: Re-calculate q-values using filtered data (sidecar-based)
         step11_time = @elapsed begin
-            # Determine score column from filtered data
-            sample_tbl = Arrow.Table(file_path(passing_refs[1]))
-            has_mbr_cols = hasproperty(sample_tbl, :MBR_boosted_prec_prob)
-            sample_tbl = nothing
-
-            recalc_score_col = has_mbr_cols ? :MBR_boosted_prec_prob : :prec_prob
-            recalc_qval_col = has_mbr_cols ? :MBR_boosted_qval : :qval
+            recalc_score_col = :prec_prob
+            recalc_qval_col = :qval
 
             # Sidecar lifecycle for new spline (on filtered data)
             spline_result = build_qvalue_spline_from_refs(passing_refs, recalc_score_col, results.merged_quant_path;

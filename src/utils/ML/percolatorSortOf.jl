@@ -63,7 +63,7 @@ function update_pair_statistics(current_stats, new_prob::Float32)
 end
 
 """
-    sort_of_percolator!(psms, features, match_between_runs; kwargs...) -> Models
+    sort_of_percolator!(psms, features; kwargs...) -> Models
 
 Generic PSM scoring function using LightGBM with cross-validation.
 Delegates to the trait-based `percolator_scoring!` function.
@@ -71,7 +71,6 @@ Delegates to the trait-based `percolator_scoring!` function.
 # Arguments
 - `psms::AbstractPSMContainer`: PSMs to score (modified in-place)
 - `features::Vector{Symbol}`: Feature columns to use
-- `match_between_runs::Bool`: Whether to enable MBR features
 
 # Keyword Arguments
 - `max_q_value_lightgbm_rescore::Float32`: Q-value threshold for training (default: 0.01)
@@ -92,9 +91,8 @@ Delegates to the trait-based `percolator_scoring!` function.
 """
 function sort_of_percolator!(psms::AbstractPSMContainer,
                   features::Vector{Symbol},
-                  match_between_runs::Bool = true;
+                  ;
                   max_q_value_lightgbm_rescore::Float32 = 0.01f0,
-                  max_q_value_mbr_itr::Float32 = 0.20f0,
                   min_PEP_neg_threshold_itr = 0.90f0,
                   feature_fraction::Float64 = 0.5,
                   learning_rate::Float64 = 0.15,
@@ -108,9 +106,8 @@ function sort_of_percolator!(psms::AbstractPSMContainer,
                   show_progress::Bool = true,
                   verbose_logging::Bool = false)
 
-    # Separate base features from MBR features
+    # Match-between-runs has been removed; ignore any legacy MBR_* features.
     base_features = [f for f in features if !startswith(String(f), "MBR_")]
-    mbr_features = [f for f in features if startswith(String(f), "MBR_")]
 
     # Build ScoringConfig from keyword arguments
     config = ScoringConfig(
@@ -125,9 +122,9 @@ function sort_of_percolator!(psms::AbstractPSMContainer,
         )),
         RandomPairing(),
         QValueNegativeMining(max_q_value_lightgbm_rescore, Float32(min_PEP_neg_threshold_itr)),
-        IterativeFeatureSelection(base_features, mbr_features, length(iter_scheme)),
+        IterativeFeatureSelection(base_features, Symbol[], length(iter_scheme)),
         FixedIterationScheme(iter_scheme),
-        match_between_runs ? PairBasedMBR(max_q_value_lightgbm_rescore) : NoMBR()
+        NoMBR()
     )
 
     # Delegate to trait-based implementation
@@ -228,24 +225,11 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
 end
 
 function initialize_prob_group_features!(
-    psms::AbstractDataFrame,
-    match_between_runs::Bool
+    psms::AbstractDataFrame
 )
     n = nrow(psms)
     psms[!, :trace_prob]      = zeros(Float32, n)
     psms[!, :q_value]   = zeros(Float64, n)
-
-    if match_between_runs
-        psms[!, :MBR_max_pair_prob]             = zeros(Float32, n)
-        psms[!, :MBR_best_irt_diff]             = zeros(Float32, n)
-        psms[!, :MBR_log2_weight_ratio]         = zeros(Float32, n)
-        psms[!, :MBR_log2_explained_ratio]      = zeros(Float32, n)
-        psms[!, :MBR_rv_coefficient]            = zeros(Float32, n)
-        psms[!, :MBR_is_best_decoy]             = trues(n)
-        psms[!, :MBR_num_runs]                  = zeros(Int32, n)
-        psms[!, :MBR_transfer_candidate]        = falses(n)
-        psms[!, :MBR_is_missing]                = falses(n)
-    end
 
     return psms
 end

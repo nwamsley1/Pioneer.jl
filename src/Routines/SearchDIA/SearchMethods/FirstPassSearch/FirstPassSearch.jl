@@ -100,7 +100,6 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
     spec_order::Set{Int64}
-    match_between_runs::Bool
     relative_improvement_threshold::Float32
     
     # Scoring parameters
@@ -155,7 +154,6 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             Set{Int64}([2]),
-            global_params.match_between_runs,
             Float32(frag_params.relative_improvement_threshold),
             
             Int64(score_params.n_train_rounds),
@@ -565,38 +563,8 @@ function summarize_results!(
     # Process precursors
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
 
-    if false==true#params.match_between_runs==true
-        #######
-        #Each target has a corresponding decoy and vice versa
-        #Add the complement targets/decoys to the precursor dict 
-        #if the `sibling_peptide_scores` parameter is set to true
-        #In the target/decoy scoring (see SearchMethods/ScoringSearch)
-        #the maximum score for each target/decoy pair is shared accross runs
-        #in an iterative training scheme. 
-        precursors = getPrecursors(getSpecLib(search_context))
-        i = 1
-        for (pid, val) in pairs(precursor_dict)
-            i += 1
-            setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
-            partner_pid = getPartnerPrecursorIdx(precursors)[pid]
-            if ismissing(partner_pid)
-                continue
-            end
-
-            # If the partner needs to be added, then give it the irt of the currently identified precursor
-            # Otherwise if the partner was ID'ed, it should keep its original predicted iRT
-            if !haskey(precursor_dict, partner_pid)
-                insert!(precursor_dict, partner_pid, val)
-                setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
-            else
-                setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[partner_pid])
-            end
-            
-        end
-    else
-        for (pid, val) in pairs(precursor_dict)
-            setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
-        end
+    for (pid, val) in pairs(precursor_dict)
+        setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
     end
 
     setPrecursorDict!(search_context, precursor_dict)
@@ -619,4 +587,3 @@ function summarize_results!(
         empty!(results.ms1_mass_plots)
     end
 end
-

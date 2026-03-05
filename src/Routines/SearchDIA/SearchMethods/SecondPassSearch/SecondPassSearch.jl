@@ -156,7 +156,6 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
     spec_order::Set{Int64}
-    match_between_runs::Bool
 
     # Deconvolution parameters (MS2)
     lambda::Float32
@@ -240,7 +239,6 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             Set{Int64}([2]),
-            Bool(global_params.match_between_runs),
             
             Float32(deconv_params.ms2.lambda),
             reg_type,
@@ -572,7 +570,7 @@ function process_search_results!(
         )
 
         # Initialize probability scores (will be calculated later)
-        initialize_prob_group_features!(psms, params.match_between_runs)
+        initialize_prob_group_features!(psms)
 
         # Only save results if we have actual PSMs
         if nrow(psms) > 0

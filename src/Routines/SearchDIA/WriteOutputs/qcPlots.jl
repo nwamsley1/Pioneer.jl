@@ -54,8 +54,7 @@ function qcPlots(
     frag_err_dist_dict,
     valid_file_indices
 )
-    # Get conditional q-value column name based on MBR mode
-    qval_col = params_.global_settings.match_between_runs ? :MBR_boosted_qval : :qval
+    qval_col = :qval
 
     short_fnames = shortenFileNames(parsed_fnames)
     #grouped_precursors = groupby(best_psms, :file_name)
@@ -184,7 +183,7 @@ function qcPlots(
         parsed_fnames,
         n_files_per_plot = n_files_per_plot,
         file_column = :file_name,
-        q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
+        q_value_column = qval_col,
         q_value_threshold = params_.global_settings.scoring.q_value_threshold,
         qc_plot_folder = qc_plot_folder
     )
@@ -284,7 +283,7 @@ function qcPlots(
                                 parsed_fnames,
                                 n_files_per_plot=n_files_per_plot,
                                 file_column = :file_name,
-                                q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
+                                q_value_column = qval_col,
                                 q_value_threshold = params_.global_settings.scoring.q_value_threshold,
                                 qc_plot_folder = qc_plot_folder)
     append!(qc_plots, id_plots)
@@ -370,7 +369,7 @@ function qcPlots(
         parsed_fnames,
         n_files_per_plot = n_files_per_plot,
         file_column = :file_name,
-        q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
+        q_value_column = qval_col,
         q_value_threshold = params_.global_settings.scoring.q_value_threshold,
         qc_plot_folder = qc_plot_folder
     )
@@ -468,7 +467,7 @@ function qcPlots(
         parsed_fnames,
         n_files_per_plot = n_files_per_plot,
         file_column = :file_name,
-        q_value_column = qval_col,  # Conditional: MBR_boosted_qval or qval
+        q_value_column = qval_col,
         q_value_threshold = params_.global_settings.scoring.q_value_threshold,
         qc_plot_folder = qc_plot_folder
     )

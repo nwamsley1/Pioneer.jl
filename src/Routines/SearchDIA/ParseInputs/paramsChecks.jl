@@ -65,7 +65,6 @@ function checkParams(json_path::String)
     check_param(global_params["huber_override"], "huber_delta", Real)
     check_param(global_params, "ms1_scoring", Bool)
     check_param(global_params, "ms1_quant", Bool)
-    check_param(global_params, "match_between_runs", Bool)
 
     # Validate parameter tuning parameters
     tuning_params = params["parameter_tuning"]
@@ -288,7 +287,6 @@ function checkParams(json_path::String)
     ml_params = opt_params["machine_learning"]
     check_param(ml_params, "max_psm_memory_mb", Real)
     check_param(ml_params, "min_trace_prob", Real)
-    check_param(ml_params, "max_q_value_mbr_itr", Real)
     check_param(ml_params, "min_PEP_neg_threshold_itr", Real)
     check_param(ml_params, "spline_points", Integer)
     check_param(ml_params, "interpolation_points", Integer)
