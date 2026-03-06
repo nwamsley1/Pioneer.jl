@@ -261,10 +261,11 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         
         passing_filter = (
             weight[i] >= 1e-6
+        )&(
+            (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count + unscored_PSMs[i].isotope_count) >= min_frag_count
         )
         #= Removed filters — let ML scoring handle PSM quality
            (unscored_PSMs[i].y_count) >= min_y_count
-           (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count + unscored_PSMs[i].isotope_count) >= min_frag_count
            (spectral_scores[i].fitted_spectral_contrast) >= min_spectral_contrast
            spectral_scores[i].matched_ratio > min_log2_matched_ratio
            (unscored_PSMs[i].topn >= min_topn) | (unscored_PSMs[i].topn_iso >= min_topn)
@@ -297,7 +298,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             unscored_PSMs[i].isotope_count,
             Float16(getPoisson(expected_matches, total_ions)),
             #Float16(HyperScore(unscored_PSMs[i])),
-            Float16(log2((unscored_PSMs[i].b_int + unscored_PSMs[i].y_int)/spectrum_intensity)),
+            Float16(log2(max(unscored_PSMs[i].b_int + unscored_PSMs[i].y_int, Float32(1e-20))/spectrum_intensity)),
             Float16(log2(unscored_PSMs[i].error)),
             
             spectral_scores[scores_idx].spectral_contrast,
