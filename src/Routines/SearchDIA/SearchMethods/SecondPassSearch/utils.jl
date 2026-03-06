@@ -1255,6 +1255,432 @@ function init_summary_columns!(
         return psms
 end
 
+#==========================================================
+Iterative Prescore Filter (DIA-NN-style diff-cov + probit)
+==========================================================#
+
+"""
+Per-scan features for the iterative prescore filter.
+These are all computed within a single scan (no cross-scan summaries).
+"""
+const ITERATIVE_PRESCORE_FEATURES = [
+    :fitted_manhattan_distance,   # per-scan spectral distance
+    :max_matched_residual,        # per-scan: largest matched fragment residual
+    :gof,                         # per-scan goodness-of-fit
+    :max_unmatched_residual,      # per-scan: largest unmatched fragment residual
+    :poisson,                     # per-scan Poisson score
+    :irt_error,                   # per-scan: |observed iRT - predicted iRT|
+    :y_count,                     # per-scan: number of y-ions matched
+    :scribe,                      # per-scan: scribe score
+    :err_norm,                    # per-scan: normalized mass error
+    :spectral_contrast,           # per-scan: cosine similarity
+]
+
+"""
+    ensure_ms1_stub_columns!(psms::DataFrame)
+
+Add placeholder MS1 columns needed by add_features!() during iterative
+prescore filtering, before the real MS1 join in process_search_results!.
+"""
+function ensure_ms1_stub_columns!(psms::DataFrame)
+    n = nrow(psms)
+    if !hasproperty(psms, :rt_ms1)
+        psms[!, :rt_ms1] = fill(Float32(-1), n)
+    end
+    if !hasproperty(psms, :ms1_features_missing)
+        psms[!, :ms1_features_missing] = trues(n)
+    end
+    if !hasproperty(psms, :ms1_ms2_rt_diff)
+        psms[!, :ms1_ms2_rt_diff] = fill(Float32(-1), n)
+    end
+end
+
+"""
+    get_best_psm_per_precursor(psms::DataFrame) -> DataFrame
+
+Reduce to one PSM per precursor_idx, keeping the row with highest `weight`.
+Returns a copy (does not modify input).
+"""
+function get_best_psm_per_precursor(psms::DataFrame)
+    sorted = sort(psms, [:precursor_idx, order(:weight, rev=true)])
+    best = combine(groupby(sorted, :precursor_idx), first)
+    return best
+end
+
+"""
+    form_target_decoy_pairs(best_psms::DataFrame) -> Vector{Tuple{Int,Int}}
+
+Find matched target-decoy pairs from best-PSM-per-precursor DataFrame.
+Each pair is (target_row_idx, decoy_row_idx).
+Uses the `pair_id` column which holds the partner's precursor_idx.
+"""
+function form_target_decoy_pairs(best_psms::DataFrame)
+    prec_to_row = Dict{UInt32, Int}()
+    for i in 1:nrow(best_psms)
+        prec_to_row[best_psms[i, :precursor_idx]] = i
+    end
+
+    pairs = Vector{Tuple{Int,Int}}()
+    visited = falses(nrow(best_psms))
+
+    for i in 1:nrow(best_psms)
+        visited[i] && continue
+        partner_pid = best_psms[i, :pair_id]
+        partner_pid == zero(UInt32) && continue
+
+        partner_row = get(prec_to_row, partner_pid, 0)
+        partner_row == 0 && continue
+        visited[partner_row] && continue
+
+        is_target_i = best_psms[i, :target]
+        is_target_j = best_psms[partner_row, :target]
+        (is_target_i == is_target_j) && continue
+
+        t_row = is_target_i ? i : partner_row
+        d_row = is_target_i ? partner_row : i
+
+        push!(pairs, (t_row, d_row))
+        visited[i] = true
+        visited[partner_row] = true
+    end
+
+    return pairs
+end
+
+"""
+    train_difference_covariance!(best_psms, pairs, features; regularization) -> Union{Vector{Float64}, Nothing}
+
+DIA-NN-style difference-covariance classifier.
+  delta_k = features_target[k] - features_decoy[k]
+  w = (cov(delta) + eps*I) \\ mean(delta)
+"""
+function train_difference_covariance!(
+    best_psms::DataFrame,
+    pairs::Vector{Tuple{Int,Int}},
+    features::Vector{Symbol};
+    regularization::Float64 = 1e-9
+)
+    N = length(pairs)
+    p = length(features)
+
+    if N < 20
+        return nothing
+    end
+
+    # Mean feature differences (target - decoy)
+    ds_mean = zeros(Float64, p)
+    for (t_row, d_row) in pairs
+        for j in 1:p
+            ds_mean[j] += Float64(best_psms[t_row, features[j]]) -
+                          Float64(best_psms[d_row, features[j]])
+        end
+    end
+    ds_mean ./= N
+
+    # Covariance of differences
+    A = zeros(Float64, p, p)
+    for (t_row, d_row) in pairs
+        for i in 1:p
+            di = (Float64(best_psms[t_row, features[i]]) -
+                  Float64(best_psms[d_row, features[i]])) - ds_mean[i]
+            for j in i:p
+                dj = (Float64(best_psms[t_row, features[j]]) -
+                      Float64(best_psms[d_row, features[j]])) - ds_mean[j]
+                A[i,j] += di * dj
+            end
+        end
+    end
+    for i in 1:p, j in i:p
+        A[i,j] /= (N - 1)
+        A[j,i] = A[i,j]
+    end
+    for i in 1:p
+        A[i,i] += regularization
+    end
+
+    w = A \ ds_mean
+
+    @info "    Diff-cov weights ($N pairs, $p features):\n"
+    for (fname, wval) in zip(features, w)
+        @info "      $(rpad(fname, 35)) $(round(wval, digits=6))\n"
+    end
+
+    return w
+end
+
+"""
+    apply_linear_scores!(psms, w, features)
+
+Score all PSMs: score_i = w' * features_i. Stores in psms[!, :score].
+"""
+function apply_linear_scores!(psms::DataFrame, w::Vector{Float64}, features::Vector{Symbol})
+    n = nrow(psms)
+    scores = zeros(Float32, n)
+    for i in 1:n
+        s = 0.0
+        for (j, f) in enumerate(features)
+            s += w[j] * Float64(psms[i, f])
+        end
+        scores[i] = Float32(s)
+    end
+    psms[!, :score] = scores
+end
+
+"""
+    train_probit_on_features!(psms, train_mask, features; max_iter) -> Vector{Float64}
+
+Train probit model on the masked subset. Returns coefficient vector.
+"""
+function train_probit_on_features!(
+    psms::DataFrame,
+    train_mask::BitVector,
+    features::Vector{Symbol};
+    max_iter::Int = 20
+)
+    X_train = DataFrame(Matrix{Float64}(psms[train_mask, features]), features)
+    targets_train = Vector{Bool}(psms[train_mask, :target])
+    n_train = sum(train_mask)
+
+    chunk_size = max(1, n_train ÷ (10 * Threads.nthreads()))
+    data_chunks = Iterators.partition(1:n_train, chunk_size)
+
+    beta = zeros(Float64, length(features))
+    beta = ProbitRegression(beta, X_train, targets_train, data_chunks; max_iter=max_iter)
+
+    @info "    Probit coefficients:\n"
+    for (fname, coef) in zip(features, beta)
+        @info "      $(rpad(fname, 35)) $(round(coef, digits=6))\n"
+    end
+
+    return beta
+end
+
+"""
+    apply_probit_scores!(psms, beta, features)
+
+Apply probit probability scores to all PSMs. Stores in psms[!, :probit_score].
+"""
+function apply_probit_scores!(
+    psms::DataFrame,
+    beta::Vector{Float64},
+    features::Vector{Symbol}
+)
+    n = nrow(psms)
+    X_all = DataFrame(Matrix{Float64}(psms[!, features]), features)
+    scores = zeros(Float32, n)
+
+    chunk_size = max(1, n ÷ (10 * Threads.nthreads()))
+    data_chunks = Iterators.partition(1:n, chunk_size)
+
+    ModelPredictProbs!(scores, X_all, beta, data_chunks)
+    psms[!, :probit_score] = scores
+end
+
+"""
+    rerun_search_with_filter(spectra, search_context, params, ms_file_idx, surviving_pairs)
+
+Rebuild scan_to_prec_idx with only surviving (precursor_idx, scan_idx) pairs,
+then re-run perform_second_pass_search. This re-solves the Huber deconvolution
+with reduced precursor competition per scan.
+"""
+function rerun_search_with_filter(
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    params::SecondPassSearchParameters,
+    ms_file_idx::Int64,
+    surviving_pairs::Set{Tuple{UInt32, UInt32}}
+)
+    frag_match_path = getFragmentIndexMatches(getMSData(search_context), ms_file_idx)
+    scan_to_prec_idx_orig, precursors_passed_orig = load_fragment_index_matches(
+        frag_match_path, length(spectra)
+    )
+    n_original = length(precursors_passed_orig)
+
+    new_precursors = UInt32[]
+    new_scan_to_prec = Vector{Union{Missing, UnitRange{Int64}}}(missing, length(spectra))
+
+    for scan_idx in 1:length(spectra)
+        range = scan_to_prec_idx_orig[scan_idx]
+        ismissing(range) && continue
+
+        start_new = length(new_precursors) + 1
+        for idx in range
+            pid = precursors_passed_orig[idx]
+            if (pid, UInt32(scan_idx)) in surviving_pairs
+                push!(new_precursors, pid)
+            end
+        end
+        end_new = length(new_precursors)
+
+        if end_new >= start_new
+            new_scan_to_prec[scan_idx] = start_new:end_new
+        end
+    end
+
+    n_filtered = length(new_precursors)
+    pct = round(100.0 * n_filtered / max(1, n_original), digits=1)
+    @info "    Re-search input: $n_filtered / $n_original entries ($pct%)\n"
+
+    return perform_second_pass_search(
+        spectra, new_scan_to_prec, new_precursors,
+        search_context, params, ms_file_idx, MS2CHROM()
+    )
+end
+
+"""
+    iterative_prescore_filter!(psms, search_context, spectra, params, ms_file_idx)
+
+Run two rounds of diff-cov + probit filtering. After each round, re-runs
+perform_second_pass_search with surviving pairs so deconvolution is
+re-solved with reduced competition.
+
+Returns fresh PSMs from the final re-search (raw columns only,
+ready for process_search_results!).
+"""
+function iterative_prescore_filter!(
+    psms::DataFrame,
+    search_context::SearchContext,
+    spectra::MassSpecData,
+    params::SecondPassSearchParameters,
+    ms_file_idx::Int64
+)
+    n_initial = nrow(psms)
+    @info "=== Iterative Prescore Filter: starting with $n_initial PSMs ===\n"
+
+    for round in 1:2
+        n_round_start = nrow(psms)
+        @info "--- Filter Round $round: $n_round_start PSMs entering ---\n"
+
+        # Step 1: Add basic columns (RT, charge, target/decoy, err_norm, etc.)
+        add_second_search_columns!(psms,
+            getRetentionTimes(spectra),
+            getCharge(getPrecursors(getSpecLib(search_context))),
+            getIsDecoy(getPrecursors(getSpecLib(search_context))),
+            getPrecursors(getSpecLib(search_context))
+        )
+
+        # Step 2: Isotope capture info + basic quality filters
+        get_isotopes_captured!(psms,
+            getIsotopeTraceType(params),
+            getQuadTransmissionModel(search_context, ms_file_idx),
+            getSearchData(search_context),
+            psms[!, :scan_idx],
+            getCharge(getPrecursors(getSpecLib(search_context))),
+            getMz(getPrecursors(getSpecLib(search_context))),
+            getSulfurCount(getPrecursors(getSpecLib(search_context))),
+            getCenterMzs(spectra),
+            getIsolationWidthMzs(spectra)
+        )
+
+        filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
+        filter!(row -> row.weight > 0.0f0, psms)
+        n_post_filter = nrow(psms)
+        @info "  Round $round: $n_post_filter PSMs after quality filters\n"
+
+        # Step 3: Add ML features (irt_error, pair_id) — needs MS1 stubs
+        ensure_ms1_stub_columns!(psms)
+        add_features!(psms, search_context,
+            getTICs(spectra), getMzArrays(spectra),
+            ms_file_idx,
+            getRtIrtModel(search_context, ms_file_idx),
+            getPrecursorDict(search_context)
+        )
+
+        # Step 4: Reduce to best PSM per precursor (by weight) for pairing
+        best_psms = get_best_psm_per_precursor(psms)
+        n_unique = nrow(best_psms)
+        n_targets = count(best_psms[!, :target])
+        n_decoys = n_unique - n_targets
+        @info "  Round $round: $n_unique unique precursors ($n_targets T, $n_decoys D)\n"
+
+        # Step 5: Form target-decoy pairs
+        pairs_td = form_target_decoy_pairs(best_psms)
+        n_pairs = length(pairs_td)
+        @info "  Round $round: $n_pairs target-decoy pairs\n"
+
+        if n_pairs < 20
+            @info "  Round $round: Too few pairs ($n_pairs < 20), skipping filter\n"
+            break
+        end
+
+        # Step 6: Train diff-cov classifier on paired best PSMs
+        features = filter(f -> hasproperty(best_psms, f), collect(ITERATIVE_PRESCORE_FEATURES))
+        @info "  Round $round: using $(length(features)) features: $(join(features, ", "))\n"
+        w = train_difference_covariance!(best_psms, pairs_td, features)
+        if w === nothing
+            @info "  Round $round: Diff-cov training failed, skipping\n"
+            break
+        end
+
+        # Step 7: Apply diff-cov weights to ALL PSMs (not just best)
+        apply_linear_scores!(psms, w, features)
+
+        # Step 8: Compute q-values from diff-cov scores
+        q_vals = zeros(Float64, nrow(psms))
+        get_qvalues!(psms[!, :score], psms[!, :target], q_vals)
+        psms[!, :q_value] = q_vals
+
+        n_1pct_dc = count((q_vals .<= 0.01) .& psms[!, :target])
+        n_5pct_dc = count((q_vals .<= 0.05) .& psms[!, :target])
+        @info "  Round $round diff-cov: $n_1pct_dc targets @ 1% FDR, $n_5pct_dc @ 5% FDR\n"
+
+        # Step 9: Train probit on targets(q<=0.05) + all decoys
+        targets_col = psms[!, :target]
+        train_mask = BitVector(((q_vals .<= 0.05) .& targets_col) .| .!targets_col)
+        n_train_t = count((q_vals .<= 0.05) .& targets_col)
+        n_train_d = count(.!targets_col)
+        @info "  Round $round probit training: $n_train_t targets + $n_train_d decoys\n"
+
+        beta = train_probit_on_features!(psms, train_mask, features)
+
+        # Step 10: Apply probit to ALL PSMs -> compute q-values
+        apply_probit_scores!(psms, beta, features)
+        q_vals_probit = zeros(Float64, nrow(psms))
+        get_qvalues!(psms[!, :probit_score], psms[!, :target], q_vals_probit)
+        psms[!, :q_value] = q_vals_probit
+
+        n_1pct_p = count((q_vals_probit .<= 0.01) .& psms[!, :target])
+        n_5pct_p = count((q_vals_probit .<= 0.05) .& psms[!, :target])
+        @info "  Round $round probit: $n_1pct_p targets @ 1% FDR, $n_5pct_p @ 5% FDR\n"
+
+        # Step 11: Collect surviving (precursor_idx, scan_idx) where q <= 0.50
+        keep_mask = q_vals_probit .<= 0.50
+        n_keep = count(keep_mask)
+        n_discard = nrow(psms) - n_keep
+        @info "  Round $round: keeping $n_keep PSMs, discarding $n_discard (q > 0.50)\n"
+
+        surviving_pairs = Set{Tuple{UInt32, UInt32}}()
+        prec_col = psms[!, :precursor_idx]
+        scan_col = psms[!, :scan_idx]
+        for i in 1:nrow(psms)
+            if keep_mask[i]
+                push!(surviving_pairs, (prec_col[i], scan_col[i]))
+            end
+        end
+        n_surviving_precs = length(Set(p[1] for p in surviving_pairs))
+        @info "  Round $round: $(length(surviving_pairs)) surviving (prec, scan) pairs across $n_surviving_precs precursors\n"
+
+        # Step 12: Re-run search with filtered pairs (re-solves deconvolution)
+        @info "  Round $round: re-running search with filtered pairs...\n"
+        psms = rerun_search_with_filter(
+            spectra, search_context, params, ms_file_idx, surviving_pairs
+        )
+        @info "  Round $round: re-search produced $(nrow(psms)) PSMs\n"
+    end
+
+    n_final = nrow(psms)
+    pct_reduction = round(100.0 * (1 - n_final / n_initial), digits=1)
+    @info "=== Filter complete: $n_initial -> $n_final PSMs ($pct_reduction% reduction) ===\n"
+
+    # Return fresh PSMs from final re-search (raw columns only).
+    # process_search_results! will add all derived columns from scratch.
+    return psms
+end
+
+#==========================================================
+Prescore (Best Scan Selection)
+==========================================================#
+
 const PRESCORE_FEATURES = [
     :fitted_spectral_contrast,
     :err_norm,

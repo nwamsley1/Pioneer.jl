@@ -325,6 +325,12 @@ function process_file!(
             MS2CHROM()
         )
 
+        # Iterative prescore filter: 2 rounds of diff-cov + probit,
+        # re-running search after each round to re-solve deconvolution
+        psms = iterative_prescore_filter!(
+            psms, search_context, spectra, params, ms_file_idx
+        )
+
         # MS1 scoring temporarily disabled in bypass mode
         ms1_psms = DataFrame()
 
