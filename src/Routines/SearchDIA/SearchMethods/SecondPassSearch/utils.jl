@@ -1099,6 +1099,12 @@ function add_features!(psms::DataFrame,
     Mox = zeros(UInt8, N);
     TIC = zeros(Float16, N);
 
+    # Amino acid count features (20 standard amino acids)
+    aa_counts = Dict{Char, Vector{UInt8}}()
+    for aa in "ACDEFGHIKLMNPQRSTVWY"
+        aa_counts[aa] = zeros(UInt8, N)
+    end
+
     #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
     scan_idx::Vector{UInt32} = psms[!,:scan_idx]
@@ -1142,7 +1148,13 @@ function add_features!(psms::DataFrame,
 
                 missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
                 #sequence[i] = precursor_sequence[prec_idx]
-                sequence_length[i] = length(replace(precursor_sequence[prec_idx], r"\(.*?\)" => ""))#replace.(sequence[i], "M(ox)" => "M");
+                stripped_seq = replace(precursor_sequence[prec_idx], r"\(.*?\)" => "")
+                sequence_length[i] = length(stripped_seq)
+                for ch in stripped_seq
+                    if haskey(aa_counts, ch)
+                        aa_counts[ch][i] += one(UInt8)
+                    end
+                end
                 Mox[i] = countMOX(structural_mods[prec_idx])::UInt8
                 #sequence_length[i] = length(stripped_sequence[i])
                 TIC[i] = Float16(log2(tic[scan_idx[i]]))
@@ -1178,6 +1190,11 @@ function add_features!(psms::DataFrame,
     psms[!,:prec_mz] = prec_mzs
     psms[!,:entrapment_group_id] = entrap_group_id
     psms[!,:ms_file_idx] .= ms_file_idx
+
+    # Amino acid count columns
+    for aa in "ACDEFGHIKLMNPQRSTVWY"
+        psms[!, Symbol("aa_", aa)] = aa_counts[aa]
+    end
     return nothing
 end
 

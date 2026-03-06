@@ -100,7 +100,12 @@ const ADVANCED_FEATURE_SET = [
     
     :percent_theoretical_ignored,
     :scribe,
-    :max_scribe
+    :max_scribe,
+    # Amino acid composition features
+    :aa_A, :aa_C, :aa_D, :aa_E, :aa_F,
+    :aa_G, :aa_H, :aa_I, :aa_K, :aa_L,
+    :aa_M, :aa_N, :aa_P, :aa_Q, :aa_R,
+    :aa_S, :aa_T, :aa_V, :aa_W, :aa_Y
     # MBR features added automatically if match_between_runs=true
 ]
 
@@ -120,6 +125,11 @@ const REDUCED_FEATURE_SET = [
     :fitted_spectral_contrast, :spectral_contrast, :max_matched_ratio,
     :err_norm, :poisson, :weight, :log2_intensity_explained, :tic, :num_scans,
     :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
+    # Amino acid composition features
+    :aa_A, :aa_C, :aa_D, :aa_E, :aa_F,
+    :aa_G, :aa_H, :aa_I, :aa_K, :aa_L,
+    :aa_M, :aa_N, :aa_P, :aa_Q, :aa_R,
+    :aa_S, :aa_T, :aa_V, :aa_W, :aa_Y,
     # MS1 features
     :weight_ms1,
     :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
