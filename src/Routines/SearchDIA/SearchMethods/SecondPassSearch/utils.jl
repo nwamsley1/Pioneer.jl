@@ -199,6 +199,9 @@ function process_scans_fragindex!(
     residuals = getResiduals(search_data)
     last_val = 0
     cycle_idx = 0
+    total_skipped_weight = 0
+    total_skipped_frag_count = 0
+    total_skipped_spectral_contrast = 0
 
     nce_model = getNceModel(search_context, ms_file_idx)
     precursors = getPrecursors(getSpecLib(search_context))
@@ -311,7 +314,7 @@ function process_scans_fragindex!(
             last(params.min_topn_of_m)
         )
 
-        last_val = Score!(
+        score_result = Score!(
             getComplexScoredPsms(search_data),
             getComplexUnscoredPsms(search_data),
             getComplexSpectralScores(search_data),
@@ -331,10 +334,15 @@ function process_scans_fragindex!(
             min_topn = first(params.min_topn_of_m),
             block_size = 500000
         )
+        last_val = score_result.last_val
+        total_skipped_weight += score_result.skipped_weight
+        total_skipped_frag_count += score_result.skipped_frag_count
+        total_skipped_spectral_contrast += score_result.skipped_spectral_contrast
 
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
+    @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_spectral_contrast=$total_skipped_spectral_contrast"
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 
@@ -371,7 +379,9 @@ function process_scans!(
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     last_val = 0
-    
+    total_skipped_weight = 0
+    total_skipped_frag_count = 0
+    total_skipped_spectral_contrast = 0
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -501,7 +511,7 @@ function process_scans!(
             last(params.min_topn_of_m)
         )
 
-        last_val = Score!(
+        score_result = Score!(
             getComplexScoredPsms(search_data),
             getComplexUnscoredPsms(search_data),
             getComplexSpectralScores(search_data),
@@ -521,10 +531,15 @@ function process_scans!(
             min_topn = first(params.min_topn_of_m),
             block_size = 500000
         )
+        last_val = score_result.last_val
+        total_skipped_weight += score_result.skipped_weight
+        total_skipped_frag_count += score_result.skipped_frag_count
+        total_skipped_spectral_contrast += score_result.skipped_spectral_contrast
 
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
+    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_spectral_contrast=$total_skipped_spectral_contrast"
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 

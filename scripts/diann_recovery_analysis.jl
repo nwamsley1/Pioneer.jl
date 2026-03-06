@@ -125,7 +125,7 @@ function diann_recovery_analysis(config_path::String; kwargs...)
 end
 
 """
-    diann_recovery_analysis(; kwargs...) -> Vector{RecoveryResult}
+    diann_recovery_analysis(; kwargs...) -> (Vector{RecoveryResult}, Dict{String,Vector{Vector{Float64}}})
 
 Compare Pioneer second-pass PSMs against DIA-NN identifications.
 
@@ -167,8 +167,10 @@ function diann_recovery_analysis(;
     pioneer_file_set = Set(pioneer_files)
 
     diann_per_file = Dict{String, Set{_DRA_CKey}}()
+    diann_rt_per_file = Dict{String, Dict{_DRA_CKey, Float64}}()
     for f in pioneer_files
         diann_per_file[f] = Set{_DRA_CKey}()
+        diann_rt_per_file[f] = Dict{_DRA_CKey, Float64}()
     end
 
     for i in 1:nrow(diann_df)
@@ -180,6 +182,10 @@ function diann_recovery_analysis(;
         key = _dra_parse_diann_seq(diann_df[i, "Modified.Sequence"],
                                     Int(diann_df[i, "Precursor.Charge"]))
         push!(diann_per_file[pf], key)
+        rt_val = diann_df[i, "RT"]
+        if !ismissing(rt_val) && rt_val isa Number
+            diann_rt_per_file[pf][key] = Float64(rt_val)
+        end
     end
 
     if !quiet
@@ -199,16 +205,19 @@ function diann_recovery_analysis(;
         println("="^90)
     end
 
+    all_rt_diffs = Dict{String, Vector{Vector{Float64}}}()
+
     for f in pioneer_files
         diann_keys = diann_per_file[f]
+        diann_rts = diann_rt_per_file[f]
         n_diann = length(diann_keys)
 
         psms = DataFrame(Arrow.Table(joinpath(second_pass_dir, "$f.arrow")))
 
-        # Best PSM per precursor_idx (highest prec_prob)
+        # Best PSM per precursor_idx (highest prec_prob), include RT
         best = combine(groupby(psms, :precursor_idx)) do sub
             idx = argmax(sub.prec_prob)
-            return (prec_prob=sub.prec_prob[idx], target=sub.target[idx])
+            return (prec_prob=sub.prec_prob[idx], target=sub.target[idx], rt=sub.rt[idx])
         end
 
         qvals = compute_tdc_qvalues(best.prec_prob, best.target)
@@ -219,10 +228,22 @@ function diann_recovery_analysis(;
             best_keys[i] = get(pidx_to_key, UInt32(best.precursor_idx[i]), nothing)
         end
 
+        # Build Pioneer key -> RT map for all targets (no FDR cut)
+        pioneer_rt_map = Dict{_DRA_CKey, Float64}()
+        pioneer_qval_map = Dict{_DRA_CKey, Float64}()
+        for i in 1:nrow(best)
+            best.target[i] || continue
+            k = best_keys[i]
+            k === nothing && continue
+            pioneer_rt_map[k] = Float64(best.rt[i])
+            pioneer_qval_map[k] = qvals[i]
+        end
+
         total_vec = Int[]
         recov_vec = Int[]
         miss_vec  = Int[]
         pct_vec   = Float64[]
+        rt_diffs_per_threshold = Vector{Float64}[]
 
         for threshold in fdr_thresholds
             passing_keys = Set{_DRA_CKey}()
@@ -239,26 +260,34 @@ function diann_recovery_analysis(;
             missing_count = n_diann - recovered
             recov_pct = 100.0 * recovered / n_diann
 
+            # RT differences for precursors matched at this threshold
+            matched_at_threshold = intersect(passing_keys, keys(diann_rts))
+            rt_diffs = Float64[pioneer_rt_map[k] - diann_rts[k] for k in matched_at_threshold if haskey(pioneer_rt_map, k)]
+
             push!(total_vec, n_passing)
             push!(recov_vec, recovered)
             push!(miss_vec, missing_count)
             push!(pct_vec, recov_pct)
+            push!(rt_diffs_per_threshold, rt_diffs)
         end
+        all_rt_diffs[f] = rt_diffs_per_threshold
 
         push!(results, RecoveryResult(f, n_diann, copy(fdr_thresholds),
                                        total_vec, recov_vec, miss_vec, pct_vec))
     end
 
     !quiet && print_recovery_table(results)
+    !quiet && print_rt_analysis(all_rt_diffs, fdr_thresholds)
 
     # Write report to results directory
     report_path = joinpath(pioneer_results_dir, "diann_recovery_report.txt")
     open(report_path, "w") do io
         write_recovery_report(io, results, pioneer_results_dir)
+        write_rt_analysis(io, all_rt_diffs, fdr_thresholds)
     end
     !quiet && println("Report written to: $report_path")
 
-    return results
+    return results, all_rt_diffs
 end
 
 """
@@ -341,6 +370,124 @@ function write_recovery_report(io::IO, results::Vector{RecoveryResult}, results_
         @printf(io, "  %-8s  %8.0f  %8.0f  %8.0f  %7.1f%%\n",
                 "$(Int(results[1].thresholds[i]*100))%",
                 avg_total, avg_recov, avg_miss, avg_pct)
+    end
+    println(io, "\n" * "="^90)
+end
+
+"""
+    _rt_summary(diffs) -> NamedTuple
+
+Compute summary statistics for a vector of RT differences (in minutes).
+"""
+function _rt_summary(diffs::Vector{Float64})
+    abs_diffs = abs.(diffs)
+    sorted = sort(abs_diffs)
+    n = length(sorted)
+    (
+        n         = n,
+        mean_diff = mean(diffs),
+        median_abs = median(abs_diffs),
+        mean_abs  = mean(abs_diffs),
+        p90       = n > 0 ? sorted[min(ceil(Int, 0.90 * n), n)] : NaN,
+        p95       = n > 0 ? sorted[min(ceil(Int, 0.95 * n), n)] : NaN,
+        p99       = n > 0 ? sorted[min(ceil(Int, 0.99 * n), n)] : NaN,
+        max_abs   = n > 0 ? sorted[end] : NaN,
+        frac_gt_1min = count(>(1.0), abs_diffs) / max(n, 1),
+        frac_gt_2min = count(>(2.0), abs_diffs) / max(n, 1),
+        frac_gt_5min = count(>(5.0), abs_diffs) / max(n, 1),
+    )
+end
+
+"""
+    _print_rt_summary(io, s; indent="  ")
+
+Print a single RT summary to an IO stream.
+"""
+function _print_rt_summary(io::IO, s; indent="  ")
+    @printf(io, "%sMatched precursors:  %d\n", indent, s.n)
+    @printf(io, "%sMean Δ(RT):          %+.3f min  (Pioneer - DIA-NN)\n", indent, s.mean_diff)
+    @printf(io, "%sMedian |Δ(RT)|:      %.3f min\n", indent, s.median_abs)
+    @printf(io, "%sMean |Δ(RT)|:        %.3f min\n", indent, s.mean_abs)
+    @printf(io, "%s90th pctl |Δ(RT)|:   %.3f min\n", indent, s.p90)
+    @printf(io, "%s95th pctl |Δ(RT)|:   %.3f min\n", indent, s.p95)
+    @printf(io, "%s99th pctl |Δ(RT)|:   %.3f min\n", indent, s.p99)
+    @printf(io, "%sMax |Δ(RT)|:         %.3f min\n", indent, s.max_abs)
+    @printf(io, "%s|Δ(RT)| > 1 min:     %.1f%%  (%d)\n", indent, 100*s.frac_gt_1min, round(Int, s.n * s.frac_gt_1min))
+    @printf(io, "%s|Δ(RT)| > 2 min:     %.1f%%  (%d)\n", indent, 100*s.frac_gt_2min, round(Int, s.n * s.frac_gt_2min))
+    @printf(io, "%s|Δ(RT)| > 5 min:     %.1f%%  (%d)\n", indent, 100*s.frac_gt_5min, round(Int, s.n * s.frac_gt_5min))
+end
+
+"""
+    _print_rt_for_threshold(io, label, diffs)
+
+Print RT summary for a single FDR threshold.
+"""
+function _print_rt_for_threshold(io::IO, label::String, diffs::Vector{Float64})
+    if isempty(diffs)
+        println(io, "  $label:  no matched precursors")
+        return
+    end
+    s = _rt_summary(diffs)
+    @printf(io, "  %-6s  n=%-6d  median|Δ|=%.3f  mean|Δ|=%.3f  p95=%.3f  p99=%.3f  max=%.3f  >1min=%.1f%%  >2min=%.1f%%\n",
+            label, s.n, s.median_abs, s.mean_abs, s.p95, s.p99, s.max_abs,
+            100*s.frac_gt_1min, 100*s.frac_gt_2min)
+end
+
+"""
+    print_rt_analysis(all_rt_diffs, fdr_thresholds)
+
+Print RT difference analysis to stdout at each FDR threshold.
+"""
+function print_rt_analysis(all_rt_diffs::Dict{String, Vector{Vector{Float64}}}, fdr_thresholds::Vector{Float64})
+    println("\n" * "="^90)
+    println("RT DIFFERENCE ANALYSIS  (Pioneer RT - DIA-NN RT)")
+    println("="^90)
+
+    for f in sort(collect(keys(all_rt_diffs)))
+        diffs_per_thresh = all_rt_diffs[f]
+        println("\n── $f ──")
+        for (j, threshold) in enumerate(fdr_thresholds)
+            label = "$(Int(threshold*100))% FDR"
+            _print_rt_for_threshold(stdout, label, diffs_per_thresh[j])
+        end
+    end
+
+    # Pooled across files at each threshold
+    files = sort(collect(keys(all_rt_diffs)))
+    println("\n── POOLED across $(length(files)) files ──")
+    for (j, threshold) in enumerate(fdr_thresholds)
+        pooled = vcat([all_rt_diffs[f][j] for f in files]...)
+        label = "$(Int(threshold*100))% FDR"
+        _print_rt_for_threshold(stdout, label, pooled)
+    end
+    println("\n" * "="^90)
+end
+
+"""
+    write_rt_analysis(io, all_rt_diffs, fdr_thresholds)
+
+Write RT difference analysis to an IO stream.
+"""
+function write_rt_analysis(io::IO, all_rt_diffs::Dict{String, Vector{Vector{Float64}}}, fdr_thresholds::Vector{Float64})
+    println(io, "\n" * "="^90)
+    println(io, "RT DIFFERENCE ANALYSIS  (Pioneer RT - DIA-NN RT)")
+    println(io, "="^90)
+
+    for f in sort(collect(keys(all_rt_diffs)))
+        diffs_per_thresh = all_rt_diffs[f]
+        println(io, "\n-- $f --")
+        for (j, threshold) in enumerate(fdr_thresholds)
+            label = "$(Int(threshold*100))% FDR"
+            _print_rt_for_threshold(io, label, diffs_per_thresh[j])
+        end
+    end
+
+    files = sort(collect(keys(all_rt_diffs)))
+    println(io, "\n-- POOLED across $(length(files)) files --")
+    for (j, threshold) in enumerate(fdr_thresholds)
+        pooled = vcat([all_rt_diffs[f][j] for f in files]...)
+        label = "$(Int(threshold*100))% FDR"
+        _print_rt_for_threshold(io, label, pooled)
     end
     println(io, "\n" * "="^90)
 end
