@@ -157,7 +157,7 @@ sort_of_percolator_in_memory!()
 ├── Initialize probability arrays and CV fold mappings
 ├── For each CV fold:
 │   ├── Split train/test data
-│   ├── For each iteration in iter_scheme [100, 200, 200]:
+│   ├── For each iteration in iter_scheme [100, 200, 200, 200]:
 │   │   ├── get_training_data_for_iteration!()
 │   │   │   ├── First iteration: Use all training PSMs
 │   │   │   └── Later iterations: 
@@ -176,7 +176,7 @@ sort_of_percolator_in_memory!()
 ### Key Training Features
 
 1. **Cross-Validation**: Uses CV folds from spectral library (typically 2 folds with values 0,1)
-2. **Iterative Training**: 3-stage scheme [100, 200, 200] rounds with progressive filtering
+2. **Iterative Training**: 4-stage scheme [100, 200, 200, 200] rounds with progressive filtering
 3. **Negative Mining**: Converts low-scoring targets to negatives in later iterations
 4. **Transfer Integration**: Cross-run transfer features exist in code but are disabled in production runs
 5. **Dynamic Training Data**: Training set filtered by q-value thresholds between iterations
