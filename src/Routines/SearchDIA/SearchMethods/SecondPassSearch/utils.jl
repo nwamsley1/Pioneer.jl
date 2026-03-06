@@ -1212,6 +1212,109 @@ function init_summary_columns!(
         return psms
 end
 
+const PRESCORE_FEATURES = [
+    :fitted_spectral_contrast,
+    :err_norm,
+    :log2_intensity_explained,
+    :gof,
+    :scribe,
+    :weight,
+]
+
+"""
+    train_and_apply_prescore!(psms::DataFrame)
+
+Train a lightweight probit model on per-scan features to produce a preliminary
+quality score (`prescore`) for each scan. Then for each precursor group, mark
+the scan with the highest prescore as `best_scan = true`.
+
+This replaces the default `argmax(weight)` apex selection with a multi-feature
+quality-based selection.
+"""
+function train_and_apply_prescore!(
+    psms::DataFrame;
+    features::Vector{Symbol} = PRESCORE_FEATURES,
+    n_train_rounds::Int = 2,
+    max_iter::Int = 20
+)
+    n = nrow(psms)
+    if n < 100
+        @user_warn "Too few PSMs ($n) for probit prescore — falling back to weight-based apex selection"
+        return false
+    end
+
+    @user_info "Training probit prescore model on $n scans with features: $(join(features, ", "))"
+
+    # Prepare labels
+    targets = psms[!, :target]
+    n_targets = sum(targets)
+    n_decoys = n - n_targets
+    @user_info "  Prescore training data: $n_targets targets, $n_decoys decoys"
+
+    # Prepare feature matrix (convert to Float64 for probit)
+    X = DataFrame(Matrix{Float64}(psms[!, features]), features)
+
+    # Partition for parallel IRLS
+    chunk_size = max(1, n ÷ (10 * Threads.nthreads()))
+    data_chunks = Iterators.partition(1:n, chunk_size)
+
+    # Train probit model iteratively
+    β = zeros(Float64, length(features))
+    scores = zeros(Float32, n)
+
+    for round in 1:n_train_rounds
+        if round > 1
+            # Compute q-values for training data selection
+            q_vals = zeros(Float64, n)
+            get_qvalues!(scores, targets, q_vals)
+
+            # Filter training data: targets at q <= 0.05 + all decoys
+            train_mask = (q_vals .<= 0.05 .&& targets) .|| .!targets
+            n_train = sum(train_mask)
+            X_train = X[train_mask, :]
+            targets_train = targets[train_mask]
+            chunks_train = Iterators.partition(1:n_train,
+                                   max(1, n_train ÷ (10 * Threads.nthreads())))
+            β = ProbitRegression(β, X_train, targets_train, chunks_train; max_iter=max_iter)
+        else
+            β = ProbitRegression(β, X, targets, data_chunks; max_iter=max_iter)
+        end
+
+        # Score all scans
+        ModelPredict!(scores, X, β, data_chunks)
+    end
+
+    # Log probit coefficients (feature importances)
+    @user_info "  Probit prescore coefficients:"
+    for (fname, coef) in zip(features, β)
+        @user_info "    $(rpad(fname, 30)) $(round(coef, digits=4))"
+    end
+
+    # Final scoring with probabilities
+    ModelPredictProbs!(scores, X, β, data_chunks)
+
+    # Store prescores
+    psms[!, :prescore] = scores
+
+    # Mark best_scan based on highest prescore per precursor group
+    psms[!, :best_scan] .= false
+    n_changed = 0
+    n_groups = 0
+    for gpsms in groupby(psms, :precursor_idx)
+        n_groups += 1
+        probit_best = argmax(gpsms[!, :prescore])
+        weight_best = argmax(gpsms[!, :weight])
+        if probit_best != weight_best
+            n_changed += 1
+        end
+        gpsms[probit_best, :best_scan] = true
+    end
+
+    @user_info "  Prescore selection changed apex in $n_changed / $n_groups precursor groups ($(round(100*n_changed/max(n_groups,1), digits=1))%)"
+
+    return true
+end
+
 """
     get_summary_scores!(psms::SubDataFrame, weight::AbstractVector{Float32}, ...)
 
@@ -1244,8 +1347,14 @@ function get_summary_scores!(
     max_y_ions = 0
     smoothness = 0.0f0
 
-    apex_scan = argmax(psms[!,:weight])
-    #Need to make sure there is not a big gap. 
+    # Use probit-selected best_scan if available, otherwise fall back to max weight
+    best_scan_col = psms[!, :best_scan]
+    if any(best_scan_col)
+        apex_scan = findfirst(best_scan_col)
+    else
+        apex_scan = argmax(psms[!, :weight])
+    end
+    #Need to make sure there is not a big gap.
     start = max(1, apex_scan - 2)
     stop = min(length(weight), apex_scan + 2)
 

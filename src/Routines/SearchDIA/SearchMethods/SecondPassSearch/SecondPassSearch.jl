@@ -415,8 +415,13 @@ function process_search_results!(
         filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
         #filter!(row -> first(row.isotopes_captured) > 2, psms)
 
-        # Initialize columns for best scan selection and summary statistics
+        # Initialize best_scan column
         psms[!,:best_scan] = zeros(Bool, size(psms, 1));
+
+        # Pre-score all scans with probit model for quality-based best scan selection
+        train_and_apply_prescore!(psms)
+
+        # Initialize columns for summary statistics
         init_summary_columns!(psms);
 
         # Calculate summary scores for each PSM group
@@ -435,6 +440,11 @@ function process_search_results!(
         end
         # Keep only apex scans for each PSM group
         filter!(x->x.best_scan, psms);
+
+        # Remove temporary prescore column if present (not needed downstream)
+        if hasproperty(psms, :prescore)
+            select!(psms, Not(:prescore))
+        end
 
         # Build MS2 RT lookup for efficient MS1 alignment
         ms2_rt_lookup = Dict{UInt32, Float32}(
