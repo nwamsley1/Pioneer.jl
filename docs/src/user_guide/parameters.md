@@ -34,14 +34,13 @@ Most parameters should not be changed, but the following may need adjustment.
 | `isotope_settings.combine_traces` | Boolean | Whether to combine precursor isotope traces in quantification (default: true) |
 | `isotope_settings.partial_capture` | Boolean | Whether to estimate the conditional fragment isotope distribution (true) or assume complete transmission of the entire precursor isotopic envelope (default: true) |
 | `isotope_settings.min_fraction_transmitted` | Float | Minimum fraction of the precursor isotope distribution that must be isolated for scoring and quantitation (default: 0.25) |
-| `scoring.q_value_threshold` | Float | Global q-value threshold for filtering results. Also controls false transfer rate of MBR (default: 0.01) |
+| `scoring.q_value_threshold` | Float | Global q-value threshold for filtering results (default: 0.01) |
 | `normalization.n_rt_bins` | Int | Number of retention time bins for quant normalization (default: 100) |
 | `normalization.spline_n_knots` | Int | Number of knots in quant normalization spline (default: 7) |
 | `huber_override.override_huber_delta_fit` | Boolean | Whether to override the automatic Huber delta fitting with a manual value (default: false) |
 | `huber_override.huber_delta` | Float | Huber delta value when override is enabled (default: 1055) |
 | `ms1_scoring` | Boolean | Enable MS1-level scoring features (default: true) |
 | `ms1_quant` | Boolean | Enable MS1-level quantification (default: false) |
-| `match_between_runs` | Boolean | Whether to attempt to transfer peptide identifications across runs. Turning this on will add additional features to the LightGBM model (default: true) |
 
 ### Parameter Tuning Settings
 
@@ -175,9 +174,7 @@ The deconvolution parameters are split into `ms1` and `ms2` sub-objects for sepa
 |-----------|------|-------------|
 | `machine_learning.max_psm_memory_mb` | Real | Memory budget in MB for PSMs held in memory during LightGBM training. Row count is dynamically estimated from Arrow column sizes (default: 2000) |
 | `machine_learning.force_oom` | Boolean | Force out-of-memory processing regardless of dataset size (default: false) |
-| `machine_learning.max_mbr_training_candidates` | Int | Maximum number of candidates for MBR training (default: 1000000) |
 | `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
-| `machine_learning.max_q_value_mbr_itr` | Float | q-value threshold for match-between-runs candidates kept during the iterative training (ITR) stage of LightGBM rescoring (default: 0.20) |
 | `machine_learning.min_PEP_neg_threshold_itr` | Float | Minimum posterior error probability threshold for reclassifying weak target PSMs as negatives during the ITR stage of LightGBM rescoring (default: 0.90) |
 | `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
 | `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |

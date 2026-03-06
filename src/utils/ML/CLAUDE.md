@@ -98,7 +98,6 @@ end
 
 # Create default LightGBM config
 config = default_scoring_config(
-    match_between_runs=true,
     features=base_features,
     max_q_value=0.01f0
 )
@@ -162,7 +161,7 @@ models = percolator_scoring!(psms, config; show_progress=true, verbose=false)
 Legacy wrapper that constructs a `ScoringConfig` and delegates to `percolator_scoring!`:
 
 ```julia
-function sort_of_percolator!(psms::AbstractPSMContainer, features, match_between_runs; kwargs...)
+function sort_of_percolator!(psms::AbstractPSMContainer, features; kwargs...)
     # Build ScoringConfig from keyword arguments
     config = ScoringConfig(
         LightGBMScorer(hyperparams),
@@ -170,7 +169,7 @@ function sort_of_percolator!(psms::AbstractPSMContainer, features, match_between
         QValueNegativeMining(max_q_value, min_pep_threshold),
         IterativeFeatureSelection(base_features, mbr_features, n_iters),
         FixedIterationScheme(iter_scheme),
-        match_between_runs ? PairBasedMBR(max_q_value) : NoMBR()
+        NoMBR()
     )
     return percolator_scoring!(psms, config; show_progress, verbose)
 end

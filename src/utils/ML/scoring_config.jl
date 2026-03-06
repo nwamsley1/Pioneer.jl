@@ -45,12 +45,12 @@ struct ScoringConfig{M<:PSMScoringModel, P<:PairingStrategy, T<:TrainingDataStra
 end
 
 """
-    default_scoring_config(; match_between_runs=true, features=Symbol[], hyperparams=Dict())
+    default_scoring_config(; match_between_runs=false, features=Symbol[], hyperparams=Dict())
 
 Create default LightGBM scoring configuration.
 
 # Arguments
-- `match_between_runs::Bool`: Whether to enable MBR features
+- `match_between_runs::Bool`: Whether to enable MBR features (currently disabled by default)
 - `features::Vector{Symbol}`: Base feature set
 - `hyperparams::Dict{Symbol,Any}`: LightGBM hyperparameters
 
@@ -58,7 +58,7 @@ Create default LightGBM scoring configuration.
 - `ScoringConfig`: Configured scoring configuration
 """
 function default_scoring_config(;
-    match_between_runs::Bool = true,
+    match_between_runs::Bool = false,
     features::Vector{Symbol} = Symbol[],
     hyperparams::Dict{Symbol,Any} = Dict{Symbol,Any}(),
     max_q_value::Float32 = 0.01f0,

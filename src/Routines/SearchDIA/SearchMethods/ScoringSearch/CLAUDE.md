@@ -102,7 +102,7 @@ ScoringSearch implements a comprehensive 23-step pipeline:
 - **ADVANCED_FEATURE_SET**: 50 features including all spectral, RT, MS1, and quality metrics
 - **REDUCED_FEATURE_SET**: 40+ core features for balanced performance
 - **MINIMAL_FEATURE_SET**: 5 essential spectral matching features
-- **MBR Features**: Automatically appended when match_between_runs=true
+- **Cross-run transfer features**: Currently disabled in production runs
 
 **Clean Output Design**:
 - Progress bars suppressed during comparison using `show_progress=false` parameter
@@ -187,8 +187,7 @@ ScoringSearch implements a comprehensive 23-step pipeline:
 "global_settings": {
     "scoring": {
         "q_value_threshold": 0.01  // Used for model comparison target counting
-    },
-    "match_between_runs": true
+    }
 }
 ```
 

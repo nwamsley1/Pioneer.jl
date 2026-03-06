@@ -92,7 +92,7 @@ Delegates to the trait-based `percolator_scoring!` function.
 """
 function sort_of_percolator!(psms::AbstractPSMContainer,
                   features::Vector{Symbol},
-                  match_between_runs::Bool = true;
+                  match_between_runs::Bool = false;
                   max_q_value_lightgbm_rescore::Float32 = 0.01f0,
                   max_q_value_mbr_itr::Float32 = 0.20f0,
                   min_PEP_neg_threshold_itr = 0.90f0,

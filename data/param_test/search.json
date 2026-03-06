@@ -23,8 +23,7 @@
         "huber_override": {
             "override_huber_delta_fit": false,
             "huber_delta": 1500.0
-        },
-        "match_between_runs": true
+        }
     },
     "parameter_tuning": {
         "fragment_settings": {

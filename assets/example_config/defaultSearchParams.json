@@ -23,8 +23,7 @@
             "huber_delta": 1055
         }, 
         "ms1_scoring": true,
-        "ms1_quant": false,
-		"match_between_runs": true
+        "ms1_quant": false
     },
     "parameter_tuning": {
         "fragment_settings": {
