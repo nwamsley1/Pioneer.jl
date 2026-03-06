@@ -566,7 +566,7 @@ function process_search_results!(
         markFileFailed!(search_context, ms_file_idx, reason)
         # Also mark in ArrowTableReference for downstream methods
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
-        @user_warn "Second pass search failed for MS data file: $file_name. Error type: $(typeof(e)). Creating empty results to continue pipeline."
+        @user_warn "Second pass search failed for MS data file: $file_name. Error: $(sprint(showerror, e))\n$(sprint(Base.show_backtrace, catch_backtrace()))"
 
         # Set empty path for failed file
         setSecondPassPsms!(getMSData(search_context), ms_file_idx, "")

@@ -410,7 +410,8 @@ function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T
     sum_of_fitted_peaks =  sum_of_fitted_peaks_matched +  sum_of_fitted_peaks_unmatched
     sum_of_fitted_peaks_squared =  sum_of_fitted_peaks_matched_squared +  sum_of_fitted_peaks_unmatched_squared
 
-    fitted_spectral_contrast = fitted_dotp/(sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared))
+    denom = sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared)
+    fitted_spectral_contrast = denom > 0 ? fitted_dotp/denom : zero(T)
     spectral_contrast = dot_product/(sqrt(h2_sum)*sqrt(x2_sum))
 
     scribe_score = -log2(scribe_score / N)
@@ -419,9 +420,9 @@ function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T
     end
 
 
-    gof   = -log2(sum_of_residuals/sum_of_fitted_peaks)
-    max_matched_residual = -log2(max_matched_residual/sum_of_fitted_peaks_matched)
-    max_unmatched_residual = -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10)
+    gof   = sum_of_fitted_peaks > 0 ? -log2(sum_of_residuals/sum_of_fitted_peaks) : zero(T)
+    max_matched_residual = sum_of_fitted_peaks_matched > 0 ? -log2(max_matched_residual/sum_of_fitted_peaks_matched) : zero(T)
+    max_unmatched_residual = sum_of_fitted_peaks > 0 ? -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10) : zero(T)
     fitted_manhattan_distance = -log2(manhattan_distance/x_sum)
     matched_ratio = log2(matched_sum/unmatched_sum)
     worst_intensity_ignored = worst_idx > 0 ? H.nzval[worst_idx] : 0.0

@@ -937,7 +937,7 @@ function add_second_search_columns!(psms::DataFrame,
                 rt[i] = Float32(scan_retention_time[scan_idx]);
                 prec_charges[i] = prec_charge[prec_idx];
                 total_ions[i] = UInt16(y_count[i] + b_count[i] + isotope_count[i]);
-                err_norm[i] = min(Float16((2^error[i])/(total_ions[i])), 6e4)
+                err_norm[i] = Float16(min((2^error[i])/max(total_ions[i], one(UInt16)), Float32(6e4)))
                 if isinf(matched_ratio[i])
                     matched_ratio[i] = Float16(60000)*sign(matched_ratio[i])
                 end
@@ -1253,6 +1253,8 @@ function train_and_apply_prescore!(
 
     # Prepare feature matrix (convert to Float64 for probit)
     X = DataFrame(Matrix{Float64}(psms[!, features]), features)
+
+
 
     # Partition for parallel IRLS
     chunk_size = max(1, n ÷ (10 * Threads.nthreads()))
