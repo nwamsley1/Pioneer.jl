@@ -256,7 +256,7 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
     if print_importances
         first_fold = first(get_cv_folds(workspace))
         fold_models = get_fold_models(workspace, first_fold)
-        last_model = last(fold_models)
+        last_model = fold_models[iterations_to_run]
         imp = importance(last_model)
         if imp !== nothing
             sorted_imp = sort(imp, by=x -> x[2], rev=true)
