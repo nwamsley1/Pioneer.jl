@@ -1169,6 +1169,17 @@ function add_features!(psms::DataFrame,
         end
     end
     fetch.(tasks)
+
+    # Build has_spectral_pair: true if the paired target/decoy precursor also has a PSM in this file
+    prec_idx_set = Set(precursor_idx)
+    has_spectral_pair = BitVector(undef, N)
+    for i in 1:N
+        has_spectral_pair[i] = pair_idxs[i] != zero(UInt32) && pair_idxs[i] in prec_idx_set
+    end
+    n_paired = count(has_spectral_pair)
+    @info "Spectral pair coverage: $n_paired / $N PSMs ($(round(100*n_paired/N, digits=1))%) have paired target/decoy in file\n"
+    psms[!, :has_spectral_pair] = has_spectral_pair
+
     psms[!,:irt_obs] = irt_obs
     psms[!,:irt_pred] = irt_pred
     psms[!,:irt_diff] = irt_diff
