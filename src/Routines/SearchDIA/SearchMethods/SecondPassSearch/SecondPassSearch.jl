@@ -415,6 +415,14 @@ function process_search_results!(
         filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
         #filter!(row -> first(row.isotopes_captured) > 2, psms)
 
+        # Remove scans with zero weight (no signal from deconvolution)
+        n_before = nrow(psms)
+        filter!(row -> row.weight > 0.0f0, psms)
+        n_removed = n_before - nrow(psms)
+        if n_removed > 0
+            @user_info "Removed $n_removed / $n_before scans with zero weight ($(round(100*n_removed/n_before, digits=1))%)"
+        end
+
         # Initialize best_scan column
         psms[!,:best_scan] = zeros(Bool, size(psms, 1));
 
