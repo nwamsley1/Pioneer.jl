@@ -214,7 +214,8 @@ Generic PSM scoring using configurable traits.
 - `Dict{UInt8, Vector{TrainedModel}}`: Dictionary mapping CV fold to trained models
 """
 function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
-                             show_progress::Bool = true, verbose::Bool = false)
+                             show_progress::Bool = true, verbose::Bool = false,
+                             print_importances::Bool = false)
 
     # Step 1: Prepare training data (pairing, sorting, column init — dispatched on container type)
     prepare_training_data!(psms, config)
@@ -249,6 +250,21 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
     for fold in get_cv_folds(workspace)
         process_fold_iterations!(TrainingPhase(), workspace, fold,
                                  iteration_rounds, config, mbr_start_iter, pbar)
+    end
+
+    # Print feature importances from the last iteration of the first fold
+    if print_importances
+        first_fold = first(get_cv_folds(workspace))
+        fold_models = get_fold_models(workspace, first_fold)
+        last_model = last(fold_models)
+        imp = importance(last_model)
+        if imp !== nothing
+            sorted_imp = sort(imp, by=x -> x[2], rev=true)
+            @user_info "LightGBM Feature Importances (gain, fold $first_fold, last iteration):"
+            for (fname, gain) in sorted_imp
+                @user_info "  $(rpad(fname, 40)) $(round(gain, digits=2))"
+            end
+        end
     end
 
     # Step 7: PHASE 2 - Predict on held-out test data (dispatched on phase + workspace type)
@@ -324,7 +340,8 @@ end
 Convenience wrapper that wraps DataFrame in DataFramePSMContainer.
 """
 function percolator_scoring!(psms::DataFrame, config::ScoringConfig;
-                             show_progress::Bool = true, verbose::Bool = false)
+                             show_progress::Bool = true, verbose::Bool = false,
+                             print_importances::Bool = false)
     container = DataFramePSMContainer(psms, Val(:unsafe))
-    return percolator_scoring!(container, config; show_progress, verbose)
+    return percolator_scoring!(container, config; show_progress, verbose, print_importances)
 end

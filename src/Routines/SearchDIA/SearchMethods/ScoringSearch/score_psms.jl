@@ -88,7 +88,7 @@ function score_precursor_isotope_traces(
                                        min_PEP_neg_threshold_itr)
 
         container = ArrowFilePSMContainer(file_paths; max_training_psms=max_training)
-        models = percolator_scoring!(container, config; show_progress=true, verbose=true)
+        models = percolator_scoring!(container, config; show_progress=true, verbose=true, print_importances=true)
 
         # _finalize_scoring_arrow! already wrote trace_prob, MBR_boosted_trace_prob,
         # and MBR_transfer_candidate back to the data files. No write_scored_psms_to_files! needed.
@@ -366,7 +366,7 @@ function train_lightgbm_model(
     )
 
     # Delegate to trait-based implementation
-    return percolator_scoring!(best_psms, config; show_progress=show_progress)
+    return percolator_scoring!(best_psms, config; show_progress=show_progress, print_importances=true)
 end
 
 

@@ -495,6 +495,13 @@ function summarize_results!(
             setPassingPsms!(getMSData(search_context), file_idx, file_path(ref))
         end
 
+        # Log per-file passing precursor counts
+        @user_info "Precursors passing 1% FDR per file:"
+        for (file_idx, ref) in zip(valid_file_indices, passing_refs)
+            fname = getFileIdToName(getMSData(search_context), file_idx)
+            @user_info "  $(fname): $(row_count(ref)) precursors"
+        end
+
         # Step 12: Count protein peptides
         step12_time = @elapsed begin
             protein_to_possible_peptides = count_protein_peptides(
