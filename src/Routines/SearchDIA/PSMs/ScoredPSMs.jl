@@ -263,10 +263,11 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             weight[i] >= 1e-6
         )&(
             (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count + unscored_PSMs[i].isotope_count) >= min_frag_count
+        )&(
+            (spectral_scores[i].fitted_spectral_contrast) >= min_spectral_contrast
         )
         #= Removed filters — let ML scoring handle PSM quality
            (unscored_PSMs[i].y_count) >= min_y_count
-           (spectral_scores[i].fitted_spectral_contrast) >= min_spectral_contrast
            spectral_scores[i].matched_ratio > min_log2_matched_ratio
            (unscored_PSMs[i].topn >= min_topn) | (unscored_PSMs[i].topn_iso >= min_topn)
            (UInt8(unscored_PSMs[i].best_rank) <= max_best_rank) | (UInt8(unscored_PSMs[i].best_rank_iso) <= max_best_rank)
