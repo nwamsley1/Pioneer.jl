@@ -88,6 +88,7 @@
         }
     },
     "quant_search": {
+        "prescore_method": "diff_cov",
         "fragment_settings": {
             "min_count": 3,
             "min_y_count": 2,

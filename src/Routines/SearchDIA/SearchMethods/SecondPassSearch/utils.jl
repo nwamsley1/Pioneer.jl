@@ -1206,8 +1206,68 @@ function add_features!(psms::DataFrame,
     return nothing
 end
 
+"""
+    add_precursor_ms2_features!(psms, spectra, search_context, ms_file_idx)
+
+Check if the monoisotopic precursor m/z appears as a peak in each MS2 scan.
+Adds column `log2_prec_ms2_intensity` (0.0 when not found).
+"""
+function add_precursor_ms2_features!(psms::DataFrame, spectra::MassSpecData, search_context::SearchContext, ms_file_idx::Int64)
+    prec_mzs = getMz(getPrecursors(getSpecLib(search_context)))
+    mass_err_model = getMassErrorModel(search_context, ms_file_idx)
+    mz_arrays = getMzArrays(spectra)
+    int_arrays = getIntensityArrays(spectra)
+
+    N = nrow(psms)
+    log2_intensity = zeros(Float32, N)
+
+    precursor_idx = psms[!, :precursor_idx]
+    scan_idx = psms[!, :scan_idx]
+
+    # getMzBounds assumes empirical m/z is already corrected (see MassErrorModel.jl).
+    # We must apply getCorrectedMz to each raw peak before comparing, matching matchPeaks!.
+    # Use a wider binary-search window to account for raw-vs-corrected offset.
+    offset = abs(getMassCorrection(mass_err_model))
+
+    for i in 1:N
+        prec_mz = prec_mzs[precursor_idx[i]]
+        mz_arr = mz_arrays[scan_idx[i]]
+        int_arr = int_arrays[scan_idx[i]]
+
+        low, high = getMzBounds(mass_err_model, prec_mz)
+        # Widen binary search to cover raw (uncorrected) m/z values
+        ppm_offset = offset * (prec_mz / 1f6)
+        lo_idx = searchsortedfirst(mz_arr, low - ppm_offset)
+        hi_idx = searchsortedlast(mz_arr, high + ppm_offset)
+
+        if lo_idx <= hi_idx && lo_idx <= length(mz_arr)
+            best_int = Float32(0)
+            for j in lo_idx:hi_idx
+                corrected_mz = getCorrectedMz(mass_err_model, mz_arr[j])
+                if corrected_mz >= low && corrected_mz <= high
+                    peak_int = Float32(coalesce(int_arr[j], 0f0))
+                    best_int = max(best_int, peak_int)
+                end
+            end
+            if best_int > 0
+                log2_intensity[i] = log2(best_int)
+            end
+        end
+    end
+
+    psms[!, :log2_prec_ms2_intensity] = log2_intensity
+
+    n_found = count(>(0), log2_intensity)
+    @info "  Precursor MS2 features: $(n_found)/$(N) ($(round(100*n_found/N, digits=1))%) precursor m/z peaks found in MS2 scans"
+    if n_found > 0
+        found_mask = log2_intensity .> 0
+        vals = log2_intensity[found_mask]
+        @info "    log2_prec_ms2_intensity range: $(round(minimum(vals), digits=1)) to $(round(maximum(vals), digits=1)), mean=$(round(sum(vals)/length(vals), digits=1))"
+    end
+end
+
 #==========================================================
-Summary Statistics 
+Summary Statistics
 ==========================================================#
 """
     init_summary_columns!(psms::DataFrame)
@@ -1357,6 +1417,8 @@ const LGBM_RECOVERY_FEATURES = [
     :tic, :best_rank, :matched_ratio, :spectrum_peak_count,
     # Amino acid composition
     :aa_H, :aa_P, :aa_L,
+    # Precursor in MS2
+    :log2_prec_ms2_intensity,
 ]
 
 """
@@ -1410,6 +1472,18 @@ Returns a copy (does not modify input).
 """
 function get_best_psm_per_precursor(psms::DataFrame)
     sorted = sort(psms, [:precursor_idx, order(:weight, rev=true)])
+    best = combine(groupby(sorted, :precursor_idx), first)
+    return best
+end
+
+"""
+    get_best_psm_per_precursor_by_score(psms::DataFrame, score_col::Symbol) -> DataFrame
+
+Reduce to one PSM per precursor_idx, keeping the row with highest `score_col`.
+Returns a copy (does not modify input).
+"""
+function get_best_psm_per_precursor_by_score(psms::DataFrame, score_col::Symbol)
+    sorted = sort(psms, [:precursor_idx, order(score_col, rev=true)])
     best = combine(groupby(sorted, :precursor_idx), first)
     return best
 end
@@ -1695,14 +1769,41 @@ function iterative_prescore_filter!(
         getRtIrtModel(search_context, ms_file_idx),
         getPrecursorDict(search_context)
     )
+    add_precursor_ms2_features!(psms, spectra, search_context, ms_file_idx)
 
     sanitize_prescore_features!(psms, collect(ITERATIVE_PRESCORE_FEATURES))
     features = filter(f -> hasproperty(psms, f), collect(ITERATIVE_PRESCORE_FEATURES))
     @info "  Using $(length(features)) features: $(join(features, ", "))\n"
 
-    # ── Step 3: Best PSM per precursor (by weight) ────────────────
-    best_psms = get_best_psm_per_precursor(psms)
-    @info "  $(nrow(best_psms)) unique precursors from $(nrow(psms)) PSMs\n"
+    # ── Step 3a: Two-pass probit on ALL PSMs ─────────────────────
+    targets_all = psms[!, :target]
+    n_all = nrow(psms)
+    @info "  All-PSM probit: $n_all PSMs ($(count(targets_all)) targets)\n"
+
+    # Pass 1: seed from scribe q≤0.01 on all PSMs + all decoys
+    scribe_q_all = zeros(Float64, n_all)
+    get_qvalues!(psms[!, :scribe], targets_all, scribe_q_all)
+    pass1_mask_all = BitVector(((scribe_q_all .<= 0.01) .& targets_all) .| .!targets_all)
+    n_p1_t_all = count((scribe_q_all .<= 0.01) .& targets_all)
+    n_p1_d_all = count(.!targets_all)
+    @info "  All-PSM probit pass 1: $n_p1_t_all targets (scribe q≤0.01) + $n_p1_d_all decoys\n"
+
+    beta_all = train_probit_on_features!(psms, pass1_mask_all, features)
+    apply_probit_scores!(psms, beta_all, features)
+
+    # Pass 2: retrain on probit q≤0.01 + all decoys
+    q_all_p1 = zeros(Float64, n_all)
+    get_qvalues!(psms[!, :probit_score], targets_all, q_all_p1)
+    n_1pct_all = count((q_all_p1 .<= 0.01) .& targets_all)
+    @info "  All-PSM probit pass 1: $n_1pct_all targets @ 1% FDR\n"
+
+    pass2_mask_all = BitVector(((q_all_p1 .<= 0.01) .& targets_all) .| .!targets_all)
+    beta_all = train_probit_on_features!(psms, pass2_mask_all, features)
+    apply_probit_scores!(psms, beta_all, features)
+
+    # ── Step 3b: Best PSM per precursor (by probit_score) ──────
+    best_psms = get_best_psm_per_precursor_by_score(psms, :probit_score)
+    @info "  $(nrow(best_psms)) unique precursors from $(nrow(psms)) PSMs (selected by probit_score)\n"
 
     # ── Step 4: Two-pass probit on best PSMs ──────────────────────
     targets_col = best_psms[!, :target]
@@ -1798,9 +1899,8 @@ function iterative_prescore_filter!(
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            top_n = min(10, length(sorted_imp))
-            @info "  LightGBM feature importances (top $top_n):"
-            for (fname, gain) in sorted_imp[1:top_n]
+            @info "  LightGBM recovery feature importances ($(length(sorted_imp)) features):"
+            for (fname, gain) in sorted_imp
                 @info "    $fname: $(round(gain, digits=1))"
             end
             @info ""
@@ -1827,67 +1927,66 @@ function iterative_prescore_filter!(
         end
         @info "  LightGBM recovery recovered $n_recovered precursors at q≤0.10\n"
 
-        # ── Step 6b: Second-round LightGBM recovery on q>0.20 remainder ──
-        very_low_mask = q_low .> 0.20
-        n_vlow_t = count(very_low_mask .& low_psms[!, :target])
-        n_vlow_d = count(very_low_mask .& .!low_psms[!, :target])
-
-        if n_vlow_t >= 50 && n_vlow_d >= 50
-            @info "  Second-round LightGBM recovery: $n_vlow_t targets + $n_vlow_d decoys\n"
-
+        # ── Step 6b: DIA-NN diagnostic model on q>0.20 remainder ──
+        # Train DIA-NN-vs-decoy model to assess separability of missing DIA-NN IDs.
+        # Purely diagnostic — does NOT add precursors to passing_precs.
+        if !isempty(diann_file)
+            very_low_mask = q_low .> 0.20
             vlow_psms = low_psms[very_low_mask, :]
-            vlow_feature_df = vlow_psms[!, lgbm_features]
-            vlow_labels = vlow_psms[!, :target]
 
-            classifier2 = build_lightgbm_classifier(
-                num_iterations = 200,
-                max_depth = 5,
-                num_leaves = 31,
-                min_data_in_leaf = 50,
-                feature_fraction = 0.8,
-                bagging_fraction = 0.8,
-                bagging_freq = 1,
-                is_unbalance = true,
-            )
-            lgbm_model2 = fit_lightgbm_model(classifier2, vlow_feature_df, vlow_labels)
+            # Labels: DIA-NN targets = positive, decoys = negative, non-DIA-NN targets excluded
+            vlow_is_diann = BitVector(vlow_psms[i, :target] && vlow_psms[i, :precursor_idx] ∈ diann_file
+                                      for i in 1:nrow(vlow_psms))
+            vlow_is_decoy = .!vlow_psms[!, :target]
+            diag_mask = vlow_is_diann .| vlow_is_decoy
+            n_diann_pos = count(vlow_is_diann)
+            n_decoy_neg = count(vlow_is_decoy)
 
-            lgbm_scores2 = lightgbm_predict(lgbm_model2, vlow_feature_df)
-            q_vlow = zeros(Float64, nrow(vlow_psms))
-            get_qvalues!(lgbm_scores2, vlow_psms[!, :target], q_vlow)
+            if n_diann_pos >= 50 && n_decoy_neg >= 50
+                @info "  DIA-NN diagnostic model (q>0.20 remainder): $n_diann_pos DIA-NN positives + $n_decoy_neg decoys\n"
 
-            # Log feature importances
-            imp2 = importance(lgbm_model2)
-            if imp2 !== nothing
-                sorted_imp2 = sort(imp2, by = x -> -x[2])
-                top_n2 = min(10, length(sorted_imp2))
-                @info "  Second-round feature importances (top $top_n2):"
-                for (fname, gain) in sorted_imp2[1:top_n2]
-                    @info "    $fname: $(round(gain, digits=1))"
+                diag_psms = vlow_psms[diag_mask, :]
+                diag_labels = vlow_is_diann[diag_mask]  # true=DIA-NN, false=decoy
+                diag_feature_df = diag_psms[!, lgbm_features]
+
+                classifier_diag = build_lightgbm_classifier(
+                    num_iterations = 200,
+                    max_depth = 5,
+                    num_leaves = 31,
+                    min_data_in_leaf = 50,
+                    feature_fraction = 0.8,
+                    bagging_fraction = 0.8,
+                    bagging_freq = 1,
+                    is_unbalance = true,
+                )
+                lgbm_diag = fit_lightgbm_model(classifier_diag, diag_feature_df, diag_labels)
+
+                # Feature importances
+                imp_diag = importance(lgbm_diag)
+                if imp_diag !== nothing
+                    sorted_imp_diag = sort(imp_diag, by = x -> -x[2])
+                    top_n_diag = min(10, length(sorted_imp_diag))
+                    @info "  DIA-NN diagnostic feature importances (top $top_n_diag):"
+                    for (fname, gain) in sorted_imp_diag[1:top_n_diag]
+                        @info "    $fname: $(round(gain, digits=1))"
+                    end
+                    @info ""
                 end
-                @info ""
-            end
 
-            # Recover precursors at q≤0.10
-            n_recovered2 = 0
-            for i in 1:nrow(vlow_psms)
-                if vlow_psms[i, :target] && q_vlow[i] <= 0.10
-                    push!(passing_precs, vlow_psms[i, :precursor_idx])
-                    n_recovered2 += 1
+                # Score DIA-NN targets + decoys only (exclude non-DIA-NN targets)
+                # Use "target" column trick: DIA-NN=true acts as target, decoy=false acts as decoy
+                diag_scores = lightgbm_predict(lgbm_diag, diag_feature_df)
+                q_diag = zeros(Float64, nrow(diag_psms))
+                get_qvalues!(diag_scores, diag_labels, q_diag)
+
+                for q_thresh in [0.01, 0.05, 0.10, 0.20]
+                    passing_diag = (q_diag .<= q_thresh) .& diag_labels
+                    n_diann_pass = count(passing_diag)
+                    @info "    DIA-NN diagnostic q≤$q_thresh: $n_diann_pass / $n_diann_pos DIA-NN precursors\n"
                 end
+            else
+                @info "  DIA-NN diagnostic model: too few samples ($n_diann_pos DIA-NN, $n_decoy_neg decoys), skipped\n"
             end
-
-            for q_thresh in [0.01, 0.05, 0.10, 0.20]
-                passing2 = (q_vlow .<= q_thresh) .& vlow_psms[!, :target]
-                n_pass2 = count(passing2)
-                recovered_precs2 = Set{UInt32}(vlow_psms[i, :precursor_idx]
-                                               for i in 1:nrow(vlow_psms) if passing2[i])
-                n_file_rec2 = isempty(diann_file) ? 0 : length(intersect(recovered_precs2, diann_file))
-                n_global_rec2 = isempty(diann_global) ? 0 : length(intersect(recovered_precs2, diann_global))
-                @info "    Second-round q≤$q_thresh: $n_pass2 / $n_vlow_t targets, DIA-NN file=$n_file_rec2 global=$n_global_rec2\n"
-            end
-            @info "  Second-round recovered $n_recovered2 precursors at q≤0.10\n"
-        else
-            @info "  Second-round LightGBM recovery: too few samples ($n_vlow_t T, $n_vlow_d D), skipped\n"
         end
     else
         @info "  Low-score LightGBM recovery: too few samples ($n_low_t T, $n_low_d D), skipped\n"

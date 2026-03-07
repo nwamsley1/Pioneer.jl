@@ -188,6 +188,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     # Collect MS1 data?
     ms1_scoring::Bool
 
+    # Iterative prescore filter mode: "diff_cov" (default) or "probit_only"
+    prescore_method::Symbol
+
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -234,6 +237,14 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
         end
 
         ms1_scoring = Bool(global_params.ms1_scoring)
+
+        # Parse prescore method: "diff_cov" (default) or "probit_only"
+        prescore_method = if haskey(quant_params, :prescore_method) && quant_params.prescore_method == "probit_only"
+            :probit_only
+        else
+            :diff_cov
+        end
+
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -241,7 +252,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             UInt8(frag_params.max_rank),
             Set{Int64}([2]),
             Bool(global_params.match_between_runs),
-            
+
             Float32(deconv_params.ms2.lambda),
             reg_type,
             Int64(deconv_params.newton_iters),
@@ -261,11 +272,12 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Float32(frag_params.min_log2_ratio),
             (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
             Int64(frag_params.max_rank),
-            
+
             isotope_trace_type,
             prec_estimation,
 
-            ms1_scoring
+            ms1_scoring,
+            prescore_method
         )
     end
 end
@@ -532,9 +544,15 @@ function process_search_results!(
             getRtIrtModel(search_context, ms_file_idx),
             getPrecursorDict(search_context)
         )
+        add_precursor_ms2_features!(psms, spectra, search_context, ms_file_idx)
 
         # Initialize probability scores (will be calculated later)
         initialize_prob_group_features!(psms, params.match_between_runs)
+
+        # DIA-NN recovery for final processed PSMs (going to ScoringSearch)
+        file_name_diann = getParsedFileName(search_context, ms_file_idx)
+        diann_file, diann_global = load_diann_reference(file_name_diann)
+        log_diann_recovery("Processed PSMs (to ScoringSearch)", psms, diann_file, diann_global)
 
         # Only save results if we have actual PSMs
         if nrow(psms) > 0

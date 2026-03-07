@@ -57,23 +57,6 @@ function get_training_subset(::TrainingPhase, psms::AbstractPSMContainer,
     training_strategy = itr == 1 ? AllDataSelection() : config.training_data
     psms_itr = select_training_data(psms, training_strategy, itr)
 
-    # Filter training data to PSMs whose spectral library partner is also present
-    if has_column(psms_itr, :has_spectral_pair)
-        pair_mask = BitVector(collect(Bool, get_column(psms_itr, :has_spectral_pair)))
-        n_paired = sum(pair_mask)
-        n_paired_targets = sum(pair_mask .& BitVector(collect(Bool, get_column(psms_itr, :target))))
-        n_before = nrows(psms_itr)
-        if n_paired_targets >= 50
-            psms_itr = select_subset(psms_itr, pair_mask)
-            n_after = nrows(psms_itr)
-            targets_after = sum(collect(Bool, get_column(psms_itr, :target)))
-            decoys_after = n_after - targets_after
-            @info "Paired training filter (iter $itr): $n_after/$n_before PSMs ($targets_after T, $decoys_after D)\n"
-        else
-            @info "Paired training filter (iter $itr): skipped, too few paired targets ($n_paired_targets < 50)\n"
-        end
-    end
-
     # Get features and filter to available
     features = get_features(config.feature_selection, itr, total_iterations)
     features = filter_available_features(features, psms_itr)
