@@ -74,7 +74,7 @@ abstract type FeatureSelectionStrategy end
 
 # 5. IterationScheme - Training iterations
 abstract type IterationScheme end
-├── FixedIterationScheme  # Fixed rounds per iteration [100, 200, 200]
+├── FixedIterationScheme  # Fixed rounds per iteration [100, 200, 200, 200]
 └── SinglePassScheme      # Single pass (for probit)
 
 # 6. MBRUpdateStrategy - Match-between-runs

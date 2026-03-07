@@ -83,7 +83,7 @@ Delegates to the trait-based `percolator_scoring!` function.
 - `min_gain_to_split::Float64`: Minimum gain to split (default: 0.0)
 - `max_depth::Int`: Maximum tree depth (default: 10)
 - `num_leaves::Int`: Maximum leaves per tree (default: 63)
-- `iter_scheme::Vector{Int}`: Boosting rounds per iteration (default: [100, 200, 200])
+- `iter_scheme::Vector{Int}`: Boosting rounds per iteration (default: [100, 200, 200, 200])
 - `show_progress::Bool`: Show progress bar (default: true)
 - `verbose_logging::Bool`: Enable verbose output (default: false)
 
@@ -103,7 +103,7 @@ function sort_of_percolator!(psms::AbstractPSMContainer,
                   min_gain_to_split::Float64 = 0.0,
                   max_depth::Int = 10,
                   num_leaves::Int = 63,
-                  iter_scheme::Vector{Int} = [100, 200, 200],
+                  iter_scheme::Vector{Int} = [100, 200, 200, 200],
                   print_importance::Bool = false,
                   show_progress::Bool = true,
                   verbose_logging::Bool = false)
