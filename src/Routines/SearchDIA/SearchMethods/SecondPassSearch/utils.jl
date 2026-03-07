@@ -201,7 +201,6 @@ function process_scans_fragindex!(
     cycle_idx = 0
     total_skipped_weight = 0
     total_skipped_frag_count = 0
-    total_skipped_spectral_contrast = 0
 
     nce_model = getNceModel(search_context, ms_file_idx)
     precursors = getPrecursors(getSpecLib(search_context))
@@ -337,12 +336,11 @@ function process_scans_fragindex!(
         last_val = score_result.last_val
         total_skipped_weight += score_result.skipped_weight
         total_skipped_frag_count += score_result.skipped_frag_count
-        total_skipped_spectral_contrast += score_result.skipped_spectral_contrast
 
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_spectral_contrast=$total_skipped_spectral_contrast"
+    @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count"
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 
@@ -381,7 +379,6 @@ function process_scans!(
     last_val = 0
     total_skipped_weight = 0
     total_skipped_frag_count = 0
-    total_skipped_spectral_contrast = 0
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -534,12 +531,11 @@ function process_scans!(
         last_val = score_result.last_val
         total_skipped_weight += score_result.skipped_weight
         total_skipped_frag_count += score_result.skipped_frag_count
-        total_skipped_spectral_contrast += score_result.skipped_spectral_contrast
 
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_spectral_contrast=$total_skipped_spectral_contrast"
+    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count"
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 
@@ -1177,7 +1173,8 @@ function add_features!(psms::DataFrame,
         has_spectral_pair[i] = pair_idxs[i] != zero(UInt32) && pair_idxs[i] in prec_idx_set
     end
     n_paired = count(has_spectral_pair)
-    @info "Spectral pair coverage: $n_paired / $N PSMs ($(round(100*n_paired/N, digits=1))%) have paired target/decoy in file\n"
+    pct_paired = round(100*n_paired/N, digits=1)
+    @info "Spectral pair coverage: $n_paired / $N PSMs ($pct_paired%) have paired target/decoy in file\n"
     psms[!, :has_spectral_pair] = has_spectral_pair
 
     psms[!,:irt_obs] = irt_obs
@@ -1256,6 +1253,74 @@ function init_summary_columns!(
 end
 
 #==========================================================
+DIA-NN Recovery Diagnostics
+==========================================================#
+
+const DIANN_PERFILE_DIR = "/Users/nathanwamsley/Data/MS_DATA/OlsenEclipse/DIA-NN_results/per_file_precursor_indices"
+const DIANN_GLOBAL_ARROW = "/Users/nathanwamsley/Data/MS_DATA/OlsenEclipse/DIA-NN_results/diann_precursor_indices_3P_rank_based.arrow"
+
+"""
+    load_diann_reference(file_name::String) -> (per_file::Set{UInt32}, global_set::Set{UInt32})
+
+Load DIA-NN reference precursor indices for diagnostics.
+Returns empty sets if files are not found (non-fatal).
+"""
+function load_diann_reference(file_name::String)
+    per_file = Set{UInt32}()
+    global_set = Set{UInt32}()
+
+    # Per-file reference
+    pf_path = joinpath(DIANN_PERFILE_DIR, "$(file_name).arrow")
+    if isfile(pf_path)
+        t = Arrow.Table(pf_path)
+        per_file = Set{UInt32}(t.precursor_idx)
+        @info "  DIA-NN per-file ($file_name): $(length(per_file)) unique precursor_idx values\n"
+    end
+
+    # Global reference
+    if isfile(DIANN_GLOBAL_ARROW)
+        t = Arrow.Table(DIANN_GLOBAL_ARROW)
+        global_set = Set{UInt32}(t.precursor_idx)
+        @info "  DIA-NN global: $(length(global_set)) unique precursor_idx values\n"
+    end
+
+    return per_file, global_set
+end
+
+"""
+    log_diann_recovery(label, psms, diann_file, diann_global)
+
+Log how many DIA-NN precursors have at least one surviving target PSM.
+"""
+function log_diann_recovery(label::String, psms::DataFrame,
+                            diann_file::Set{UInt32}, diann_global::Set{UInt32})
+    (isempty(diann_file) && isempty(diann_global)) && return
+
+    # Unique target precursor_idxs with surviving PSMs
+    target_mask = psms[!, :target]
+    surviving_precs = Set{UInt32}()
+    prec_col = psms[!, :precursor_idx]
+    for i in 1:nrow(psms)
+        if target_mask[i]
+            push!(surviving_precs, prec_col[i])
+        end
+    end
+
+    if !isempty(diann_file)
+        n_recovered = length(intersect(surviving_precs, diann_file))
+        n_total = length(diann_file)
+        pct = round(100.0 * n_recovered / max(1, n_total), digits=1)
+        @info "  [$label] DIA-NN file recovery: $n_recovered / $n_total ($pct%)\n"
+    end
+    if !isempty(diann_global)
+        n_recovered = length(intersect(surviving_precs, diann_global))
+        n_total = length(diann_global)
+        pct = round(100.0 * n_recovered / max(1, n_total), digits=1)
+        @info "  [$label] DIA-NN global recovery: $n_recovered / $n_total ($pct%)\n"
+    end
+end
+
+#==========================================================
 Iterative Prescore Filter (DIA-NN-style diff-cov + probit)
 ==========================================================#
 
@@ -1276,6 +1341,24 @@ const ITERATIVE_PRESCORE_FEATURES = [
     :spectral_contrast,           # per-scan: cosine similarity
 ]
 
+const LGBM_RECOVERY_FEATURES = [
+    # Core spectral quality
+    :fitted_manhattan_distance, :max_matched_residual, :gof,
+    :max_unmatched_residual, :poisson, :spectral_contrast, :err_norm,
+    # Scores / weights
+    :scribe, :weight, :log2_intensity_explained,
+    # Ion counts
+    :y_count, :b_count, :isotope_count, :total_ions,
+    # RT
+    :irt_error, :irt_diff,
+    # Peptide properties
+    :charge, :sequence_length, :missed_cleavage, :Mox, :prec_mz,
+    # Other
+    :tic, :best_rank, :matched_ratio, :spectrum_peak_count,
+    # Amino acid composition
+    :aa_H, :aa_P, :aa_L,
+]
+
 """
     ensure_ms1_stub_columns!(psms::DataFrame)
 
@@ -1292,6 +1375,30 @@ function ensure_ms1_stub_columns!(psms::DataFrame)
     end
     if !hasproperty(psms, :ms1_ms2_rt_diff)
         psms[!, :ms1_ms2_rt_diff] = fill(Float32(-1), n)
+    end
+end
+
+"""
+    sanitize_prescore_features!(psms::DataFrame, features::Vector{Symbol})
+
+Replace Inf/NaN values with 0.0 in prescore feature columns.
+Float16 columns (e.g., err_norm) can overflow to Inf, which would
+crash the covariance matrix solve in train_difference_covariance!.
+"""
+function sanitize_prescore_features!(psms::DataFrame, features::Vector{Symbol})
+    n_fixed = 0
+    for f in features
+        hasproperty(psms, f) || continue
+        col = psms[!, f]
+        for i in eachindex(col)
+            if !isfinite(col[i])
+                col[i] = zero(eltype(col))
+                n_fixed += 1
+            end
+        end
+    end
+    if n_fixed > 0
+        @info "  Sanitized $n_fixed non-finite feature values (Inf/NaN → 0)\n"
     end
 end
 
@@ -1530,11 +1637,13 @@ end
 """
     iterative_prescore_filter!(psms, search_context, spectra, params, ms_file_idx)
 
-Run two rounds of diff-cov + probit filtering. After each round, re-runs
-perform_second_pass_search with surviving pairs so deconvolution is
-re-solved with reduced competition.
+Single-round prescore filter with low-score retrain:
+  1. Two-pass probit on best-per-precursor PSMs (like FirstPassSearch)
+  2. Retrain a second probit on q>0.10 subset to recover borderline precursors
+  3. Exclude precursors failing both models at q>0.10
+  4. Re-run search with surviving (precursor_idx, scan_idx) pairs
 
-Returns fresh PSMs from the final re-search (raw columns only,
+Returns fresh PSMs from the re-search (raw columns only,
 ready for process_search_results!).
 """
 function iterative_prescore_filter!(
@@ -1545,135 +1654,290 @@ function iterative_prescore_filter!(
     ms_file_idx::Int64
 )
     n_initial = nrow(psms)
-    @info "=== Iterative Prescore Filter: starting with $n_initial PSMs ===\n"
+    @info "=== Prescore Filter: starting with $n_initial PSMs ===\n"
 
-    for round in 1:2
-        n_round_start = nrow(psms)
-        @info "--- Filter Round $round: $n_round_start PSMs entering ---\n"
+    # Load DIA-NN reference sets for recovery diagnostics
+    file_name = getParsedFileName(search_context, ms_file_idx)
+    diann_file, diann_global = load_diann_reference(file_name)
+    if !isempty(diann_file) || !isempty(diann_global)
+        @info "  DIA-NN reference loaded: $(length(diann_file)) per-file, $(length(diann_global)) global precursors\n"
+    end
 
-        # Step 1: Add basic columns (RT, charge, target/decoy, err_norm, etc.)
-        add_second_search_columns!(psms,
-            getRetentionTimes(spectra),
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getIsDecoy(getPrecursors(getSpecLib(search_context))),
-            getPrecursors(getSpecLib(search_context))
+    # ── Step 1: Add columns + quality filter ──────────────────────
+    add_second_search_columns!(psms,
+        getRetentionTimes(spectra),
+        getCharge(getPrecursors(getSpecLib(search_context))),
+        getIsDecoy(getPrecursors(getSpecLib(search_context))),
+        getPrecursors(getSpecLib(search_context))
+    )
+
+    get_isotopes_captured!(psms,
+        getIsotopeTraceType(params),
+        getQuadTransmissionModel(search_context, ms_file_idx),
+        getSearchData(search_context),
+        psms[!, :scan_idx],
+        getCharge(getPrecursors(getSpecLib(search_context))),
+        getMz(getPrecursors(getSpecLib(search_context))),
+        getSulfurCount(getPrecursors(getSpecLib(search_context))),
+        getCenterMzs(spectra),
+        getIsolationWidthMzs(spectra)
+    )
+
+    filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
+    filter!(row -> row.weight > 1e-6, psms)
+    @info "  $(nrow(psms)) PSMs after quality filters\n"
+
+    # ── Step 2: Add ML features ───────────────────────────────────
+    ensure_ms1_stub_columns!(psms)
+    add_features!(psms, search_context,
+        getTICs(spectra), getMzArrays(spectra),
+        ms_file_idx,
+        getRtIrtModel(search_context, ms_file_idx),
+        getPrecursorDict(search_context)
+    )
+
+    sanitize_prescore_features!(psms, collect(ITERATIVE_PRESCORE_FEATURES))
+    features = filter(f -> hasproperty(psms, f), collect(ITERATIVE_PRESCORE_FEATURES))
+    @info "  Using $(length(features)) features: $(join(features, ", "))\n"
+
+    # ── Step 3: Best PSM per precursor (by weight) ────────────────
+    best_psms = get_best_psm_per_precursor(psms)
+    @info "  $(nrow(best_psms)) unique precursors from $(nrow(psms)) PSMs\n"
+
+    # ── Step 4: Two-pass probit on best PSMs ──────────────────────
+    targets_col = best_psms[!, :target]
+
+    # Pass 1: seed from scribe q≤0.01 targets + all decoys
+    scribe_q = zeros(Float64, nrow(best_psms))
+    get_qvalues!(best_psms[!, :scribe], targets_col, scribe_q)
+    pass1_mask = BitVector(((scribe_q .<= 0.01) .& targets_col) .| .!targets_col)
+    n_p1_t = count((scribe_q .<= 0.01) .& targets_col)
+    n_p1_d = count(.!targets_col)
+    @info "  Probit pass 1: $n_p1_t targets (scribe q≤0.01) + $n_p1_d decoys\n"
+
+    beta = train_probit_on_features!(best_psms, pass1_mask, features)
+    apply_probit_scores!(best_psms, beta, features)
+
+    # Pass 2: retrain on probit q≤0.01 targets + all decoys
+    q_pass1 = zeros(Float64, nrow(best_psms))
+    get_qvalues!(best_psms[!, :probit_score], targets_col, q_pass1)
+    n_1pct_p1 = count((q_pass1 .<= 0.01) .& targets_col)
+    @info "  Probit pass 1: $n_1pct_p1 targets @ 1% FDR\n"
+
+    pass2_mask = BitVector(((q_pass1 .<= 0.01) .& targets_col) .| .!targets_col)
+    beta = train_probit_on_features!(best_psms, pass2_mask, features)
+    apply_probit_scores!(best_psms, beta, features)
+
+    # Final q-values for best PSMs
+    q_main = zeros(Float64, nrow(best_psms))
+    get_qvalues!(best_psms[!, :probit_score], targets_col, q_main)
+
+    n_pass_1 = count((q_main .<= 0.01) .& targets_col)
+    n_pass_5 = count((q_main .<= 0.05) .& targets_col)
+    n_pass_10 = count((q_main .<= 0.10) .& targets_col)
+    @info "  Main probit: $n_pass_1 @ 1%, $n_pass_5 @ 5%, $n_pass_10 @ 10% FDR target precursors\n"
+
+    # DIA-NN diagnostics for main model
+    if !isempty(diann_file) || !isempty(diann_global)
+        high_precs = Set{UInt32}(best_psms[i, :precursor_idx]
+                                  for i in 1:nrow(best_psms) if (q_main[i] <= 0.10) && targets_col[i])
+        low_precs = Set{UInt32}(best_psms[i, :precursor_idx]
+                                 for i in 1:nrow(best_psms) if (q_main[i] > 0.10) && targets_col[i])
+        if !isempty(diann_file)
+            n_high_file = length(intersect(high_precs, diann_file))
+            n_low_file = length(intersect(low_precs, diann_file))
+            n_no_psm_file = length(diann_file) - n_high_file - n_low_file
+            @info "  DIA-NN FILE breakdown ($(length(diann_file))): q≤0.10=$n_high_file, q>0.10=$n_low_file, no PSM=$n_no_psm_file\n"
+        end
+        if !isempty(diann_global)
+            n_high_global = length(intersect(high_precs, diann_global))
+            n_low_global = length(intersect(low_precs, diann_global))
+            n_no_psm_global = length(diann_global) - n_high_global - n_low_global
+            @info "  DIA-NN GLOBAL breakdown ($(length(diann_global))): q≤0.10=$n_high_global, q>0.10=$n_low_global, no PSM=$n_no_psm_global\n"
+        end
+    end
+
+    # ── Step 5: Identify high-scoring vs low-scoring precursors ───
+    high_mask = q_main .<= 0.10
+    low_mask  = .!high_mask
+    passing_precs = Set{UInt32}(best_psms[i, :precursor_idx]
+                                 for i in 1:nrow(best_psms) if high_mask[i])
+
+    # ── Step 6: Low-score LightGBM recovery ──────────────────────
+    n_low_t = count(low_mask .& targets_col)
+    n_low_d = count(low_mask .& .!targets_col)
+
+    if n_low_t >= 50 && n_low_d >= 50
+        # Build feature set from available columns
+        lgbm_features = filter(f -> hasproperty(best_psms, f), collect(LGBM_RECOVERY_FEATURES))
+        @info "  Low-score LightGBM recovery: $n_low_t targets + $n_low_d decoys, $(length(lgbm_features)) features\n"
+
+        # Extract low subset and train LightGBM
+        low_psms = best_psms[low_mask, :]
+        low_feature_df = low_psms[!, lgbm_features]
+        low_labels = low_psms[!, :target]
+
+        classifier = build_lightgbm_classifier(
+            num_iterations = 200,
+            max_depth = 5,
+            num_leaves = 31,
+            min_data_in_leaf = 50,
+            feature_fraction = 0.8,
+            bagging_fraction = 0.8,
+            bagging_freq = 1,
+            is_unbalance = true,
         )
+        lgbm_model = fit_lightgbm_model(classifier, low_feature_df, low_labels)
 
-        # Step 2: Isotope capture info + basic quality filters
-        get_isotopes_captured!(psms,
-            getIsotopeTraceType(params),
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            psms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
-        )
+        # Predict and compute q-values within low subset
+        lgbm_scores = lightgbm_predict(lgbm_model, low_feature_df)
+        q_low = zeros(Float64, nrow(low_psms))
+        get_qvalues!(lgbm_scores, low_psms[!, :target], q_low)
 
-        filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
-        filter!(row -> row.weight > 0.0f0, psms)
-        n_post_filter = nrow(psms)
-        @info "  Round $round: $n_post_filter PSMs after quality filters\n"
-
-        # Step 3: Add ML features (irt_error, pair_id) — needs MS1 stubs
-        ensure_ms1_stub_columns!(psms)
-        add_features!(psms, search_context,
-            getTICs(spectra), getMzArrays(spectra),
-            ms_file_idx,
-            getRtIrtModel(search_context, ms_file_idx),
-            getPrecursorDict(search_context)
-        )
-
-        # Step 4: Reduce to best PSM per precursor (by weight) for pairing
-        best_psms = get_best_psm_per_precursor(psms)
-        n_unique = nrow(best_psms)
-        n_targets = count(best_psms[!, :target])
-        n_decoys = n_unique - n_targets
-        @info "  Round $round: $n_unique unique precursors ($n_targets T, $n_decoys D)\n"
-
-        # Step 5: Form target-decoy pairs
-        pairs_td = form_target_decoy_pairs(best_psms)
-        n_pairs = length(pairs_td)
-        @info "  Round $round: $n_pairs target-decoy pairs\n"
-
-        if n_pairs < 20
-            @info "  Round $round: Too few pairs ($n_pairs < 20), skipping filter\n"
-            break
+        # Log feature importances
+        imp = importance(lgbm_model)
+        if imp !== nothing
+            sorted_imp = sort(imp, by = x -> -x[2])
+            top_n = min(10, length(sorted_imp))
+            @info "  LightGBM feature importances (top $top_n):"
+            for (fname, gain) in sorted_imp[1:top_n]
+                @info "    $fname: $(round(gain, digits=1))"
+            end
+            @info ""
         end
 
-        # Step 6: Train diff-cov classifier on paired best PSMs
-        features = filter(f -> hasproperty(best_psms, f), collect(ITERATIVE_PRESCORE_FEATURES))
-        @info "  Round $round: using $(length(features)) features: $(join(features, ", "))\n"
-        w = train_difference_covariance!(best_psms, pairs_td, features)
-        if w === nothing
-            @info "  Round $round: Diff-cov training failed, skipping\n"
-            break
-        end
-
-        # Step 7: Apply diff-cov weights to ALL PSMs (not just best)
-        apply_linear_scores!(psms, w, features)
-
-        # Step 8: Compute q-values from diff-cov scores
-        q_vals = zeros(Float64, nrow(psms))
-        get_qvalues!(psms[!, :score], psms[!, :target], q_vals)
-        psms[!, :q_value] = q_vals
-
-        n_1pct_dc = count((q_vals .<= 0.01) .& psms[!, :target])
-        n_5pct_dc = count((q_vals .<= 0.05) .& psms[!, :target])
-        @info "  Round $round diff-cov: $n_1pct_dc targets @ 1% FDR, $n_5pct_dc @ 5% FDR\n"
-
-        # Step 9: Train probit on targets(q<=0.05) + all decoys
-        targets_col = psms[!, :target]
-        train_mask = BitVector(((q_vals .<= 0.05) .& targets_col) .| .!targets_col)
-        n_train_t = count((q_vals .<= 0.05) .& targets_col)
-        n_train_d = count(.!targets_col)
-        @info "  Round $round probit training: $n_train_t targets + $n_train_d decoys\n"
-
-        beta = train_probit_on_features!(psms, train_mask, features)
-
-        # Step 10: Apply probit to ALL PSMs -> compute q-values
-        apply_probit_scores!(psms, beta, features)
-        q_vals_probit = zeros(Float64, nrow(psms))
-        get_qvalues!(psms[!, :probit_score], psms[!, :target], q_vals_probit)
-        psms[!, :q_value] = q_vals_probit
-
-        n_1pct_p = count((q_vals_probit .<= 0.01) .& psms[!, :target])
-        n_5pct_p = count((q_vals_probit .<= 0.05) .& psms[!, :target])
-        @info "  Round $round probit: $n_1pct_p targets @ 1% FDR, $n_5pct_p @ 5% FDR\n"
-
-        # Step 11: Collect surviving (precursor_idx, scan_idx) where q <= 0.50
-        keep_mask = q_vals_probit .<= 0.50
-        n_keep = count(keep_mask)
-        n_discard = nrow(psms) - n_keep
-        @info "  Round $round: keeping $n_keep PSMs, discarding $n_discard (q > 0.50)\n"
-
-        surviving_pairs = Set{Tuple{UInt32, UInt32}}()
-        prec_col = psms[!, :precursor_idx]
-        scan_col = psms[!, :scan_idx]
-        for i in 1:nrow(psms)
-            if keep_mask[i]
-                push!(surviving_pairs, (prec_col[i], scan_col[i]))
+        # Precursors that pass at q≤0.10
+        n_recovered = 0
+        for i in 1:nrow(low_psms)
+            if low_psms[i, :target] && q_low[i] <= 0.10
+                push!(passing_precs, low_psms[i, :precursor_idx])
+                n_recovered += 1
             end
         end
-        n_surviving_precs = length(Set(p[1] for p in surviving_pairs))
-        @info "  Round $round: $(length(surviving_pairs)) surviving (prec, scan) pairs across $n_surviving_precs precursors\n"
 
-        # Step 12: Re-run search with filtered pairs (re-solves deconvolution)
-        @info "  Round $round: re-running search with filtered pairs...\n"
-        psms = rerun_search_with_filter(
-            spectra, search_context, params, ms_file_idx, surviving_pairs
-        )
-        @info "  Round $round: re-search produced $(nrow(psms)) PSMs\n"
+        # Log recovery results at various thresholds
+        for q_thresh in [0.01, 0.05, 0.10, 0.20]
+            passing = (q_low .<= q_thresh) .& low_psms[!, :target]
+            n_pass = count(passing)
+            recovered_precs = Set{UInt32}(low_psms[i, :precursor_idx]
+                                          for i in 1:nrow(low_psms) if passing[i])
+            n_file_rec = isempty(diann_file) ? 0 : length(intersect(recovered_precs, diann_file))
+            n_global_rec = isempty(diann_global) ? 0 : length(intersect(recovered_precs, diann_global))
+            @info "    LightGBM recovery q≤$q_thresh: $n_pass / $n_low_t targets, DIA-NN file=$n_file_rec global=$n_global_rec\n"
+        end
+        @info "  LightGBM recovery recovered $n_recovered precursors at q≤0.10\n"
+
+        # ── Step 6b: Second-round LightGBM recovery on q>0.20 remainder ──
+        very_low_mask = q_low .> 0.20
+        n_vlow_t = count(very_low_mask .& low_psms[!, :target])
+        n_vlow_d = count(very_low_mask .& .!low_psms[!, :target])
+
+        if n_vlow_t >= 50 && n_vlow_d >= 50
+            @info "  Second-round LightGBM recovery: $n_vlow_t targets + $n_vlow_d decoys\n"
+
+            vlow_psms = low_psms[very_low_mask, :]
+            vlow_feature_df = vlow_psms[!, lgbm_features]
+            vlow_labels = vlow_psms[!, :target]
+
+            classifier2 = build_lightgbm_classifier(
+                num_iterations = 200,
+                max_depth = 5,
+                num_leaves = 31,
+                min_data_in_leaf = 50,
+                feature_fraction = 0.8,
+                bagging_fraction = 0.8,
+                bagging_freq = 1,
+                is_unbalance = true,
+            )
+            lgbm_model2 = fit_lightgbm_model(classifier2, vlow_feature_df, vlow_labels)
+
+            lgbm_scores2 = lightgbm_predict(lgbm_model2, vlow_feature_df)
+            q_vlow = zeros(Float64, nrow(vlow_psms))
+            get_qvalues!(lgbm_scores2, vlow_psms[!, :target], q_vlow)
+
+            # Log feature importances
+            imp2 = importance(lgbm_model2)
+            if imp2 !== nothing
+                sorted_imp2 = sort(imp2, by = x -> -x[2])
+                top_n2 = min(10, length(sorted_imp2))
+                @info "  Second-round feature importances (top $top_n2):"
+                for (fname, gain) in sorted_imp2[1:top_n2]
+                    @info "    $fname: $(round(gain, digits=1))"
+                end
+                @info ""
+            end
+
+            # Recover precursors at q≤0.10
+            n_recovered2 = 0
+            for i in 1:nrow(vlow_psms)
+                if vlow_psms[i, :target] && q_vlow[i] <= 0.10
+                    push!(passing_precs, vlow_psms[i, :precursor_idx])
+                    n_recovered2 += 1
+                end
+            end
+
+            for q_thresh in [0.01, 0.05, 0.10, 0.20]
+                passing2 = (q_vlow .<= q_thresh) .& vlow_psms[!, :target]
+                n_pass2 = count(passing2)
+                recovered_precs2 = Set{UInt32}(vlow_psms[i, :precursor_idx]
+                                               for i in 1:nrow(vlow_psms) if passing2[i])
+                n_file_rec2 = isempty(diann_file) ? 0 : length(intersect(recovered_precs2, diann_file))
+                n_global_rec2 = isempty(diann_global) ? 0 : length(intersect(recovered_precs2, diann_global))
+                @info "    Second-round q≤$q_thresh: $n_pass2 / $n_vlow_t targets, DIA-NN file=$n_file_rec2 global=$n_global_rec2\n"
+            end
+            @info "  Second-round recovered $n_recovered2 precursors at q≤0.10\n"
+        else
+            @info "  Second-round LightGBM recovery: too few samples ($n_vlow_t T, $n_vlow_d D), skipped\n"
+        end
+    else
+        @info "  Low-score LightGBM recovery: too few samples ($n_low_t T, $n_low_d D), skipped\n"
     end
+
+    n_passing = length(passing_precs)
+    @info "  $n_passing precursors survive (main + recovery)\n"
+
+    # ── Step 7: Collect surviving (precursor_idx, scan_idx) pairs ─
+    # From the ORIGINAL all-PSMs DataFrame (not just best-per-precursor)
+    surviving_pairs = Set{Tuple{UInt32, UInt32}}()
+    prec_col = psms[!, :precursor_idx]
+    scan_col = psms[!, :scan_idx]
+    for i in 1:nrow(psms)
+        if prec_col[i] in passing_precs
+            push!(surviving_pairs, (prec_col[i], scan_col[i]))
+        end
+    end
+    n_surviving_precs = length(Set(p[1] for p in surviving_pairs))
+    surviving_prec_set = Set(p[1] for p in surviving_pairs)
+    n_diann_file_present = isempty(diann_file) ? 0 : length(intersect(surviving_prec_set, diann_file))
+    n_diann_file_absent  = isempty(diann_file) ? 0 : length(setdiff(diann_file, surviving_prec_set))
+    n_diann_global_present = isempty(diann_global) ? 0 : length(intersect(surviving_prec_set, diann_global))
+    n_diann_global_absent  = isempty(diann_global) ? 0 : length(setdiff(diann_global, surviving_prec_set))
+    @info "  $(length(surviving_pairs)) surviving (prec, scan) pairs across $n_surviving_precs precursors\n"
+    @info "  DIA-NN file: $n_diann_file_present present, $n_diann_file_absent absent | global: $n_diann_global_present present, $n_diann_global_absent absent\n"
+
+    # ── Step 8: Re-run search with filtered pairs ─────────────────
+    @info "  Re-running search with filtered pairs...\n"
+    psms = rerun_search_with_filter(
+        spectra, search_context, params, ms_file_idx, surviving_pairs
+    )
 
     n_final = nrow(psms)
     pct_reduction = round(100.0 * (1 - n_final / n_initial), digits=1)
-    @info "=== Filter complete: $n_initial -> $n_final PSMs ($pct_reduction% reduction) ===\n"
+    @info "=== Prescore Filter complete: $n_initial -> $n_final PSMs ($pct_reduction% reduction) ===\n"
 
-    # Return fresh PSMs from final re-search (raw columns only).
-    # process_search_results! will add all derived columns from scratch.
+    # Final recovery check — psms here are raw from re-search, need target column
+    if !isempty(diann_file) || !isempty(diann_global)
+        is_decoy = getIsDecoy(getPrecursors(getSpecLib(search_context)))
+        prec_col_final = psms[!, :precursor_idx]
+        tmp_target = BitVector(undef, nrow(psms))
+        for i in 1:nrow(psms)
+            tmp_target[i] = !is_decoy[prec_col_final[i]]
+        end
+        psms[!, :target] = tmp_target
+        log_diann_recovery("Final PSMs (to ScoringSearch)", psms, diann_file, diann_global)
+        select!(psms, Not(:target))
+    end
+
     return psms
 end
 
@@ -1733,8 +1997,8 @@ function train_and_apply_prescore!(
     β = zeros(Float64, length(features))
     scores = zeros(Float32, n)
 
-    for round in 1:n_train_rounds
-        if round > 1
+    for iround in 1:n_train_rounds
+        if iround > 1
             # Compute q-values for training data selection
             q_vals = zeros(Float64, n)
             get_qvalues!(scores, targets, q_vals)
@@ -1781,7 +2045,8 @@ function train_and_apply_prescore!(
         gpsms[probit_best, :best_scan] = true
     end
 
-    @user_info "  Prescore selection changed apex in $n_changed / $n_groups precursor groups ($(round(100*n_changed/max(n_groups,1), digits=1))%)"
+    pct_changed = round(100*n_changed/max(n_groups,1), digits=1)
+    @user_info "  Prescore selection changed apex in $n_changed / $n_groups precursor groups ($pct_changed%)"
 
     return true
 end
