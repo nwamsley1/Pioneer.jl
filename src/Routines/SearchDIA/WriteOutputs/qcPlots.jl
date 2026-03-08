@@ -110,21 +110,8 @@ function qcPlots(
         qc_plot_folder::String = "./qc_plots/"
     )
         function getColumnECDF(
-            abundance::AbstractVector{Union{Missing, Float32}})
-            non_missing_count = 0
-            for i in range(1, length(abundance))
-                if !ismissing(abundance[i])
-                    non_missing_count += 1
-                end
-            end
-            sorted_precursor_abundances = zeros(eltype(abundance), non_missing_count)
-            non_missing_count = 0
-            for i in range(1, length(abundance))
-                if !ismissing(abundance[i])
-                    non_missing_count += 1
-                    sorted_precursor_abundances[non_missing_count] = abundance[i]
-                end
-            end
+            abundance::AbstractVector)
+            sorted_precursor_abundances = Float32.(collect(abundance))
             sort!(sorted_precursor_abundances, rev=true)
             sampled_range = 1:20:length(sorted_precursor_abundances)
             return log2.(sampled_range), [log10(x) for x in sorted_precursor_abundances[sampled_range]]
@@ -303,14 +290,8 @@ function qcPlots(
         qc_plot_folder::String = "./qc_plots/"
     )
         function getColumnIDs(
-            abundance::AbstractVector{Union{Missing, Float32}})
-            non_missing_count = 0
-            for i in range(1, length(abundance))
-                if !ismissing(abundance[i])
-                    non_missing_count += 1
-                end
-            end
-            return non_missing_count
+            abundance::AbstractVector)
+            return length(abundance)
         end
 
         # Create protein group counts only for successful files
@@ -392,19 +373,15 @@ function qcPlots(
         qc_plot_folder::String = "./qc_plots/"
     )
         function getMissedCleavageRate(
-            abundance::AbstractVector{Union{Missing, Float32}},
-            precursor_idx::AbstractVector{Union{UInt32}},
+            abundance::AbstractVector,
+            precursor_idx::AbstractVector{<:Integer},
             missed_cleavages::AbstractVector{UInt8})
 
-            non_missing_count = 0
             missed_cleavage_count = 0
-            for i in range(1, length(abundance))
-                if !ismissing(abundance[i])
-                    non_missing_count += 1
-                    missed_cleavage_count += missed_cleavages[precursor_idx[i]]
-                end
+            @inbounds for i in eachindex(abundance)
+                missed_cleavage_count += missed_cleavages[precursor_idx[i]]
             end
-            return missed_cleavage_count/non_missing_count
+            return missed_cleavage_count/length(abundance)
         end
 
         # Get file names from precursors data to ensure same ordering as other plots
