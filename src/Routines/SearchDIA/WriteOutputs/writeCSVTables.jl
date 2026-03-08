@@ -127,6 +127,27 @@ function getModifiedSequence(
     mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
     return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
 end
+
+"""
+    _ensure_typed_missing_file_columns!(df, file_names, T)
+
+Ensure each file column in `file_names` exists in `df` and has element type
+`Union{Missing,T}` when the column is fully missing for a batch.
+"""
+function _ensure_typed_missing_file_columns!(
+    df::DataFrame,
+    file_names::AbstractVector{<:AbstractString},
+    ::Type{T}) where {T<:AbstractFloat}
+
+    n = nrow(df)
+    col_names = names(df)
+    for fname in file_names
+        if fname ∉ col_names || eltype(df[!, fname]) === Missing
+            df[!, fname] = Vector{Union{Missing, T}}(missing, n)
+        end
+    end
+    return df
+end
 #Assume sorted by protein,peptide keys. Do this in batches and write a long and wide form .csv without
 #loading the entire table into memory. 
 function writePrecursorCSV(
@@ -299,12 +320,7 @@ function writePrecursorCSV(
                         CSV.write(io1, subdf, append=true, header=false, delim='\t')
                     end
                     subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
-                    col_names = names(subunstack)
-                    for fname in file_names
-                        if fname ∉ col_names
-                            subunstack[!,fname] .= Vector{Union{Missing,Float32}}(missing, nrow(subunstack))
-                        end
-                    end
+                    _ensure_typed_missing_file_columns!(subunstack, file_names, Float32)
                     if write_csv
                         _sanitize_empty_strings!(subunstack)
                         CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
@@ -514,12 +530,7 @@ function writePrecursorCSV_chunked(
                             CSV.write(io1, subdf, append=true, header=false, delim='\t')
                         end
                         subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
-                        col_names = names(subunstack)
-                        for fname in file_names
-                            if fname ∉ col_names
-                                subunstack[!, fname] .= Vector{Union{Missing, Float32}}(missing, nrow(subunstack))
-                            end
-                        end
+                        _ensure_typed_missing_file_columns!(subunstack, file_names, Float32)
                         if write_csv
                             _sanitize_empty_strings!(subunstack)
                             CSV.write(io2, subunstack[!, sorted_columns], append=true, header=false, delim='\t')
@@ -668,12 +679,7 @@ function writeProteinGroupsCSV(
                         CSV.write(io1, subdf, append=true, header=false, delim='\t')
                     end
                     subunstack = makeWideFormat(subdf)
-                    col_names = names(subunstack)
-                    for fname in file_names
-                        if fname ∉ col_names
-                            subunstack[!,fname] = Vector{Union{Missing,Float64}}(missing, nrow(subunstack))
-                        end
-                    end
+                    _ensure_typed_missing_file_columns!(subunstack, file_names, Float64)
                     if write_csv
                         CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
                     end
