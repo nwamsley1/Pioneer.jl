@@ -407,8 +407,8 @@ function summarize_results!(
 
     @info "=== SecondPassSearch: Phase 2 — Global aggregation + final search ==="
 
-    # Step 1: Global prescore aggregation → passing precursor set + per-file iRT exclusions + Phase 1 scan lookup
-    passing_precs, irt_exclusions, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold)
+    # Step 1: Global prescore aggregation → passing precursor set + Phase 1 scan lookup
+    passing_precs, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold)
 
     # Step 2: Re-search each file with only passing precursors (minus iRT outliers)
     msdr = getMassSpecData(search_context)
@@ -426,21 +426,12 @@ function summarize_results!(
 
         file_name = getParsedFileName(search_context, ms_file_idx)
 
-        # Remove iRT outlier precursors for this specific file
-        file_passing = if haskey(irt_exclusions, ms_file_idx)
-            excluded = irt_exclusions[ms_file_idx]
-            @info "  Phase 2 file $ms_file_idx ($file_name): excluding $(length(excluded)) iRT outlier precursors"
-            setdiff(passing_precs, excluded)
-        else
-            passing_precs
-        end
-
         try
             spectra = getMSData(msdr, ms_file_idx)
 
             # Re-deconvolve with only globally-passing precursors (reduced competition)
             psms = rerun_search_with_precursor_filter(
-                spectra, search_context, params, ms_file_idx, file_passing
+                spectra, search_context, params, ms_file_idx, passing_precs
             )
 
             if nrow(psms) == 0

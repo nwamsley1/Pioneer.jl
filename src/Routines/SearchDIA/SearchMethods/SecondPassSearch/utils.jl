@@ -1627,13 +1627,12 @@ function _prescore_logodds_combine(probs::Vector{Float32}, top_n::Int)::Float32
 end
 
 """
-    aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD) -> (Set{UInt32}, Dict{Int, Set{UInt32}}, Dictionary{UInt32, Dictionary{Int, UInt32}})
+    aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD) -> (Set{UInt32}, Dictionary{UInt32, Dictionary{Int, UInt32}})
 
 Load per-file LightGBM prescore arrow files, aggregate via log-odds averaging,
 compute global q-values, and return (1) the set of precursor indices passing at
-q ≤ qvalue_threshold, (2) per-file iRT outlier exclusions mapping
-ms_file_idx → precursor IDs to exclude from that file's re-deconvolution, and
-(3) per-precursor Phase 1 best scan lookup mapping precursor_idx → (file_idx → scan_idx).
+q ≤ qvalue_threshold and (2) per-precursor Phase 1 best scan lookup mapping
+precursor_idx → (file_idx → scan_idx).
 """
 function aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD)
     ms_data = getMSData(search_context)
@@ -1758,7 +1757,6 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
     @info "Global prescore filter: $(length(passing)) precursors pass at q≤$(qvalue_threshold)"
 
     # ── iRT spread diagnostics for 1% FDR targets ──────────────
-    per_file_irt_exclusions = Dict{Int, Set{UInt32}}()
     if !isempty(prec_min_irt)
         # Collect iRT diffs for target precursors at 1% global FDR
         irt_diffs = Float32[]
@@ -1815,19 +1813,13 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
                     n_total_obs += 1
                     if abs(file_irt - best_irt) > irt_outlier_threshold
                         n_outlier += 1
-                        if !haskey(per_file_irt_exclusions, file_idx)
-                            per_file_irt_exclusions[file_idx] = Set{UInt32}()
-                        end
-                        push!(per_file_irt_exclusions[file_idx], pid)
                     end
                 end
             end
 
-            n_excluded_total = sum(length(s) for s in values(per_file_irt_exclusions); init=0)
             pct = round(100.0 * n_outlier / max(1, n_total_obs); digits=2)
             @info "iRT outlier detection (q≤0.01 targets): MAD=$(round(mad_raw; digits=4)), threshold=$(round(irt_outlier_threshold; digits=4))"
-            @info "  $n_outlier / $n_total_obs observations ($pct%) exceed 3σ from best-scoring iRT"
-            @info "  Excluding $n_excluded_total (precursor, file) pairs from re-deconvolution"
+            @info "  $n_outlier / $n_total_obs observations ($pct%) exceed 3σ from best-scoring iRT (diagnostic only, not filtering)"
         end
     end
 
@@ -1907,7 +1899,7 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
         end
     end
 
-    return passing, per_file_irt_exclusions, prec_best_scan
+    return passing, prec_best_scan
 end
 
 """
