@@ -1195,66 +1195,6 @@ function add_features!(psms::DataFrame,
     return nothing
 end
 
-"""
-    add_precursor_ms2_features!(psms, spectra, search_context, ms_file_idx)
-
-Check if the monoisotopic precursor m/z appears as a peak in each MS2 scan.
-Adds column `log2_prec_ms2_intensity` (0.0 when not found).
-"""
-function add_precursor_ms2_features!(psms::DataFrame, spectra::MassSpecData, search_context::SearchContext, ms_file_idx::Int64)
-    prec_mzs = getMz(getPrecursors(getSpecLib(search_context)))
-    mass_err_model = getMassErrorModel(search_context, ms_file_idx)
-    mz_arrays = getMzArrays(spectra)
-    int_arrays = getIntensityArrays(spectra)
-
-    N = nrow(psms)
-    log2_intensity = zeros(Float32, N)
-
-    precursor_idx = psms[!, :precursor_idx]
-    scan_idx = psms[!, :scan_idx]
-
-    # getMzBounds assumes empirical m/z is already corrected (see MassErrorModel.jl).
-    # We must apply getCorrectedMz to each raw peak before comparing, matching matchPeaks!.
-    # Use a wider binary-search window to account for raw-vs-corrected offset.
-    offset = abs(getMassCorrection(mass_err_model))
-
-    for i in 1:N
-        prec_mz = prec_mzs[precursor_idx[i]]
-        mz_arr = mz_arrays[scan_idx[i]]
-        int_arr = int_arrays[scan_idx[i]]
-
-        low, high = getMzBounds(mass_err_model, prec_mz)
-        # Widen binary search to cover raw (uncorrected) m/z values
-        ppm_offset = offset * (prec_mz / 1f6)
-        lo_idx = searchsortedfirst(mz_arr, low - ppm_offset)
-        hi_idx = searchsortedlast(mz_arr, high + ppm_offset)
-
-        if lo_idx <= hi_idx && lo_idx <= length(mz_arr)
-            best_int = Float32(0)
-            for j in lo_idx:hi_idx
-                corrected_mz = getCorrectedMz(mass_err_model, mz_arr[j])
-                if corrected_mz >= low && corrected_mz <= high
-                    peak_int = Float32(coalesce(int_arr[j], 0f0))
-                    best_int = max(best_int, peak_int)
-                end
-            end
-            if best_int > 0
-                log2_intensity[i] = log2(best_int)
-            end
-        end
-    end
-
-    psms[!, :log2_prec_ms2_intensity] = log2_intensity
-
-    n_found = count(>(0), log2_intensity)
-    @info "  Precursor MS2 features: $(n_found)/$(N) ($(round(100*n_found/N, digits=1))%) precursor m/z peaks found in MS2 scans"
-    if n_found > 0
-        found_mask = log2_intensity .> 0
-        vals = log2_intensity[found_mask]
-        @info "    log2_prec_ms2_intensity range: $(round(minimum(vals), digits=1)) to $(round(maximum(vals), digits=1)), mean=$(round(sum(vals)/length(vals), digits=1))"
-    end
-end
-
 
 #==========================================================
 DIA-NN Recovery Diagnostics
@@ -1344,8 +1284,6 @@ const LGBM_RECOVERY_FEATURES = [
     :tic, :best_rank, :matched_ratio, :spectrum_peak_count,
     # Amino acid composition
     :aa_H, :aa_P, :aa_L,
-    # Precursor in MS2
-    :log2_prec_ms2_intensity,
 ]
 
 """
@@ -1403,8 +1341,7 @@ Steps:
 3. Filter by fraction_transmitted and weight > 0
 4. ensure_ms1_stub_columns! — stubs needed by add_features!
 5. add_features! — irt_error, irt_diff, tic, prec_mz, sequence_length, etc.
-6. add_precursor_ms2_features! — log2_prec_ms2_intensity
-7. sanitize_prescore_features! — replace Inf/NaN with 0
+6. sanitize_prescore_features! — replace Inf/NaN with 0
 """
 function prepare_psm_features!(
     psms::DataFrame,
@@ -1458,10 +1395,7 @@ function prepare_psm_features!(
         getPrecursorDict(search_context)
     )
 
-    # 6. Add precursor-in-MS2 feature
-    add_precursor_ms2_features!(psms, spectra, search_context, ms_file_idx)
-
-    # 7. Sanitize features (Inf/NaN → 0)
+    # 6. Sanitize features (Inf/NaN → 0)
     sanitize_prescore_features!(psms, collect(LGBM_RECOVERY_FEATURES))
 
     return psms
@@ -1566,6 +1500,29 @@ function get_best_psm_per_precursor_by_score(psms::DataFrame, score_col::Symbol)
     return best
 end
 
+"""
+    add_multi_scan_aggregates!(best_psms, all_psms)
+
+Compute per-precursor aggregate features from all scans and join them onto
+the best-scan DataFrame. Gives ScoringSearch multi-scan signal.
+"""
+function add_multi_scan_aggregates!(best_psms::DataFrame, all_psms::DataFrame)
+    aggs = combine(groupby(all_psms, :precursor_idx),
+        nrow => :num_scans,
+        :y_count => maximum => :max_y_ions,
+        :y_count => sum => :y_ions_sum,
+        :gof => maximum => :max_gof,
+        :fitted_manhattan_distance => maximum => :max_fitted_manhattan_distance,
+        :fitted_spectral_contrast => maximum => :max_fitted_spectral_contrast,
+        :matched_ratio => maximum => :max_matched_ratio,
+        :scribe => maximum => :max_scribe,
+        :weight => maximum => :max_weight,
+    )
+    aggs[!, :num_scans] = UInt16.(aggs[!, :num_scans])
+    aggs[!, :y_ions_sum] = UInt16.(aggs[!, :y_ions_sum])
+    leftjoin!(best_psms, aggs, on = :precursor_idx)
+    return best_psms
+end
 
 """
     rerun_search_with_precursor_filter(spectra, search_context, params, ms_file_idx, passing_precs)

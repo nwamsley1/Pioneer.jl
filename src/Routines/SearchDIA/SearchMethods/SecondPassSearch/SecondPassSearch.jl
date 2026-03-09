@@ -415,6 +415,9 @@ function summarize_results!(
             # Train LightGBM → best scan per precursor
             best_psms, _, _ = train_lgbm_and_select_best(psms)
 
+            # Add multi-scan aggregate features for ScoringSearch
+            add_multi_scan_aggregates!(best_psms, psms)
+
             # Add ScoringSearch-required columns
             initialize_prob_group_features!(best_psms, params.match_between_runs)
 
