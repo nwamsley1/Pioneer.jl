@@ -174,6 +174,6 @@
     "paths": {
         "library": "/Users/nathanwamsley/Data/SPEC_LIBS/3P_rank_based.poin",
         "ms_data": "/Users/nathanwamsley/Data/MS_DATA/OlsenEclipse",
-        "results": "/Users/nathanwamsley/Data/For_Figures/OlsenEclipse/OlsenEclipse_prescore_fragsettings"
+        "results": "/Users/nathanwamsley/Data/For_Figures/OlsenEclipse/OlsenEclipse_3pass_refactor"
     }
 }

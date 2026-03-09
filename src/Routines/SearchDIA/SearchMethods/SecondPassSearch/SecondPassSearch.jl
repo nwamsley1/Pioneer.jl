@@ -18,33 +18,14 @@
 """
     SecondPassSearch
 
-Second pass search method using optimized parameters from initial searches.
+Second pass search: full-feature deconvolution on globally-filtered precursors.
 
-This search:
-1. Uses optimized parameters from first pass search
-2. Performs PSM identification with previously calculated Huber delta
-3. Tracks retention time windows for efficient searching
-4. Records chromatogram information for later analysis
-
-# Example Implementation
-```julia
-# Define search parameters
-params = Dict(
-    :second_pass_params => Dict(
-        "min_y_count" => 1,
-        "min_frag_count" => 3,
-        "min_spectral_contrast" => 0.1,
-        "min_log2_matched_ratio" => -3.0,
-        "min_topn_of_m" => (3, 5),
-        "max_best_rank" => 3,
-        "n_frag_isotopes" => 2,
-        "max_frag_rank" => 10
-    )
-)
-
-# Execute search
-results = execute_search(SecondPassSearch(), search_context, params)
-```
+Pipeline:
+1. process_file!: Load filtered_fragment_matches (from FirstPassSearch), deconvolve with
+   full fragment settings, compute all 29 features, select best scan per precursor using
+   Phase 1 LightGBM scan preference, add multi-scan aggregates, write fold-split Arrow files
+2. process_search_results!: No-op (all work done in process_file!)
+3. summarize_results!: Logging only
 """
 struct SecondPassSearch <: SearchMethod end
 
@@ -56,7 +37,7 @@ Type Definitions
 Results container for second pass search.
 """
 struct SecondPassSearchResults <: SearchResults
-    psms::Base.Ref{DataFrame}          # PSMs for each file
+    psms::Base.Ref{DataFrame}
     ms1_psms::Base.Ref{DataFrame}
 end
 
@@ -94,7 +75,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     min_log2_matched_ratio::Float32
     min_topn_of_m::Tuple{Int64, Int64}
     max_best_rank::Int64
-    
+
     # Precursor estimation strategy
     isotope_tracetype::I
     prec_estimation::P
@@ -115,9 +96,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
         quant_params = params.quant_search
         frag_params = quant_params.fragment_settings
         deconv_params = params.optimization.deconvolution
-        
+
         # Determine isotope trace type based on global settings
-        isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && 
+        isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) &&
                                global_params.isotope_settings.combine_traces
             SeperateTraces() #CombineTraces(0.0f0)  # Default min_fraction_transmitted
         else
@@ -242,31 +223,38 @@ Core Processing Methods
 
 """
 Process a single file for second pass search.
+Loads filtered fragment matches, deconvolves with full settings, computes all features,
+selects best scan per precursor, and writes fold-split Arrow files.
 """
 function process_file!(
     results::SecondPassSearchResults,
-    params::P, 
-    search_context::SearchContext,    
+    params::P,
+    search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}
 
-    # Check if file should be skipped due to previous failure
     if check_and_skip_failed_file(search_context, ms_file_idx, "SecondPassSearch")
-        return results  # Return early with unchanged results
+        return results
     end
 
     try
         t_start = time()
+        file_name = getParsedFileName(search_context, ms_file_idx)
 
-        # Load fragment index mapping instead of RT index
-        frag_match_path = getFragmentIndexMatches(getMSData(search_context), ms_file_idx)
+        # Load filtered fragment matches (produced by FirstPassSearch::summarize_results!)
+        filtered_path = getFilteredFragmentMatches(getMSData(search_context), ms_file_idx)
+        if isempty(filtered_path) || !isfile(filtered_path)
+            @info "  No filtered fragment matches for file $ms_file_idx ($file_name), skipping"
+            return results
+        end
+
         scan_to_prec_idx, precursors_passed = load_fragment_index_matches(
-            frag_match_path, length(spectra)
+            filtered_path, length(spectra)
         )
         t_load = time()
 
-        # Perform second pass search using fragment index matches (Phase 1 prescore settings)
+        # Deconvolve with full Phase 2 fragment settings
         psms = perform_second_pass_search(
             spectra,
             scan_to_prec_idx,
@@ -274,21 +262,80 @@ function process_file!(
             search_context,
             params,
             ms_file_idx,
-            MS2CHROM();
-            n_frag_isotopes = params.prescore_n_frag_isotopes,
-            max_frag_rank = params.prescore_max_frag_rank
+            MS2CHROM()  # Uses params.n_frag_isotopes and params.max_frag_rank by default
         )
         t_deconv = time()
 
-        results.psms[] = psms
+        if nrow(psms) == 0
+            @info "    No PSMs after deconvolution, skipping"
+            return results
+        end
 
-        println()
-        @info "Phase 1 deconvolution: $(nrow(psms)) PSMs, load=$(round(t_load - t_start, digits=2))s, deconv=$(round(t_deconv - t_load, digits=2))s"
-        println()
+        # Compute all 29 features on ALL PSMs
+        prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
+        t_features = time()
+
+        if nrow(psms) == 0
+            @info "    No PSMs after feature computation, skipping"
+            return results
+        end
+
+        # Retrieve Phase 1 best scans from FirstPassSearch
+        first_pass_results = get_results(search_context, FirstPassSearch)
+        prec_best_scan = first_pass_results.prec_best_scan
+
+        # Build file-specific scan lookup: precursor_idx → scan_idx from Phase 1
+        file_best_scans = Dictionary{UInt32, UInt32}()
+        for (pid, file_scans) in pairs(prec_best_scan)
+            if haskey(file_scans, ms_file_idx)
+                insert!(file_best_scans, pid, file_scans[ms_file_idx])
+            end
+        end
+
+        # Select best scan per precursor using Phase 1 LightGBM scan preference
+        best_psms = get_best_psm_per_precursor_by_prescore_scan(psms, file_best_scans)
+        t_select = time()
+
+        n_matched = count(row -> haskey(file_best_scans, row.precursor_idx) &&
+            row.scan_idx == file_best_scans[row.precursor_idx], eachrow(best_psms))
+        @info "    $(nrow(best_psms)) precursors ($(n_matched) matched Phase 1 scan, $(nrow(best_psms) - n_matched) fell back to weight)"
+
+        # Add multi-scan aggregate features for ScoringSearch
+        add_multi_scan_aggregates!(best_psms, psms)
+
+        # Add ScoringSearch-required columns
+        initialize_prob_group_features!(best_psms, params.match_between_runs)
+
+        # Write fold-split Arrow files for ScoringSearch
+        base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
+        setSecondPassPsms!(getMSData(search_context), ms_file_idx,
+                          joinpath(base_dir, file_name))
+
+        for fold in UInt8[0, 1]
+            fold_path = joinpath(base_dir, "$(file_name)_fold$(fold).arrow")
+            fold_mask = best_psms.cv_fold .== fold
+            if any(fold_mask)
+                writeArrow(fold_path, best_psms[fold_mask, :])
+            elseif isfile(fold_path)
+                rm(fold_path)
+            end
+        end
+        t_write = time()
+
+        r = s -> round(s, digits=2)
+        @info "    SecondPassSearch: $(nrow(best_psms)) precursors written to fold Arrow files\n" *
+              "      load=$(r(t_load - t_start))s, deconv=$(r(t_deconv - t_load))s, features=$(r(t_features - t_deconv))s, " *
+              "select=$(r(t_select - t_features))s, write=$(r(t_write - t_select))s, total=$(r(t_write - t_start))s"
 
     catch e
-        # Handle failures gracefully using helper function (logs full stacktrace)
-        handle_search_error!(search_context, ms_file_idx, "SecondPassSearch", e, createFallbackResults!, results)
+        file_name = try
+            getMassSpecData(search_context).file_id_to_name[ms_file_idx]
+        catch
+            "file_$ms_file_idx"
+        end
+        @user_warn "SecondPassSearch failed for file $ms_file_idx ($file_name): $(sprint(showerror, e))\n$(sprint(Base.show_backtrace, catch_backtrace()))"
+        markFileFailed!(search_context, ms_file_idx, "SecondPassSearch failed: $(typeof(e))")
+        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
     end
 
     return results
@@ -298,34 +345,31 @@ end
 Create empty PSM results for a failed file in SecondPassSearch.
 """
 function createFallbackResults!(results::SecondPassSearchResults, ms_file_idx::Int64)
-    # Create empty PSM DataFrame with proper schema for regular PSMs
     empty_psms = DataFrame(
         ms_file_idx = UInt32[],
-        scan_idx = UInt32[], 
+        scan_idx = UInt32[],
         precursor_idx = UInt32[],
         rt = Float32[],
         q_value = Float32[],
-        score = Float32[], 
+        score = Float32[],
         prob = Float32[]
     )
-    
-    # Create empty MS1 PSM DataFrame with proper schema
     empty_ms1_psms = DataFrame(
         ms_file_idx = UInt32[],
-        scan_idx = UInt32[], 
+        scan_idx = UInt32[],
         precursor_idx = UInt32[],
         rt = Float32[],
         q_value = Float32[],
-        score = Float32[], 
+        score = Float32[],
         prob = Float32[]
     )
-    
-    # Set empty results (don't append since this file failed)
     results.psms[] = empty_psms
     results.ms1_psms[] = empty_ms1_psms
 end
 
-
+"""
+No additional per-file processing needed (all work done in process_file!).
+"""
 function process_search_results!(
     results::SecondPassSearchResults,
     params::P,
@@ -333,116 +377,8 @@ function process_search_results!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}
-
-    # Check if file should be skipped due to previous failure
-    if check_and_skip_failed_file(search_context, ms_file_idx, "SecondPassSearch results processing")
-        return nothing
-    end
-
-    try
-        t_start = time()
-        psms = results.psms[]
-        file_name = getParsedFileName(search_context, ms_file_idx)
-
-        # Phase 1: Compute only prescore features (skip columns recomputed in Phase 2)
-        prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra, prescore_only=true)
-        t_features = time()
-
-        if nrow(psms) == 0
-            @debug_l2 "No PSMs for file $ms_file_idx after feature computation"
-            setSecondPassPsms!(getMSData(search_context), ms_file_idx, "")
-            return nothing
-        end
-
-        # Compute within-file iRT peak width from full psms (all scans per precursor)
-        prec_irt_min = Dictionary{UInt32, Float32}()
-        prec_irt_max = Dictionary{UInt32, Float32}()
-        for i in 1:nrow(psms)
-            pid = psms[i, :precursor_idx]
-            irt = psms[i, :irt_obs]
-            if haskey(prec_irt_min, pid)
-                prec_irt_min[pid] = min(prec_irt_min[pid], irt)
-                prec_irt_max[pid] = max(prec_irt_max[pid], irt)
-            else
-                insert!(prec_irt_min, pid, irt)
-                insert!(prec_irt_max, pid, irt)
-            end
-        end
-        t_prep = time()
-
-        # Train LightGBM on ALL PSMs, select best scan per precursor
-        best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms)
-        t_lgbm = time()
-
-        # DIA-NN diagnostics at various q-value thresholds (debug only)
-        #=
-        diann_file, diann_global = load_diann_reference(file_name)
-        if !isempty(diann_file) || !isempty(diann_global)
-            best_targets = best_psms[!, :target]
-            for q_thresh in [0.01, 0.05, 0.10]
-                passing = Set{UInt32}(best_psms[i, :precursor_idx]
-                    for i in 1:nrow(best_psms) if (q_values[i] <= q_thresh) && best_targets[i])
-                n_file = isempty(diann_file) ? 0 : length(intersect(passing, diann_file))
-                n_global = isempty(diann_global) ? 0 : length(intersect(passing, diann_global))
-                @debug "    Prescore q≤$q_thresh: $(length(passing)) targets, DIA-NN file=$n_file global=$n_global"
-            end
-        end
-        =#
-        # Map within-file iRT peak widths onto best_psms
-        #=
-        irt_peak_width = Float32[
-            prec_irt_max[pid] - prec_irt_min[pid]
-            for pid in best_psms[!, :precursor_idx]
-        ]
-        =#
-
-        # Write prescore table (scores only, NO fold Arrow files yet)
-        prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
-        mkpath(prescore_dir)
-        score_df = DataFrame(
-            precursor_idx = best_psms[!, :precursor_idx],
-            lgbm_prob = scores,
-            target = best_psms[!, :target],
-            irt_obs = best_psms[!, :irt_obs],
-            #irt_peak_width = irt_peak_width,
-            scan_idx = best_psms[!, :scan_idx]
-        )
-        writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
-        t_write = time()
-
-        # Register base path for summarize_results! (fold files written in Phase 2)
-        base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
-        setSecondPassPsms!(getMSData(search_context), ms_file_idx,
-                          joinpath(base_dir, file_name))
-
-        # Timing summary
-        n_pass_1 = count((q_values .<= 0.01) .& best_psms[!, :target])
-        n_pass_5 = count((q_values .<= 0.05) .& best_psms[!, :target])
-        t_total = t_write - t_start
-        r = s -> round(s, digits=2)
-        println()
-        @info "Phase 1 scoring: $(nrow(psms)) PSMs → $(nrow(best_psms)) precursors ($n_pass_1 @ 1%, $n_pass_5 @ 5% FDR)\n" *
-              "  features=$(r(t_features - t_start))s, prep=$(r(t_prep - t_features))s, write=$(r(t_write - t_lgbm))s\n" *
-              "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train=$(r(lgbm_timings.train))s, predict=$(r(lgbm_timings.predict))s, select=$(r(lgbm_timings.select))s\n" *
-              "  total=$(r(t_total))s"
-        println()
-
-    catch e
-        file_name = try
-            getMassSpecData(search_context).file_id_to_name[ms_file_idx]
-        catch
-            "file_$ms_file_idx"
-        end
-        reason = "SecondPassSearch failed: $(typeof(e))"
-        markFileFailed!(search_context, ms_file_idx, reason)
-        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
-        @user_warn "Second pass search failed for MS data file: $file_name. Error: $(sprint(showerror, e))\n$(sprint(Base.show_backtrace, catch_backtrace()))"
-        setSecondPassPsms!(getMSData(search_context), ms_file_idx, "")
-    end
-
     return nothing
 end
-
 
 """
 Reset results containers.
@@ -451,98 +387,39 @@ function reset_results!(results::SecondPassSearchResults)
     results.psms[] = DataFrame()
 end
 
+"""
+Summarize results — logging only, all per-file work done in process_file!.
+"""
 function summarize_results!(
     results::SecondPassSearchResults,
     params::P,
     search_context::SearchContext
 ) where {P<:SecondPassSearchParameters}
 
-    @info "=== SecondPassSearch: Phase 2 — Global aggregation + final search ==="
-    @info "Phase 2 final: n_frag_isotopes=$(params.n_frag_isotopes), max_frag_rank=$(params.max_frag_rank)"
+    @info "=== SecondPassSearch complete ==="
+    @info "Phase 2 settings: n_frag_isotopes=$(params.n_frag_isotopes), max_frag_rank=$(params.max_frag_rank)"
 
-    # Step 1: Global prescore aggregation → passing precursor set + Phase 1 scan lookup
-    passing_precs, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold)
-
-    # Step 2: Re-search each file with only passing precursors (minus iRT outliers)
-    msdr = getMassSpecData(search_context)
+    # Count total precursors written
     ms_data = getMSData(search_context)
     n_files = length(ms_data)
-    n_rerun = 0
+    n_processed = 0
     n_psms_total = 0
-
-    @info "Re-deconvolving $(n_files) files with $(length(passing_precs)) globally-passing precursors"
 
     for ms_file_idx in 1:n_files
         getFailedIndicator(ms_data, ms_file_idx) && continue
         base_path = getSecondPassPsms(ms_data, ms_file_idx)
         isempty(base_path) && continue
 
-        file_name = getParsedFileName(search_context, ms_file_idx)
-
-        try
-            spectra = getMSData(msdr, ms_file_idx)
-
-            # Re-deconvolve with only globally-passing precursors (reduced competition)
-            psms = rerun_search_with_precursor_filter(
-                spectra, search_context, params, ms_file_idx, passing_precs
-            )
-
-            if nrow(psms) == 0
-                @info "    No PSMs after global re-search, skipping"
-                continue
-            end
-
-            # Compute 29 features on ALL PSMs
-            prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
-
-            if nrow(psms) == 0
-                @info "    No PSMs after feature computation, skipping"
-                continue
-            end
-
-            # Build file-specific scan lookup: precursor_idx → scan_idx from Phase 1
-            file_best_scans = Dictionary{UInt32, UInt32}()
-            for (pid, file_scans) in pairs(prec_best_scan)
-                if haskey(file_scans, ms_file_idx)
-                    insert!(file_best_scans, pid, file_scans[ms_file_idx])
-                end
-            end
-
-            # Select best scan per precursor using Phase 1 LightGBM scan preference
-            best_psms = get_best_psm_per_precursor_by_prescore_scan(psms, file_best_scans)
-
-            n_matched = count(row -> haskey(file_best_scans, row.precursor_idx) &&
-                row.scan_idx == file_best_scans[row.precursor_idx], eachrow(best_psms))
-            @info "    $(nrow(best_psms)) precursors ($(n_matched) matched Phase 1 scan, $(nrow(best_psms) - n_matched) fell back to weight)"
-
-            # Add multi-scan aggregate features for ScoringSearch
-            add_multi_scan_aggregates!(best_psms, psms)
-
-            # Add ScoringSearch-required columns
-            initialize_prob_group_features!(best_psms, params.match_between_runs)
-
-            # Write fold-split Arrow files for ScoringSearch
-            base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
-            for fold in UInt8[0, 1]
-                fold_path = joinpath(base_dir, "$(file_name)_fold$(fold).arrow")
-                fold_mask = best_psms.cv_fold .== fold
-                if any(fold_mask)
-                    writeArrow(fold_path, best_psms[fold_mask, :])
-                elseif isfile(fold_path)
-                    rm(fold_path)
-                end
-            end
-
-            n_rerun += 1
-            n_psms_total += nrow(best_psms)
-            @info "    $(nrow(best_psms)) precursors written to fold Arrow files"
-
-        catch e
-            @user_warn "Phase 2 failed for file $ms_file_idx ($file_name): $(sprint(showerror, e))"
+        for fold in UInt8[0, 1]
+            fold_path = "$(base_path)_fold$(fold).arrow"
+            isfile(fold_path) || continue
+            tbl = Arrow.Table(fold_path)
+            n_psms_total += length(tbl[:precursor_idx])
         end
+        n_processed += 1
     end
 
-    @info "=== Phase 2 complete: $n_rerun files, $n_psms_total total precursors ==="
+    @info "  $n_processed files processed, $n_psms_total total precursors in fold files"
 
     return nothing
 end

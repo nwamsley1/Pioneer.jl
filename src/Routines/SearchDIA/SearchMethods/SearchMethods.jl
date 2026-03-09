@@ -46,7 +46,7 @@ function execute_search(
 
     search_parameters = get_parameters(search_type, params)
     Random.seed!(1844)
-    search_results = init_search_results(search_parameters, search_context)
+    search_results = init_search_results(search_type, search_parameters, search_context)
 
     n_processed = 0
     n_failed = 0
@@ -109,6 +109,10 @@ Required Interface Methods
 function get_parameters(search_type::SearchMethod, params::Any)
     error("get_parameters not implemented for search method of type $(typeof(search_type))")
 end
+
+# Default: dispatch on (search_type, params) falls back to (params) for backward compatibility
+init_search_results(::SearchMethod, search_parameters::SearchParameters, search_context::SearchContext) =
+    init_search_results(search_parameters, search_context)
 
 function init_search_results(search_parameters::SearchParameters, search_context::SearchContext, ms_file_idx::Int64)
     error("init_search_results not implemented for params of type $(typeof(search_parameters))")

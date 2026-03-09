@@ -1642,57 +1642,6 @@ function add_multi_scan_aggregates!(best_psms::DataFrame, all_psms::DataFrame)
     return best_psms
 end
 
-"""
-    rerun_search_with_precursor_filter(spectra, search_context, params, ms_file_idx, passing_precs)
-
-Filter fragment index to keep only precursors in `passing_precs`, then re-solve
-deconvolution with reduced precursor competition.
-"""
-function rerun_search_with_precursor_filter(
-    spectra::MassSpecData,
-    search_context::SearchContext,
-    params::SecondPassSearchParameters,
-    ms_file_idx::Int64,
-    passing_precs::Set{UInt32}
-)
-    frag_match_path = getFragmentIndexMatches(getMSData(search_context), ms_file_idx)
-    scan_to_prec_idx_orig, precursors_passed_orig = load_fragment_index_matches(
-        frag_match_path, length(spectra)
-    )
-    n_original = length(precursors_passed_orig)
-
-    new_precursors = UInt32[]
-    new_scan_to_prec = Vector{Union{Missing, UnitRange{Int64}}}(missing, length(spectra))
-
-    for scan_idx in 1:length(spectra)
-        range = scan_to_prec_idx_orig[scan_idx]
-        ismissing(range) && continue
-
-        start_new = length(new_precursors) + 1
-        for idx in range
-            pid = precursors_passed_orig[idx]
-            if pid in passing_precs
-                push!(new_precursors, pid)
-            end
-        end
-        end_new = length(new_precursors)
-
-        if end_new >= start_new
-            new_scan_to_prec[scan_idx] = start_new:end_new
-        end
-    end
-
-    n_filtered = length(new_precursors)
-    pct = round(100.0 * n_filtered / max(1, n_original), digits=1)
-    @info "    Global re-search input: $n_filtered / $n_original entries ($pct%)\n"
-
-    return perform_second_pass_search(
-        spectra, new_scan_to_prec, new_precursors,
-        search_context, params, ms_file_idx, MS2CHROM()
-    )
-end
-
-
 #==========================================================
 Global Cross-Run Prescore Aggregation
 ==========================================================#

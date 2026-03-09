@@ -18,47 +18,13 @@
 """
     FirstPassSearch
 
-Initial search method to identify PSMs and establish retention time calibration.
+First pass deconvolution and LightGBM prescore search.
 
-This search:
-1. Performs initial PSM identification with learned scoring
-2. Calculates retention time indices and FWHM statistics
-3. Maps between library and empirical retention times
-4. Generates RT calibration curves for subsequent searches
-
-# Example Implementation
-```julia
-# Define search parameters
-params = Dict(
-    :isotope_err_bounds => (1, 0),
-    :first_search_params => Dict(
-        "n_train_rounds_probit" => 10,
-        "max_iter_probit" => 100,
-        "max_q_value_probit_rescore" => 0.01,
-        "min_index_search_score" => 3,
-        "min_frag_count" => 3,
-        "min_spectral_contrast" => 0.1,
-        "min_log2_matched_ratio" => -3.0,
-        "min_topn_of_m" => (3, 5),
-        "max_best_rank" => 3,
-        "max_precursors_passing" => 5000,
-        "abreviate_precursor_calc" => false
-    ),
-    :summarize_first_search_params => Dict(
-        "min_inference_points" => 1000,
-        "max_q_val_for_irt" => 0.01,
-        "max_precursors" => 10000,
-        "max_irt_bin_size" => 0.1,
-        "max_prob_to_impute" => 0.99
-    ),
-    :irt_mapping_params => Dict(
-        "min_prob" => 0.9
-    )
-)
-
-# Execute search
-results = execute_search(FirstPassSearch(), search_context, params)
-```
+Pipeline:
+1. process_file!: Load fragment_index_matches, deconvolve with prescore fragment settings
+2. process_search_results!: Compute prescore features, train LightGBM, select best scan per precursor
+3. summarize_results!: Global prescore aggregation, filter fragment_index_matches to passing precursors,
+   write filtered_fragment_matches for SecondPassSearch
 """
 struct FirstPassSearch <: SearchMethod end
 
@@ -66,144 +32,26 @@ struct FirstPassSearch <: SearchMethod end
 Type Definitions
 ==========================================================#
 
-
 """
-Results container for first pass search.
-Holds FWHM statistics, PSM file paths, and model updates.
+Results container for first pass prescore search.
 """
 struct FirstPassSearchResults <: SearchResults
-    fwhms::Dictionary{Int64, @NamedTuple{median_fwhm::Float32,mad_fwhm::Float32}}
     psms::Base.Ref{DataFrame}
-    ms1_mass_err_model::Base.Ref{<:MassErrorModel}
-    ms1_ppm_errs::Vector{Float32}
-    ms1_mass_plots::Vector{Plots.Plot}
-    qc_plots_folder_path::String
 end
-
-"""
-Parameters for first pass search.
-Configures PSM identification, scoring, and RT calibration.
-"""
-struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
-    # Core parameters
-    isotope_err_bounds::Tuple{UInt8, UInt8}
-    min_fraction_transmitted::Float32
-    frag_tol_ppm::Float32
-    ms1_tol_ppm::Float32
-    frag_err_quantile::Float32
-    min_index_search_score::UInt8
-    min_frag_count::Int64
-    min_spectral_contrast::Float32
-    min_log2_matched_ratio::Float32
-    min_topn_of_m::Tuple{Int64, Int64}
-    max_best_rank::UInt8
-    n_frag_isotopes::Int64
-    max_frag_rank::UInt8
-    spec_order::Set{Int64}
-    match_between_runs::Bool
-    relative_improvement_threshold::Float32
-    
-    # Scoring parameters
-    n_train_rounds_probit::Int64
-    max_iter_probit::Int64
-    max_q_value_probit_rescore::Float32
-    global_pep_threshold::Float32
-    # RT parameters
-    min_inference_points::Int64
-    max_q_val_for_irt::Float32
-    min_prob_for_irt_mapping::Float32
-    max_irt_bin_size::Float32
-    max_prob_to_impute::Float32
-    fwhm_nstd::Float32
-    irt_nstd::Float32
-    plot_rt_alignment::Bool
-    prec_estimation::P
-
-    function FirstPassSearchParameters(params::PioneerParameters)
-        # Extract relevant parameter groups
-        global_params = params.global_settings
-        first_params = params.first_search
-        frag_params = first_params.fragment_settings
-        score_params = first_params.scoring_settings
-        rt_params = params.rt_alignment
-        irt_mapping_params = first_params.irt_mapping
-        # Convert isotope error bounds
-        isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
-        # Determine precursor estimation strategy
-        prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        
-        new{typeof(prec_estimation)}(
-            (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
-            0.0f0,  # No transmission threshold for first pass
-            0.0f0,  # No fragment tolerance for first pass
-            Float32(params.parameter_tuning.iteration_settings.ms1_tol_ppm),  # MS1 tolerance from config
-            Float32(params.parameter_tuning.search_settings.frag_err_quantile),
-            # Handle min_score as either single value or array (use first value if array)
-            begin
-                min_score_raw = frag_params.min_score
-                if min_score_raw isa Vector
-                    UInt8(first(min_score_raw))
-                else
-                    UInt8(min_score_raw)
-                end
-            end,
-            Int64(frag_params.min_count),
-            Float32(frag_params.min_spectral_contrast),
-            Float32(frag_params.min_log2_ratio),
-            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
-            UInt8(1), # max_best_rank
-            Int64(frag_params.n_isotopes),
-            UInt8(frag_params.max_rank),
-            Set{Int64}([2]),
-            global_params.match_between_runs,
-            Float32(frag_params.relative_improvement_threshold),
-            
-            Int64(score_params.n_train_rounds),
-            Int64(score_params.max_iterations),
-            Float32(score_params.max_q_value_probit_rescore),
-            Float32(score_params.global_pep_threshold),
-
-            Int64(1000), # Default min_inference_points
-            Float32(rt_params.min_probability),
-            Float32(rt_params.min_probability),
-            Float32(0.1), # Default max_irt_bin_size
-            Float32(irt_mapping_params.max_prob_to_impute_irt),  # Default max_prob_to_impute
-            Float32(irt_mapping_params.fwhm_nstd),   # Default fwhm_nstd
-            Float32(irt_mapping_params.irt_nstd),   # Default irt_nstd
-            Bool(hasproperty(irt_mapping_params, :plot_rt_alignment) ? irt_mapping_params.plot_rt_alignment : false),
-            prec_estimation
-        )
-    end
-end
-
 
 #==========================================================
 Interface Implementation
 ==========================================================#
 
-get_parameters(::FirstPassSearch, params::Any) = FirstPassSearchParameters(params)
-getMs1MassErrorModel(ptsr::FirstPassSearchResults) = ptsr.ms1_mass_err_model[]
-getMs1TolPpm(params::FirstPassSearchParameters) = params.ms1_tol_ppm
+get_parameters(::FirstPassSearch, params::Any) = SecondPassSearchParameters(params)
 
-function init_search_results(
-    ::FirstPassSearchParameters,
-    search_context::SearchContext
-)
-    temp_folder = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms")
-    !isdir(temp_folder) && mkdir(temp_folder)
-    frag_match_folder = joinpath(getDataOutDir(search_context), "temp_data", "fragment_index_matches")
-    !isdir(frag_match_folder) && mkdir(frag_match_folder)
-    out_dir = getDataOutDir(search_context)
-    qc_dir = joinpath(out_dir, "qc_plots")
-    ms1_mass_error_plots = joinpath(qc_dir, "ms1_mass_error_plots")
-    !isdir(ms1_mass_error_plots ) && mkdir(ms1_mass_error_plots )
+function init_search_results(::FirstPassSearch, ::P, search_context::SearchContext) where {P<:SecondPassSearchParameters}
+    prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
+    mkpath(prescore_dir)
+    filtered_dir = joinpath(getDataOutDir(search_context), "temp_data", "filtered_fragment_matches")
+    mkpath(filtered_dir)
     return FirstPassSearchResults(
-        Dictionary{Int64, NamedTuple{(:median_fwhm, :mad_fwhm), Tuple{Float32, Float32}}}(),
-        Base.Ref{DataFrame}(),
-        Base.Ref{MassErrorModel}(),
-        Vector{Float32}(),
-        Plots.Plot[],
-        qc_dir
+        DataFrame()
     )
 end
 
@@ -212,8 +60,7 @@ Core Processing Methods
 ==========================================================#
 
 """
-Process a single MS file in the first pass search.
-Bypass mode: only runs fragment index search, skips probit scoring and MS1 mass error.
+Process a single file: load fragment index matches and deconvolve with prescore settings.
 """
 function process_file!(
     results::FirstPassSearchResults,
@@ -221,144 +68,203 @@ function process_file!(
     search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
-) where {P<:FirstPassSearchParameters}
+) where {P<:SecondPassSearchParameters}
+
+    if check_and_skip_failed_file(search_context, ms_file_idx, "FirstPassSearch")
+        return results
+    end
 
     try
-        # Run fragment index search only (no getPSMS, no probit scoring)
-        scan_to_prec_idx, precursors_passed = fragment_index_search_only(
-            spectra, search_context, params, ms_file_idx
-        )
+        t_start = time()
 
-        # Write fragment index matches to Arrow
-        parsed_fname = getParsedFileName(search_context, ms_file_idx)
-        output_path = joinpath(
-            getDataOutDir(search_context), "temp_data", "fragment_index_matches",
-            parsed_fname * ".arrow"
+        # Load fragment index mapping from FragmentIndexSearch
+        frag_match_path = getFragmentIndexMatches(getMSData(search_context), ms_file_idx)
+        scan_to_prec_idx, precursors_passed = load_fragment_index_matches(
+            frag_match_path, length(spectra)
         )
-        write_fragment_index_matches(scan_to_prec_idx, precursors_passed, output_path)
-        setFragmentIndexMatches!(getMSData(search_context), ms_file_idx, output_path)
+        t_load = time()
 
-        # Create empty PSMs DataFrame (needed by process_search_results!)
-        results.psms[] = DataFrame(
-            ms_file_idx = UInt32[], scan_idx = UInt32[], precursor_idx = UInt32[],
-            rt = Float32[], irt_predicted = Float32[], q_value = Float32[],
-            score = Float32[], prob = Float32[], scan_count = UInt32[],
-            fwhm = Union{Missing, Float32}[], PEP = Float16[]
+        # Deconvolve with Phase 1 prescore fragment settings
+        psms = perform_second_pass_search(
+            spectra,
+            scan_to_prec_idx,
+            precursors_passed,
+            search_context,
+            params,
+            ms_file_idx,
+            MS2CHROM();
+            n_frag_isotopes = params.prescore_n_frag_isotopes,
+            max_frag_rank = params.prescore_max_frag_rank
         )
+        t_deconv = time()
 
-        # Use default MS1 mass error model (no PSMs to estimate from)
-        results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
+        results.psms[] = psms
+
+        println()
+        @info "FirstPassSearch deconvolution: $(nrow(psms)) PSMs, load=$(round(t_load - t_start, digits=2))s, deconv=$(round(t_deconv - t_load, digits=2))s"
+        println()
 
     catch e
-        file_name = try
-            getFileIdToName(getMSData(search_context), ms_file_idx)
-        catch
-            "file_$ms_file_idx"
-        end
-
-        reason = "FirstPassSearch failed: $e"
-        markFileFailed!(search_context, ms_file_idx, reason)
-        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
-        @user_warn "First pass search failed for MS data file: $file_name. Error: $e."
-
-        try
-            bt = catch_backtrace()
-            @user_error "Full error details:\n" * sprint(showerror, e, bt)
-        catch
-        end
-
-        results.psms[] = DataFrame(
-            ms_file_idx = UInt32[], scan_idx = UInt32[], precursor_idx = UInt32[],
-            rt = Float32[], irt_predicted = Float32[], q_value = Float32[],
-            score = Float32[], prob = Float32[], scan_count = UInt32[],
-            fwhm = Union{Missing, Float32}[], PEP = Float16[]
-        )
-        results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
+        handle_search_error!(search_context, ms_file_idx, "FirstPassSearch", e, createFirstPassFallbackResults!, results)
     end
 
     return results
 end
 
 """
-Initial file processing complete, no additional processing needed.
+Create empty PSM results for a failed file.
+"""
+function createFirstPassFallbackResults!(results::FirstPassSearchResults, ms_file_idx::Int64)
+    results.psms[] = DataFrame(
+        ms_file_idx = UInt32[],
+        scan_idx = UInt32[],
+        precursor_idx = UInt32[],
+        rt = Float32[],
+        q_value = Float32[],
+        score = Float32[],
+        prob = Float32[]
+    )
+end
+
+"""
+Per-file scoring: compute prescore features, train LightGBM, select best scan per precursor.
 """
 function process_search_results!(
     results::FirstPassSearchResults,
     params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    ::MassSpecData
-) where {P<:FirstPassSearchParameters}
-    # Bypass mode: set default FWHM values (no PSMs to measure)
-    insert!(results.fwhms, ms_file_idx, (
-        median_fwhm = 0.5f0,
-        mad_fwhm = 0.2f0))
+    spectra::MassSpecData
+) where {P<:SecondPassSearchParameters}
 
-    # Update MS1 mass error model with default
-    setMs1MassErrorModel!(search_context, ms_file_idx, getMassErrorModel(search_context, ms_file_idx))
-end
+    if check_and_skip_failed_file(search_context, ms_file_idx, "FirstPassSearch results processing")
+        return nothing
+    end
 
-"""
-No cleanup needed between files.
-"""
-function reset_results!(results::FirstPassSearchResults)
-    empty!(results.psms[])
-    resize!(results.ms1_ppm_errs, 0)
+    try
+        t_start = time()
+        psms = results.psms[]
+        file_name = getParsedFileName(search_context, ms_file_idx)
+
+        # Compute only prescore features (skip columns recomputed in Phase 2)
+        prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra, prescore_only=true)
+        t_features = time()
+
+        if nrow(psms) == 0
+            @debug_l2 "No PSMs for file $ms_file_idx after feature computation"
+            return nothing
+        end
+
+        # Train LightGBM on ALL PSMs, select best scan per precursor
+        best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms)
+        t_lgbm = time()
+
+        # Write prescore table (scores only, NO fold Arrow files yet)
+        prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
+        mkpath(prescore_dir)
+        score_df = DataFrame(
+            precursor_idx = best_psms[!, :precursor_idx],
+            lgbm_prob = scores,
+            target = best_psms[!, :target],
+            irt_obs = best_psms[!, :irt_obs],
+            scan_idx = best_psms[!, :scan_idx]
+        )
+        writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
+        t_write = time()
+
+        # Timing summary
+        n_pass_1 = count((q_values .<= 0.01) .& best_psms[!, :target])
+        n_pass_5 = count((q_values .<= 0.05) .& best_psms[!, :target])
+        t_total = t_write - t_start
+        r = s -> round(s, digits=2)
+        println()
+        @info "FirstPassSearch scoring: $(nrow(psms)) PSMs → $(nrow(best_psms)) precursors ($n_pass_1 @ 1%, $n_pass_5 @ 5% FDR)\n" *
+              "  features=$(r(t_features - t_start))s, write=$(r(t_write - t_lgbm))s\n" *
+              "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train=$(r(lgbm_timings.train))s, predict=$(r(lgbm_timings.predict))s, select=$(r(lgbm_timings.select))s\n" *
+              "  total=$(r(t_total))s"
+        println()
+
+    catch e
+        file_name = try
+            getMassSpecData(search_context).file_id_to_name[ms_file_idx]
+        catch
+            "file_$ms_file_idx"
+        end
+        reason = "FirstPassSearch scoring failed: $(typeof(e))"
+        markFileFailed!(search_context, ms_file_idx, reason)
+        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
+        @user_warn "First pass scoring failed for MS data file: $file_name. Error: $(sprint(showerror, e))\n$(sprint(Base.show_backtrace, catch_backtrace()))"
+    end
+
     return nothing
 end
 
 """
-Summarize results across all files.
-Bypass mode: build precursor dict from fragment index match files.
+Reset results containers.
+"""
+function reset_results!(results::FirstPassSearchResults)
+    results.psms[] = DataFrame()
+end
+
+"""
+Global aggregation: aggregate prescore across files, filter fragment_index_matches
+to passing precursors, write filtered_fragment_matches for SecondPassSearch.
 """
 function summarize_results!(
     results::FirstPassSearchResults,
     params::P,
     search_context::SearchContext
-) where {P<:FirstPassSearchParameters}
+) where {P<:SecondPassSearchParameters}
 
-    # Build precursor dict from all fragment index match files
-    valid_indices = get_valid_file_indices(search_context)
-    precursors = getPrecursors(getSpecLib(search_context))
-    prec_irts = getIrt(precursors)
-    prec_mzs = getMz(precursors)
+    @info "=== FirstPassSearch: Global prescore aggregation + fragment index filtering ==="
 
-    # Collect all unique precursor IDs across all fragment index match files
-    all_prec_ids = Set{UInt32}()
-    for idx in valid_indices
-        match_path = getFragmentIndexMatches(getMSData(search_context), idx)
-        isempty(match_path) && continue
-        !isfile(match_path) && continue
-        tbl = Arrow.Table(match_path)
-        union!(all_prec_ids, Set{UInt32}(tbl[:precursor_idx]))
+    # Step 1: Global prescore aggregation → passing precursor set + Phase 1 scan lookup
+    passing_precs, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold)
+
+    # Store results for SecondPassSearch to retrieve Phase 1 best scans
+    store_results!(search_context, FirstPassSearch, (passing_precs=passing_precs, prec_best_scan=prec_best_scan))
+
+    # Step 2: Filter fragment_index_matches to only passing precursors, write filtered versions
+    ms_data = getMSData(search_context)
+    n_files = length(ms_data)
+    filtered_dir = joinpath(getDataOutDir(search_context), "temp_data", "filtered_fragment_matches")
+    mkpath(filtered_dir)
+
+    n_filtered_files = 0
+    n_total_entries = 0
+    n_kept_entries = 0
+
+    for ms_file_idx in 1:n_files
+        getFailedIndicator(ms_data, ms_file_idx) && continue
+
+        frag_match_path = getFragmentIndexMatches(ms_data, ms_file_idx)
+        isempty(frag_match_path) && continue
+        !isfile(frag_match_path) && continue
+
+        file_name = getParsedFileName(ms_data, ms_file_idx)
+
+        # Load original fragment index matches
+        tbl = DataFrame(Tables.columntable(Arrow.Table(frag_match_path)))
+        n_before = nrow(tbl)
+        n_total_entries += n_before
+
+        # Filter to only globally-passing precursors
+        filter!(row -> row.precursor_idx in passing_precs, tbl)
+        n_after = nrow(tbl)
+        n_kept_entries += n_after
+
+        # Write filtered version
+        filtered_path = joinpath(filtered_dir, "$(file_name).arrow")
+        writeArrow(filtered_path, tbl)
+        setFilteredFragmentMatches!(ms_data, ms_file_idx, filtered_path)
+
+        n_filtered_files += 1
+        pct = round(100.0 * n_after / max(1, n_before), digits=1)
+        @debug "  $file_name: $n_after / $n_before entries kept ($pct%)"
     end
 
-    @user_info "Bypass FirstPassSearch: $(length(all_prec_ids)) unique precursors from fragment index"
+    overall_pct = round(100.0 * n_kept_entries / max(1, n_total_entries), digits=1)
+    @info "Filtered fragment matches: $n_kept_entries / $n_total_entries entries ($overall_pct%) across $n_filtered_files files"
 
-    # Build minimal precursor dict with library iRT values
-    precursor_dict = Dictionary{UInt32, @NamedTuple{
-        best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32,
-        best_irt::Float32, mean_irt::Union{Missing, Float32},
-        var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32
-    }}()
-
-    for pid in all_prec_ids
-        insert!(precursor_dict, pid, (
-            best_prob = 1.0f0,
-            best_ms_file_idx = UInt32(0),
-            best_scan_idx = UInt32(0),
-            best_irt = prec_irts[pid],
-            mean_irt = missing,
-            var_irt = missing,
-            n = missing,
-            mz = prec_mzs[pid]
-        ))
-        setPredIrt!(search_context, pid, prec_irts[pid])
-    end
-
-    setPrecursorDict!(search_context, precursor_dict)
-
-    # Skip: map_retention_times!, create_rt_indices!, MS1 mass error plots
-    # Second pass will use fragment index matches directly.
+    return nothing
 end
-

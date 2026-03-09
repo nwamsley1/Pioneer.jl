@@ -229,11 +229,23 @@ function importScripts()
         ]
     )
     
-    # Include remaining SearchMethods files (excluding old FileReferences and FileOperations)
-    # Skip ParameterTuningSearch and ScoringSearch since we loaded them above
+    # SecondPassSearch/utils.jl first (shared functions needed by FirstPassSearch and SecondPassSearch)
+    include_files!(joinpath(search_methods_dir, "SecondPassSearch"), ["utils.jl"])
+
+    # FragmentIndexSearch (renamed from old FirstPassSearch bypass mode)
+    include_files!(joinpath(search_methods_dir, "FragmentIndexSearch"), ["FragmentIndexSearch.jl"])
+
+    # FirstPassSearch (Phase 1 deconv + prescore, uses shared utils from SecondPassSearch/)
+    include_files!(joinpath(search_methods_dir, "FirstPassSearch"), ["FirstPassSearch.jl"])
+
+    # SecondPassSearch main file (Phase 2 full features + fold files)
+    include_files!(joinpath(search_methods_dir, "SecondPassSearch"), ["SecondPassSearch.jl"])
+
+    # Include remaining SearchMethods files (excluding explicitly loaded directories)
     for (root, dirs, files) in walkdir(search_methods_dir)
-        # Skip ParameterTuningSearch and ScoringSearch directories
-        if occursin("ParameterTuningSearch", root) || occursin("ScoringSearch", root)
+        if occursin("ParameterTuningSearch", root) || occursin("ScoringSearch", root) ||
+           occursin("SecondPassSearch", root) || occursin("FirstPassSearch", root) ||
+           occursin("FragmentIndexSearch", root)
             continue
         end
         for file in files
