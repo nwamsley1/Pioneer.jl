@@ -1335,23 +1335,37 @@ function ensure_ms1_stub_columns!(psms::DataFrame)
 end
 
 """
+    _sanitize_column!(col::Vector{<:AbstractFloat}) -> Int
+
+Replace Inf/NaN values with zero in a float column. Returns count of values fixed.
+Typed inner function so Julia compiles a tight loop per concrete element type.
+"""
+function _sanitize_column!(col::Vector{T}) where {T<:AbstractFloat}
+    n = 0
+    @inbounds for i in eachindex(col)
+        if !isfinite(col[i])
+            col[i] = zero(T)
+            n += 1
+        end
+    end
+    return n
+end
+
+# No-op for integer/bool columns (always finite)
+_sanitize_column!(::AbstractVector{<:Union{Integer, Bool}}) = 0
+
+"""
     sanitize_prescore_features!(psms::DataFrame, features::Vector{Symbol})
 
 Replace Inf/NaN values with 0.0 in feature columns.
 Float16 columns (e.g., err_norm) can overflow to Inf, which would
-crash downstream ML models.
+crash downstream ML models. Integer/Bool columns are skipped (always finite).
 """
 function sanitize_prescore_features!(psms::DataFrame, features::Vector{Symbol})
     n_fixed = 0
     for f in features
         hasproperty(psms, f) || continue
-        col = psms[!, f]
-        for i in eachindex(col)
-            if !isfinite(col[i])
-                col[i] = zero(eltype(col))
-                n_fixed += 1
-            end
-        end
+        n_fixed += _sanitize_column!(psms[!, f])
     end
     if n_fixed > 0
         @info "  Sanitized $n_fixed non-finite feature values (Inf/NaN → 0)\n"
@@ -1380,6 +1394,8 @@ function prepare_psm_features!(
     spectra::MassSpecData;
     prescore_only::Bool=false
 ) where {P<:SecondPassSearchParameters}
+    t0 = time()
+
     # 1. Add basic search columns (RT, charge, target/decoy status, cv_fold)
     add_second_search_columns!(psms,
         getRetentionTimes(spectra),
@@ -1387,6 +1403,7 @@ function prepare_psm_features!(
         getIsDecoy(getPrecursors(getSpecLib(search_context))),
         getPrecursors(getSpecLib(search_context))
     )
+    t1 = time()
 
     # 2. Determine which precursor isotopes are captured in each scan's isolation window
     get_isotopes_captured!(
@@ -1401,6 +1418,7 @@ function prepare_psm_features!(
         getCenterMzs(spectra),
         getIsolationWidthMzs(spectra)
     )
+    t2 = time()
 
     # 3. Filter by fraction_transmitted and weight
     filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
@@ -1410,9 +1428,11 @@ function prepare_psm_features!(
     if n_removed > 0
         @user_info "Removed $n_removed / $n_before scans with zero weight ($(round(100*n_removed/n_before, digits=1))%)"
     end
+    t3 = time()
 
     # 4. Add MS1 stub columns (needed by add_features!)
     ensure_ms1_stub_columns!(psms)
+    t4 = time()
 
     # 5. Add ML features (irt_error, irt_diff, tic, prec_mz, sequence_length, etc.)
     add_features!(
@@ -1425,9 +1445,18 @@ function prepare_psm_features!(
         getPrecursorDict(search_context);
         prescore_only=prescore_only
     )
+    t5 = time()
 
     # 6. Sanitize features (Inf/NaN → 0)
-    sanitize_prescore_features!(psms, collect(LGBM_RECOVERY_FEATURES))
+    features_to_sanitize = prescore_only ? PRESCORE_FEATURES : LGBM_RECOVERY_FEATURES
+    sanitize_prescore_features!(psms, collect(features_to_sanitize))
+    t6 = time()
+
+    r = s -> round(s, digits=3)
+    @info "  prepare_psm_features! ($(nrow(psms)) PSMs, prescore_only=$prescore_only): " *
+          "columns=$(r(t1-t0))s, isotopes=$(r(t2-t1))s, filter=$(r(t3-t2))s, " *
+          "ms1_stubs=$(r(t4-t3))s, add_features=$(r(t5-t4))s, sanitize=$(r(t6-t5))s, " *
+          "total=$(r(t6-t0))s"
 
     return psms
 end
