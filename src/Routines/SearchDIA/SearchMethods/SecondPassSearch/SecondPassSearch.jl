@@ -15,92 +15,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-#==========================================================
-MS1 Feature Schema Definition
-==========================================================#
-"""
-Complete MS1 feature schema with column names (without _ms1 suffix), types,
-and sentinel values. These are the column names as they appear in ms1_psms
-before joining. The leftjoin operation will automatically add the _ms1 suffix.
-
-This ensures consistent Arrow schemas across all files, regardless of whether
-MS1 PSMs were found during search.
-
-Sentinel values indicate missing MS1 data:
-- Float types: -1.0 (no MS1 measurement)
-- UInt types: 0 (no MS1 data)
-- Bool: false (feature not present)
-
-Schema derived from Ms1ScoredPSM struct + parseMs1Psms additions.
-"""
-const MS1_BASE_SCHEMA = [
-    # From Ms1ScoredPSM struct (core MS1 scoring features)
-    (:m0, Bool, false),
-    (:n_iso, UInt8, UInt8(0)),
-    (:big_iso, UInt8, UInt8(0)),
-    (:m0_error, Float16, Float16(-1)),
-    (:error, Float16, Float16(-1)),
-    (:spectral_contrast, Float16, Float16(-1)),
-    (:fitted_spectral_contrast, Float16, Float16(-1)),
-    (:gof, Float16, Float16(-1)),
-    (:max_matched_residual, Float16, Float16(-1)),
-    (:max_unmatched_residual, Float16, Float16(-1)),
-    (:fitted_manhattan_distance, Float16, Float16(-1)),
-    (:matched_ratio, Float16, Float16(-1)),
-    (:weight, Float32, Float32(-1)),
-    (:ms_file_idx, UInt32, UInt32(0)),
-    (:scan_idx, UInt32, UInt32(0)),
-    # From parseMs1Psms (RT-related features)
-    (:rt, Float32, Float32(-1)),
-    (:rt_max_intensity, Float32, Float32(-1)),
-    (:rt_diff_max_intensity, Float32, Float32(-1)),
-    # From SecondPassSearch join (precursor pairing)
-    (:pair_idx, UInt32, UInt32(0)),
-]
-
-"""
-    get_expected_column_order(psms::DataFrame) -> Vector{Symbol}
-
-Returns the expected column order for PSMs DataFrame with MS1 features.
-Ensures consistent Arrow schema across all files by enforcing deterministic column positions.
-
-# Column Ordering Strategy
-1. All non-MS1-related columns in their current order
-2. MS1 feature columns in MS1_BASE_SCHEMA order (with _ms1 suffix)
-3. MS1-derived computed columns (ms1_ms2_rt_diff, ms1_features_missing)
-
-# Rationale
-Arrow.jl requires not just matching column names and types, but also matching column **positions**
-across files. The leftjoin operation preserves the column order from the right DataFrame (ms1_psms),
-which can vary depending on what parseMs1Psms() returns. This function enforces a consistent order.
-
-# Performance
-Uses select!() for in-place reordering - only reorders column metadata pointers, does not copy data.
-Overhead: <1ms per file.
-"""
-function get_expected_column_order(psms::DataFrame)
-    all_cols = propertynames(psms)
-
-    # MS1 columns in schema order (with _ms1 suffix added)
-    ms1_cols_ordered = [Symbol(String(col_name) * "_ms1") for (col_name, _, _) in MS1_BASE_SCHEMA]
-
-    # MS1-derived computed columns
-    ms1_computed = [:ms1_ms2_rt_diff, :ms1_features_missing]
-
-    # All MS1-related columns
-    ms1_related = Set(vcat(ms1_cols_ordered, ms1_computed))
-
-    # Non-MS1 columns in their current order
-    non_ms1_cols = [c for c in all_cols if c ∉ ms1_related]
-
-    # Final order: non-MS1 columns, then MS1 columns in schema order, then computed columns
-    return vcat(
-        non_ms1_cols,
-        ms1_cols_ordered,
-        ms1_computed
-    )
-end
-
 """
     SecondPassSearch
 
@@ -188,15 +102,6 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     # Collect MS1 data?
     ms1_scoring::Bool
 
-    # Iterative prescore filter mode: "diff_cov" (default) or "probit_only"
-    prescore_method::Symbol
-
-    # Per-file prescore q-value cutoff (1.0 = keep all, let global filter decide)
-    prescore_qvalue_threshold::Float32
-
-    # Re-run deconvolution after global prescore filter (reduces precursor competition)
-    global_rerun_deconvolution::Bool
-
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -244,25 +149,6 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
 
         ms1_scoring = Bool(global_params.ms1_scoring)
 
-        # Parse prescore method: "diff_cov" (default) or "probit_only"
-        prescore_method = if haskey(quant_params, :prescore_method) && quant_params.prescore_method == "probit_only"
-            :probit_only
-        else
-            :diff_cov
-        end
-
-        prescore_qvalue_threshold = if haskey(quant_params, :prescore_qvalue_threshold)
-            Float32(quant_params.prescore_qvalue_threshold)
-        else
-            0.10f0  # default preserves current behavior
-        end
-
-        global_rerun_deconvolution = if haskey(quant_params, :global_rerun_deconvolution)
-            Bool(quant_params.global_rerun_deconvolution)
-        else
-            false
-        end
-
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -294,10 +180,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             isotope_trace_type,
             prec_estimation,
 
-            ms1_scoring,
-            prescore_method,
-            prescore_qvalue_threshold,
-            global_rerun_deconvolution
+            ms1_scoring
         )
     end
 end
@@ -357,17 +240,7 @@ function process_file!(
             MS2CHROM()
         )
 
-        # Iterative prescore filter: 2 rounds of diff-cov + probit,
-        # re-running search after each round to re-solve deconvolution
-        psms = iterative_prescore_filter!(
-            psms, search_context, spectra, params, ms_file_idx
-        )
-
-        # MS1 scoring temporarily disabled in bypass mode
-        ms1_psms = DataFrame()
-
         results.psms[] = psms
-        results.ms1_psms[] = ms1_psms
 
     catch e
         # Handle failures gracefully using helper function (logs full stacktrace)
@@ -408,154 +281,6 @@ function createFallbackResults!(results::SecondPassSearchResults, ms_file_idx::I
     results.ms1_psms[] = empty_ms1_psms
 end
 
-"""
-    compute_psm_features!(psms, ms1_psms, params, search_context, ms_file_idx, spectra) -> DataFrame
-
-Core feature computation pipeline for second pass PSMs. Adds columns, filters,
-computes summary scores, joins MS1 data, and adds ML features. Returns the
-processed DataFrame (one row per precursor×isotope_trace, with all features).
-"""
-function compute_psm_features!(
-    psms::DataFrame,
-    ms1_psms::DataFrame,
-    params::P,
-    search_context::SearchContext,
-    ms_file_idx::Int64,
-    spectra::MassSpecData
-) where {P<:SecondPassSearchParameters}
-    # Add basic search columns (RT, charge, target/decoy status)
-    add_second_search_columns!(psms,
-        getRetentionTimes(spectra),
-        getCharge(getPrecursors(getSpecLib(search_context))),
-        getIsDecoy(getPrecursors(getSpecLib(search_context))),
-        getPrecursors(getSpecLib(search_context))
-    )
-
-    # Determine which precursor isotopes are captured in each scan's isolation window
-    get_isotopes_captured!(
-        psms,
-        getIsotopeTraceType(params),
-        getQuadTransmissionModel(search_context, ms_file_idx),
-        getSearchData(search_context),
-        psms[!, :scan_idx],
-        getCharge(getPrecursors(getSpecLib(search_context))),
-        getMz(getPrecursors(getSpecLib(search_context))),
-        getSulfurCount(getPrecursors(getSpecLib(search_context))),
-        getCenterMzs(spectra),
-        getIsolationWidthMzs(spectra)
-    )
-
-    filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
-
-    # Remove scans with zero weight (no signal from deconvolution)
-    n_before = nrow(psms)
-    filter!(row -> row.weight > 0.0f0, psms)
-    n_removed = n_before - nrow(psms)
-    if n_removed > 0
-        @user_info "Removed $n_removed / $n_before scans with zero weight ($(round(100*n_removed/n_before, digits=1))%)"
-    end
-
-    # Initialize best_scan column
-    psms[!,:best_scan] = zeros(Bool, size(psms, 1))
-
-    # Pre-score all scans with probit model for quality-based best scan selection
-    train_and_apply_prescore!(psms)
-
-    # Initialize columns for summary statistics
-    init_summary_columns!(psms)
-
-    # Calculate summary scores for each PSM group
-    for (key, gpsms) in pairs(groupby(psms, getPsmGroupbyCols(getIsotopeTraceType(params))))
-        get_summary_scores!(
-            gpsms,
-            gpsms[!,:weight],
-            gpsms[!,:gof],
-            gpsms[!,:matched_ratio],
-            gpsms[!,:fitted_manhattan_distance],
-            gpsms[!,:fitted_spectral_contrast],
-            gpsms[!,:scribe],
-            gpsms[!,:y_count],
-            getRtIrtModel(search_context, ms_file_idx)
-        )
-    end
-    # Keep only apex scans for each PSM group
-    filter!(x->x.best_scan, psms)
-
-    # Remove temporary prescore column if present (not needed downstream)
-    if hasproperty(psms, :prescore)
-        select!(psms, Not(:prescore))
-    end
-
-    # Build MS2 RT lookup for efficient MS1 alignment
-    ms2_rt_lookup = Dict{UInt32, Float32}(
-        row.precursor_idx => row.rt for row in eachrow(psms)
-    )
-
-    # Apply hybrid MS1 selection (RT proximity + max intensity features)
-    ms1_psms = parseMs1Psms(ms1_psms, spectra, ms2_rt_lookup)
-
-    # Standardize MS1 schema to ensure consistent Arrow output across all files
-    if size(ms1_psms, 1) > 0
-        for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
-            if hasproperty(ms1_psms, col_name)
-                ms1_psms[!, col_name] = col_type.(ms1_psms[!, col_name])
-            else
-                ms1_psms[!, col_name] = fill(sentinel_value, nrow(ms1_psms))
-            end
-        end
-
-        psms = leftjoin(
-            psms,
-            ms1_psms,
-            on = :precursor_idx,
-            makeunique = true,
-            renamecols = "" => "_ms1"
-        )
-
-        for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
-            ms1_col = Symbol(String(col_name) * "_ms1")
-            psms[!, ms1_col] = coalesce.(psms[!, ms1_col], sentinel_value)
-            disallowmissing!(psms, ms1_col)
-        end
-
-        miss_mask = ismissing.(psms[!, Symbol(String(first(MS1_BASE_SCHEMA)[1]) * "_ms1")])
-    else
-        for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
-            ms1_col = Symbol(String(col_name) * "_ms1")
-            psms[!, ms1_col] = fill(sentinel_value, nrow(psms))
-        end
-        miss_mask = trues(nrow(psms))
-    end
-
-    # Calculate MS1-MS2 RT difference in iRT space
-    rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
-    psms[!,:ms1_ms2_rt_diff] = Float32.(ifelse.(psms[!,:rt_ms1] .== Float32(-1),
-                      Float32(-1),
-                      abs.(rt_to_irt_model.(psms[!,:rt]) .- rt_to_irt_model.(psms[!,:rt_ms1]))))
-
-    psms[!, :ms1_features_missing] = miss_mask
-
-    # Enforce consistent MS1 column ordering for Arrow schema compatibility
-    expected_order = get_expected_column_order(psms)
-    select!(psms, expected_order)
-
-    # Add additional features for final analysis
-    add_features!(
-        psms,
-        search_context,
-        getTICs(spectra),
-        getMzArrays(spectra),
-        ms_file_idx,
-        getRtIrtModel(search_context, ms_file_idx),
-        getPrecursorDict(search_context)
-    )
-    add_precursor_ms2_features!(psms, spectra, search_context, ms_file_idx)
-
-    # Initialize probability scores (will be calculated later)
-    initialize_prob_group_features!(psms, params.match_between_runs)
-
-    return psms
-end
 
 function process_search_results!(
     results::SecondPassSearchResults,
@@ -567,64 +292,64 @@ function process_search_results!(
 
     # Check if file should be skipped due to previous failure
     if check_and_skip_failed_file(search_context, ms_file_idx, "SecondPassSearch results processing")
-        return nothing  # Return early
+        return nothing
     end
 
     try
-        # Get PSMs from results container
         psms = results.psms[]
-        ms1_psms = results.ms1_psms[]
+        file_name = getParsedFileName(search_context, ms_file_idx)
 
-        # Compute all features (columns, filtering, summary scores, MS1 join, ML features)
-        psms = compute_psm_features!(psms, ms1_psms, params, search_context, ms_file_idx, spectra)
+        # Phase 1: Compute 29 features on ALL PSMs (all scans, not best-per-precursor)
+        prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
 
-        # DIA-NN recovery for final processed PSMs (going to ScoringSearch)
-        file_name_diann = getParsedFileName(search_context, ms_file_idx)
-        diann_file, diann_global = load_diann_reference(file_name_diann)
-        log_diann_recovery("Processed PSMs (to ScoringSearch)", psms, diann_file, diann_global)
-
-        # Only save results if we have actual PSMs
-        if nrow(psms) > 0
-            # Save processed results - split by CV fold for memory-efficient ML training
-            base_name = getParsedFileName(search_context, ms_file_idx)
-            base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
-
-            # Split and write by cv_fold
-            for fold in UInt8[0, 1]
-                fold_mask = psms.cv_fold .== fold
-                if any(fold_mask)
-                    fold_path = joinpath(base_dir, "$(base_name)_fold$(fold).arrow")
-                    writeArrow(fold_path, psms[fold_mask, :])
-                end
-            end
-
-            # Store base path (without fold suffix) for reference
-            # Downstream code uses getSecondPassPsmsFold() to construct fold-specific paths
-            setSecondPassPsms!(getMSData(search_context), ms_file_idx,
-                              joinpath(base_dir, base_name))
-        else
-            # No PSMs found - mark as empty but don't fail
-            @debug_l2 "No PSMs found for file $ms_file_idx in SecondPassSearch, setting empty path"
+        if nrow(psms) == 0
+            @debug_l2 "No PSMs for file $ms_file_idx after feature computation"
             setSecondPassPsms!(getMSData(search_context), ms_file_idx, "")
+            return nothing
         end
+
+        # Train LightGBM on ALL PSMs, select best scan per precursor
+        best_psms, scores, q_values = train_lgbm_and_select_best(psms)
+
+        # DIA-NN diagnostics at various q-value thresholds
+        diann_file, diann_global = load_diann_reference(file_name)
+        if !isempty(diann_file) || !isempty(diann_global)
+            best_targets = best_psms[!, :target]
+            for q_thresh in [0.01, 0.05, 0.10]
+                passing = Set{UInt32}(best_psms[i, :precursor_idx]
+                    for i in 1:nrow(best_psms) if (q_values[i] <= q_thresh) && best_targets[i])
+                n_file = isempty(diann_file) ? 0 : length(intersect(passing, diann_file))
+                n_global = isempty(diann_global) ? 0 : length(intersect(passing, diann_global))
+                @info "    Prescore q≤$q_thresh: $(length(passing)) targets, DIA-NN file=$n_file global=$n_global"
+            end
+        end
+
+        # Write prescore table (scores only, NO fold Arrow files yet)
+        prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
+        mkpath(prescore_dir)
+        score_df = DataFrame(
+            precursor_idx = best_psms[!, :precursor_idx],
+            lgbm_prob = scores,
+            target = best_psms[!, :target]
+        )
+        writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
+
+        # Register base path for summarize_results! (fold files written in Phase 2)
+        base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
+        setSecondPassPsms!(getMSData(search_context), ms_file_idx,
+                          joinpath(base_dir, file_name))
+
     catch e
-        # Mark file as failed and handle gracefully
         file_name = try
             getMassSpecData(search_context).file_id_to_name[ms_file_idx]
         catch
             "file_$ms_file_idx"
         end
-
         reason = "SecondPassSearch failed: $(typeof(e))"
         markFileFailed!(search_context, ms_file_idx, reason)
-        # Also mark in ArrowTableReference for downstream methods
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
         @user_warn "Second pass search failed for MS data file: $file_name. Error: $(sprint(showerror, e))\n$(sprint(Base.show_backtrace, catch_backtrace()))"
-
-        # Set empty path for failed file
         setSecondPassPsms!(getMSData(search_context), ms_file_idx, "")
-
-        # Don't rethrow - continue with next file
     end
 
     return nothing
@@ -644,19 +369,77 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:SecondPassSearchParameters}
 
-    @info "=== SecondPassSearch: Global prescore aggregation ==="
+    @info "=== SecondPassSearch: Phase 2 — Global aggregation + final search ==="
 
-    # Aggregate per-file LightGBM scores → global q-values → passing set
+    # Step 1: Global prescore aggregation → passing precursor set
     passing_precs = aggregate_prescore_globally!(search_context)
 
-    if params.global_rerun_deconvolution
-        # Re-run deconvolution with only passing precursors → better weights/features
-        @info "Global rerun deconvolution enabled — re-solving with $(length(passing_precs)) passing precursors"
-        rerun_globally_filtered!(search_context, params, passing_precs)
-    else
-        # Simple row filter on existing arrow files
-        filter_arrow_files_to_passing!(search_context, passing_precs)
+    # Step 2: Re-search each file with only passing precursors
+    msdr = getMassSpecData(search_context)
+    ms_data = getMSData(search_context)
+    n_files = length(ms_data)
+    n_rerun = 0
+    n_psms_total = 0
+
+    @info "Re-deconvolving $(n_files) files with $(length(passing_precs)) globally-passing precursors"
+
+    for ms_file_idx in 1:n_files
+        getFailedIndicator(ms_data, ms_file_idx) && continue
+        base_path = getSecondPassPsms(ms_data, ms_file_idx)
+        isempty(base_path) && continue
+
+        file_name = getParsedFileName(search_context, ms_file_idx)
+        @info "  Phase 2 file $ms_file_idx ($file_name)..."
+
+        try
+            spectra = getMSData(msdr, ms_file_idx)
+
+            # Re-deconvolve with only globally-passing precursors (reduced competition)
+            psms = rerun_search_with_precursor_filter(
+                spectra, search_context, params, ms_file_idx, passing_precs
+            )
+
+            if nrow(psms) == 0
+                @info "    No PSMs after global re-search, skipping"
+                continue
+            end
+
+            # Compute 29 features on ALL PSMs
+            prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
+
+            if nrow(psms) == 0
+                @info "    No PSMs after feature computation, skipping"
+                continue
+            end
+
+            # Train LightGBM → best scan per precursor
+            best_psms, _, _ = train_lgbm_and_select_best(psms)
+
+            # Add ScoringSearch-required columns
+            initialize_prob_group_features!(best_psms, params.match_between_runs)
+
+            # Write fold-split Arrow files for ScoringSearch
+            base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
+            for fold in UInt8[0, 1]
+                fold_path = joinpath(base_dir, "$(file_name)_fold$(fold).arrow")
+                fold_mask = best_psms.cv_fold .== fold
+                if any(fold_mask)
+                    writeArrow(fold_path, best_psms[fold_mask, :])
+                elseif isfile(fold_path)
+                    rm(fold_path)
+                end
+            end
+
+            n_rerun += 1
+            n_psms_total += nrow(best_psms)
+            @info "    $(nrow(best_psms)) precursors written to fold Arrow files"
+
+        catch e
+            @user_warn "Phase 2 failed for file $ms_file_idx ($file_name): $(sprint(showerror, e))"
+        end
     end
+
+    @info "=== Phase 2 complete: $n_rerun files, $n_psms_total total precursors ==="
 
     return nothing
 end

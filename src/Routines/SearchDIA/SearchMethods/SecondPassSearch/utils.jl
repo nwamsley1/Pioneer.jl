@@ -1266,51 +1266,6 @@ function add_precursor_ms2_features!(psms::DataFrame, spectra::MassSpecData, sea
     end
 end
 
-#==========================================================
-Summary Statistics
-==========================================================#
-"""
-    init_summary_columns!(psms::DataFrame)
-
-Initialize columns for summary statistics across PSM groups.
-
-# Added Columns
-- Maximum entropy, goodness-of-fit
-- Peak intensity metrics
-- Ion coverage statistics
-"""
-function init_summary_columns!(
-    psms::DataFrame,
-    )
-
-    new_cols = [
-        (:max_entropy,              Float16)
-        (:max_gof,         Float16)
-        (:max_fitted_manhattan_distance,          Float16)
-        (:max_fitted_spectral_contrast,         Float16)
-        (:max_scribe, Float16)
-        (:y_ions_sum,               UInt16)
-        (:max_y_ions,               UInt16)
-        (:max_matched_ratio,        Float16)
-        (:num_scans,        UInt16)
-        (:smoothness,        Float32)
-        (:weights,        Vector{Float32})
-        (:irts,         Vector{Float32})
-        ];
-
-        N = size(psms, 1)
-        for (col_name, col_type) in new_cols
-            if col_type <: AbstractVector
-                # col_type is something like Vector{Float16};
-                # create an array of length N, each element is an empty vector of that subtype.
-                psms[!, col_name] = [col_type() for _ in 1:N]
-            else
-                # scalar numeric type, use zeros as before
-                psms[!, col_name] = zeros(col_type, N)
-            end
-        end
-        return psms
-end
 
 #==========================================================
 DIA-NN Recovery Diagnostics
@@ -1381,25 +1336,8 @@ function log_diann_recovery(label::String, psms::DataFrame,
 end
 
 #==========================================================
-Iterative Prescore Filter (DIA-NN-style diff-cov + probit)
+LightGBM Feature Set
 ==========================================================#
-
-"""
-Per-scan features for the iterative prescore filter.
-These are all computed within a single scan (no cross-scan summaries).
-"""
-const ITERATIVE_PRESCORE_FEATURES = [
-    :fitted_manhattan_distance,   # per-scan spectral distance
-    :max_matched_residual,        # per-scan: largest matched fragment residual
-    :gof,                         # per-scan goodness-of-fit
-    :max_unmatched_residual,      # per-scan: largest unmatched fragment residual
-    :poisson,                     # per-scan Poisson score
-    :irt_error,                   # per-scan: |observed iRT - predicted iRT|
-    :y_count,                     # per-scan: number of y-ions matched
-    :scribe,                      # per-scan: scribe score
-    :err_norm,                    # per-scan: normalized mass error
-    :spectral_contrast,           # per-scan: cosine similarity
-]
 
 const LGBM_RECOVERY_FEATURES = [
     # Core spectral quality
@@ -1443,9 +1381,9 @@ end
 """
     sanitize_prescore_features!(psms::DataFrame, features::Vector{Symbol})
 
-Replace Inf/NaN values with 0.0 in prescore feature columns.
+Replace Inf/NaN values with 0.0 in feature columns.
 Float16 columns (e.g., err_norm) can overflow to Inf, which would
-crash the covariance matrix solve in train_difference_covariance!.
+crash downstream ML models.
 """
 function sanitize_prescore_features!(psms::DataFrame, features::Vector{Symbol})
     n_fixed = 0
@@ -1462,6 +1400,157 @@ function sanitize_prescore_features!(psms::DataFrame, features::Vector{Symbol})
     if n_fixed > 0
         @info "  Sanitized $n_fixed non-finite feature values (Inf/NaN → 0)\n"
     end
+end
+
+"""
+    prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra) -> DataFrame
+
+Reusable feature computation pipeline for second pass PSMs. Called in both
+Phase 1 (per-file prescore) and Phase 2 (after global re-deconvolution).
+
+Steps:
+1. add_second_search_columns! — RT, charge, target, cv_fold, err_norm, total_ions
+2. get_isotopes_captured! — precursor_fraction_transmitted
+3. Filter by fraction_transmitted and weight > 0
+4. ensure_ms1_stub_columns! — stubs needed by add_features!
+5. add_features! — irt_error, irt_diff, tic, prec_mz, sequence_length, etc.
+6. add_precursor_ms2_features! — log2_prec_ms2_intensity
+7. sanitize_prescore_features! — replace Inf/NaN with 0
+"""
+function prepare_psm_features!(
+    psms::DataFrame,
+    params::P,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+) where {P<:SecondPassSearchParameters}
+    # 1. Add basic search columns (RT, charge, target/decoy status, cv_fold)
+    add_second_search_columns!(psms,
+        getRetentionTimes(spectra),
+        getCharge(getPrecursors(getSpecLib(search_context))),
+        getIsDecoy(getPrecursors(getSpecLib(search_context))),
+        getPrecursors(getSpecLib(search_context))
+    )
+
+    # 2. Determine which precursor isotopes are captured in each scan's isolation window
+    get_isotopes_captured!(
+        psms,
+        getIsotopeTraceType(params),
+        getQuadTransmissionModel(search_context, ms_file_idx),
+        getSearchData(search_context),
+        psms[!, :scan_idx],
+        getCharge(getPrecursors(getSpecLib(search_context))),
+        getMz(getPrecursors(getSpecLib(search_context))),
+        getSulfurCount(getPrecursors(getSpecLib(search_context))),
+        getCenterMzs(spectra),
+        getIsolationWidthMzs(spectra)
+    )
+
+    # 3. Filter by fraction_transmitted and weight
+    filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
+    n_before = nrow(psms)
+    filter!(row -> row.weight > 0.0f0, psms)
+    n_removed = n_before - nrow(psms)
+    if n_removed > 0
+        @user_info "Removed $n_removed / $n_before scans with zero weight ($(round(100*n_removed/n_before, digits=1))%)"
+    end
+
+    # 4. Add MS1 stub columns (needed by add_features!)
+    ensure_ms1_stub_columns!(psms)
+
+    # 5. Add ML features (irt_error, irt_diff, tic, prec_mz, sequence_length, etc.)
+    add_features!(
+        psms,
+        search_context,
+        getTICs(spectra),
+        getMzArrays(spectra),
+        ms_file_idx,
+        getRtIrtModel(search_context, ms_file_idx),
+        getPrecursorDict(search_context)
+    )
+
+    # 6. Add precursor-in-MS2 feature
+    add_precursor_ms2_features!(psms, spectra, search_context, ms_file_idx)
+
+    # 7. Sanitize features (Inf/NaN → 0)
+    sanitize_prescore_features!(psms, collect(LGBM_RECOVERY_FEATURES))
+
+    return psms
+end
+
+"""
+    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, q_values)
+
+Train LightGBM on ALL PSMs (all scans), predict scores, select best scan
+per precursor by LightGBM score, compute q-values, and log diagnostics.
+
+Returns:
+- best_psms: DataFrame with one row per precursor (best by LightGBM score)
+- scores: Vector{Float32} of LightGBM probabilities for best_psms
+- q_values: Vector{Float64} of q-values for best_psms
+"""
+function train_lgbm_and_select_best(
+    psms::DataFrame;
+    features::Vector{Symbol} = collect(LGBM_RECOVERY_FEATURES)
+)
+    # Filter to available features
+    available_features = filter(f -> hasproperty(psms, f), features)
+    targets_col = psms[!, :target]
+    n_targets = count(targets_col)
+    n_decoys = count(.!targets_col)
+    @info "  LightGBM training: $(nrow(psms)) PSMs ($n_targets targets, $n_decoys decoys), $(length(available_features)) features"
+
+    # Train LightGBM classifier
+    feature_df = psms[!, available_features]
+    classifier = build_lightgbm_classifier(
+        num_iterations = 200,
+        max_depth = 5,
+        num_leaves = 31,
+        min_data_in_leaf = 50,
+        feature_fraction = 0.8,
+        bagging_fraction = 0.8,
+        bagging_freq = 1,
+        is_unbalance = true,
+    )
+    model = fit_lightgbm_model(classifier, feature_df, targets_col)
+
+    # Predict on ALL PSMs
+    all_scores = lightgbm_predict(model, feature_df)
+
+    # Add scores to psms for best-per-precursor selection
+    psms[!, :lgbm_score] = Float32.(all_scores)
+
+    # Select best scan per precursor by LightGBM score
+    best_psms = get_best_psm_per_precursor_by_score(psms, :lgbm_score)
+
+    # Extract scores for best PSMs
+    scores = best_psms[!, :lgbm_score]
+
+    # Compute q-values
+    best_targets = best_psms[!, :target]
+    q_values = zeros(Float64, nrow(best_psms))
+    get_qvalues!(scores, best_targets, q_values)
+
+    # Diagnostics
+    n_pass_1 = count((q_values .<= 0.01) .& best_targets)
+    n_pass_5 = count((q_values .<= 0.05) .& best_targets)
+    n_pass_10 = count((q_values .<= 0.10) .& best_targets)
+    @info "  LightGBM: $n_pass_1 @ 1%, $n_pass_5 @ 5%, $n_pass_10 @ 10% FDR target precursors"
+
+    # Feature importances
+    imp = importance(model)
+    if imp !== nothing
+        sorted_imp = sort(imp, by = x -> -x[2])
+        @info "  LightGBM feature importances ($(length(sorted_imp)) features):"
+        for (fname, gain) in sorted_imp
+            @info "    $fname: $(round(gain, digits=1))"
+        end
+    end
+
+    # Clean up temporary column
+    select!(psms, Not(:lgbm_score))
+
+    return best_psms, Vector{Float32}(scores), q_values
 end
 
 """
@@ -1488,232 +1577,12 @@ function get_best_psm_per_precursor_by_score(psms::DataFrame, score_col::Symbol)
     return best
 end
 
-"""
-    form_target_decoy_pairs(best_psms::DataFrame) -> Vector{Tuple{Int,Int}}
-
-Find matched target-decoy pairs from best-PSM-per-precursor DataFrame.
-Each pair is (target_row_idx, decoy_row_idx).
-Uses the `pair_id` column which holds the partner's precursor_idx.
-"""
-function form_target_decoy_pairs(best_psms::DataFrame)
-    prec_to_row = Dict{UInt32, Int}()
-    for i in 1:nrow(best_psms)
-        prec_to_row[best_psms[i, :precursor_idx]] = i
-    end
-
-    pairs = Vector{Tuple{Int,Int}}()
-    visited = falses(nrow(best_psms))
-
-    for i in 1:nrow(best_psms)
-        visited[i] && continue
-        partner_pid = best_psms[i, :pair_id]
-        partner_pid == zero(UInt32) && continue
-
-        partner_row = get(prec_to_row, partner_pid, 0)
-        partner_row == 0 && continue
-        visited[partner_row] && continue
-
-        is_target_i = best_psms[i, :target]
-        is_target_j = best_psms[partner_row, :target]
-        (is_target_i == is_target_j) && continue
-
-        t_row = is_target_i ? i : partner_row
-        d_row = is_target_i ? partner_row : i
-
-        push!(pairs, (t_row, d_row))
-        visited[i] = true
-        visited[partner_row] = true
-    end
-
-    return pairs
-end
-
-"""
-    train_difference_covariance!(best_psms, pairs, features; regularization) -> Union{Vector{Float64}, Nothing}
-
-DIA-NN-style difference-covariance classifier.
-  delta_k = features_target[k] - features_decoy[k]
-  w = (cov(delta) + eps*I) \\ mean(delta)
-"""
-function train_difference_covariance!(
-    best_psms::DataFrame,
-    pairs::Vector{Tuple{Int,Int}},
-    features::Vector{Symbol};
-    regularization::Float64 = 1e-9
-)
-    N = length(pairs)
-    p = length(features)
-
-    if N < 20
-        return nothing
-    end
-
-    # Mean feature differences (target - decoy)
-    ds_mean = zeros(Float64, p)
-    for (t_row, d_row) in pairs
-        for j in 1:p
-            ds_mean[j] += Float64(best_psms[t_row, features[j]]) -
-                          Float64(best_psms[d_row, features[j]])
-        end
-    end
-    ds_mean ./= N
-
-    # Covariance of differences
-    A = zeros(Float64, p, p)
-    for (t_row, d_row) in pairs
-        for i in 1:p
-            di = (Float64(best_psms[t_row, features[i]]) -
-                  Float64(best_psms[d_row, features[i]])) - ds_mean[i]
-            for j in i:p
-                dj = (Float64(best_psms[t_row, features[j]]) -
-                      Float64(best_psms[d_row, features[j]])) - ds_mean[j]
-                A[i,j] += di * dj
-            end
-        end
-    end
-    for i in 1:p, j in i:p
-        A[i,j] /= (N - 1)
-        A[j,i] = A[i,j]
-    end
-    for i in 1:p
-        A[i,i] += regularization
-    end
-
-    w = A \ ds_mean
-
-    @info "    Diff-cov weights ($N pairs, $p features):\n"
-    for (fname, wval) in zip(features, w)
-        @info "      $(rpad(fname, 35)) $(round(wval, digits=6))\n"
-    end
-
-    return w
-end
-
-"""
-    apply_linear_scores!(psms, w, features)
-
-Score all PSMs: score_i = w' * features_i. Stores in psms[!, :score].
-"""
-function apply_linear_scores!(psms::DataFrame, w::Vector{Float64}, features::Vector{Symbol})
-    n = nrow(psms)
-    scores = zeros(Float32, n)
-    for i in 1:n
-        s = 0.0
-        for (j, f) in enumerate(features)
-            s += w[j] * Float64(psms[i, f])
-        end
-        scores[i] = Float32(s)
-    end
-    psms[!, :score] = scores
-end
-
-"""
-    train_probit_on_features!(psms, train_mask, features; max_iter) -> Vector{Float64}
-
-Train probit model on the masked subset. Returns coefficient vector.
-"""
-function train_probit_on_features!(
-    psms::DataFrame,
-    train_mask::BitVector,
-    features::Vector{Symbol};
-    max_iter::Int = 20
-)
-    X_train = DataFrame(Matrix{Float64}(psms[train_mask, features]), features)
-    targets_train = Vector{Bool}(psms[train_mask, :target])
-    n_train = sum(train_mask)
-
-    chunk_size = max(1, n_train ÷ (10 * Threads.nthreads()))
-    data_chunks = Iterators.partition(1:n_train, chunk_size)
-
-    beta = zeros(Float64, length(features))
-    beta = ProbitRegression(beta, X_train, targets_train, data_chunks; max_iter=max_iter)
-
-    @info "    Probit coefficients:\n"
-    for (fname, coef) in zip(features, beta)
-        @info "      $(rpad(fname, 35)) $(round(coef, digits=6))\n"
-    end
-
-    return beta
-end
-
-"""
-    apply_probit_scores!(psms, beta, features)
-
-Apply probit probability scores to all PSMs. Stores in psms[!, :probit_score].
-"""
-function apply_probit_scores!(
-    psms::DataFrame,
-    beta::Vector{Float64},
-    features::Vector{Symbol}
-)
-    n = nrow(psms)
-    X_all = DataFrame(Matrix{Float64}(psms[!, features]), features)
-    scores = zeros(Float32, n)
-
-    chunk_size = max(1, n ÷ (10 * Threads.nthreads()))
-    data_chunks = Iterators.partition(1:n, chunk_size)
-
-    ModelPredictProbs!(scores, X_all, beta, data_chunks)
-    psms[!, :probit_score] = scores
-end
-
-"""
-    rerun_search_with_filter(spectra, search_context, params, ms_file_idx, surviving_pairs)
-
-Rebuild scan_to_prec_idx with only surviving (precursor_idx, scan_idx) pairs,
-then re-run perform_second_pass_search. This re-solves the Huber deconvolution
-with reduced precursor competition per scan.
-"""
-function rerun_search_with_filter(
-    spectra::MassSpecData,
-    search_context::SearchContext,
-    params::SecondPassSearchParameters,
-    ms_file_idx::Int64,
-    surviving_pairs::Set{Tuple{UInt32, UInt32}}
-)
-    frag_match_path = getFragmentIndexMatches(getMSData(search_context), ms_file_idx)
-    scan_to_prec_idx_orig, precursors_passed_orig = load_fragment_index_matches(
-        frag_match_path, length(spectra)
-    )
-    n_original = length(precursors_passed_orig)
-
-    new_precursors = UInt32[]
-    new_scan_to_prec = Vector{Union{Missing, UnitRange{Int64}}}(missing, length(spectra))
-
-    for scan_idx in 1:length(spectra)
-        range = scan_to_prec_idx_orig[scan_idx]
-        ismissing(range) && continue
-
-        start_new = length(new_precursors) + 1
-        for idx in range
-            pid = precursors_passed_orig[idx]
-            if (pid, UInt32(scan_idx)) in surviving_pairs
-                push!(new_precursors, pid)
-            end
-        end
-        end_new = length(new_precursors)
-
-        if end_new >= start_new
-            new_scan_to_prec[scan_idx] = start_new:end_new
-        end
-    end
-
-    n_filtered = length(new_precursors)
-    pct = round(100.0 * n_filtered / max(1, n_original), digits=1)
-    @info "    Re-search input: $n_filtered / $n_original entries ($pct%)\n"
-
-    return perform_second_pass_search(
-        spectra, new_scan_to_prec, new_precursors,
-        search_context, params, ms_file_idx, MS2CHROM()
-    )
-end
 
 """
     rerun_search_with_precursor_filter(spectra, search_context, params, ms_file_idx, passing_precs)
 
-Like `rerun_search_with_filter`, but filters by precursor identity only (not per-scan).
-Keeps all scans for precursors in `passing_precs`, then re-solves deconvolution
-with reduced competition.
+Filter fragment index to keep only precursors in `passing_precs`, then re-solve
+deconvolution with reduced precursor competition.
 """
 function rerun_search_with_precursor_filter(
     spectra::MassSpecData,
@@ -1759,488 +1628,6 @@ function rerun_search_with_precursor_filter(
     )
 end
 
-"""
-    iterative_prescore_filter!(psms, search_context, spectra, params, ms_file_idx)
-
-Single-round prescore filter with low-score retrain:
-  1. Two-pass probit on best-per-precursor PSMs (like FirstPassSearch)
-  2. Retrain a second probit on q>0.10 subset to recover borderline precursors
-  3. Exclude precursors failing both models at q>0.10
-  4. Re-run search with surviving (precursor_idx, scan_idx) pairs
-
-Returns fresh PSMs from the re-search (raw columns only,
-ready for process_search_results!).
-"""
-function iterative_prescore_filter!(
-    psms::DataFrame,
-    search_context::SearchContext,
-    spectra::MassSpecData,
-    params::SecondPassSearchParameters,
-    ms_file_idx::Int64
-)
-    n_initial = nrow(psms)
-    @info "=== Prescore Filter: starting with $n_initial PSMs ===\n"
-
-    # Load DIA-NN reference sets for recovery diagnostics
-    file_name = getParsedFileName(search_context, ms_file_idx)
-    diann_file, diann_global = load_diann_reference(file_name)
-    if !isempty(diann_file) || !isempty(diann_global)
-        @info "  DIA-NN reference loaded: $(length(diann_file)) per-file, $(length(diann_global)) global precursors\n"
-    end
-
-    # ── Step 1: Add columns + quality filter ──────────────────────
-    add_second_search_columns!(psms,
-        getRetentionTimes(spectra),
-        getCharge(getPrecursors(getSpecLib(search_context))),
-        getIsDecoy(getPrecursors(getSpecLib(search_context))),
-        getPrecursors(getSpecLib(search_context))
-    )
-
-    get_isotopes_captured!(psms,
-        getIsotopeTraceType(params),
-        getQuadTransmissionModel(search_context, ms_file_idx),
-        getSearchData(search_context),
-        psms[!, :scan_idx],
-        getCharge(getPrecursors(getSpecLib(search_context))),
-        getMz(getPrecursors(getSpecLib(search_context))),
-        getSulfurCount(getPrecursors(getSpecLib(search_context))),
-        getCenterMzs(spectra),
-        getIsolationWidthMzs(spectra)
-    )
-
-    filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
-    filter!(row -> row.weight > 1e-6, psms)
-    @info "  $(nrow(psms)) PSMs after quality filters\n"
-
-    # ── Step 2: Add ML features ───────────────────────────────────
-    ensure_ms1_stub_columns!(psms)
-    add_features!(psms, search_context,
-        getTICs(spectra), getMzArrays(spectra),
-        ms_file_idx,
-        getRtIrtModel(search_context, ms_file_idx),
-        getPrecursorDict(search_context)
-    )
-    add_precursor_ms2_features!(psms, spectra, search_context, ms_file_idx)
-
-    sanitize_prescore_features!(psms, collect(ITERATIVE_PRESCORE_FEATURES))
-    features = filter(f -> hasproperty(psms, f), collect(ITERATIVE_PRESCORE_FEATURES))
-    @info "  Using $(length(features)) features: $(join(features, ", "))\n"
-
-    # ── Step 3a: Two-pass probit on ALL PSMs ─────────────────────
-    targets_all = psms[!, :target]
-    n_all = nrow(psms)
-    @info "  All-PSM probit: $n_all PSMs ($(count(targets_all)) targets)\n"
-
-    # Pass 1: seed from scribe q≤0.01 on all PSMs + all decoys
-    scribe_q_all = zeros(Float64, n_all)
-    get_qvalues!(psms[!, :scribe], targets_all, scribe_q_all)
-    pass1_mask_all = BitVector(((scribe_q_all .<= 0.01) .& targets_all) .| .!targets_all)
-    n_p1_t_all = count((scribe_q_all .<= 0.01) .& targets_all)
-    n_p1_d_all = count(.!targets_all)
-    @info "  All-PSM probit pass 1: $n_p1_t_all targets (scribe q≤0.01) + $n_p1_d_all decoys\n"
-
-    beta_all = train_probit_on_features!(psms, pass1_mask_all, features)
-    apply_probit_scores!(psms, beta_all, features)
-
-    # Pass 2: retrain on probit q≤0.01 + all decoys
-    q_all_p1 = zeros(Float64, n_all)
-    get_qvalues!(psms[!, :probit_score], targets_all, q_all_p1)
-    n_1pct_all = count((q_all_p1 .<= 0.01) .& targets_all)
-    @info "  All-PSM probit pass 1: $n_1pct_all targets @ 1% FDR\n"
-
-    pass2_mask_all = BitVector(((q_all_p1 .<= 0.01) .& targets_all) .| .!targets_all)
-    beta_all = train_probit_on_features!(psms, pass2_mask_all, features)
-    apply_probit_scores!(psms, beta_all, features)
-
-    # ── Step 3b: Best PSM per precursor (by probit_score) ──────
-    best_psms = get_best_psm_per_precursor_by_score(psms, :probit_score)
-    @info "  $(nrow(best_psms)) unique precursors from $(nrow(psms)) PSMs (selected by probit_score)\n"
-
-    # ── Step 4: LightGBM on best PSMs ──────────────────────────
-    targets_col = best_psms[!, :target]
-
-    lgbm_main_features = filter(f -> hasproperty(best_psms, f), collect(LGBM_RECOVERY_FEATURES))
-    @info "  LightGBM main model: $(nrow(best_psms)) PSMs, $(length(lgbm_main_features)) features\n"
-
-    lgbm_main_feature_df = best_psms[!, lgbm_main_features]
-
-    classifier_main = build_lightgbm_classifier(
-        num_iterations = 200,
-        max_depth = 5,
-        num_leaves = 31,
-        min_data_in_leaf = 50,
-        feature_fraction = 0.8,
-        bagging_fraction = 0.8,
-        bagging_freq = 1,
-        is_unbalance = true,
-    )
-    lgbm_main_model = fit_lightgbm_model(classifier_main, lgbm_main_feature_df, targets_col)
-
-    lgbm_main_scores = lightgbm_predict(lgbm_main_model, lgbm_main_feature_df)
-    q_main = zeros(Float64, nrow(best_psms))
-    get_qvalues!(lgbm_main_scores, targets_col, q_main)
-
-    n_pass_1 = count((q_main .<= 0.01) .& targets_col)
-    n_pass_5 = count((q_main .<= 0.05) .& targets_col)
-    n_pass_10 = count((q_main .<= 0.10) .& targets_col)
-    @info "  Main LightGBM: $n_pass_1 @ 1%, $n_pass_5 @ 5%, $n_pass_10 @ 10% FDR target precursors\n"
-
-    # Feature importances
-    imp_main = importance(lgbm_main_model)
-    if imp_main !== nothing
-        sorted_imp_main = sort(imp_main, by = x -> -x[2])
-        @info "  LightGBM main model feature importances ($(length(sorted_imp_main)) features):"
-        for (fname, gain) in sorted_imp_main
-            @info "    $fname: $(round(gain, digits=1))"
-        end
-        @info ""
-    end
-
-    # DIA-NN diagnostics
-    if !isempty(diann_file) || !isempty(diann_global)
-        for q_thresh in [0.01, 0.05, 0.10]
-            lgbm_precs = Set{UInt32}(best_psms[i, :precursor_idx]
-                                      for i in 1:nrow(best_psms) if (q_main[i] <= q_thresh) && targets_col[i])
-            n_file = isempty(diann_file) ? 0 : length(intersect(lgbm_precs, diann_file))
-            n_global = isempty(diann_global) ? 0 : length(intersect(lgbm_precs, diann_global))
-            @info "    LightGBM main q≤$q_thresh: $(length(lgbm_precs)) targets, DIA-NN file=$n_file global=$n_global\n"
-        end
-    end
-
-    # ── Step 4b: Save per-file LightGBM scores for cross-run aggregation ──
-    prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
-    mkpath(prescore_dir)
-    score_df = DataFrame(
-        precursor_idx = best_psms[!, :precursor_idx],
-        lgbm_prob = Float32.(lgbm_main_scores),
-        target = best_psms[!, :target]
-    )
-    writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
-
-    # ── Step 5: Collect passing precursors ────────────────────────
-    passing_precs = Set{UInt32}(best_psms[i, :precursor_idx]
-                                 for i in 1:nrow(best_psms) if q_main[i] <= params.prescore_qvalue_threshold)
-
-    n_passing = length(passing_precs)
-    @info "  $n_passing precursors survive (main model)\n"
-
-    # ── Step 7: Collect surviving (precursor_idx, scan_idx) pairs ─
-    # From the ORIGINAL all-PSMs DataFrame (not just best-per-precursor)
-    surviving_pairs = Set{Tuple{UInt32, UInt32}}()
-    prec_col = psms[!, :precursor_idx]
-    scan_col = psms[!, :scan_idx]
-    for i in 1:nrow(psms)
-        if prec_col[i] in passing_precs
-            push!(surviving_pairs, (prec_col[i], scan_col[i]))
-        end
-    end
-    n_surviving_precs = length(Set(p[1] for p in surviving_pairs))
-    surviving_prec_set = Set(p[1] for p in surviving_pairs)
-    n_diann_file_present = isempty(diann_file) ? 0 : length(intersect(surviving_prec_set, diann_file))
-    n_diann_file_absent  = isempty(diann_file) ? 0 : length(setdiff(diann_file, surviving_prec_set))
-    n_diann_global_present = isempty(diann_global) ? 0 : length(intersect(surviving_prec_set, diann_global))
-    n_diann_global_absent  = isempty(diann_global) ? 0 : length(setdiff(diann_global, surviving_prec_set))
-    @info "  $(length(surviving_pairs)) surviving (prec, scan) pairs across $n_surviving_precs precursors\n"
-    @info "  DIA-NN file: $n_diann_file_present present, $n_diann_file_absent absent | global: $n_diann_global_present present, $n_diann_global_absent absent\n"
-
-    # ── Step 8: Re-run search with filtered pairs ─────────────────
-    @info "  Re-running search with filtered pairs...\n"
-    psms = rerun_search_with_filter(
-        spectra, search_context, params, ms_file_idx, surviving_pairs
-    )
-
-    n_final = nrow(psms)
-    pct_reduction = round(100.0 * (1 - n_final / n_initial), digits=1)
-    @info "=== Prescore Filter complete: $n_initial -> $n_final PSMs ($pct_reduction% reduction) ===\n"
-
-    # Final recovery check — psms here are raw from re-search, need target column
-    if !isempty(diann_file) || !isempty(diann_global)
-        is_decoy = getIsDecoy(getPrecursors(getSpecLib(search_context)))
-        prec_col_final = psms[!, :precursor_idx]
-        tmp_target = BitVector(undef, nrow(psms))
-        for i in 1:nrow(psms)
-            tmp_target[i] = !is_decoy[prec_col_final[i]]
-        end
-        psms[!, :target] = tmp_target
-        log_diann_recovery("Final PSMs (to ScoringSearch)", psms, diann_file, diann_global)
-        select!(psms, Not(:target))
-    end
-
-    return psms
-end
-
-#==========================================================
-Prescore (Best Scan Selection)
-==========================================================#
-
-const PRESCORE_FEATURES = [
-    :fitted_spectral_contrast,
-    :err_norm,
-    :log2_intensity_explained,
-    :gof,
-    :scribe,
-    :weight,
-]
-
-"""
-    train_and_apply_prescore!(psms::DataFrame)
-
-Train a lightweight probit model on per-scan features to produce a preliminary
-quality score (`prescore`) for each scan. Then for each precursor group, mark
-the scan with the highest prescore as `best_scan = true`.
-
-This replaces the default `argmax(weight)` apex selection with a multi-feature
-quality-based selection.
-"""
-function train_and_apply_prescore!(
-    psms::DataFrame;
-    features::Vector{Symbol} = PRESCORE_FEATURES,
-    n_train_rounds::Int = 2,
-    max_iter::Int = 20
-)
-    n = nrow(psms)
-    if n < 100
-        @user_warn "Too few PSMs ($n) for probit prescore — falling back to weight-based apex selection"
-        return false
-    end
-
-    @user_info "Training probit prescore model on $n scans with features: $(join(features, ", "))"
-
-    # Prepare labels
-    targets = psms[!, :target]
-    n_targets = sum(targets)
-    n_decoys = n - n_targets
-    @user_info "  Prescore training data: $n_targets targets, $n_decoys decoys"
-
-    # Prepare feature matrix (convert to Float64 for probit)
-    X = DataFrame(Matrix{Float64}(psms[!, features]), features)
-
-
-
-    # Partition for parallel IRLS
-    chunk_size = max(1, n ÷ (10 * Threads.nthreads()))
-    data_chunks = Iterators.partition(1:n, chunk_size)
-
-    # Train probit model iteratively
-    β = zeros(Float64, length(features))
-    scores = zeros(Float32, n)
-
-    for iround in 1:n_train_rounds
-        if iround > 1
-            # Compute q-values for training data selection
-            q_vals = zeros(Float64, n)
-            get_qvalues!(scores, targets, q_vals)
-
-            # Filter training data: targets at q <= 0.05 + all decoys
-            train_mask = (q_vals .<= 0.05 .&& targets) .|| .!targets
-            n_train = sum(train_mask)
-            X_train = X[train_mask, :]
-            targets_train = targets[train_mask]
-            chunks_train = Iterators.partition(1:n_train,
-                                   max(1, n_train ÷ (10 * Threads.nthreads())))
-            β = ProbitRegression(β, X_train, targets_train, chunks_train; max_iter=max_iter)
-        else
-            β = ProbitRegression(β, X, targets, data_chunks; max_iter=max_iter)
-        end
-
-        # Score all scans
-        ModelPredict!(scores, X, β, data_chunks)
-    end
-
-    # Log probit coefficients (feature importances)
-    @user_info "  Probit prescore coefficients:"
-    for (fname, coef) in zip(features, β)
-        @user_info "    $(rpad(fname, 30)) $(round(coef, digits=4))"
-    end
-
-    # Final scoring with probabilities
-    ModelPredictProbs!(scores, X, β, data_chunks)
-
-    # Store prescores
-    psms[!, :prescore] = scores
-
-    # Mark best_scan based on highest prescore per precursor group
-    psms[!, :best_scan] .= false
-    n_changed = 0
-    n_groups = 0
-    for gpsms in groupby(psms, :precursor_idx)
-        n_groups += 1
-        probit_best = argmax(gpsms[!, :prescore])
-        weight_best = argmax(gpsms[!, :weight])
-        if probit_best != weight_best
-            n_changed += 1
-        end
-        gpsms[probit_best, :best_scan] = true
-    end
-
-    pct_changed = round(100*n_changed/max(n_groups,1), digits=1)
-    @user_info "  Prescore selection changed apex in $n_changed / $n_groups precursor groups ($pct_changed%)"
-
-    return true
-end
-
-"""
-    get_summary_scores!(psms::SubDataFrame, weight::AbstractVector{Float32}, ...)
-
-Calculate summary statistics for a group of related PSMs.
-
-Computes maximum values and sums around apex scan for various
-scoring metrics.
-"""
-function get_summary_scores!(
-                            psms::SubDataFrame,
-                            weight::AbstractVector{Float32},
-                            gof::AbstractVector{Float16},
-                            matched_ratio::AbstractVector{Float16},
-                            #entropy::AbstractVector{Float16},
-                            fitted_manhattan_distance::AbstractVector{Float16},
-                            fitted_spectral_contrast::AbstractVector{Float16},
-                            scribe::AbstractVector{Float16},
-                            y_count::AbstractVector{UInt8},
-                            rt_to_irt_interp::RtConversionModel
-                        )
-
-    max_gof = -100.0
-    max_matched_ratio = -100.0
-   # max_entropy = -100.0
-    max_fitted_manhattan_distance = -100.0
-    max_fitted_spectral_contrast= -100
-    max_scribe = -100
-    count = 0
-    y_ions_sum = 0
-    max_y_ions = 0
-    smoothness = 0.0f0
-
-    # Use probit-selected best_scan if available, otherwise fall back to max weight
-    best_scan_col = psms[!, :best_scan]
-    if any(best_scan_col)
-        apex_scan = findfirst(best_scan_col)
-    else
-        apex_scan = argmax(psms[!, :weight])
-    end
-    #Need to make sure there is not a big gap.
-    start = max(1, apex_scan - 2)
-    stop = min(length(weight), apex_scan + 2)
-
-    @inbounds @fastmath for i in range(start, stop)
-        if gof[i]>max_gof
-            max_gof =gof[i]
-        end
-
-        if matched_ratio[i]>max_matched_ratio
-            max_matched_ratio = matched_ratio[i]
-        end
-
-        #if entropy[i]>max_entropy
-        #    max_entropy=entropy[i]
-        #end
-
-        if fitted_manhattan_distance[i]>max_fitted_manhattan_distance
-            max_fitted_manhattan_distance = fitted_manhattan_distance[i]
-        end
-
-        if fitted_spectral_contrast[i]>max_fitted_spectral_contrast
-            max_fitted_spectral_contrast = fitted_spectral_contrast[i]
-        end
-
-        if scribe[i]>max_scribe
-            max_scribe = scribe[i]
-        end
-    
-        y_ions_sum += y_count[i]
-        if y_count[i] > max_y_ions
-            max_y_ions = y_count[i]
-        end
-
-        count += 1
-    end    
-
-    irts = rt_to_irt_interp.(psms.rt)
-    
-    @inbounds @fastmath for i in range(1, length(weight))
-        if length(weight) == 1
-            smoothness = (-2*weight[i] / weight[apex_scan])^2
-        else
-            if (i == 1)
-                smoothness += (((weight[i+1] - weight[i]) / (psms.rt[i+1] - psms.rt[i]) + (-weight[i]) / (psms.rt[i+1] - psms.rt[i])) / weight[apex_scan]) ^2
-            elseif (i > 1) & (i < length(weight))
-                smoothness += (((weight[i-1] - weight[i]) / (psms.rt[i] - psms.rt[i-1]) + (weight[i+1]-weight[i]) / (psms.rt[i+1] - psms.rt[i])) / weight[apex_scan]) ^2
-            elseif (i == length(weight))
-                smoothness += (((weight[i-1] - weight[i]) / (psms.rt[i] - psms.rt[i-1]) + (-weight[i]) / (psms.rt[i] - psms.rt[i-1])) / weight[apex_scan]) ^2
-            end
-        end
-    end
-
-   
-
-    psms.max_gof[apex_scan] = max_gof
-    psms.max_matched_ratio[apex_scan] = max_matched_ratio
-   # psms.max_entropy[apex_scan] = max_entropy
-    psms.max_fitted_manhattan_distance[apex_scan] = max_fitted_manhattan_distance
-    psms.max_fitted_spectral_contrast[apex_scan] = max_fitted_spectral_contrast
-    psms.max_scribe[apex_scan] = max_scribe
-    psms.y_ions_sum[apex_scan] = y_ions_sum
-    psms.max_y_ions[apex_scan] = max_y_ions
-    psms.num_scans[apex_scan] = length(weight)
-    psms.smoothness[apex_scan] = smoothness
-    psms.weights[apex_scan] = weight
-    psms.irts[apex_scan] = irts
-    psms.best_scan[apex_scan] = true
-
-end
-
-function parseMs1Psms(
-    psms::DataFrame,
-    spectra::MassSpecData,
-    ms2_rt_lookup::Dict{UInt32, Float32}
-)
-    if !hasproperty(psms, :precursor_idx) || (size(psms, 1) == 0)
-        return DataFrame()
-    end
-
-    # Add RT column
-    rts = zeros(Float32, size(psms, 1))
-    for i in range(1, size(psms, 1))
-        scan_idx = psms[i, :scan_idx]
-        rts[i] = getRetentionTime(spectra, scan_idx)
-    end
-    psms[!, :rt] = rts
-
-    # Pre-allocate new columns for max intensity features
-    psms[!, :rt_max_intensity] = zeros(Float32, size(psms, 1))
-    psms[!, :rt_diff_max_intensity] = zeros(Float32, size(psms, 1))
-
-    # Group by precursor and apply hybrid selection
-    return combine(groupby(psms, :precursor_idx)) do group
-        # Find max intensity scan
-        max_intensity_idx = argmax(group[!, :weight])
-        max_intensity_rt = group[max_intensity_idx, :rt]
-
-        # Find RT-closest scan to MS2 apex
-        precursor_idx = group[1, :precursor_idx]
-        if haskey(ms2_rt_lookup, precursor_idx)
-            ms2_rt = ms2_rt_lookup[precursor_idx]
-            rt_diffs = abs.(group[!, :rt] .- ms2_rt)
-            closest_rt_idx = argmin(rt_diffs)
-
-            # Start with RT-closest scan features
-            result_row = group[closest_rt_idx:closest_rt_idx, :]
-
-            # Set max intensity RT features for this row
-            result_row[1, :rt_max_intensity] = max_intensity_rt
-            result_row[1, :rt_diff_max_intensity] = abs(max_intensity_rt - ms2_rt)
-
-            return result_row
-        else
-            # Fallback to max intensity if no MS2 match
-            fallback_row = group[max_intensity_idx:max_intensity_idx, :]
-            # Set fallback values for new features
-            fallback_row[1, :rt_max_intensity] = max_intensity_rt
-            fallback_row[1, :rt_diff_max_intensity] = Float32(0.0)  # No reference RT
-            return fallback_row
-        end
-    end
-end
 
 #==========================================================
 Global Cross-Run Prescore Aggregation
@@ -2411,79 +1798,3 @@ function filter_arrow_files_to_passing!(search_context::SearchContext, passing_p
     @info "Global filter applied: kept $n_kept_total PSMs, removed $n_removed_total across all files"
 end
 
-"""
-    rerun_globally_filtered!(search_context, params, passing_precs)
-
-Re-run deconvolution for each file with only globally-passing precursors,
-then recompute all PSM features and overwrite fold-split arrow files.
-This reduces precursor competition in the design matrix, producing better
-weights and features for the final LightGBM model in ScoringSearch.
-"""
-function rerun_globally_filtered!(
-    search_context::SearchContext,
-    params::P,
-    passing_precs::Set{UInt32}
-) where {P<:SecondPassSearchParameters}
-    msdr = getMassSpecData(search_context)
-    ms_data = getMSData(search_context)
-    n_files = length(ms_data)
-    n_rerun = 0
-    n_psms_total = 0
-
-    @info "=== Global deconvolution re-run: $(length(passing_precs)) passing precursors ==="
-
-    for ms_file_idx in 1:n_files
-        getFailedIndicator(ms_data, ms_file_idx) && continue
-        base_path = getSecondPassPsms(ms_data, ms_file_idx)
-        isempty(base_path) && continue
-
-        file_name = getParsedFileName(search_context, ms_file_idx)
-        @info "  Re-running file $ms_file_idx ($file_name)..."
-
-        try
-            # Load spectra for this file
-            spectra = getMSData(msdr, ms_file_idx)
-
-            # Re-run deconvolution with only globally-passing precursors
-            psms = rerun_search_with_precursor_filter(
-                spectra, search_context, params, ms_file_idx, passing_precs
-            )
-
-            if nrow(psms) == 0
-                @info "    No PSMs after global re-search for file $ms_file_idx, keeping existing arrow files"
-                continue
-            end
-
-            # Recompute all features on fresh PSMs
-            ms1_psms = DataFrame()  # MS1 scoring disabled in bypass mode
-            psms = compute_psm_features!(psms, ms1_psms, params, search_context, ms_file_idx, spectra)
-
-            if nrow(psms) == 0
-                @info "    No PSMs after feature computation for file $ms_file_idx, keeping existing arrow files"
-                continue
-            end
-
-            # Overwrite fold-split arrow files
-            base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
-            for fold in UInt8[0, 1]
-                fold_path = joinpath(base_dir, "$(file_name)_fold$(fold).arrow")
-                fold_mask = psms.cv_fold .== fold
-                if any(fold_mask)
-                    writeArrow(fold_path, psms[fold_mask, :])
-                elseif isfile(fold_path)
-                    # Remove stale fold file if no PSMs for this fold
-                    rm(fold_path)
-                end
-            end
-
-            n_rerun += 1
-            n_psms_total += nrow(psms)
-            @info "    File $ms_file_idx: $(nrow(psms)) PSMs after global re-deconvolution"
-
-        catch e
-            @user_warn "Global re-deconvolution failed for file $ms_file_idx ($file_name), keeping existing arrow files. Error: $(sprint(showerror, e))"
-        end
-    end
-
-    @info "=== Global re-run complete: $n_rerun files, $n_psms_total total PSMs ==="
-end
