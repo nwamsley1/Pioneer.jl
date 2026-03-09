@@ -1709,6 +1709,57 @@ function rerun_search_with_filter(
 end
 
 """
+    rerun_search_with_precursor_filter(spectra, search_context, params, ms_file_idx, passing_precs)
+
+Like `rerun_search_with_filter`, but filters by precursor identity only (not per-scan).
+Keeps all scans for precursors in `passing_precs`, then re-solves deconvolution
+with reduced competition.
+"""
+function rerun_search_with_precursor_filter(
+    spectra::MassSpecData,
+    search_context::SearchContext,
+    params::SecondPassSearchParameters,
+    ms_file_idx::Int64,
+    passing_precs::Set{UInt32}
+)
+    frag_match_path = getFragmentIndexMatches(getMSData(search_context), ms_file_idx)
+    scan_to_prec_idx_orig, precursors_passed_orig = load_fragment_index_matches(
+        frag_match_path, length(spectra)
+    )
+    n_original = length(precursors_passed_orig)
+
+    new_precursors = UInt32[]
+    new_scan_to_prec = Vector{Union{Missing, UnitRange{Int64}}}(missing, length(spectra))
+
+    for scan_idx in 1:length(spectra)
+        range = scan_to_prec_idx_orig[scan_idx]
+        ismissing(range) && continue
+
+        start_new = length(new_precursors) + 1
+        for idx in range
+            pid = precursors_passed_orig[idx]
+            if pid in passing_precs
+                push!(new_precursors, pid)
+            end
+        end
+        end_new = length(new_precursors)
+
+        if end_new >= start_new
+            new_scan_to_prec[scan_idx] = start_new:end_new
+        end
+    end
+
+    n_filtered = length(new_precursors)
+    pct = round(100.0 * n_filtered / max(1, n_original), digits=1)
+    @info "    Global re-search input: $n_filtered / $n_original entries ($pct%)\n"
+
+    return perform_second_pass_search(
+        spectra, new_scan_to_prec, new_precursors,
+        search_context, params, ms_file_idx, MS2CHROM()
+    )
+end
+
+"""
     iterative_prescore_filter!(psms, search_context, spectra, params, ms_file_idx)
 
 Single-round prescore filter with low-score retrain:
@@ -1805,195 +1856,73 @@ function iterative_prescore_filter!(
     best_psms = get_best_psm_per_precursor_by_score(psms, :probit_score)
     @info "  $(nrow(best_psms)) unique precursors from $(nrow(psms)) PSMs (selected by probit_score)\n"
 
-    # ── Step 4: Two-pass probit on best PSMs ──────────────────────
+    # ── Step 4: LightGBM on best PSMs ──────────────────────────
     targets_col = best_psms[!, :target]
 
-    # Pass 1: seed from scribe q≤0.01 targets + all decoys
-    scribe_q = zeros(Float64, nrow(best_psms))
-    get_qvalues!(best_psms[!, :scribe], targets_col, scribe_q)
-    pass1_mask = BitVector(((scribe_q .<= 0.01) .& targets_col) .| .!targets_col)
-    n_p1_t = count((scribe_q .<= 0.01) .& targets_col)
-    n_p1_d = count(.!targets_col)
-    @info "  Probit pass 1: $n_p1_t targets (scribe q≤0.01) + $n_p1_d decoys\n"
+    lgbm_main_features = filter(f -> hasproperty(best_psms, f), collect(LGBM_RECOVERY_FEATURES))
+    @info "  LightGBM main model: $(nrow(best_psms)) PSMs, $(length(lgbm_main_features)) features\n"
 
-    beta = train_probit_on_features!(best_psms, pass1_mask, features)
-    apply_probit_scores!(best_psms, beta, features)
+    lgbm_main_feature_df = best_psms[!, lgbm_main_features]
 
-    # Pass 2: retrain on probit q≤0.01 targets + all decoys
-    q_pass1 = zeros(Float64, nrow(best_psms))
-    get_qvalues!(best_psms[!, :probit_score], targets_col, q_pass1)
-    n_1pct_p1 = count((q_pass1 .<= 0.01) .& targets_col)
-    @info "  Probit pass 1: $n_1pct_p1 targets @ 1% FDR\n"
+    classifier_main = build_lightgbm_classifier(
+        num_iterations = 200,
+        max_depth = 5,
+        num_leaves = 31,
+        min_data_in_leaf = 50,
+        feature_fraction = 0.8,
+        bagging_fraction = 0.8,
+        bagging_freq = 1,
+        is_unbalance = true,
+    )
+    lgbm_main_model = fit_lightgbm_model(classifier_main, lgbm_main_feature_df, targets_col)
 
-    pass2_mask = BitVector(((q_pass1 .<= 0.01) .& targets_col) .| .!targets_col)
-    beta = train_probit_on_features!(best_psms, pass2_mask, features)
-    apply_probit_scores!(best_psms, beta, features)
-
-    # Final q-values for best PSMs
+    lgbm_main_scores = lightgbm_predict(lgbm_main_model, lgbm_main_feature_df)
     q_main = zeros(Float64, nrow(best_psms))
-    get_qvalues!(best_psms[!, :probit_score], targets_col, q_main)
+    get_qvalues!(lgbm_main_scores, targets_col, q_main)
 
     n_pass_1 = count((q_main .<= 0.01) .& targets_col)
     n_pass_5 = count((q_main .<= 0.05) .& targets_col)
     n_pass_10 = count((q_main .<= 0.10) .& targets_col)
-    @info "  Main probit: $n_pass_1 @ 1%, $n_pass_5 @ 5%, $n_pass_10 @ 10% FDR target precursors\n"
+    @info "  Main LightGBM: $n_pass_1 @ 1%, $n_pass_5 @ 5%, $n_pass_10 @ 10% FDR target precursors\n"
 
-    # DIA-NN diagnostics for main model
+    # Feature importances
+    imp_main = importance(lgbm_main_model)
+    if imp_main !== nothing
+        sorted_imp_main = sort(imp_main, by = x -> -x[2])
+        @info "  LightGBM main model feature importances ($(length(sorted_imp_main)) features):"
+        for (fname, gain) in sorted_imp_main
+            @info "    $fname: $(round(gain, digits=1))"
+        end
+        @info ""
+    end
+
+    # DIA-NN diagnostics
     if !isempty(diann_file) || !isempty(diann_global)
-        high_precs = Set{UInt32}(best_psms[i, :precursor_idx]
-                                  for i in 1:nrow(best_psms) if (q_main[i] <= 0.10) && targets_col[i])
-        low_precs = Set{UInt32}(best_psms[i, :precursor_idx]
-                                 for i in 1:nrow(best_psms) if (q_main[i] > 0.10) && targets_col[i])
-        if !isempty(diann_file)
-            n_high_file = length(intersect(high_precs, diann_file))
-            n_low_file = length(intersect(low_precs, diann_file))
-            n_no_psm_file = length(diann_file) - n_high_file - n_low_file
-            @info "  DIA-NN FILE breakdown ($(length(diann_file))): q≤0.10=$n_high_file, q>0.10=$n_low_file, no PSM=$n_no_psm_file\n"
-        end
-        if !isempty(diann_global)
-            n_high_global = length(intersect(high_precs, diann_global))
-            n_low_global = length(intersect(low_precs, diann_global))
-            n_no_psm_global = length(diann_global) - n_high_global - n_low_global
-            @info "  DIA-NN GLOBAL breakdown ($(length(diann_global))): q≤0.10=$n_high_global, q>0.10=$n_low_global, no PSM=$n_no_psm_global\n"
+        for q_thresh in [0.01, 0.05, 0.10]
+            lgbm_precs = Set{UInt32}(best_psms[i, :precursor_idx]
+                                      for i in 1:nrow(best_psms) if (q_main[i] <= q_thresh) && targets_col[i])
+            n_file = isempty(diann_file) ? 0 : length(intersect(lgbm_precs, diann_file))
+            n_global = isempty(diann_global) ? 0 : length(intersect(lgbm_precs, diann_global))
+            @info "    LightGBM main q≤$q_thresh: $(length(lgbm_precs)) targets, DIA-NN file=$n_file global=$n_global\n"
         end
     end
 
-    # ── Step 5: Identify high-scoring vs low-scoring precursors ───
-    high_mask = q_main .<= 0.10
-    low_mask  = .!high_mask
+    # ── Step 4b: Save per-file LightGBM scores for cross-run aggregation ──
+    prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
+    mkpath(prescore_dir)
+    score_df = DataFrame(
+        precursor_idx = best_psms[!, :precursor_idx],
+        lgbm_prob = Float32.(lgbm_main_scores),
+        target = best_psms[!, :target]
+    )
+    writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
+
+    # ── Step 5: Collect passing precursors ────────────────────────
     passing_precs = Set{UInt32}(best_psms[i, :precursor_idx]
-                                 for i in 1:nrow(best_psms) if high_mask[i])
-
-    # ── Step 6: Low-score LightGBM recovery ──────────────────────
-    n_low_t = count(low_mask .& targets_col)
-    n_low_d = count(low_mask .& .!targets_col)
-
-    if n_low_t >= 50 && n_low_d >= 50
-        # Build feature set from available columns
-        lgbm_features = filter(f -> hasproperty(best_psms, f), collect(LGBM_RECOVERY_FEATURES))
-        @info "  Low-score LightGBM recovery: $n_low_t targets + $n_low_d decoys, $(length(lgbm_features)) features\n"
-
-        # Extract low subset and train LightGBM
-        low_psms = best_psms[low_mask, :]
-        low_feature_df = low_psms[!, lgbm_features]
-        low_labels = low_psms[!, :target]
-
-        classifier = build_lightgbm_classifier(
-            num_iterations = 200,
-            max_depth = 5,
-            num_leaves = 31,
-            min_data_in_leaf = 50,
-            feature_fraction = 0.8,
-            bagging_fraction = 0.8,
-            bagging_freq = 1,
-            is_unbalance = true,
-        )
-        lgbm_model = fit_lightgbm_model(classifier, low_feature_df, low_labels)
-
-        # Predict and compute q-values within low subset
-        lgbm_scores = lightgbm_predict(lgbm_model, low_feature_df)
-        q_low = zeros(Float64, nrow(low_psms))
-        get_qvalues!(lgbm_scores, low_psms[!, :target], q_low)
-
-        # Log feature importances
-        imp = importance(lgbm_model)
-        if imp !== nothing
-            sorted_imp = sort(imp, by = x -> -x[2])
-            @info "  LightGBM recovery feature importances ($(length(sorted_imp)) features):"
-            for (fname, gain) in sorted_imp
-                @info "    $fname: $(round(gain, digits=1))"
-            end
-            @info ""
-        end
-
-        # Precursors that pass at q≤0.10
-        n_recovered = 0
-        for i in 1:nrow(low_psms)
-            if low_psms[i, :target] && q_low[i] <= 0.10
-                push!(passing_precs, low_psms[i, :precursor_idx])
-                n_recovered += 1
-            end
-        end
-
-        # Log recovery results at various thresholds
-        for q_thresh in [0.01, 0.05, 0.10, 0.20]
-            passing = (q_low .<= q_thresh) .& low_psms[!, :target]
-            n_pass = count(passing)
-            recovered_precs = Set{UInt32}(low_psms[i, :precursor_idx]
-                                          for i in 1:nrow(low_psms) if passing[i])
-            n_file_rec = isempty(diann_file) ? 0 : length(intersect(recovered_precs, diann_file))
-            n_global_rec = isempty(diann_global) ? 0 : length(intersect(recovered_precs, diann_global))
-            @info "    LightGBM recovery q≤$q_thresh: $n_pass / $n_low_t targets, DIA-NN file=$n_file_rec global=$n_global_rec\n"
-        end
-        @info "  LightGBM recovery recovered $n_recovered precursors at q≤0.10\n"
-
-        # ── Step 6b: DIA-NN diagnostic model on q>0.20 remainder ──
-        # Train DIA-NN-vs-decoy model to assess separability of missing DIA-NN IDs.
-        # Purely diagnostic — does NOT add precursors to passing_precs.
-        if !isempty(diann_file)
-            very_low_mask = q_low .> 0.20
-            vlow_psms = low_psms[very_low_mask, :]
-
-            # Labels: DIA-NN targets = positive, decoys = negative, non-DIA-NN targets excluded
-            vlow_is_diann = BitVector(vlow_psms[i, :target] && vlow_psms[i, :precursor_idx] ∈ diann_file
-                                      for i in 1:nrow(vlow_psms))
-            vlow_is_decoy = .!vlow_psms[!, :target]
-            diag_mask = vlow_is_diann .| vlow_is_decoy
-            n_diann_pos = count(vlow_is_diann)
-            n_decoy_neg = count(vlow_is_decoy)
-
-            if n_diann_pos >= 50 && n_decoy_neg >= 50
-                @info "  DIA-NN diagnostic model (q>0.20 remainder): $n_diann_pos DIA-NN positives + $n_decoy_neg decoys\n"
-
-                diag_psms = vlow_psms[diag_mask, :]
-                diag_labels = vlow_is_diann[diag_mask]  # true=DIA-NN, false=decoy
-                diag_feature_df = diag_psms[!, lgbm_features]
-
-                classifier_diag = build_lightgbm_classifier(
-                    num_iterations = 200,
-                    max_depth = 5,
-                    num_leaves = 31,
-                    min_data_in_leaf = 50,
-                    feature_fraction = 0.8,
-                    bagging_fraction = 0.8,
-                    bagging_freq = 1,
-                    is_unbalance = true,
-                )
-                lgbm_diag = fit_lightgbm_model(classifier_diag, diag_feature_df, diag_labels)
-
-                # Feature importances
-                imp_diag = importance(lgbm_diag)
-                if imp_diag !== nothing
-                    sorted_imp_diag = sort(imp_diag, by = x -> -x[2])
-                    top_n_diag = min(10, length(sorted_imp_diag))
-                    @info "  DIA-NN diagnostic feature importances (top $top_n_diag):"
-                    for (fname, gain) in sorted_imp_diag[1:top_n_diag]
-                        @info "    $fname: $(round(gain, digits=1))"
-                    end
-                    @info ""
-                end
-
-                # Score DIA-NN targets + decoys only (exclude non-DIA-NN targets)
-                # Use "target" column trick: DIA-NN=true acts as target, decoy=false acts as decoy
-                diag_scores = lightgbm_predict(lgbm_diag, diag_feature_df)
-                q_diag = zeros(Float64, nrow(diag_psms))
-                get_qvalues!(diag_scores, diag_labels, q_diag)
-
-                for q_thresh in [0.01, 0.05, 0.10, 0.20]
-                    passing_diag = (q_diag .<= q_thresh) .& diag_labels
-                    n_diann_pass = count(passing_diag)
-                    @info "    DIA-NN diagnostic q≤$q_thresh: $n_diann_pass / $n_diann_pos DIA-NN precursors\n"
-                end
-            else
-                @info "  DIA-NN diagnostic model: too few samples ($n_diann_pos DIA-NN, $n_decoy_neg decoys), skipped\n"
-            end
-        end
-    else
-        @info "  Low-score LightGBM recovery: too few samples ($n_low_t T, $n_low_d D), skipped\n"
-    end
+                                 for i in 1:nrow(best_psms) if q_main[i] <= params.prescore_qvalue_threshold)
 
     n_passing = length(passing_precs)
-    @info "  $n_passing precursors survive (main + recovery)\n"
+    @info "  $n_passing precursors survive (main model)\n"
 
     # ── Step 7: Collect surviving (precursor_idx, scan_idx) pairs ─
     # From the ORIGINAL all-PSMs DataFrame (not just best-per-precursor)
@@ -2311,4 +2240,250 @@ function parseMs1Psms(
             return fallback_row
         end
     end
+end
+
+#==========================================================
+Global Cross-Run Prescore Aggregation
+==========================================================#
+
+const GLOBAL_PRESCORE_QVALUE_THRESHOLD = 0.15f0
+
+"""
+Log-odds average of top-N probabilities, converted back to probability space.
+Same approach as FirstPassSearch's _logodds_combine.
+"""
+function _prescore_logodds_combine(probs::Vector{Float32}, top_n::Int)::Float32
+    isempty(probs) && return 0.0f0
+    n = min(length(probs), top_n)
+    sorted = sort(probs; rev=true)
+    selected = @view sorted[1:n]
+    eps = 1f-6
+    lo = log.(clamp.(selected, 0.1f0, 1 - eps) ./ (1 .- clamp.(selected, 0.1f0, 1 - eps)))
+    avg = sum(lo) / n
+    return 1.0f0 / (1 + exp(-avg))
+end
+
+"""
+    aggregate_prescore_globally!(search_context::SearchContext) -> Set{UInt32}
+
+Load per-file LightGBM prescore arrow files, aggregate via log-odds averaging,
+compute global q-values, and return the set of precursor indices passing at
+q ≤ GLOBAL_PRESCORE_QVALUE_THRESHOLD.
+"""
+function aggregate_prescore_globally!(search_context::SearchContext)
+    ms_data = getMSData(search_context)
+    n_files = length(ms_data)
+    prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
+
+    # Collect per-file best probs per precursor
+    prec_probs_by_run = Dictionary{UInt32, Vector{Float32}}()
+    prec_is_target = Dictionary{UInt32, Bool}()
+    n_valid_files = 0
+
+    for ms_file_idx in 1:n_files
+        getFailedIndicator(ms_data, ms_file_idx) && continue
+        file_name = getParsedFileName(ms_data, ms_file_idx)
+        score_path = joinpath(prescore_dir, "$(file_name).arrow")
+        !isfile(score_path) && continue
+
+        scores = Arrow.Table(score_path)
+        n_valid_files += 1
+
+        for i in eachindex(scores[:precursor_idx])
+            pid = scores[:precursor_idx][i]
+            p = scores[:lgbm_prob][i]
+            if haskey(prec_probs_by_run, pid)
+                push!(prec_probs_by_run[pid], p)
+            else
+                insert!(prec_probs_by_run, pid, Float32[p])
+            end
+            if !haskey(prec_is_target, pid)
+                insert!(prec_is_target, pid, scores[:target][i])
+            end
+        end
+    end
+
+    # Aggregate via log-odds
+    sqrt_n = max(1, floor(Int, sqrt(n_valid_files)))
+    n_unique = length(prec_probs_by_run)
+    global_prec_idxs = Vector{UInt32}(undef, n_unique)
+    global_probs = Vector{Float32}(undef, n_unique)
+    global_targets = Vector{Bool}(undef, n_unique)
+
+    for (i, (pid, probs)) in enumerate(pairs(prec_probs_by_run))
+        global_prec_idxs[i] = pid
+        global_probs[i] = _prescore_logodds_combine(probs, sqrt_n)
+        global_targets[i] = prec_is_target[pid]
+    end
+
+    # Q-values on global scores
+    global_qvals = Vector{Float32}(undef, n_unique)
+    get_qvalues!(global_probs, global_targets, global_qvals; doSort=true)
+
+    # Diagnostics
+    n_targets = count(global_targets)
+    n_1pct = count(i -> global_qvals[i] <= 0.01f0 && global_targets[i], eachindex(global_qvals))
+    n_5pct = count(i -> global_qvals[i] <= 0.05f0 && global_targets[i], eachindex(global_qvals))
+    n_10pct = count(i -> global_qvals[i] <= 0.10f0 && global_targets[i], eachindex(global_qvals))
+    n_15pct = count(i -> global_qvals[i] <= 0.15f0 && global_targets[i], eachindex(global_qvals))
+    @info "Global prescore: $n_unique precursors ($n_targets targets) from $n_valid_files files (top_n=$sqrt_n)"
+    @info "  Targets at q≤0.01: $n_1pct, q≤0.05: $n_5pct, q≤0.10: $n_10pct, q≤0.15: $n_15pct"
+
+    # Build passing set
+    passing = Set{UInt32}()
+    for i in eachindex(global_prec_idxs)
+        if global_qvals[i] <= GLOBAL_PRESCORE_QVALUE_THRESHOLD
+            push!(passing, global_prec_idxs[i])
+        end
+    end
+
+    @info "Global prescore filter: $(length(passing)) precursors pass at q≤$(GLOBAL_PRESCORE_QVALUE_THRESHOLD)"
+
+    # ── DIA-NN diagnostics ──────────────────────────────────────
+    # Build lookup: precursor_idx → global_qval for all scored precursors
+    prec_to_global_qval = Dictionary{UInt32, Float32}()
+    for i in eachindex(global_prec_idxs)
+        insert!(prec_to_global_qval, global_prec_idxs[i], global_qvals[i])
+    end
+
+    # Global DIA-NN reference
+    if isfile(DIANN_GLOBAL_ARROW)
+        diann_global = Set{UInt32}(Arrow.Table(DIANN_GLOBAL_ARROW).precursor_idx)
+        n_diann = length(diann_global)
+        n_pass = count(pid -> pid in passing, diann_global)
+        n_scored_fail = count(pid -> haskey(prec_to_global_qval, pid) && !(pid in passing), diann_global)
+        n_not_scored = n_diann - n_pass - n_scored_fail
+        @info "DIA-NN global ($n_diann): pass=$n_pass, scored-but-filtered=$n_scored_fail, not-scored=$n_not_scored"
+    end
+
+    # Per-file DIA-NN references
+    if isdir(DIANN_PERFILE_DIR)
+        for ms_file_idx in 1:n_files
+            getFailedIndicator(ms_data, ms_file_idx) && continue
+            file_name = getParsedFileName(ms_data, ms_file_idx)
+            pf_path = joinpath(DIANN_PERFILE_DIR, "$(file_name).arrow")
+            !isfile(pf_path) && continue
+
+            diann_file = Set{UInt32}(Arrow.Table(pf_path).precursor_idx)
+            n_diann_f = length(diann_file)
+            n_pass_f = count(pid -> pid in passing, diann_file)
+            n_scored_fail_f = count(pid -> haskey(prec_to_global_qval, pid) && !(pid in passing), diann_file)
+            n_not_scored_f = n_diann_f - n_pass_f - n_scored_fail_f
+            @info "  DIA-NN file $file_name ($n_diann_f): pass=$n_pass_f, scored-but-filtered=$n_scored_fail_f, not-scored=$n_not_scored_f"
+        end
+    end
+
+    return passing
+end
+
+"""
+    filter_arrow_files_to_passing!(search_context::SearchContext, passing_precs::Set{UInt32})
+
+Read each fold-split second pass arrow file, filter rows to keep only precursors
+in the passing set, and rewrite in-place.
+"""
+function filter_arrow_files_to_passing!(search_context::SearchContext, passing_precs::Set{UInt32})
+    ms_data = getMSData(search_context)
+    n_files = length(ms_data)
+    n_removed_total = 0
+    n_kept_total = 0
+
+    for ms_file_idx in 1:n_files
+        getFailedIndicator(ms_data, ms_file_idx) && continue
+        base_path = getSecondPassPsms(ms_data, ms_file_idx)
+        isempty(base_path) && continue
+
+        for fold in UInt8[0, 1]
+            fold_path = getSecondPassPsmsFold(ms_data, ms_file_idx, fold)
+            !isfile(fold_path) && continue
+
+            tbl = DataFrame(Tables.columntable(Arrow.Table(fold_path)))
+            n_before = nrow(tbl)
+            filter!(row -> row.precursor_idx in passing_precs, tbl)
+            n_after = nrow(tbl)
+            n_removed_total += (n_before - n_after)
+            n_kept_total += n_after
+
+            writeArrow(fold_path, tbl)  # Overwrite in-place
+        end
+    end
+
+    @info "Global filter applied: kept $n_kept_total PSMs, removed $n_removed_total across all files"
+end
+
+"""
+    rerun_globally_filtered!(search_context, params, passing_precs)
+
+Re-run deconvolution for each file with only globally-passing precursors,
+then recompute all PSM features and overwrite fold-split arrow files.
+This reduces precursor competition in the design matrix, producing better
+weights and features for the final LightGBM model in ScoringSearch.
+"""
+function rerun_globally_filtered!(
+    search_context::SearchContext,
+    params::P,
+    passing_precs::Set{UInt32}
+) where {P<:SecondPassSearchParameters}
+    msdr = getMassSpecData(search_context)
+    ms_data = getMSData(search_context)
+    n_files = length(ms_data)
+    n_rerun = 0
+    n_psms_total = 0
+
+    @info "=== Global deconvolution re-run: $(length(passing_precs)) passing precursors ==="
+
+    for ms_file_idx in 1:n_files
+        getFailedIndicator(ms_data, ms_file_idx) && continue
+        base_path = getSecondPassPsms(ms_data, ms_file_idx)
+        isempty(base_path) && continue
+
+        file_name = getParsedFileName(search_context, ms_file_idx)
+        @info "  Re-running file $ms_file_idx ($file_name)..."
+
+        try
+            # Load spectra for this file
+            spectra = getMSData(msdr, ms_file_idx)
+
+            # Re-run deconvolution with only globally-passing precursors
+            psms = rerun_search_with_precursor_filter(
+                spectra, search_context, params, ms_file_idx, passing_precs
+            )
+
+            if nrow(psms) == 0
+                @info "    No PSMs after global re-search for file $ms_file_idx, keeping existing arrow files"
+                continue
+            end
+
+            # Recompute all features on fresh PSMs
+            ms1_psms = DataFrame()  # MS1 scoring disabled in bypass mode
+            psms = compute_psm_features!(psms, ms1_psms, params, search_context, ms_file_idx, spectra)
+
+            if nrow(psms) == 0
+                @info "    No PSMs after feature computation for file $ms_file_idx, keeping existing arrow files"
+                continue
+            end
+
+            # Overwrite fold-split arrow files
+            base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
+            for fold in UInt8[0, 1]
+                fold_path = joinpath(base_dir, "$(file_name)_fold$(fold).arrow")
+                fold_mask = psms.cv_fold .== fold
+                if any(fold_mask)
+                    writeArrow(fold_path, psms[fold_mask, :])
+                elseif isfile(fold_path)
+                    # Remove stale fold file if no PSMs for this fold
+                    rm(fold_path)
+                end
+            end
+
+            n_rerun += 1
+            n_psms_total += nrow(psms)
+            @info "    File $ms_file_idx: $(nrow(psms)) PSMs after global re-deconvolution"
+
+        catch e
+            @user_warn "Global re-deconvolution failed for file $ms_file_idx ($file_name), keeping existing arrow files. Error: $(sprint(showerror, e))"
+        end
+    end
+
+    @info "=== Global re-run complete: $n_rerun files, $n_psms_total total PSMs ==="
 end

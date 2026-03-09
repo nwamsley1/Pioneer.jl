@@ -191,6 +191,12 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     # Iterative prescore filter mode: "diff_cov" (default) or "probit_only"
     prescore_method::Symbol
 
+    # Per-file prescore q-value cutoff (1.0 = keep all, let global filter decide)
+    prescore_qvalue_threshold::Float32
+
+    # Re-run deconvolution after global prescore filter (reduces precursor competition)
+    global_rerun_deconvolution::Bool
+
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -245,6 +251,18 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             :diff_cov
         end
 
+        prescore_qvalue_threshold = if haskey(quant_params, :prescore_qvalue_threshold)
+            Float32(quant_params.prescore_qvalue_threshold)
+        else
+            0.10f0  # default preserves current behavior
+        end
+
+        global_rerun_deconvolution = if haskey(quant_params, :global_rerun_deconvolution)
+            Bool(quant_params.global_rerun_deconvolution)
+        else
+            false
+        end
+
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -277,7 +295,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             prec_estimation,
 
             ms1_scoring,
-            prescore_method
+            prescore_method,
+            prescore_qvalue_threshold,
+            global_rerun_deconvolution
         )
     end
 end
@@ -388,166 +408,175 @@ function createFallbackResults!(results::SecondPassSearchResults, ms_file_idx::I
     results.ms1_psms[] = empty_ms1_psms
 end
 
+"""
+    compute_psm_features!(psms, ms1_psms, params, search_context, ms_file_idx, spectra) -> DataFrame
+
+Core feature computation pipeline for second pass PSMs. Adds columns, filters,
+computes summary scores, joins MS1 data, and adds ML features. Returns the
+processed DataFrame (one row per precursor×isotope_trace, with all features).
+"""
+function compute_psm_features!(
+    psms::DataFrame,
+    ms1_psms::DataFrame,
+    params::P,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+) where {P<:SecondPassSearchParameters}
+    # Add basic search columns (RT, charge, target/decoy status)
+    add_second_search_columns!(psms,
+        getRetentionTimes(spectra),
+        getCharge(getPrecursors(getSpecLib(search_context))),
+        getIsDecoy(getPrecursors(getSpecLib(search_context))),
+        getPrecursors(getSpecLib(search_context))
+    )
+
+    # Determine which precursor isotopes are captured in each scan's isolation window
+    get_isotopes_captured!(
+        psms,
+        getIsotopeTraceType(params),
+        getQuadTransmissionModel(search_context, ms_file_idx),
+        getSearchData(search_context),
+        psms[!, :scan_idx],
+        getCharge(getPrecursors(getSpecLib(search_context))),
+        getMz(getPrecursors(getSpecLib(search_context))),
+        getSulfurCount(getPrecursors(getSpecLib(search_context))),
+        getCenterMzs(spectra),
+        getIsolationWidthMzs(spectra)
+    )
+
+    filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
+
+    # Remove scans with zero weight (no signal from deconvolution)
+    n_before = nrow(psms)
+    filter!(row -> row.weight > 0.0f0, psms)
+    n_removed = n_before - nrow(psms)
+    if n_removed > 0
+        @user_info "Removed $n_removed / $n_before scans with zero weight ($(round(100*n_removed/n_before, digits=1))%)"
+    end
+
+    # Initialize best_scan column
+    psms[!,:best_scan] = zeros(Bool, size(psms, 1))
+
+    # Pre-score all scans with probit model for quality-based best scan selection
+    train_and_apply_prescore!(psms)
+
+    # Initialize columns for summary statistics
+    init_summary_columns!(psms)
+
+    # Calculate summary scores for each PSM group
+    for (key, gpsms) in pairs(groupby(psms, getPsmGroupbyCols(getIsotopeTraceType(params))))
+        get_summary_scores!(
+            gpsms,
+            gpsms[!,:weight],
+            gpsms[!,:gof],
+            gpsms[!,:matched_ratio],
+            gpsms[!,:fitted_manhattan_distance],
+            gpsms[!,:fitted_spectral_contrast],
+            gpsms[!,:scribe],
+            gpsms[!,:y_count],
+            getRtIrtModel(search_context, ms_file_idx)
+        )
+    end
+    # Keep only apex scans for each PSM group
+    filter!(x->x.best_scan, psms)
+
+    # Remove temporary prescore column if present (not needed downstream)
+    if hasproperty(psms, :prescore)
+        select!(psms, Not(:prescore))
+    end
+
+    # Build MS2 RT lookup for efficient MS1 alignment
+    ms2_rt_lookup = Dict{UInt32, Float32}(
+        row.precursor_idx => row.rt for row in eachrow(psms)
+    )
+
+    # Apply hybrid MS1 selection (RT proximity + max intensity features)
+    ms1_psms = parseMs1Psms(ms1_psms, spectra, ms2_rt_lookup)
+
+    # Standardize MS1 schema to ensure consistent Arrow output across all files
+    if size(ms1_psms, 1) > 0
+        for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
+            if hasproperty(ms1_psms, col_name)
+                ms1_psms[!, col_name] = col_type.(ms1_psms[!, col_name])
+            else
+                ms1_psms[!, col_name] = fill(sentinel_value, nrow(ms1_psms))
+            end
+        end
+
+        psms = leftjoin(
+            psms,
+            ms1_psms,
+            on = :precursor_idx,
+            makeunique = true,
+            renamecols = "" => "_ms1"
+        )
+
+        for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
+            ms1_col = Symbol(String(col_name) * "_ms1")
+            psms[!, ms1_col] = coalesce.(psms[!, ms1_col], sentinel_value)
+            disallowmissing!(psms, ms1_col)
+        end
+
+        miss_mask = ismissing.(psms[!, Symbol(String(first(MS1_BASE_SCHEMA)[1]) * "_ms1")])
+    else
+        for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
+            ms1_col = Symbol(String(col_name) * "_ms1")
+            psms[!, ms1_col] = fill(sentinel_value, nrow(psms))
+        end
+        miss_mask = trues(nrow(psms))
+    end
+
+    # Calculate MS1-MS2 RT difference in iRT space
+    rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
+    psms[!,:ms1_ms2_rt_diff] = Float32.(ifelse.(psms[!,:rt_ms1] .== Float32(-1),
+                      Float32(-1),
+                      abs.(rt_to_irt_model.(psms[!,:rt]) .- rt_to_irt_model.(psms[!,:rt_ms1]))))
+
+    psms[!, :ms1_features_missing] = miss_mask
+
+    # Enforce consistent MS1 column ordering for Arrow schema compatibility
+    expected_order = get_expected_column_order(psms)
+    select!(psms, expected_order)
+
+    # Add additional features for final analysis
+    add_features!(
+        psms,
+        search_context,
+        getTICs(spectra),
+        getMzArrays(spectra),
+        ms_file_idx,
+        getRtIrtModel(search_context, ms_file_idx),
+        getPrecursorDict(search_context)
+    )
+    add_precursor_ms2_features!(psms, spectra, search_context, ms_file_idx)
+
+    # Initialize probability scores (will be calculated later)
+    initialize_prob_group_features!(psms, params.match_between_runs)
+
+    return psms
+end
+
 function process_search_results!(
     results::SecondPassSearchResults,
     params::P,
-    search_context::SearchContext, 
+    search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}
 
     # Check if file should be skipped due to previous failure
     if check_and_skip_failed_file(search_context, ms_file_idx, "SecondPassSearch results processing")
-        return nothing  # Return early 
+        return nothing  # Return early
     end
 
     try
         # Get PSMs from results container
         psms = results.psms[]
         ms1_psms = results.ms1_psms[]
-        # Add basic search columns (RT, charge, target/decoy status)
-        add_second_search_columns!(psms, 
-            getRetentionTimes(spectra),
-            getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge], 
-            getIsDecoy(getPrecursors(getSpecLib(search_context))),#[:is_decoy],
-            getPrecursors(getSpecLib(search_context))
-            );
 
-        # Determine which precursor isotopes are captured in each scan's isolation window
-        get_isotopes_captured!(
-            psms,
-            getIsotopeTraceType(params),#.isotope_tracetype,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            psms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
-            getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
-        )
-
-        # Remove PSMs where only M2+ isotopes are captured (expect poor quantification)
-        #excluded_isotopes = (Int8(-1), Int8(-1))
-        #filter!(row -> row.isotopes_captured != excluded_isotopes, psms)
-        filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
-        #filter!(row -> first(row.isotopes_captured) > 2, psms)
-
-        # Remove scans with zero weight (no signal from deconvolution)
-        n_before = nrow(psms)
-        filter!(row -> row.weight > 0.0f0, psms)
-        n_removed = n_before - nrow(psms)
-        if n_removed > 0
-            @user_info "Removed $n_removed / $n_before scans with zero weight ($(round(100*n_removed/n_before, digits=1))%)"
-        end
-
-        # Initialize best_scan column
-        psms[!,:best_scan] = zeros(Bool, size(psms, 1));
-
-        # Pre-score all scans with probit model for quality-based best scan selection
-        train_and_apply_prescore!(psms)
-
-        # Initialize columns for summary statistics
-        init_summary_columns!(psms);
-
-        # Calculate summary scores for each PSM group
-        for (key, gpsms) in pairs(groupby(psms, getPsmGroupbyCols(getIsotopeTraceType(params))))
-            get_summary_scores!(
-                gpsms, 
-                gpsms[!,:weight],
-                gpsms[!,:gof],
-                gpsms[!,:matched_ratio],
-                gpsms[!,:fitted_manhattan_distance],
-                gpsms[!,:fitted_spectral_contrast],
-                gpsms[!,:scribe],
-                gpsms[!,:y_count],
-                getRtIrtModel(search_context, ms_file_idx)
-            );
-        end
-        # Keep only apex scans for each PSM group
-        filter!(x->x.best_scan, psms);
-
-        # Remove temporary prescore column if present (not needed downstream)
-        if hasproperty(psms, :prescore)
-            select!(psms, Not(:prescore))
-        end
-
-        # Build MS2 RT lookup for efficient MS1 alignment
-        ms2_rt_lookup = Dict{UInt32, Float32}(
-            row.precursor_idx => row.rt for row in eachrow(psms)
-        )
-
-        # Apply hybrid MS1 selection (RT proximity + max intensity features)
-        ms1_psms = parseMs1Psms(ms1_psms, spectra, ms2_rt_lookup)
-
-        # Standardize MS1 schema to ensure consistent Arrow output across all files
-        if size(ms1_psms, 1) > 0
-            # Ensure ms1_psms has correct types for all columns in schema
-            for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
-                if hasproperty(ms1_psms, col_name)
-                    # Convert to correct type
-                    ms1_psms[!, col_name] = col_type.(ms1_psms[!, col_name])
-                else
-                    # Add missing column with sentinel values
-                    ms1_psms[!, col_name] = fill(sentinel_value, nrow(ms1_psms))
-                end
-            end
-
-            # Join - leftjoin automatically adds _ms1 suffix via renamecols
-            psms = leftjoin(
-                psms,
-                ms1_psms,
-                on = :precursor_idx,
-                makeunique = true,
-                renamecols = "" => "_ms1"
-            )
-
-            # Fill missing values (precursors without MS1 match) with sentinels
-            for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
-                ms1_col = Symbol(String(col_name) * "_ms1")
-                psms[!, ms1_col] = coalesce.(psms[!, ms1_col], sentinel_value)
-                disallowmissing!(psms, ms1_col)
-            end
-
-            # Track which PSMs have missing MS1 data
-            miss_mask = ismissing.(psms[!, Symbol(String(first(MS1_BASE_SCHEMA)[1]) * "_ms1")])
-        else
-            # No MS1 data - create all columns with _ms1 suffix using sentinels
-            for (col_name, col_type, sentinel_value) in MS1_BASE_SCHEMA
-                ms1_col = Symbol(String(col_name) * "_ms1")
-                psms[!, ms1_col] = fill(sentinel_value, nrow(psms))
-            end
-            miss_mask = trues(nrow(psms))
-        end
-
-        # Calculate MS1-MS2 RT difference in iRT space with explicit Float32 conversion
-        rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
-        psms[!,:ms1_ms2_rt_diff] = Float32.(ifelse.(psms[!,:rt_ms1] .== Float32(-1),
-                          Float32(-1),
-                          abs.(rt_to_irt_model.(psms[!,:rt]) .- rt_to_irt_model.(psms[!,:rt_ms1]))))
-
-        psms[!, :ms1_features_missing] = miss_mask
-
-        # Critical: Enforce consistent MS1 column ordering for Arrow schema compatibility
-        # Arrow requires matching column positions across files, not just names/types.
-        # The leftjoin operation preserves input order from ms1_psms, which can vary.
-        expected_order = get_expected_column_order(psms)
-        select!(psms, expected_order)
-
-        #Add additional features for final analysis
-        add_features!(
-            psms,
-            search_context,
-            getTICs(spectra),
-            getMzArrays(spectra),
-            ms_file_idx,
-            getRtIrtModel(search_context, ms_file_idx),
-            getPrecursorDict(search_context)
-        )
-        add_precursor_ms2_features!(psms, spectra, search_context, ms_file_idx)
-
-        # Initialize probability scores (will be calculated later)
-        initialize_prob_group_features!(psms, params.match_between_runs)
+        # Compute all features (columns, filtering, summary scores, MS1 join, ML features)
+        psms = compute_psm_features!(psms, ms1_psms, params, search_context, ms_file_idx, spectra)
 
         # DIA-NN recovery for final processed PSMs (going to ScoringSearch)
         file_name_diann = getParsedFileName(search_context, ms_file_idx)
@@ -614,6 +643,20 @@ function summarize_results!(
     params::P,
     search_context::SearchContext
 ) where {P<:SecondPassSearchParameters}
+
+    @info "=== SecondPassSearch: Global prescore aggregation ==="
+
+    # Aggregate per-file LightGBM scores → global q-values → passing set
+    passing_precs = aggregate_prescore_globally!(search_context)
+
+    if params.global_rerun_deconvolution
+        # Re-run deconvolution with only passing precursors → better weights/features
+        @info "Global rerun deconvolution enabled — re-solving with $(length(passing_precs)) passing precursors"
+        rerun_globally_filtered!(search_context, params, passing_precs)
+    else
+        # Simple row filter on existing arrow files
+        filter_arrow_files_to_passing!(search_context, passing_precs)
+    end
 
     return nothing
 end
