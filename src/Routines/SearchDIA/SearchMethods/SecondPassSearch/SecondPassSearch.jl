@@ -365,7 +365,8 @@ function process_search_results!(
             lgbm_prob = scores,
             target = best_psms[!, :target],
             irt_obs = best_psms[!, :irt_obs],
-            irt_peak_width = irt_peak_width
+            irt_peak_width = irt_peak_width,
+            scan_idx = best_psms[!, :scan_idx]
         )
         writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
 
@@ -406,8 +407,8 @@ function summarize_results!(
 
     @info "=== SecondPassSearch: Phase 2 — Global aggregation + final search ==="
 
-    # Step 1: Global prescore aggregation → passing precursor set + per-file iRT exclusions
-    passing_precs, irt_exclusions = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold)
+    # Step 1: Global prescore aggregation → passing precursor set + per-file iRT exclusions + Phase 1 scan lookup
+    passing_precs, irt_exclusions, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold)
 
     # Step 2: Re-search each file with only passing precursors (minus iRT outliers)
     msdr = getMassSpecData(search_context)
@@ -455,8 +456,20 @@ function summarize_results!(
                 continue
             end
 
-            # Select best scan per precursor by deconvolution weight
-            best_psms = get_best_psm_per_precursor(psms)
+            # Build file-specific scan lookup: precursor_idx → scan_idx from Phase 1
+            file_best_scans = Dictionary{UInt32, UInt32}()
+            for (pid, file_scans) in pairs(prec_best_scan)
+                if haskey(file_scans, ms_file_idx)
+                    insert!(file_best_scans, pid, file_scans[ms_file_idx])
+                end
+            end
+
+            # Select best scan per precursor using Phase 1 LightGBM scan preference
+            best_psms = get_best_psm_per_precursor_by_prescore_scan(psms, file_best_scans)
+
+            n_matched = count(row -> haskey(file_best_scans, row.precursor_idx) &&
+                row.scan_idx == file_best_scans[row.precursor_idx], eachrow(best_psms))
+            @info "    $(nrow(best_psms)) precursors ($(n_matched) matched Phase 1 scan, $(nrow(best_psms) - n_matched) fell back to weight)"
 
             # Add multi-scan aggregate features for ScoringSearch
             add_multi_scan_aggregates!(best_psms, psms)

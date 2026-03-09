@@ -1501,6 +1501,36 @@ function get_best_psm_per_precursor_by_score(psms::DataFrame, score_col::Symbol)
 end
 
 """
+    get_best_psm_per_precursor_by_prescore_scan(psms::DataFrame, best_scans::Dictionary{UInt32, UInt32}) -> DataFrame
+
+Select one PSM per precursor using the Phase 1 LightGBM-selected scan_idx.
+Falls back to highest deconvolution weight if the preferred scan isn't present.
+`best_scans` maps precursor_idx → preferred scan_idx for this file.
+"""
+function get_best_psm_per_precursor_by_prescore_scan(
+    psms::DataFrame,
+    best_scans::Dictionary{UInt32, UInt32}
+)
+    # Sort by weight descending as fallback ordering
+    sorted = sort(psms, [:precursor_idx, order(:weight, rev=true)])
+
+    best = combine(groupby(sorted, :precursor_idx)) do group
+        pid = first(group.precursor_idx)
+        if haskey(best_scans, pid)
+            target_scan = best_scans[pid]
+            match_idx = findfirst(==(target_scan), group.scan_idx)
+            if match_idx !== nothing
+                return group[match_idx:match_idx, :]
+            end
+        end
+        # Fallback: highest weight (first row, since sorted desc)
+        return group[1:1, :]
+    end
+
+    return best
+end
+
+"""
     add_multi_scan_aggregates!(best_psms, all_psms)
 
 Compute per-precursor aggregate features from all scans and join them onto
@@ -1597,12 +1627,13 @@ function _prescore_logodds_combine(probs::Vector{Float32}, top_n::Int)::Float32
 end
 
 """
-    aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD) -> (Set{UInt32}, Dict{Int, Set{UInt32}})
+    aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD) -> (Set{UInt32}, Dict{Int, Set{UInt32}}, Dictionary{UInt32, Dictionary{Int, UInt32}})
 
 Load per-file LightGBM prescore arrow files, aggregate via log-odds averaging,
 compute global q-values, and return (1) the set of precursor indices passing at
-q ≤ qvalue_threshold and (2) per-file iRT outlier exclusions mapping
-ms_file_idx → precursor IDs to exclude from that file's re-deconvolution.
+q ≤ qvalue_threshold, (2) per-file iRT outlier exclusions mapping
+ms_file_idx → precursor IDs to exclude from that file's re-deconvolution, and
+(3) per-precursor Phase 1 best scan lookup mapping precursor_idx → (file_idx → scan_idx).
 """
 function aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD)
     ms_data = getMSData(search_context)
@@ -1618,6 +1649,7 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
     prec_max_irt = Dictionary{UInt32, Float32}()       # max iRT across files
     prec_peak_widths = Dictionary{UInt32, Vector{Float32}}()  # within-file iRT peak widths
     prec_irt_by_file = Dictionary{UInt32, Vector{Pair{Int,Float32}}}()  # (file_idx => irt) per observation
+    prec_best_scan = Dictionary{UInt32, Dictionary{Int, UInt32}}()  # pid → (file_idx → scan_idx)
     n_valid_files = 0
 
     for ms_file_idx in 1:n_files
@@ -1631,6 +1663,7 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
 
         has_irt = :irt_obs in Tables.columnnames(scores)
         has_peak_width = :irt_peak_width in Tables.columnnames(scores)
+        has_scan = :scan_idx in Tables.columnnames(scores)
 
         for i in eachindex(scores[:precursor_idx])
             pid = scores[:precursor_idx][i]
@@ -1675,6 +1708,15 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
                 else
                     insert!(prec_peak_widths, pid, Float32[pw])
                 end
+            end
+
+            # Track Phase 1 best scan per precursor per file
+            if has_scan
+                sid = UInt32(scores[:scan_idx][i])
+                if !haskey(prec_best_scan, pid)
+                    insert!(prec_best_scan, pid, Dictionary{Int, UInt32}())
+                end
+                insert!(prec_best_scan[pid], ms_file_idx, sid)
             end
         end
     end
@@ -1865,7 +1907,7 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
         end
     end
 
-    return passing, per_file_irt_exclusions
+    return passing, per_file_irt_exclusions, prec_best_scan
 end
 
 """
