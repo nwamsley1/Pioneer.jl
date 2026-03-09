@@ -1579,7 +1579,7 @@ end
 Global Cross-Run Prescore Aggregation
 ==========================================================#
 
-const GLOBAL_PRESCORE_QVALUE_THRESHOLD = 0.25f0
+const GLOBAL_PRESCORE_QVALUE_THRESHOLD = 0.10f0
 
 """
 Log-odds average of top-N probabilities, converted back to probability space.
