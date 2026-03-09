@@ -103,7 +103,7 @@ function sort_of_percolator!(psms::AbstractPSMContainer,
                   min_gain_to_split::Float64 = 0.0,
                   max_depth::Int = 10,
                   num_leaves::Int = 63,
-                  iter_scheme::Vector{Int} = [100, 200, 200],
+                  iter_scheme::Vector{Int} = [200],
                   print_importance::Bool = false,
                   show_progress::Bool = true,
                   verbose_logging::Bool = false)

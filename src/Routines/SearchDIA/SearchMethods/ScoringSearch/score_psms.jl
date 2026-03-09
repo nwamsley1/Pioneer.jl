@@ -270,7 +270,7 @@ function create_default_advanced_lightgbm_config(ms1_scoring::Bool = true)
             :max_depth => 10,
             :num_leaves => 63,
             :learning_rate => 0.05,
-            :iter_scheme => [100, 200, 200]
+            :iter_scheme => [200]
         )
     )
 end

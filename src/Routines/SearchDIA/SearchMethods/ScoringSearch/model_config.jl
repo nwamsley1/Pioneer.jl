@@ -201,10 +201,10 @@ function create_model_configurations(ms1_scoring::Bool = true)
                 :max_depth => 4,
                 :num_leaves => 15,
                 :learning_rate => 0.1,
-                :iter_scheme => [150, 300, 300]
+                :iter_scheme => [200]
             )
         ),
-        
+
         # Model 2: Advanced LightGBM (Same as used for >100K PSMs)
         ModelConfig(
             "AdvancedLightGBM",
@@ -218,7 +218,7 @@ function create_model_configurations(ms1_scoring::Bool = true)
                 :max_depth => -1,
                 :num_leaves => 63,
                 :learning_rate => 0.05,
-                :iter_scheme => [100, 200, 200]
+                :iter_scheme => [200]
             )
         ),
         
@@ -264,7 +264,7 @@ function create_model_configurations(ms1_scoring::Bool = true)
                 :max_depth => 4,
                 :num_leaves => 15,
                 :learning_rate => 0.1,
-                :iter_scheme => [150, 300, 300]
+                :iter_scheme => [200]
             )
         )
     ]
@@ -484,7 +484,7 @@ function build_scoring_config(
     ] : Symbol[]
 
     # Get iteration scheme
-    iter_scheme = get(model_config.hyperparams, :iter_scheme, [100, 200, 200])
+    iter_scheme = get(model_config.hyperparams, :iter_scheme, [200])
 
     return ScoringConfig(
         model,

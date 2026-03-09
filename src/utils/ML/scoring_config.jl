@@ -77,7 +77,7 @@ function default_scoring_config(;
     base_features = [f for f in features if !startswith(String(f), "MBR_")]
 
     # Get iteration scheme from hyperparams
-    iter_scheme = get(hyperparams, :iter_scheme, [100, 200, 200])
+    iter_scheme = get(hyperparams, :iter_scheme, [200])
 
     return ScoringConfig(
         LightGBMScorer(hyperparams),

@@ -184,7 +184,7 @@ struct FixedIterationScheme <: IterationScheme
     rounds::Vector{Int}
 end
 
-FixedIterationScheme() = FixedIterationScheme([100, 200, 200])
+FixedIterationScheme() = FixedIterationScheme([200])
 
 """
     SinglePassScheme <: IterationScheme
