@@ -257,14 +257,16 @@ function process_file!(
     end
 
     try
+        t_start = time()
+
         # Load fragment index mapping instead of RT index
         frag_match_path = getFragmentIndexMatches(getMSData(search_context), ms_file_idx)
         scan_to_prec_idx, precursors_passed = load_fragment_index_matches(
             frag_match_path, length(spectra)
         )
+        t_load = time()
 
         # Perform second pass search using fragment index matches (Phase 1 prescore settings)
-        @info "  Phase 1 prescore: n_frag_isotopes=$(params.prescore_n_frag_isotopes), max_frag_rank=$(params.prescore_max_frag_rank)"
         psms = perform_second_pass_search(
             spectra,
             scan_to_prec_idx,
@@ -276,8 +278,13 @@ function process_file!(
             n_frag_isotopes = params.prescore_n_frag_isotopes,
             max_frag_rank = params.prescore_max_frag_rank
         )
+        t_deconv = time()
 
         results.psms[] = psms
+
+        println()
+        @info "Phase 1 deconvolution: $(nrow(psms)) PSMs, load=$(round(t_load - t_start, digits=2))s, deconv=$(round(t_deconv - t_load, digits=2))s"
+        println()
 
     catch e
         # Handle failures gracefully using helper function (logs full stacktrace)
@@ -333,11 +340,13 @@ function process_search_results!(
     end
 
     try
+        t_start = time()
         psms = results.psms[]
         file_name = getParsedFileName(search_context, ms_file_idx)
 
-        # Phase 1: Compute 29 features on ALL PSMs (all scans, not best-per-precursor)
-        prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
+        # Phase 1: Compute only prescore features (skip columns recomputed in Phase 2)
+        prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra, prescore_only=true)
+        t_features = time()
 
         if nrow(psms) == 0
             @debug_l2 "No PSMs for file $ms_file_idx after feature computation"
@@ -359,11 +368,13 @@ function process_search_results!(
                 insert!(prec_irt_max, pid, irt)
             end
         end
+        t_prep = time()
 
         # Train LightGBM on ALL PSMs, select best scan per precursor
-        best_psms, scores, q_values = train_lgbm_and_select_best(psms)
+        best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms)
+        t_lgbm = time()
 
-        # DIA-NN diagnostics at various q-value thresholds
+        # DIA-NN diagnostics at various q-value thresholds (debug only)
         diann_file, diann_global = load_diann_reference(file_name)
         if !isempty(diann_file) || !isempty(diann_global)
             best_targets = best_psms[!, :target]
@@ -372,7 +383,7 @@ function process_search_results!(
                     for i in 1:nrow(best_psms) if (q_values[i] <= q_thresh) && best_targets[i])
                 n_file = isempty(diann_file) ? 0 : length(intersect(passing, diann_file))
                 n_global = isempty(diann_global) ? 0 : length(intersect(passing, diann_global))
-                @info "    Prescore q≤$q_thresh: $(length(passing)) targets, DIA-NN file=$n_file global=$n_global"
+                @debug "    Prescore q≤$q_thresh: $(length(passing)) targets, DIA-NN file=$n_file global=$n_global"
             end
         end
 
@@ -394,11 +405,24 @@ function process_search_results!(
             scan_idx = best_psms[!, :scan_idx]
         )
         writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
+        t_write = time()
 
         # Register base path for summarize_results! (fold files written in Phase 2)
         base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
         setSecondPassPsms!(getMSData(search_context), ms_file_idx,
                           joinpath(base_dir, file_name))
+
+        # Timing summary
+        n_pass_1 = count((q_values .<= 0.01) .& best_psms[!, :target])
+        n_pass_5 = count((q_values .<= 0.05) .& best_psms[!, :target])
+        t_total = t_write - t_start
+        r = s -> round(s, digits=2)
+        println()
+        @info "Phase 1 scoring: $(nrow(psms)) PSMs → $(nrow(best_psms)) precursors ($n_pass_1 @ 1%, $n_pass_5 @ 5% FDR)\n" *
+              "  features=$(r(t_features - t_start))s, prep=$(r(t_prep - t_features))s, write=$(r(t_write - t_lgbm))s\n" *
+              "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train=$(r(lgbm_timings.train))s, predict=$(r(lgbm_timings.predict))s, select=$(r(lgbm_timings.select))s\n" *
+              "  total=$(r(t_total))s"
+        println()
 
     catch e
         file_name = try

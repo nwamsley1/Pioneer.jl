@@ -346,7 +346,7 @@ function process_scans_fragindex!(
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count"
+    @debug "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count"
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 
@@ -541,7 +541,7 @@ function process_scans!(
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count"
+    @debug "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count"
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 
@@ -1056,13 +1056,14 @@ Add feature columns to PSMs for scoring and analysis.
 - Intensity metrics
 - Spectrum characteristics
 """
-function add_features!(psms::DataFrame, 
+function add_features!(psms::DataFrame,
                         search_context::SearchContext,
                                     tic::AbstractVector{Float32},
                                     masses::AbstractArray,
                                     ms_file_idx::Integer,
                                     rt_to_irt_interp::RtConversionModel,
-                                    prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}
+                                    prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}};
+                                    prescore_only::Bool=false
                                     )
 
     precursor_sequence = getSequence(getPrecursors(getSpecLib(search_context)))#[:sequence],
@@ -1079,32 +1080,30 @@ function add_features!(psms::DataFrame,
     ###########################
     #Allocate new columns
     N = size(psms, 1)
-    irt_diff = zeros(Float32, N)
     irt_obs = zeros(Float32, N)
-    ms1_irt_diff = zeros(Float32, N)
     irt_pred = zeros(Float32, N)
     irt_error = zeros(Float32, N)
-    pair_idxs = zeros(UInt32, N)
-    entrap_group_id = zeros(UInt8, N)
-    #psms[!,:missed_cleavage] .= zero(UInt8);
-    #psms[!,:sequence] .= "";
     missed_cleavage = zeros(UInt8, N);
-    #sequence = Vector{String}(undef, N);
-    #stripped_sequence = Vector{String}(undef, N);
-    adjusted_intensity_explained = zeros(Float16, N);
-    #log2_base_peak_intensity = zeros(Float16, N);
-    prec_charges = zeros(UInt8, N)
-    sequence_length = zeros(UInt8, N);
-    #b_y_overlap = zeros(Bool, N);
     spectrum_peak_count = zeros(Float16, N);
-    prec_mzs = zeros(Float32, size(psms, 1));
     Mox = zeros(UInt8, N);
-    TIC = zeros(Float16, N);
 
-    # Amino acid count features (20 standard amino acids)
-    aa_counts = Dict{Char, Vector{UInt8}}()
-    for aa in "ACDEFGHIKLMNPQRSTVWY"
-        aa_counts[aa] = zeros(UInt8, N)
+    # Columns only needed for Phase 2 (full feature set)
+    if !prescore_only
+        irt_diff = zeros(Float32, N)
+        ms1_irt_diff = zeros(Float32, N)
+        pair_idxs = zeros(UInt32, N)
+        entrap_group_id = zeros(UInt8, N)
+        adjusted_intensity_explained = zeros(Float16, N);
+        prec_charges = zeros(UInt8, N)
+        sequence_length = zeros(UInt8, N);
+        prec_mzs = zeros(Float32, N);
+        TIC = zeros(Float16, N);
+
+        # Amino acid count features (20 standard amino acids)
+        aa_counts = Dict{Char, Vector{UInt8}}()
+        for aa in "ACDEFGHIKLMNPQRSTVWY"
+            aa_counts[aa] = zeros(UInt8, N)
+        end
     end
 
     #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
@@ -1127,6 +1126,29 @@ function add_features!(psms::DataFrame,
         return zero(UInt8)
     end
 
+    # Pre-compute per-precursor string features to avoid redundant work across ~3 PSMs/precursor
+    AA_ORDER = "ACDEFGHIKLMNPQRSTVWY"
+    unique_precs = unique(precursor_idx)
+    _mox_cache = Dict{UInt32, UInt8}()
+    sizehint!(_mox_cache, length(unique_precs))
+    if !prescore_only
+        _seq_length_cache = Dict{UInt32, UInt8}()
+        _aa_cache = Dict{UInt32, NTuple{20, UInt8}}()
+        sizehint!(_seq_length_cache, length(unique_precs))
+        sizehint!(_aa_cache, length(unique_precs))
+        for pid in unique_precs
+            stripped = replace(precursor_sequence[pid], r"\(.*?\)" => "")
+            _seq_length_cache[pid] = UInt8(length(stripped))
+            _mox_cache[pid] = countMOX(structural_mods[pid])
+            _aa_cache[pid] = ntuple(Val(20)) do j
+                UInt8(count(==(AA_ORDER[j]), stripped))
+            end
+        end
+    else
+        for pid in unique_precs
+            _mox_cache[pid] = countMOX(structural_mods[pid])
+        end
+    end
 
     tasks_per_thread = 5
     chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
@@ -1136,37 +1158,32 @@ function add_features!(psms::DataFrame,
         Threads.@spawn begin 
             for i in chunk
                 prec_idx = precursor_idx[i]
-                entrap_group_id[i] = entrap_group_ids[prec_idx]
                 irt_obs[i] = rt_to_irt_interp(rt[i])
-                irt_pred[i] = getPredIrt(search_context, prec_idx)#prec_irt[prec_idx]
-                #irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[prec_idx]))
-                irt_diff[i] = abs(irt_obs[i] - prec_id_to_irt[prec_idx].best_irt)
-                if !ms1_missing[i]
-                    ms1_irt_diff[i] = abs(rt_to_irt_interp(ms1_rt[i]) - getPredIrt(search_context, prec_idx))
-                else
-                    ms1_irt_diff[i] = 0f0
-                end
+                irt_pred[i] = getPredIrt(search_context, prec_idx)
                 irt_error[i] = abs(irt_obs[i] - irt_pred[i])
-
                 missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
-                #sequence[i] = precursor_sequence[prec_idx]
-                stripped_seq = replace(precursor_sequence[prec_idx], r"\(.*?\)" => "")
-                sequence_length[i] = length(stripped_seq)
-                for ch in stripped_seq
-                    if haskey(aa_counts, ch)
-                        aa_counts[ch][i] += one(UInt8)
-                    end
-                end
-                Mox[i] = countMOX(structural_mods[prec_idx])::UInt8
-                #sequence_length[i] = length(stripped_sequence[i])
-                TIC[i] = Float16(log2(tic[scan_idx[i]]))
-                adjusted_intensity_explained[i] = Float16(log2(TIC[i]) + log2_intensity_explained[i]);
-                prec_charges[i] = prec_charge[prec_idx]
-                #b_y_overlap[i] = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
-                pair_idxs[i] = extract_pair_idx(precursor_pair_idxs, prec_idx)
+                Mox[i] = _mox_cache[prec_idx]
                 spectrum_peak_count[i] = length(masses[scan_idx[i]])
-         
-                prec_mzs[i] = prec_mz[prec_idx];
+
+                if !prescore_only
+                    entrap_group_id[i] = entrap_group_ids[prec_idx]
+                    irt_diff[i] = abs(irt_obs[i] - prec_id_to_irt[prec_idx].best_irt)
+                    if !ms1_missing[i]
+                        ms1_irt_diff[i] = abs(rt_to_irt_interp(ms1_rt[i]) - getPredIrt(search_context, prec_idx))
+                    else
+                        ms1_irt_diff[i] = 0f0
+                    end
+                    sequence_length[i] = _seq_length_cache[prec_idx]
+                    aa_tuple = _aa_cache[prec_idx]
+                    @inbounds for (j, aa) in enumerate(AA_ORDER)
+                        aa_counts[aa][i] = aa_tuple[j]
+                    end
+                    TIC[i] = Float16(log2(tic[scan_idx[i]]))
+                    adjusted_intensity_explained[i] = Float16(log2(TIC[i]) + log2_intensity_explained[i]);
+                    prec_charges[i] = prec_charge[prec_idx]
+                    pair_idxs[i] = extract_pair_idx(precursor_pair_idxs, prec_idx)
+                    prec_mzs[i] = prec_mz[prec_idx];
+                end
             end
         end
     end
@@ -1174,29 +1191,27 @@ function add_features!(psms::DataFrame,
 
     psms[!,:irt_obs] = irt_obs
     psms[!,:irt_pred] = irt_pred
-    psms[!,:irt_diff] = irt_diff
     psms[!,:irt_error] = irt_error
-    psms[!,:ms1_irt_diff] = ms1_irt_diff
     psms[!,:missed_cleavage] = missed_cleavage
-    #psms[!,:sequence] = sequence
-    #psms[!,:stripped_sequence] = stripped_sequence
     psms[!,:Mox] = Mox
-    psms[!,:sequence_length] = sequence_length
-
-    psms[!,:tic] = TIC
-    psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
-    psms[!,:charge] = prec_charges
-    
-    #psms[!,:b_y_overlap] = b_y_overlap
     psms[!,:spectrum_peak_count] = spectrum_peak_count
-    psms[!,:pair_id] = pair_idxs
-    psms[!,:prec_mz] = prec_mzs
-    psms[!,:entrapment_group_id] = entrap_group_id
-    psms[!,:ms_file_idx] .= ms_file_idx
 
-    # Amino acid count columns
-    for aa in "ACDEFGHIKLMNPQRSTVWY"
-        psms[!, Symbol("aa_", aa)] = aa_counts[aa]
+    if !prescore_only
+        psms[!,:irt_diff] = irt_diff
+        psms[!,:ms1_irt_diff] = ms1_irt_diff
+        psms[!,:sequence_length] = sequence_length
+        psms[!,:tic] = TIC
+        psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
+        psms[!,:charge] = prec_charges
+        psms[!,:pair_id] = pair_idxs
+        psms[!,:prec_mz] = prec_mzs
+        psms[!,:entrapment_group_id] = entrap_group_id
+        psms[!,:ms_file_idx] .= ms_file_idx
+
+        # Amino acid count columns
+        for aa in "ACDEFGHIKLMNPQRSTVWY"
+            psms[!, Symbol("aa_", aa)] = aa_counts[aa]
+        end
     end
     return nothing
 end
@@ -1224,14 +1239,14 @@ function load_diann_reference(file_name::String)
     if isfile(pf_path)
         t = Arrow.Table(pf_path)
         per_file = Set{UInt32}(t.precursor_idx)
-        @info "  DIA-NN per-file ($file_name): $(length(per_file)) unique precursor_idx values\n"
+        @debug "  DIA-NN per-file ($file_name): $(length(per_file)) unique precursor_idx values"
     end
 
     # Global reference
     if isfile(DIANN_GLOBAL_ARROW)
         t = Arrow.Table(DIANN_GLOBAL_ARROW)
         global_set = Set{UInt32}(t.precursor_idx)
-        @info "  DIA-NN global: $(length(global_set)) unique precursor_idx values\n"
+        @debug "  DIA-NN global: $(length(global_set)) unique precursor_idx values"
     end
 
     return per_file, global_set
@@ -1260,13 +1275,13 @@ function log_diann_recovery(label::String, psms::DataFrame,
         n_recovered = length(intersect(surviving_precs, diann_file))
         n_total = length(diann_file)
         pct = round(100.0 * n_recovered / max(1, n_total), digits=1)
-        @info "  [$label] DIA-NN file recovery: $n_recovered / $n_total ($pct%)\n"
+        @debug "  [$label] DIA-NN file recovery: $n_recovered / $n_total ($pct%)"
     end
     if !isempty(diann_global)
         n_recovered = length(intersect(surviving_precs, diann_global))
         n_total = length(diann_global)
         pct = round(100.0 * n_recovered / max(1, n_total), digits=1)
-        @info "  [$label] DIA-NN global recovery: $n_recovered / $n_total ($pct%)\n"
+        @debug "  [$label] DIA-NN global recovery: $n_recovered / $n_total ($pct%)"
     end
 end
 
@@ -1274,6 +1289,14 @@ end
 LightGBM Feature Set
 ==========================================================#
 
+# Lean feature set for Phase 1 prescore LightGBM (fast per-file ranking)
+const PRESCORE_FEATURES = [
+    :fitted_manhattan_distance, :scribe, :irt_error, :poisson, :err_norm,
+    :total_ions, :missed_cleavage, :y_count, :weight, :gof,
+    :max_unmatched_residual, :max_matched_residual, :Mox, :spectrum_peak_count,
+]
+
+# Full feature set used in Phase 2 (ScoringSearch gets these via fold Arrow files)
 const LGBM_RECOVERY_FEATURES = [
     # Core spectral quality
     :fitted_manhattan_distance, :max_matched_residual, :gof,
@@ -1354,7 +1377,8 @@ function prepare_psm_features!(
     params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    spectra::MassSpecData
+    spectra::MassSpecData;
+    prescore_only::Bool=false
 ) where {P<:SecondPassSearchParameters}
     # 1. Add basic search columns (RT, charge, target/decoy status, cv_fold)
     add_second_search_columns!(psms,
@@ -1398,7 +1422,8 @@ function prepare_psm_features!(
         getMzArrays(spectra),
         ms_file_idx,
         getRtIrtModel(search_context, ms_file_idx),
-        getPrecursorDict(search_context)
+        getPrecursorDict(search_context);
+        prescore_only=prescore_only
     )
 
     # 6. Sanitize features (Inf/NaN → 0)
@@ -1408,7 +1433,7 @@ function prepare_psm_features!(
 end
 
 """
-    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, q_values)
+    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, q_values, timings)
 
 Train LightGBM on ALL PSMs (all scans), predict scores, select best scan
 per precursor by LightGBM score, compute q-values, and log diagnostics.
@@ -1420,17 +1445,19 @@ Returns:
 """
 function train_lgbm_and_select_best(
     psms::DataFrame;
-    features::Vector{Symbol} = collect(LGBM_RECOVERY_FEATURES)
+    features::Vector{Symbol} = collect(PRESCORE_FEATURES)
 )
+    t0 = time()
+
     # Filter to available features
     available_features = filter(f -> hasproperty(psms, f), features)
     targets_col = psms[!, :target]
-    n_targets = count(targets_col)
-    n_decoys = count(.!targets_col)
-    @info "  LightGBM training: $(nrow(psms)) PSMs ($n_targets targets, $n_decoys decoys), $(length(available_features)) features"
+
+    # Build feature matrix for LightGBM
+    feature_df = psms[!, available_features]
+    t_matrix = time()
 
     # Train LightGBM classifier
-    feature_df = psms[!, available_features]
     classifier = build_lightgbm_classifier(
         num_iterations = 50,
         learning_rate = 0.2,
@@ -1443,9 +1470,11 @@ function train_lgbm_and_select_best(
         is_unbalance = true,
     )
     model = fit_lightgbm_model(classifier, feature_df, targets_col)
+    t_train = time()
 
     # Predict on ALL PSMs
     all_scores = lightgbm_predict(model, feature_df)
+    t_predict = time()
 
     # Add scores to psms for best-per-precursor selection
     psms[!, :lgbm_score] = Float32.(all_scores)
@@ -1460,27 +1489,29 @@ function train_lgbm_and_select_best(
     best_targets = best_psms[!, :target]
     q_values = zeros(Float64, nrow(best_psms))
     get_qvalues!(scores, best_targets, q_values)
+    t_select = time()
 
-    # Diagnostics
-    n_pass_1 = count((q_values .<= 0.01) .& best_targets)
-    n_pass_5 = count((q_values .<= 0.05) .& best_targets)
-    n_pass_10 = count((q_values .<= 0.10) .& best_targets)
-    @info "  LightGBM: $n_pass_1 @ 1%, $n_pass_5 @ 5%, $n_pass_10 @ 10% FDR target precursors"
-
-    # Feature importances
+    # Feature importances (debug only)
     imp = importance(model)
     if imp !== nothing
         sorted_imp = sort(imp, by = x -> -x[2])
-        @info "  LightGBM feature importances ($(length(sorted_imp)) features):"
+        @debug "  LightGBM feature importances ($(length(sorted_imp)) features):"
         for (fname, gain) in sorted_imp
-            @info "    $fname: $(round(gain, digits=1))"
+            @debug "    $fname: $(round(gain, digits=1))"
         end
     end
 
     # Clean up temporary column
     select!(psms, Not(:lgbm_score))
 
-    return best_psms, Vector{Float32}(scores), q_values
+    timings = (
+        matrix = t_matrix - t0,
+        train = t_train - t_matrix,
+        predict = t_predict - t_train,
+        select = t_select - t_predict,
+    )
+
+    return best_psms, Vector{Float32}(scores), q_values, timings
 end
 
 """
@@ -1502,9 +1533,30 @@ Reduce to one PSM per precursor_idx, keeping the row with highest `score_col`.
 Returns a copy (does not modify input).
 """
 function get_best_psm_per_precursor_by_score(psms::DataFrame, score_col::Symbol)
-    sorted = sort(psms, [:precursor_idx, order(score_col, rev=true)])
-    best = combine(groupby(sorted, :precursor_idx), first)
-    return best
+    scores = psms[!, score_col]
+    prec_ids = psms[!, :precursor_idx]
+
+    # Single pass: track best row index per precursor
+    best_idx = Dictionary{UInt32, Int}()
+    best_score = Dictionary{UInt32, Float32}()
+    for i in eachindex(prec_ids)
+        pid = prec_ids[i]
+        s = scores[i]
+        if !haskey(best_idx, pid) || s > best_score[pid]
+            if haskey(best_idx, pid)
+                best_idx[pid] = i
+                best_score[pid] = s
+            else
+                insert!(best_idx, pid, i)
+                insert!(best_score, pid, s)
+            end
+        end
+    end
+
+    # Collect best rows — sort indices for cache-friendly DataFrame access
+    row_indices = collect(values(best_idx))
+    sort!(row_indices)
+    return psms[row_indices, :]
 end
 
 """
@@ -1763,7 +1815,7 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
 
     @info "Global prescore filter: $(length(passing)) precursors pass at q≤$(qvalue_threshold)"
 
-    # ── iRT spread diagnostics for 1% FDR targets ──────────────
+    #= ── iRT spread diagnostics for 1% FDR targets ──────────────
     if !isempty(prec_min_irt)
         # Collect iRT diffs for target precursors at 1% global FDR
         irt_diffs = Float32[]
@@ -1871,6 +1923,7 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
             end
         end
     end
+    =#
 
     # ── DIA-NN diagnostics ──────────────────────────────────────
     # Build lookup: precursor_idx → global_qval for all scored precursors
@@ -1886,7 +1939,7 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
         n_pass = count(pid -> pid in passing, diann_global)
         n_scored_fail = count(pid -> haskey(prec_to_global_qval, pid) && !(pid in passing), diann_global)
         n_not_scored = n_diann - n_pass - n_scored_fail
-        @info "DIA-NN global ($n_diann): pass=$n_pass, scored-but-filtered=$n_scored_fail, not-scored=$n_not_scored"
+        @debug "DIA-NN global ($n_diann): pass=$n_pass, scored-but-filtered=$n_scored_fail, not-scored=$n_not_scored"
     end
 
     # Per-file DIA-NN references
@@ -1902,7 +1955,7 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
             n_pass_f = count(pid -> pid in passing, diann_file)
             n_scored_fail_f = count(pid -> haskey(prec_to_global_qval, pid) && !(pid in passing), diann_file)
             n_not_scored_f = n_diann_f - n_pass_f - n_scored_fail_f
-            @info "  DIA-NN file $file_name ($n_diann_f): pass=$n_pass_f, scored-but-filtered=$n_scored_fail_f, not-scored=$n_not_scored_f"
+            @debug "  DIA-NN file $file_name ($n_diann_f): pass=$n_pass_f, scored-but-filtered=$n_scored_fail_f, not-scored=$n_not_scored_f"
         end
     end
 
