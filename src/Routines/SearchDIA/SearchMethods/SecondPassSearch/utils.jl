@@ -139,7 +139,9 @@ function perform_second_pass_search(
     search_context::SearchContext,
     params::SecondPassSearchParameters,
     ms_file_idx::Int64,
-    ::MS2CHROM
+    ::MS2CHROM;
+    n_frag_isotopes::Int64 = params.n_frag_isotopes,
+    max_frag_rank::UInt8 = params.max_frag_rank
 )
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
@@ -156,7 +158,9 @@ function perform_second_pass_search(
                 search_context,
                 search_data,
                 params,
-                ms_file_idx
+                ms_file_idx;
+                n_frag_isotopes = n_frag_isotopes,
+                max_frag_rank = max_frag_rank
             )
         end
     end
@@ -190,7 +194,9 @@ function process_scans_fragindex!(
     search_context::SearchContext,
     search_data::SearchDataStructures,
     params::SecondPassSearchParameters,
-    ms_file_idx::Int64
+    ms_file_idx::Int64;
+    n_frag_isotopes::Int64 = params.n_frag_isotopes,
+    max_frag_rank::UInt8 = params.max_frag_rank
 )
     # Get working arrays
     Hs = getHs(search_data)
@@ -237,8 +243,8 @@ function process_scans_fragindex!(
             ),
             getPrecursorTransmission(search_data),
             getIsotopes(search_data),
-            params.n_frag_isotopes,
-            params.max_frag_rank,
+            n_frag_isotopes,
+            max_frag_rank,
             Float32(0.0),       # iRT value (not used for filtering)
             Float32(1e10),      # iRT_tol = effectively infinite (no RT filtering)
             (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
@@ -1426,10 +1432,11 @@ function train_lgbm_and_select_best(
     # Train LightGBM classifier
     feature_df = psms[!, available_features]
     classifier = build_lightgbm_classifier(
-        num_iterations = 200,
+        num_iterations = 50,
+        learning_rate = 0.2,
         max_depth = 5,
-        num_leaves = 31,
-        min_data_in_leaf = 50,
+        num_leaves = 15,
+        min_data_in_leaf = 200,
         feature_fraction = 0.8,
         bagging_fraction = 0.8,
         bagging_freq = 1,

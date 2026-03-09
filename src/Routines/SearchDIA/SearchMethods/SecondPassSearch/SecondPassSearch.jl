@@ -105,6 +105,10 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     # Global prescore q-value threshold
     global_prescore_qvalue_threshold::Float32
 
+    # Phase 1 prescore fragment settings (may differ from Phase 2)
+    prescore_n_frag_isotopes::Int64
+    prescore_max_frag_rank::UInt8
+
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -159,6 +163,21 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             0.05f0
         end
 
+        # Phase 1 prescore fragment settings (fallback to main fragment_settings)
+        prescore_n_frag_isotopes = if haskey(quant_params, :prescore_fragment_settings) &&
+                                      haskey(quant_params.prescore_fragment_settings, :n_isotopes)
+            Int64(quant_params.prescore_fragment_settings.n_isotopes)
+        else
+            Int64(frag_params.n_isotopes)
+        end
+
+        prescore_max_frag_rank = if haskey(quant_params, :prescore_fragment_settings) &&
+                                    haskey(quant_params.prescore_fragment_settings, :max_rank)
+            UInt8(quant_params.prescore_fragment_settings.max_rank)
+        else
+            UInt8(frag_params.max_rank)
+        end
+
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -192,7 +211,10 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
 
             ms1_scoring,
 
-            global_prescore_qval
+            global_prescore_qval,
+
+            prescore_n_frag_isotopes,
+            prescore_max_frag_rank
         )
     end
 end
@@ -241,7 +263,8 @@ function process_file!(
             frag_match_path, length(spectra)
         )
 
-        # Perform second pass search using fragment index matches
+        # Perform second pass search using fragment index matches (Phase 1 prescore settings)
+        @info "  Phase 1 prescore: n_frag_isotopes=$(params.prescore_n_frag_isotopes), max_frag_rank=$(params.prescore_max_frag_rank)"
         psms = perform_second_pass_search(
             spectra,
             scan_to_prec_idx,
@@ -249,7 +272,9 @@ function process_file!(
             search_context,
             params,
             ms_file_idx,
-            MS2CHROM()
+            MS2CHROM();
+            n_frag_isotopes = params.prescore_n_frag_isotopes,
+            max_frag_rank = params.prescore_max_frag_rank
         )
 
         results.psms[] = psms
@@ -406,6 +431,7 @@ function summarize_results!(
 ) where {P<:SecondPassSearchParameters}
 
     @info "=== SecondPassSearch: Phase 2 — Global aggregation + final search ==="
+    @info "Phase 2 final: n_frag_isotopes=$(params.n_frag_isotopes), max_frag_rank=$(params.max_frag_rank)"
 
     # Step 1: Global prescore aggregation → passing precursor set + Phase 1 scan lookup
     passing_precs, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold)
