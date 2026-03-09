@@ -22,6 +22,7 @@ on:
           - APMS_Astral
           - EWZ_2P_MBR_Exploris
           - KEAP1KO_Eclipse
+          - MacCoss_Eclipse_Normalization
           - MTAC_3P_Alternating
           - MTAC_3P_Standard
           - MTAC_Yeast_Alternating_3min
