@@ -102,6 +102,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     # Collect MS1 data?
     ms1_scoring::Bool
 
+    # Global prescore q-value threshold
+    global_prescore_qvalue_threshold::Float32
+
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -149,6 +152,13 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
 
         ms1_scoring = Bool(global_params.ms1_scoring)
 
+        # Global prescore q-value threshold (default 0.05 if not in JSON)
+        global_prescore_qval = if haskey(quant_params, :global_prescore_qvalue_threshold)
+            Float32(quant_params.global_prescore_qvalue_threshold)
+        else
+            0.05f0
+        end
+
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -180,7 +190,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             isotope_trace_type,
             prec_estimation,
 
-            ms1_scoring
+            ms1_scoring,
+
+            global_prescore_qval
         )
     end
 end
@@ -308,6 +320,21 @@ function process_search_results!(
             return nothing
         end
 
+        # Compute within-file iRT peak width from full psms (all scans per precursor)
+        prec_irt_min = Dictionary{UInt32, Float32}()
+        prec_irt_max = Dictionary{UInt32, Float32}()
+        for i in 1:nrow(psms)
+            pid = psms[i, :precursor_idx]
+            irt = psms[i, :irt_obs]
+            if haskey(prec_irt_min, pid)
+                prec_irt_min[pid] = min(prec_irt_min[pid], irt)
+                prec_irt_max[pid] = max(prec_irt_max[pid], irt)
+            else
+                insert!(prec_irt_min, pid, irt)
+                insert!(prec_irt_max, pid, irt)
+            end
+        end
+
         # Train LightGBM on ALL PSMs, select best scan per precursor
         best_psms, scores, q_values = train_lgbm_and_select_best(psms)
 
@@ -324,13 +351,21 @@ function process_search_results!(
             end
         end
 
+        # Map within-file iRT peak widths onto best_psms
+        irt_peak_width = Float32[
+            prec_irt_max[pid] - prec_irt_min[pid]
+            for pid in best_psms[!, :precursor_idx]
+        ]
+
         # Write prescore table (scores only, NO fold Arrow files yet)
         prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
         mkpath(prescore_dir)
         score_df = DataFrame(
             precursor_idx = best_psms[!, :precursor_idx],
             lgbm_prob = scores,
-            target = best_psms[!, :target]
+            target = best_psms[!, :target],
+            irt_obs = best_psms[!, :irt_obs],
+            irt_peak_width = irt_peak_width
         )
         writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
 
@@ -371,10 +406,10 @@ function summarize_results!(
 
     @info "=== SecondPassSearch: Phase 2 — Global aggregation + final search ==="
 
-    # Step 1: Global prescore aggregation → passing precursor set
-    passing_precs = aggregate_prescore_globally!(search_context)
+    # Step 1: Global prescore aggregation → passing precursor set + per-file iRT exclusions
+    passing_precs, irt_exclusions = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold)
 
-    # Step 2: Re-search each file with only passing precursors
+    # Step 2: Re-search each file with only passing precursors (minus iRT outliers)
     msdr = getMassSpecData(search_context)
     ms_data = getMSData(search_context)
     n_files = length(ms_data)
@@ -389,14 +424,22 @@ function summarize_results!(
         isempty(base_path) && continue
 
         file_name = getParsedFileName(search_context, ms_file_idx)
-        @info "  Phase 2 file $ms_file_idx ($file_name)..."
+
+        # Remove iRT outlier precursors for this specific file
+        file_passing = if haskey(irt_exclusions, ms_file_idx)
+            excluded = irt_exclusions[ms_file_idx]
+            @info "  Phase 2 file $ms_file_idx ($file_name): excluding $(length(excluded)) iRT outlier precursors"
+            setdiff(passing_precs, excluded)
+        else
+            passing_precs
+        end
 
         try
             spectra = getMSData(msdr, ms_file_idx)
 
             # Re-deconvolve with only globally-passing precursors (reduced competition)
             psms = rerun_search_with_precursor_filter(
-                spectra, search_context, params, ms_file_idx, passing_precs
+                spectra, search_context, params, ms_file_idx, file_passing
             )
 
             if nrow(psms) == 0
@@ -412,8 +455,8 @@ function summarize_results!(
                 continue
             end
 
-            # Train LightGBM → best scan per precursor
-            best_psms, _, _ = train_lgbm_and_select_best(psms)
+            # Select best scan per precursor by deconvolution weight
+            best_psms = get_best_psm_per_precursor(psms)
 
             # Add multi-scan aggregate features for ScoringSearch
             add_multi_scan_aggregates!(best_psms, psms)

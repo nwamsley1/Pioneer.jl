@@ -1579,7 +1579,7 @@ end
 Global Cross-Run Prescore Aggregation
 ==========================================================#
 
-const GLOBAL_PRESCORE_QVALUE_THRESHOLD = 0.05f0
+const DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD = 0.05f0
 
 """
 Log-odds average of top-N probabilities, converted back to probability space.
@@ -1597,20 +1597,27 @@ function _prescore_logodds_combine(probs::Vector{Float32}, top_n::Int)::Float32
 end
 
 """
-    aggregate_prescore_globally!(search_context::SearchContext) -> Set{UInt32}
+    aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD) -> (Set{UInt32}, Dict{Int, Set{UInt32}})
 
 Load per-file LightGBM prescore arrow files, aggregate via log-odds averaging,
-compute global q-values, and return the set of precursor indices passing at
-q ≤ GLOBAL_PRESCORE_QVALUE_THRESHOLD.
+compute global q-values, and return (1) the set of precursor indices passing at
+q ≤ qvalue_threshold and (2) per-file iRT outlier exclusions mapping
+ms_file_idx → precursor IDs to exclude from that file's re-deconvolution.
 """
-function aggregate_prescore_globally!(search_context::SearchContext)
+function aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD)
     ms_data = getMSData(search_context)
     n_files = length(ms_data)
     prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
 
-    # Collect per-file best probs per precursor
+    # Collect per-file best probs per precursor + iRT tracking
     prec_probs_by_run = Dictionary{UInt32, Vector{Float32}}()
     prec_is_target = Dictionary{UInt32, Bool}()
+    prec_best_prob = Dictionary{UInt32, Float32}()    # best lgbm_prob seen so far
+    prec_best_irt = Dictionary{UInt32, Float32}()     # iRT of globally best-scoring scan
+    prec_min_irt = Dictionary{UInt32, Float32}()       # min iRT across files
+    prec_max_irt = Dictionary{UInt32, Float32}()       # max iRT across files
+    prec_peak_widths = Dictionary{UInt32, Vector{Float32}}()  # within-file iRT peak widths
+    prec_irt_by_file = Dictionary{UInt32, Vector{Pair{Int,Float32}}}()  # (file_idx => irt) per observation
     n_valid_files = 0
 
     for ms_file_idx in 1:n_files
@@ -1622,6 +1629,9 @@ function aggregate_prescore_globally!(search_context::SearchContext)
         scores = Arrow.Table(score_path)
         n_valid_files += 1
 
+        has_irt = :irt_obs in Tables.columnnames(scores)
+        has_peak_width = :irt_peak_width in Tables.columnnames(scores)
+
         for i in eachindex(scores[:precursor_idx])
             pid = scores[:precursor_idx][i]
             p = scores[:lgbm_prob][i]
@@ -1632,6 +1642,39 @@ function aggregate_prescore_globally!(search_context::SearchContext)
             end
             if !haskey(prec_is_target, pid)
                 insert!(prec_is_target, pid, scores[:target][i])
+            end
+
+            # Track iRT range per precursor
+            if has_irt
+                irt = Float32(scores[:irt_obs][i])
+                if haskey(prec_min_irt, pid)
+                    prec_min_irt[pid] = min(prec_min_irt[pid], irt)
+                    prec_max_irt[pid] = max(prec_max_irt[pid], irt)
+                    if p > prec_best_prob[pid]
+                        prec_best_prob[pid] = p
+                        prec_best_irt[pid] = irt
+                    end
+                else
+                    insert!(prec_min_irt, pid, irt)
+                    insert!(prec_max_irt, pid, irt)
+                    insert!(prec_best_prob, pid, p)
+                    insert!(prec_best_irt, pid, irt)
+                end
+                if haskey(prec_irt_by_file, pid)
+                    push!(prec_irt_by_file[pid], ms_file_idx => irt)
+                else
+                    insert!(prec_irt_by_file, pid, [ms_file_idx => irt])
+                end
+            end
+
+            # Track within-file iRT peak width per precursor
+            if has_peak_width
+                pw = Float32(scores[:irt_peak_width][i])
+                if haskey(prec_peak_widths, pid)
+                    push!(prec_peak_widths[pid], pw)
+                else
+                    insert!(prec_peak_widths, pid, Float32[pw])
+                end
             end
         end
     end
@@ -1665,12 +1708,128 @@ function aggregate_prescore_globally!(search_context::SearchContext)
     # Build passing set
     passing = Set{UInt32}()
     for i in eachindex(global_prec_idxs)
-        if global_qvals[i] <= GLOBAL_PRESCORE_QVALUE_THRESHOLD
+        if global_qvals[i] <= qvalue_threshold
             push!(passing, global_prec_idxs[i])
         end
     end
 
-    @info "Global prescore filter: $(length(passing)) precursors pass at q≤$(GLOBAL_PRESCORE_QVALUE_THRESHOLD)"
+    @info "Global prescore filter: $(length(passing)) precursors pass at q≤$(qvalue_threshold)"
+
+    # ── iRT spread diagnostics for 1% FDR targets ──────────────
+    per_file_irt_exclusions = Dict{Int, Set{UInt32}}()
+    if !isempty(prec_min_irt)
+        # Collect iRT diffs for target precursors at 1% global FDR
+        irt_diffs = Float32[]
+        for i in eachindex(global_prec_idxs)
+            pid = global_prec_idxs[i]
+            global_qvals[i] <= 0.01f0 && global_targets[i] && haskey(prec_min_irt, pid) || continue
+            push!(irt_diffs, prec_max_irt[pid] - prec_min_irt[pid])
+        end
+
+        if !isempty(irt_diffs)
+            sorted_diffs = sort(irt_diffs)
+            n_d = length(sorted_diffs)
+            med = sorted_diffs[max(1, div(n_d + 1, 2))]
+            avg = sum(sorted_diffs) / n_d
+            sd = sqrt(sum((d - avg)^2 for d in sorted_diffs) / max(1, n_d - 1))
+            p25 = sorted_diffs[max(1, ceil(Int, 0.25 * n_d))]
+            p75 = sorted_diffs[max(1, ceil(Int, 0.75 * n_d))]
+            p90 = sorted_diffs[max(1, ceil(Int, 0.90 * n_d))]
+            p95 = sorted_diffs[max(1, ceil(Int, 0.95 * n_d))]
+            @info "iRT spread (max-min) for $(n_d) target precursors at q≤0.01:"
+            @info "  median=$(round(med; digits=2)), mean=$(round(avg; digits=2)), std=$(round(sd; digits=2))"
+            @info "  p25=$(round(p25; digits=2)), p75=$(round(p75; digits=2)), p90=$(round(p90; digits=2)), p95=$(round(p95; digits=2))"
+
+            # Save histogram
+            try
+                results_dir = getDataOutDir(search_context)
+                p_hist = histogram(irt_diffs;
+                    xlabel = "iRT spread (max - min across files)",
+                    ylabel = "Count",
+                    title = "Prescore iRT spread ($(n_d) targets, q≤1%)",
+                    legend = false,
+                    bins = min(100, max(20, div(n_d, 50)))
+                )
+                savefig(p_hist, joinpath(results_dir, "prescore_irt_spread.pdf"))
+                @info "Saved prescore_irt_spread.pdf to $results_dir"
+            catch e
+                @warn "Failed to save iRT spread histogram: $e"
+            end
+
+            # ── iRT outlier detection (per-file observations) ──
+            med_spread = sorted_diffs[max(1, div(length(sorted_diffs) + 1, 2))]
+            abs_devs = sort([abs(d - med_spread) for d in sorted_diffs])
+            mad_raw = abs_devs[max(1, div(length(abs_devs) + 1, 2))]
+            mad_normalized = mad_raw * 1.4826f0
+            irt_outlier_threshold = 3.0f0 * mad_normalized
+
+            n_outlier = 0
+            n_total_obs = 0
+            for i in eachindex(global_prec_idxs)
+                pid = global_prec_idxs[i]
+                global_qvals[i] <= 0.01f0 && global_targets[i] && haskey(prec_irt_by_file, pid) || continue
+                best_irt = prec_best_irt[pid]
+                for (file_idx, file_irt) in prec_irt_by_file[pid]
+                    n_total_obs += 1
+                    if abs(file_irt - best_irt) > irt_outlier_threshold
+                        n_outlier += 1
+                        if !haskey(per_file_irt_exclusions, file_idx)
+                            per_file_irt_exclusions[file_idx] = Set{UInt32}()
+                        end
+                        push!(per_file_irt_exclusions[file_idx], pid)
+                    end
+                end
+            end
+
+            n_excluded_total = sum(length(s) for s in values(per_file_irt_exclusions); init=0)
+            pct = round(100.0 * n_outlier / max(1, n_total_obs); digits=2)
+            @info "iRT outlier detection (q≤0.01 targets): MAD=$(round(mad_raw; digits=4)), threshold=$(round(irt_outlier_threshold; digits=4))"
+            @info "  $n_outlier / $n_total_obs observations ($pct%) exceed 3σ from best-scoring iRT"
+            @info "  Excluding $n_excluded_total (precursor, file) pairs from re-deconvolution"
+        end
+    end
+
+    # ── Within-file iRT peak width diagnostics for 1% FDR targets ──
+    if !isempty(prec_peak_widths)
+        # Collect all per-file peak widths for target precursors at 1% global FDR
+        pw_all = Float32[]
+        for i in eachindex(global_prec_idxs)
+            pid = global_prec_idxs[i]
+            global_qvals[i] <= 0.01f0 && global_targets[i] && haskey(prec_peak_widths, pid) || continue
+            append!(pw_all, prec_peak_widths[pid])
+        end
+
+        if !isempty(pw_all)
+            sorted_pw = sort(pw_all)
+            n_pw = length(sorted_pw)
+            med = sorted_pw[max(1, div(n_pw + 1, 2))]
+            avg = sum(sorted_pw) / n_pw
+            sd = sqrt(sum((w - avg)^2 for w in sorted_pw) / max(1, n_pw - 1))
+            p25 = sorted_pw[max(1, ceil(Int, 0.25 * n_pw))]
+            p75 = sorted_pw[max(1, ceil(Int, 0.75 * n_pw))]
+            p90 = sorted_pw[max(1, ceil(Int, 0.90 * n_pw))]
+            p95 = sorted_pw[max(1, ceil(Int, 0.95 * n_pw))]
+            @info "iRT peak width (within-file) for $(n_pw) observations from target precursors at q≤0.01:"
+            @info "  median=$(round(med; digits=2)), mean=$(round(avg; digits=2)), std=$(round(sd; digits=2))"
+            @info "  p25=$(round(p25; digits=2)), p75=$(round(p75; digits=2)), p90=$(round(p90; digits=2)), p95=$(round(p95; digits=2))"
+
+            # Save histogram
+            try
+                results_dir = getDataOutDir(search_context)
+                p_hist = histogram(pw_all;
+                    xlabel = "iRT peak width (within-file)",
+                    ylabel = "Count",
+                    title = "Prescore iRT peak width ($(n_pw) obs, q≤1%)",
+                    legend = false,
+                    bins = min(100, max(20, div(n_pw, 50)))
+                )
+                savefig(p_hist, joinpath(results_dir, "prescore_irt_peak_width.pdf"))
+                @info "Saved prescore_irt_peak_width.pdf to $results_dir"
+            catch e
+                @warn "Failed to save iRT peak width histogram: $e"
+            end
+        end
+    end
 
     # ── DIA-NN diagnostics ──────────────────────────────────────
     # Build lookup: precursor_idx → global_qval for all scored precursors
@@ -1706,7 +1865,7 @@ function aggregate_prescore_globally!(search_context::SearchContext)
         end
     end
 
-    return passing
+    return passing, per_file_irt_exclusions
 end
 
 """

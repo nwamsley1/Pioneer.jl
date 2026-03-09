@@ -89,6 +89,7 @@
     },
     "quant_search": {
         "prescore_method": "diff_cov",
+        "global_prescore_qvalue_threshold": 0.05,
         "fragment_settings": {
             "min_count": 3,
             "min_y_count": 2,
