@@ -139,6 +139,12 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
+      - name: Write bundled version
+        shell: bash
+        run: |
+          echo "${{ steps.get_version.outputs.version }}" > \
+            build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
+
       - name: Pre-download artifacts
         shell: bash
         run: |

@@ -135,6 +135,12 @@ jobs:
         run: |
           Copy-Item src\build\CLI\pioneer.bat build\Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
 
+      - name: Write bundled version
+        shell: pwsh
+        run: |
+          Set-Content -Path "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\VERSION" `
+                      -Value "${{ steps.get_version.outputs.version }}"
+
       - name: Pre-download artifacts
         shell: pwsh
         run: |

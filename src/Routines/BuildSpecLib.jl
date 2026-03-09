@@ -59,6 +59,7 @@ function BuildSpecLib(params_path::String)
     # Clean up any old file handlers in case the program crashed
     GC.gc()
     Random.seed!(1844)
+    pioneer_version = Pioneer.get_pioneer_version()
     # Initialize timing dictionary for performance tracking
     #params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
     timings = Dict{String, Any}()
@@ -100,6 +101,7 @@ function BuildSpecLib(params_path::String)
     
         dual_println("\n", repeat("=", 90))
         dual_println("Spectral Library Building Process")
+        dual_println("Version: ", pioneer_version)
         dual_println(repeat("=", 90))
         dual_println("\nStarting library build at: ", Dates.now())
         dual_println("Output directory: ", lib_dir)
@@ -390,7 +392,8 @@ function BuildSpecLib(params_path::String)
         N_PRECURSORS = N_PRECURSORS,
         N_FRAGMENTS = N_FRAGMENTS,
         N_TARGETS = N_TARGETS,
-        N_DECOYS = N_DECOYS)
+        N_DECOYS = N_DECOYS,
+        pioneer_version = pioneer_version)
         
         dual_println("\nLibrary building completed at: ", Dates.now())
         dual_println("\nLibrary location: ", lib_dir)
@@ -493,6 +496,7 @@ function print_performance_report(timings, println_func; kwargs...)
     # Process statistics
     println_func("\nProcess Information:")
     println_func(repeat("-", 90))
+    println_func("Pioneer Version: $(get(kwargs, :pioneer_version, "unknown"))")
     println_func("Number of Threads: $(Threads.nthreads())")
     println_func("Julia Version: $(VERSION)")
     println_func("System: $(Sys.MACHINE)")
