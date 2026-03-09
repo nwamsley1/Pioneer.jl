@@ -375,6 +375,7 @@ function process_search_results!(
         t_lgbm = time()
 
         # DIA-NN diagnostics at various q-value thresholds (debug only)
+        #=
         diann_file, diann_global = load_diann_reference(file_name)
         if !isempty(diann_file) || !isempty(diann_global)
             best_targets = best_psms[!, :target]
@@ -386,12 +387,14 @@ function process_search_results!(
                 @debug "    Prescore q≤$q_thresh: $(length(passing)) targets, DIA-NN file=$n_file global=$n_global"
             end
         end
-
+        =#
         # Map within-file iRT peak widths onto best_psms
+        #=
         irt_peak_width = Float32[
             prec_irt_max[pid] - prec_irt_min[pid]
             for pid in best_psms[!, :precursor_idx]
         ]
+        =#
 
         # Write prescore table (scores only, NO fold Arrow files yet)
         prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
@@ -401,7 +404,7 @@ function process_search_results!(
             lgbm_prob = scores,
             target = best_psms[!, :target],
             irt_obs = best_psms[!, :irt_obs],
-            irt_peak_width = irt_peak_width,
+            #irt_peak_width = irt_peak_width,
             scan_idx = best_psms[!, :scan_idx]
         )
         writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
