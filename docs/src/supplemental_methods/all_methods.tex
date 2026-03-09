@@ -602,7 +602,7 @@ Pioneer solves each of these single variable problems by the Newton-Raphson meth
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection{Target-Decoy Model, Match-Between-Runs, and False-Discovery Rate Estimation}\label{subsec:target-decoy-mbr-fdr}
 
-Pioneer trains LightGBM target-decoy discrimination models using cross-validation to score each precursor isotope trace \cite{LightGBM paper...}. The approach implements iterative training with negative mining and, when match-between-runs (MBR) is enabled, incorporates cross-run comparison features followed by false transfer rate (FTR) filtering.
+Pioneer trains LightGBM target-decoy discrimination models using cross-validation to score each precursor isotope trace \cite{LightGBM paper...}. The approach implements iterative training with negative mining. Cross-run transfer comparison features and false transfer rate (FTR) filtering are currently disabled in production runs.
 
 \subsubsection{Data Structure and Cross-Validation Setup}\label{subsubsec:data-structure-cv-setup}
 
@@ -612,7 +612,7 @@ During spectral library construction, Pioneer randomly assigns each protein grou
 
 \subsubsection{Target-Decoy Pairing for Match-Between-Runs}\label{subsubsec:target-decoy-pairing}
 
-When MBR is enabled, Pioneer establishes 1:1 target-decoy pairs to enable chromatographic comparison features. Pairing is performed within retention time bins to ensure comparable elution profiles.
+Pioneer establishes 1:1 target-decoy pairs to enable chromatographic comparison features. Pairing is performed within retention time bins to ensure comparable elution profiles.
 
 \paragraph{iRT Binning}\label{para:irt-binning} Precursors are sorted by predicted indexed retention time (iRT) and partitioned into bins of size $B = 1000$. For precursors with predicted iRTs $\{\text{iRT}_1, \ldots, \text{iRT}_{|\mathcal{P}|}\}$ sorted in ascending order, bin assignments $b_p$ are:
 \begin{equation}
@@ -632,7 +632,7 @@ where $\text{next\_id}()$ generates a unique pair identifier and unpaired precur
 
 \subsubsection{Match-Between-Runs Features}\label{sec:mbr_features}
 
-When MBR is enabled, Pioneer augments the feature vector $\mathbf{X}_{p,i,r}$ with seven additional features computed by comparing chromatographic profiles across runs. These features are added starting from iteration 2, using in-fold probabilities from the previous iteration.
+In the cross-run transfer pathway, Pioneer augments the feature vector $\mathbf{X}_{p,i,r}$ with seven additional features computed by comparing chromatographic profiles across runs. These features are added starting from iteration 2, using in-fold probabilities from the previous iteration.
 
 \paragraph{Paired Precursor Identification}\label{para:paired-precursor-identification} For each isotope trace $(p,i,r)$, identify the best-scoring paired precursor from a \emph{different} run. Let $\mathcal{P}_{\text{pair}}(p, r)$ denote all paired traces across other runs:
 \begin{equation}
@@ -1041,7 +1041,7 @@ After protein inference and filtering, Pioneer scores protein groups in three st
 \begin{equation}
 \text{score}(q) = -\sum_{p \in \mathcal{N}(q)} \log(1 - \text{prob}_p)
 \end{equation}
-where $\text{prob}_p$ is the maximum precursor probability for peptide, $p$, within that run. When match-between-runs (MBR) is enabled, protein scoring uses MBR-boosted precursor probabilities; otherwise standard precursor probabilities from the machine learning PSM scoring model are used.
+where $\text{prob}_p$ is the maximum precursor probability for peptide, $p$, within that run, using precursor probabilities from the machine learning PSM scoring model.
 
 \paragraph{Stage 2: Probit Regression Refinement}\label{para:stage2-probit-regression-refinement} Pioneer applies probit regression to refine the per-run protein group scores using the following features:
 \begin{itemize}
