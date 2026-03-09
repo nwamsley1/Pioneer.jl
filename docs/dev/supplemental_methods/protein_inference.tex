@@ -145,7 +145,7 @@ After protein inference and filtering, each protein group is scored based on its
 \begin{equation}
 \text{score}(q) = -\sum_{p \in \mathcal{N}(q)} \log(1 - \text{prob}_p)
 \end{equation}
-where $\text{prob}_p$ is the maximum precursor probability for peptide, $p$, within that run. When match-between-runs (MBR) is enabled, protein scoring uses MBR-boosted precursor probabilities; otherwise standard precursor probabilities from the machine learning PSM scoring model are used.
+where $\text{prob}_p$ is the maximum precursor probability for peptide, $p$, within that run, using precursor probabilities from the machine learning PSM scoring model.
 
 \paragraph{Stage 2: Probit Regression Refinement} Pioneer applies probit regression to refine the per-run protein group scores. The probit model uses the log-sum score as the primary feature, along with additional features including:
 \begin{itemize}
