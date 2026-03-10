@@ -236,7 +236,7 @@ function importScripts()
     include_files!(joinpath(search_methods_dir, "FragmentIndexSearch"), ["FragmentIndexSearch.jl"])
 
     # FirstPassSearch (Phase 1 deconv + prescore, uses shared utils from SecondPassSearch/)
-    include_files!(joinpath(search_methods_dir, "FirstPassSearch"), ["FirstPassSearch.jl"])
+    include_files!(joinpath(search_methods_dir, "FirstPassSearch"), ["utils.jl", "FirstPassSearch.jl"])
 
     # SecondPassSearch main file (Phase 2 full features + fold files)
     include_files!(joinpath(search_methods_dir, "SecondPassSearch"), ["SecondPassSearch.jl"])
