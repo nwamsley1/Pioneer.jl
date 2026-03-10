@@ -261,6 +261,7 @@ jobs:
           DIST="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
           PKGROOT="pkgroot"
           VERSION='${{ steps.norm.outputs.pkg }}'
+          RAW_VERSION='${{ steps.get_version.outputs.version }}'
 
           echo "Starting codesigning at $(date)"
 
@@ -279,7 +280,13 @@ jobs:
           mkdir -p "$PKGROOT/usr/local/bin"
           ln -sf /usr/local/Pioneer/pioneer "$PKGROOT/usr/local/bin/pioneer"
 
-          IDENTIFIER=$(jq -r '.identifier' src/build/package_info.json)
+          BASE_IDENTIFIER=$(jq -r '.identifier' src/build/package_info.json)
+          if [[ "$RAW_VERSION" == dev-* ]]; then
+            IDENTIFIER="${BASE_IDENTIFIER}.dev"
+          else
+            IDENTIFIER="$BASE_IDENTIFIER"
+          fi
+          echo "Using package identifier: $IDENTIFIER"
 
           pkgbuild --root "$PKGROOT" \
                   --identifier "$IDENTIFIER" \
