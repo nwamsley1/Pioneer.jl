@@ -202,7 +202,6 @@ jobs:
           $rawVersion = '${{ steps.get_version.outputs.version }}'
           $isDevBuild = $rawVersion -like "dev-*"
           $allowDowngrades = if ($isDevBuild) { "yes" } else { "no" }
-          $allowSameVersionUpgrades = if ($isDevBuild) { "yes" } else { "no" }
           Write-Host "MSI downgrade mode: $allowDowngrades (version=$rawVersion)"
 
           & heat.exe dir $pioneerRoot `
@@ -219,7 +218,6 @@ jobs:
             -dProductDescription="$desc" `
             -dPackageIdentifier="$identifier" `
             -dAllowDowngrades="$allowDowngrades" `
-            -dAllowSameVersionUpgrades="$allowSameVersionUpgrades" `
             -dPlatform="x64" `
             -arch x64 `
             -ext WixUIExtension `
