@@ -15,6 +15,7 @@ Results container for second pass search.
 struct SecondPassSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
     ms1_psms::Base.Ref{DataFrame}
+    file_fwhms::Dict{Int, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}
 end
 
 """

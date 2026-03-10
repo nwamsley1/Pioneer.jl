@@ -495,6 +495,9 @@ function summarize_results!(
             setPassingPsms!(getMSData(search_context), file_idx, file_path(ref))
         end
 
+        # Build RT indices for IntegrateChromatogramsSearch (all library precursors per file)
+        build_rt_indices!(search_context, valid_file_indices, passing_refs)
+
         # Log per-file passing precursor counts
         @user_info "Precursors passing 1% FDR per file:"
         for (file_idx, ref) in zip(valid_file_indices, passing_refs)

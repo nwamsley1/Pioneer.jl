@@ -225,12 +225,13 @@ function importScripts()
             "score_psms.jl",                   # PSM scoring functions
             "scoring_interface.jl",            # Interface functions
             "protein_inference_pipeline.jl",   # Protein inference pipeline
+            "build_rt_indices.jl",             # RT index construction for IntegrateChromatogramsSearch
             "ScoringSearch.jl"                 # Main implementation - depends on utils.jl
         ]
     )
     
     # SecondPassSearch types first, then utils (shared functions needed by FirstPassSearch and SecondPassSearch)
-    include_files!(joinpath(search_methods_dir, "SecondPassSearch"), ["prescore_aggregation.jl", "types.jl", "utils.jl"])
+    include_files!(joinpath(search_methods_dir, "SecondPassSearch"), ["prescore_aggregation.jl", "types.jl", "chromatographic_tolerance.jl", "utils.jl"])
 
     # FragmentIndexSearch (renamed from old FirstPassSearch bypass mode)
     include_files!(joinpath(search_methods_dir, "FragmentIndexSearch"), ["FragmentIndexSearch.jl"])

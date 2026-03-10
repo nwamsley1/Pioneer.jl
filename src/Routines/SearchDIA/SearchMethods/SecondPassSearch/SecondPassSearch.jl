@@ -12,7 +12,8 @@ function init_search_results(::P, search_context::SearchContext) where {P<:Secon
     !isdir(second_pass_psms) && mkdir(second_pass_psms)
     return SecondPassSearchResults(
         DataFrame(),
-        DataFrame()
+        DataFrame(),
+        Dict{Int, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}()
     )
 end
 
@@ -80,6 +81,10 @@ function process_file!(
             @info "    No PSMs after feature computation, skipping"
             return results
         end
+
+        # Estimate per-file FWHM from multi-scan weight profiles (before best-PSM selection)
+        fwhm_stats = estimate_file_fwhm(psms)
+        results.file_fwhms[ms_file_idx] = fwhm_stats
 
         # Retrieve Phase 1 best scans from FirstPassSearch
         first_pass_results = get_results(search_context, FirstPassSearch)
@@ -221,6 +226,9 @@ function summarize_results!(
     end
 
     @info "  $n_processed files processed, $n_psms_total total precursors in fold files"
+
+    # Compute chromatographic iRT tolerance from FWHM + cross-run iRT variance
+    compute_chromatographic_tolerance!(search_context, results.file_fwhms, ms_data, n_files)
 
     return nothing
 end
