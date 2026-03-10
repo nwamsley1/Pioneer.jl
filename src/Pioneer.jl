@@ -91,6 +91,68 @@ const DEBUG_CONSOLE_LEVEL = Ref{Int}(0)
 const MAX_LOG_MSG_BYTES = Ref{Int}(4096)
 
 """
+    get_pioneer_version()
+
+Return the Pioneer version string used for user-facing logs/CLI output.
+Lookup order:
+1. `ENV["PIONEER_VERSION"]` (if set)
+2. Bundled `VERSION` file near the executable/app root
+3. `Project.toml` version (source/development fallback)
+"""
+function get_pioneer_version()
+    env_version = strip(get(ENV, "PIONEER_VERSION", ""))
+    if !isempty(env_version)
+        return env_version
+    end
+
+    version_candidates = String[]
+
+    # Candidate paths near the currently executing program.
+    if !isempty(PROGRAM_FILE)
+        exe = PROGRAM_FILE
+        if !isabspath(exe)
+            exe_full = Sys.which(exe)
+            exe = exe_full === nothing ? exe : exe_full
+        end
+        if ispath(exe)
+            exe_real = realpath(exe)
+            exe_dir = dirname(exe_real)
+            push!(version_candidates, joinpath(exe_dir, "VERSION"))
+            push!(version_candidates, joinpath(exe_dir, "..", "VERSION"))
+        end
+    end
+
+    # Source/development fallbacks.
+    push!(version_candidates, joinpath(pkgdir(Pioneer), "VERSION"))
+    push!(version_candidates, joinpath(pkgdir(Pioneer), "Project.toml"))
+
+    for path in unique(version_candidates)
+        if !isfile(path)
+            continue
+        end
+
+        try
+            if endswith(path, "Project.toml")
+                content = read(path, String)
+                version_match = match(r"^version[ \t]*=[ \t]*\"([^\"]+)\""m, content)
+                if version_match !== nothing
+                    return strip(version_match[1])
+                end
+            else
+                v = strip(read(path, String))
+                if !isempty(v)
+                    return first(split(v, '\n'))
+                end
+            end
+        catch
+            # Ignore malformed or unreadable candidates and continue fallback chain.
+        end
+    end
+
+    return "unknown"
+end
+
+"""
     truncate_for_log(msg::String; max_bytes::Int=MAX_LOG_MSG_BYTES[])
 
 Safely truncate a message by bytes without splitting UTF-8 characters.
@@ -537,5 +599,6 @@ function __init__()
 end
 
 export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams, convertMzML, # ParseSpecLib, GetParseSpecLibParams, # COMMENTED OUT: ParseSpecLib has loading issues
-       @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
+       @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace,
+       get_pioneer_version
 end

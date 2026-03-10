@@ -216,6 +216,12 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
+      - name: Write bundled version
+        shell: bash
+        run: |
+          echo "${{ steps.get_version.outputs.version }}" > \
+            build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
+
       - name: Codesign & package macOS app (release tags or forced dispatch)
         if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
         env:

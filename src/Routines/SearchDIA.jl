@@ -167,16 +167,7 @@ function SearchDIA(params_path::String)
     Pioneer.DEBUG_FILE[] = open(debug_path, "w")
     Pioneer.WARNINGS_FILE[] = open(warnings_path, "w")
     
-    # Get Pioneer version from Project.toml
-    project_toml = joinpath(pkgdir(Pioneer), "Project.toml")
-    pioneer_version = "unknown"
-    if isfile(project_toml)
-        content = read(project_toml, String)
-        version_match = match(r"version\s*=\s*\"([^\"]+)\"", content)
-        if version_match !== nothing
-            pioneer_version = version_match[1]
-        end
-    end
+    pioneer_version = Pioneer.get_pioneer_version()
     
     # Essential file - clean header (like dual_println)
     essential_header = [
@@ -217,6 +208,7 @@ function SearchDIA(params_path::String)
     warnings_header = [
         "=" ^ 90,
         "Pioneer Warnings Log",
+        "Version: $pioneer_version",
         "Started: $(Dates.now())",
         "=" ^ 90,
         ""

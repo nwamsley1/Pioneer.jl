@@ -4,6 +4,22 @@ setlocal enabledelayedexpansion
 if "%JULIA_NUM_THREADS%"=="" set JULIA_NUM_THREADS=auto
 
 set SCRIPT_DIR=%~dp0
+if not defined PIONEER_VERSION (
+    if exist "%SCRIPT_DIR%VERSION" (
+        set /p PIONEER_VERSION=<"%SCRIPT_DIR%VERSION"
+    ) else (
+        set "PROJECT_TOML=%SCRIPT_DIR%..\..\..\Project.toml"
+        if exist "!PROJECT_TOML!" (
+            for /f "tokens=2 delims=\" %%V in ('findstr /R /C:"^version *= *\".*\"" "!PROJECT_TOML!"') do (
+                set "PIONEER_VERSION=%%V"
+                goto version_ready
+            )
+        )
+    )
+)
+if not defined PIONEER_VERSION set "PIONEER_VERSION=unknown"
+
+:version_ready
 
 set SUBCOMMAND=
 set SUBCOMMAND_ARGS=
@@ -23,6 +39,7 @@ if "%~1"=="--threads" (
     goto parse_args
 )
 for %%H in (--help -h -help /?) do if /I "%~1"=="%%H" goto handle_help
+for %%V in (--version -V) do if /I "%~1"=="%%V" goto handle_version
 
 rem Check for --threads=value format
 echo %~1 | findstr /C:"--threads=" >nul
@@ -90,6 +107,7 @@ if "%SUBCOMMAND%"=="" (
 
 :show_help
 echo Pioneer - Mass Spectrometry Data Analysis
+echo Version: %PIONEER_VERSION%
 echo.
 echo Usage: pioneer [options] ^<subcommand^> [subcommand-args...]
 echo.
@@ -97,6 +115,7 @@ echo Options:
 echo   --threads N        Set number of Julia threads (default: auto)
 echo   --threads=N        Alternative syntax for setting threads
 echo   --help, -h         Show this help message
+echo   --version, -V      Show Pioneer version
 echo.
 echo Subcommands:
 echo   search ^<params.json^>                       Perform DIA search analysis
@@ -128,6 +147,22 @@ echo For subcommand-specific help:
 echo   pioneer ^<subcommand^> --help
 exit /b 0
 
+:handle_version
+if "%SUBCOMMAND%"=="" (
+    goto show_version
+) else (
+    if "%SUBCOMMAND_ARGS%"=="" (
+        set SUBCOMMAND_ARGS=%~1
+    ) else (
+        set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% %~1
+    )
+    shift
+    goto parse_args
+)
+
+:show_version
+echo Pioneer version: %PIONEER_VERSION%
+exit /b 0
 
 :check_subcommand
 if "%SUBCOMMAND%"=="" (
