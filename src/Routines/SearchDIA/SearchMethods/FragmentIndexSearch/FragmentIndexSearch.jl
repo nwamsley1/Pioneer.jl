@@ -45,95 +45,20 @@ end
 
 """
 Parameters for fragment index search.
-Configures PSM identification, scoring, and RT calibration.
+Only needs isotope error bounds, minimum score, and spec order.
 """
-struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
-    # Core parameters
+struct FirstPassSearchParameters <: FragmentIndexSearchParameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
-    min_fraction_transmitted::Float32
-    frag_tol_ppm::Float32
-    ms1_tol_ppm::Float32
-    frag_err_quantile::Float32
     min_index_search_score::UInt8
-    min_frag_count::Int64
-    min_spectral_contrast::Float32
-    min_log2_matched_ratio::Float32
-    min_topn_of_m::Tuple{Int64, Int64}
-    max_best_rank::UInt8
-    n_frag_isotopes::Int64
-    max_frag_rank::UInt8
     spec_order::Set{Int64}
-    match_between_runs::Bool
-    relative_improvement_threshold::Float32
-
-    # Scoring parameters
-    n_train_rounds_probit::Int64
-    max_iter_probit::Int64
-    max_q_value_probit_rescore::Float32
-    global_pep_threshold::Float32
-    # RT parameters
-    min_inference_points::Int64
-    max_q_val_for_irt::Float32
-    min_prob_for_irt_mapping::Float32
-    max_irt_bin_size::Float32
-    max_prob_to_impute::Float32
-    fwhm_nstd::Float32
-    irt_nstd::Float32
-    plot_rt_alignment::Bool
-    prec_estimation::P
 
     function FirstPassSearchParameters(params::PioneerParameters)
-        # Extract relevant parameter groups
-        global_params = params.global_settings
-        first_params = params.fragment_index_search
-        frag_params = first_params.fragment_settings
-        score_params = first_params.scoring_settings
-        rt_params = params.rt_alignment
-        irt_mapping_params = first_params.irt_mapping
-        # Convert isotope error bounds
-        isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
-        # Determine precursor estimation strategy
-        prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-
-        new{typeof(prec_estimation)}(
+        isotope_bounds = params.global_settings.isotope_settings.err_bounds_first_pass
+        frag_idx_params = params.fragment_index_search
+        new(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
-            0.0f0,  # No transmission threshold for first pass
-            0.0f0,  # No fragment tolerance for first pass
-            Float32(params.parameter_tuning.iteration_settings.ms1_tol_ppm),
-            Float32(params.parameter_tuning.search_settings.frag_err_quantile),
-            begin
-                min_score_raw = frag_params.min_score
-                if min_score_raw isa Vector
-                    UInt8(first(min_score_raw))
-                else
-                    UInt8(min_score_raw)
-                end
-            end,
-            Int64(frag_params.min_count),
-            Float32(frag_params.min_spectral_contrast),
-            Float32(frag_params.min_log2_ratio),
-            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
-            UInt8(1), # max_best_rank
-            Int64(frag_params.n_isotopes),
-            UInt8(frag_params.max_rank),
-            Set{Int64}([2]),
-            global_params.match_between_runs,
-            Float32(frag_params.relative_improvement_threshold),
-
-            Int64(score_params.n_train_rounds),
-            Int64(score_params.max_iterations),
-            Float32(score_params.max_q_value_probit_rescore),
-            Float32(score_params.global_pep_threshold),
-
-            Int64(1000), # Default min_inference_points
-            Float32(rt_params.min_probability),
-            Float32(rt_params.min_probability),
-            Float32(0.1), # Default max_irt_bin_size
-            Float32(irt_mapping_params.max_prob_to_impute_irt),
-            Float32(irt_mapping_params.fwhm_nstd),
-            Float32(irt_mapping_params.irt_nstd),
-            Bool(hasproperty(irt_mapping_params, :plot_rt_alignment) ? irt_mapping_params.plot_rt_alignment : false),
-            prec_estimation
+            UInt8(frag_idx_params.min_score),
+            Set{Int64}([2])
         )
     end
 end
@@ -144,7 +69,6 @@ Interface Implementation
 
 get_parameters(::FragmentIndexSearch, params::Any) = FirstPassSearchParameters(params)
 getMs1MassErrorModel(r::FragmentIndexSearchResults) = r.ms1_mass_err_model[]
-getMs1TolPpm(params::FirstPassSearchParameters) = params.ms1_tol_ppm
 
 function init_search_results(
     ::FirstPassSearchParameters,
@@ -177,11 +101,11 @@ Process a single MS file: run fragment index search only, write matches to Arrow
 """
 function process_file!(
     results::FragmentIndexSearchResults,
-    params::P,
+    params::FirstPassSearchParameters,
     search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
-) where {P<:FirstPassSearchParameters}
+)
 
     try
         # Run fragment index search only (no getPSMS, no probit scoring)
@@ -244,11 +168,11 @@ No additional per-file processing needed for fragment index search.
 """
 function process_search_results!(
     results::FragmentIndexSearchResults,
-    params::P,
+    params::FirstPassSearchParameters,
     search_context::SearchContext,
     ms_file_idx::Int64,
     ::MassSpecData
-) where {P<:FirstPassSearchParameters}
+)
     # Set default FWHM values (no PSMs to measure)
     insert!(results.fwhms, ms_file_idx, (
         median_fwhm = 0.5f0,
@@ -273,9 +197,9 @@ Build precursor dict from fragment index match files.
 """
 function summarize_results!(
     results::FragmentIndexSearchResults,
-    params::P,
+    params::FirstPassSearchParameters,
     search_context::SearchContext
-) where {P<:FirstPassSearchParameters}
+)
 
     # Build precursor dict from all fragment index match files
     valid_indices = get_valid_file_indices(search_context)

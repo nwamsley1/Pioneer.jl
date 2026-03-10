@@ -52,30 +52,7 @@
         }
     },
     "fragment_index_search": {
-        "fragment_settings": {
-            "min_count": 4,
-            "max_rank": 25,
-            "min_score": 15,
-            "min_spectral_contrast": 0.5,
-            "relative_improvement_threshold": 1.25,
-            "min_log2_ratio": 0.0,
-            "min_top_n": [
-                2,
-                3
-            ],
-            "n_isotopes": 1
-        },
-        "scoring_settings": {
-            "n_train_rounds": 2,
-            "max_iterations": 20,
-            "max_q_value_probit_rescore": 0.05,
-            "max_PEP": 0.9
-        },
-        "irt_mapping": {
-            "max_prob_to_impute_irt": 0.75,
-            "fwhm_nstd": 4,
-            "irt_nstd": 4
-        }
+        "min_score": 15
     },
     "first_search": {
         "fragment_settings": {

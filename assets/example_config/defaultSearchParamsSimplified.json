@@ -22,9 +22,7 @@
         "ms1_quant": false
     },
     "fragment_index_search": {
-        "fragment_settings": {
-            "min_score": 15
-        }
+        "min_score": 15
     },
     "acquisition": {
         "nce": 26,

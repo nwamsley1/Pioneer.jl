@@ -8,9 +8,7 @@ Pioneer uses JSON configuration files to control analysis. This guide explains t
 
 Most parameters should not be changed, but the following may need adjustment.
 
-* `fragment_index_search.fragment_settings.min_score`: The minimum score determines which fragments must match in the fragment-index search in order for the precursor to pass. Each precursor is awarded a score based on which fragments match the spectrum. The score assigned to each fragment depends on its intensity rank. The default scheme is 8,4,4,2,2,1,1. That is, if the 1st, 3rd, and 7th ranking fragments matched the spectrum, the precursor would be awarded a score of 8+4+1=13. If all 7 of the fragments matched, the precursor would be awarded a score of 22. For normal instrument settings on an Orbitrap or Astral mass analyzer, the mass tolerance is about +/- 5-15 ppm and 15 is a reasonable default score threshold. However, for instruments with less mass accuracy (Sciex ZenoTOF 7600 or different Orbitrap scan settings), the score threshold may need to be set higher, perhaps to 20. It may be worthwhile to test different values when searching data from a new instrument or sample type. In order to pass the first search, a precursor need only pass the threshold and score sufficiently well in at least one of the MS data files.
-
-* `fragment_index_search.fragment_settings.max_rank`: Search against only the n'th most abundant fragment for each precursor. Including more fragments can improve performance but increase memory consumption, and the search could take longer. From experience, there are diminishing returns after 25-50 fragments.
+* `fragment_index_search.min_score`: The minimum score determines which fragments must match in the fragment-index search in order for the precursor to pass. Each precursor is awarded a score based on which fragments match the spectrum. The score assigned to each fragment depends on its intensity rank. The default scheme is 8,4,4,2,2,1,1. That is, if the 1st, 3rd, and 7th ranking fragments matched the spectrum, the precursor would be awarded a score of 8+4+1=13. If all 7 of the fragments matched, the precursor would be awarded a score of 22. For normal instrument settings on an Orbitrap or Astral mass analyzer, the mass tolerance is about +/- 5-15 ppm and 15 is a reasonable default score threshold. However, for instruments with less mass accuracy (Sciex ZenoTOF 7600 or different Orbitrap scan settings), the score threshold may need to be set higher, perhaps to 20. It may be worthwhile to test different values when searching data from a new instrument or sample type. In order to pass the first search, a precursor need only pass the threshold and score sufficiently well in at least one of the MS data files.
 
 * `second_search.fragment_settings.max_rank`: See above
 
@@ -76,39 +74,7 @@ Most parameters should not be changed, but the following may need adjustment.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `fragment_settings.min_count` | Int | Minimum number of matching fragments (default: 4) |
-| `fragment_settings.max_rank` | Int | Maximum fragment rank to consider (default: 25) |
-| `fragment_settings.min_score` | Int | Minimum score for fragment matches (default: 15) |
-| `fragment_settings.min_spectral_contrast` | Float | Minimum cosine similarity required (default: 0.5) |
-| `fragment_settings.relative_improvement_threshold` | Float | Minimum relative Scribe score improvement needed to ignore an interfering peak (default: 1.25) |
-| `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of matched library fragment intensities to unmatched library fragment intensities (default: 0.0, means sum of matched library fragment intensities is equal to the sum of unmatched library fragment intensities for the precursor) |
-| `fragment_settings.min_top_n` | [Int, Int] | Minimum top N matches - [requirement, denominator]. Default: `[2, 3]` |
-| `fragment_settings.n_isotopes` | Int | Number of isotopes to consider (default: 1) |
-| `scoring_settings.n_train_rounds` | Int | Number of training rounds for scoring model (default: 2) |
-| `scoring_settings.max_iterations` | Int | Maximum iterations for scoring optimization (default: 20) |
-| `scoring_settings.max_q_value_probit_rescore` | Float | Maximum q-value threshold for semi-supervised learning during probit regression (default: 0.05) |
-| `scoring_settings.max_PEP` | Float | Maximum local FDR threshold for passing the first search (default: 0.9) |
-| `scoring_settings.global_pep_threshold` | Float | Maximum global PEP for precursor selection in cross-run aggregation (default: 0.5) |
-| `irt_mapping.max_prob_to_impute_irt` | Float | If probability of the PSM is less than x in the first-pass search, then impute iRT for the precursor with globally determined value from the other runs (default: 0.75) |
-| `irt_mapping.fwhm_nstd` | Float | Number of standard deviations of the FWHM to add to the retention time tolerance (default: 4) |
-| `irt_mapping.irt_nstd` | Int | Number of standard deviations of run-to-run iRT tolerance to add to the retention time tolerance (default: 4) |
-| `irt_mapping.plot_rt_alignment` | Boolean | Whether to generate RT alignment diagnostic plots (default: false) |
-
-#### First Search Filter Constants
-
-The first search uses a hybrid filter to decide how many precursors to carry forward from each stage. These are hardcoded constants (not JSON-configurable) because they should rarely need adjustment.
-
-**Per-file pre-filter** (applied per MS file before cross-run aggregation): keeps the largest of three counts:
-- PSMs with PEP ≤ 0.95
-- PSMs where cumulative decoy/target ratio ≤ `PERFILE_QVALUE_THRESHOLD` (0.50)
-- `PERFILE_MIN_PSMS` (10,000, or all PSMs if fewer exist)
-
-**Global post-filter** (applied after cross-run global PEP computation): keeps the largest of three counts:
-- Precursors with global PEP ≤ `global_pep_threshold` (default 0.5, JSON-configurable)
-- Precursors where cumulative decoy/target ratio ≤ `GLOBAL_QVALUE_THRESHOLD` (0.15)
-- `GLOBAL_MIN_PRECURSORS` (50,000, or all precursors if fewer exist)
-
-The hard minimum floors ensure sparse datasets (e.g. single-cell proteomics) always retain enough precursors for second-pass scoring, while the q-value floors prevent decoy contamination in large experiments.
+| `min_score` | Int | Minimum score for fragment index matches (default: 15). Each precursor is awarded a score based on which fragments match the spectrum using the intensity rank scheme 8,4,4,2,2,1,1. For normal Orbitrap/Astral settings, 15 is reasonable. For instruments with less mass accuracy (e.g. Sciex ZenoTOF 7600), consider raising to 20. |
 
 ### Second Search Parameters
 

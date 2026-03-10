@@ -199,29 +199,7 @@ function checkParams(json_path::String)
 
     # Validate fragment index search parameters
     frag_idx_search = params["fragment_index_search"]
-    check_param(frag_idx_search, "fragment_settings", Dict)
-    frag_idx_frag = frag_idx_search["fragment_settings"]
-    check_param(frag_idx_frag, "min_count", Integer)
-    check_param(frag_idx_frag, "max_rank", Integer)
-    check_param(frag_idx_frag, "min_score", Integer)
-    check_param(frag_idx_frag, "min_spectral_contrast", Real)
-    check_param(frag_idx_frag, "relative_improvement_threshold", Real)
-    check_param(frag_idx_frag, "min_log2_ratio", Real)
-    check_param(frag_idx_frag, "min_top_n", Vector)
-    check_param(frag_idx_frag, "n_isotopes", Integer)
-
-    check_param(frag_idx_search, "scoring_settings", Dict)
-    score_settings = frag_idx_search["scoring_settings"]
-    check_param(score_settings, "n_train_rounds", Integer)
-    check_param(score_settings, "max_iterations", Integer)
-    check_param(score_settings, "max_q_value_probit_rescore", Real)
-    check_param(score_settings, "max_PEP", Real)
-    check_param(score_settings, "global_pep_threshold", Real)
-
-    score_settings = frag_idx_search["irt_mapping"]
-    check_param(score_settings, "max_prob_to_impute_irt", Real)
-    check_param(score_settings, "fwhm_nstd", Real)
-    check_param(score_settings, "irt_nstd", Real)
+    check_param(frag_idx_search, "min_score", Integer)
 
     # Validate first search parameters (prescore settings)
     first_search = params["first_search"]
