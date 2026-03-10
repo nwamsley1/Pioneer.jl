@@ -234,14 +234,14 @@ jobs:
                            -DestinationPath "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip"
 
       - name: Upload zipped binaries
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ matrix.identifier }}
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
 
       - name: Upload MSI (release tags or forced dispatch)
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ matrix.identifier }}-msi
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi
