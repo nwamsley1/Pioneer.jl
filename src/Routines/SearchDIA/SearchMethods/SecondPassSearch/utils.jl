@@ -141,7 +141,8 @@ function perform_second_pass_search(
     ms_file_idx::Int64,
     ::MS2CHROM;
     n_frag_isotopes::Int64 = params.n_frag_isotopes,
-    max_frag_rank::UInt8 = params.max_frag_rank
+    max_frag_rank::UInt8 = params.max_frag_rank,
+    min_frag_count::Int64 = params.min_frag_count
 )
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
@@ -160,7 +161,8 @@ function perform_second_pass_search(
                 params,
                 ms_file_idx;
                 n_frag_isotopes = n_frag_isotopes,
-                max_frag_rank = max_frag_rank
+                max_frag_rank = max_frag_rank,
+                min_frag_count = min_frag_count
             )
         end
     end
@@ -196,7 +198,8 @@ function process_scans_fragindex!(
     params::SecondPassSearchParameters,
     ms_file_idx::Int64;
     n_frag_isotopes::Int64 = params.n_frag_isotopes,
-    max_frag_rank::UInt8 = params.max_frag_rank
+    max_frag_rank::UInt8 = params.max_frag_rank,
+    min_frag_count::Int64 = params.min_frag_count
 )
     # Get working arrays
     Hs = getHs(search_data)
@@ -334,7 +337,7 @@ function process_scans_fragindex!(
             min_spectral_contrast = params.min_spectral_contrast,
             min_log2_matched_ratio = params.min_log2_matched_ratio,
             min_y_count = params.min_y_count,
-            min_frag_count = params.min_frag_count,
+            min_frag_count = min_frag_count,
             max_best_rank = params.max_best_rank,
             min_topn = first(params.min_topn_of_m),
             block_size = 500000
@@ -1075,7 +1078,7 @@ function add_features!(psms::DataFrame,
     precursor_missed_cleavage = getMissedCleavages(getPrecursors(getSpecLib(search_context)))#[:missed_cleavages],
     precursor_pair_idxs = getPairIdx(getPrecursors(getSpecLib(search_context)))
     #filter!(x -> x.best_scan, psms);
-    filter!(x->x.weight>0, psms);
+    # weight>0 already enforced upstream in add_second_search_columns!
     #filter!(x->x.data_points>0, psms)
     ###########################
     #Allocate new columns
@@ -1381,7 +1384,7 @@ Phase 1 (per-file prescore) and Phase 2 (after global re-deconvolution).
 Steps:
 1. add_second_search_columns! — RT, charge, target, cv_fold, err_norm, total_ions
 2. get_isotopes_captured! — precursor_fraction_transmitted
-3. Filter by fraction_transmitted and weight > 0
+3. Filter by fraction_transmitted (weight>0 enforced in step 1)
 4. ensure_ms1_stub_columns! — stubs needed by add_features!
 5. add_features! — irt_error, irt_diff, tic, prec_mz, sequence_length, etc.
 6. sanitize_prescore_features! — replace Inf/NaN with 0
@@ -1420,14 +1423,9 @@ function prepare_psm_features!(
     )
     t2 = time()
 
-    # 3. Filter by fraction_transmitted and weight
-    filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
-    n_before = nrow(psms)
-    filter!(row -> row.weight > 0.0f0, psms)
-    n_removed = n_before - nrow(psms)
-    if n_removed > 0
-        @user_info "Removed $n_removed / $n_before scans with zero weight ($(round(100*n_removed/n_before, digits=1))%)"
-    end
+    # 3. Filter by fraction_transmitted (weight>0 already enforced in add_second_search_columns!)
+    to_remove = findall(psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
+    deleteat!(psms, to_remove)
     t3 = time()
 
     # 4. Add MS1 stub columns (needed by add_features!)
@@ -1493,12 +1491,21 @@ function train_lgbm_and_select_best(
         max_depth = 5,
         num_leaves = 15,
         min_data_in_leaf = 200,
-        feature_fraction = 0.8,
-        bagging_fraction = 0.8,
+        feature_fraction = 0.5,
+        bagging_fraction = 0.5,
         bagging_freq = 1,
         is_unbalance = true,
     )
-    model = fit_lightgbm_model(classifier, feature_df, targets_col)
+    # Subsample for training if > 1M PSMs
+    max_train = 1_000_000
+    n_total = nrow(feature_df)
+    if n_total > max_train
+        train_idx = randperm(n_total)[1:max_train]
+        @info "  LightGBM training: subsampled $max_train / $n_total PSMs"
+        model = fit_lightgbm_model(classifier, feature_df[train_idx, :], targets_col[train_idx])
+    else
+        model = fit_lightgbm_model(classifier, feature_df, targets_col)
+    end
     t_train = time()
 
     # Predict on ALL PSMs
@@ -1649,29 +1656,17 @@ Global Cross-Run Prescore Aggregation
 const DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD = 0.05f0
 
 """
-Log-odds average of top-N probabilities, converted back to probability space.
-Same approach as FirstPassSearch's _logodds_combine.
-"""
-function _prescore_logodds_combine(probs::Vector{Float32}, top_n::Int)::Float32
-    isempty(probs) && return 0.0f0
-    n = min(length(probs), top_n)
-    sorted = sort(probs; rev=true)
-    selected = @view sorted[1:n]
-    eps = 1f-6
-    lo = log.(clamp.(selected, 0.1f0, 1 - eps) ./ (1 .- clamp.(selected, 0.1f0, 1 - eps)))
-    avg = sum(lo) / n
-    return 1.0f0 / (1 + exp(-avg))
-end
+    aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32, aggregation::PrescoreAggregationStrategy) -> (Set{UInt32}, Dictionary{UInt32, Dictionary{Int, UInt32}})
 
-"""
-    aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD) -> (Set{UInt32}, Dictionary{UInt32, Dictionary{Int, UInt32}})
-
-Load per-file LightGBM prescore arrow files, aggregate via log-odds averaging,
+Load per-file LightGBM prescore arrow files, calibrate per-file scores via
+`calibrate_file_scores(aggregation, ...)`, aggregate via `combine_scores(aggregation, ...)`,
 compute global q-values, and return (1) the set of precursor indices passing at
 q ≤ qvalue_threshold and (2) per-precursor Phase 1 best scan lookup mapping
 precursor_idx → (file_idx → scan_idx).
 """
-function aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD)
+function aggregate_prescore_globally!(search_context::SearchContext,
+                                      qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD,
+                                      aggregation::PrescoreAggregationStrategy=PEPCalibratedAggregation())
     ms_data = getMSData(search_context)
     n_files = length(ms_data)
     prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
@@ -1688,6 +1683,8 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
     prec_best_scan = Dictionary{UInt32, Dictionary{Int, UInt32}}()  # pid → (file_idx → scan_idx)
     n_valid_files = 0
 
+    @info "Prescore aggregation strategy: $(typeof(aggregation))"
+
     for ms_file_idx in 1:n_files
         getFailedIndicator(ms_data, ms_file_idx) && continue
         file_name = getParsedFileName(ms_data, ms_file_idx)
@@ -1701,16 +1698,21 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
         has_peak_width = :irt_peak_width in Tables.columnnames(scores)
         has_scan = :scan_idx in Tables.columnnames(scores)
 
+        # Calibrate per-file scores using the aggregation strategy
+        file_probs = Float32.(scores[:lgbm_prob])
+        file_targets = Bool.(scores[:target])
+        calibrated_probs = calibrate_file_scores(aggregation, file_probs, file_targets)
+
         for i in eachindex(scores[:precursor_idx])
             pid = scores[:precursor_idx][i]
-            p = scores[:lgbm_prob][i]
+            p = calibrated_probs[i]
             if haskey(prec_probs_by_run, pid)
                 push!(prec_probs_by_run[pid], p)
             else
                 insert!(prec_probs_by_run, pid, Float32[p])
             end
             if !haskey(prec_is_target, pid)
-                insert!(prec_is_target, pid, scores[:target][i])
+                insert!(prec_is_target, pid, file_targets[i])
             end
 
             # Track iRT range per precursor
@@ -1766,7 +1768,7 @@ function aggregate_prescore_globally!(search_context::SearchContext, qvalue_thre
 
     for (i, (pid, probs)) in enumerate(pairs(prec_probs_by_run))
         global_prec_idxs[i] = pid
-        global_probs[i] = _prescore_logodds_combine(probs, sqrt_n)
+        global_probs[i] = combine_scores(aggregation, probs, sqrt_n)
         global_targets[i] = prec_is_target[pid]
     end
 

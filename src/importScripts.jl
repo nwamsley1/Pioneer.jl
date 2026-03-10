@@ -230,7 +230,7 @@ function importScripts()
     )
     
     # SecondPassSearch types first, then utils (shared functions needed by FirstPassSearch and SecondPassSearch)
-    include_files!(joinpath(search_methods_dir, "SecondPassSearch"), ["types.jl", "utils.jl"])
+    include_files!(joinpath(search_methods_dir, "SecondPassSearch"), ["prescore_aggregation.jl", "types.jl", "utils.jl"])
 
     # FragmentIndexSearch (renamed from old FirstPassSearch bypass mode)
     include_files!(joinpath(search_methods_dir, "FragmentIndexSearch"), ["FragmentIndexSearch.jl"])

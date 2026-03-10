@@ -62,7 +62,8 @@ function process_file!(
             search_context,
             params,
             ms_file_idx,
-            MS2CHROM()  # Uses params.n_frag_isotopes and params.max_frag_rank by default
+            MS2CHROM();  # Uses params.n_frag_isotopes and params.max_frag_rank by default
+            min_frag_count = 0  # No pre-filtering; let downstream ML handle quality
         )
         t_deconv = time()
 

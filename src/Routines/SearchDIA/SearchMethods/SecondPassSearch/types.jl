@@ -20,7 +20,7 @@ end
 """
 Parameters for second pass search.
 """
-struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentIndexSearchParameters
+struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:PrescoreAggregationStrategy} <: FragmentIndexSearchParameters
     # Core parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
     min_fraction_transmitted::Float32
@@ -65,6 +65,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     # Phase 1 prescore fragment settings (may differ from Phase 2)
     prescore_n_frag_isotopes::Int64
     prescore_max_frag_rank::UInt8
+
+    # Prescore aggregation strategy
+    prescore_aggregation::A
 
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -135,7 +138,19 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             UInt8(frag_params.max_rank)
         end
 
-        new{typeof(prec_estimation), typeof(isotope_trace_type)}(
+        # Prescore aggregation strategy (default: PEPCalibratedAggregation)
+        prescore_aggregation = if haskey(quant_params, :prescore_aggregation)
+            agg_str = string(quant_params.prescore_aggregation)
+            if agg_str == "raw_logodds"
+                RawLogOddsAggregation()
+            else
+                PEPCalibratedAggregation()
+            end
+        else
+            PEPCalibratedAggregation()
+        end
+
+        new{typeof(prec_estimation), typeof(isotope_trace_type), typeof(prescore_aggregation)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
             Int64(frag_params.n_isotopes),
@@ -171,7 +186,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             global_prescore_qval,
 
             prescore_n_frag_isotopes,
-            prescore_max_frag_rank
+            prescore_max_frag_rank,
+
+            prescore_aggregation
         )
     end
 end

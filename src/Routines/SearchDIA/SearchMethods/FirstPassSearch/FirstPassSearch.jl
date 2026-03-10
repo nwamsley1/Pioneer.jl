@@ -219,7 +219,7 @@ function summarize_results!(
     @info "=== FirstPassSearch: Global prescore aggregation + fragment index filtering ==="
 
     # Step 1: Global prescore aggregation → passing precursor set + Phase 1 scan lookup
-    passing_precs, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold)
+    passing_precs, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold, params.prescore_aggregation)
 
     # Store results for SecondPassSearch to retrieve Phase 1 best scans
     store_results!(search_context, FirstPassSearch, (passing_precs=passing_precs, prec_best_scan=prec_best_scan))
