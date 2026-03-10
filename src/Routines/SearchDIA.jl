@@ -283,8 +283,9 @@ function SearchDIA(params_path::String)
                 params = PioneerParameters(
                     updated_global,
                     params.parameter_tuning,
+                    params.fragment_index_search,
                     params.first_search,
-                    params.quant_search,
+                    params.second_search,
                     params.acquisition,
                     params.rt_alignment,
                     params.optimization,

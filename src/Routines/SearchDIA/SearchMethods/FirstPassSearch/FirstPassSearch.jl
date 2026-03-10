@@ -100,6 +100,27 @@ function process_file!(
 
         results.psms[] = psms
 
+        # Save precursors-per-scan histogram to QC folder
+        try
+            if nrow(psms) > 0
+                counts_per_scan = combine(groupby(psms, :scan_idx), nrow => :n_precursors)
+                file_name = getParsedFileName(search_context, ms_file_idx)
+                qc_dir = joinpath(getDataOutDir(search_context), "qc_plots")
+                mkpath(qc_dir)
+                p = Plots.histogram(counts_per_scan.n_precursors,
+                    xlabel = "Precursors per scan",
+                    ylabel = "Number of scans",
+                    title = "FirstPass: $file_name",
+                    legend = false,
+                    bins = range(0, maximum(counts_per_scan.n_precursors) + 1, step=1),
+                    color = :steelblue
+                )
+                Plots.savefig(p, joinpath(qc_dir, "firstpass_precs_per_scan_$(file_name).pdf"))
+            end
+        catch e
+            @warn "Failed to save precursors-per-scan histogram" exception=(e, catch_backtrace())
+        end
+
         println()
         @info "FirstPassSearch deconvolution: $(nrow(psms)) PSMs, load=$(round(t_load - t_start, digits=2))s, deconv=$(round(t_deconv - t_load, digits=2))s"
         println()

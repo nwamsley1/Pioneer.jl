@@ -1,10 +1,13 @@
 {
     "global": {
         "isotope_settings": {
-            "err_bounds": [1, 0],
+            "err_bounds": [
+                1,
+                0
+            ],
             "combine_traces": false,
             "partial_capture": true,
-            "min_fraction_transmitted" : 0.25
+            "min_fraction_transmitted": 0.25
         },
         "scoring": {
             "q_value_threshold": 0.01
@@ -12,8 +15,8 @@
         "normalization": {
             "n_rt_bins": 100,
             "spline_n_knots": 7
-        }, 
-		"match_between_runs": true
+        },
+        "match_between_runs": true
     },
     "parameter_tuning": {
         "fragment_settings": {
@@ -23,7 +26,10 @@
             "min_spectral_contrast": 0.9,
             "relative_improvement_threshold": 1.25,
             "min_log2_ratio": 1.5,
-            "min_top_n": [3, 3],
+            "min_top_n": [
+                3,
+                3
+            ],
             "n_isotopes": 1
         },
         "search_settings": {
@@ -37,7 +43,7 @@
             "iterations_per_phase": 3
         }
     },
-    "first_search": {
+    "fragment_index_search": {
         "fragment_settings": {
             "min_count": 4,
             "max_rank": 25,
@@ -45,7 +51,10 @@
             "min_spectral_contrast": 0.5,
             "relative_improvement_threshold": 1.25,
             "min_log2_ratio": 0.0,
-            "min_top_n": [2, 3],
+            "min_top_n": [
+                2,
+                3
+            ],
             "n_isotopes": 1
         },
         "scoring_settings": {
@@ -56,18 +65,36 @@
             "global_pep_threshold": 0.5
         }
     },
-    "quant_search": {
+    "first_search": {
+        "fragment_settings": {
+            "max_rank": 10,
+            "n_isotopes": 1,
+            "min_count": 4,
+            "min_spectral_contrast": 0.0,
+            "min_log2_ratio": 0.0,
+            "min_top_n": [
+                2,
+                3
+            ]
+        },
+        "global_prescore_qvalue_threshold": 0.05,
+        "prescore_aggregation": "pep_calibrated"
+    },
+    "second_search": {
         "fragment_settings": {
             "min_count": 3,
             "min_y_count": 2,
             "max_rank": 255,
             "min_spectral_contrast": 0.0,
             "min_log2_ratio": -1.7,
-            "min_top_n": [2, 3],
+            "min_top_n": [
+                2,
+                3
+            ],
             "n_isotopes": 2
         },
         "chromatogram": {
-            "smoothing_strength": 1e-6,
+            "smoothing_strength": 1e-06,
             "padding": 0,
             "max_apex_offset": 2
         }
@@ -99,8 +126,8 @@
         "machine_learning": {
             "max_samples": 10000000,
             "min_trace_prob": 0.75,
-            "max_q_value_mbr_itr": 0.20,
-            "min_PEP_neg_threshold_itr": 0.90,
+            "max_q_value_mbr_itr": 0.2,
+            "min_PEP_neg_threshold_itr": 0.9,
             "spline_points": 500,
             "interpolation_points": 10
         }

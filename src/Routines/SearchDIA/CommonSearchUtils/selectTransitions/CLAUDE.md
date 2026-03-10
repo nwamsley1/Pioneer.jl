@@ -311,7 +311,7 @@ end
 {
     "isotope_settings": {
         "err_bounds_first_pass": [1, 0],
-        "err_bounds_quant_search": [2, 0],   
+        "err_bounds_second_search": [2, 0],   
         "partial_capture": false,
         "min_fraction_transmitted": 0.25
     },

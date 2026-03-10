@@ -79,7 +79,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
-        quant_params = params.quant_search
+        quant_params = params.second_search
         frag_params = quant_params.fragment_settings
         chrom_params = quant_params.chromatogram
         deconv_params = params.optimization.deconvolution
@@ -93,7 +93,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             SeperateTraces()
         end
 
-        isotope_bounds = global_params.isotope_settings.err_bounds_quant_search
+        isotope_bounds = global_params.isotope_settings.err_bounds_second_search
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         # Always use partial precursor capture for integrate chromatogram
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()

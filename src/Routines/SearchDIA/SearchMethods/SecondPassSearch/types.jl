@@ -73,7 +73,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
-        quant_params = params.quant_search
+        quant_params = params.second_search
         frag_params = quant_params.fragment_settings
         deconv_params = params.optimization.deconvolution
 
@@ -85,7 +85,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
             SeperateTraces()
         end
 
-        isotope_bounds = global_params.isotope_settings.err_bounds_quant_search
+        isotope_bounds = global_params.isotope_settings.err_bounds_second_search
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
@@ -118,30 +118,21 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
         ms1_scoring = Bool(global_params.ms1_scoring)
 
         # Global prescore q-value threshold (default 0.05 if not in JSON)
-        global_prescore_qval = if haskey(quant_params, :global_prescore_qvalue_threshold)
-            Float32(quant_params.global_prescore_qvalue_threshold)
+        first_search_params = params.first_search
+        global_prescore_qval = if haskey(first_search_params, :global_prescore_qvalue_threshold)
+            Float32(first_search_params.global_prescore_qvalue_threshold)
         else
             0.05f0
         end
 
-        # Phase 1 prescore fragment settings (fallback to main fragment_settings)
-        prescore_n_frag_isotopes = if haskey(quant_params, :prescore_fragment_settings) &&
-                                      haskey(quant_params.prescore_fragment_settings, :n_isotopes)
-            Int64(quant_params.prescore_fragment_settings.n_isotopes)
-        else
-            Int64(frag_params.n_isotopes)
-        end
-
-        prescore_max_frag_rank = if haskey(quant_params, :prescore_fragment_settings) &&
-                                    haskey(quant_params.prescore_fragment_settings, :max_rank)
-            UInt8(quant_params.prescore_fragment_settings.max_rank)
-        else
-            UInt8(frag_params.max_rank)
-        end
+        # Phase 1 prescore fragment settings from first_search
+        prescore_frag = first_search_params.fragment_settings
+        prescore_n_frag_isotopes = Int64(prescore_frag.n_isotopes)
+        prescore_max_frag_rank = UInt8(prescore_frag.max_rank)
 
         # Prescore aggregation strategy (default: PEPCalibratedAggregation)
-        prescore_aggregation = if haskey(quant_params, :prescore_aggregation)
-            agg_str = string(quant_params.prescore_aggregation)
+        prescore_aggregation = if haskey(first_search_params, :prescore_aggregation)
+            agg_str = string(first_search_params.prescore_aggregation)
             if agg_str == "raw_logodds"
                 RawLogOddsAggregation()
             else

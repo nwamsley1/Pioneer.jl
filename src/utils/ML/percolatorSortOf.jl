@@ -210,9 +210,9 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
                 continue
             end
 
-            best_log2_weights = log2.(sub_psms.weights[best_idx])
+            best_log2_weights = log2.(sub_psms.weight[best_idx])
             best_iRTs = sub_psms.irts[best_idx]
-            best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(sub_psms.weights[i]))
+            best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(sub_psms.weight[i]))
             best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_iRTs, sub_psms.irts[i])
 
             sub_psms.MBR_max_pair_prob[i] = sub_psms.trace_prob[best_idx]

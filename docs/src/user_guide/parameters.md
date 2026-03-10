@@ -8,13 +8,13 @@ Pioneer uses JSON configuration files to control analysis. This guide explains t
 
 Most parameters should not be changed, but the following may need adjustment.
 
-* `first_search.fragment_settings.min_score`: The minimum score determines which fragments must match in the fragment-index search in order for the precursor to pass. Each precursor is awarded a score based on which fragments match the spectrum. The score assigned to each fragment depends on its intensity rank. The default scheme is 8,4,4,2,2,1,1. That is, if the 1st, 3rd, and 7th ranking fragments matched the spectrum, the precursor would be awarded a score of 8+4+1=13. If all 7 of the fragments matched, the precursor would be awarded a score of 22. For normal instrument settings on an Orbitrap or Astral mass analyzer, the mass tolerance is about +/- 5-15 ppm and 15 is a reasonable default score threshold. However, for instruments with less mass accuracy (Sciex ZenoTOF 7600 or different Orbitrap scan settings), the score threshold may need to be set higher, perhaps to 20. It may be worthwhile to test different values when searching data from a new instrument or sample type. In order to pass the first search, a precursor need only pass the threshold and score sufficiently well in at least one of the MS data files.
+* `fragment_index_search.fragment_settings.min_score`: The minimum score determines which fragments must match in the fragment-index search in order for the precursor to pass. Each precursor is awarded a score based on which fragments match the spectrum. The score assigned to each fragment depends on its intensity rank. The default scheme is 8,4,4,2,2,1,1. That is, if the 1st, 3rd, and 7th ranking fragments matched the spectrum, the precursor would be awarded a score of 8+4+1=13. If all 7 of the fragments matched, the precursor would be awarded a score of 22. For normal instrument settings on an Orbitrap or Astral mass analyzer, the mass tolerance is about +/- 5-15 ppm and 15 is a reasonable default score threshold. However, for instruments with less mass accuracy (Sciex ZenoTOF 7600 or different Orbitrap scan settings), the score threshold may need to be set higher, perhaps to 20. It may be worthwhile to test different values when searching data from a new instrument or sample type. In order to pass the first search, a precursor need only pass the threshold and score sufficiently well in at least one of the MS data files.
 
-* `first_search.fragment_settings.max_rank`: Search against only the n'th most abundant fragment for each precursor. Including more fragments can improve performance but increase memory consumption, and the search could take longer. From experience, there are diminishing returns after 25-50 fragments.
+* `fragment_index_search.fragment_settings.max_rank`: Search against only the n'th most abundant fragment for each precursor. Including more fragments can improve performance but increase memory consumption, and the search could take longer. From experience, there are diminishing returns after 25-50 fragments.
 
-* `quant_search.fragment_settings.max_rank`: See above
+* `second_search.fragment_settings.max_rank`: See above
 
-* `quant_search.fragment_settings.n_isotopes`: If searching with non-Altimeter libraries (not recommended), such as Prosit or UniSpec, this should be set to 1 as the second fragment isotopes will not be calculated accurately.
+* `second_search.fragment_settings.n_isotopes`: If searching with non-Altimeter libraries (not recommended), such as Prosit or UniSpec, this should be set to 1 as the second fragment isotopes will not be calculated accurately.
 
 * `acquisition.nce`: This is the initial guess for the normalized collision energy that will best align the Altimeter Library with the empirical data. Altimeter values should agree with those from Thermo Instruments manufactured in Bremen Germany. If upon inspection of the quality control plots the initial guess is far from the estimated value, it might be possible to improve search results slightly by re-searching with a better initial guess.
 
@@ -30,7 +30,7 @@ Most parameters should not be changed, but the following may need adjustment.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `isotope_settings.err_bounds_first_pass` | [Int, Int] | Precursor monoisotope may lie NEUTRON/charge Thompsons (left, right) outside the quadrupole isolation window (default: [1, 0]) |
-| `isotope_settings.err_bounds_quant_search` | [Int, Int] | Precursor monoisotope may lie NEUTRON/charge Thompsons (left, right) outside the quadrupole isolation window (default: [3, 0]) |
+| `isotope_settings.err_bounds_second_search` | [Int, Int] | Precursor monoisotope may lie NEUTRON/charge Thompsons (left, right) outside the quadrupole isolation window (default: [3, 0]) |
 | `isotope_settings.combine_traces` | Boolean | Whether to combine precursor isotope traces in quantification (default: true) |
 | `isotope_settings.partial_capture` | Boolean | Whether to estimate the conditional fragment isotope distribution (true) or assume complete transmission of the entire precursor isotopic envelope (default: true) |
 | `isotope_settings.min_fraction_transmitted` | Float | Minimum fraction of the precursor isotope distribution that must be isolated for scoring and quantitation (default: 0.25) |
@@ -72,7 +72,7 @@ Most parameters should not be changed, but the following may need adjustment.
 | `iteration_settings.ms1_tol_ppm` | Float | Initial MS1 mass tolerance in ppm (default: 20.0) |
 | `iteration_settings.scan_counts` | [Int] | Scan counts to sample during parameter tuning (default: [10000]) |
 
-### First Search Parameters
+### Fragment Index Search Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -110,7 +110,7 @@ The first search uses a hybrid filter to decide how many precursors to carry for
 
 The hard minimum floors ensure sparse datasets (e.g. single-cell proteomics) always retain enough precursors for second-pass scoring, while the q-value floors prevent decoy contamination in large experiments.
 
-### Quantification Search Parameters
+### Second Search Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

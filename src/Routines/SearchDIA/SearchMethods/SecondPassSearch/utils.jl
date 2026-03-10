@@ -210,6 +210,7 @@ function process_scans_fragindex!(
     cycle_idx = 0
     total_skipped_weight = 0
     total_skipped_frag_count = 0
+    total_skipped_matched_ratio = 0
 
     nce_model = getNceModel(search_context, ms_file_idx)
     precursors = getPrecursors(getSpecLib(search_context))
@@ -345,11 +346,12 @@ function process_scans_fragindex!(
         last_val = score_result.last_val
         total_skipped_weight += score_result.skipped_weight
         total_skipped_frag_count += score_result.skipped_frag_count
+        total_skipped_matched_ratio += score_result.skipped_matched_ratio
 
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    @debug "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count"
+    @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio"
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 
@@ -388,6 +390,7 @@ function process_scans!(
     last_val = 0
     total_skipped_weight = 0
     total_skipped_frag_count = 0
+    total_skipped_matched_ratio = 0
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -540,11 +543,12 @@ function process_scans!(
         last_val = score_result.last_val
         total_skipped_weight += score_result.skipped_weight
         total_skipped_frag_count += score_result.skipped_frag_count
+        total_skipped_matched_ratio += score_result.skipped_matched_ratio
 
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    @debug "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count"
+    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio"
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 
@@ -916,7 +920,10 @@ function add_second_search_columns!(psms::DataFrame,
     
     ###########################
     #Correct Weights by base-peak intensity
+    n_before_weight = nrow(psms)
     filter!(x->x.weight>0.0, psms);
+    n_removed_weight = n_before_weight - nrow(psms)
+    @info "  Weight > 0 filter: removed $n_removed_weight/$n_before_weight PSMs"
     ###########################
     #Allocate new columns
    
@@ -1475,6 +1482,15 @@ function train_lgbm_and_select_best(
     features::Vector{Symbol} = collect(PRESCORE_FEATURES)
 )
     t0 = time()
+
+    # Filter out PSMs with fewer than 3 matched fragments (b + y ions)
+    n_before = nrow(psms)
+    precs_before = length(unique(psms[!, :precursor_idx]))
+    frag_mask = (psms[!, :y_count] .+ psms[!, :b_count]) .>= UInt8(4)
+    psms = psms[frag_mask, :]
+    n_removed = n_before - nrow(psms)
+    precs_removed = precs_before - length(unique(psms[!, :precursor_idx]))
+    @info "  Min fragment filter (≥4 b+y): removed $n_removed/$n_before PSMs, $precs_removed/$precs_before unique precursors"
 
     # Filter to available features
     available_features = filter(f -> hasproperty(psms, f), features)

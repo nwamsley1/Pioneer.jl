@@ -100,13 +100,13 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
         # Extract relevant parameter groups
         deconv_params = params.optimization.deconvolution
         global_params = params.global_settings
-        frag_params = params.quant_search.fragment_settings
+        frag_params = params.second_search.fragment_settings
         # Calculate Huber delta grid
         delta0 = Float32(deconv_params.ms2.huber_delta)
         delta_exp = Float32(deconv_params.huber_exp)
         delta_iters = Int64(deconv_params.huber_iters)
         huber_δs = Float32[delta0 * (delta_exp^i) for i in range(-4,delta_iters+6)]
-        isotope_bounds = global_params.isotope_settings.err_bounds_quant_search
+        isotope_bounds = global_params.isotope_settings.err_bounds_second_search
 
         # Always use partial capture for Huber tuning
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()

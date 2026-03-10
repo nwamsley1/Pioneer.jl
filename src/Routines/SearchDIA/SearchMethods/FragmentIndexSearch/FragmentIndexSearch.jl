@@ -85,7 +85,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     function FirstPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
-        first_params = params.first_search
+        first_params = params.fragment_index_search
         frag_params = first_params.fragment_settings
         score_params = first_params.scoring_settings
         rt_params = params.rt_alignment

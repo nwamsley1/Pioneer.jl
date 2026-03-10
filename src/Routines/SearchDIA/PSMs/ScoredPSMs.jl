@@ -157,27 +157,15 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
         log((lam^observed)*exp(-lam)) - logfac(observed)
     end
 
+    skipped_topn = 0
     for i in range(1, n_vals)
 
-        #= Filters removed — let ML scoring handle PSM quality
-        passing_filter = (
-            (spectral_scores[i].spectral_contrast) >= min_spectral_contrast
-        )&(
-            (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
-        )&(
-            spectral_scores[i].matched_ratio > min_log2_matched_ratio
-        )&(
-            (unscored_PSMs[i].topn >= min_topn)
-        )&(
-            UInt8(unscored_PSMs[i].best_rank) == max_best_rank
-        )
-
-        if !passing_filter #Skip this scan
+        if unscored_PSMs[i].topn < min_topn
             skipped += 1
+            skipped_topn += 1
             continue
         end
-        =#
-        
+
         if start_idx + i - skipped > length(scored_psms)
             growScoredPSMs!(scored_psms, block_size);
         end
@@ -213,10 +201,10 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
         n += 1
         last_val += 1
     end
-    return last_val
+    return (last_val=last_val, skipped_topn=skipped_topn)
 end
 
-function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}}, 
+function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
                 unscored_PSMs::Vector{ComplexUnscoredPSM{H}}, 
                 spectral_scores::Vector{SpectralScoresComplex{L}},
                 weight::Vector{H}, 
@@ -259,6 +247,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
     skipped = 0
     skipped_weight = 0
     skipped_frag_count = 0
+    skipped_matched_ratio = 0
     for i in range(1, n_vals)
 
         pass_frag_count = (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count + unscored_PSMs[i].isotope_count) >= min_frag_count
@@ -269,14 +258,20 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             continue
         end
 
+        precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
+        scores_idx = IDtoCOL[precursor_idx]
+
+        if spectral_scores[scores_idx].matched_ratio < min_log2_matched_ratio
+            skipped += 1
+            skipped_matched_ratio += 1
+            continue
+        end
+
         if start_idx + i - skipped > length(scored_psms)
             growScoredPSMs!(scored_psms, block_size);
         end
 
         total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
-
-        precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
-        scores_idx = IDtoCOL[precursor_idx]
         scored_psms[start_idx + i - skipped] = ComplexScoredPSM(
             unscored_PSMs[i].best_rank,
             unscored_PSMs[i].best_rank_iso,
@@ -314,7 +309,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         )
         last_val += 1
     end
-    return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=skipped_frag_count)
+    return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=skipped_frag_count, skipped_matched_ratio=skipped_matched_ratio)
 end
 
 function Score!(scored_psms::Vector{Ms1ScoredPSM{H, L}}, 

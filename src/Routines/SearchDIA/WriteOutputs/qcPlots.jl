@@ -392,9 +392,9 @@ function qcPlots(
         qc_plot_folder::String = "./qc_plots/"
     )
         function getMissedCleavageRate(
-            abundance::AbstractVector{Union{Missing, Float32}},
-            precursor_idx::AbstractVector{Union{UInt32}},
-            missed_cleavages::AbstractVector{UInt8})
+            abundance,
+            precursor_idx,
+            missed_cleavages)
 
             non_missing_count = 0
             missed_cleavage_count = 0
@@ -426,8 +426,9 @@ function qcPlots(
                     precursors_wide[:precursor_idx],
                     getMissedCleavages(precursors)
                 )
-            catch
-                fname_to_cleavage_rate[fname] = 0.0f0  # Use 0 for files that don't have data
+            catch e
+                @warn "Failed to compute missed cleavage rate for $(fname)" exception=e
+                fname_to_cleavage_rate[fname] = 0.0f0
             end
         end
 

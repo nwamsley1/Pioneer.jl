@@ -108,6 +108,7 @@ function getPSMS(
 
     msms_counts = Dict{Int64, Int64}()
     last_val = 0
+    total_skipped_topn = 0
     Hs = SparseArray(UInt32(5000))
     isotopes = zeros(Float32, 5)
     precursor_transmission = zeros(Float32, 5)
@@ -182,15 +183,15 @@ function getPSMS(
                 last(getMinTopNofM(params))
             )
 
-            last_val = Score!(
-                getScoredPsms(search_data), 
+            score_result = Score!(
+                getScoredPsms(search_data),
                 getUnscoredPsms(search_data),
                 getSpectralScores(search_data),
                 getIdToCol(search_data),
                 nmatches/(nmatches + nmisses),
                 last_val,
                 Hs.n,
-                Float32(sum(getIntensityArray(spectra, scan_idx))), 
+                Float32(sum(getIntensityArray(spectra, scan_idx))),
                 scan_idx,
                 min_spectral_contrast = getMinSpectralContrast(params),
                 min_log2_matched_ratio = getMinLog2MatchedRatio(params),
@@ -199,6 +200,8 @@ function getPSMS(
                 min_topn = first(getMinTopNofM(params)),
                 block_size = 500000
             )
+            last_val = score_result.last_val
+            total_skipped_topn += score_result.skipped_topn
         end
         # Reset arrays
         for scan_idx in range(1, Hs.n)
@@ -207,6 +210,7 @@ function getPSMS(
         reset!(getIdToCol(search_data))
         reset!(Hs)
     end
+    @info "FirstPass filter summary: kept=$last_val, skipped_topn=$total_skipped_topn"
     return DataFrame(@view(getScoredPsms(search_data)[1:last_val]))
 end
 

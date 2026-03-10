@@ -42,7 +42,7 @@ function checkParams(json_path::String)
 
     # Check top-level sections
     required_sections = [
-        "global", "parameter_tuning", "first_search", "quant_search",
+        "global", "parameter_tuning", "fragment_index_search", "first_search", "second_search",
         "acquisition", "rt_alignment", "optimization", "output", "paths"
     ]
     
@@ -54,7 +54,7 @@ function checkParams(json_path::String)
     global_params = params["global"]
     check_param(global_params, "isotope_settings", Dict)
     check_param(global_params["isotope_settings"], "err_bounds_first_pass", Vector)
-    check_param(global_params["isotope_settings"], "err_bounds_quant_search", Vector)
+    check_param(global_params["isotope_settings"], "err_bounds_second_search", Vector)
     check_param(global_params["isotope_settings"], "combine_traces", Bool)
     check_param(global_params["isotope_settings"], "partial_capture", Bool)
     check_param(global_params["isotope_settings"], "min_fraction_transmitted", Real)
@@ -197,46 +197,58 @@ function checkParams(json_path::String)
         end
     end
 
-    # Validate first search parameters
-    first_search = params["first_search"]
-    check_param(first_search, "fragment_settings", Dict)
-    first_frag = first_search["fragment_settings"]
-    check_param(first_frag, "min_count", Integer)
-    check_param(first_frag, "max_rank", Integer)
-    check_param(first_frag, "min_score", Integer)
-    check_param(first_frag, "min_spectral_contrast", Real)
-    check_param(first_frag, "relative_improvement_threshold", Real)
-    check_param(first_frag, "min_log2_ratio", Real)
-    check_param(first_frag, "min_top_n", Vector)
-    check_param(first_frag, "n_isotopes", Integer)
+    # Validate fragment index search parameters
+    frag_idx_search = params["fragment_index_search"]
+    check_param(frag_idx_search, "fragment_settings", Dict)
+    frag_idx_frag = frag_idx_search["fragment_settings"]
+    check_param(frag_idx_frag, "min_count", Integer)
+    check_param(frag_idx_frag, "max_rank", Integer)
+    check_param(frag_idx_frag, "min_score", Integer)
+    check_param(frag_idx_frag, "min_spectral_contrast", Real)
+    check_param(frag_idx_frag, "relative_improvement_threshold", Real)
+    check_param(frag_idx_frag, "min_log2_ratio", Real)
+    check_param(frag_idx_frag, "min_top_n", Vector)
+    check_param(frag_idx_frag, "n_isotopes", Integer)
 
-    check_param(first_search, "scoring_settings", Dict)
-    score_settings = first_search["scoring_settings"]
+    check_param(frag_idx_search, "scoring_settings", Dict)
+    score_settings = frag_idx_search["scoring_settings"]
     check_param(score_settings, "n_train_rounds", Integer)
     check_param(score_settings, "max_iterations", Integer)
     check_param(score_settings, "max_q_value_probit_rescore", Real)
     check_param(score_settings, "max_PEP", Real)
     check_param(score_settings, "global_pep_threshold", Real)
 
-    score_settings = first_search["irt_mapping"]
+    score_settings = frag_idx_search["irt_mapping"]
     check_param(score_settings, "max_prob_to_impute_irt", Real)
     check_param(score_settings, "fwhm_nstd", Real)
     check_param(score_settings, "irt_nstd", Real)
-    # Validate quant search parameters
-    quant_search = params["quant_search"]
-    check_param(quant_search, "fragment_settings", Dict)
-    check_param(quant_search, "chromatogram", Dict)
-    
-    quant_frag = quant_search["fragment_settings"]
-    check_param(quant_frag, "min_count", Integer)
-    check_param(quant_frag, "min_y_count", Integer)
-    check_param(quant_frag, "max_rank", Integer)
-    check_param(quant_frag, "min_spectral_contrast", Real)
-    check_param(quant_frag, "min_log2_ratio", Real)
-    check_param(quant_frag, "min_top_n", Vector)
-    check_param(quant_frag, "n_isotopes", Integer)
 
-    chrom_settings = quant_search["chromatogram"]
+    # Validate first search parameters (prescore settings)
+    first_search = params["first_search"]
+    check_param(first_search, "fragment_settings", Dict)
+    first_frag = first_search["fragment_settings"]
+    check_param(first_frag, "max_rank", Integer)
+    check_param(first_frag, "n_isotopes", Integer)
+    check_param(first_frag, "min_count", Integer)
+    check_param(first_frag, "min_spectral_contrast", Real)
+    check_param(first_frag, "min_log2_ratio", Real)
+    check_param(first_frag, "min_top_n", Vector)
+
+    # Validate second search parameters
+    second_search = params["second_search"]
+    check_param(second_search, "fragment_settings", Dict)
+    check_param(second_search, "chromatogram", Dict)
+
+    second_frag = second_search["fragment_settings"]
+    check_param(second_frag, "min_count", Integer)
+    check_param(second_frag, "min_y_count", Integer)
+    check_param(second_frag, "max_rank", Integer)
+    check_param(second_frag, "min_spectral_contrast", Real)
+    check_param(second_frag, "min_log2_ratio", Real)
+    check_param(second_frag, "min_top_n", Vector)
+    check_param(second_frag, "n_isotopes", Integer)
+
+    chrom_settings = second_search["chromatogram"]
     check_param(chrom_settings, "smoothing_strength", Real)
     check_param(chrom_settings, "padding", Integer)
     check_param(chrom_settings, "max_apex_offset", Integer)
