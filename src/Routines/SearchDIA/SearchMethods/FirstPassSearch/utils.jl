@@ -1,20 +1,15 @@
 """
-    recalibrate_rt_and_rescore!(search_context, params, ms_file_idx, spectra, best_psms, scores; kwargs...)
+    recalibrate_rt!(search_context, ms_file_idx, best_psms, scores; kwargs...)
 
 Per-file RT recalibration after initial LightGBM scoring.
 
-Uses high-confidence PSMs (score > min_prob, target) to refit the RT→iRT spline,
-then re-deconvolves, recomputes features (with improved iRT), filters by tighter
-iRT tolerance, and re-trains LightGBM.
-
-Returns `(best_psms, scores, q_values, timings, irt_mad)` or `nothing` if
-too few calibration PSMs are available (in which case caller keeps original results).
+Uses high-confidence PSMs (score > min_prob, target) to refit the RT→iRT spline
+and update iRT error tolerance. SecondPassSearch naturally benefits via
+`getRtIrtModel()` and `getIrtErrors()`.
 """
-function recalibrate_rt_and_rescore!(
+function recalibrate_rt!(
     search_context::SearchContext,
-    params::SecondPassSearchParameters,
     ms_file_idx::Int64,
-    spectra::MassSpecData,
     best_psms::DataFrame,
     scores::Vector{Float32};
     min_prob::Float32 = 0.9f0,
@@ -45,58 +40,15 @@ function recalibrate_rt_and_rescore!(
         return nothing
     end
 
-    @info "RT recalibration: fit from $n_calib PSMs, MAD=$(round(mad, digits=3))"
-
     # 4. Store the improved model (overwrites coarse ParameterTuning model)
+    old_irt_tol = getIrtErrors(search_context)[ms_file_idx]
     setRtIrtMap!(search_context, model, ms_file_idx)
 
-    # 5. Reload fragment index matches
-    frag_match_path = getFragmentIndexMatches(getMSData(search_context), ms_file_idx)
-    scan_to_prec_idx, precursors_passed = load_fragment_index_matches(
-        frag_match_path, length(spectra)
-    )
+    # 5. Update iRT error tolerance
+    new_irt_tol = mad * irt_tol_multiplier
+    getIrtErrors(search_context)[ms_file_idx] = new_irt_tol
 
-    # 6. Re-deconvolve with the new RT model
-    psms = perform_second_pass_search(
-        spectra,
-        scan_to_prec_idx,
-        precursors_passed,
-        search_context,
-        params,
-        ms_file_idx,
-        MS2CHROM();
-        n_frag_isotopes = params.prescore_n_frag_isotopes,
-        max_frag_rank = params.prescore_max_frag_rank
-    )
+    @info "RT recalibration: $n_calib PSMs, MAD=$(round(mad, digits=3)), iRT tol $(round(old_irt_tol, digits=2)) → $(round(new_irt_tol, digits=2))"
 
-    n_psms_deconv = nrow(psms)
-    if n_psms_deconv == 0
-        @warn "RT recalibration: re-deconvolution produced 0 PSMs, skipping"
-        return nothing
-    end
-
-    # 7. Recompute features (add_features! now uses the new RT spline for irt_obs/irt_error)
-    prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra, prescore_only=true)
-
-    if nrow(psms) == 0
-        @warn "RT recalibration: no PSMs after feature computation, skipping"
-        return nothing
-    end
-
-    # 8. Filter by iRT tolerance
-    irt_tol = irt_tol_multiplier * mad
-    n_before_filter = nrow(psms)
-    filter!(row -> row.irt_error <= irt_tol, psms)
-    n_after_filter = nrow(psms)
-    @info "RT recalibration: iRT filter (tol=$(round(irt_tol, digits=2))): $n_after_filter / $n_before_filter PSMs kept"
-
-    if nrow(psms) == 0
-        @warn "RT recalibration: no PSMs after iRT filter, skipping"
-        return nothing
-    end
-
-    # 9. Re-train LightGBM and select best PSM per precursor
-    best_psms2, scores2, q_values2, timings2 = train_lgbm_and_select_best(psms)
-
-    return (best_psms2, scores2, q_values2, timings2, mad)
+    return nothing
 end

@@ -159,14 +159,8 @@ function process_search_results!(
         best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms)
         t_lgbm = time()
 
-        # RT recalibration: refit iRT model from high-confidence PSMs, re-deconvolve + filter
-        recalib_result = recalibrate_rt_and_rescore!(
-            search_context, params, ms_file_idx, spectra, best_psms, scores
-        )
-        if recalib_result !== nothing
-            best_psms, scores, q_values, lgbm_timings, irt_mad = recalib_result
-        end
-        t_recalib = time()
+        # RT recalibration: refit iRT spline from high-confidence PSMs
+        recalibrate_rt!(search_context, ms_file_idx, best_psms, scores)
 
         # Write prescore table (scores only, NO fold Arrow files yet)
         prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
@@ -188,10 +182,9 @@ function process_search_results!(
         n_pass_5 = count((q_values .<= 0.05) .& best_psms[!, :target])
         t_total = t_write - t_start
         r = s -> round(s, digits=2)
-        recalib_str = recalib_result !== nothing ? ", recalib=$(r(t_recalib - t_lgbm))s" : ""
         println()
         @info "FirstPassSearch scoring: $(nrow(psms)) PSMs → $(nrow(best_psms)) precursors ($n_pass_1 @ 1%, $n_pass_5 @ 5% FDR)\n" *
-              "  features=$(r(t_features - t_start))s, write=$(r(t_write - t_recalib))s$recalib_str\n" *
+              "  features=$(r(t_features - t_start))s, write=$(r(t_write - t_lgbm))s\n" *
               "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train=$(r(lgbm_timings.train))s, predict=$(r(lgbm_timings.predict))s, select=$(r(lgbm_timings.select))s\n" *
               "  total=$(r(t_total))s"
         println()
