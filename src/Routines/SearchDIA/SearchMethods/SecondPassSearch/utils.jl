@@ -217,6 +217,7 @@ function process_scans_fragindex!(
     # Get working arrays
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
+    colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     last_val = 0
@@ -235,7 +236,7 @@ function process_scans_fragindex!(
     t_select_transitions = UInt64(0)
     t_match_peaks = UInt64(0)
     t_build_matrix = UInt64(0)
-    t_solve_huber = UInt64(0)
+    t_solve_ols = UInt64(0)
     t_scoring = UInt64(0)
 
     nce_model = getNceModel(search_context, ms_file_idx)
@@ -328,21 +329,15 @@ function process_scans_fragindex!(
         t_build_matrix += time_ns() - _t0
 
         _t0 = time_ns()
-        converged, n_iters = solveHuber!(
+        converged, n_iters = solveOLS!(
             Hs,
             residuals,
             weights,
-            getHuberDelta(search_context),
-            params.lambda,
-            params.max_iter_newton,
-            params.max_iter_bisection,
+            colnorm2,
             params.max_iter_outer,
-            search_context.deconvolution_stop_tolerance[],
-            search_context.deconvolution_stop_tolerance[],
-            params.max_diff,
-            params.reg_type
+            params.max_diff
         )
-        t_solve_huber += time_ns() - _t0
+        t_solve_ols += time_ns() - _t0
         push!(iter_counts, n_iters)
         push!(col_counts, Hs.n)
         if !converged
@@ -396,9 +391,9 @@ function process_scans_fragindex!(
     end
     n_diverged = count(i -> i == params.max_iter_outer, iter_counts)
     to_s = t -> round(t / 1e9, digits=2)
-    t_total = t_select_transitions + t_match_peaks + t_build_matrix + t_solve_huber + t_scoring
+    t_total = t_select_transitions + t_match_peaks + t_build_matrix + t_solve_ols + t_scoring
     to_pct = t -> t_total > 0 ? round(100.0 * t / t_total, digits=1) : 0.0
-    @info "Deconv timing (thread): selectTransitions=$(to_s(t_select_transitions))s ($(to_pct(t_select_transitions))%), matchPeaks=$(to_s(t_match_peaks))s ($(to_pct(t_match_peaks))%), buildMatrix=$(to_s(t_build_matrix))s ($(to_pct(t_build_matrix))%), solveHuber=$(to_s(t_solve_huber))s ($(to_pct(t_solve_huber))%), scoring=$(to_s(t_scoring))s ($(to_pct(t_scoring))%)"
+    @info "Deconv timing (thread): selectTransitions=$(to_s(t_select_transitions))s ($(to_pct(t_select_transitions))%), matchPeaks=$(to_s(t_match_peaks))s ($(to_pct(t_match_peaks))%), buildMatrix=$(to_s(t_build_matrix))s ($(to_pct(t_build_matrix))%), solveOLS=$(to_s(t_solve_ols))s ($(to_pct(t_solve_ols))%), scoring=$(to_s(t_scoring))s ($(to_pct(t_scoring))%)"
     @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
     return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
             iter_counts = iter_counts, col_counts = col_counts)
@@ -434,6 +429,7 @@ function process_scans!(
     # Get working arrays
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
+    colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     last_val = 0
@@ -542,22 +538,16 @@ function process_scans!(
         end
 
         initialize_weights!(search_data, weights, precursor_weights)
-        
+
         # Solve deconvolution problem
         initResiduals!(residuals, Hs, weights)
-        converged, n_iters = solveHuber!(
+        converged, n_iters = solveOLS!(
             Hs,
             residuals,
             weights,
-            getHuberDelta(search_context),
-            params.lambda,
-            params.max_iter_newton,
-            params.max_iter_bisection,
+            colnorm2,
             params.max_iter_outer,
-            search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
-            search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-            params.max_diff,
-            params.reg_type
+            params.max_diff
         )
         push!(iter_counts, n_iters)
         push!(col_counts, Hs.n)
@@ -653,6 +643,7 @@ function process_scans!(
     mem = getMs1MassErrorModel(search_context, ms_file_idx)
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
+    colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
@@ -811,6 +802,7 @@ function process_scans!(
             if mz_grouping.current_col > length(weights)
                 new_entries = Int(mz_grouping.current_col) - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
+                resize!(colnorm2, length(colnorm2) + new_entries)
                 resize!(getMs1SpectralScores(search_data), length(getMs1SpectralScores(search_data)) + new_entries)
                 append!(getMs1UnscoredPsms(search_data), [eltype(getMs1UnscoredPsms(search_data))() for _ in 1:new_entries])
             end
@@ -822,19 +814,13 @@ function process_scans!(
 
             # Solve deconvolution
             initResiduals!(residuals, Hs, weights)
-            solveHuber!(
+            solveOLS!(
                 Hs,
                 residuals,
                 weights,
-                params.ms1_huber_delta,
-                params.ms1_lambda,
-                params.max_iter_newton,
-                params.max_iter_bisection,
+                colnorm2,
                 params.max_iter_outer,
-                search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
-                search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                params.max_diff,
-                params.ms1_reg_type
+                params.max_diff
             )
 
             # NEW: Distribute grouped coefficients back to individual precursors
@@ -899,6 +885,7 @@ Expands:
 function resize_arrays!(search_data::SearchDataStructures, weights::Vector{Float32})
     new_entries = getIdToCol(search_data).size - length(weights) + 1000
     resize!(weights, length(weights) + new_entries)
+    resize!(getColNorm2(search_data), length(getColNorm2(search_data)) + new_entries)
     resize!(getComplexSpectralScores(search_data), length(getComplexSpectralScores(search_data)) + new_entries)
     append!(getComplexUnscoredPsms(search_data), [eltype(getComplexUnscoredPsms(search_data))() for _ in 1:new_entries])
 end

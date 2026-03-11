@@ -770,31 +770,26 @@ function perform_quad_transmission_search(
         if getIdToCol(search_data).size > length(weights)
             new_entries = getIdToCol(search_data).size - length(weights) + 1000
             resize!(weights, length(weights) + new_entries)
+            resize!(getColNorm2(search_data), length(getColNorm2(search_data)) + new_entries)
             resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
             append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
         end
-        
+
         # Initialize weights
         for i in 1:getIdToCol(search_data).size
-            weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
+            weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] =
                 precursor_weights[getIdToCol(search_data).keys[i]]
         end
-        
+
         # Solve deconvolution problem
         initResiduals!(residuals, Hs, weights)
-        solveHuber!(
+        solveOLS!(
             Hs,
             residuals,
             weights,
-            Float32(100000.0f0),
-            0.0f0,
-            params.max_iter_newton,
-            params.max_iter_bisection,
+            getColNorm2(search_data),
             params.max_iter_outer,
-            params.accuracy_newton,
-            params.accuracy_bisection,
-            params.max_diff,
-            NoNorm()
+            params.max_diff
         )
     end
 

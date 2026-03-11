@@ -228,6 +228,7 @@ function build_chromatograms(
     # Initialize working arrays
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
+    colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     # Pre-allocate chromatograms with better size estimate (~100 points per scan average)
@@ -331,6 +332,7 @@ function build_chromatograms(
             if getIdToCol(search_data).size > length(weights)
                 new_entries = getIdToCol(search_data).size - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
+                resize!(colnorm2, length(colnorm2) + new_entries)
                 resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
                 # Avoid list comprehension allocation - use direct resize and loop
                 psms = getUnscoredPsms(search_data)
@@ -343,26 +345,20 @@ function build_chromatograms(
 
             # Initialize weights
             for i in 1:getIdToCol(search_data).size
-                weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
+                weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] =
                     precursor_weights[getIdToCol(search_data).keys[i]]
             end
 
             # Solve deconvolution
             initResiduals!(residuals, Hs, weights)
 
-            solveHuber!(
+            solveOLS!(
                 Hs,
                 residuals,
                 weights,
-                getHuberDelta(search_context),
-                params.lambda,
-                params.max_iter_newton,
-                params.max_iter_bisection,
+                colnorm2,
                 params.max_iter_outer,
-                search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
-                search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                params.max_diff,
-                params.reg_type
+                params.max_diff
             )
 
             # Record chromatogram points with weights
@@ -453,6 +449,7 @@ function build_chromatograms(
     mem = getMs1MassErrorModel(search_context, ms_file_idx)
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
+    colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     chromatograms = Vector{MS1ChromObject}(undef, 500000)  # Initial size
@@ -572,6 +569,7 @@ function build_chromatograms(
             if getIdToCol(search_data).size > length(weights)
                 new_entries = getIdToCol(search_data).size - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
+                resize!(colnorm2, length(colnorm2) + new_entries)
                 resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
                 # Avoid list comprehension allocation - use direct resize and loop
                 psms = getUnscoredPsms(search_data)
@@ -584,25 +582,19 @@ function build_chromatograms(
 
             # Initialize weights
             for i in 1:getIdToCol(search_data).size
-                weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
+                weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] =
                     precursor_weights[getIdToCol(search_data).keys[i]]
             end
 
             # Solve deconvolution
             initResiduals!(residuals, Hs, weights)
-            solveHuber!(
+            solveOLS!(
                 Hs,
                 residuals,
                 weights,
-                params.ms1_huber_delta,
-                params.ms1_lambda,
-                params.max_iter_newton,
-                params.max_iter_bisection,
+                colnorm2,
                 params.max_iter_outer,
-                search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
-                search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                params.max_diff,
-                params.ms1_reg_type
+                params.max_diff
             )
 
             # NEW: Distribute grouped coefficients back to individual precursors

@@ -408,6 +408,7 @@ function initSimpleSearchContext(
         zeros(Float32, n_precursors),
         zeros(Float32, 5000),
         zeros(Float32, 5000),
+        zeros(Float32, 5000),
         zeros(Float32, 5),
         zeros(Float32, 5),
     )

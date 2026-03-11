@@ -343,7 +343,6 @@ function SearchDIA(params_path::String)
             ("NCE Tuning", NceTuningSearch()),
             ("Quadrupole Tuning", QuadTuningSearch()),
             ("Fragment Index Search", FragmentIndexSearch()),
-            ("Huber Tuning", HuberTuningSearch()),
             ("First Pass Search", FirstPassSearch()),
             ("Second Pass Search", SecondPassSearch()),
             ("Scoring", ScoringSearch()),

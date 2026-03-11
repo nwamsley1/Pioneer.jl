@@ -195,6 +195,7 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     prec_ids::Vector{UInt32}
     precursor_weights::Vector{Float32}
     temp_weights::Vector{Float32}
+    colnorm2::Vector{Float32}
     residuals::Vector{Float32}
     isotopes::Vector{Float32}
     precursor_transmission::Vector{Float32}
@@ -429,6 +430,7 @@ getIsotopes(s::SearchDataStructures) = s.isotopes
 getPrecursorTransmission(s::SearchDataStructures) = s.precursor_transmission
 getTuningResults(s::SearchDataStructures) = s.tuning_results
 getTempWeights(s::SimpleLibrarySearch) = s.temp_weights
+getColNorm2(s::SimpleLibrarySearch) = s.colnorm2
 getPrecursorWeights(s::SimpleLibrarySearch) = s.precursor_weights
 
 #==========================================================

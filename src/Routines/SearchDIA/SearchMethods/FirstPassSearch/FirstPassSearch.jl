@@ -126,7 +126,7 @@ function process_file!(
             @warn "Failed to save precursors-per-scan histogram" exception=(e, catch_backtrace())
         end
 
-        # Save solveHuber iteration QC plots
+        # Save solveOLS iteration QC plots
         try
             iter_counts = search_result.iter_counts
             col_counts = search_result.col_counts
@@ -138,24 +138,24 @@ function process_file!(
                 p_hist = Plots.histogram(iter_counts;
                     xlabel = "Outer iterations",
                     ylabel = "Count",
-                    title = "solveHuber iterations ($(file_name), n=$(length(iter_counts)))",
+                    title = "solveOLS iterations ($(file_name), n=$(length(iter_counts)))",
                     legend = false,
                     bins = min(100, max(20, div(length(iter_counts), 50)))
                 )
-                Plots.savefig(p_hist, joinpath(qc_dir, "solveHuber_iter_hist_$(file_name).pdf"))
+                Plots.savefig(p_hist, joinpath(qc_dir, "solveOLS_iter_hist_$(file_name).pdf"))
 
                 p_scatter = Plots.scatter(col_counts, iter_counts;
                     xlabel = "Number of columns (precursors)",
                     ylabel = "Outer iterations",
-                    title = "solveHuber cols vs iters ($(file_name))",
+                    title = "solveOLS cols vs iters ($(file_name))",
                     legend = false,
                     markersize = 2,
                     markeralpha = 0.3
                 )
-                Plots.savefig(p_scatter, joinpath(qc_dir, "solveHuber_cols_vs_iters_$(file_name).pdf"))
+                Plots.savefig(p_scatter, joinpath(qc_dir, "solveOLS_cols_vs_iters_$(file_name).pdf"))
             end
         catch e
-            @warn "Failed to save solveHuber QC plots" exception=(e, catch_backtrace())
+            @warn "Failed to save solveOLS QC plots" exception=(e, catch_backtrace())
         end
 
         println()
