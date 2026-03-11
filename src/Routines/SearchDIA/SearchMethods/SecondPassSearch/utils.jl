@@ -1678,13 +1678,13 @@ function train_lgbm_and_select_best(
     get_qvalues!(scores, best_targets, q_values)
     t_select = time()
 
-    # Feature importances (debug only)
+    # Feature importances
     imp = importance(model)
     if imp !== nothing
         sorted_imp = sort(imp, by = x -> -x[2])
-        @debug "  LightGBM feature importances ($(length(sorted_imp)) features):"
+        @user_info "FirstPass LightGBM Feature Importances (gain):"
         for (fname, gain) in sorted_imp
-            @debug "    $fname: $(round(gain, digits=1))"
+            @user_info "  $(rpad(fname, 40)) $(round(gain, digits=2))"
         end
     end
 
