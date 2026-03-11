@@ -16,51 +16,68 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    B(x, k, i, t)
+    splevl(x, knots, c, k)
 
-Evaluate B-spline basis function of degree k for the i-th basis function.
-"""
-function B(x::T, k::Int, i::Int, t::NTuple{N,T}) where {N,T<:AbstractFloat}
-    # Base case for k=0 (constant basis function)
-    if k == 0
-        return T(t[i] ≤ x < t[i+1])
-    end
-    
-    # First term: uses nodes t[i] through t[i+k]
-    c1 = if t[i+k] == t[i]
-        zero(T)
-    else
-        ((x - t[i]) / (t[i+k] - t[i])) * B(x, k-1, i, t)
-    end
-    
-    # Second term: uses nodes t[i+1] through t[i+k+1]
-    c2 = if t[i+k+1] == t[i+1]
-        zero(T)
-    else
-        ((t[i+k+1] - x) / (t[i+k+1] - t[i+1])) * B(x, k-1, i+1, t)
-    end
-    
-    return c1 + c2
-end
+Evaluate cubic B-spline at point x using the iterative de Boor algorithm.
+Knots `knots`, coefficients `c`, degree `k` (must be 3).
 
+Replaces the recursive Cox-de Boor approach (B() + sum) with a single-pass
+triangular iteration: O(k²) = 6 multiply-adds vs 32 recursive calls.
 """
-    splevl(x, t, c, k)
-
-Evaluate B-spline with knots t, coefficients c, and degree k at point x.
-"""
-function splevl(x::T, knots::NTuple{N,T}, c::NTuple{M,T}, k::Int) where {M,N,T<:AbstractFloat}
-    # Number of basis functions is (length(t) - k - 1)
-    n = length(knots) - k - 1
-    
-    # Input validation
-    @assert n ≥ k+1 && length(c) ≥ n "Invalid input sizes"
-    
-    # Sum up the contributions from each basis function
-    v = zero(T)
-    for i in 1:n
-        v += c[i] * B(x, k, i, knots)
+@inline function splevl(x::T, knots::NTuple{N,T}, c::NTuple{M,T}, k::Int) where {M,N,T<:AbstractFloat}
+    # Find knot span: j where knots[j] ≤ x < knots[j+1]
+    j = 0
+    @inbounds for idx in 1:(N-1)
+        if knots[idx] ≤ x < knots[idx+1]
+            j = idx
+            break
+        end
     end
-    return v
+
+    # x outside all knot spans → all basis functions are zero
+    j == 0 && return zero(T)
+
+    # Safe coefficient access: zero outside [1, M]
+    @inline _getc(i) = (1 ≤ i ≤ M) ? @inbounds(c[i]) : zero(T)
+    # Safe knot access: clamp to [1, N]
+    # Out-of-bounds accesses only occur when multiplied by zero coefficients
+    @inline _getk(i) = @inbounds knots[clamp(i, 1, N)]
+
+    # Initialize d[1..4] with active coefficients (zero-padded outside range)
+    d1 = _getc(j - 3)
+    d2 = _getc(j - 2)
+    d3 = _getc(j - 1)
+    d4 = _getc(j)
+
+    # de Boor triangular iterations, fully unrolled for k=3
+    # r = 1: three updates
+    denom = _getk(j + 3) - _getk(j)
+    α = ifelse(denom == zero(T), zero(T), (x - _getk(j)) / denom)
+    d4 = (one(T) - α) * d3 + α * d4
+
+    denom = _getk(j + 2) - _getk(j - 1)
+    α = ifelse(denom == zero(T), zero(T), (x - _getk(j - 1)) / denom)
+    d3 = (one(T) - α) * d2 + α * d3
+
+    denom = _getk(j + 1) - _getk(j - 2)
+    α = ifelse(denom == zero(T), zero(T), (x - _getk(j - 2)) / denom)
+    d2 = (one(T) - α) * d1 + α * d2
+
+    # r = 2: two updates
+    denom = _getk(j + 2) - _getk(j)
+    α = ifelse(denom == zero(T), zero(T), (x - _getk(j)) / denom)
+    d4 = (one(T) - α) * d3 + α * d4
+
+    denom = _getk(j + 1) - _getk(j - 1)
+    α = ifelse(denom == zero(T), zero(T), (x - _getk(j - 1)) / denom)
+    d3 = (one(T) - α) * d2 + α * d3
+
+    # r = 3: one update
+    denom = _getk(j + 1) - _getk(j)
+    α = ifelse(denom == zero(T), zero(T), (x - _getk(j)) / denom)
+    d4 = (one(T) - α) * d3 + α * d4
+
+    return d4
 end
 
 """
@@ -79,13 +96,13 @@ end
 Use Fast Gaussian Quadrature to compute the definite integral of a B-spline
 over its domain
 """
-function splint(knots::NTuple{N, T}, 
-                c::NTuple{M, T}, 
+function splint(knots::NTuple{N, T},
+                c::NTuple{M, T},
                 d::Int,
                 gqx::SVector{20, T},
                 gqw::SVector{20, T}) where {M,N,T<:AbstractFloat}
     i_eval = zero(T)
-    for i in range(1, length(gqx))
+    @inbounds for i in 1:20
         i_eval += splevl(gqx[i], knots, c, d)*gqw[i]
     end
     return i_eval
