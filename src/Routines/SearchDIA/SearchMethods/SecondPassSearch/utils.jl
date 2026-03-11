@@ -1063,31 +1063,7 @@ function add_second_search_columns!(psms::DataFrame,
                         precursors::LibraryPrecursors,
                         #prec_id_to_cv_fold::Dictionary{UInt32, UInt8})
 )
-    
-    ###########################
-    #Correct Weights by base-peak intensity
-    n_before_weight = nrow(psms)
-    filter!(x->x.weight>0.0, psms);
-    n_removed_weight = n_before_weight - nrow(psms)
-    @info "  Weight > 0 filter: removed $n_removed_weight/$n_before_weight PSMs"
-
-    # Remove PSMs with negligible weight relative to scan maximum
-    n_before_scan_filter = nrow(psms)
-    scan_max_weight = Dictionary{UInt32, Float32}()
-    for row in eachrow(psms)
-        sid = row.scan_idx
-        w = row.weight
-        if !isassigned(scan_max_weight, sid)
-            insert!(scan_max_weight, sid, w)
-        elseif w > scan_max_weight[sid]
-            scan_max_weight[sid] = w
-        end
-    end
-    filter!(row -> row.weight >= Float32(1e-4) * scan_max_weight[row.scan_idx], psms)
-    n_removed_scan = n_before_scan_filter - nrow(psms)
-    @info "  Scan-level weight filter (1e-4 of max): removed $n_removed_scan/$n_before_scan_filter PSMs"
-    ###########################
-    #Allocate new columns
+    # Allocate new columns
    
     #Threads.@threads for i in ProgressBar(range(1, size(psms)[1]))
     N = size(psms, 1);
@@ -1258,6 +1234,7 @@ function add_features!(psms::DataFrame,
     missed_cleavage = zeros(UInt8, N);
     spectrum_peak_count = zeros(Float16, N);
     Mox = zeros(UInt8, N);
+    sequence_length = zeros(UInt8, N);
 
     # Columns only needed for Phase 2 (full feature set)
     if !prescore_only
@@ -1267,7 +1244,6 @@ function add_features!(psms::DataFrame,
         entrap_group_id = zeros(UInt8, N)
         adjusted_intensity_explained = zeros(Float16, N);
         prec_charges = zeros(UInt8, N)
-        sequence_length = zeros(UInt8, N);
         prec_mzs = zeros(Float32, N);
         TIC = zeros(Float16, N);
 
@@ -1302,11 +1278,11 @@ function add_features!(psms::DataFrame,
     AA_ORDER = "ACDEFGHIKLMNPQRSTVWY"
     unique_precs = unique(precursor_idx)
     _mox_cache = Dict{UInt32, UInt8}()
+    _seq_length_cache = Dict{UInt32, UInt8}()
     sizehint!(_mox_cache, length(unique_precs))
+    sizehint!(_seq_length_cache, length(unique_precs))
     if !prescore_only
-        _seq_length_cache = Dict{UInt32, UInt8}()
         _aa_cache = Dict{UInt32, NTuple{20, UInt8}}()
-        sizehint!(_seq_length_cache, length(unique_precs))
         sizehint!(_aa_cache, length(unique_precs))
         for pid in unique_precs
             stripped = replace(precursor_sequence[pid], r"\(.*?\)" => "")
@@ -1318,6 +1294,8 @@ function add_features!(psms::DataFrame,
         end
     else
         for pid in unique_precs
+            stripped = replace(precursor_sequence[pid], r"\(.*?\)" => "")
+            _seq_length_cache[pid] = UInt8(length(stripped))
             _mox_cache[pid] = countMOX(structural_mods[pid])
         end
     end
@@ -1336,6 +1314,7 @@ function add_features!(psms::DataFrame,
                 missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
                 Mox[i] = _mox_cache[prec_idx]
                 spectrum_peak_count[i] = length(masses[scan_idx[i]])
+                sequence_length[i] = _seq_length_cache[prec_idx]
 
                 if !prescore_only
                     entrap_group_id[i] = entrap_group_ids[prec_idx]
@@ -1345,7 +1324,6 @@ function add_features!(psms::DataFrame,
                     else
                         ms1_irt_diff[i] = 0f0
                     end
-                    sequence_length[i] = _seq_length_cache[prec_idx]
                     aa_tuple = _aa_cache[prec_idx]
                     @inbounds for (j, aa) in enumerate(AA_ORDER)
                         aa_counts[aa][i] = aa_tuple[j]
@@ -1367,11 +1345,11 @@ function add_features!(psms::DataFrame,
     psms[!,:missed_cleavage] = missed_cleavage
     psms[!,:Mox] = Mox
     psms[!,:spectrum_peak_count] = spectrum_peak_count
+    psms[!,:sequence_length] = sequence_length
 
     if !prescore_only
         psms[!,:irt_diff] = irt_diff
         psms[!,:ms1_irt_diff] = ms1_irt_diff
-        psms[!,:sequence_length] = sequence_length
         psms[!,:tic] = TIC
         psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
         psms[!,:charge] = prec_charges
@@ -1466,6 +1444,7 @@ const PRESCORE_FEATURES = [
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :max_unmatched_residual, :max_matched_residual, :Mox, :spectrum_peak_count,
+    :sequence_length,
 ]
 
 # Full feature set used in Phase 2 (ScoringSearch gets these via fold Arrow files)

@@ -210,7 +210,7 @@ function getPSMS(
         reset!(getIdToCol(search_data))
         reset!(Hs)
     end
-    @info "FirstPass filter summary: kept=$last_val, skipped_topn=$total_skipped_topn"
+    @debug "FirstPass filter summary: kept=$last_val, skipped_topn=$total_skipped_topn"
     return DataFrame(@view(getScoredPsms(search_data)[1:last_val]))
 end
 
