@@ -106,7 +106,228 @@ function getL1(Hs::SparseArray{Ti, Float32},
     return Float32(L1) + getRegL1(λ, xk, regularization_type)
 end
 
-function newton_bisection!(Hs::SparseArray{Ti, T}, 
+# ── Optimized variants: replace ^2 with x*x to avoid power_by_squaring ──
+
+function getDerivatives_opt!(Hs::SparseArray{Ti, T},
+                              r::Vector{Float32},
+                              col::Int64,
+                              δ::Float32,
+                              λ::Float32,
+                              xk::Float32,
+                              regularization_type::RegularizationType
+                              ) where {Ti<:Integer,T<:AbstractFloat}
+    L1 = zero(Float32)
+    L2 = zero(Float32)
+    @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        rval = r[Hs.rowval[i]]
+        hsval = Hs.nzval[i]
+        rval_d = rval / δ
+        RS = 1 + rval_d * rval_d
+        # Quake's Fast Inverse Square Root Algorithm
+        R = RS
+        int32 = reinterpret(UInt32, R)
+        int32 = 0x5f3759df - int32 >> 1
+        R = reinterpret(Float32, int32)
+        R2 = R * R
+        R *= 1.5f0 - RS * 0.5f0 * R2
+        HSVAL_R = hsval * R
+        R2 = R * R
+
+        L1 += HSVAL_R * rval
+        L2 += hsval * HSVAL_R * R2
+    end
+
+    return Float32(L1) + getRegL1(λ, xk, regularization_type), Float32(L2) + getRegL2(λ, xk, regularization_type)
+end
+
+function getL1_opt(Hs::SparseArray{Ti, Float32},
+                    r::Vector{Float32},
+                    col::Int64,
+                    δ::Float32,
+                    λ::Float32,
+                    xk::Float32,
+                    regularization_type::RegularizationType) where {Ti<:Integer}
+    L1 = zero(Float32)
+    @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        rval = r[Hs.rowval[i]]
+        hsval = Hs.nzval[i]
+        rval_d = rval / δ
+        RS = 1 + rval_d * rval_d
+        # Quake's Fast Inverse Square Root Algorithm
+        R = RS
+        int32 = reinterpret(UInt32, R)
+        int32 = 0x5f3759df - int32 >> 1
+        R = reinterpret(Float32, int32)
+        R2 = R * R
+        R *= 1.5f0 - RS * 0.5f0 * R2
+        L1 += rval * hsval * R
+    end
+    return Float32(L1) + getRegL1(λ, xk, regularization_type)
+end
+
+function newton_bisection_opt!(Hs::SparseArray{Ti, T},
+                                r::Vector{T},
+                                X₁::Vector{T},
+                                col::Int64,
+                                δ::T,
+                                λ::T,
+                                max_iter_newton::Int64,
+                                max_iter_bisection::Int64,
+                                accuracy_newton::T,
+                                accuracy_bisection::T,
+                                regularization_type::RegularizationType,
+                                rel_tol::T = T(0.01)) where {Ti<:Integer,T<:AbstractFloat}
+    n = 0
+    X_init = X₁[col]
+    X0 = X₁[col]
+    _ranbisection_ = false
+    max_l1, max_x1 = typemax(T), typemax(T)
+
+    @inbounds begin
+        while (n < max_iter_newton)
+            L1, L2 = getDerivatives_opt!(Hs, r, col, δ, λ, X₁[col], regularization_type)
+            update_rule = (L1)/L2
+
+            if isnan(update_rule)
+                n = max_iter_newton
+                break
+            end
+
+            if (sign(L1) == 1) & (L1 < max_l1)
+                max_x1, max_l1 = X₁[col], L1
+            end
+
+            X0 = X₁[col]
+            X₁[col] = max(X₁[col] - update_rule, zero(T))
+            n += 1
+
+            updateResiduals!(Hs, r, col, X₁[col], X0)
+
+            abs_change = abs(X₁[col] - X0)
+
+            if !iszero(X0)
+                rel_change = abs_change / abs(X0)
+                if rel_change < rel_tol
+                    break
+                end
+            else
+                if abs_change < accuracy_newton
+                    break
+                end
+            end
+        end
+
+        if n == max_iter_newton
+            _ranbisection_ = true
+            X0 = X₁[col]
+            X₁[col] = zero(T)
+            updateResiduals!(Hs, r, col, X₁[col], X0)
+            L1 = getL1_opt(Hs, r, col, δ, λ, X₁[col], regularization_type)
+
+            if sign(L1) != 1
+                _ = bisection_opt!(Hs, r, X₁, col, δ, λ, zero(T),
+                            min(max(max_x1, zero(Float32)), Float32(1e11)),
+                            L1,
+                            max_iter_bisection,
+                            accuracy_bisection,
+                            regularization_type)
+            end
+            return X₁[col] - X_init
+        else
+            return X₁[col] - X_init
+        end
+    end
+end
+
+function bisection_opt!(Hs::SparseArray{Ti, T},
+                         r::Vector{T},
+                         X₁::Vector{T},
+                         col::Int64,
+                         δ::T,
+                         λ::T,
+                         a::T,
+                         b::T,
+                         fa::Float32,
+                         max_iter::Int64,
+                         accuracy_bisection::T,
+                         regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
+    n = 0
+    c = (a + b)/2
+    updateResiduals!(Hs, r, col, c, X₁[col])
+    X0 = X₁[col]
+    X₁[col] = c
+    X_init, X0 = X₁[col], X₁[col]
+    while (n < max_iter)
+        fc = getL1_opt(Hs, r, col, δ, λ, X₁[col], regularization_type)
+        if (sign(fc) != sign(fa))
+            b, fb = c, fc
+        else
+            a, fa = c, fc
+        end
+
+        c, X0 = (a + b)/2, X₁[col]
+        X₁[col] = c
+        updateResiduals!(Hs, r, col, X₁[col], X0)
+
+        abs(X₁[col] - X0) < accuracy_bisection ? break : nothing
+        n += 1
+    end
+    return X₁[col] - X_init
+end
+
+function solveHuber_opt!(Hs::SparseArray{Ti, T},
+                          r::Vector{T},
+                          X₁::Vector{T},
+                          δ::T,
+                          λ::T,
+                          max_iter_newton::Int64,
+                          max_iter_bisection::Int64,
+                          max_iter_outer::Int64,
+                          accuracy_newton::T,
+                          accuracy_bisection::T,
+                          relative_convergence_threshold::T,
+                          regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
+
+    newton_rel_tol = relative_convergence_threshold
+    max_weight = T(0)
+
+    i = 0
+    while i < max_iter_outer
+        _diff = T(0)
+        weight_floor = i >= 5 ? max_weight * T(1e-7) : T(0)
+        max_weight = T(0)
+
+        for col in range(1, Hs.n)
+            δx = abs(newton_bisection_opt!(Hs, r, X₁, col, δ, λ,
+                                            max_iter_newton,
+                                            max_iter_bisection,
+                                            accuracy_newton,
+                                            accuracy_bisection,
+                                            regularization_type,
+                                            newton_rel_tol))
+
+            if X₁[col] > max_weight
+                max_weight = X₁[col]
+            end
+
+            if X₁[col] > weight_floor
+                rel_change = δx / abs(X₁[col])
+                if rel_change > _diff
+                    _diff = rel_change
+                end
+            end
+        end
+
+        if _diff < relative_convergence_threshold
+            break
+        end
+        i += 1
+    end
+
+    return nothing
+end
+
+function newton_bisection!(Hs::SparseArray{Ti, T},
                             r::Vector{T}, 
                             X₁::Vector{T}, 
                             col::Int64, 
@@ -299,5 +520,141 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         i += 1
     end
     
+    return nothing
+end
+
+function solveOLS!(
+    Hs::SparseArray{Ti, T},
+    r::Vector{T},
+    X₁::Vector{T},
+    colnorm2::Vector{T},
+    max_iter_outer::Int64,
+    relative_convergence_threshold::T
+) where {Ti<:Integer, T<:AbstractFloat}
+
+    # Precompute column norms: colnorm2[j] = Σ_i A_ij²
+    # For OLS the Hessian per coordinate is constant, so one Newton step is exact.
+    @inbounds for col in 1:Hs.n
+        s = zero(T)
+        for i in Hs.colptr[col]:(Hs.colptr[col+1]-1)
+            s += Hs.nzval[i]^2
+        end
+        colnorm2[col] = s
+    end
+
+    max_weight = T(0)
+    i = 0
+    while i < max_iter_outer
+        _diff = T(0)
+        weight_floor = i >= 5 ? max_weight * T(1e-7) : T(0)
+        max_weight = T(0)
+
+        for col in 1:Hs.n
+            L2 = colnorm2[col]
+            iszero(L2) && continue
+
+            # Gradient: L1 = Σ_i A_ij * r_i
+            L1 = zero(T)
+            @inbounds @fastmath for k in Hs.colptr[col]:(Hs.colptr[col+1]-1)
+                L1 += Hs.nzval[k] * r[Hs.rowval[k]]
+            end
+
+            # Exact coordinate minimizer (one step)
+            X0 = X₁[col]
+            X₁[col] = max(X₁[col] - L1 / L2, zero(T))
+
+            # Update residuals
+            updateResiduals!(Hs, r, col, X₁[col], X0)
+
+            # Track convergence
+            δx = abs(X₁[col] - X0)
+            if X₁[col] > max_weight
+                max_weight = X₁[col]
+            end
+            if X₁[col] > weight_floor
+                rc = δx / abs(X₁[col])
+                rc > _diff && (_diff = rc)
+            end
+        end
+
+        _diff < relative_convergence_threshold && break
+        i += 1
+    end
+    return nothing
+end
+
+function reinitResiduals!(r::Vector{T}, Hs::SparseArray{Ti, T}, X₁::Vector{T}) where {Ti<:Integer, T<:AbstractFloat}
+    @inbounds for i in 1:Hs.m
+        r[i] = zero(T)
+    end
+    @inbounds for n in 1:Hs.n_vals
+        if iszero(r[Hs.rowval[n]])
+            r[Hs.rowval[n]] = -Hs.x[n]
+        end
+    end
+    @inbounds for col in 1:Hs.n
+        for n in Hs.colptr[col]:(Hs.colptr[col+1] - 1)
+            r[Hs.rowval[n]] += X₁[col] * Hs.nzval[n]
+        end
+    end
+end
+
+function solveOLS_v2!(
+    Hs::SparseArray{Ti, T},
+    r::Vector{T},
+    X₁::Vector{T},
+    colnorm2::Vector{T},
+    max_iter_outer::Int64,
+    relative_convergence_threshold::T;
+    reinit_period::Int64 = Int64(10)
+) where {Ti<:Integer, T<:AbstractFloat}
+
+    @inbounds for col in 1:Hs.n
+        s = zero(T)
+        for i in Hs.colptr[col]:(Hs.colptr[col+1]-1)
+            s += Hs.nzval[i]^2
+        end
+        colnorm2[col] = s
+    end
+
+    max_weight = T(0)
+    i = 0
+    while i < max_iter_outer
+        # Periodic residual recomputation to prevent Float32 drift
+        if i > 0 && mod(i, reinit_period) == 0
+            reinitResiduals!(r, Hs, X₁)
+        end
+
+        _diff = T(0)
+        weight_floor = i >= 5 ? max_weight * T(1e-7) : T(0)
+        max_weight = T(0)
+
+        for col in 1:Hs.n
+            L2 = colnorm2[col]
+            iszero(L2) && continue
+
+            L1 = zero(T)
+            @inbounds @fastmath for k in Hs.colptr[col]:(Hs.colptr[col+1]-1)
+                L1 += Hs.nzval[k] * r[Hs.rowval[k]]
+            end
+
+            X0 = X₁[col]
+            X₁[col] = max(X₁[col] - L1 / L2, zero(T))
+
+            updateResiduals!(Hs, r, col, X₁[col], X0)
+
+            δx = abs(X₁[col] - X0)
+            if X₁[col] > max_weight
+                max_weight = X₁[col]
+            end
+            if X₁[col] > weight_floor
+                rc = δx / abs(X₁[col])
+                rc > _diff && (_diff = rc)
+            end
+        end
+
+        _diff < relative_convergence_threshold && break
+        i += 1
+    end
     return nothing
 end
