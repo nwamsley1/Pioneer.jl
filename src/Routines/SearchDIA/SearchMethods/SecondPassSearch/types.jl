@@ -71,6 +71,10 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
     prescore_min_log2_matched_ratio::Float32
     prescore_min_topn_of_m::Tuple{Int64, Int64}
 
+    # Dynamic range filter
+    dynamic_range::Float32
+    prescore_dynamic_range::Float32
+
     # Prescore aggregation strategy
     prescore_aggregation::A
 
@@ -138,6 +142,18 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
         prescore_min_log2_matched_ratio = Float32(prescore_frag.min_log2_ratio)
         prescore_min_topn_of_m = (Int64(first(prescore_frag.min_top_n)), Int64(last(prescore_frag.min_top_n)))
 
+        # Dynamic range filter (backward compatible defaults)
+        dynamic_range = if haskey(frag_params, :dynamic_range)
+            Float32(frag_params.dynamic_range)
+        else
+            Float32(1e-3)
+        end
+        prescore_dynamic_range = if haskey(prescore_frag, :dynamic_range)
+            Float32(prescore_frag.dynamic_range)
+        else
+            Float32(1e-3)
+        end
+
         # Prescore aggregation strategy (default: PEPCalibratedAggregation)
         prescore_aggregation = if haskey(first_search_params, :prescore_aggregation)
             agg_str = string(first_search_params.prescore_aggregation)
@@ -191,6 +207,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
             prescore_min_spectral_contrast,
             prescore_min_log2_matched_ratio,
             prescore_min_topn_of_m,
+
+            dynamic_range,
+            prescore_dynamic_range,
 
             prescore_aggregation
         )

@@ -147,7 +147,8 @@ function perform_second_pass_search(
     min_frag_count::Int64 = params.min_frag_count,
     min_spectral_contrast::Float32 = params.min_spectral_contrast,
     min_log2_matched_ratio::Float32 = params.min_log2_matched_ratio,
-    min_topn_of_m::Tuple{Int64, Int64} = params.min_topn_of_m
+    min_topn_of_m::Tuple{Int64, Int64} = params.min_topn_of_m,
+    dynamic_range::Float32 = params.dynamic_range
 )
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
@@ -170,7 +171,8 @@ function perform_second_pass_search(
                 min_frag_count = min_frag_count,
                 min_spectral_contrast = min_spectral_contrast,
                 min_log2_matched_ratio = min_log2_matched_ratio,
-                min_topn_of_m = min_topn_of_m
+                min_topn_of_m = min_topn_of_m,
+                dynamic_range = dynamic_range
             )
         end
     end
@@ -189,6 +191,51 @@ function perform_second_pass_search(
     return (psms = vcat([r.psms for r in thread_results]...),
             iter_counts = vcat([r.iter_counts for r in thread_results]...),
             col_counts = vcat([r.col_counts for r in thread_results]...))
+end
+
+"""
+    filter_low_quality_precursors!(weights, Hs, min_frag_count; dynamic_range=1e-3f0)
+
+Zero out weights for precursors that will inevitably fail downstream filters,
+before expensive `getDistanceMetrics` computation. Applies two filters:
+1. Dynamic range: weights < `dynamic_range * max_weight` are zeroed
+2. Min fragment count: precursors with fewer than `min_frag_count` fragments (from H.colptr) are zeroed
+"""
+function filter_low_quality_precursors!(
+    weights::Vector{Float32},
+    Hs::SparseArray,
+    min_frag_count::Int;
+    dynamic_range::Float32 = Float32(1e-3)
+)
+    n_filtered_weight = 0
+    n_filtered_frag = 0
+
+    # Find max weight in this scan
+    max_weight = zero(Float32)
+    @inbounds for col in 1:Hs.n
+        max_weight = max(max_weight, weights[col])
+    end
+    weight_threshold = dynamic_range * max_weight
+
+    @inbounds for col in 1:Hs.n
+        # Dynamic range filter
+        if weights[col] < weight_threshold
+            weights[col] = zero(Float32)
+            n_filtered_weight += 1
+            continue
+        end
+        # Fragment count filter (count only matched fragments)
+        n_matched = 0
+        for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+            n_matched += Hs.matched[i]
+        end
+        if n_matched < min_frag_count
+            weights[col] = zero(Float32)
+            n_filtered_frag += 1
+        end
+    end
+
+    return n_filtered_weight, n_filtered_frag
 end
 
 """
@@ -212,7 +259,8 @@ function process_scans_fragindex!(
     min_frag_count::Int64 = params.min_frag_count,
     min_spectral_contrast::Float32 = params.min_spectral_contrast,
     min_log2_matched_ratio::Float32 = params.min_log2_matched_ratio,
-    min_topn_of_m::Tuple{Int64, Int64} = params.min_topn_of_m
+    min_topn_of_m::Tuple{Int64, Int64} = params.min_topn_of_m,
+    dynamic_range::Float32 = params.dynamic_range
 )
     # Get working arrays
     Hs = getHs(search_data)
@@ -227,6 +275,8 @@ function process_scans_fragindex!(
     total_skipped_matched_ratio = 0
     total_skipped_topn = 0
     total_skipped_spectral_contrast = 0
+    total_filtered_weight = 0
+    total_filtered_frag = 0
 
     # Collect per-scan solver iteration stats for QC plots
     iter_counts = Int[]
@@ -349,6 +399,13 @@ function process_scans_fragindex!(
         #_t0 = time_ns()
         update_precursor_weights!(search_data, weights, precursor_weights)
 
+        # Filter low-quality precursors before expensive spectral scoring
+        n_filt_wt, n_filt_frag = filter_low_quality_precursors!(
+            weights, Hs, min_frag_count; dynamic_range = dynamic_range
+        )
+        total_filtered_weight += n_filt_wt
+        total_filtered_frag += n_filt_frag
+
         getDistanceMetrics(weights, residuals, Hs, getComplexSpectralScores(search_data))
 
         ScoreFragmentMatches!(
@@ -394,7 +451,7 @@ function process_scans_fragindex!(
     # t_total = t_select_transitions + t_match_peaks + t_build_matrix + t_solve_ols + t_scoring
     # to_pct = t -> t_total > 0 ? round(100.0 * t / t_total, digits=1) : 0.0
     # @info "Deconv timing (thread): selectTransitions=$(to_s(t_select_transitions))s ($(to_pct(t_select_transitions))%), matchPeaks=$(to_s(t_match_peaks))s ($(to_pct(t_match_peaks))%), buildMatrix=$(to_s(t_build_matrix))s ($(to_pct(t_build_matrix))%), solveOLS=$(to_s(t_solve_ols))s ($(to_pct(t_solve_ols))%), scoring=$(to_s(t_scoring))s ($(to_pct(t_scoring))%)"
-    @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
+    @info "SecondPass (fragindex) filter summary: kept=$last_val, early_filtered_weight=$total_filtered_weight, early_filtered_frag=$total_filtered_frag, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
     return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
             iter_counts = iter_counts, col_counts = col_counts)
 end
@@ -438,6 +495,8 @@ function process_scans!(
     total_skipped_matched_ratio = 0
     total_skipped_topn = 0
     total_skipped_spectral_contrast = 0
+    total_filtered_weight = 0
+    total_filtered_frag = 0
 
     # Collect per-scan solver iteration stats for QC plots
     iter_counts = Int[]
@@ -559,6 +618,13 @@ function process_scans!(
         # Update precursor weights
         update_precursor_weights!(search_data, weights, precursor_weights)
 
+        # Filter low-quality precursors before expensive spectral scoring
+        n_filt_wt, n_filt_frag = filter_low_quality_precursors!(
+            weights, Hs, params.min_frag_count; dynamic_range = params.dynamic_range
+        )
+        total_filtered_weight += n_filt_wt
+        total_filtered_frag += n_filt_frag
+
         # Score PSMs
         getDistanceMetrics(weights, residuals, Hs, getComplexSpectralScores(search_data))
 
@@ -602,7 +668,7 @@ function process_scans!(
         reset_arrays!(search_data, Hs)
     end
     n_diverged = count(i -> i == params.max_iter_outer, iter_counts)
-    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
+    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, early_filtered_weight=$total_filtered_weight, early_filtered_frag=$total_filtered_frag, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
     return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
             iter_counts = iter_counts, col_counts = col_counts)
 end

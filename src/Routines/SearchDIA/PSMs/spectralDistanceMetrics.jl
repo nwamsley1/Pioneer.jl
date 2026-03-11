@@ -250,6 +250,14 @@ function getDistanceMetrics(w::Vector{T},
     # iterate over precursors
     # ------------------------------------------------------------------
     for col in 1:H.n
+        # Skip zero-weight columns (already filtered out)
+        if w[col] <= zero(T)
+            spectral_scores[col] = SpectralScoresComplex(
+                zero(U), zero(U), zero(U), zero(U), zero(U),
+                zero(U), zero(U), zero(U), zero(U)
+            )
+            continue
+        end
         # ---- gather indices of usable peaks in this spectrum ----------
         incl = Int[]
         tot_pred_signal = zero(T)

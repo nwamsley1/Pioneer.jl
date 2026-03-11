@@ -252,6 +252,15 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
     skipped_spectral_contrast = 0
     for i in range(1, n_vals)
 
+        precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
+        scores_idx = IDtoCOL[precursor_idx]
+
+        if weight[scores_idx] < Float32(1e-6)
+            skipped += 1
+            skipped_weight += 1
+            continue
+        end
+
         if unscored_PSMs[i].topn < min_topn
             skipped += 1
             skipped_topn += 1
@@ -265,9 +274,6 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             skipped_frag_count += 1
             continue
         end
-
-        precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
-        scores_idx = IDtoCOL[precursor_idx]
 
         if spectral_scores[scores_idx].matched_ratio < min_log2_matched_ratio
             skipped += 1

@@ -92,7 +92,8 @@
             "min_top_n": [
                 2,
                 3
-            ]
+            ],
+            "dynamic_range": 0.001
         },
         "global_prescore_qvalue_threshold": 0.05,
         "prescore_aggregation": "pep_calibrated"
@@ -108,7 +109,8 @@
                 2,
                 3
             ],
-            "n_isotopes": 2
+            "n_isotopes": 2,
+            "dynamic_range": 0.001
         },
         "chromatogram": {
             "smoothing_strength": 1e-06,

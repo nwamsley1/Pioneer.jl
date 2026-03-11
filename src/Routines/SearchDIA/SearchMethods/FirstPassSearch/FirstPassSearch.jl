@@ -107,7 +107,8 @@ function process_file!(
                 min_frag_count = params.prescore_min_frag_count,
                 min_spectral_contrast = params.prescore_min_spectral_contrast,
                 min_log2_matched_ratio = params.prescore_min_log2_matched_ratio,
-                min_topn_of_m = params.prescore_min_topn_of_m
+                min_topn_of_m = params.prescore_min_topn_of_m,
+                dynamic_range = params.prescore_dynamic_range
             )
         else
             search_result = perform_second_pass_search(
@@ -123,7 +124,8 @@ function process_file!(
                 min_frag_count = params.prescore_min_frag_count,
                 min_spectral_contrast = params.prescore_min_spectral_contrast,
                 min_log2_matched_ratio = params.prescore_min_log2_matched_ratio,
-                min_topn_of_m = params.prescore_min_topn_of_m
+                min_topn_of_m = params.prescore_min_topn_of_m,
+                dynamic_range = params.prescore_dynamic_range
             )
         end
 
