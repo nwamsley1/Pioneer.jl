@@ -201,7 +201,9 @@ end
 Zero out weights for precursors that will inevitably fail downstream filters,
 before expensive `getDistanceMetrics` computation. Applies two filters:
 1. Dynamic range: weights < `dynamic_range * max_weight` are zeroed
-2. Min fragment count: precursors with fewer than `min_frag_count` fragments (from H.colptr) are zeroed
+2. Isotope-aware fragment count: requires at least `min_frag_count` monoisotopic OR
+   `min_frag_count` M+1 matched fragments. This catches PSMs early that would otherwise
+   pass total fragment count but fail the later b+y monoisotopic filter.
 """
 function filter_low_quality_precursors!(
     weights::Vector{Float32},
@@ -209,9 +211,6 @@ function filter_low_quality_precursors!(
     min_frag_count::Int;
     dynamic_range::Float32 = Float32(1e-3)
 )
-    n_filtered_weight = 0
-    n_filtered_frag = 0
-
     # Find max weight in this scan
     max_weight = zero(Float32)
     @inbounds for col in 1:Hs.n
@@ -223,21 +222,27 @@ function filter_low_quality_precursors!(
         # Dynamic range filter
         if weights[col] < weight_threshold
             weights[col] = zero(Float32)
-            n_filtered_weight += 1
             continue
         end
-        # Fragment count filter (count only matched fragments)
-        n_matched = 0
+        # Isotope-aware fragment count filter
+        mono_count = 0
+        m1_count = 0
         for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
-            n_matched += Hs.matched[i]
+            if Hs.matched[i]
+                iso = Hs.isotope[i]
+                if iso == 0x00
+                    mono_count += 1
+                elseif iso == 0x01
+                    m1_count += 1
+                end
+            end
         end
-        if n_matched < min_frag_count
+        if mono_count < min_frag_count && m1_count < min_frag_count
             weights[col] = zero(Float32)
-            n_filtered_frag += 1
         end
     end
 
-    return n_filtered_weight, n_filtered_frag
+    return nothing
 end
 
 """
@@ -1025,12 +1030,12 @@ Add essential columns to PSM DataFrame for second pass analysis.
 - Error metrics
 - CV fold assignments
 """
-function add_second_search_columns!(psms::DataFrame, 
+function add_second_search_columns!(psms::DataFrame,
                         scan_retention_time::AbstractVector{Float32},
                         prec_charge::AbstractVector{UInt8},
                         prec_is_decoy::AbstractVector{Bool},
-                        precursors::LibraryPrecursors,
-                        #prec_id_to_cv_fold::Dictionary{UInt32, UInt8})
+                        precursors::LibraryPrecursors;
+                        prescore_only::Bool=false
 )
     # Allocate new columns
    
@@ -1092,7 +1097,9 @@ function add_second_search_columns!(psms::DataFrame,
     psms[!,:cv_fold] = cv_fold
     psms[!,:charge2] = Vector{UInt8}(psms[!, :charge] .== 2)
     #######
-    sort!(psms,:rt); #Sorting before grouping is critical. 
+    if !prescore_only
+        sort!(psms,:rt); #Sorting before grouping is critical.
+    end
     return nothing
 end
 
@@ -1521,29 +1528,37 @@ function prepare_psm_features!(
         getRetentionTimes(spectra),
         getCharge(getPrecursors(getSpecLib(search_context))),
         getIsDecoy(getPrecursors(getSpecLib(search_context))),
-        getPrecursors(getSpecLib(search_context))
+        getPrecursors(getSpecLib(search_context));
+        prescore_only=prescore_only
     )
     t1 = time()
 
-    # 2. Determine which precursor isotopes are captured in each scan's isolation window
-    get_isotopes_captured!(
-        psms,
-        getIsotopeTraceType(params),
-        getQuadTransmissionModel(search_context, ms_file_idx),
-        getSearchData(search_context),
-        psms[!, :scan_idx],
-        getCharge(getPrecursors(getSpecLib(search_context))),
-        getMz(getPrecursors(getSpecLib(search_context))),
-        getSulfurCount(getPrecursors(getSpecLib(search_context))),
-        getCenterMzs(spectra),
-        getIsolationWidthMzs(spectra)
-    )
-    t2 = time()
+    if prescore_only
+        # Skip isotope computation and fraction_transmitted filter for prescore path —
+        # these PSMs get filtered in SecondPassSearch anyway, and no PRESCORE_FEATURES use isotope info.
+        t2 = t1
+        t3 = t1
+    else
+        # 2. Determine which precursor isotopes are captured in each scan's isolation window
+        get_isotopes_captured!(
+            psms,
+            getIsotopeTraceType(params),
+            getQuadTransmissionModel(search_context, ms_file_idx),
+            getSearchData(search_context),
+            psms[!, :scan_idx],
+            getCharge(getPrecursors(getSpecLib(search_context))),
+            getMz(getPrecursors(getSpecLib(search_context))),
+            getSulfurCount(getPrecursors(getSpecLib(search_context))),
+            getCenterMzs(spectra),
+            getIsolationWidthMzs(spectra)
+        )
+        t2 = time()
 
-    # 3. Filter by fraction_transmitted (weight>0 already enforced in add_second_search_columns!)
-    to_remove = findall(psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
-    deleteat!(psms, to_remove)
-    t3 = time()
+        # 3. Filter by fraction_transmitted (weight>0 already enforced in add_second_search_columns!)
+        to_remove = findall(psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
+        deleteat!(psms, to_remove)
+        t3 = time()
+    end
 
     # 4. Add MS1 stub columns (needed by add_features!)
     ensure_ms1_stub_columns!(psms)
@@ -1590,18 +1605,8 @@ Returns:
 function train_lgbm_and_select_best(
     psms::DataFrame;
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
-    min_frag_count::Int64 = Int64(4)
 )
     t0 = time()
-
-    # Filter out PSMs with fewer than 3 matched fragments (b + y ions)
-    n_before = nrow(psms)
-    precs_before = length(unique(psms[!, :precursor_idx]))
-    frag_mask = (psms[!, :y_count] .+ psms[!, :b_count]) .>= UInt8(min_frag_count)
-    psms = psms[frag_mask, :]
-    n_removed = n_before - nrow(psms)
-    precs_removed = precs_before - length(unique(psms[!, :precursor_idx]))
-    @info "  Min fragment filter (≥$min_frag_count b+y): removed $n_removed/$n_before PSMs, $precs_removed/$precs_before unique precursors"
 
     # Filter to available features
     available_features = filter(f -> hasproperty(psms, f), features)
@@ -1705,14 +1710,12 @@ function get_best_psm_per_precursor_by_score(psms::DataFrame, score_col::Symbol)
     for i in eachindex(prec_ids)
         pid = prec_ids[i]
         s = scores[i]
-        if !haskey(best_idx, pid) || s > best_score[pid]
-            if haskey(best_idx, pid)
-                best_idx[pid] = i
-                best_score[pid] = s
-            else
-                insert!(best_idx, pid, i)
-                insert!(best_score, pid, s)
-            end
+        if !haskey(best_idx, pid)
+            insert!(best_idx, pid, i)
+            insert!(best_score, pid, s)
+        elseif s > best_score[pid]
+            best_idx[pid] = i
+            best_score[pid] = s
         end
     end
 

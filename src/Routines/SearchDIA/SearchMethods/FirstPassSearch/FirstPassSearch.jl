@@ -217,7 +217,7 @@ function process_search_results!(
         end
 
         # Train LightGBM on ALL PSMs, select best scan per precursor
-        best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms; min_frag_count = params.prescore_min_frag_count)
+        best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms)
         t_lgbm = time()
 
         # RT recalibration: refit iRT spline from high-confidence PSMs
