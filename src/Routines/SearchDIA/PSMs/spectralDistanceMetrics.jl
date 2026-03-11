@@ -50,6 +50,15 @@ struct SpectralScoresMs1{T<:AbstractFloat} <: SpectralScores{T}
     #entropy_score::T
 end
 
+struct SpectralScoresFirstPass{T<:AbstractFloat} <: SpectralScores{T}
+    spectral_contrast::T       # for Score! filtering
+    gof::T                     # PRESCORE_FEATURES
+    max_matched_residual::T    # PRESCORE_FEATURES
+    max_unmatched_residual::T  # PRESCORE_FEATURES
+    fitted_manhattan_distance::T # PRESCORE_FEATURES
+    matched_ratio::T           # for Score! filtering
+end
+
 function getDistanceMetrics(H::SparseArray{Ti,T}, 
     spectral_scores::Vector{SpectralScoresSimple{U}};
     relative_improvement_threshold::Float32 = 1.25f0,
@@ -303,6 +312,108 @@ function getDistanceMetrics(w::Vector{T},
             Float16(best.mr),                         # matched / unmatched
             Float16(best.scribe),                     # scribe
             Float16(pct_ignored)                      # percent_theoretical_ignored
+        )
+    end
+end
+
+"""
+    getDistanceMetrics(w, r, H, spectral_scores::Vector{SpectralScoresFirstPass})
+
+Single-pass spectral scoring for FirstPassSearch. Skips the iterative peak-removal
+loop and scribe computation entirely, computing only the 6 metrics needed for
+prescore LightGBM + Score! filtering.
+"""
+function getDistanceMetrics(w::Vector{T},
+    r::Vector{T},
+    H::SparseArray{Ti,T},
+    spectral_scores::Vector{SpectralScoresFirstPass{U}}
+   ) where {Ti<:Integer,T,U<:AbstractFloat}
+
+    # Zero residual vector
+    @turbo for i in range(1, H.m)
+        r[i] = zero(T)
+    end
+
+    for n in range(1, H.n_vals)
+        if iszero(r[H.rowval[n]])
+            r[H.rowval[n]] = -H.x[n]
+        end
+    end
+
+    for col in range(1, H.n)
+        start = H.colptr[col]
+        stop = H.colptr[col+1] - 1
+        for n in start:stop
+            r[H.rowval[n]] += w[col]*H.nzval[n]
+        end
+    end
+
+    # Single-pass scoring per precursor
+    for col in 1:H.n
+        # Skip zero-weight columns
+        if w[col] <= zero(T)
+            spectral_scores[col] = SpectralScoresFirstPass(
+                zero(U), zero(U), zero(U), zero(U), zero(U), zero(U)
+            )
+            continue
+        end
+
+        h2_sum = zero(T)
+        x2_sum = zero(T)
+        x_sum = zero(T)
+        dot_product = zero(T)
+        matched_sum = zero(T)
+        unmatched_sum = zero(T)
+
+        manhattan_distance = zero(T)
+        max_matched_residual = zero(T)
+        max_unmatched_residual = zero(T)
+        sum_of_residuals = zero(T)
+        sum_of_fitted_peaks_matched = zero(T)
+        sum_of_fitted_peaks_unmatched = zero(T)
+
+        @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
+            x_sum += H.x[i]
+            manhattan_distance += abs(w[col]*H.nzval[i] - H.x[i])
+
+            dot_product += H.nzval[i]*H.x[i]
+            x2_sum += (H.x[i])^2
+            h2_sum += (H.nzval[i])^2
+
+            fitted_peak = w[col]*H.nzval[i]
+            r_abs = abs(r[H.rowval[i]])
+            sum_of_residuals += r_abs
+
+            if H.matched[i]
+                matched_sum += H.nzval[i]
+                sum_of_fitted_peaks_matched += fitted_peak
+                if r_abs > max_matched_residual
+                    max_matched_residual = r_abs
+                end
+            else
+                unmatched_sum += H.nzval[i]
+                sum_of_fitted_peaks_unmatched += fitted_peak
+                if r_abs > max_unmatched_residual
+                    max_unmatched_residual = r_abs
+                end
+            end
+        end
+
+        sum_of_fitted_peaks = sum_of_fitted_peaks_matched + sum_of_fitted_peaks_unmatched
+        spectral_contrast = dot_product/(sqrt(h2_sum)*sqrt(x2_sum))
+        gof = sum_of_fitted_peaks > 0 ? -log2(sum_of_residuals/sum_of_fitted_peaks) : zero(T)
+        max_matched_residual = sum_of_fitted_peaks_matched > 0 ? -log2(max_matched_residual/sum_of_fitted_peaks_matched) : zero(T)
+        max_unmatched_residual = sum_of_fitted_peaks > 0 ? -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10) : zero(T)
+        fitted_manhattan_distance = -log2(manhattan_distance/x_sum)
+        matched_ratio = log2(matched_sum/unmatched_sum)
+
+        spectral_scores[col] = SpectralScoresFirstPass(
+            U(spectral_contrast),
+            U(gof),
+            U(max_matched_residual),
+            U(max_unmatched_residual),
+            U(fitted_manhattan_distance),
+            U(matched_ratio)
         )
     end
 end

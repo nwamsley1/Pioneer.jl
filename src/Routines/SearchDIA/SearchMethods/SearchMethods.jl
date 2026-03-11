@@ -403,6 +403,8 @@ function initSimpleSearchContext(
         Vector{Ms1ScoredPSM{Float32, Float16}}(undef, 5000),
         [Ms1UnscoredPSM{Float32}() for _ in range(1, 5000)],
         Vector{SpectralScoresMs1{Float16}}(undef, 5000),
+        Vector{FirstPassScoredPSM{Float32, Float16}}(undef, 5000),
+        Vector{SpectralScoresFirstPass{Float16}}(undef, 5000),
         SparseArray(UInt32(5000)),
         zeros(UInt32, 5000),
         zeros(Float32, n_precursors),

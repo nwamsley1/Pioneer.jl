@@ -189,6 +189,8 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     ms1_scored_psms::Vector{Ms1ScoredPSM{Float32, Float16}}
     ms1_unscored_psms::Vector{Ms1UnscoredPSM{Float32}}
     ms1_spectral_scores::Vector{SpectralScoresMs1{Float16}}
+    first_pass_scored_psms::Vector{FirstPassScoredPSM{Float32, Float16}}
+    first_pass_spectral_scores::Vector{SpectralScoresFirstPass{Float16}}
 
     # Working arrays
     Hs::SparseArray
@@ -421,6 +423,8 @@ getMs1ScoredPsms(s::SearchDataStructures) = s.ms1_scored_psms
 getMs1UnscoredPsms(s::SearchDataStructures) = s.ms1_unscored_psms
 getMs1SpectralScores(s::SearchDataStructures) = s.ms1_spectral_scores
 
+getFirstPassScoredPsms(s::SearchDataStructures) = s.first_pass_scored_psms
+getFirstPassSpectralScores(s::SearchDataStructures) = s.first_pass_spectral_scores
 
 getHs(s::SearchDataStructures) = s.Hs
 getPrecIds(s::SearchDataStructures) = s.prec_ids

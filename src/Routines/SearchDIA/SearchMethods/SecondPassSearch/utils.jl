@@ -148,7 +148,8 @@ function perform_second_pass_search(
     min_spectral_contrast::Float32 = params.min_spectral_contrast,
     min_log2_matched_ratio::Float32 = params.min_log2_matched_ratio,
     min_topn_of_m::Tuple{Int64, Int64} = params.min_topn_of_m,
-    dynamic_range::Float32 = params.dynamic_range
+    dynamic_range::Float32 = params.dynamic_range,
+    first_pass::Bool = false
 )
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
@@ -172,7 +173,8 @@ function perform_second_pass_search(
                 min_spectral_contrast = min_spectral_contrast,
                 min_log2_matched_ratio = min_log2_matched_ratio,
                 min_topn_of_m = min_topn_of_m,
-                dynamic_range = dynamic_range
+                dynamic_range = dynamic_range,
+                first_pass = first_pass
             )
         end
     end
@@ -260,7 +262,8 @@ function process_scans_fragindex!(
     min_spectral_contrast::Float32 = params.min_spectral_contrast,
     min_log2_matched_ratio::Float32 = params.min_log2_matched_ratio,
     min_topn_of_m::Tuple{Int64, Int64} = params.min_topn_of_m,
-    dynamic_range::Float32 = params.dynamic_range
+    dynamic_range::Float32 = params.dynamic_range,
+    first_pass::Bool = false
 )
     # Get working arrays
     Hs = getHs(search_data)
@@ -406,8 +409,6 @@ function process_scans_fragindex!(
         total_filtered_weight += n_filt_wt
         total_filtered_frag += n_filt_frag
 
-        getDistanceMetrics(weights, residuals, Hs, getComplexSpectralScores(search_data))
-
         ScoreFragmentMatches!(
             getComplexUnscoredPsms(search_data),
             getIdToCol(search_data),
@@ -417,26 +418,51 @@ function process_scans_fragindex!(
             last(min_topn_of_m)
         )
 
-        score_result = Score!(
-            getComplexScoredPsms(search_data),
-            getComplexUnscoredPsms(search_data),
-            getComplexSpectralScores(search_data),
-            weights,
-            getIdToCol(search_data),
-            cycle_idx,
-            nmatches/(nmatches + nmisses),
-            last_val,
-            Hs.n,
-            Float32(sum(getIntensityArray(spectra, scan_idx))),
-            scan_idx;
-            min_spectral_contrast = min_spectral_contrast,
-            min_log2_matched_ratio = min_log2_matched_ratio,
-            min_y_count = params.min_y_count,
-            min_frag_count = min_frag_count,
-            max_best_rank = params.max_best_rank,
-            min_topn = first(min_topn_of_m),
-            block_size = 500000
-        )
+        if first_pass
+            getDistanceMetrics(weights, residuals, Hs, getFirstPassSpectralScores(search_data))
+            score_result = Score!(
+                getFirstPassScoredPsms(search_data),
+                getComplexUnscoredPsms(search_data),
+                getFirstPassSpectralScores(search_data),
+                weights,
+                getIdToCol(search_data),
+                cycle_idx,
+                nmatches/(nmatches + nmisses),
+                last_val,
+                Hs.n,
+                Float32(sum(getIntensityArray(spectra, scan_idx))),
+                scan_idx;
+                min_spectral_contrast = min_spectral_contrast,
+                min_log2_matched_ratio = min_log2_matched_ratio,
+                min_y_count = params.min_y_count,
+                min_frag_count = min_frag_count,
+                max_best_rank = params.max_best_rank,
+                min_topn = first(min_topn_of_m),
+                block_size = 500000
+            )
+        else
+            getDistanceMetrics(weights, residuals, Hs, getComplexSpectralScores(search_data))
+            score_result = Score!(
+                getComplexScoredPsms(search_data),
+                getComplexUnscoredPsms(search_data),
+                getComplexSpectralScores(search_data),
+                weights,
+                getIdToCol(search_data),
+                cycle_idx,
+                nmatches/(nmatches + nmisses),
+                last_val,
+                Hs.n,
+                Float32(sum(getIntensityArray(spectra, scan_idx))),
+                scan_idx;
+                min_spectral_contrast = min_spectral_contrast,
+                min_log2_matched_ratio = min_log2_matched_ratio,
+                min_y_count = params.min_y_count,
+                min_frag_count = min_frag_count,
+                max_best_rank = params.max_best_rank,
+                min_topn = first(min_topn_of_m),
+                block_size = 500000
+            )
+        end
         #t_scoring += time_ns() - _t0
         last_val = score_result.last_val
         total_skipped_weight += score_result.skipped_weight
@@ -447,13 +473,14 @@ function process_scans_fragindex!(
         reset_arrays!(search_data, Hs)
     end
     n_diverged = count(i -> i == params.max_iter_outer, iter_counts)
-    # to_s = t -> round(t / 1e9, digits=2)
-    # t_total = t_select_transitions + t_match_peaks + t_build_matrix + t_solve_ols + t_scoring
-    # to_pct = t -> t_total > 0 ? round(100.0 * t / t_total, digits=1) : 0.0
-    # @info "Deconv timing (thread): selectTransitions=$(to_s(t_select_transitions))s ($(to_pct(t_select_transitions))%), matchPeaks=$(to_s(t_match_peaks))s ($(to_pct(t_match_peaks))%), buildMatrix=$(to_s(t_build_matrix))s ($(to_pct(t_build_matrix))%), solveOLS=$(to_s(t_solve_ols))s ($(to_pct(t_solve_ols))%), scoring=$(to_s(t_scoring))s ($(to_pct(t_scoring))%)"
     @info "SecondPass (fragindex) filter summary: kept=$last_val, early_filtered_weight=$total_filtered_weight, early_filtered_frag=$total_filtered_frag, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
-    return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
-            iter_counts = iter_counts, col_counts = col_counts)
+    if first_pass
+        return (psms = DataFrame(@view(getFirstPassScoredPsms(search_data)[1:last_val])),
+                iter_counts = iter_counts, col_counts = col_counts)
+    else
+        return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
+                iter_counts = iter_counts, col_counts = col_counts)
+    end
 end
 
 """
@@ -953,6 +980,7 @@ function resize_arrays!(search_data::SearchDataStructures, weights::Vector{Float
     resize!(weights, length(weights) + new_entries)
     resize!(getColNorm2(search_data), length(getColNorm2(search_data)) + new_entries)
     resize!(getComplexSpectralScores(search_data), length(getComplexSpectralScores(search_data)) + new_entries)
+    resize!(getFirstPassSpectralScores(search_data), length(getFirstPassSpectralScores(search_data)) + new_entries)
     append!(getComplexUnscoredPsms(search_data), [eltype(getComplexUnscoredPsms(search_data))() for _ in 1:new_entries])
 end
 
@@ -1435,7 +1463,7 @@ LightGBM Feature Set
 
 # Lean feature set for Phase 1 prescore LightGBM (fast per-file ranking)
 const PRESCORE_FEATURES = [
-    :fitted_manhattan_distance, :scribe, :irt_error, :poisson, :err_norm,
+    :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :max_unmatched_residual, :max_matched_residual, :Mox, :spectrum_peak_count,
 ]
