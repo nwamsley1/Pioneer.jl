@@ -256,7 +256,7 @@ function solve_poisson_observed_instrumented(sa, y_vec;
 end
 
 function solve_poisson_mm_instrumented(sa, y_vec;
-        max_outer=500, rel_conv=1f-4)
+        max_outer=500, rel_conv=1f-4, max_inner=5)
 
     m, n = sa.m, sa.n
     μ  = zeros(Float32, m)
@@ -281,13 +281,23 @@ function solve_poisson_mm_instrumented(sa, y_vec;
         max_weight = 0f0
 
         for col in 1:n
-            L1, L2 = getPoissonDerivativesObs!(sa, μ, yy, col)
-            X0 = w[col]
-            if L2 > ε && !isnan(L1)
+            X_before = w[col]
+
+            for _k in 1:max_inner
+                L1, L2 = getPoissonDerivativesObs!(sa, μ, yy, col)
+                if L2 <= ε || isnan(L1)
+                    break
+                end
+                X0 = w[col]
                 w[col] = max(w[col] - L1 / L2, 0f0)
                 updateMu!(sa, μ, col, w[col], X0)
+                abs_step = abs(w[col] - X0)
+                if iszero(w[col]) || (!iszero(X0) && abs_step / abs(X0) < rel_conv)
+                    break
+                end
             end
-            δx = abs(w[col] - X0)
+
+            δx = abs(w[col] - X_before)
             w[col] > max_weight && (max_weight = w[col])
             if w[col] > weight_floor
                 rc = δx / abs(w[col])

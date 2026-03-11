@@ -480,13 +480,12 @@ end
 # ══════════════════════════════════════════════════════════════════
 # MM (Majorization-Minimization) variant — Cyclops-style
 #
-# Takes a single closed-form step per coordinate per sweep:
-#   δ_j = L1_j / L2_j   (gradient / observed Hessian)
-#   w_j ← max(w_j - δ_j, 0)
+# Takes K observed-Hessian Newton steps per coordinate per sweep,
+# recomputing derivatives after each step. This bridges large dynamic
+# ranges that a single step cannot traverse in Float32 precision.
 #
-# No inner Newton iterations, no bisection fallback.
-# The observed Hessian at the current point majorizes the curvature
-# for positive steps, guaranteeing monotonic LL ascent.
+# Each step uses the observed Hessian: δ = L1/L2, w ← max(w - δ, 0).
+# No bisection fallback needed — steps are bounded by non-negativity.
 #
 # Reference: Suchard et al. "Massive parallelization of serial
 # inference algorithms for complex generalized linear models."
@@ -495,38 +494,77 @@ end
 
 """
     solvePoissonMM!(Hs, μ, y, X₁, max_iter_outer,
-                    relative_convergence_threshold)
+                    relative_convergence_threshold;
+                    max_inner_iter=5)
 
 Coordinate descent Poisson MLE with MM (majorization-minimization) steps.
-Uses one closed-form step per coordinate per sweep — no inner Newton loop.
+Takes `max_inner_iter` observed-Hessian Newton steps per coordinate per
+sweep — much simpler than full Newton+bisection but handles large dynamic
+ranges. Default inner iterations is 5.
 """
 function solvePoissonMM!(Hs::SparseArray{Ti, T},
                           μ::Vector{T},
                           y::Vector{T},
                           X₁::Vector{T},
                           max_iter_outer::Int64,
-                          relative_convergence_threshold::T) where {Ti<:Integer, T<:AbstractFloat}
+                          relative_convergence_threshold::T;
+                          max_inner_iter::Int64 = Int64(5)) where {Ti<:Integer, T<:AbstractFloat}
 
+    # ── Y-scaling: divide y by max(y) to bring weights into tractable range ──
+    # Without scaling, cold-start weights need to traverse 5-8 OOM from w=1
+    # to w_true ~ O(1e4-1e8), but the observed Hessian makes steps microscopic.
+    # Scaling y' = y/c means optimal w' = w/c, keeping steps well-sized.
+    y_scale = T(0)
+    @inbounds for i in 1:Hs.m
+        if y[i] > y_scale
+            y_scale = y[i]
+        end
+    end
+    if y_scale > T(1)
+        @inbounds for i in 1:Hs.m
+            y[i] /= y_scale
+        end
+        @inbounds for j in 1:Hs.n
+            X₁[j] /= y_scale
+        end
+        # Recompute μ = A * X₁ with scaled weights
+        initMu!(μ, Hs, X₁)
+    end
+
+    # ── Core MM iteration ──
     max_weight = T(0)
     ε = T(POISSON_MU_FLOOR)
+    inner_tol = relative_convergence_threshold
 
     i = 0
     while i < max_iter_outer
         _diff = T(0)
-        weight_floor = i >= 5 ? max_weight * T(1e-7) : T(0)
+        weight_floor = i >= 5 ? max_weight * T(1e-4) : T(0)
         max_weight = T(0)
 
         for col in 1:Hs.n
-            # Gradient and observed Hessian (reuse existing function)
-            L1, L2 = getPoissonDerivativesObs!(Hs, μ, y, col)
+            X_before = X₁[col]
 
-            # Single MM step: closed-form update
-            X0 = X₁[col]
-            if L2 > ε && !isnan(L1)
+            # Multi-step MM: up to max_inner_iter observed-Hessian steps
+            for _k in 1:max_inner_iter
+                L1, L2 = getPoissonDerivativesObs!(Hs, μ, y, col)
+
+                if L2 <= ε || isnan(L1)
+                    break
+                end
+
+                X0 = X₁[col]
                 X₁[col] = max(X₁[col] - L1 / L2, zero(T))
                 updateMu!(Hs, μ, col, X₁[col], X0)
+
+                # Early exit if this step was tiny
+                abs_step = abs(X₁[col] - X0)
+                if iszero(X₁[col]) || (!iszero(X0) && abs_step / abs(X0) < inner_tol)
+                    break
+                end
             end
-            δx = abs(X₁[col] - X0)
+
+            δx = abs(X₁[col] - X_before)
 
             # Convergence tracking with significance floor
             if X₁[col] > max_weight
@@ -545,6 +583,19 @@ function solvePoissonMM!(Hs::SparseArray{Ti, T},
         end
         i += 1
     end
+
+    # ── Unscale: restore y and weights to original magnitude ──
+    if y_scale > T(1)
+        @inbounds for i in 1:Hs.m
+            y[i] *= y_scale
+        end
+        @inbounds for j in 1:Hs.n
+            X₁[j] *= y_scale
+        end
+        # Recompute μ = A * X₁ with unscaled weights so caller sees correct μ
+        initMu!(μ, Hs, X₁)
+    end
+
     return nothing
 end
 

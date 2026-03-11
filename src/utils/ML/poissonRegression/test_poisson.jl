@@ -260,11 +260,19 @@ function test_mm_loglik_monotonic()
 
     for _ in 1:50
         for col in 1:sa.n
-            L1, L2 = getPoissonDerivativesObs!(sa, μ, yy, col)
-            X0 = w[col]
-            if L2 > ε && !isnan(L1)
+            # Multi-step MM: up to 5 inner steps per coordinate
+            for _k in 1:5
+                L1, L2 = getPoissonDerivativesObs!(sa, μ, yy, col)
+                if L2 <= ε || isnan(L1)
+                    break
+                end
+                X0 = w[col]
                 w[col] = max(w[col] - L1 / L2, 0f0)
                 updateMu!(sa, μ, col, w[col], X0)
+                abs_step = abs(w[col] - X0)
+                if iszero(w[col]) || (!iszero(X0) && abs_step / abs(X0) < 1f-4)
+                    break
+                end
             end
         end
         push!(lls, poissonLogLikelihood(μ, yy, sa.m))

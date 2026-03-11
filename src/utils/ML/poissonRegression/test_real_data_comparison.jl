@@ -166,7 +166,7 @@ function solve_poisson_obs_real(sa_l, init_weights)
     return w, iters, sse, pll
 end
 
-function solve_poisson_mm_real(sa_l, init_weights; mm_rel_conv=rel_conv, mm_max_outer=max_outer)
+function solve_poisson_mm_real(sa_l, init_weights; mm_rel_conv=rel_conv, mm_max_outer=max_outer, max_inner=5)
     m, n = sa_l.m, sa_l.n
     μ = zeros(Float32, m); yy = zeros(Float32, m); w = copy(init_weights)
     initObserved!(yy, sa_l); initMu!(μ, sa_l, w)
@@ -179,13 +179,19 @@ function solve_poisson_mm_real(sa_l, init_weights; mm_rel_conv=rel_conv, mm_max_
         weight_floor = iter > 5 ? max_weight * Float32(1e-7) : Float32(0)
         max_weight = Float32(0)
         for col in 1:n
-            L1, L2 = getPoissonDerivativesObs!(sa_l, μ, yy, col)
-            X0 = w[col]
-            if L2 > ε && !isnan(L1)
+            X_before = w[col]
+            for _k in 1:max_inner
+                L1, L2 = getPoissonDerivativesObs!(sa_l, μ, yy, col)
+                if L2 <= ε || isnan(L1); break; end
+                X0 = w[col]
                 w[col] = max(w[col] - L1 / L2, 0f0)
                 updateMu!(sa_l, μ, col, w[col], X0)
+                abs_step = abs(w[col] - X0)
+                if iszero(w[col]) || (!iszero(X0) && abs_step / abs(X0) < mm_rel_conv)
+                    break
+                end
             end
-            δx = abs(w[col] - X0)
+            δx = abs(w[col] - X_before)
             w[col] > max_weight && (max_weight = w[col])
             if w[col] > weight_floor
                 rc = δx / abs(w[col]); rc > _diff && (_diff = rc)
@@ -199,7 +205,7 @@ function solve_poisson_mm_real(sa_l, init_weights; mm_rel_conv=rel_conv, mm_max_
     return w, iters, sse, pll
 end
 
-function solve_poisson_mm_real_traced(sa_l, init_weights; mm_rel_conv=rel_conv, mm_max_outer=max_outer)
+function solve_poisson_mm_real_traced(sa_l, init_weights; mm_rel_conv=rel_conv, mm_max_outer=max_outer, max_inner=5)
     m, n = sa_l.m, sa_l.n
     μ = zeros(Float32, m); yy = zeros(Float32, m); w = copy(init_weights)
     initObserved!(yy, sa_l); initMu!(μ, sa_l, w)
@@ -216,13 +222,19 @@ function solve_poisson_mm_real_traced(sa_l, init_weights; mm_rel_conv=rel_conv, 
         weight_floor = iter > 5 ? max_weight * Float32(1e-7) : Float32(0)
         max_weight = Float32(0)
         for col in 1:n
-            L1, L2 = getPoissonDerivativesObs!(sa_l, μ, yy, col)
-            X0 = w[col]
-            if L2 > ε && !isnan(L1)
+            X_before = w[col]
+            for _k in 1:max_inner
+                L1, L2 = getPoissonDerivativesObs!(sa_l, μ, yy, col)
+                if L2 <= ε || isnan(L1); break; end
+                X0 = w[col]
                 w[col] = max(w[col] - L1 / L2, 0f0)
                 updateMu!(sa_l, μ, col, w[col], X0)
+                abs_step = abs(w[col] - X0)
+                if iszero(w[col]) || (!iszero(X0) && abs_step / abs(X0) < mm_rel_conv)
+                    break
+                end
             end
-            δx = abs(w[col] - X0)
+            δx = abs(w[col] - X_before)
             w[col] > max_weight && (max_weight = w[col])
             if w[col] > weight_floor
                 rc = δx / abs(w[col]); rc > _diff && (_diff = rc)
@@ -335,27 +347,41 @@ println("─" ^ 90)
 
 # ── MM convergence investigation ──────────────────────────────────
 println("\n" * "=" ^ 90)
-println("  MM CONVERGENCE INVESTIGATION")
+println("  MM CONVERGENCE INVESTIGATION (multi-step)")
 println("=" ^ 90)
 
-# Run MM with different convergence thresholds
-println("\n── MM with varying convergence thresholds (cold-start) ──")
-@printf("  %-20s  %5s  %8s  %14s  %16s  %5s\n",
-        "Threshold", "Iters", "Time(s)", "SSE", "Poisson LL", "nnz")
-println("  " * "─" ^ 75)
+# Test varying inner step counts (cold-start)
+println("\n── MM with varying inner steps (cold-start, rel_conv=$(rel_conv)) ──")
+@printf("  %-22s  %5s  %8s  %14s  %16s  %5s\n",
+        "Inner steps", "Iters", "Time(s)", "SSE", "Poisson LL", "nnz")
+println("  " * "─" ^ 80)
 
-for rc in [1f-2, 1f-3, 1f-4, 1f-5, 1f-6]
+for ki in [1, 3, 5, 10, 25]
     t = @elapsed w_t, it_t, sse_t, pll_t = solve_poisson_mm_real(sa, cold_w;
-                                                mm_rel_conv=rc, mm_max_outer=5000)
+                                                max_inner=ki)
     nnz_t = count(w_t[1:sa.n] .> 0.01)
-    @printf("  %-20s  %5d  %8.4f  %14.6e  %16.6e  %5d\n",
-            @sprintf("%.0e", rc), it_t, t, sse_t, pll_t, nnz_t)
+    @printf("  %-22s  %5d  %8.4f  %14.6e  %16.6e  %5d\n",
+            "K=$ki", it_t, t, sse_t, pll_t, nnz_t)
 end
 
-# Convergence trace for MM with tight threshold
-println("\n── MM convergence trace (cold-start, rel_conv=1e-6, max_outer=5000) ──")
+# Also warm-start
+println("\n── MM with varying inner steps (warm-start, rel_conv=$(rel_conv)) ──")
+@printf("  %-22s  %5s  %8s  %14s  %16s  %5s\n",
+        "Inner steps", "Iters", "Time(s)", "SSE", "Poisson LL", "nnz")
+println("  " * "─" ^ 80)
+
+for ki in [1, 3, 5, 10, 25]
+    t = @elapsed w_t, it_t, sse_t, pll_t = solve_poisson_mm_real(sa, warm_w;
+                                                max_inner=ki)
+    nnz_t = count(w_t[1:sa.n] .> 0.01)
+    @printf("  %-22s  %5d  %8.4f  %14.6e  %16.6e  %5d\n",
+            "K=$ki", it_t, t, sse_t, pll_t, nnz_t)
+end
+
+# Convergence trace for best MM config
+println("\n── MM convergence trace (cold-start, K=5, rel_conv=1e-4) ──")
 _, _, mm_lls, mm_sses, mm_diffs, mm_nnz = solve_poisson_mm_real_traced(sa, cold_w;
-                                            mm_rel_conv=1f-6, mm_max_outer=5000)
+                                            mm_rel_conv=1f-4, mm_max_outer=5000, max_inner=5)
 
 @printf("  %5s  %16s  %14s  %12s\n", "Iter", "Poisson LL", "SSE", "max_rel_diff")
 println("  " * "─" ^ 55)
@@ -379,15 +405,15 @@ ll_mono = all(mm_lls[i+1] >= mm_lls[i] - 1.0 for i in 1:length(mm_lls)-1)
 @printf("  Final nnz: %d / %d\n", mm_nnz, sa.n)
 
 # Compare best MM vs ObsHess
-println("\n── Best MM (rel_conv=1e-6) vs ObsHess (cold-start) ──")
+println("\n── MM (K=5) vs ObsHess (cold-start) ──")
 w_mm_best, it_mm_best, sse_mm_best, pll_mm_best = solve_poisson_mm_real(sa, cold_w;
-                                                    mm_rel_conv=1f-6, mm_max_outer=5000)
+                                                    mm_rel_conv=1f-4, mm_max_outer=5000, max_inner=5)
 wm_best = Float64.(w_mm_best[1:sa.n])
 @printf("  ObsHess:  iters=%d, PoissonLL=%.6e, SSE=%.6e, nnz=%d\n",
         it_oc, pll_oc, sse_oc, count(w_oc[1:sa.n] .> 0.01))
-@printf("  MM-best:  iters=%d, PoissonLL=%.6e, SSE=%.6e, nnz=%d\n",
+@printf("  MM(K=5):  iters=%d, PoissonLL=%.6e, SSE=%.6e, nnz=%d\n",
         it_mm_best, pll_mm_best, sse_mm_best, count(w_mm_best[1:sa.n] .> 0.01))
-@printf("  ObsHess vs MM-best weight correlation: %.6f\n", cor(woc, wm_best))
+@printf("  ObsHess vs MM(K=5) weight correlation: %.6f\n", cor(woc, wm_best))
 
 println("\n" * "=" ^ 90)
 println("  Done.")
