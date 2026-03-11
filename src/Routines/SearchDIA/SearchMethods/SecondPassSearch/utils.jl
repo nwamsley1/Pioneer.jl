@@ -142,7 +142,10 @@ function perform_second_pass_search(
     ::MS2CHROM;
     n_frag_isotopes::Int64 = params.n_frag_isotopes,
     max_frag_rank::UInt8 = params.max_frag_rank,
-    min_frag_count::Int64 = params.min_frag_count
+    min_frag_count::Int64 = params.min_frag_count,
+    min_spectral_contrast::Float32 = params.min_spectral_contrast,
+    min_log2_matched_ratio::Float32 = params.min_log2_matched_ratio,
+    min_topn_of_m::Tuple{Int64, Int64} = params.min_topn_of_m
 )
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
@@ -162,7 +165,10 @@ function perform_second_pass_search(
                 ms_file_idx;
                 n_frag_isotopes = n_frag_isotopes,
                 max_frag_rank = max_frag_rank,
-                min_frag_count = min_frag_count
+                min_frag_count = min_frag_count,
+                min_spectral_contrast = min_spectral_contrast,
+                min_log2_matched_ratio = min_log2_matched_ratio,
+                min_topn_of_m = min_topn_of_m
             )
         end
     end
@@ -199,7 +205,10 @@ function process_scans_fragindex!(
     ms_file_idx::Int64;
     n_frag_isotopes::Int64 = params.n_frag_isotopes,
     max_frag_rank::UInt8 = params.max_frag_rank,
-    min_frag_count::Int64 = params.min_frag_count
+    min_frag_count::Int64 = params.min_frag_count,
+    min_spectral_contrast::Float32 = params.min_spectral_contrast,
+    min_log2_matched_ratio::Float32 = params.min_log2_matched_ratio,
+    min_topn_of_m::Tuple{Int64, Int64} = params.min_topn_of_m
 )
     # Get working arrays
     Hs = getHs(search_data)
@@ -211,6 +220,8 @@ function process_scans_fragindex!(
     total_skipped_weight = 0
     total_skipped_frag_count = 0
     total_skipped_matched_ratio = 0
+    total_skipped_topn = 0
+    total_skipped_spectral_contrast = 0
 
     nce_model = getNceModel(search_context, ms_file_idx)
     precursors = getPrecursors(getSpecLib(search_context))
@@ -293,7 +304,7 @@ function process_scans_fragindex!(
 
         # Solve deconvolution
         initResiduals!(residuals, Hs, weights)
-        solveHuber!(
+        converged = solveHuber!(
             Hs,
             residuals,
             weights,
@@ -307,6 +318,23 @@ function process_scans_fragindex!(
             params.max_diff,
             params.reg_type
         )
+        if !converged
+            dump_path = joinpath(homedir(), "Desktop", "solveHuber_diverged_scan$(scan_idx).jls")
+            try
+                open(dump_path, "w") do io
+                    serialize(io, Dict(
+                        :n_vals => Hs.n_vals, :m => Hs.m, :n => Hs.n,
+                        :rowval => Hs.rowval[1:Hs.n_vals], :colval => Hs.colval[1:Hs.n_vals],
+                        :nzval => Hs.nzval[1:Hs.n_vals], :colptr => Hs.colptr[1:Hs.n+1],
+                        :weights => copy(weights), :residuals => copy(residuals)
+                    ))
+                end
+                @error "solveHuber! DIVERGED at scan_idx=$scan_idx (max_iter_outer=$(params.max_iter_outer)). Hs dumped to $dump_path"
+            catch ser_err
+                @error "solveHuber! DIVERGED at scan_idx=$scan_idx (max_iter_outer=$(params.max_iter_outer)). Serialize failed: $ser_err"
+            end
+            error("solveHuber! failed to converge at scan_idx=$scan_idx")
+        end
 
         # Update precursor weights
         update_precursor_weights!(search_data, weights, precursor_weights)
@@ -320,7 +348,7 @@ function process_scans_fragindex!(
             getIonMatches(search_data),
             nmatches,
             getMassErrorModel(search_context, ms_file_idx),
-            last(params.min_topn_of_m)
+            last(min_topn_of_m)
         )
 
         score_result = Score!(
@@ -335,12 +363,12 @@ function process_scans_fragindex!(
             Hs.n,
             Float32(sum(getIntensityArray(spectra, scan_idx))),
             scan_idx;
-            min_spectral_contrast = params.min_spectral_contrast,
-            min_log2_matched_ratio = params.min_log2_matched_ratio,
+            min_spectral_contrast = min_spectral_contrast,
+            min_log2_matched_ratio = min_log2_matched_ratio,
             min_y_count = params.min_y_count,
             min_frag_count = min_frag_count,
             max_best_rank = params.max_best_rank,
-            min_topn = first(params.min_topn_of_m),
+            min_topn = first(min_topn_of_m),
             block_size = 500000
         )
         last_val = score_result.last_val
@@ -351,7 +379,7 @@ function process_scans_fragindex!(
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio"
+    @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast"
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 
@@ -391,6 +419,8 @@ function process_scans!(
     total_skipped_weight = 0
     total_skipped_frag_count = 0
     total_skipped_matched_ratio = 0
+    total_skipped_topn = 0
+    total_skipped_spectral_contrast = 0
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -490,7 +520,7 @@ function process_scans!(
         
         # Solve deconvolution problem
         initResiduals!(residuals, Hs, weights)
-        solveHuber!(
+        converged = solveHuber!(
             Hs,
             residuals,
             weights,
@@ -504,6 +534,23 @@ function process_scans!(
             params.max_diff,
             params.reg_type
         )
+        if !converged
+            dump_path = joinpath(homedir(), "Desktop", "solveHuber_diverged_scan$(scan_idx).jls")
+            try
+                open(dump_path, "w") do io
+                    serialize(io, Dict(
+                        :n_vals => Hs.n_vals, :m => Hs.m, :n => Hs.n,
+                        :rowval => Hs.rowval[1:Hs.n_vals], :colval => Hs.colval[1:Hs.n_vals],
+                        :nzval => Hs.nzval[1:Hs.n_vals], :colptr => Hs.colptr[1:Hs.n+1],
+                        :weights => copy(weights), :residuals => copy(residuals)
+                    ))
+                end
+                @error "solveHuber! DIVERGED at scan_idx=$scan_idx (max_iter_outer=$(params.max_iter_outer)). Hs dumped to $dump_path"
+            catch ser_err
+                @error "solveHuber! DIVERGED at scan_idx=$scan_idx (max_iter_outer=$(params.max_iter_outer)). Serialize failed: $ser_err"
+            end
+            error("solveHuber! failed to converge at scan_idx=$scan_idx")
+        end
 
         # Update precursor weights
         update_precursor_weights!(search_data, weights, precursor_weights)
@@ -544,11 +591,13 @@ function process_scans!(
         total_skipped_weight += score_result.skipped_weight
         total_skipped_frag_count += score_result.skipped_frag_count
         total_skipped_matched_ratio += score_result.skipped_matched_ratio
+        total_skipped_topn += score_result.skipped_topn
+        total_skipped_spectral_contrast += score_result.skipped_spectral_contrast
 
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio"
+    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast"
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 
@@ -1479,18 +1528,19 @@ Returns:
 """
 function train_lgbm_and_select_best(
     psms::DataFrame;
-    features::Vector{Symbol} = collect(PRESCORE_FEATURES)
+    features::Vector{Symbol} = collect(PRESCORE_FEATURES),
+    min_frag_count::Int64 = Int64(4)
 )
     t0 = time()
 
     # Filter out PSMs with fewer than 3 matched fragments (b + y ions)
     n_before = nrow(psms)
     precs_before = length(unique(psms[!, :precursor_idx]))
-    frag_mask = (psms[!, :y_count] .+ psms[!, :b_count]) .>= UInt8(4)
+    frag_mask = (psms[!, :y_count] .+ psms[!, :b_count]) .>= UInt8(min_frag_count)
     psms = psms[frag_mask, :]
     n_removed = n_before - nrow(psms)
     precs_removed = precs_before - length(unique(psms[!, :precursor_idx]))
-    @info "  Min fragment filter (≥4 b+y): removed $n_removed/$n_before PSMs, $precs_removed/$precs_before unique precursors"
+    @info "  Min fragment filter (≥$min_frag_count b+y): removed $n_removed/$n_before PSMs, $precs_removed/$precs_before unique precursors"
 
     # Filter to available features
     available_features = filter(f -> hasproperty(psms, f), features)

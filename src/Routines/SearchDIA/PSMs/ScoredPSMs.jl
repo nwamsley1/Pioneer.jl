@@ -248,7 +248,15 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
     skipped_weight = 0
     skipped_frag_count = 0
     skipped_matched_ratio = 0
+    skipped_topn = 0
+    skipped_spectral_contrast = 0
     for i in range(1, n_vals)
+
+        if unscored_PSMs[i].topn < min_topn
+            skipped += 1
+            skipped_topn += 1
+            continue
+        end
 
         pass_frag_count = (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count + unscored_PSMs[i].isotope_count) >= min_frag_count
 
@@ -264,6 +272,12 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         if spectral_scores[scores_idx].matched_ratio < min_log2_matched_ratio
             skipped += 1
             skipped_matched_ratio += 1
+            continue
+        end
+
+        if spectral_scores[scores_idx].spectral_contrast < min_spectral_contrast
+            skipped += 1
+            skipped_spectral_contrast += 1
             continue
         end
 
@@ -309,7 +323,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         )
         last_val += 1
     end
-    return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=skipped_frag_count, skipped_matched_ratio=skipped_matched_ratio)
+    return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=skipped_frag_count, skipped_matched_ratio=skipped_matched_ratio, skipped_topn=skipped_topn, skipped_spectral_contrast=skipped_spectral_contrast)
 end
 
 function Score!(scored_psms::Vector{Ms1ScoredPSM{H, L}}, 

@@ -282,10 +282,10 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         
         # Check convergence
         if _diff < relative_convergence_threshold
-            break
-        end  
+            return true
+        end
         i += 1
     end
-    
-    return nothing
+
+    return false
 end
