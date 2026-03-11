@@ -5,6 +5,7 @@ using Random, Printf
 
 include("SparseArray.jl")
 include("spectralPoissonRegression.jl")
+include("spectralPoissonRegression_legacy.jl")
 
 # ── Solver defaults ──────────────────────────────────────────────
 const NR_ITER   = 25

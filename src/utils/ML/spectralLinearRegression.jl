@@ -301,3 +301,139 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     
     return nothing
 end
+
+function solveOLS!(
+    Hs::SparseArray{Ti, T},
+    r::Vector{T},
+    X₁::Vector{T},
+    colnorm2::Vector{T},
+    max_iter_outer::Int64,
+    relative_convergence_threshold::T
+) where {Ti<:Integer, T<:AbstractFloat}
+
+    # Precompute column norms: colnorm2[j] = Σ_i A_ij²
+    # For OLS the Hessian per coordinate is constant, so one Newton step is exact.
+    @inbounds for col in 1:Hs.n
+        s = zero(T)
+        for i in Hs.colptr[col]:(Hs.colptr[col+1]-1)
+            s += Hs.nzval[i]^2
+        end
+        colnorm2[col] = s
+    end
+
+    max_weight = T(0)
+    i = 0
+    while i < max_iter_outer
+        _diff = T(0)
+        weight_floor = i >= 5 ? max_weight * T(1e-7) : T(0)
+        max_weight = T(0)
+
+        for col in 1:Hs.n
+            L2 = colnorm2[col]
+            iszero(L2) && continue
+
+            # Gradient: L1 = Σ_i A_ij * r_i
+            L1 = zero(T)
+            @inbounds @fastmath for k in Hs.colptr[col]:(Hs.colptr[col+1]-1)
+                L1 += Hs.nzval[k] * r[Hs.rowval[k]]
+            end
+
+            # Exact coordinate minimizer (one step)
+            X0 = X₁[col]
+            X₁[col] = max(X₁[col] - L1 / L2, zero(T))
+
+            # Update residuals
+            updateResiduals!(Hs, r, col, X₁[col], X0)
+
+            # Track convergence
+            δx = abs(X₁[col] - X0)
+            if X₁[col] > max_weight
+                max_weight = X₁[col]
+            end
+            if X₁[col] > weight_floor
+                rc = δx / abs(X₁[col])
+                rc > _diff && (_diff = rc)
+            end
+        end
+
+        _diff < relative_convergence_threshold && break
+        i += 1
+    end
+    return nothing
+end
+
+function reinitResiduals!(r::Vector{T}, Hs::SparseArray{Ti, T}, X₁::Vector{T}) where {Ti<:Integer, T<:AbstractFloat}
+    @inbounds for i in 1:Hs.m
+        r[i] = zero(T)
+    end
+    @inbounds for n in 1:Hs.n_vals
+        if iszero(r[Hs.rowval[n]])
+            r[Hs.rowval[n]] = -Hs.x[n]
+        end
+    end
+    @inbounds for col in 1:Hs.n
+        for n in Hs.colptr[col]:(Hs.colptr[col+1] - 1)
+            r[Hs.rowval[n]] += X₁[col] * Hs.nzval[n]
+        end
+    end
+end
+
+function solveOLS_v2!(
+    Hs::SparseArray{Ti, T},
+    r::Vector{T},
+    X₁::Vector{T},
+    colnorm2::Vector{T},
+    max_iter_outer::Int64,
+    relative_convergence_threshold::T;
+    reinit_period::Int64 = Int64(10)
+) where {Ti<:Integer, T<:AbstractFloat}
+
+    @inbounds for col in 1:Hs.n
+        s = zero(T)
+        for i in Hs.colptr[col]:(Hs.colptr[col+1]-1)
+            s += Hs.nzval[i]^2
+        end
+        colnorm2[col] = s
+    end
+
+    max_weight = T(0)
+    i = 0
+    while i < max_iter_outer
+        # Periodic residual recomputation to prevent Float32 drift
+        if i > 0 && mod(i, reinit_period) == 0
+            reinitResiduals!(r, Hs, X₁)
+        end
+
+        _diff = T(0)
+        weight_floor = i >= 5 ? max_weight * T(1e-7) : T(0)
+        max_weight = T(0)
+
+        for col in 1:Hs.n
+            L2 = colnorm2[col]
+            iszero(L2) && continue
+
+            L1 = zero(T)
+            @inbounds @fastmath for k in Hs.colptr[col]:(Hs.colptr[col+1]-1)
+                L1 += Hs.nzval[k] * r[Hs.rowval[k]]
+            end
+
+            X0 = X₁[col]
+            X₁[col] = max(X₁[col] - L1 / L2, zero(T))
+
+            updateResiduals!(Hs, r, col, X₁[col], X0)
+
+            δx = abs(X₁[col] - X0)
+            if X₁[col] > max_weight
+                max_weight = X₁[col]
+            end
+            if X₁[col] > weight_floor
+                rc = δx / abs(X₁[col])
+                rc > _diff && (_diff = rc)
+            end
+        end
+
+        _diff < relative_convergence_threshold && break
+        i += 1
+    end
+    return nothing
+end

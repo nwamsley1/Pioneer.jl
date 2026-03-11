@@ -5,6 +5,7 @@ using Random, Printf, GLM, DataFrames, Distributions
 
 include("SparseArray.jl")
 include("spectralPoissonRegression.jl")
+include("spectralPoissonRegression_legacy.jl")
 
 const NR_ITER   = 25
 const BS_ITER   = 100
