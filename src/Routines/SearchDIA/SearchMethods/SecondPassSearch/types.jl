@@ -66,6 +66,10 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
     # Phase 1 prescore fragment settings (may differ from Phase 2)
     prescore_n_frag_isotopes::Int64
     prescore_max_frag_rank::UInt8
+    prescore_min_frag_count::Int64
+    prescore_min_spectral_contrast::Float32
+    prescore_min_log2_matched_ratio::Float32
+    prescore_min_topn_of_m::Tuple{Int64, Int64}
 
     # Prescore aggregation strategy
     prescore_aggregation::A
@@ -129,6 +133,10 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
         prescore_frag = first_search_params.fragment_settings
         prescore_n_frag_isotopes = Int64(prescore_frag.n_isotopes)
         prescore_max_frag_rank = UInt8(prescore_frag.max_rank)
+        prescore_min_frag_count = Int64(prescore_frag.min_count)
+        prescore_min_spectral_contrast = Float32(prescore_frag.min_spectral_contrast)
+        prescore_min_log2_matched_ratio = Float32(prescore_frag.min_log2_ratio)
+        prescore_min_topn_of_m = (Int64(first(prescore_frag.min_top_n)), Int64(last(prescore_frag.min_top_n)))
 
         # Prescore aggregation strategy (default: PEPCalibratedAggregation)
         prescore_aggregation = if haskey(first_search_params, :prescore_aggregation)
@@ -179,6 +187,10 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
 
             prescore_n_frag_isotopes,
             prescore_max_frag_rank,
+            prescore_min_frag_count,
+            prescore_min_spectral_contrast,
+            prescore_min_log2_matched_ratio,
+            prescore_min_topn_of_m,
 
             prescore_aggregation
         )

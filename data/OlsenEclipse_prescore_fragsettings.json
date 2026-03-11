@@ -84,12 +84,12 @@
     "first_search": {
         "fragment_settings": {
             "max_rank": 10,
-            "n_isotopes": 1,
+            "n_isotopes": 2,
             "min_count": 4,
             "min_spectral_contrast": 0.0,
-            "min_log2_ratio": 0.0,
+            "min_log2_ratio": -10.0,
             "min_top_n": [
-                2,
+                0,
                 3
             ]
         },
@@ -102,7 +102,7 @@
             "min_y_count": 0,
             "max_rank": 255,
             "min_spectral_contrast": 0.0,
-            "min_log2_ratio": 0.0,
+            "min_log2_ratio": -10.0,
             "min_top_n": [
                 0,
                 3

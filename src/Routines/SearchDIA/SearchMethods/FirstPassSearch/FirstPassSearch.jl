@@ -85,7 +85,7 @@ function process_file!(
         t_load = time()
 
         # Deconvolve with Phase 1 prescore fragment settings
-        psms = perform_second_pass_search(
+        search_result = perform_second_pass_search(
             spectra,
             scan_to_prec_idx,
             precursors_passed,
@@ -94,8 +94,13 @@ function process_file!(
             ms_file_idx,
             MS2CHROM();
             n_frag_isotopes = params.prescore_n_frag_isotopes,
-            max_frag_rank = params.prescore_max_frag_rank
+            max_frag_rank = params.prescore_max_frag_rank,
+            min_frag_count = params.prescore_min_frag_count,
+            min_spectral_contrast = params.prescore_min_spectral_contrast,
+            min_log2_matched_ratio = params.prescore_min_log2_matched_ratio,
+            min_topn_of_m = params.prescore_min_topn_of_m
         )
+        psms = search_result.psms
         t_deconv = time()
 
         results.psms[] = psms
@@ -119,6 +124,38 @@ function process_file!(
             end
         catch e
             @warn "Failed to save precursors-per-scan histogram" exception=(e, catch_backtrace())
+        end
+
+        # Save solveHuber iteration QC plots
+        try
+            iter_counts = search_result.iter_counts
+            col_counts = search_result.col_counts
+            if !isempty(iter_counts)
+                file_name = getParsedFileName(search_context, ms_file_idx)
+                qc_dir = joinpath(getDataOutDir(search_context), "qc_plots")
+                mkpath(qc_dir)
+
+                p_hist = Plots.histogram(iter_counts;
+                    xlabel = "Outer iterations",
+                    ylabel = "Count",
+                    title = "solveHuber iterations ($(file_name), n=$(length(iter_counts)))",
+                    legend = false,
+                    bins = min(100, max(20, div(length(iter_counts), 50)))
+                )
+                Plots.savefig(p_hist, joinpath(qc_dir, "solveHuber_iter_hist_$(file_name).pdf"))
+
+                p_scatter = Plots.scatter(col_counts, iter_counts;
+                    xlabel = "Number of columns (precursors)",
+                    ylabel = "Outer iterations",
+                    title = "solveHuber cols vs iters ($(file_name))",
+                    legend = false,
+                    markersize = 2,
+                    markeralpha = 0.3
+                )
+                Plots.savefig(p_scatter, joinpath(qc_dir, "solveHuber_cols_vs_iters_$(file_name).pdf"))
+            end
+        catch e
+            @warn "Failed to save solveHuber QC plots" exception=(e, catch_backtrace())
         end
 
         println()
@@ -177,7 +214,7 @@ function process_search_results!(
         end
 
         # Train LightGBM on ALL PSMs, select best scan per precursor
-        best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms)
+        best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms; min_frag_count = params.prescore_min_frag_count)
         t_lgbm = time()
 
         # RT recalibration: refit iRT spline from high-confidence PSMs

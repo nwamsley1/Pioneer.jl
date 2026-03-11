@@ -231,6 +231,13 @@ function process_scans_fragindex!(
     iter_counts = Int[]
     col_counts = Int[]
 
+    # Timing accumulators (nanoseconds)
+    t_select_transitions = UInt64(0)
+    t_match_peaks = UInt64(0)
+    t_build_matrix = UInt64(0)
+    t_solve_huber = UInt64(0)
+    t_scoring = UInt64(0)
+
     nce_model = getNceModel(search_context, ms_file_idx)
     precursors = getPrecursors(getSpecLib(search_context))
 
@@ -246,6 +253,7 @@ function process_scans_fragindex!(
         ismissing(scan_to_prec_idx[scan_idx]) && continue
 
         # Select transitions using StandardTransitionSelection with explicit precursor list
+        _t0 = time_ns()
         ion_idx, _ = selectTransitions!(
             getIonTemplates(search_data),
             StandardTransitionSelection(),
@@ -274,10 +282,12 @@ function process_scans_fragindex!(
             isotope_err_bounds = params.isotope_err_bounds,
             block_size = 10000
         )
+        t_select_transitions += time_ns() - _t0
 
         ion_idx < 2 && continue
 
         # Match peaks
+        _t0 = time_ns()
         nmatches, nmisses = matchPeaks!(
             getIonMatches(search_data),
             getIonMisses(search_data),
@@ -291,9 +301,12 @@ function process_scans_fragindex!(
             UInt32(ms_file_idx)
         )
 
+        t_match_peaks += time_ns() - _t0
+
         nmatches ≤ 2 && continue
 
         # Build design matrix
+        _t0 = time_ns()
         buildDesignMatrix!(
             Hs,
             getIonMatches(search_data),
@@ -312,7 +325,9 @@ function process_scans_fragindex!(
 
         # Solve deconvolution
         initResiduals!(residuals, Hs, weights)
+        t_build_matrix += time_ns() - _t0
 
+        _t0 = time_ns()
         converged, n_iters = solveHuber!(
             Hs,
             residuals,
@@ -327,6 +342,7 @@ function process_scans_fragindex!(
             params.max_diff,
             params.reg_type
         )
+        t_solve_huber += time_ns() - _t0
         push!(iter_counts, n_iters)
         push!(col_counts, Hs.n)
         if !converged
@@ -334,10 +350,10 @@ function process_scans_fragindex!(
             continue
         end
 
-        # Update precursor weights
+        # Update precursor weights and score PSMs
+        _t0 = time_ns()
         update_precursor_weights!(search_data, weights, precursor_weights)
 
-        # Score PSMs
         getDistanceMetrics(weights, residuals, Hs, getComplexSpectralScores(search_data))
 
         ScoreFragmentMatches!(
@@ -369,6 +385,7 @@ function process_scans_fragindex!(
             min_topn = first(min_topn_of_m),
             block_size = 500000
         )
+        t_scoring += time_ns() - _t0
         last_val = score_result.last_val
         total_skipped_weight += score_result.skipped_weight
         total_skipped_frag_count += score_result.skipped_frag_count
@@ -378,6 +395,10 @@ function process_scans_fragindex!(
         reset_arrays!(search_data, Hs)
     end
     n_diverged = count(i -> i == params.max_iter_outer, iter_counts)
+    to_s = t -> round(t / 1e9, digits=2)
+    t_total = t_select_transitions + t_match_peaks + t_build_matrix + t_solve_huber + t_scoring
+    to_pct = t -> t_total > 0 ? round(100.0 * t / t_total, digits=1) : 0.0
+    @info "Deconv timing (thread): selectTransitions=$(to_s(t_select_transitions))s ($(to_pct(t_select_transitions))%), matchPeaks=$(to_s(t_match_peaks))s ($(to_pct(t_match_peaks))%), buildMatrix=$(to_s(t_build_matrix))s ($(to_pct(t_build_matrix))%), solveHuber=$(to_s(t_solve_huber))s ($(to_pct(t_solve_huber))%), scoring=$(to_s(t_scoring))s ($(to_pct(t_scoring))%)"
     @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
     return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
             iter_counts = iter_counts, col_counts = col_counts)

@@ -56,7 +56,7 @@ function process_file!(
         t_load = time()
 
         # Deconvolve with full Phase 2 fragment settings
-        psms = perform_second_pass_search(
+        search_result = perform_second_pass_search(
             spectra,
             scan_to_prec_idx,
             precursors_passed,
@@ -66,6 +66,7 @@ function process_file!(
             MS2CHROM();  # Uses params.n_frag_isotopes and params.max_frag_rank by default
             min_frag_count = 0  # No pre-filtering; let downstream ML handle quality
         )
+        psms = search_result.psms
         t_deconv = time()
 
         if nrow(psms) == 0
