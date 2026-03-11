@@ -66,10 +66,10 @@ function perform_second_pass_search(
     end
     
     # Collect results with detailed error logging per task
-    results = Vector{DataFrame}(undef, length(tasks))
+    thread_results = Vector{@NamedTuple{psms::DataFrame, iter_counts::Vector{Int}, col_counts::Vector{Int}}}(undef, length(tasks))
     for (i, t) in enumerate(tasks)
         try
-            results[i] = fetch(t)
+            thread_results[i] = fetch(t)
         catch e
             bt = catch_backtrace()
             @user_error "SecondPassSearch task $(i) failed while fetching results (MS2CHROM)"
@@ -77,7 +77,9 @@ function perform_second_pass_search(
             rethrow(e)
         end
     end
-    return vcat(results...)
+    return (psms = vcat([r.psms for r in thread_results]...),
+            iter_counts = vcat([r.iter_counts for r in thread_results]...),
+            col_counts = vcat([r.col_counts for r in thread_results]...))
 end
 
 function perform_second_pass_search(
@@ -173,10 +175,10 @@ function perform_second_pass_search(
         end
     end
 
-    results = Vector{DataFrame}(undef, length(tasks))
+    thread_results = Vector{@NamedTuple{psms::DataFrame, iter_counts::Vector{Int}, col_counts::Vector{Int}}}(undef, length(tasks))
     for (i, t) in enumerate(tasks)
         try
-            results[i] = fetch(t)
+            thread_results[i] = fetch(t)
         catch e
             bt = catch_backtrace()
             @user_error "SecondPassSearch (fragindex) task $(i) failed"
@@ -184,7 +186,9 @@ function perform_second_pass_search(
             rethrow(e)
         end
     end
-    return vcat(results...)
+    return (psms = vcat([r.psms for r in thread_results]...),
+            iter_counts = vcat([r.iter_counts for r in thread_results]...),
+            col_counts = vcat([r.col_counts for r in thread_results]...))
 end
 
 """
@@ -222,6 +226,10 @@ function process_scans_fragindex!(
     total_skipped_matched_ratio = 0
     total_skipped_topn = 0
     total_skipped_spectral_contrast = 0
+
+    # Collect per-scan solver iteration stats for QC plots
+    iter_counts = Int[]
+    col_counts = Int[]
 
     nce_model = getNceModel(search_context, ms_file_idx)
     precursors = getPrecursors(getSpecLib(search_context))
@@ -304,7 +312,8 @@ function process_scans_fragindex!(
 
         # Solve deconvolution
         initResiduals!(residuals, Hs, weights)
-        converged = solveHuber!(
+
+        converged, n_iters = solveHuber!(
             Hs,
             residuals,
             weights,
@@ -318,22 +327,11 @@ function process_scans_fragindex!(
             params.max_diff,
             params.reg_type
         )
+        push!(iter_counts, n_iters)
+        push!(col_counts, Hs.n)
         if !converged
-            dump_path = joinpath(homedir(), "Desktop", "solveHuber_diverged_scan$(scan_idx).jls")
-            try
-                open(dump_path, "w") do io
-                    serialize(io, Dict(
-                        :n_vals => Hs.n_vals, :m => Hs.m, :n => Hs.n,
-                        :rowval => Hs.rowval[1:Hs.n_vals], :colval => Hs.colval[1:Hs.n_vals],
-                        :nzval => Hs.nzval[1:Hs.n_vals], :colptr => Hs.colptr[1:Hs.n+1],
-                        :weights => copy(weights), :residuals => copy(residuals)
-                    ))
-                end
-                @error "solveHuber! DIVERGED at scan_idx=$scan_idx (max_iter_outer=$(params.max_iter_outer)). Hs dumped to $dump_path"
-            catch ser_err
-                @error "solveHuber! DIVERGED at scan_idx=$scan_idx (max_iter_outer=$(params.max_iter_outer)). Serialize failed: $ser_err"
-            end
-            error("solveHuber! failed to converge at scan_idx=$scan_idx")
+            reset_arrays!(search_data, Hs)
+            continue
         end
 
         # Update precursor weights
@@ -379,8 +377,10 @@ function process_scans_fragindex!(
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast"
-    return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
+    n_diverged = count(i -> i == params.max_iter_outer, iter_counts)
+    @info "SecondPass (fragindex) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
+    return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
+            iter_counts = iter_counts, col_counts = col_counts)
 end
 
 """
@@ -421,6 +421,10 @@ function process_scans!(
     total_skipped_matched_ratio = 0
     total_skipped_topn = 0
     total_skipped_spectral_contrast = 0
+
+    # Collect per-scan solver iteration stats for QC plots
+    iter_counts = Int[]
+    col_counts = Int[]
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -520,7 +524,7 @@ function process_scans!(
         
         # Solve deconvolution problem
         initResiduals!(residuals, Hs, weights)
-        converged = solveHuber!(
+        converged, n_iters = solveHuber!(
             Hs,
             residuals,
             weights,
@@ -534,22 +538,11 @@ function process_scans!(
             params.max_diff,
             params.reg_type
         )
+        push!(iter_counts, n_iters)
+        push!(col_counts, Hs.n)
         if !converged
-            dump_path = joinpath(homedir(), "Desktop", "solveHuber_diverged_scan$(scan_idx).jls")
-            try
-                open(dump_path, "w") do io
-                    serialize(io, Dict(
-                        :n_vals => Hs.n_vals, :m => Hs.m, :n => Hs.n,
-                        :rowval => Hs.rowval[1:Hs.n_vals], :colval => Hs.colval[1:Hs.n_vals],
-                        :nzval => Hs.nzval[1:Hs.n_vals], :colptr => Hs.colptr[1:Hs.n+1],
-                        :weights => copy(weights), :residuals => copy(residuals)
-                    ))
-                end
-                @error "solveHuber! DIVERGED at scan_idx=$scan_idx (max_iter_outer=$(params.max_iter_outer)). Hs dumped to $dump_path"
-            catch ser_err
-                @error "solveHuber! DIVERGED at scan_idx=$scan_idx (max_iter_outer=$(params.max_iter_outer)). Serialize failed: $ser_err"
-            end
-            error("solveHuber! failed to converge at scan_idx=$scan_idx")
+            reset_arrays!(search_data, Hs)
+            continue
         end
 
         # Update precursor weights
@@ -557,7 +550,7 @@ function process_scans!(
 
         # Score PSMs
         getDistanceMetrics(weights, residuals, Hs, getComplexSpectralScores(search_data))
-        
+
         ScoreFragmentMatches!(
             getComplexUnscoredPsms(search_data),
             getIdToCol(search_data),
@@ -597,8 +590,10 @@ function process_scans!(
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast"
-    return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
+    n_diverged = count(i -> i == params.max_iter_outer, iter_counts)
+    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
+    return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
+            iter_counts = iter_counts, col_counts = col_counts)
 end
 
 """
@@ -973,6 +968,22 @@ function add_second_search_columns!(psms::DataFrame,
     filter!(x->x.weight>0.0, psms);
     n_removed_weight = n_before_weight - nrow(psms)
     @info "  Weight > 0 filter: removed $n_removed_weight/$n_before_weight PSMs"
+
+    # Remove PSMs with negligible weight relative to scan maximum
+    n_before_scan_filter = nrow(psms)
+    scan_max_weight = Dictionary{UInt32, Float32}()
+    for row in eachrow(psms)
+        sid = row.scan_idx
+        w = row.weight
+        if !isassigned(scan_max_weight, sid)
+            insert!(scan_max_weight, sid, w)
+        elseif w > scan_max_weight[sid]
+            scan_max_weight[sid] = w
+        end
+    end
+    filter!(row -> row.weight >= Float32(1e-4) * scan_max_weight[row.scan_idx], psms)
+    n_removed_scan = n_before_scan_filter - nrow(psms)
+    @info "  Scan-level weight filter (1e-4 of max): removed $n_removed_scan/$n_before_scan_filter PSMs"
     ###########################
     #Allocate new columns
    
@@ -1562,8 +1573,8 @@ function train_lgbm_and_select_best(
         bagging_freq = 1,
         is_unbalance = true,
     )
-    # Subsample for training if > 1M PSMs
-    max_train = 1_000_000
+    # Subsample for training if > 5M PSMs
+    max_train = 5_000_000
     n_total = nrow(feature_df)
     if n_total > max_train
         train_idx = randperm(n_total)[1:max_train]

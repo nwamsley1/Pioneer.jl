@@ -255,37 +255,49 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     
     # Use user-provided convergence threshold as relative tolerance for Newton's method
     newton_rel_tol = relative_convergence_threshold
-    
+    max_weight = T(0)
+
     # Initialize iteration counter
     i = 0
     while i < max_iter_outer
         _diff = T(0)
+        # After 5 iterations, ignore columns below max_weight * 1e-7 for convergence.
+        # Below this floor, peaks are outside the instrument's dynamic range (~5 OOM)
+        # and their oscillation is physically meaningless.
+        weight_floor = i >= 5 ? max_weight * T(1e-7) : T(0)
+        max_weight = T(0)
+
         for col in range(1, Hs.n)
-            
+
             # Update coefficient
             δx = abs(newton_bisection!(Hs, r, X₁, col, δ, λ,
-                                        max_iter_newton, 
+                                        max_iter_newton,
                                         max_iter_bisection,
                                         accuracy_newton,
                                         accuracy_bisection,
                                         regularization_type,
                                         newton_rel_tol))
 
-            # Track maximum relative change
-            if !iszero(X₁[col])
+            # Track max weight for significance floor
+            if X₁[col] > max_weight
+                max_weight = X₁[col]
+            end
+
+            # Only count relative change for significant columns
+            if X₁[col] > weight_floor
                 rel_change = δx / abs(X₁[col])
                 if rel_change > _diff
                     _diff = rel_change
                 end
             end
         end
-        
+
         # Check convergence
         if _diff < relative_convergence_threshold
-            return true
+            return (true, i)
         end
         i += 1
     end
 
-    return false
+    return (false, max_iter_outer)
 end
