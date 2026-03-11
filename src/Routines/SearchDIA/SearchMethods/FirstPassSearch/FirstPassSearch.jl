@@ -85,21 +85,70 @@ function process_file!(
         t_load = time()
 
         # Deconvolve with Phase 1 prescore fragment settings
-        search_result = perform_second_pass_search(
-            spectra,
-            scan_to_prec_idx,
-            precursors_passed,
-            search_context,
-            params,
-            ms_file_idx,
-            MS2CHROM();
-            n_frag_isotopes = params.prescore_n_frag_isotopes,
-            max_frag_rank = params.prescore_max_frag_rank,
-            min_frag_count = params.prescore_min_frag_count,
-            min_spectral_contrast = params.prescore_min_spectral_contrast,
-            min_log2_matched_ratio = params.prescore_min_log2_matched_ratio,
-            min_topn_of_m = params.prescore_min_topn_of_m
-        )
+        # Profile the deconvolution step (first file only)
+        profile_dir = "/Users/nathanwamsley/Desktop"
+        do_profile = (ms_file_idx == 1)
+        if do_profile
+            Profile.clear()
+            Profile.init(n = 10_000_000, delay = 0.0001)  # 100μs sampling
+        end
+
+        if do_profile
+            Profile.@profile search_result = perform_second_pass_search(
+                spectra,
+                scan_to_prec_idx,
+                precursors_passed,
+                search_context,
+                params,
+                ms_file_idx,
+                MS2CHROM();
+                n_frag_isotopes = params.prescore_n_frag_isotopes,
+                max_frag_rank = params.prescore_max_frag_rank,
+                min_frag_count = params.prescore_min_frag_count,
+                min_spectral_contrast = params.prescore_min_spectral_contrast,
+                min_log2_matched_ratio = params.prescore_min_log2_matched_ratio,
+                min_topn_of_m = params.prescore_min_topn_of_m
+            )
+        else
+            search_result = perform_second_pass_search(
+                spectra,
+                scan_to_prec_idx,
+                precursors_passed,
+                search_context,
+                params,
+                ms_file_idx,
+                MS2CHROM();
+                n_frag_isotopes = params.prescore_n_frag_isotopes,
+                max_frag_rank = params.prescore_max_frag_rank,
+                min_frag_count = params.prescore_min_frag_count,
+                min_spectral_contrast = params.prescore_min_spectral_contrast,
+                min_log2_matched_ratio = params.prescore_min_log2_matched_ratio,
+                min_topn_of_m = params.prescore_min_topn_of_m
+            )
+        end
+
+        if do_profile
+            # Save profile to Desktop
+            pprof_path = joinpath(profile_dir, "pioneer_firstpass_profile.pb.gz")
+            PProf.pprof(out = pprof_path, web = false)
+            @info "PProf profile saved to $pprof_path"
+            @info "View with: julia -e 'using PProf; PProf.pprof(\"$pprof_path\"; web=true)'"
+
+            # Also save a text summary for analysis
+            txt_path = joinpath(profile_dir, "pioneer_firstpass_profile.txt")
+            open(txt_path, "w") do io
+                Profile.print(io; mincount=10, noisefloor=2)
+            end
+            @info "Profile text summary saved to $txt_path"
+
+            # Save flat profile (sorted by self time)
+            flat_path = joinpath(profile_dir, "pioneer_firstpass_profile_flat.txt")
+            open(flat_path, "w") do io
+                Profile.print(io; format=:flat, sortedby=:count, mincount=10)
+            end
+            @info "Flat profile saved to $flat_path"
+        end
+
         psms = search_result.psms
         t_deconv = time()
 
