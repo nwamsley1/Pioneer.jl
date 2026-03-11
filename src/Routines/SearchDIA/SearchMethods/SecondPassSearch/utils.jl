@@ -273,13 +273,6 @@ function process_scans_fragindex!(
     residuals = getResiduals(search_data)
     last_val = 0
     cycle_idx = 0
-    total_skipped_weight = 0
-    total_skipped_frag_count = 0
-    total_skipped_matched_ratio = 0
-    total_skipped_topn = 0
-    total_skipped_spectral_contrast = 0
-    total_filtered_weight = 0
-    total_filtered_frag = 0
 
     # Collect per-scan solver iteration stats for QC plots
     iter_counts = Int[]
@@ -403,11 +396,9 @@ function process_scans_fragindex!(
         update_precursor_weights!(search_data, weights, precursor_weights)
 
         # Filter low-quality precursors before expensive spectral scoring
-        n_filt_wt, n_filt_frag = filter_low_quality_precursors!(
+        filter_low_quality_precursors!(
             weights, Hs, min_frag_count; dynamic_range = dynamic_range
         )
-        total_filtered_weight += n_filt_wt
-        total_filtered_frag += n_filt_frag
 
         ScoreFragmentMatches!(
             getComplexUnscoredPsms(search_data),
@@ -463,17 +454,11 @@ function process_scans_fragindex!(
                 block_size = 500000
             )
         end
-        #t_scoring += time_ns() - _t0
         last_val = score_result.last_val
-        total_skipped_weight += score_result.skipped_weight
-        total_skipped_frag_count += score_result.skipped_frag_count
-        total_skipped_matched_ratio += score_result.skipped_matched_ratio
 
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    n_diverged = count(i -> i == params.max_iter_outer, iter_counts)
-    @info "SecondPass (fragindex) filter summary: kept=$last_val, early_filtered_weight=$total_filtered_weight, early_filtered_frag=$total_filtered_frag, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
     if first_pass
         return (psms = DataFrame(@view(getFirstPassScoredPsms(search_data)[1:last_val])),
                 iter_counts = iter_counts, col_counts = col_counts)
@@ -517,13 +502,6 @@ function process_scans!(
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     last_val = 0
-    total_skipped_weight = 0
-    total_skipped_frag_count = 0
-    total_skipped_matched_ratio = 0
-    total_skipped_topn = 0
-    total_skipped_spectral_contrast = 0
-    total_filtered_weight = 0
-    total_filtered_frag = 0
 
     # Collect per-scan solver iteration stats for QC plots
     iter_counts = Int[]
@@ -646,11 +624,9 @@ function process_scans!(
         update_precursor_weights!(search_data, weights, precursor_weights)
 
         # Filter low-quality precursors before expensive spectral scoring
-        n_filt_wt, n_filt_frag = filter_low_quality_precursors!(
+        filter_low_quality_precursors!(
             weights, Hs, params.min_frag_count; dynamic_range = params.dynamic_range
         )
-        total_filtered_weight += n_filt_wt
-        total_filtered_frag += n_filt_frag
 
         # Score PSMs
         getDistanceMetrics(weights, residuals, Hs, getComplexSpectralScores(search_data))
@@ -685,17 +661,10 @@ function process_scans!(
             block_size = 500000
         )
         last_val = score_result.last_val
-        total_skipped_weight += score_result.skipped_weight
-        total_skipped_frag_count += score_result.skipped_frag_count
-        total_skipped_matched_ratio += score_result.skipped_matched_ratio
-        total_skipped_topn += score_result.skipped_topn
-        total_skipped_spectral_contrast += score_result.skipped_spectral_contrast
 
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    n_diverged = count(i -> i == params.max_iter_outer, iter_counts)
-    @info "SecondPass (RT-indexed) filter summary: kept=$last_val, early_filtered_weight=$total_filtered_weight, early_filtered_frag=$total_filtered_frag, skipped_weight=$total_skipped_weight, skipped_frag_count=$total_skipped_frag_count, skipped_matched_ratio=$total_skipped_matched_ratio, skipped_topn=$total_skipped_topn, skipped_spectral_contrast=$total_skipped_spectral_contrast, diverged=$n_diverged/$(length(iter_counts))"
     return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
             iter_counts = iter_counts, col_counts = col_counts)
 end
