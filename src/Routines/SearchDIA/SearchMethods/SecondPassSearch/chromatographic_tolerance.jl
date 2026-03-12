@@ -136,7 +136,7 @@ function compute_chromatographic_tolerance!(
 
     elapsed = round(time() - t_start, digits=2)
     t_read_elapsed = round(t_read - t_start, digits=2)
-    n_precs_multi = sum(length(v) > 1 for (_, v) in pairs(prec_irts))
+    n_precs_multi = sum(length(v) > 1 for (_, v) in pairs(prec_irts); init=0)
 
     @info "Chromatographic iRT tolerance computed in $(elapsed)s (read=$(t_read_elapsed)s)"
     @info "  $(n_psms_read) PSMs read, $(length(prec_irts)) unique precursors, $(n_precs_multi) seen in >1 file"

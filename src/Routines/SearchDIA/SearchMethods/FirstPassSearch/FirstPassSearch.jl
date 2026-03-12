@@ -37,6 +37,7 @@ Results container for first pass prescore search.
 """
 struct FirstPassSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
+    file_fwhms::Dict{Int, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}
 end
 
 #==========================================================
@@ -50,8 +51,13 @@ function init_search_results(::FirstPassSearch, ::P, search_context::SearchConte
     mkpath(prescore_dir)
     filtered_dir = joinpath(getDataOutDir(search_context), "temp_data", "filtered_fragment_matches")
     mkpath(filtered_dir)
+    first_pass_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms")
+    mkpath(first_pass_psms_dir)
+    second_pass_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
+    mkpath(second_pass_psms_dir)
     return FirstPassSearchResults(
-        DataFrame()
+        DataFrame(),
+        Dict{Int, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}()
     )
 end
 
@@ -82,6 +88,9 @@ function process_file!(
         scan_to_prec_idx, precursors_passed = load_fragment_index_matches(
             frag_match_path, length(spectra)
         )
+        n_input_pairs = sum(ismissing(r) ? 0 : length(r) for r in scan_to_prec_idx)
+        file_name = getParsedFileName(search_context, ms_file_idx)
+        @info "FirstPassSearch input: $file_name — $(n_input_pairs) (scan, precursor) pairs"
         t_load = time()
 
         # Deconvolve with Phase 1 prescore fragment settings
@@ -108,62 +117,7 @@ function process_file!(
 
         results.psms[] = psms
 
-        # Save precursors-per-scan histogram to QC folder
-        try
-            if nrow(psms) > 0
-                counts_per_scan = combine(groupby(psms, :scan_idx), nrow => :n_precursors)
-                file_name = getParsedFileName(search_context, ms_file_idx)
-                qc_dir = joinpath(getDataOutDir(search_context), "qc_plots")
-                mkpath(qc_dir)
-                p = Plots.histogram(counts_per_scan.n_precursors,
-                    xlabel = "Precursors per scan",
-                    ylabel = "Number of scans",
-                    title = "FirstPass: $file_name",
-                    legend = false,
-                    bins = range(0, maximum(counts_per_scan.n_precursors) + 1, step=1),
-                    color = :steelblue
-                )
-                Plots.savefig(p, joinpath(qc_dir, "firstpass_precs_per_scan_$(file_name).pdf"))
-            end
-        catch e
-            @warn "Failed to save precursors-per-scan histogram" exception=(e, catch_backtrace())
-        end
-
-        # Save solveOLS iteration QC plots
-        try
-            iter_counts = search_result.iter_counts
-            col_counts = search_result.col_counts
-            if !isempty(iter_counts)
-                file_name = getParsedFileName(search_context, ms_file_idx)
-                qc_dir = joinpath(getDataOutDir(search_context), "qc_plots")
-                mkpath(qc_dir)
-
-                p_hist = Plots.histogram(iter_counts;
-                    xlabel = "Outer iterations",
-                    ylabel = "Count",
-                    title = "solveOLS iterations ($(file_name), n=$(length(iter_counts)))",
-                    legend = false,
-                    bins = min(100, max(20, div(length(iter_counts), 50)))
-                )
-                Plots.savefig(p_hist, joinpath(qc_dir, "solveOLS_iter_hist_$(file_name).pdf"))
-
-                p_scatter = Plots.scatter(col_counts, iter_counts;
-                    xlabel = "Number of columns (precursors)",
-                    ylabel = "Outer iterations",
-                    title = "solveOLS cols vs iters ($(file_name))",
-                    legend = false,
-                    markersize = 2,
-                    markeralpha = 0.3
-                )
-                Plots.savefig(p_scatter, joinpath(qc_dir, "solveOLS_cols_vs_iters_$(file_name).pdf"))
-            end
-        catch e
-            @warn "Failed to save solveOLS QC plots" exception=(e, catch_backtrace())
-        end
-
-        println()
         @info "FirstPassSearch deconvolution: $(nrow(psms)) PSMs, load=$(round(t_load - t_start, digits=2))s, deconv=$(round(t_deconv - t_load, digits=2))s"
-        println()
 
     catch e
         handle_search_error!(search_context, ms_file_idx, "FirstPassSearch", e, createFirstPassFallbackResults!, results)
@@ -218,17 +172,20 @@ function process_search_results!(
 
         # Train LightGBM on ALL PSMs, select best scan per precursor
         best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms)
+        best_psms[!, :lgbm_prob] = scores
+        best_psms[!, :prescore_q_value] = q_values
         t_lgbm = time()
 
         # RT recalibration: refit iRT spline from high-confidence PSMs
-        recalibrate_rt!(search_context, ms_file_idx, best_psms, scores)
+        recalibrate_rt!(search_context, ms_file_idx, best_psms, best_psms[!, :lgbm_prob])
+        t_recal = time()
 
-        # Write prescore table (scores only, NO fold Arrow files yet)
+        # Write prescore table (scores only — needed by aggregate_prescore_globally!)
         prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
         mkpath(prescore_dir)
         score_df = DataFrame(
             precursor_idx = best_psms[!, :precursor_idx],
-            lgbm_prob = scores,
+            lgbm_prob = best_psms[!, :lgbm_prob],
             target = best_psms[!, :target],
             irt_obs = best_psms[!, :irt_obs],
             irt_pred = best_psms[!, :irt_pred],
@@ -236,17 +193,37 @@ function process_search_results!(
             scan_idx = best_psms[!, :scan_idx]
         )
         writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
+        t_prescore_write = time()
+
+        # Phase 2 features on best_psms only (bypassing SecondPassSearch)
+        # This adds all 29 features including isotopes_captured and precursor_fraction_transmitted
+        prepare_psm_features!(best_psms, params, search_context, ms_file_idx, spectra, prescore_only=false)
+        t_phase2 = time()
+
+        # Initialize columns expected by ScoringSearch
+        initialize_prob_group_features!(best_psms, params.match_between_runs)
+        best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
+
+        # Hardcoded FWHM — replace with real estimation when bypassing SecondPass
+        results.file_fwhms[ms_file_idx] = (median_fwhm=0.2f0, mad_fwhm=0.2f0)
+
+        # Drop vector columns that can't be serialized to Arrow
+        dropVectorColumns!(best_psms)
+
+        # Write first_pass_psms for summarize_results! to filter + split by fold
+        first_pass_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms")
+        writeArrow(joinpath(first_pass_psms_dir, "$(file_name).arrow"), best_psms)
         t_write = time()
 
         # Timing summary
-        n_pass_1 = count((q_values .<= 0.01) .& best_psms[!, :target])
-        n_pass_5 = count((q_values .<= 0.05) .& best_psms[!, :target])
+        n_pass_1 = count((best_psms[!, :prescore_q_value] .<= 0.01) .& best_psms[!, :target])
+        n_pass_5 = count((best_psms[!, :prescore_q_value] .<= 0.05) .& best_psms[!, :target])
         t_total = t_write - t_start
         r = s -> round(s, digits=2)
         println()
         @info "FirstPassSearch scoring: $(nrow(psms)) PSMs → $(nrow(best_psms)) precursors ($n_pass_1 @ 1%, $n_pass_5 @ 5% FDR)\n" *
-              "  features=$(r(t_features - t_start))s, write=$(r(t_write - t_lgbm))s\n" *
-              "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train=$(r(lgbm_timings.train))s, predict=$(r(lgbm_timings.predict))s, select=$(r(lgbm_timings.select))s\n" *
+              "  features=$(r(t_features - t_start))s, recal=$(r(t_recal - t_lgbm))s, phase2=$(r(t_phase2 - t_prescore_write))s, write=$(r(t_write - t_phase2))s\n" *
+              "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train=$(r(lgbm_timings.train))s, predict=$(r(lgbm_timings.predict))s, best=$(r(lgbm_timings.best))s, qval=$(r(lgbm_timings.qval))s\n" *
               "  total=$(r(t_total))s"
         println()
 
@@ -282,17 +259,83 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:SecondPassSearchParameters}
 
+    r(t) = round(t; digits=2)
+    t_total_start = time()
+
     @info "=== FirstPassSearch: Global prescore aggregation + fragment index filtering ==="
 
     # Step 1: Global prescore aggregation → passing precursor set + Phase 1 scan lookup
+    t1_start = time()
     passing_precs, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold, params.prescore_aggregation)
+    t1 = time() - t1_start
 
     # Store results for SecondPassSearch to retrieve Phase 1 best scans
     store_results!(search_context, FirstPassSearch, (passing_precs=passing_precs, prec_best_scan=prec_best_scan))
 
-    # Step 2: Filter fragment_index_matches to only passing precursors, write filtered versions
+    # Step 2: Load first_pass_psms, filter to passing precursors, write fold-split second_pass_psms
+    t2_start = time()
     ms_data = getMSData(search_context)
     n_files = length(ms_data)
+    first_pass_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms")
+    second_pass_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
+
+    n_processed_files = 0
+    n_total_precs = 0
+    n_kept_precs = 0
+
+    for ms_file_idx in 1:n_files
+        getFailedIndicator(ms_data, ms_file_idx) && continue
+
+        file_name = getParsedFileName(ms_data, ms_file_idx)
+        psm_path = joinpath(first_pass_psms_dir, "$(file_name).arrow")
+        !isfile(psm_path) && continue
+
+        # Load first pass PSMs (already best-per-precursor with Phase 2 features)
+        tbl = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
+        n_before = nrow(tbl)
+        n_total_precs += n_before
+
+        # Filter to globally-passing precursors
+        mask = in.(tbl[!, :precursor_idx], Ref(passing_precs))
+        tbl = tbl[mask, :]
+        n_after = nrow(tbl)
+        n_kept_precs += n_after
+
+        # Register base path for ScoringSearch to find fold files
+        base_path = joinpath(second_pass_dir, file_name)
+        setSecondPassPsms!(ms_data, ms_file_idx, base_path)
+
+        # Write fold-split Arrow files
+        for fold in UInt8[0, 1]
+            fold_path = "$(base_path)_fold$(fold).arrow"
+            fold_mask = tbl[!, :cv_fold] .== fold
+            if any(fold_mask)
+                writeArrow(fold_path, tbl[fold_mask, :])
+            elseif isfile(fold_path)
+                rm(fold_path)
+            end
+        end
+
+        n_processed_files += 1
+        pct = round(100.0 * n_after / max(1, n_before), digits=1)
+        @debug "  $file_name: $n_after / $n_before precursors kept ($pct%)"
+    end
+    t2 = time() - t2_start
+
+    overall_pct = round(100.0 * n_kept_precs / max(1, n_total_precs), digits=1)
+    @info "Second pass PSMs (from first pass): $n_kept_precs / $n_total_precs precursors ($overall_pct%) across $n_processed_files files"
+
+    # Step 3: Compute chromatographic tolerance from fold files
+    t3_start = time()
+    if n_processed_files > 0
+        compute_chromatographic_tolerance!(search_context, results.file_fwhms, ms_data, n_files)
+    else
+        @warn "No files processed in FirstPassSearch — skipping chromatographic tolerance computation"
+    end
+    t3 = time() - t3_start
+
+    # Step 4: Filter fragment_index_matches to passing precursors (still needed by downstream)
+    t4_start = time()
     filtered_dir = joinpath(getDataOutDir(search_context), "temp_data", "filtered_fragment_matches")
     mkpath(filtered_dir)
 
@@ -309,17 +352,15 @@ function summarize_results!(
 
         file_name = getParsedFileName(ms_data, ms_file_idx)
 
-        # Load original fragment index matches
         tbl = DataFrame(Tables.columntable(Arrow.Table(frag_match_path)))
         n_before = nrow(tbl)
         n_total_entries += n_before
 
-        # Filter to only globally-passing precursors
-        filter!(row -> row.precursor_idx in passing_precs, tbl)
+        mask = in.(tbl[!, :precursor_idx], Ref(passing_precs))
+        tbl = tbl[mask, :]
         n_after = nrow(tbl)
         n_kept_entries += n_after
 
-        # Write filtered version
         filtered_path = joinpath(filtered_dir, "$(file_name).arrow")
         writeArrow(filtered_path, tbl)
         setFilteredFragmentMatches!(ms_data, ms_file_idx, filtered_path)
@@ -328,9 +369,13 @@ function summarize_results!(
         pct = round(100.0 * n_after / max(1, n_before), digits=1)
         @debug "  $file_name: $n_after / $n_before entries kept ($pct%)"
     end
+    t4 = time() - t4_start
 
-    overall_pct = round(100.0 * n_kept_entries / max(1, n_total_entries), digits=1)
-    @info "Filtered fragment matches: $n_kept_entries / $n_total_entries entries ($overall_pct%) across $n_filtered_files files"
+    overall_pct_frag = round(100.0 * n_kept_entries / max(1, n_total_entries), digits=1)
+    @info "Filtered fragment matches: $n_kept_entries / $n_total_entries entries ($overall_pct_frag%) across $n_filtered_files files"
+
+    t_total = time() - t_total_start
+    @info "FirstPassSearch summarize: aggregation=$(r(t1))s, fold_write=$(r(t2))s, chrom_tol=$(r(t3))s, frag_filter=$(r(t4))s, total=$(r(t_total))s"
 
     return nothing
 end
