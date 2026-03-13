@@ -178,13 +178,13 @@ abstract type IterationScheme end
     FixedIterationScheme <: IterationScheme
 
 Fixed number of boosting rounds per iteration.
-Default: [100, 200, 200] = 3 iterations with increasing rounds.
+Default: [100, 200, 200, 200] = 4 iterations with increasing rounds.
 """
 struct FixedIterationScheme <: IterationScheme
     rounds::Vector{Int}
 end
 
-FixedIterationScheme() = FixedIterationScheme([100, 200, 200])
+FixedIterationScheme() = FixedIterationScheme([100, 200, 200, 200])
 
 """
     SinglePassScheme <: IterationScheme

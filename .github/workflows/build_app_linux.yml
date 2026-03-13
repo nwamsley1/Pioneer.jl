@@ -45,7 +45,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -67,7 +67,7 @@ jobs:
           version: '1.11'
 
       - name: Cache Julia packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.julia/registries
@@ -139,6 +139,12 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
+      - name: Write bundled version
+        shell: bash
+        run: |
+          echo "${{ steps.get_version.outputs.version }}" > \
+            build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
+
       - name: Pre-download artifacts
         shell: bash
         run: |
@@ -159,10 +165,20 @@ jobs:
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
           chmod -R a+rwx deb/usr/local/Pioneer/share/julia
           info=src/build/package_info.json
-          PACKAGE=$(jq -r '.package' $info)
+          RAW_VERSION='${{ steps.get_version.outputs.version }}'
+          BASE_PACKAGE=$(jq -r '.package' $info)
+          PACKAGE="$BASE_PACKAGE"
           MAINTAINER=$(jq -r '.maintainer' $info)
           DESCRIPTION=$(jq -r '.description' $info)
           DEB_VERSION='${{ steps.norm.outputs.deb }}'
+          if [[ "$RAW_VERSION" == dev-* ]]; then
+            PACKAGE="${BASE_PACKAGE}-dev"
+            CONFLICTS="$BASE_PACKAGE"
+            REPLACES="$BASE_PACKAGE"
+          else
+            CONFLICTS="${BASE_PACKAGE}-dev"
+            REPLACES="${BASE_PACKAGE}-dev"
+          fi
 
           mkdir -p deb/DEBIAN
           cat <<EOF > deb/DEBIAN/control
@@ -170,6 +186,9 @@ jobs:
           Version: $DEB_VERSION
           Architecture: amd64
           Maintainer: $MAINTAINER
+          Provides: $BASE_PACKAGE
+          Conflicts: $CONFLICTS
+          Replaces: $REPLACES
           Description: $DESCRIPTION
           EOF
 
@@ -182,14 +201,14 @@ jobs:
           zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
 
       - name: Upload zipped binaries
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
 
       - name: Upload .deb (release tags or forced dispatch)
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}-deb
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb

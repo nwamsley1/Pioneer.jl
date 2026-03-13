@@ -50,7 +50,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -82,7 +82,7 @@ jobs:
           arch: ${{ matrix.arch }}
 
       - name: Cache Julia packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.julia/registries
@@ -216,6 +216,12 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
+      - name: Write bundled version
+        shell: bash
+        run: |
+          echo "${{ steps.get_version.outputs.version }}" > \
+            build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
+
       - name: Codesign & package macOS app (release tags or forced dispatch)
         if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
         env:
@@ -255,6 +261,7 @@ jobs:
           DIST="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
           PKGROOT="pkgroot"
           VERSION='${{ steps.norm.outputs.pkg }}'
+          RAW_VERSION='${{ steps.get_version.outputs.version }}'
 
           echo "Starting codesigning at $(date)"
 
@@ -273,7 +280,13 @@ jobs:
           mkdir -p "$PKGROOT/usr/local/bin"
           ln -sf /usr/local/Pioneer/pioneer "$PKGROOT/usr/local/bin/pioneer"
 
-          IDENTIFIER=$(jq -r '.identifier' src/build/package_info.json)
+          BASE_IDENTIFIER=$(jq -r '.identifier' src/build/package_info.json)
+          if [[ "$RAW_VERSION" == dev-* ]]; then
+            IDENTIFIER="${BASE_IDENTIFIER}.dev"
+          else
+            IDENTIFIER="$BASE_IDENTIFIER"
+          fi
+          echo "Using package identifier: $IDENTIFIER"
 
           pkgbuild --root "$PKGROOT" \
                   --identifier "$IDENTIFIER" \
@@ -351,14 +364,14 @@ jobs:
           security list-keychains -d user -s login.keychain
 
       - name: Upload zipped binaries
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ matrix.identifier }}
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
 
       - name: Upload signed package (release tags or forced dispatch)
         if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ matrix.identifier }}-pkg
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg

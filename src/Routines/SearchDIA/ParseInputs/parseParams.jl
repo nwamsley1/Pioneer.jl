@@ -46,6 +46,10 @@ function params_to_dict(params::PioneerParameters)
     function namedtuple_to_dict(nt::NamedTuple)
         result = Dict{String, Any}()
         for (k, v) in pairs(nt)
+            if k == :match_between_runs
+                # Keep runtime behavior deterministic while omitting deprecated config keys.
+                continue
+            end
             key_str = string(k)
             result[key_str] = if v isa NamedTuple
                 namedtuple_to_dict(v)
@@ -130,7 +134,7 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     end
 
     # Parse each section
-    global_settings = dict_to_namedtuple(params["global"])
+    global_settings = (; dict_to_namedtuple(params["global"])..., match_between_runs=false)
     parameter_tuning = dict_to_namedtuple(params["parameter_tuning"])
     first_search = dict_to_namedtuple(params["first_search"])
     quant_search = dict_to_namedtuple(params["quant_search"])

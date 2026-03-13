@@ -105,13 +105,13 @@ Multi-layered approach:
 - PSM-level (Percolator-style iterative training)
 - Precursor-level (two-stage global + experiment-wide)
 - Protein-level (target-decoy competition)
-- Transfer-level (FTR for match-between-runs)
+- Transfer-level (FTR for cross-run transfer candidates)
 
 ### Novel Contributions
 1. **Intensity-aware fragment indexing** - accounts for predicted intensities in scoring
 2. **NCE alignment** - maps vendor collision energies to PROCAL Lumos scale
 3. **Conditional fragment isotopes** - models isotopes based on quadrupole transmission
-4. **FTR filtering** - controls false transfers in match-between-runs
+4. **FTR filtering** - controls false transfers in cross-run transfer candidates
 5. **Integrated workflow** - spectral prediction (Altimeter) → search → quantification (Pioneer)
 
 ## Technical Details

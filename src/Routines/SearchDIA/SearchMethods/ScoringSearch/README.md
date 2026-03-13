@@ -93,7 +93,7 @@ PSM Count Decision Tree:
 - **ADVANCED_FEATURE_SET**: 50+ features including all spectral, RT, MS1, and quality metrics
 - **REDUCED_FEATURE_SET**: 40+ core features for balanced performance  
 - **MINIMAL_FEATURE_SET**: 5 essential features (spectral contrast, residuals, error norms, intensity explained)
-- **MBR Features**: Automatically appended when match_between_runs=true
+- **Cross-run transfer features**: Currently disabled in production runs
 
 ## Function Call Flow
 
@@ -104,7 +104,6 @@ score_precursor_isotope_traces(
     second_pass_folder,
     file_paths,
     precursors,
-    match_between_runs,
     max_q_value_lightgbm_rescore,
     max_q_value_mbr_itr,
     min_PEP_neg_threshold_itr,
@@ -158,7 +157,7 @@ sort_of_percolator_in_memory!()
 ├── Initialize probability arrays and CV fold mappings
 ├── For each CV fold:
 │   ├── Split train/test data
-│   ├── For each iteration in iter_scheme [100, 200, 200]:
+│   ├── For each iteration in iter_scheme [100, 200, 200, 200]:
 │   │   ├── get_training_data_for_iteration!()
 │   │   │   ├── First iteration: Use all training PSMs
 │   │   │   └── Later iterations: 
@@ -168,18 +167,18 @@ sort_of_percolator_in_memory!()
 │   │   │   └── LightGBMModel(hyperparams...)
 │   │   ├── Predict on train/test sets
 │   │   ├── Calculate q-values
-│   │   └── update_mbr_features!() [if match_between_runs]
+│   │   └── update_mbr_features!() [transfer path only]
 │   └── Store fold predictions
-├── Handle MBR transfer candidates [if match_between_runs]
+├── Handle MBR transfer candidates [transfer path only]
 └── Return trained models (Dict{UInt8, LightGBMModelVector})
 ```
 
 ### Key Training Features
 
 1. **Cross-Validation**: Uses CV folds from spectral library (typically 2 folds with values 0,1)
-2. **Iterative Training**: 3-stage scheme [100, 200, 200] rounds with progressive filtering
+2. **Iterative Training**: 4-stage scheme [100, 200, 200, 200] rounds with progressive filtering
 3. **Negative Mining**: Converts low-scoring targets to negatives in later iterations
-4. **MBR Integration**: Optional match-between-runs features added in final iteration
+4. **Transfer Integration**: Cross-run transfer features exist in code but are disabled in production runs
 5. **Dynamic Training Data**: Training set filtered by q-value thresholds between iterations
 
 ## Probit Regression Pipeline
@@ -200,7 +199,7 @@ probit_regression_scoring_cv!()
 │   │   └── Predict probabilities on test set
 │   └── Store fold predictions
 ├── Assign final probabilities to DataFrame
-├── Create MBR columns for compatibility [if match_between_runs]
+├── Create MBR columns for compatibility [transfer path only]
 ├── Validate and clamp probability values
 └── Clean up temporary columns
 ```
@@ -258,8 +257,7 @@ The trained models integrate into the broader ScoringSearch pipeline:
     "global_settings": {
         "scoring": {
             "q_value_threshold": 0.01
-        },
-        "match_between_runs": true
+        }
     }
 }
 ```
@@ -271,7 +269,6 @@ The trained models integrate into the broader ScoringSearch pipeline:
 - **max_q_value_mbr_itr**: Caps MBR transfers admitted to the iterative training (ITR) stage
 - **min_PEP_neg_threshold_itr**: Sets the PEP cutoff for relabeling weak targets as negatives during ITR
 - **q_value_threshold**: Used for model performance evaluation during comparison
-- **match_between_runs**: Enables MBR features and processing
 
 ## Performance Characteristics
 

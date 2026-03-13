@@ -11,12 +11,46 @@ concurrency:
   cancel-in-progress: false 
 
 jobs:
+  validate_release_version:
+    name: Validate Release Version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - name: Verify tag matches Project.toml version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "Non-tag release run; skipping Project.toml version validation."
+            exit 0
+          fi
+
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PROJECT_VERSION=$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Project.toml | head -n1)
+
+          if [[ -z "$PROJECT_VERSION" ]]; then
+            echo "ERROR: Could not parse version from Project.toml"
+            exit 1
+          fi
+
+          if [[ "$TAG_VERSION" != "$PROJECT_VERSION" ]]; then
+            echo "ERROR: Tag version v$TAG_VERSION does not match Project.toml version $PROJECT_VERSION"
+            exit 1
+          fi
+
+          echo "Validated tag v$TAG_VERSION matches Project.toml version $PROJECT_VERSION"
+
   linux:
+    needs: validate_release_version
     uses: ./.github/workflows/build_app_linux.yml
   macos:
+    needs: validate_release_version
     uses: ./.github/workflows/build_app_macos.yml
     secrets: inherit
   windows:
+    needs: validate_release_version
     uses: ./.github/workflows/build_app_windows.yml
 
   publish:
@@ -32,7 +66,7 @@ jobs:
       actions: read
     steps:
       - name: Checkout just the publish-release action
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
           sparse-checkout: |
@@ -57,15 +91,15 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}

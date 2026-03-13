@@ -1,6 +1,6 @@
 name = "Pioneer"
 uuid = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
-version = "0.7.0"
+version = "0.7.1"
 authors = ["Nathan Wamsley"]
 
 [deps]

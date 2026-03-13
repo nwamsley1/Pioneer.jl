@@ -1,0 +1,162 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to set in Project.toml (X.Y.Z)"
+        required: true
+        type: string
+      source_branch:
+        description: "Branch to update (usually develop)"
+        required: false
+        default: "develop"
+        type: string
+      target_branch:
+        description: "Branch to merge into for release (usually main)"
+        required: false
+        default: "main"
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_branch }}
+
+      - name: Validate version and update Project.toml
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ inputs.version }}"
+          SOURCE_BRANCH="${{ inputs.source_branch }}"
+          TARGET_BRANCH="${{ inputs.target_branch }}"
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: version must match X.Y.Z (received: $VERSION)"
+            exit 1
+          fi
+
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "ERROR: tag v${VERSION} already exists"
+            exit 1
+          fi
+
+          CURRENT_VERSION=$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Project.toml | head -n1)
+          if [[ -z "$CURRENT_VERSION" ]]; then
+            echo "ERROR: unable to parse current Project.toml version"
+            exit 1
+          fi
+
+          sed -i -E 's/^version[[:space:]]*=[[:space:]]*"[^"]+".*/version = "'"$VERSION"'"/' Project.toml
+
+          NEW_VERSION=$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Project.toml | head -n1)
+          if [[ "$NEW_VERSION" != "$VERSION" ]]; then
+            echo "ERROR: failed to update Project.toml version to $VERSION"
+            exit 1
+          fi
+
+          if [[ "$CURRENT_VERSION" == "$VERSION" ]]; then
+            echo "Project.toml already set to $VERSION"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "source_branch=$SOURCE_BRANCH"
+            echo "target_branch=$TARGET_BRANCH"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push version bump
+        if: steps.bump.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Project.toml
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }}"
+          git push origin "HEAD:${{ steps.bump.outputs.source_branch }}"
+
+      - name: Create or update release PR
+        uses: actions/github-script@v7
+        env:
+          RELEASE_VERSION: ${{ steps.bump.outputs.version }}
+          SOURCE_BRANCH: ${{ steps.bump.outputs.source_branch }}
+          TARGET_BRANCH: ${{ steps.bump.outputs.target_branch }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const version = process.env.RELEASE_VERSION;
+            const source = process.env.SOURCE_BRANCH;
+            const target = process.env.TARGET_BRANCH;
+
+            if (source === target) {
+              core.notice(`Source and target are both ${source}; skipping PR creation.`);
+              return;
+            }
+
+            const title = `release: v${version}`;
+            const body = [
+              `Prepare Pioneer release v${version}.`,
+              "",
+              "This PR is managed by the `Prepare Release` workflow.",
+              "",
+              "After merge:",
+              `1. Create tag \`v${version}\` on the merge commit in \`${target}\`.`,
+              "2. The `Release` workflow will publish binaries and installers."
+            ].join("\n");
+
+            const existing = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "open",
+              head: `${owner}:${source}`,
+              base: target,
+              per_page: 100
+            });
+
+            if (existing.length > 0) {
+              const pr = existing[0];
+              await github.rest.pulls.update({
+                owner,
+                repo,
+                pull_number: pr.number,
+                title,
+                body
+              });
+              core.notice(`Updated existing PR #${pr.number}: ${pr.html_url}`);
+            } else {
+              try {
+                const pr = await github.rest.pulls.create({
+                  owner,
+                  repo,
+                  head: source,
+                  base: target,
+                  title,
+                  body
+                });
+                core.notice(`Created PR #${pr.data.number}: ${pr.data.html_url}`);
+              } catch (error) {
+                const msg = String(error?.message || error);
+                if (msg.includes("No commits between")) {
+                  core.notice(`No commits between ${source} and ${target}; skipping PR creation.`);
+                  return;
+                }
+                throw error;
+              }
+            }

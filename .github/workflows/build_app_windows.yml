@@ -45,7 +45,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -68,7 +68,7 @@ jobs:
           arch: ${{ matrix.arch }}
 
       - name: Cache Julia packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             C:\Users\runneradmin\.julia\registries
@@ -135,6 +135,12 @@ jobs:
         run: |
           Copy-Item src\build\CLI\pioneer.bat build\Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
 
+      - name: Write bundled version
+        shell: pwsh
+        run: |
+          Set-Content -Path "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\VERSION" `
+                      -Value "${{ steps.get_version.outputs.version }}"
+
       - name: Pre-download artifacts
         shell: pwsh
         run: |
@@ -193,6 +199,10 @@ jobs:
           $info = Get-Content src\build\package_info.json | ConvertFrom-Json
           $desc       = $info.description
           $identifier = $info.identifier
+          $rawVersion = '${{ steps.get_version.outputs.version }}'
+          $isDevBuild = $rawVersion -like "dev-*"
+          $allowDowngrades = if ($isDevBuild) { "yes" } else { "no" }
+          Write-Host "MSI downgrade mode: $allowDowngrades (version=$rawVersion)"
 
           & heat.exe dir $pioneerRoot `
             -cg ProductComponents `
@@ -207,6 +217,7 @@ jobs:
             -dProductVersion="${{ steps.norm.outputs.msi }}" `
             -dProductDescription="$desc" `
             -dPackageIdentifier="$identifier" `
+            -dAllowDowngrades="$allowDowngrades" `
             -dPlatform="x64" `
             -arch x64 `
             -ext WixUIExtension `
@@ -228,14 +239,14 @@ jobs:
                            -DestinationPath "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip"
 
       - name: Upload zipped binaries
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ matrix.identifier }}
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
 
       - name: Upload MSI (release tags or forced dispatch)
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ matrix.identifier }}-msi
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi

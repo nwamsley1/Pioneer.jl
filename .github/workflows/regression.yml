@@ -16,6 +16,7 @@ on:
           - APMS_Astral
           - EWZ_2P_MBR_Exploris
           - KEAP1KO_Eclipse
+          - MacCoss_Eclipse_Normalization
           - MTAC_3P_Alternating
           - MTAC_3P_Standard
           - MTAC_Yeast_Alternating_3min
@@ -72,7 +73,7 @@ jobs:
       GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (startsWith(github.ref, 'refs/tags/') && github.ref_name || github.sha) }}
       GITHUB_REF_NAME: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || github.ref_name }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -768,7 +769,7 @@ jobs:
           run_root_raw="${CLUSTER_RUN_ROOT:-/storage1/fs1/d.goldfarb/Active/Automation/Pioneer}"
           run_root="${run_root_raw%/}/runs"
           release_tag="${RELEASE_TAG:?RELEASE_TAG not set}"
-          release_dir="${run_root_raw%/}/release/${release_tag}"
+          release_dir="${run_root_raw%/}/metrics/release/${release_tag}"
 
           ssh_options=(
             -o BatchMode=yes
@@ -968,7 +969,7 @@ jobs:
 
       - name: Upload regression HTML report artifact
         if: env.REPORT_PAGES_DIR != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         env:
           REPORT_PAGES_DIR: ${{ env.REPORT_PAGES_DIR }}
         with:

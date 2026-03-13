@@ -1,5 +1,48 @@
 #!/bin/bash
 
+resolve_script_dir() {
+    local script_path="$1"
+    while [ -L "$script_path" ]; do
+        local script_dir
+        script_dir="$(cd -P "$(dirname "$script_path")" && pwd)"
+        script_path="$(readlink "$script_path")"
+        [[ $script_path != /* ]] && script_path="$script_dir/$script_path"
+    done
+    cd -P "$(dirname "$script_path")" && pwd
+}
+
+read_project_version() {
+    local project_toml="$1"
+    if [ ! -f "$project_toml" ]; then
+        return 1
+    fi
+    sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$project_toml" | head -n1
+}
+
+get_pioneer_version() {
+    if [ -n "$PIONEER_VERSION" ]; then
+        echo "$PIONEER_VERSION"
+        return
+    fi
+
+    if [ -f "$SCRIPT_DIR/VERSION" ]; then
+        head -n1 "$SCRIPT_DIR/VERSION"
+        return
+    fi
+
+    local project_version=""
+    project_version="$(read_project_version "$SCRIPT_DIR/../../../Project.toml")"
+    if [ -n "$project_version" ]; then
+        echo "$project_version"
+        return
+    fi
+
+    echo "unknown"
+}
+
+SCRIPT_DIR="$(resolve_script_dir "$0")"
+PIONEER_VERSION="$(get_pioneer_version)"
+
 # Set default threads to auto if not specified
 if [ -z "$JULIA_NUM_THREADS" ]; then
     export JULIA_NUM_THREADS=auto
@@ -11,6 +54,7 @@ VALID_COMMANDS="search predict params-search params-predict convert-raw convert-
 
 show_help() {
     echo "Pioneer - Mass Spectrometry Data Analysis"
+    echo "Version: $PIONEER_VERSION"
     echo ""
     echo "Usage: pioneer [options] <subcommand> [subcommand-args...]"
     echo ""
@@ -18,6 +62,7 @@ show_help() {
     echo "  --threads N        Set number of Julia threads (default: auto)"
     echo "  --threads=N        Alternative syntax for setting threads"
     echo "  --help, -h         Show this help message"
+    echo "  --version, -V      Show Pioneer version"
     echo ""
     echo "Subcommands:"
     echo "  search <params.json>                        Perform DIA search analysis"
@@ -48,6 +93,10 @@ show_help() {
     echo "For subcommand-specific help:"
     echo "  pioneer <subcommand> --help"
 }
+
+show_version() {
+    echo "Pioneer version: $PIONEER_VERSION"
+}
 # Parse command line arguments for thread override
 SUBCOMMAND=""
 SUBCOMMAND_ARGS=()
@@ -70,6 +119,15 @@ while [[ $# -gt 0 ]]; do
         --help|-h|-help|/\?)
             if [[ -z "$SUBCOMMAND" ]]; then
                 show_help
+                exit 0
+            else
+                SUBCOMMAND_ARGS+=("$1")
+                shift
+            fi
+            ;;
+        --version|-V)
+            if [[ -z "$SUBCOMMAND" ]]; then
+                show_version
                 exit 0
             else
                 SUBCOMMAND_ARGS+=("$1")
@@ -161,15 +219,6 @@ esac
     #params-empirical)
     #    SUBCOMMAND="GetParseSpecLibParams"
     #    ;;
-
-# Resolve the actual script location, handling symlinks
-SCRIPT_PATH="$0"
-while [ -L "$SCRIPT_PATH" ]; do
-    SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
-    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
-    [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
-done
-SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 # Call the actual Pioneer executable with subcommand and its arguments
 # The executables are in the bin/ subdirectory relative to the script location

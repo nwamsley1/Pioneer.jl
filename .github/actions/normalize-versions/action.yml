@@ -26,6 +26,33 @@ runs:
         CLEAN="${RAW#[vV]}"
         CLEAN="${CLEAN%%+*}"
 
+        # ---- Dev builds: derive installer-safe numeric versions from timestamp ----
+        if [[ "$CLEAN" =~ ^[dD][eE][vV]-([0-9]{14})$ ]]; then
+          TS="${BASH_REMATCH[1]}"
+          YEAR="${TS:0:4}"
+          MONTH="${TS:4:2}"
+          DAY="${TS:6:2}"
+          HOUR="${TS:8:2}"
+          MINUTE="${TS:10:2}"
+          SECOND="${TS:12:2}"
+
+          # Debian supports explicit prerelease markers with '~'
+          DEB="0.0.0~dev.${TS}"
+
+          # pkgbuild requires numeric dotted version; use stable timestamp-derived encoding
+          PKG="0.$((10#$YEAR - 2000)).$((10#$MONTH * 10000 + 10#$DAY * 100 + 10#$HOUR))"
+
+          # MSI allows x.y.z[.w]; keep fields bounded and numeric.
+          MSI="1.$((10#$YEAR - 2000)).$((10#$MONTH * 1000 + 10#$DAY * 24 + 10#$HOUR)).$((10#$MINUTE * 60 + 10#$SECOND))"
+
+          {
+            echo "deb=$DEB"
+            echo "pkg=$PKG"
+            echo "msi=$MSI"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
         BASE="${CLEAN%%-*}"   # before any -pre
         PRE="${CLEAN#*-}"
         HAS_PRE=0; [[ "$CLEAN" == *-* ]] && HAS_PRE=1

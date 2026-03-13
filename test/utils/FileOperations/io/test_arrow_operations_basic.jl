@@ -3,7 +3,8 @@ using DataFrames, Arrow, Tables
 
 using Pioneer: PSMFileReference,
                sort_file_by_keys!, write_arrow_file, transform_and_write!,
-               load_dataframe, column_names, has_columns, create_reference
+               load_dataframe, column_names, has_columns, create_reference,
+               _ensure_typed_missing_file_columns!
 
 @testset "ArrowOperations basics" begin
     temp_dir = mktempdir()
@@ -49,4 +50,68 @@ using Pioneer: PSMFileReference,
     # transform_and_write! to new path (no change to original)
     new_ref = transform_and_write!(d->d, ref, f2)
     @test load_dataframe(new_ref) == df_only_id
+end
+
+@testset "Arrow record-batch missing Float32 stability" begin
+    temp_dir = mktempdir()
+    out_path = joinpath(temp_dir, "missing_float32_batches.arrow")
+
+    open(Arrow.Writer, out_path; file=false) do writer
+        batch1 = DataFrame(
+            id = 1:2,
+            run_col = Union{Missing, Float32}[1.0f0, missing]
+        )
+        Arrow.write(writer, batch1)
+
+        # Match Pioneer write path: add absent run columns as typed Missing Float32.
+        batch2 = DataFrame(id = 3:4)
+        _ensure_typed_missing_file_columns!(batch2, ["run_col"], Float32)
+        Arrow.write(writer, batch2)
+    end
+
+    table = Arrow.Table(out_path)
+    c = Tables.getcolumn(table, :run_col)
+
+    @test eltype(c) == Union{Missing, Float32}
+    @test c[1] == 1.0f0
+    @test ismissing(c[2])
+    @test ismissing(c[3])
+    @test ismissing(c[4])
+end
+
+@testset "Arrow record-batch unstack all-missing stability" begin
+    temp_dir = mktempdir()
+    out_path = joinpath(temp_dir, "unstack_all_missing_batches.arrow")
+
+    long1 = DataFrame(
+        precursor_idx = UInt32[1, 2],
+        file_name = ["run_col", "run_col"],
+        peak_area = Union{Missing, Float32}[1.0f0, missing]
+    )
+    long2 = DataFrame(
+        precursor_idx = UInt32[3, 4],
+        file_name = ["run_col", "run_col"],
+        peak_area = Union{Missing, Float32}[missing, missing]
+    )
+
+    batch1 = unstack(long1, [:precursor_idx], :file_name, :peak_area; combine=sum)
+    batch2 = unstack(long2, [:precursor_idx], :file_name, :peak_area; combine=sum)
+    @test eltype(batch2.run_col) == Missing
+
+    _ensure_typed_missing_file_columns!(batch1, ["run_col"], Float32)
+    _ensure_typed_missing_file_columns!(batch2, ["run_col"], Float32)
+
+    open(Arrow.Writer, out_path; file=false) do writer
+        Arrow.write(writer, batch1)
+        Arrow.write(writer, batch2)
+    end
+
+    table = Arrow.Table(out_path)
+    c = Tables.getcolumn(table, :run_col)
+
+    @test eltype(c) == Union{Missing, Float32}
+    @test c[1] == 1.0f0
+    @test ismissing(c[2])
+    @test ismissing(c[3])
+    @test ismissing(c[4])
 end
