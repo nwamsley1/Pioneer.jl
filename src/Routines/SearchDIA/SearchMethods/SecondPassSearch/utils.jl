@@ -1777,17 +1777,18 @@ end
 const DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD = 0.05f0
 
 """
-    aggregate_prescore_globally!(search_context::SearchContext, qvalue_threshold::Float32, aggregation::PrescoreAggregationStrategy) -> (Set{UInt32}, Dictionary{UInt32, Dictionary{Int, UInt32}})
+    aggregate_prescore_globally!(search_context, qvalue_threshold, aggregation; fold_suffix="") -> (Set{UInt32}, Dictionary{UInt32, Dictionary{Int, UInt32}})
 
-Load per-file LightGBM prescore arrow files, calibrate per-file scores via
-`calibrate_file_scores(aggregation, ...)`, aggregate via `combine_scores(aggregation, ...)`,
-compute global q-values, and return (1) the set of precursor indices passing at
-q ≤ qvalue_threshold and (2) per-precursor Phase 1 best scan lookup mapping
-precursor_idx → (file_idx → scan_idx).
+Load per-file LightGBM prescore arrow files (with optional `fold_suffix` appended to
+filenames), calibrate per-file scores via `calibrate_file_scores(aggregation, ...)`,
+aggregate via `combine_scores(aggregation, ...)`, compute global q-values, and return
+(1) the set of precursor indices passing at q ≤ qvalue_threshold and (2) per-precursor
+Phase 1 best scan lookup mapping precursor_idx → (file_idx → scan_idx).
 """
 function aggregate_prescore_globally!(search_context::SearchContext,
                                       qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD,
-                                      aggregation::PrescoreAggregationStrategy=PEPCalibratedAggregation())
+                                      aggregation::PrescoreAggregationStrategy=PEPCalibratedAggregation();
+                                      fold_suffix::String="")
     r(t) = round(t; digits=2)
     t_total_start = time()
 
@@ -1816,7 +1817,7 @@ function aggregate_prescore_globally!(search_context::SearchContext,
     for ms_file_idx in 1:n_files
         getFailedIndicator(ms_data, ms_file_idx) && continue
         file_name = getParsedFileName(ms_data, ms_file_idx)
-        score_path = joinpath(prescore_dir, "$(file_name).arrow")
+        score_path = joinpath(prescore_dir, "$(file_name)$(fold_suffix).arrow")
         !isfile(score_path) && continue
 
         t_r = time()

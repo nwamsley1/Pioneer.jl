@@ -182,9 +182,10 @@ function process_search_results!(
         recalibrate_rt!(search_context, ms_file_idx, best_psms, best_psms[!, :lgbm_prob])
         t_recal = time()
 
-        # Write prescore table (scores only — needed by aggregate_prescore_globally!)
+        # Write per-fold prescore tables (scores only — needed by aggregate_prescore_globally!)
         prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
         mkpath(prescore_dir)
+        precursors = getPrecursors(getSpecLib(search_context))
         score_df = DataFrame(
             precursor_idx = best_psms[!, :precursor_idx],
             lgbm_prob = best_psms[!, :lgbm_prob],
@@ -194,7 +195,11 @@ function process_search_results!(
             rt = best_psms[!, :rt],
             scan_idx = best_psms[!, :scan_idx]
         )
-        writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
+        score_cv_fold = UInt8[getCvFold(precursors, pid) for pid in score_df.precursor_idx]
+        for fold in UInt8[0, 1]
+            fold_mask = score_cv_fold .== fold
+            any(fold_mask) && writeArrow(joinpath(prescore_dir, "$(file_name)_fold$(fold).arrow"), score_df[fold_mask, :])
+        end
         t_prescore_write = time()
 
         # Phase 2: compute isotopes_captured (needs spectra data)
@@ -222,9 +227,13 @@ function process_search_results!(
         # Drop vector columns that can't be serialized to Arrow
         dropVectorColumns!(best_psms)
 
-        # Write first_pass_psms for summarize_results! to filter + split by fold
+        # Write per-fold first_pass_psms for summarize_results! to filter
         first_pass_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms")
-        writeArrow(joinpath(first_pass_psms_dir, "$(file_name).arrow"), best_psms)
+        best_cv_fold = UInt8[getCvFold(precursors, pid) for pid in best_psms.precursor_idx]
+        for fold in UInt8[0, 1]
+            fold_mask = best_cv_fold .== fold
+            any(fold_mask) && writeArrow(joinpath(first_pass_psms_dir, "$(file_name)_fold$(fold).arrow"), best_psms[fold_mask, :])
+        end
         t_write = time()
 
         # Timing summary
@@ -300,9 +309,16 @@ function summarize_results!(
 
     @info "=== FirstPassSearch: Global prescore aggregation + fragment index filtering ==="
 
-    # Step 1: Global prescore aggregation → passing precursor set + Phase 1 scan lookup
+    # Step 1: Per-fold global prescore aggregation → passing precursor sets + Phase 1 scan lookup
     t1_start = time()
-    passing_precs, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold, params.prescore_aggregation)
+    passing_fold0, best_scan_fold0 = aggregate_prescore_globally!(
+        search_context, params.global_prescore_qvalue_threshold, params.prescore_aggregation;
+        fold_suffix="_fold0")
+    passing_fold1, best_scan_fold1 = aggregate_prescore_globally!(
+        search_context, params.global_prescore_qvalue_threshold, params.prescore_aggregation;
+        fold_suffix="_fold1")
+    passing_precs = union(passing_fold0, passing_fold1)
+    prec_best_scan = merge(best_scan_fold0, best_scan_fold1)
     t1 = time() - t1_start
 
     # Store results for SecondPassSearch to retrieve Phase 1 best scans
@@ -330,58 +346,72 @@ function summarize_results!(
         getFailedIndicator(ms_data, ms_file_idx) && continue
 
         file_name = getParsedFileName(ms_data, ms_file_idx)
-        psm_path = joinpath(first_pass_psms_dir, "$(file_name).arrow")
-        !isfile(psm_path) && continue
-
-        # Load first pass PSMs (best-per-precursor with prescore features + isotopes)
-        tbl = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
-        n_before = nrow(tbl)
-        n_total_precs += n_before
-
-        # Filter to globally-passing precursors
-        mask = in.(tbl[!, :precursor_idx], Ref(passing_precs))
-        tbl = tbl[mask, :]
-        n_after = nrow(tbl)
-        n_kept_precs += n_after
-
-        # Add Phase 2 library-lookup columns (deferred from process_search_results!)
-        N = nrow(tbl)
-        irt_diff_col = Vector{Float32}(undef, N)
-        prec_mz_col = Vector{Float32}(undef, N)
-        pair_id_col = Vector{UInt32}(undef, N)
-        entrap_col = Vector{UInt8}(undef, N)
-        _compute_phase2_columns!(
-            tbl[!, :precursor_idx], tbl[!, :irt_obs],
-            prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
-            irt_diff_col, prec_mz_col, pair_id_col, entrap_col
-        )
-        tbl[!, :irt_diff] = irt_diff_col
-        tbl[!, :prec_mz] = prec_mz_col
-        tbl[!, :pair_id] = pair_id_col
-        tbl[!, :entrapment_group_id] = entrap_col
-
-        sort!(tbl, :rt)
-        initialize_prob_group_features!(tbl, params.match_between_runs)
-        dropVectorColumns!(tbl)
 
         # Register base path for ScoringSearch to find fold files
         base_path = joinpath(second_pass_dir, file_name)
         setSecondPassPsms!(ms_data, ms_file_idx, base_path)
 
-        # Write fold-split Arrow files
+        file_has_data = false
+        n_before_file = 0
+        n_after_file = 0
+
         for fold in UInt8[0, 1]
-            fold_path = "$(base_path)_fold$(fold).arrow"
-            fold_mask = tbl[!, :cv_fold] .== fold
-            if any(fold_mask)
-                writeArrow(fold_path, tbl[fold_mask, :])
-            elseif isfile(fold_path)
-                rm(fold_path)
+            passing = fold == 0 ? passing_fold0 : passing_fold1
+            psm_path = joinpath(first_pass_psms_dir, "$(file_name)_fold$(fold).arrow")
+            fold_out_path = "$(base_path)_fold$(fold).arrow"
+
+            if !isfile(psm_path)
+                isfile(fold_out_path) && rm(fold_out_path)
+                continue
             end
+
+            # Load this fold's first pass PSMs
+            tbl = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
+            n_before = nrow(tbl)
+            n_before_file += n_before
+            n_total_precs += n_before
+
+            # Filter to this fold's passing precursors
+            mask = in.(tbl[!, :precursor_idx], Ref(passing))
+            tbl = tbl[mask, :]
+            n_after = nrow(tbl)
+            n_after_file += n_after
+            n_kept_precs += n_after
+
+            if n_after == 0
+                isfile(fold_out_path) && rm(fold_out_path)
+                continue
+            end
+
+            # Add Phase 2 library-lookup columns (deferred from process_search_results!)
+            N = nrow(tbl)
+            irt_diff_col = Vector{Float32}(undef, N)
+            prec_mz_col = Vector{Float32}(undef, N)
+            pair_id_col = Vector{UInt32}(undef, N)
+            entrap_col = Vector{UInt8}(undef, N)
+            _compute_phase2_columns!(
+                tbl[!, :precursor_idx], tbl[!, :irt_obs],
+                prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
+                irt_diff_col, prec_mz_col, pair_id_col, entrap_col
+            )
+            tbl[!, :irt_diff] = irt_diff_col
+            tbl[!, :prec_mz] = prec_mz_col
+            tbl[!, :pair_id] = pair_id_col
+            tbl[!, :entrapment_group_id] = entrap_col
+
+            sort!(tbl, :rt)
+            initialize_prob_group_features!(tbl, params.match_between_runs)
+            dropVectorColumns!(tbl)
+
+            writeArrow(fold_out_path, tbl)
+            file_has_data = true
         end
 
-        n_processed_files += 1
-        pct = round(100.0 * n_after / max(1, n_before), digits=1)
-        @debug "  $file_name: $n_after / $n_before precursors kept ($pct%)"
+        if file_has_data
+            n_processed_files += 1
+            pct = round(100.0 * n_after_file / max(1, n_before_file), digits=1)
+            @debug "  $file_name: $n_after_file / $n_before_file precursors kept ($pct%)"
+        end
     end
     t2 = time() - t2_start
 
