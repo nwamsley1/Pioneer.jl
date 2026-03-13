@@ -460,12 +460,12 @@ getRtIrtMap(s::SearchContext) = s.rt_irt_map
 getPrecursorDict(s::SearchContext) = s.precursor_dict[]
 getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
-getPredIrt(s::SearchContext) = s.irt_obs
-getPredIrt(s::SearchContext, prec_idx::Int64) = s.irt_obs[prec_idx]
-getPredIrt(s::SearchContext, prec_idx::UInt32) = s.irt_obs[prec_idx]
+# Use library iRT array directly — O(1) indexing, no Dict overhead
+getPredIrt(s::SearchContext) = getIrt(getPrecursors(getSpecLib(s)))
+getPredIrt(s::SearchContext, prec_idx::Int64) = getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
+getPredIrt(s::SearchContext, prec_idx::UInt32) = getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
 getHuberDelta(s::SearchContext) = s.huber_delta[]
-setPredIrt!(s::SearchContext, prec_idx::Int64, irt::Float32) = s.irt_obs[prec_idx] = irt
-setPredIrt!(s::SearchContext, prec_idx::UInt32, irt::Float32) = s.irt_obs[prec_idx] = irt
+# irt_obs Dict on SearchContext is now unused; setPredIrt! removed
 getLibraryTargetCount(s::SearchContext) = s.n_library_targets
 getLibraryDecoyCount(s::SearchContext) = s.n_library_decoys
 getLibraryFdrScaleFactor(s::SearchContext) = s.library_fdr_scale_factor

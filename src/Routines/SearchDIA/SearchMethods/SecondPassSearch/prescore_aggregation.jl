@@ -96,16 +96,32 @@ end
 """
     _logodds_combine(probs, top_n, floor) -> Float32
 
-Shared implementation: sort descending, take top-n, clamp to [floor, 1-ε],
+Shared implementation: take top-n values, clamp to [floor, 1-ε],
 convert to log-odds, average, and convert back to probability.
+
+Optimized to avoid per-call allocations:
+- Fast path for single-element vectors (scalar ops, no sort)
+- Fast path for n==1 (find max, scalar ops)
+- General case uses partialsort! (in-place) + scalar loop
 """
 function _logodds_combine(probs::Vector{Float32}, top_n::Int, floor::Float32)::Float32
     isempty(probs) && return 0.0f0
-    n = min(length(probs), top_n)
-    sorted = sort(probs; rev=true)
-    selected = @view sorted[1:n]
     eps = 1f-6
-    lo = log.(clamp.(selected, floor, 1 - eps) ./ (1 .- clamp.(selected, floor, 1 - eps)))
-    avg = sum(lo) / n
+    n = min(length(probs), top_n)
+    if n == 1
+        # Single value needed: find max without sorting
+        p = length(probs) == 1 ? @inbounds(probs[1]) : maximum(probs)
+        c = clamp(p, floor, 1 - eps)
+        # logit → average(1 element) → sigmoid is identity
+        return c
+    end
+    # In-place partial sort — safe because probs is a temporary consumed only once
+    partialsort!(probs, 1:n; rev=true)
+    lo_sum = 0.0f0
+    @inbounds for i in 1:n
+        c = clamp(probs[i], floor, 1 - eps)
+        lo_sum += log(c / (1 - c))
+    end
+    avg = lo_sum / n
     return 1.0f0 / (1 + exp(-avg))
 end

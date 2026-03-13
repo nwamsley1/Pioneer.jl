@@ -81,27 +81,11 @@
     "fragment_index_search": {
         "min_score": 15
     },
-    "first_search": {
-        "fragment_settings": {
-            "max_rank": 7,
-            "n_isotopes": 2,
-            "min_count": 4,
-            "min_spectral_contrast": 0.0,
-            "min_log2_ratio": -10.0,
-            "min_top_n": [
-                0,
-                3
-            ],
-            "dynamic_range": 0.001
-        },
-        "global_prescore_qvalue_threshold": 0.05,
-        "prescore_aggregation": "pep_calibrated"
-    },
     "second_search": {
         "fragment_settings": {
-            "min_count": 0,
+            "min_count": 4,
             "min_y_count": 0,
-            "max_rank": 255,
+            "max_rank": 10,
             "min_spectral_contrast": 0.0,
             "min_log2_ratio": -10.0,
             "min_top_n": [
@@ -115,7 +99,9 @@
             "smoothing_strength": 1e-06,
             "padding": 0,
             "max_apex_offset": 2
-        }
+        },
+        "global_prescore_qvalue_threshold": 0.05,
+        "prescore_aggregation": "pep_calibrated"
     },
     "acquisition": {
         "nce": 26,

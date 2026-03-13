@@ -51,12 +51,12 @@ struct SpectralScoresMs1{T<:AbstractFloat} <: SpectralScores{T}
 end
 
 struct SpectralScoresFirstPass{T<:AbstractFloat} <: SpectralScores{T}
-    spectral_contrast::T       # for Score! filtering
-    gof::T                     # PRESCORE_FEATURES
-    max_matched_residual::T    # PRESCORE_FEATURES
-    max_unmatched_residual::T  # PRESCORE_FEATURES
-    fitted_manhattan_distance::T # PRESCORE_FEATURES
-    matched_ratio::T           # for Score! filtering
+    fitted_spectral_contrast::T
+    gof::T
+    max_matched_residual::T
+    max_unmatched_residual::T
+    fitted_manhattan_distance::T
+    percent_theoretical_ignored::T
 end
 
 function getDistanceMetrics(H::SparseArray{Ti,T}, 
@@ -358,40 +358,35 @@ function getDistanceMetrics(w::Vector{T},
             continue
         end
 
-        h2_sum = zero(T)
-        x2_sum = zero(T)
         x_sum = zero(T)
-        dot_product = zero(T)
-        matched_sum = zero(T)
-        unmatched_sum = zero(T)
-
         manhattan_distance = zero(T)
         max_matched_residual = zero(T)
         max_unmatched_residual = zero(T)
         sum_of_residuals = zero(T)
         sum_of_fitted_peaks_matched = zero(T)
         sum_of_fitted_peaks_unmatched = zero(T)
+        fitted_dotp = zero(T)
+        fitted_dotp_norm1 = zero(T)
+        sum_of_fitted_peaks_squared = zero(T)
 
         @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
             x_sum += H.x[i]
-            manhattan_distance += abs(w[col]*H.nzval[i] - H.x[i])
-
-            dot_product += H.nzval[i]*H.x[i]
-            x2_sum += (H.x[i])^2
-            h2_sum += (H.nzval[i])^2
-
             fitted_peak = w[col]*H.nzval[i]
+            manhattan_distance += abs(fitted_peak - H.x[i])
+
+            shadow_peak = fitted_peak - r[H.rowval[i]]
             r_abs = abs(r[H.rowval[i]])
             sum_of_residuals += r_abs
+            sum_of_fitted_peaks_squared += fitted_peak^2
 
             if H.matched[i]
-                matched_sum += H.nzval[i]
                 sum_of_fitted_peaks_matched += fitted_peak
+                fitted_dotp += shadow_peak*fitted_peak
+                fitted_dotp_norm1 += shadow_peak^2
                 if r_abs > max_matched_residual
                     max_matched_residual = r_abs
                 end
             else
-                unmatched_sum += H.nzval[i]
                 sum_of_fitted_peaks_unmatched += fitted_peak
                 if r_abs > max_unmatched_residual
                     max_unmatched_residual = r_abs
@@ -400,20 +395,20 @@ function getDistanceMetrics(w::Vector{T},
         end
 
         sum_of_fitted_peaks = sum_of_fitted_peaks_matched + sum_of_fitted_peaks_unmatched
-        spectral_contrast = dot_product/(sqrt(h2_sum)*sqrt(x2_sum))
+        denom = sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared)
+        fitted_spectral_contrast = denom > 0 ? fitted_dotp/denom : zero(T)
         gof = sum_of_fitted_peaks > 0 ? -log2(sum_of_residuals/sum_of_fitted_peaks) : zero(T)
         max_matched_residual = sum_of_fitted_peaks_matched > 0 ? -log2(max_matched_residual/sum_of_fitted_peaks_matched) : zero(T)
         max_unmatched_residual = sum_of_fitted_peaks > 0 ? -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10) : zero(T)
-        fitted_manhattan_distance = -log2(manhattan_distance/x_sum)
-        matched_ratio = log2(matched_sum/unmatched_sum)
+        fitted_manhattan_distance = x_sum > 0 ? -log2(manhattan_distance/x_sum + 1e-10) : zero(T)
 
         spectral_scores[col] = SpectralScoresFirstPass(
-            U(spectral_contrast),
+            U(fitted_spectral_contrast),
             U(gof),
             U(max_matched_residual),
             U(max_unmatched_residual),
             U(fitted_manhattan_distance),
-            U(matched_ratio)
+            zero(U)  # percent_theoretical_ignored (single-pass, no iterative removal)
         )
     end
 end
@@ -531,9 +526,10 @@ function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T
 
     denom = sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared)
     fitted_spectral_contrast = denom > 0 ? fitted_dotp/denom : zero(T)
-    spectral_contrast = dot_product/(sqrt(h2_sum)*sqrt(x2_sum))
+    sc_denom = sqrt(h2_sum)*sqrt(x2_sum)
+    spectral_contrast = sc_denom > 0 ? dot_product/sc_denom : zero(T)
 
-    scribe_score = -log2(scribe_score / N)
+    scribe_score = N > 0 ? -log2(scribe_score / N) : zero(T)
     if isnan(scribe_score)
         scribe_score = zero(T)
     end
@@ -542,8 +538,8 @@ function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T
     gof   = sum_of_fitted_peaks > 0 ? -log2(sum_of_residuals/sum_of_fitted_peaks) : zero(T)
     max_matched_residual = sum_of_fitted_peaks_matched > 0 ? -log2(max_matched_residual/sum_of_fitted_peaks_matched) : zero(T)
     max_unmatched_residual = sum_of_fitted_peaks > 0 ? -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10) : zero(T)
-    fitted_manhattan_distance = -log2(manhattan_distance/x_sum)
-    matched_ratio = log2(matched_sum/unmatched_sum)
+    fitted_manhattan_distance = x_sum > 0 ? -log2(manhattan_distance/x_sum + 1e-10) : zero(T)
+    matched_ratio = unmatched_sum > 0 ? log2(matched_sum/unmatched_sum) : zero(T)
     worst_intensity_ignored = worst_idx > 0 ? H.nzval[worst_idx] : 0.0
 
     return (scribe_score, spectral_contrast, fitted_spectral_contrast, gof, max_matched_residual, max_unmatched_residual, 
@@ -637,19 +633,19 @@ function getDistanceMetrics(w::Vector{T},
         sum_of_fitted_peaks =  sum_of_fitted_peaks_matched +  sum_of_fitted_peaks_unmatched
         sum_of_fitted_peaks_squared =  sum_of_fitted_peaks_matched_squared +  sum_of_fitted_peaks_unmatched_squared
 
-        fitted_dotp_norm = fitted_dotp/(sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared))
-        fitted_spectral_contrast = fitted_dotp_norm#1 - 2*acos(fitted_dotp_norm)/π
-        dot_product_norm = dot_product/(sqrt(h2_sum)*sqrt(x2_sum))
-        spectral_contrast = dot_product_norm#1 - 2*acos(dot_product_norm)/π
+        fitted_denom = sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared)
+        fitted_spectral_contrast = fitted_denom > 0 ? fitted_dotp/fitted_denom : zero(T)
+        sc_denom = sqrt(h2_sum)*sqrt(x2_sum)
+        spectral_contrast = sc_denom > 0 ? dot_product/sc_denom : zero(T)
 
         spectral_scores[col] = SpectralScoresMs1(
             Float16(spectral_contrast), #spectral_contrast
             Float16(fitted_spectral_contrast), #fitted_spectral_contrast
-            Float16(-log2(sum_of_residuals/sum_of_fitted_peaks+ 1e-10)), #gof
-            Float16(-log2(max_matched_residual/sum_of_fitted_peaks_matched+ 1e-10)),#max_matched_residual
-            Float16(-log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10)), #max_unmatched_residual
-            Float16(-log2(manhattan_distance/x_sum + 1e-10)), #fitted_manhattan_distance
-            Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
+            Float16(sum_of_fitted_peaks > 0 ? -log2(sum_of_residuals/sum_of_fitted_peaks + 1e-10) : 0), #gof
+            Float16(sum_of_fitted_peaks_matched > 0 ? -log2(max_matched_residual/sum_of_fitted_peaks_matched + 1e-10) : 0),#max_matched_residual
+            Float16(sum_of_fitted_peaks > 0 ? -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10) : 0), #max_unmatched_residual
+            Float16(x_sum > 0 ? -log2(manhattan_distance/x_sum + 1e-10) : 0), #fitted_manhattan_distance
+            Float16(unmatched_sum > 0 ? log2(matched_sum/unmatched_sum) : 0), #matched_ratio
             #Float16(-1.0*getEntropy(H, r, col)) #entropy
         )
     end

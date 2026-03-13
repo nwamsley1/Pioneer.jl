@@ -41,25 +41,27 @@ function _select_transitions_impl!(
     block_size::Int64 = 10000
     ) where {I<:Integer}
 
+    n_precursors = 0
     for i in scan_to_prec_idx
         # Get precursor properties
         prec_idx = precursors_passed_scoring[i]
         prec_charge = prec_charges[prec_idx]
         prec_mz = prec_mzs[prec_idx]
-        
+
         # Check retention time tolerance
         if abs(prec_irts[prec_idx] - iRT) > iRT_tol
             continue
         end
-        
+
         # Handle isotope errors
         mz_low = getPrecMinBound(quad_transmission_func) - NEUTRON*first(isotope_err_bounds)/prec_charge
         mz_high = getPrecMaxBound(quad_transmission_func) + NEUTRON*last(isotope_err_bounds)/prec_charge
-        
+
         if (prec_mz < mz_low) | (prec_mz > mz_high)
             continue
         end
-        
+
+        n_precursors += 1
         prec_sulfur_count = prec_sulfur_counts[prec_idx]
         # Fill transition list using spline-specific implementation
         transition_idx = @inline fillTransitionList!(
@@ -82,6 +84,6 @@ function _select_transitions_impl!(
             block_size
         )
     end
-    
-    return transition_idx, 0
+
+    return transition_idx, n_precursors
 end

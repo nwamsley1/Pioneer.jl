@@ -29,7 +29,7 @@
         },
         "ms1_scoring": true,
         "ms1_quant": false,
-        "match_between_runs": true
+        "match_between_runs": false
     },
     "parameter_tuning": {
         "fragment_settings": {
@@ -81,21 +81,6 @@
     "fragment_index_search": {
         "min_score": 15
     },
-    "first_search": {
-        "fragment_settings": {
-            "max_rank": 10,
-            "n_isotopes": 1,
-            "min_count": 4,
-            "min_spectral_contrast": 0.0,
-            "min_log2_ratio": 0.0,
-            "min_top_n": [
-                2,
-                3
-            ]
-        },
-        "global_prescore_qvalue_threshold": 0.05,
-        "prescore_aggregation": "pep_calibrated"
-    },
     "second_search": {
         "fragment_settings": {
             "min_count": 3,
@@ -109,6 +94,8 @@
             ],
             "n_isotopes": 2
         },
+        "global_prescore_qvalue_threshold": 0.05,
+        "prescore_aggregation": "pep_calibrated",
         "chromatogram": {
             "smoothing_strength": 1e-06,
             "padding": 0,

@@ -90,7 +90,8 @@ function process_file!(
         )
         n_input_pairs = sum(ismissing(r) ? 0 : length(r) for r in scan_to_prec_idx)
         file_name = getParsedFileName(search_context, ms_file_idx)
-        @info "FirstPassSearch input: $file_name — $(n_input_pairs) (scan, precursor) pairs"
+        @info "FirstPassSearch input: $file_name — $(n_input_pairs) (scan, precursor) pairs" *
+              " | isotope_err_bounds=$(params.isotope_err_bounds), n_frag_isotopes=$(params.prescore_n_frag_isotopes), max_frag_rank=$(params.prescore_max_frag_rank)"
         t_load = time()
 
         # Deconvolve with Phase 1 prescore fragment settings
@@ -171,6 +172,7 @@ function process_search_results!(
         end
 
         # Train LightGBM on ALL PSMs, select best scan per precursor
+        n_total_psms = nrow(psms)
         best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms)
         best_psms[!, :lgbm_prob] = scores
         best_psms[!, :prescore_q_value] = q_values
@@ -195,14 +197,24 @@ function process_search_results!(
         writeArrow(joinpath(prescore_dir, "$(file_name).arrow"), score_df)
         t_prescore_write = time()
 
-        # Phase 2 features on best_psms only (bypassing SecondPassSearch)
-        # This adds all 29 features including isotopes_captured and precursor_fraction_transmitted
-        prepare_psm_features!(best_psms, params, search_context, ms_file_idx, spectra, prescore_only=false)
-        t_phase2 = time()
-
-        # Initialize columns expected by ScoringSearch
-        initialize_prob_group_features!(best_psms, params.match_between_runs)
+        # Phase 2: compute isotopes_captured (needs spectra data)
+        get_isotopes_captured!(
+            best_psms,
+            getIsotopeTraceType(params),
+            getQuadTransmissionModel(search_context, ms_file_idx),
+            getSearchData(search_context),
+            best_psms[!, :scan_idx],
+            getCharge(getPrecursors(getSpecLib(search_context))),
+            getMz(getPrecursors(getSpecLib(search_context))),
+            getSulfurCount(getPrecursors(getSpecLib(search_context))),
+            getCenterMzs(spectra),
+            getIsolationWidthMzs(spectra)
+        )
+        # Filter by precursor_fraction_transmitted
+        to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
+        deleteat!(best_psms, to_remove)
         best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
+        t_phase2 = time()
 
         # Hardcoded FWHM — replace with real estimation when bypassing SecondPass
         results.file_fwhms[ms_file_idx] = (median_fwhm=0.2f0, mad_fwhm=0.2f0)
@@ -221,7 +233,7 @@ function process_search_results!(
         t_total = t_write - t_start
         r = s -> round(s, digits=2)
         println()
-        @info "FirstPassSearch scoring: $(nrow(psms)) PSMs → $(nrow(best_psms)) precursors ($n_pass_1 @ 1%, $n_pass_5 @ 5% FDR)\n" *
+        @info "FirstPassSearch scoring: $(n_total_psms) PSMs → $(nrow(best_psms)) precursors ($n_pass_1 @ 1%, $n_pass_5 @ 5% FDR)\n" *
               "  features=$(r(t_features - t_start))s, recal=$(r(t_recal - t_lgbm))s, phase2=$(r(t_phase2 - t_prescore_write))s, write=$(r(t_write - t_phase2))s\n" *
               "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train=$(r(lgbm_timings.train))s, predict=$(r(lgbm_timings.predict))s, best=$(r(lgbm_timings.best))s, qval=$(r(lgbm_timings.qval))s\n" *
               "  total=$(r(t_total))s"
@@ -253,6 +265,30 @@ end
 Global aggregation: aggregate prescore across files, filter fragment_index_matches
 to passing precursors, write filtered_fragment_matches for SecondPassSearch.
 """
+
+"""
+Typed inner function for Phase 2 library-lookup columns in `summarize_results!`.
+Accepts DataFrame columns (already `Vector{T}`) and library arrays as `AbstractVector`
+so the compiler specializes on concrete types, eliminating dynamic dispatch.
+"""
+function _compute_phase2_columns!(
+        prec_idx_col::AbstractVector{UInt32},
+        irt_obs_col::AbstractVector{Float32},
+        prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
+        irt_diff_col::Vector{Float32},
+        prec_mz_col::Vector{Float32},
+        pair_id_col::Vector{UInt32},
+        entrap_col::Vector{UInt8})
+    @inbounds for i in eachindex(prec_idx_col)
+        pid = prec_idx_col[i]
+        irt_diff_col[i] = abs(irt_obs_col[i] - prec_irt[pid])
+        prec_mz_col[i] = prec_mz_arr[pid]
+        pair_id_col[i] = extract_pair_idx(prec_pair_idxs, pid)
+        entrap_col[i] = entrap_group_ids[pid]
+    end
+    return nothing
+end
+
 function summarize_results!(
     results::FirstPassSearchResults,
     params::P,
@@ -272,12 +308,19 @@ function summarize_results!(
     # Store results for SecondPassSearch to retrieve Phase 1 best scans
     store_results!(search_context, FirstPassSearch, (passing_precs=passing_precs, prec_best_scan=prec_best_scan))
 
-    # Step 2: Load first_pass_psms, filter to passing precursors, write fold-split second_pass_psms
+    # Step 2: Load first_pass_psms, filter to passing precursors, add deferred columns, write fold-split second_pass_psms
     t2_start = time()
     ms_data = getMSData(search_context)
     n_files = length(ms_data)
     first_pass_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms")
     second_pass_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
+
+    # Library lookups (shared across files)
+    precursors = getPrecursors(getSpecLib(search_context))
+    prec_irt = getIrt(precursors)
+    prec_mz_arr = getMz(precursors)
+    prec_pair_idxs = getPairIdx(precursors)
+    entrap_group_ids = getEntrapmentGroupId(precursors)
 
     n_processed_files = 0
     n_total_precs = 0
@@ -290,7 +333,7 @@ function summarize_results!(
         psm_path = joinpath(first_pass_psms_dir, "$(file_name).arrow")
         !isfile(psm_path) && continue
 
-        # Load first pass PSMs (already best-per-precursor with Phase 2 features)
+        # Load first pass PSMs (best-per-precursor with prescore features + isotopes)
         tbl = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
         n_before = nrow(tbl)
         n_total_precs += n_before
@@ -300,6 +343,26 @@ function summarize_results!(
         tbl = tbl[mask, :]
         n_after = nrow(tbl)
         n_kept_precs += n_after
+
+        # Add Phase 2 library-lookup columns (deferred from process_search_results!)
+        N = nrow(tbl)
+        irt_diff_col = Vector{Float32}(undef, N)
+        prec_mz_col = Vector{Float32}(undef, N)
+        pair_id_col = Vector{UInt32}(undef, N)
+        entrap_col = Vector{UInt8}(undef, N)
+        _compute_phase2_columns!(
+            tbl[!, :precursor_idx], tbl[!, :irt_obs],
+            prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
+            irt_diff_col, prec_mz_col, pair_id_col, entrap_col
+        )
+        tbl[!, :irt_diff] = irt_diff_col
+        tbl[!, :prec_mz] = prec_mz_col
+        tbl[!, :pair_id] = pair_id_col
+        tbl[!, :entrapment_group_id] = entrap_col
+
+        sort!(tbl, :rt)
+        initialize_prob_group_features!(tbl, params.match_between_runs)
+        dropVectorColumns!(tbl)
 
         # Register base path for ScoringSearch to find fold files
         base_path = joinpath(second_pass_dir, file_name)

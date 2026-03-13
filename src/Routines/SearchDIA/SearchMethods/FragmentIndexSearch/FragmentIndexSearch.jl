@@ -201,13 +201,14 @@ function summarize_results!(
     search_context::SearchContext
 )
 
-    # Build precursor dict from all fragment index match files
+    r(t) = round(t; digits=2)
+    t_total_start = time()
+
+    # Collect unique precursor IDs from all fragment index match files
     valid_indices = get_valid_file_indices(search_context)
-    precursors = getPrecursors(getSpecLib(search_context))
-    prec_irts = getIrt(precursors)
-    prec_mzs = getMz(precursors)
 
     # Collect all unique precursor IDs across all fragment index match files
+    t1_start = time()
     all_prec_ids = Set{UInt32}()
     for idx in valid_indices
         match_path = getFragmentIndexMatches(getMSData(search_context), idx)
@@ -216,29 +217,10 @@ function summarize_results!(
         tbl = Arrow.Table(match_path)
         union!(all_prec_ids, Set{UInt32}(tbl[:precursor_idx]))
     end
+    t1 = time() - t1_start
 
     @user_info "FragmentIndexSearch: $(length(all_prec_ids)) unique precursors from fragment index"
 
-    # Build minimal precursor dict with library iRT values
-    precursor_dict = Dictionary{UInt32, @NamedTuple{
-        best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32,
-        best_irt::Float32, mean_irt::Union{Missing, Float32},
-        var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32
-    }}()
-
-    for pid in all_prec_ids
-        insert!(precursor_dict, pid, (
-            best_prob = 1.0f0,
-            best_ms_file_idx = UInt32(0),
-            best_scan_idx = UInt32(0),
-            best_irt = prec_irts[pid],
-            mean_irt = missing,
-            var_irt = missing,
-            n = missing,
-            mz = prec_mzs[pid]
-        ))
-        setPredIrt!(search_context, pid, prec_irts[pid])
-    end
-
-    setPrecursorDict!(search_context, precursor_dict)
+    t_total = time() - t_total_start
+    @info "FragmentIndexSearch summarize: arrow_read=$(r(t1))s, total=$(r(t_total))s"
 end

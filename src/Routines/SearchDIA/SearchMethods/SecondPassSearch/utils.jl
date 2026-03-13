@@ -66,7 +66,7 @@ function perform_second_pass_search(
     end
     
     # Collect results with detailed error logging per task
-    thread_results = Vector{@NamedTuple{psms::DataFrame, iter_counts::Vector{Int}, col_counts::Vector{Int}}}(undef, length(tasks))
+    thread_results = Vector{@NamedTuple{psms::DataFrame}}(undef, length(tasks))
     for (i, t) in enumerate(tasks)
         try
             thread_results[i] = fetch(t)
@@ -77,9 +77,7 @@ function perform_second_pass_search(
             rethrow(e)
         end
     end
-    return (psms = vcat([r.psms for r in thread_results]...),
-            iter_counts = vcat([r.iter_counts for r in thread_results]...),
-            col_counts = vcat([r.col_counts for r in thread_results]...))
+    return (psms = vcat([r.psms for r in thread_results]...),)
 end
 
 function perform_second_pass_search(
@@ -179,7 +177,7 @@ function perform_second_pass_search(
         end
     end
 
-    thread_results = Vector{@NamedTuple{psms::DataFrame, iter_counts::Vector{Int}, col_counts::Vector{Int}}}(undef, length(tasks))
+    thread_results = Vector{@NamedTuple{psms::DataFrame}}(undef, length(tasks))
     for (i, t) in enumerate(tasks)
         try
             thread_results[i] = fetch(t)
@@ -190,9 +188,8 @@ function perform_second_pass_search(
             rethrow(e)
         end
     end
-    return (psms = vcat([r.psms for r in thread_results]...),
-            iter_counts = vcat([r.iter_counts for r in thread_results]...),
-            col_counts = vcat([r.col_counts for r in thread_results]...))
+
+    return (psms = vcat([r.psms for r in thread_results]...),)
 end
 
 """
@@ -279,17 +276,6 @@ function process_scans_fragindex!(
     last_val = 0
     cycle_idx = 0
 
-    # Collect per-scan solver iteration stats for QC plots
-    iter_counts = Int[]
-    col_counts = Int[]
-
-    # Timing accumulators (nanoseconds) — commented out for profiling
-    # t_select_transitions = UInt64(0)
-    # t_match_peaks = UInt64(0)
-    # t_build_matrix = UInt64(0)
-    # t_solve_ols = UInt64(0)
-    # t_scoring = UInt64(0)
-
     nce_model = getNceModel(search_context, ms_file_idx)
     precursors = getPrecursors(getSpecLib(search_context))
 
@@ -305,7 +291,6 @@ function process_scans_fragindex!(
         ismissing(scan_to_prec_idx[scan_idx]) && continue
 
         # Select transitions using StandardTransitionSelection with explicit precursor list
-        #_t0 = time_ns()
         ion_idx, _ = selectTransitions!(
             getIonTemplates(search_data),
             StandardTransitionSelection(),
@@ -334,12 +319,9 @@ function process_scans_fragindex!(
             isotope_err_bounds = params.isotope_err_bounds,
             block_size = 10000
         )
-        #t_select_transitions += time_ns() - _t0
-
         ion_idx < 2 && continue
 
         # Match peaks
-        #_t0 = time_ns()
         nmatches, nmisses = matchPeaks!(
             getIonMatches(search_data),
             getIonMisses(search_data),
@@ -353,12 +335,9 @@ function process_scans_fragindex!(
             UInt32(ms_file_idx)
         )
 
-        #t_match_peaks += time_ns() - _t0
-
         nmatches ≤ 2 && continue
 
         # Build design matrix
-        #_t0 = time_ns()
         buildDesignMatrix!(
             Hs,
             getIonMatches(search_data),
@@ -377,10 +356,8 @@ function process_scans_fragindex!(
 
         # Solve deconvolution
         initResiduals!(residuals, Hs, weights)
-        #t_build_matrix += time_ns() - _t0
 
-        #_t0 = time_ns()
-        converged, n_iters = solveOLS!(
+        converged, _ = solveOLS!(
             Hs,
             residuals,
             weights,
@@ -388,16 +365,12 @@ function process_scans_fragindex!(
             params.max_iter_outer,
             params.max_diff
         )
-        #t_solve_ols += time_ns() - _t0
-        push!(iter_counts, n_iters)
-        push!(col_counts, Hs.n)
         if !converged
             reset_arrays!(search_data, Hs)
             continue
         end
 
         # Update precursor weights and score PSMs
-        #_t0 = time_ns()
         update_precursor_weights!(search_data, weights, precursor_weights)
 
         # Filter low-quality precursors before expensive spectral scoring
@@ -465,11 +438,9 @@ function process_scans_fragindex!(
         reset_arrays!(search_data, Hs)
     end
     if first_pass
-        return (psms = DataFrame(@view(getFirstPassScoredPsms(search_data)[1:last_val])),
-                iter_counts = iter_counts, col_counts = col_counts)
+        return (psms = DataFrame(@view(getFirstPassScoredPsms(search_data)[1:last_val])),)
     else
-        return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
-                iter_counts = iter_counts, col_counts = col_counts)
+        return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),)
     end
 end
 
@@ -507,10 +478,6 @@ function process_scans!(
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     last_val = 0
-
-    # Collect per-scan solver iteration stats for QC plots
-    iter_counts = Int[]
-    col_counts = Int[]
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -610,7 +577,7 @@ function process_scans!(
 
         # Solve deconvolution problem
         initResiduals!(residuals, Hs, weights)
-        converged, n_iters = solveOLS!(
+        converged, _ = solveOLS!(
             Hs,
             residuals,
             weights,
@@ -618,8 +585,6 @@ function process_scans!(
             params.max_iter_outer,
             params.max_diff
         )
-        push!(iter_counts, n_iters)
-        push!(col_counts, Hs.n)
         if !converged
             reset_arrays!(search_data, Hs)
             continue
@@ -670,8 +635,7 @@ function process_scans!(
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
-            iter_counts = iter_counts, col_counts = col_counts)
+    return (psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),)
 end
 
 """
@@ -1044,7 +1008,7 @@ function add_second_search_columns!(psms::DataFrame,
     decoys = zeros(Bool, N);
     rt = zeros(Float32, N);
     #TIC = zeros(Float16, N);
-    total_ions = zeros(UInt16, N);
+    total_ions::Vector{UInt16} = psms[!,:total_ions]
     err_norm = zeros(Float16, N);
     targets = zeros(Bool, N);
     prec_charges = zeros(UInt8, N);
@@ -1052,14 +1016,7 @@ function add_second_search_columns!(psms::DataFrame,
     cv_fold = zeros(UInt8, N);
     scan_idxs::Vector{UInt32} = psms[!,:scan_idx]
     prec_idxs::Vector{UInt32} = psms[!,:precursor_idx]
-    y_count::Vector{UInt8} = psms[!,:y_count]
-    b_count::Vector{UInt8} = psms[!,:b_count]
-    isotope_count::Vector{UInt8} = psms[!,:isotope_count]
     error::Vector{Float32} = psms[!,:error]
-    #psms[!,:total_ions]
-    #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    #scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    matched_ratio::Vector{Float16} = psms[!,:matched_ratio]
 
     tasks_per_thread = 5
     chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
@@ -1075,21 +1032,15 @@ function add_second_search_columns!(psms::DataFrame,
                 targets[i] = decoys[i] == false
                 rt[i] = Float32(scan_retention_time[scan_idx]);
                 prec_charges[i] = prec_charge[prec_idx];
-                total_ions[i] = UInt16(y_count[i] + b_count[i] + isotope_count[i]);
-                err_norm[i] = Float16(min((2^error[i])/max(total_ions[i], one(UInt16)), Float32(6e4)))
-                if isinf(matched_ratio[i])
-                    matched_ratio[i] = Float16(60000)*sign(matched_ratio[i])
-                end
+                err_norm[i] = Float16(min((2^min(error[i], 15f0))/max(total_ions[i], one(UInt16)), Float32(6e4)))
                 cv_fold[i] = getCvFold(precursors, prec_idx)#prec_id_to_cv_fold[prec_idx]
             end
         end
     end
     fetch.(tasks)
-    psms[!,:matched_ratio] = matched_ratio
     psms[!,:decoy] = decoys
     psms[!,:rt] = rt
     #psms[!,:TIC] = TIC
-    psms[!,:total_ions] = total_ions
     psms[!,:err_norm] = err_norm
     psms[!,:target] = targets
     psms[!,:charge] = prec_charges
@@ -1185,19 +1136,19 @@ function add_features!(psms::DataFrame,
                                     tic::AbstractVector{Float32},
                                     masses::AbstractArray,
                                     ms_file_idx::Integer,
-                                    rt_to_irt_interp::RtConversionModel,
-                                    prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}};
+                                    rt_to_irt_interp::RtConversionModel;
                                     prescore_only::Bool=false
                                     )
 
-    precursor_sequence = getSequence(getPrecursors(getSpecLib(search_context)))#[:sequence],
-    structural_mods = getStructuralMods(getPrecursors(getSpecLib(search_context)))#[:structural_mods],
-    prec_mz = getMz(getPrecursors(getSpecLib(search_context)))#[:mz],
-    prec_irt = getIrt(getPrecursors(getSpecLib(search_context)))#[:irt],
-    prec_charge = getCharge(getPrecursors(getSpecLib(search_context)))#[:prec_charge],
-    entrap_group_ids = getEntrapmentGroupId(getPrecursors(getSpecLib(search_context)))
-    precursor_missed_cleavage = getMissedCleavages(getPrecursors(getSpecLib(search_context)))#[:missed_cleavages],
-    precursor_pair_idxs = getPairIdx(getPrecursors(getSpecLib(search_context)))
+    precursors_lib = getPrecursors(getSpecLib(search_context))
+    structural_mods = getStructuralMods(precursors_lib)
+    prec_mz = getMz(precursors_lib)
+    prec_irt = getIrt(precursors_lib)
+    prec_charge = getCharge(precursors_lib)
+    entrap_group_ids = getEntrapmentGroupId(precursors_lib)
+    precursor_missed_cleavage = getMissedCleavages(precursors_lib)
+    precursor_pair_idxs = getPairIdx(precursors_lib)
+    prec_length = getLength(precursors_lib)
     #filter!(x -> x.best_scan, psms);
     # weight>0 already enforced upstream in add_second_search_columns!
     #filter!(x->x.data_points>0, psms)
@@ -1215,33 +1166,20 @@ function add_features!(psms::DataFrame,
     # Columns only needed for Phase 2 (full feature set)
     if !prescore_only
         irt_diff = zeros(Float32, N)
-        ms1_irt_diff = zeros(Float32, N)
         pair_idxs = zeros(UInt32, N)
         entrap_group_id = zeros(UInt8, N)
         adjusted_intensity_explained = zeros(Float16, N);
         prec_charges = zeros(UInt8, N)
         prec_mzs = zeros(Float32, N);
         TIC = zeros(Float16, N);
-
-        # Amino acid count features (20 standard amino acids)
-        aa_counts = Dict{Char, Vector{UInt8}}()
-        for aa in "ACDEFGHIKLMNPQRSTVWY"
-            aa_counts[aa] = zeros(UInt8, N)
-        end
     end
 
     #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
+    precursor_idx::Vector{UInt32} = psms[!,:precursor_idx]
     scan_idx::Vector{UInt32} = psms[!,:scan_idx]
-    #masses = MS_TABLE[:mz_array]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
-    #longest_y::Vector{UInt8} = psms[!,:longest_y]
-    #longest_b::Vector{UInt8} = psms[!,:longest_b]
     rt::Vector{Float32} = psms[!,:rt]
-    ms1_rt::Vector{Float32} = psms[!,:rt_ms1]
-    ms1_missing::Vector{Bool} = psms[!,:ms1_features_missing]
-    #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     log2_intensity_explained = psms[!,:log2_intensity_explained]::Vector{Float16}
-    #precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
+
     function countMOX(seq::String)
         return UInt8(count("Unimod:35", seq))
     end
@@ -1250,60 +1188,35 @@ function add_features!(psms::DataFrame,
         return zero(UInt8)
     end
 
-    # Pre-compute per-precursor string features to avoid redundant work across ~3 PSMs/precursor
-    AA_ORDER = "ACDEFGHIKLMNPQRSTVWY"
-    unique_precs = unique(precursor_idx)
-    _mox_cache = Dict{UInt32, UInt8}()
-    _seq_length_cache = Dict{UInt32, UInt8}()
-    sizehint!(_mox_cache, length(unique_precs))
-    sizehint!(_seq_length_cache, length(unique_precs))
-    if !prescore_only
-        _aa_cache = Dict{UInt32, NTuple{20, UInt8}}()
-        sizehint!(_aa_cache, length(unique_precs))
-        for pid in unique_precs
-            stripped = replace(precursor_sequence[pid], r"\(.*?\)" => "")
-            _seq_length_cache[pid] = UInt8(length(stripped))
-            _mox_cache[pid] = countMOX(structural_mods[pid])
-            _aa_cache[pid] = ntuple(Val(20)) do j
-                UInt8(count(==(AA_ORDER[j]), stripped))
-            end
-        end
-    else
-        for pid in unique_precs
-            stripped = replace(precursor_sequence[pid], r"\(.*?\)" => "")
-            _seq_length_cache[pid] = UInt8(length(stripped))
-            _mox_cache[pid] = countMOX(structural_mods[pid])
-        end
-    end
+    # Lazy-populate Mox cache: Vector-backed for O(1) lookup, computed on first access per precursor
+    n_lib = length(prec_irt)
+    _mox_vals = Vector{UInt8}(undef, n_lib)
+    _mox_computed = falses(n_lib)
 
     tasks_per_thread = 5
     chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
-    data_chunks = partition(1:size(psms, 1), chunk_size) # partition your data into chunks that
+    data_chunks = partition(1:size(psms, 1), chunk_size)
 
     tasks = map(data_chunks) do chunk
-        Threads.@spawn begin 
+        Threads.@spawn begin
             for i in chunk
                 prec_idx = precursor_idx[i]
                 irt_obs[i] = rt_to_irt_interp(rt[i])
-                irt_pred[i] = getPredIrt(search_context, prec_idx)
+                irt_pred[i] = prec_irt[prec_idx]
                 irt_error[i] = abs(irt_obs[i] - irt_pred[i])
                 missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
-                Mox[i] = _mox_cache[prec_idx]
+                # Lazy Mox: compute once per precursor (benign race — same value)
+                if !_mox_computed[prec_idx]
+                    _mox_vals[prec_idx] = countMOX(structural_mods[prec_idx])
+                    _mox_computed[prec_idx] = true
+                end
+                Mox[i] = _mox_vals[prec_idx]
                 spectrum_peak_count[i] = length(masses[scan_idx[i]])
-                sequence_length[i] = _seq_length_cache[prec_idx]
+                sequence_length[i] = prec_length[prec_idx]
 
                 if !prescore_only
                     entrap_group_id[i] = entrap_group_ids[prec_idx]
-                    irt_diff[i] = abs(irt_obs[i] - prec_id_to_irt[prec_idx].best_irt)
-                    if !ms1_missing[i]
-                        ms1_irt_diff[i] = abs(rt_to_irt_interp(ms1_rt[i]) - getPredIrt(search_context, prec_idx))
-                    else
-                        ms1_irt_diff[i] = 0f0
-                    end
-                    aa_tuple = _aa_cache[prec_idx]
-                    @inbounds for (j, aa) in enumerate(AA_ORDER)
-                        aa_counts[aa][i] = aa_tuple[j]
-                    end
+                    irt_diff[i] = abs(irt_obs[i] - prec_irt[prec_idx])
                     TIC[i] = Float16(log2(tic[scan_idx[i]]))
                     adjusted_intensity_explained[i] = Float16(log2(TIC[i]) + log2_intensity_explained[i]);
                     prec_charges[i] = prec_charge[prec_idx]
@@ -1325,7 +1238,6 @@ function add_features!(psms::DataFrame,
 
     if !prescore_only
         psms[!,:irt_diff] = irt_diff
-        psms[!,:ms1_irt_diff] = ms1_irt_diff
         psms[!,:tic] = TIC
         psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
         psms[!,:charge] = prec_charges
@@ -1333,11 +1245,6 @@ function add_features!(psms::DataFrame,
         psms[!,:prec_mz] = prec_mzs
         psms[!,:entrapment_group_id] = entrap_group_id
         psms[!,:ms_file_idx] .= ms_file_idx
-
-        # Amino acid count columns
-        for aa in "ACDEFGHIKLMNPQRSTVWY"
-            psms[!, Symbol("aa_", aa)] = aa_counts[aa]
-        end
     end
     return nothing
 end
@@ -1379,6 +1286,19 @@ function load_diann_reference(file_name::String)
 end
 
 """
+Typed inner function to collect target precursor indices, avoiding dynamic dispatch
+on Arrow/DataFrame column types.
+"""
+function _collect_target_precs!(out::Set{UInt32}, targets::AbstractVector{Bool}, precs::AbstractVector{UInt32})
+    @inbounds for i in eachindex(targets, precs)
+        if targets[i]
+            push!(out, precs[i])
+        end
+    end
+    return out
+end
+
+"""
     log_diann_recovery(label, psms, diann_file, diann_global)
 
 Log how many DIA-NN precursors have at least one surviving target PSM.
@@ -1388,14 +1308,8 @@ function log_diann_recovery(label::String, psms::DataFrame,
     (isempty(diann_file) && isempty(diann_global)) && return
 
     # Unique target precursor_idxs with surviving PSMs
-    target_mask = psms[!, :target]
     surviving_precs = Set{UInt32}()
-    prec_col = psms[!, :precursor_idx]
-    for i in 1:nrow(psms)
-        if target_mask[i]
-            push!(surviving_precs, prec_col[i])
-        end
-    end
+    _collect_target_precs!(surviving_precs, psms[!, :target], psms[!, :precursor_idx])
 
     if !isempty(diann_file)
         n_recovered = length(intersect(surviving_precs, diann_file))
@@ -1417,7 +1331,7 @@ LightGBM Feature Set
 
 # Lean feature set for Phase 1 prescore LightGBM (fast per-file ranking)
 const PRESCORE_FEATURES = [
-    :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
+    :fitted_manhattan_distance, :fitted_spectral_contrast, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :max_unmatched_residual, :max_matched_residual, :Mox, :spectrum_peak_count,
     :sequence_length,
@@ -1438,28 +1352,7 @@ const LGBM_RECOVERY_FEATURES = [
     :charge, :sequence_length, :missed_cleavage, :Mox, :prec_mz,
     # Other
     :tic, :best_rank, :matched_ratio, :spectrum_peak_count,
-    # Amino acid composition
-    :aa_H, :aa_P, :aa_L,
 ]
-
-"""
-    ensure_ms1_stub_columns!(psms::DataFrame)
-
-Add placeholder MS1 columns needed by add_features!() during iterative
-prescore filtering, before the real MS1 join in process_search_results!.
-"""
-function ensure_ms1_stub_columns!(psms::DataFrame)
-    n = nrow(psms)
-    if !hasproperty(psms, :rt_ms1)
-        psms[!, :rt_ms1] = fill(Float32(-1), n)
-    end
-    if !hasproperty(psms, :ms1_features_missing)
-        psms[!, :ms1_features_missing] = trues(n)
-    end
-    if !hasproperty(psms, :ms1_ms2_rt_diff)
-        psms[!, :ms1_ms2_rt_diff] = fill(Float32(-1), n)
-    end
-end
 
 """
     _sanitize_column!(col::Vector{<:AbstractFloat}) -> Int
@@ -1507,11 +1400,9 @@ Phase 1 (per-file prescore) and Phase 2 (after global re-deconvolution).
 
 Steps:
 1. add_second_search_columns! — RT, charge, target, cv_fold, err_norm, total_ions
-2. get_isotopes_captured! — precursor_fraction_transmitted
-3. Filter by fraction_transmitted (weight>0 enforced in step 1)
-4. ensure_ms1_stub_columns! — stubs needed by add_features!
-5. add_features! — irt_error, irt_diff, tic, prec_mz, sequence_length, etc.
-6. sanitize_prescore_features! — replace Inf/NaN with 0
+2. get_isotopes_captured! — precursor_fraction_transmitted (skipped for prescore)
+3. Filter by fraction_transmitted (skipped for prescore)
+4. add_features! — irt_error, irt_diff, tic, prec_mz, sequence_length, etc.
 """
 function prepare_psm_features!(
     psms::DataFrame,
@@ -1560,33 +1451,23 @@ function prepare_psm_features!(
         t3 = time()
     end
 
-    # 4. Add MS1 stub columns (needed by add_features!)
-    ensure_ms1_stub_columns!(psms)
-    t4 = time()
-
-    # 5. Add ML features (irt_error, irt_diff, tic, prec_mz, sequence_length, etc.)
+    # 4. Add ML features (irt_error, irt_diff, tic, prec_mz, sequence_length, etc.)
     add_features!(
         psms,
         search_context,
         getTICs(spectra),
         getMzArrays(spectra),
         ms_file_idx,
-        getRtIrtModel(search_context, ms_file_idx),
-        getPrecursorDict(search_context);
+        getRtIrtModel(search_context, ms_file_idx);
         prescore_only=prescore_only
     )
-    t5 = time()
-
-    # 6. Sanitize features (Inf/NaN → 0)
-    features_to_sanitize = prescore_only ? PRESCORE_FEATURES : LGBM_RECOVERY_FEATURES
-    sanitize_prescore_features!(psms, collect(features_to_sanitize))
-    t6 = time()
+    t4 = time()
 
     r = s -> round(s, digits=3)
     @info "  prepare_psm_features! ($(nrow(psms)) PSMs, prescore_only=$prescore_only): " *
           "columns=$(r(t1-t0))s, isotopes=$(r(t2-t1))s, filter=$(r(t3-t2))s, " *
-          "ms1_stubs=$(r(t4-t3))s, add_features=$(r(t5-t4))s, sanitize=$(r(t6-t5))s, " *
-          "total=$(r(t6-t0))s"
+          "add_features=$(r(t4-t3))s, " *
+          "total=$(r(t4-t0))s"
 
     return psms
 end
@@ -1612,8 +1493,8 @@ function train_lgbm_and_select_best(
     available_features = filter(f -> hasproperty(psms, f), features)
     targets_col = psms[!, :target]
 
-    # Build feature matrix for LightGBM
-    feature_df = psms[!, available_features]
+    # Build feature matrix ONCE (e.g. 13M×14 Float32)
+    X_all = feature_matrix(psms, available_features)
     t_matrix = time()
 
     # Train LightGBM classifier
@@ -1630,34 +1511,53 @@ function train_lgbm_and_select_best(
     )
     # Subsample for training if > 5M PSMs
     max_train = 5_000_000
-    n_total = nrow(feature_df)
+    n_total = size(X_all, 1)
     if n_total > max_train
         train_idx = randperm(n_total)[1:max_train]
         @info "  LightGBM training: subsampled $max_train / $n_total PSMs"
-        model = fit_lightgbm_model(classifier, feature_df[train_idx, :], targets_col[train_idx])
+        X_train = X_all[train_idx, :]
+        y_train = _prepare_labels(targets_col[train_idx])
     else
-        model = fit_lightgbm_model(classifier, feature_df, targets_col)
+        X_train = X_all
+        y_train = _prepare_labels(targets_col)
+    end
+
+    # Check for degenerate case (all same label)
+    unique_labels = unique(y_train)
+    if length(unique_labels) == 1
+        constant_prob = unique_labels[1] == 0 ? 0.0f0 : 1.0f0
+        model = LightGBMModel(nothing, available_features, constant_prob)
+    else
+        LightGBM.fit!(classifier, X_train, y_train; verbosity = -1)
+        model = LightGBMModel(classifier, available_features, nothing)
     end
     t_train = time()
 
-    # Predict on ALL PSMs
-    all_scores = lightgbm_predict(model, feature_df)
+    # Predict on ALL PSMs using pre-built matrix
+    if model.booster === nothing
+        prob = model.constant_prediction === nothing ? 0.0f0 : model.constant_prediction
+        all_scores = fill(Float64(prob), n_total)
+    else
+        raw = LightGBM.predict(classifier, X_all)
+        all_scores = ndims(raw) == 2 ? dropdims(raw; dims=2) : raw
+    end
     t_predict = time()
 
     # Add scores to psms for best-per-precursor selection
     psms[!, :lgbm_score] = Float32.(all_scores)
 
     # Select best scan per precursor by LightGBM score
-    best_psms = get_best_psm_per_precursor_by_score(psms, :lgbm_score)
+    psms = select_best_per_precursor!(psms, :lgbm_score)
 
     # Extract scores for best PSMs
-    scores = best_psms[!, :lgbm_score]
+    scores = psms[!, :lgbm_score]
+    t_best = time()
 
     # Compute q-values
-    best_targets = best_psms[!, :target]
-    q_values = zeros(Float64, nrow(best_psms))
+    best_targets = psms[!, :target]
+    q_values = zeros(Float64, nrow(psms))
     get_qvalues!(scores, best_targets, q_values)
-    t_select = time()
+    t_qval = time()
 
     # Feature importances
     imp = importance(model)
@@ -1669,17 +1569,15 @@ function train_lgbm_and_select_best(
         end
     end
 
-    # Clean up temporary column
-    select!(psms, Not(:lgbm_score))
-
     timings = (
         matrix = t_matrix - t0,
         train = t_train - t_matrix,
         predict = t_predict - t_train,
-        select = t_select - t_predict,
+        best = t_best - t_predict,
+        qval = t_qval - t_best,
     )
 
-    return best_psms, Vector{Float32}(scores), q_values, timings
+    return psms, Vector{Float32}(scores), q_values, timings
 end
 
 """
@@ -1694,35 +1592,42 @@ function get_best_psm_per_precursor(psms::DataFrame)
     return best
 end
 
-"""
-    get_best_psm_per_precursor_by_score(psms::DataFrame, score_col::Symbol) -> DataFrame
 
-Reduce to one PSM per precursor_idx, keeping the row with highest `score_col`.
-Returns a copy (does not modify input).
 """
-function get_best_psm_per_precursor_by_score(psms::DataFrame, score_col::Symbol)
-    scores = psms[!, score_col]
-    prec_ids = psms[!, :precursor_idx]
+    select_best_per_precursor!(psms::DataFrame, score_col::Symbol) -> DataFrame
 
-    # Single pass: track best row index per precursor
-    best_idx = Dictionary{UInt32, Int}()
-    best_score = Dictionary{UInt32, Float32}()
-    for i in eachindex(prec_ids)
+In-place version: keeps one row per precursor_idx (highest `score_col`),
+deletes all other rows via `deleteat!`. Returns the mutated `psms`.
+"""
+function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
+    scores = psms[!, score_col]::Vector{Float32}
+    prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
+    n = nrow(psms)
+
+    # Single pass: track best row index per precursor (pre-allocate to avoid resizes)
+    best_idx = Dict{UInt32, Int}()
+    best_score = Dict{UInt32, Float32}()
+    sizehint!(best_idx, n)
+    sizehint!(best_score, n)
+    @inbounds for i in 1:n
         pid = prec_ids[i]
         s = scores[i]
         if !haskey(best_idx, pid)
-            insert!(best_idx, pid, i)
-            insert!(best_score, pid, s)
+            best_idx[pid] = i
+            best_score[pid] = s
         elseif s > best_score[pid]
             best_idx[pid] = i
             best_score[pid] = s
         end
     end
 
-    # Collect best rows — sort indices for cache-friendly DataFrame access
-    row_indices = collect(values(best_idx))
-    sort!(row_indices)
-    return psms[row_indices, :]
+    # Build keep mask and select rows
+    keep = falses(n)
+    @inbounds for idx in values(best_idx)
+        keep[idx] = true
+    end
+
+    return psms[keep, :]
 end
 
 """
@@ -1783,6 +1688,90 @@ end
 Global Cross-Run Prescore Aggregation
 ==========================================================#
 
+"""
+Typed inner function for the per-file aggregation loop in `aggregate_prescore_globally!`.
+Accepts Arrow columns as `AbstractVector` so the compiler specializes on concrete column
+types at each call site, eliminating dynamic dispatch inside the hot loop.
+"""
+function _aggregate_file_scores!(
+        prec_idx_col::AbstractVector{UInt32},
+        calibrated_probs::AbstractVector{Float32},
+        file_targets::AbstractVector{Bool},
+        irt_obs_col::Union{AbstractVector{Float32}, Nothing},
+        peak_width_col::Union{AbstractVector{Float32}, Nothing},
+        scan_idx_col::Union{AbstractVector{UInt32}, Nothing},
+        ms_file_idx::Int,
+        prec_probs_by_run::Dictionary{UInt32, Vector{Float32}},
+        prec_is_target::Dictionary{UInt32, Bool},
+        prec_min_irt::Dictionary{UInt32, Float32},
+        prec_max_irt::Dictionary{UInt32, Float32},
+        prec_best_prob::Dictionary{UInt32, Float32},
+        prec_best_irt::Dictionary{UInt32, Float32},
+        prec_irt_by_file::Dictionary{UInt32, Vector{Pair{Int,Float32}}},
+        prec_peak_widths::Dictionary{UInt32, Vector{Float32}},
+        prec_best_scan::Dictionary{UInt32, Dictionary{Int, UInt32}})
+
+    has_irt = irt_obs_col !== nothing
+    has_peak_width = peak_width_col !== nothing
+    has_scan = scan_idx_col !== nothing
+
+    @inbounds for i in eachindex(prec_idx_col)
+        pid = prec_idx_col[i]
+        p = calibrated_probs[i]
+        if haskey(prec_probs_by_run, pid)
+            push!(prec_probs_by_run[pid], p)
+        else
+            insert!(prec_probs_by_run, pid, Float32[p])
+        end
+        if !haskey(prec_is_target, pid)
+            insert!(prec_is_target, pid, file_targets[i])
+        end
+
+        # Track iRT range per precursor
+        if has_irt
+            irt = Float32(irt_obs_col[i])
+            if haskey(prec_min_irt, pid)
+                prec_min_irt[pid] = min(prec_min_irt[pid], irt)
+                prec_max_irt[pid] = max(prec_max_irt[pid], irt)
+                if p > prec_best_prob[pid]
+                    prec_best_prob[pid] = p
+                    prec_best_irt[pid] = irt
+                end
+            else
+                insert!(prec_min_irt, pid, irt)
+                insert!(prec_max_irt, pid, irt)
+                insert!(prec_best_prob, pid, p)
+                insert!(prec_best_irt, pid, irt)
+            end
+            if haskey(prec_irt_by_file, pid)
+                push!(prec_irt_by_file[pid], ms_file_idx => irt)
+            else
+                insert!(prec_irt_by_file, pid, [ms_file_idx => irt])
+            end
+        end
+
+        # Track within-file iRT peak width per precursor
+        if has_peak_width
+            pw = Float32(peak_width_col[i])
+            if haskey(prec_peak_widths, pid)
+                push!(prec_peak_widths[pid], pw)
+            else
+                insert!(prec_peak_widths, pid, Float32[pw])
+            end
+        end
+
+        # Track Phase 1 best scan per precursor per file
+        if has_scan
+            sid = UInt32(scan_idx_col[i])
+            if !haskey(prec_best_scan, pid)
+                insert!(prec_best_scan, pid, Dictionary{Int, UInt32}())
+            end
+            insert!(prec_best_scan[pid], ms_file_idx, sid)
+        end
+    end
+    return nothing
+end
+
 const DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD = 0.05f0
 
 """
@@ -1797,6 +1786,9 @@ precursor_idx → (file_idx → scan_idx).
 function aggregate_prescore_globally!(search_context::SearchContext,
                                       qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD,
                                       aggregation::PrescoreAggregationStrategy=PEPCalibratedAggregation())
+    r(t) = round(t; digits=2)
+    t_total_start = time()
+
     ms_data = getMSData(search_context)
     n_files = length(ms_data)
     prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
@@ -1815,13 +1807,19 @@ function aggregate_prescore_globally!(search_context::SearchContext,
 
     @info "Prescore aggregation strategy: $(typeof(aggregation))"
 
+    t_reads = 0.0
+    t_calibration = 0.0
+    t_loop = 0.0
+
     for ms_file_idx in 1:n_files
         getFailedIndicator(ms_data, ms_file_idx) && continue
         file_name = getParsedFileName(ms_data, ms_file_idx)
         score_path = joinpath(prescore_dir, "$(file_name).arrow")
         !isfile(score_path) && continue
 
+        t_r = time()
         scores = Arrow.Table(score_path)
+        t_reads += time() - t_r
         n_valid_files += 1
 
         has_irt = :irt_obs in Tables.columnnames(scores)
@@ -1829,67 +1827,29 @@ function aggregate_prescore_globally!(search_context::SearchContext,
         has_scan = :scan_idx in Tables.columnnames(scores)
 
         # Calibrate per-file scores using the aggregation strategy
+        t_c = time()
         file_probs = Float32.(scores[:lgbm_prob])
         file_targets = Bool.(scores[:target])
         calibrated_probs = calibrate_file_scores(aggregation, file_probs, file_targets)
+        t_calibration += time() - t_c
 
-        for i in eachindex(scores[:precursor_idx])
-            pid = scores[:precursor_idx][i]
-            p = calibrated_probs[i]
-            if haskey(prec_probs_by_run, pid)
-                push!(prec_probs_by_run[pid], p)
-            else
-                insert!(prec_probs_by_run, pid, Float32[p])
-            end
-            if !haskey(prec_is_target, pid)
-                insert!(prec_is_target, pid, file_targets[i])
-            end
-
-            # Track iRT range per precursor
-            if has_irt
-                irt = Float32(scores[:irt_obs][i])
-                if haskey(prec_min_irt, pid)
-                    prec_min_irt[pid] = min(prec_min_irt[pid], irt)
-                    prec_max_irt[pid] = max(prec_max_irt[pid], irt)
-                    if p > prec_best_prob[pid]
-                        prec_best_prob[pid] = p
-                        prec_best_irt[pid] = irt
-                    end
-                else
-                    insert!(prec_min_irt, pid, irt)
-                    insert!(prec_max_irt, pid, irt)
-                    insert!(prec_best_prob, pid, p)
-                    insert!(prec_best_irt, pid, irt)
-                end
-                if haskey(prec_irt_by_file, pid)
-                    push!(prec_irt_by_file[pid], ms_file_idx => irt)
-                else
-                    insert!(prec_irt_by_file, pid, [ms_file_idx => irt])
-                end
-            end
-
-            # Track within-file iRT peak width per precursor
-            if has_peak_width
-                pw = Float32(scores[:irt_peak_width][i])
-                if haskey(prec_peak_widths, pid)
-                    push!(prec_peak_widths[pid], pw)
-                else
-                    insert!(prec_peak_widths, pid, Float32[pw])
-                end
-            end
-
-            # Track Phase 1 best scan per precursor per file
-            if has_scan
-                sid = UInt32(scores[:scan_idx][i])
-                if !haskey(prec_best_scan, pid)
-                    insert!(prec_best_scan, pid, Dictionary{Int, UInt32}())
-                end
-                insert!(prec_best_scan[pid], ms_file_idx, sid)
-            end
-        end
+        # Pass Arrow columns directly — _aggregate_file_scores! specializes on concrete types
+        t_l = time()
+        _aggregate_file_scores!(
+            scores[:precursor_idx], calibrated_probs, file_targets,
+            has_irt ? scores[:irt_obs] : nothing,
+            has_peak_width ? scores[:irt_peak_width] : nothing,
+            has_scan ? scores[:scan_idx] : nothing,
+            ms_file_idx,
+            prec_probs_by_run, prec_is_target,
+            prec_min_irt, prec_max_irt, prec_best_prob, prec_best_irt,
+            prec_irt_by_file, prec_peak_widths, prec_best_scan
+        )
+        t_loop += time() - t_l
     end
 
     # Aggregate via log-odds
+    t_qval_start = time()
     sqrt_n = max(1, floor(Int, sqrt(n_valid_files)))
     n_unique = length(prec_probs_by_run)
     global_prec_idxs = Vector{UInt32}(undef, n_unique)
@@ -2068,6 +2028,10 @@ function aggregate_prescore_globally!(search_context::SearchContext,
             @debug "  DIA-NN file $file_name ($n_diann_f): pass=$n_pass_f, scored-but-filtered=$n_scored_fail_f, not-scored=$n_not_scored_f"
         end
     end
+
+    t_qval = time() - t_qval_start
+    t_total = time() - t_total_start
+    @info "Prescore aggregation: file_reads=$(r(t_reads))s, calibration=$(r(t_calibration))s, loop=$(r(t_loop))s, combination+qvalues=$(r(t_qval))s, total=$(r(t_total))s"
 
     return passing, prec_best_scan
 end

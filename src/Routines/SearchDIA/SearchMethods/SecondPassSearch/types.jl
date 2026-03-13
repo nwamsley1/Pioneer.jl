@@ -126,21 +126,19 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
         ms1_scoring = Bool(global_params.ms1_scoring)
 
         # Global prescore q-value threshold (default 0.05 if not in JSON)
-        first_search_params = params.first_search
-        global_prescore_qval = if haskey(first_search_params, :global_prescore_qvalue_threshold)
-            Float32(first_search_params.global_prescore_qvalue_threshold)
+        global_prescore_qval = if haskey(quant_params, :global_prescore_qvalue_threshold)
+            Float32(quant_params.global_prescore_qvalue_threshold)
         else
             0.05f0
         end
 
-        # Phase 1 prescore fragment settings from first_search
-        prescore_frag = first_search_params.fragment_settings
-        prescore_n_frag_isotopes = Int64(prescore_frag.n_isotopes)
-        prescore_max_frag_rank = UInt8(prescore_frag.max_rank)
-        prescore_min_frag_count = Int64(prescore_frag.min_count)
-        prescore_min_spectral_contrast = Float32(prescore_frag.min_spectral_contrast)
-        prescore_min_log2_matched_ratio = Float32(prescore_frag.min_log2_ratio)
-        prescore_min_topn_of_m = (Int64(first(prescore_frag.min_top_n)), Int64(last(prescore_frag.min_top_n)))
+        # Prescore fragment settings default to same as second_search fragment_settings
+        prescore_n_frag_isotopes = Int64(frag_params.n_isotopes)
+        prescore_max_frag_rank = UInt8(frag_params.max_rank)
+        prescore_min_frag_count = Int64(frag_params.min_count)
+        prescore_min_spectral_contrast = Float32(frag_params.min_spectral_contrast)
+        prescore_min_log2_matched_ratio = Float32(frag_params.min_log2_ratio)
+        prescore_min_topn_of_m = (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n)))
 
         # Dynamic range filter (backward compatible defaults)
         dynamic_range = if haskey(frag_params, :dynamic_range)
@@ -148,15 +146,11 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
         else
             Float32(1e-3)
         end
-        prescore_dynamic_range = if haskey(prescore_frag, :dynamic_range)
-            Float32(prescore_frag.dynamic_range)
-        else
-            Float32(1e-3)
-        end
+        prescore_dynamic_range = dynamic_range
 
         # Prescore aggregation strategy (default: PEPCalibratedAggregation)
-        prescore_aggregation = if haskey(first_search_params, :prescore_aggregation)
-            agg_str = string(first_search_params.prescore_aggregation)
+        prescore_aggregation = if haskey(quant_params, :prescore_aggregation)
+            agg_str = string(quant_params.prescore_aggregation)
             if agg_str == "raw_logodds"
                 RawLogOddsAggregation()
             else

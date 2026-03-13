@@ -21,7 +21,6 @@ struct PioneerParameters
     global_settings::NamedTuple
     parameter_tuning::NamedTuple
     fragment_index_search::NamedTuple
-    first_search::NamedTuple
     second_search::NamedTuple
     acquisition::NamedTuple
     rt_alignment::NamedTuple
@@ -61,7 +60,6 @@ function params_to_dict(params::PioneerParameters)
         "global" => namedtuple_to_dict(params.global_settings),
         "parameter_tuning" => namedtuple_to_dict(params.parameter_tuning),
         "fragment_index_search" => namedtuple_to_dict(params.fragment_index_search),
-        "first_search" => namedtuple_to_dict(params.first_search),
         "second_search" => namedtuple_to_dict(params.second_search),
         "acquisition" => namedtuple_to_dict(params.acquisition),
         "rt_alignment" => namedtuple_to_dict(params.rt_alignment),
@@ -135,7 +133,6 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     global_settings = dict_to_namedtuple(params["global"])
     parameter_tuning = dict_to_namedtuple(params["parameter_tuning"])
     fragment_index_search = dict_to_namedtuple(params["fragment_index_search"])
-    first_search = dict_to_namedtuple(params["first_search"])
     second_search = dict_to_namedtuple(params["second_search"])
     acquisition = dict_to_namedtuple(params["acquisition"])
     rt_alignment = dict_to_namedtuple(params["rt_alignment"])
@@ -153,7 +150,6 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
         global_settings,
         parameter_tuning,
         fragment_index_search,
-        first_search,
         second_search,
         acquisition,
         rt_alignment,

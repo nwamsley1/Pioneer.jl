@@ -53,21 +53,24 @@ function process_file!(
         scan_to_prec_idx, precursors_passed = load_fragment_index_matches(
             filtered_path, length(spectra)
         )
+        n_input_pairs = sum(ismissing(r) ? 0 : length(r) for r in scan_to_prec_idx)
+        @info "SecondPassSearch input: $file_name — $(n_input_pairs) (scan, precursor) pairs"
         t_load = time()
 
         # Deconvolve with full Phase 2 fragment settings
-        search_result = perform_second_pass_search(
+        timed_deconv = @timed perform_second_pass_search(
             spectra,
             scan_to_prec_idx,
             precursors_passed,
             search_context,
             params,
             ms_file_idx,
-            MS2CHROM();  # Uses params.n_frag_isotopes and params.max_frag_rank by default
-            min_frag_count = 0  # No pre-filtering; let downstream ML handle quality
+            MS2CHROM()  # Uses params defaults: min_frag_count, dynamic_range, etc.
         )
+        search_result = timed_deconv.value
         psms = search_result.psms
         t_deconv = time()
+        @info "    deconv: $(round(timed_deconv.time; digits=2))s, $(round(timed_deconv.bytes/1e6; digits=1))MB allocated, $(round(timed_deconv.gctime; digits=2))s GC"
 
         if nrow(psms) == 0
             @info "    No PSMs after deconvolution, skipping"
@@ -75,8 +78,9 @@ function process_file!(
         end
 
         # Compute all 29 features on ALL PSMs
-        prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
+        timed_features = @timed prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
         t_features = time()
+        @info "    features: $(round(timed_features.time; digits=2))s, $(round(timed_features.bytes/1e6; digits=1))MB allocated, $(round(timed_features.gctime; digits=2))s GC"
 
         if nrow(psms) == 0
             @info "    No PSMs after feature computation, skipping"
@@ -117,6 +121,11 @@ function process_file!(
         base_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
         setSecondPassPsms!(getMSData(search_context), ms_file_idx,
                           joinpath(base_dir, file_name))
+
+        # TEMP: Write combined file with all features for analysis (separate dir to avoid ScoringSearch overwrite)
+        all_features_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_all_features")
+        mkpath(all_features_dir)
+        writeArrow(joinpath(all_features_dir, "$(file_name).arrow"), best_psms)
 
         for fold in UInt8[0, 1]
             fold_path = joinpath(base_dir, "$(file_name)_fold$(fold).arrow")

@@ -284,7 +284,6 @@ function SearchDIA(params_path::String)
                     updated_global,
                     params.parameter_tuning,
                     params.fragment_index_search,
-                    params.first_search,
                     params.second_search,
                     params.acquisition,
                     params.rt_alignment,
@@ -344,7 +343,7 @@ function SearchDIA(params_path::String)
             ("Quadrupole Tuning", QuadTuningSearch()),
             ("Fragment Index Search", FragmentIndexSearch()),
             ("First Pass Search", FirstPassSearch()),
-            ("Second Pass Search", SecondPassSearch()),
+            #("Second Pass Search", SecondPassSearch()),  # Bypassed: FirstPassSearch now writes fold files directly
             ("Scoring", ScoringSearch()),
             ("Chromatogram Integration", IntegrateChromatogramSearch()),
             ("Quantification & Output", MaxLFQSearch())

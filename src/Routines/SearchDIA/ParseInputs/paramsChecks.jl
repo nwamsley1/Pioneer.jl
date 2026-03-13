@@ -42,7 +42,7 @@ function checkParams(json_path::String)
 
     # Check top-level sections
     required_sections = [
-        "global", "parameter_tuning", "fragment_index_search", "first_search", "second_search",
+        "global", "parameter_tuning", "fragment_index_search", "second_search",
         "acquisition", "rt_alignment", "optimization", "output", "paths"
     ]
     
@@ -200,17 +200,6 @@ function checkParams(json_path::String)
     # Validate fragment index search parameters
     frag_idx_search = params["fragment_index_search"]
     check_param(frag_idx_search, "min_score", Integer)
-
-    # Validate first search parameters (prescore settings)
-    first_search = params["first_search"]
-    check_param(first_search, "fragment_settings", Dict)
-    first_frag = first_search["fragment_settings"]
-    check_param(first_frag, "max_rank", Integer)
-    check_param(first_frag, "n_isotopes", Integer)
-    check_param(first_frag, "min_count", Integer)
-    check_param(first_frag, "min_spectral_contrast", Real)
-    check_param(first_frag, "min_log2_ratio", Real)
-    check_param(first_frag, "min_top_n", Vector)
 
     # Validate second search parameters
     second_search = params["second_search"]
