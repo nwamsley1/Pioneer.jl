@@ -4,15 +4,37 @@
 
 ### What exists
 
-Three coordinate-descent solvers for non-negative Poisson GLM spectral deconvolution:
+Four coordinate-descent solvers for non-negative Poisson GLM spectral deconvolution:
 
 - **OLS** (`solveOLS!` in `spectralLinearRegression_reference.jl`): Fastest. One dot-product + update per coordinate. Minimizes SSE.
 - **Huber** (`solveHuber!` in `spectralLinearRegression_reference.jl`): Newton-bisection per coordinate. ~5x slower than OLS. Produces near-identical solutions to OLS (cor≥0.98) because the Huber δ is large enough that all residuals stay in the quadratic zone.
-- **PMM** (`solvePoissonMM!` in `spectralPoissonRegression.jl`): Observed-Hessian coordinate descent maximizing Poisson log-likelihood. Uses y-scaling (divide y by max(y)) to normalize step sizes. Now supports inner Newton iterations (K steps per coordinate per sweep).
+- **PMM** (`solvePoissonMM!` in `spectralPoissonRegression.jl`): Observed-Hessian coordinate descent maximizing Poisson log-likelihood. Uses y-scaling (divide y by max(y)) to normalize step sizes. Supports inner Newton iterations (K steps per coordinate per sweep).
+- **PMM fast** (`solvePoissonMM_fast!` in `spectralPoissonRegression.jl`): Optimized PMM with identical algorithm. Inlines derivative computation and μ update, then fuses the μ-update from inner iteration K with the derivative computation for iteration K+1 into a single pass over each column's nonzeros. This reduces memory passes from 2K to K+1 for K inner iterations. Zero allocations, same signature as `solvePoissonMM!`.
 
 All solvers share:
 - `SparseArray` CSC structure (`SparseArray.jl`)
 - Weight-floor heuristic: after 5 iterations, columns below `max_weight * threshold` are excluded from convergence check (OLS/Huber use 1e-7, PMM uses 1e-4)
+
+### PMM fast optimization details (added 2026-03-13)
+
+`solvePoissonMM_fast!` applies one optimization to the inner loop of `solvePoissonMM!`:
+
+**Fused μ-update + derivative computation.** In the original solver, each inner Newton iteration requires two passes over the column's nonzeros: one to compute derivatives (L1, L2), one to update μ. The fast solver fuses the μ-update from iteration K with the derivative computation for iteration K+1 into a single pass. For K=5 inner iterations this reduces passes from 10 to 6 (40% fewer memory accesses in the hot loop).
+
+Other optimizations considered and rejected:
+- **Precomputed a_ij²**: Would save one multiply per nonzero in L2 but requires allocating a `Vector{T}(n_vals)` buffer. Rejected — no allocations allowed in the solver hot path.
+- **Column skipping** (skip zero columns after 2+ sweeps): Would save derivative computation for stable zero columns but requires allocating a `Vector{Int8}(n_cols)` tracker. Rejected for the same reason.
+- **Fast reciprocal** (Quake-style bit trick for 1/μ): Profiling showed division was only ~5% of derivative time (~19/370 samples). Expected gain ~3% total, not worth reduced accuracy.
+
+### Benchmark results (100 real problems, 11 runs each, median timing)
+
+| Solver | Median (μs) | Mean (μs) | vs OLS | vs PMM orig |
+|--------|------------|-----------|--------|-------------|
+| OLS | 2.3 | 11.0 | 1.0x | — |
+| PMM fast | 9.4 | 28.4 | 4.5x | 1.37x faster |
+| PMM original | 12.8 | 37.7 | 6.1x | 1.0x |
+
+Solution agreement between PMM original and PMM fast: correlation = 1.000000 on all 100 problems, relative LL difference < 2.5e-8 (Float32 rounding only).
 
 ### Inner Newton iterations (added 2026-03-13)
 
@@ -69,7 +91,8 @@ Based on the full benchmark suite:
 | `spectralPoissonRegression.jl` | PMM solvers + Poisson LL + helpers (production code) |
 | `spectralLinearRegression_reference.jl` | OLS, Huber solvers (reference implementations) |
 | `SparseArray.jl` | Minimal CSC sparse matrix struct |
-| `benchmark_solvers.jl` | 100-problem timing + solution comparison |
+| `benchmark_solvers.jl` | 100-problem timing + solution comparison (OLS, PMM, Huber) |
+| `benchmark_pmm_optimization.jl` | PMM original vs PMM fast A/B benchmark |
 | `benchmark_inner_iterations.jl` | K=1,3,5,10 inner iteration benchmark |
 | `benchmark_ll_convergence.jl` | K × LL_tol grid benchmark |
 | `benchmark_l2_reg.jl` | L2 regularization benchmark (conclusion: don't use) |

@@ -208,6 +208,153 @@ function solvePoissonMM!(Hs::SparseArray{Ti, T},
 end
 
 """
+    solvePoissonMM_fast!(Hs, μ, y, X₁, max_iter_outer,
+                          relative_convergence_threshold;
+                          max_inner_iter=5)
+
+Optimized Poisson MLE coordinate descent. Same algorithm as `solvePoissonMM!` with:
+- Inlined derivative computation and μ update (no function call overhead)
+- Fused μ-update + derivative-computation for inner iterations 2..K
+  (saves one memory pass per inner iteration over the column's nonzeros)
+"""
+function solvePoissonMM_fast!(Hs::SparseArray{Ti, T},
+                               μ::Vector{T},
+                               y::Vector{T},
+                               X₁::Vector{T},
+                               max_iter_outer::Int64,
+                               relative_convergence_threshold::T;
+                               max_inner_iter::Int64 = Int64(5)) where {Ti<:Integer, T<:AbstractFloat}
+
+    # ── Y-scaling: divide y by max(y) to bring weights into tractable range ──
+    y_scale = T(0)
+    @inbounds for i in 1:Hs.m
+        if y[i] > y_scale
+            y_scale = y[i]
+        end
+    end
+    if y_scale > T(1)
+        @inbounds for i in 1:Hs.m
+            y[i] /= y_scale
+        end
+        @inbounds for j in 1:Hs.n
+            X₁[j] /= y_scale
+        end
+        initMu!(μ, Hs, X₁)
+    end
+
+    # ── Extract fields for direct access ──
+    colptr = Hs.colptr
+    rowval = Hs.rowval
+    nzval  = Hs.nzval
+    ncols  = Hs.n
+
+    max_weight = T(0)
+    ε = T(POISSON_MU_FLOOR)
+
+    iter = 0
+    while iter < max_iter_outer
+        _diff = T(0)
+        weight_floor = iter >= 5 ? max_weight * T(1e-4) : T(0)
+        max_weight = T(0)
+
+        for col in 1:ncols
+            col_start = colptr[col]
+            col_end   = colptr[col + 1] - 1
+            X_before  = X₁[col]
+
+            # ── Initial derivative computation (separate pass) ──
+            L1 = zero(Float32)
+            L2 = zero(Float32)
+            @inbounds @fastmath for i in col_start:col_end
+                row   = rowval[i]
+                a_ij  = nzval[i]
+                inv_μ = one(Float32) / max(μ[row], ε)
+                y_i   = y[row]
+                L1   += a_ij * (one(Float32) - y_i * inv_μ)
+                L2   += a_ij * a_ij * y_i * inv_μ * inv_μ
+            end
+            # Fisher fallback when observed Hessian ≈ 0 (all y_i = 0 in support)
+            if L2 < ε
+                @inbounds @fastmath for i in col_start:col_end
+                    a_ij  = nzval[i]
+                    inv_μ = one(Float32) / max(μ[rowval[i]], ε)
+                    L2   += a_ij * a_ij * inv_μ
+                end
+            end
+
+            # ── Inner Newton iterations ──
+            for _k in 1:max_inner_iter
+                (L2 <= ε || isnan(L1)) && break
+
+                X0 = X₁[col]
+                X₁[col] = max(X₁[col] - L1 / L2, zero(T))
+                delta = X₁[col] - X0
+
+                done = iszero(X₁[col]) || abs(delta) / max(abs(X₁[col]), T(1e-10)) < T(1e-3)
+
+                if !done && _k < max_inner_iter
+                    # ── Fused: update μ + compute next derivatives in one pass ──
+                    L1 = zero(Float32)
+                    L2 = zero(Float32)
+                    @inbounds @fastmath for i in col_start:col_end
+                        row       = rowval[i]
+                        a_ij      = nzval[i]
+                        μ[row]   += a_ij * delta
+                        inv_μ     = one(Float32) / max(μ[row], ε)
+                        y_i       = y[row]
+                        L1       += a_ij * (one(Float32) - y_i * inv_μ)
+                        L2       += a_ij * a_ij * y_i * inv_μ * inv_μ
+                    end
+                    if L2 < ε
+                        @inbounds @fastmath for i in col_start:col_end
+                            a_ij  = nzval[i]
+                            inv_μ = one(Float32) / max(μ[rowval[i]], ε)
+                            L2   += a_ij * a_ij * inv_μ
+                        end
+                    end
+                else
+                    # ── Just update μ (converged or last inner iteration) ──
+                    @inbounds @fastmath for i in col_start:col_end
+                        μ[rowval[i]] += nzval[i] * delta
+                    end
+                    break
+                end
+            end
+
+            # ── Convergence tracking ──
+            δx = abs(X₁[col] - X_before)
+            if X₁[col] > max_weight
+                max_weight = X₁[col]
+            end
+            if X₁[col] > weight_floor
+                rel_change = δx / max(abs(X₁[col]), T(1e-10))
+                if rel_change > _diff
+                    _diff = rel_change
+                end
+            end
+        end
+
+        if _diff < relative_convergence_threshold
+            break
+        end
+        iter += 1
+    end
+
+    # ── Unscale: restore y and weights to original magnitude ──
+    if y_scale > T(1)
+        @inbounds for i in 1:Hs.m
+            y[i] *= y_scale
+        end
+        @inbounds for j in 1:Hs.n
+            X₁[j] *= y_scale
+        end
+        initMu!(μ, Hs, X₁)
+    end
+
+    return nothing
+end
+
+"""
     poissonLogLikelihood(μ, y, m)
 
 Compute Poisson log-likelihood Σ_i [y_i log(μ_i) - μ_i] for diagnostic monitoring.
