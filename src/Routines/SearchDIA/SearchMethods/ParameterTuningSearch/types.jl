@@ -232,8 +232,8 @@ mutable struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentInd
         search_params = tuning_params.search_settings
         rt_params = params.rt_alignment
         
-        # Convert isotope error bounds
-        isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
+        # Hardcoded isotope error bounds (always (1,0))
+        isotope_bounds = (1, 0)
         
         # Create precursor estimation type
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()

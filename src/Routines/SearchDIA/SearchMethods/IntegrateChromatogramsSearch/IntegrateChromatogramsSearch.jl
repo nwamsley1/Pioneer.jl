@@ -79,23 +79,22 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
-        quant_params = params.second_search
-        frag_params = quant_params.fragment_settings
-        chrom_params = quant_params.chromatogram
+        frag_params = params.search.fragment_settings
+        chrom_params = params.chromatogram
         deconv_params = params.optimization.deconvolution
         output_params = params.output
-        
+
         # Determine isotope trace type
-        isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && 
+        isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) &&
                                global_params.isotope_settings.combine_traces
-            CombineTraces(0.0f0)  # Default min_fraction_transmitted
+            CombineTraces(0.0f0)
         else
             SeperateTraces()
         end
 
-        isotope_bounds = global_params.isotope_settings.err_bounds_second_search
+        # Read err_bounds from top-level chromatogram section
+        isotope_bounds = chrom_params.err_bounds
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
-        # Always use partial precursor capture for integrate chromatogram
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
         # Parse MS2 regularization type
@@ -111,25 +110,16 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             @user_warn "Warning. MS2 reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
 
-        # Parse MS1 regularization type
-        ms1_reg_type = deconv_params.ms1.reg_type
-        if ms1_reg_type == "none"
-            ms1_reg_type = NoNorm()
-        elseif ms1_reg_type == "l1"
-            ms1_reg_type = L1Norm()
-        elseif ms1_reg_type == "l2"
-            ms1_reg_type = L2Norm()
-        else
-            ms1_reg_type = NoNorm()
-            @user_warn "Warning. MS1 reg type `$ms1_reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
-        end
+        # Hardcoded MS1 deconvolution parameters
+        ms1_reg_type = L2Norm()
+
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             Set{Int64}([2]),
-            global_params.ms1_quant,
+            false,  # ms1_quant hardcoded false
 
             Float32(chrom_params.smoothing_strength),
             Int64(chrom_params.padding),
@@ -138,16 +128,16 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
             Float32(deconv_params.ms2.lambda),
             reg_type,
-            Int64(deconv_params.newton_iters),
-            Int64(deconv_params.bisection_iters),
+            Int64(50),   # max_iter_newton hardcoded
+            Int64(100),  # max_iter_bisection hardcoded
             Int64(deconv_params.outer_iters),
-            Float32(deconv_params.newton_accuracy),
-            Float32(deconv_params.newton_accuracy),
+            Float32(10),  # accuracy_newton hardcoded
+            Float32(10),  # accuracy_bisection hardcoded
             Float32(deconv_params.max_diff),
 
-            Float32(deconv_params.ms1.lambda),
+            Float32(0.0001),  # ms1_lambda hardcoded
             ms1_reg_type,
-            Float32(deconv_params.ms1.huber_delta),
+            Float32(1e9),     # ms1_huber_delta hardcoded
 
             isotope_trace_type,
             prec_estimation

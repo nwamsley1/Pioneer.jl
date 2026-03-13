@@ -21,7 +21,8 @@ struct PioneerParameters
     global_settings::NamedTuple
     parameter_tuning::NamedTuple
     fragment_index_search::NamedTuple
-    second_search::NamedTuple
+    search::NamedTuple
+    chromatogram::NamedTuple
     acquisition::NamedTuple
     rt_alignment::NamedTuple
     optimization::NamedTuple
@@ -60,7 +61,8 @@ function params_to_dict(params::PioneerParameters)
         "global" => namedtuple_to_dict(params.global_settings),
         "parameter_tuning" => namedtuple_to_dict(params.parameter_tuning),
         "fragment_index_search" => namedtuple_to_dict(params.fragment_index_search),
-        "second_search" => namedtuple_to_dict(params.second_search),
+        "search" => namedtuple_to_dict(params.search),
+        "chromatogram" => namedtuple_to_dict(params.chromatogram),
         "acquisition" => namedtuple_to_dict(params.acquisition),
         "rt_alignment" => namedtuple_to_dict(params.rt_alignment),
         "optimization" => namedtuple_to_dict(params.optimization),
@@ -94,7 +96,7 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
         # Determine if we should use simplified defaults based on parameter presence
         is_simplified = !haskey(user_params, "parameter_tuning") &&
                        !haskey(user_params, "fragment_index_search") &&
-                       !haskey(user_params, "second_search")
+                       !haskey(user_params, "search")
         
         # Get appropriate defaults
         defaults = get_default_parameters(is_simplified)
@@ -133,7 +135,8 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     global_settings = dict_to_namedtuple(params["global"])
     parameter_tuning = dict_to_namedtuple(params["parameter_tuning"])
     fragment_index_search = dict_to_namedtuple(params["fragment_index_search"])
-    second_search = dict_to_namedtuple(params["second_search"])
+    search = dict_to_namedtuple(params["search"])
+    chromatogram = dict_to_namedtuple(params["chromatogram"])
     acquisition = dict_to_namedtuple(params["acquisition"])
     rt_alignment = dict_to_namedtuple(params["rt_alignment"])
     optimization = dict_to_namedtuple(params["optimization"])
@@ -150,7 +153,8 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
         global_settings,
         parameter_tuning,
         fragment_index_search,
-        second_search,
+        search,
+        chromatogram,
         acquisition,
         rt_alignment,
         optimization,

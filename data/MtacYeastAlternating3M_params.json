@@ -1,171 +1,147 @@
 {
-    "logging": {
-        "debug_console_level": 0
+    "acquisition": {
+        "nce": 26,
+        "quad_transmission": {
+            "fit_from_data": true,
+            "smoothness": 5.0,
+            "overhang": 0.25
+        }
     },
     "global": {
-        "isotope_settings": {
-            "err_bounds_first_pass": [
-                1,
-                0
-            ],
-            "combine_traces": true,
-            "partial_capture": true,
-            "min_fraction_transmitted": 0.25,
-            "err_bounds_second_search": [
-                3,
-                0
-            ]
-        },
-        "scoring": {
-            "q_value_threshold": 0.01
-        },
-        "normalization": {
-            "n_rt_bins": 100,
-            "spline_n_knots": 7
-        },
         "huber_override": {
             "override_huber_delta_fit": false,
             "huber_delta": 1055
         },
-        "ms1_scoring": true,
-        "ms1_quant": false,
-        "match_between_runs": false
+        "scoring": {
+            "q_value_threshold": 0.01
+        },
+        "isotope_settings": {
+            "combine_traces": true,
+            "min_fraction_transmitted": 0.25,
+            "partial_capture": true
+        },
+        "normalization": {
+            "n_rt_bins": 100,
+            "spline_n_knots": 7
+        }
+    },
+    "output": {
+        "plots_per_page": 12,
+        "write_decoys": false,
+        "write_csv": true,
+        "delete_temp": true
+    },
+    "chromatogram": {
+        "err_bounds": [
+            3,
+            0
+        ],
+        "padding": 0,
+        "max_apex_offset": 2,
+        "smoothing_strength": 1.0e-6
     },
     "parameter_tuning": {
+        "quad_tuning": {
+            "min_psms_per_thompson": 250,
+            "initial_percent": 2.5,
+            "min_fragments": 3
+        },
+        "iteration_settings": {
+            "init_mass_tol_ppm": 30.0,
+            "scan_scale_factor": 4,
+            "ms1_tol_ppm": 20.0,
+            "iterations_per_phase": 3,
+            "mass_tolerance_scale_factor": 1.5
+        },
+        "nce_tuning": {
+            "min_initial_scans": 5000,
+            "initial_percent": 2.5,
+            "min_psms": 2000
+        },
         "fragment_settings": {
-            "min_count": 7,
+            "min_spectral_contrast": 0.5,
+            "intensity_filter_quantile": 0.5,
             "max_rank": 25,
+            "min_top_n": [
+                3,
+                3
+            ],
+            "min_count": 7,
+            "relative_improvement_threshold": 1.25,
+            "min_log2_ratio": 1.5,
             "min_score": [
                 22,
                 17,
                 15
             ],
-            "min_spectral_contrast": 0.5,
-            "relative_improvement_threshold": 1.25,
-            "min_log2_ratio": 1.5,
-            "min_top_n": [
-                3,
-                3
-            ],
-            "n_isotopes": 1,
-            "intensity_filter_quantile": 0.5
+            "n_isotopes": 1
         },
         "search_settings": {
-            "min_samples": 1000,
-            "max_presearch_iters": 10,
-            "frag_err_quantile": 0.0025,
             "max_q_value": 0.01,
+            "frag_err_quantile": 0.0025,
+            "min_samples": 1000,
             "topn_peaks": 200,
             "initial_scan_count": 10000,
+            "max_presearch_iters": 10,
             "max_parameter_tuning_scans": 40000,
             "max_frags_for_mass_err_estimation": 12
-        },
-        "nce_tuning": {
-            "min_psms": 2000,
-            "initial_percent": 2.5,
-            "min_initial_scans": 5000
-        },
-        "quad_tuning": {
-            "min_psms_per_thompson": 250,
-            "min_fragments": 3,
-            "initial_percent": 2.5
-        },
-        "iteration_settings": {
-            "init_mass_tol_ppm": 30.0,
-            "ms1_tol_ppm": 20.0,
-            "mass_tolerance_scale_factor": 1.5,
-            "iterations_per_phase": 3,
-            "scan_scale_factor": 4
-        }
-    },
-    "fragment_index_search": {
-        "min_score": 15
-    },
-    "second_search": {
-        "fragment_settings": {
-            "min_count": 3,
-            "min_y_count": 2,
-            "max_rank": 255,
-            "min_spectral_contrast": 0.0,
-            "min_log2_ratio": -1.7,
-            "min_top_n": [
-                2,
-                3
-            ],
-            "n_isotopes": 2
-        },
-        "global_prescore_qvalue_threshold": 0.05,
-        "prescore_aggregation": "pep_calibrated",
-        "chromatogram": {
-            "smoothing_strength": 1e-06,
-            "padding": 0,
-            "max_apex_offset": 2
-        }
-    },
-    "acquisition": {
-        "nce": 26,
-        "quad_transmission": {
-            "fit_from_data": true,
-            "overhang": 0.25,
-            "smoothness": 5.0
-        }
-    },
-    "rt_alignment": {
-        "n_bins": 200,
-        "bandwidth": 0.25,
-        "sigma_tolerance": 4,
-        "min_probability": 0.95
-    },
-    "optimization": {
-        "deconvolution": {
-            "ms1": {
-                "lambda": 0.0001,
-                "reg_type": "l2",
-                "huber_delta": 1000000000.0
-            },
-            "ms2": {
-                "lambda": 0.0,
-                "reg_type": "none",
-                "huber_delta": 300
-            },
-            "huber_exp": 1.5,
-            "huber_iters": 15,
-            "newton_iters": 50,
-            "bisection_iters": 100,
-            "outer_iters": 1000,
-            "newton_accuracy": 10,
-            "bisection_accuracy": 10,
-            "max_diff": 0.01
-        },
-        "machine_learning": {
-            "max_psm_memory_mb": 4000,
-            "min_trace_prob": 0.75,
-            "max_q_value_mbr_itr": 0.2,
-            "min_PEP_neg_threshold_itr": 0.9,
-            "spline_points": 500,
-            "interpolation_points": 10,
-            "enable_model_comparison": true,
-            "validation_split_ratio": 0.2,
-            "qvalue_threshold": 0.01,
-            "min_psms_for_comparison": 1000,
-            "max_psms_for_comparison": 100000
         }
     },
     "proteinInference": {
         "min_peptides": 1
     },
+    "rt_alignment": {
+        "n_bins": 200,
+        "min_probability": 0.95,
+        "bandwidth": 0.25,
+        "sigma_tolerance": 4
+    },
     "maxLFQ": {
         "run_to_run_normalization": false
     },
-    "output": {
-        "write_csv": true,
-        "write_decoys": false,
-        "delete_temp": true,
-        "plots_per_page": 12
+    "optimization": {
+        "deconvolution": {
+            "outer_iters": 1000,
+            "ms2": {
+                "lambda": 0.0,
+                "reg_type": "none",
+                "huber_delta": 300
+            },
+            "max_diff": 0.01,
+            "huber_exp": 1.5,
+            "huber_iters": 15
+        },
+        "machine_learning": {
+            "validation_split_ratio": 0.2,
+            "max_q_value_mbr_itr": 0.2,
+            "interpolation_points": 10,
+            "spline_points": 500,
+            "min_trace_prob": 0.75,
+            "enable_model_comparison": true,
+            "min_PEP_neg_threshold_itr": 0.9,
+            "qvalue_threshold": 0.01,
+            "max_psm_memory_mb": 4000,
+            "max_psms_for_comparison": 100000,
+            "min_psms_for_comparison": 1000
+        }
+    },
+    "fragment_index_search": {
+        "min_score": 15
+    },
+    "logging": {
+        "debug_console_level": 0
+    },
+    "search": {
+        "fragment_settings": {
+            "max_rank": 255,
+            "min_count": 3,
+            "n_isotopes": 2
+        },
+        "global_prescore_qvalue_threshold": 0.01
     },
     "paths": {
-        "library": "/Users/nathanwamsley/Data/SPEC_LIBS/altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
         "ms_data": "/Users/nathanwamsley/Data/For_Figures/MtacYeastAlternating3M",
+        "library": "/Users/nathanwamsley/Data/SPEC_LIBS/altimeter_yeast_len7o40_ch2o3_mc1_MTACAstral_Sep17-2025.poin",
         "results": "/Users/nathanwamsley/Data/For_Figures/MtacYeastAlternating3M/MtacYeastAlternating3M_results"
     }
 }

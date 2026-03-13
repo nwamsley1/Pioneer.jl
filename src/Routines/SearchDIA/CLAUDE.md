@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 ## SearchDIA Overview
 
-SearchDIA is the core search engine of Pioneer.jl that performs data-independent acquisition (DIA) proteomics analysis. It implements a multi-pass search strategy with 9 sequential search methods, each building upon previous results to progressively refine peptide identification and quantification.
+SearchDIA is the core search engine of Pioneer.jl that performs data-independent acquisition (DIA) proteomics analysis. It implements a multi-stage search strategy with 8 active search methods, each building upon previous results to progressively refine peptide identification and quantification.
 
 ## Architecture
 
@@ -12,16 +12,22 @@ SearchDIA is the core search engine of Pioneer.jl that performs data-independent
 
 ```
 SearchDIA.jl (main entry)
-├── 1. ParameterTuningSearch - Establishes fragment mass tolerance
-├── 2. NceTuningSearch - Calibrates collision energy models
-├── 3. QuadTuningSearch - Models quadrupole transmission
-├── 4. FirstPassSearch - Initial PSM identification with RT calibration
-├── 5. HuberTuningSearch - Optimizes Huber loss parameters
-├── 6. SecondPassSearch - Refined search with calibrated parameters
-├── 7. ScoringSearch - FDR control and protein group scoring
-├── 8. IntegrateChromatogramSearch - Peak integration and quantification
-└── 9. MaxLFQSearch - Label-free quantification
+├── 1. ParameterTuningSearch    - Establishes fragment mass tolerance
+├── 2. NceTuningSearch          - Calibrates collision energy models
+├── 3. QuadTuningSearch         - Models quadrupole transmission
+├── 4. FragmentIndexSearch      - Builds fragment index for candidate selection
+├── 5. FirstPassSearch          - PSM identification, LightGBM scoring, global FDR, fold-split output
+├──    (SecondPassSearch)       - BYPASSED: FirstPassSearch now writes fold files directly
+├── 6. ScoringSearch            - Rescoring with additional features, FDR control, protein grouping
+├── 7. IntegrateChromatogramSearch - Peak integration and quantification
+└── 8. MaxLFQSearch             - Label-free quantification
 ```
+
+**Note**: SecondPassSearch is bypassed as of 2025-03. FirstPassSearch now performs global
+prescore aggregation, filters to passing precursors, and writes CV fold-split Arrow files
+directly to `temp_data/second_pass_psms/`. ScoringSearch reads these files and trains a
+second LightGBM with additional features (20 features vs FirstPass's 15). The SecondPassSearch
+code still exists but is commented out of the `routines` array in `SearchDIA.jl`.
 
 ### Key Abstractions
 
@@ -205,34 +211,33 @@ include("test/UnitTests/SearchMethods/test_scoring_search.jl")
 - `CommonSearchUtils/selectTransitions/` - Transition selection strategies
 - `WriteOutputs/` - Result formatting and plotting
 
-## Recent Development Updates (2025-01)
+## Recent Development Updates
 
-### Protein Inference Refactoring
-The protein inference system was recently refactored to use type-safe structures:
+### SecondPassSearch Bypass (2025-03)
+SecondPassSearch has been bypassed. The pipeline no longer performs a second fragment-index
+search. Instead, FirstPassSearch handles the complete flow:
 
-**Completed Changes**:
+1. **Fragment matching + deconvolution** → all (scan, precursor) PSMs
+2. **Per-file LightGBM scoring** (15 features) → `temp_data/prescore_scores/{file}.arrow`
+3. **Global prescore aggregation** — PEP-calibrate each file's scores, log-odds combine
+   top-√n across files, compute global q-values
+4. **Filter to passing precursors** (default 5% global FDR)
+5. **Write fold-split Arrow files** to `temp_data/second_pass_psms/` with additional
+   Phase 2 columns (irt_diff, prec_mz, pair_id, etc.)
+6. **Filter fragment index** to passing precursors for downstream chromatogram integration
+
+ScoringSearch then reads the fold-split files and trains a second LightGBM with 20 features
+(adds log2_intensity_explained, prec_mz, irt_pred, irt_diff, longest_y, b_count, charge).
+
+**Key functions**:
+- `aggregate_prescore_globally!()` — `SecondPassSearch/utils.jl:1788` (still in SecondPassSearch dir)
+- `calibrate_file_scores()` / `combine_scores()` — `SecondPassSearch/prescore_aggregation.jl`
+- `_logodds_combine()` — log-odds averaging with floor clamping
+
+### Protein Inference Refactoring (2025-01)
 - Replaced complex NamedTuples with `ProteinKey` and `PeptideKey` types
 - Unified API with single `infer_proteins()` function
-- Added comprehensive test suite (89 passing tests)
-- Removed legacy functions and conversion utilities
 - ~350 lines of code reduction
-
-**Migration Guide**:
-- Old: `infer_proteins_typed()` → New: `infer_proteins()`
-- Old: Complex NamedTuple keys → New: `ProteinKey` and `PeptideKey` structs
-- Old: Multiple function variants → New: Single type-safe function
-
-**Testing**:
-- Integration: `SearchDIA("./data/ecoli_test/ecoli_test_params.json")`
-- Unit tests: `include("test/UnitTests/test_protein_inference.jl")`
-
-### SearchMethods Refactoring Status
-All planned SearchMethods refactoring has been completed:
-- ✅ FileReference type hierarchy with PSMFileReference and ProteinGroupFileReference
-- ✅ Algorithm wrappers for protein inference and PSM score updates  
-- ✅ ScoringSearch interface using file references
-- ✅ Generic heap-based merge supporting N sort keys
-- ✅ MaxLFQSearch simplified to use MSData directly
 
 ## Module-Specific Documentation
 

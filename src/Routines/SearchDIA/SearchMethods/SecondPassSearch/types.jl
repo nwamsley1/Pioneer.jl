@@ -81,19 +81,20 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
-        quant_params = params.second_search
+        quant_params = params.search
         frag_params = quant_params.fragment_settings
         deconv_params = params.optimization.deconvolution
 
         # Determine isotope trace type based on global settings
         isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) &&
                                global_params.isotope_settings.combine_traces
-            SeperateTraces() #CombineTraces(0.0f0)  # Default min_fraction_transmitted
+            SeperateTraces()
         else
             SeperateTraces()
         end
 
-        isotope_bounds = global_params.isotope_settings.err_bounds_second_search
+        # Hardcoded isotope error bounds (always (1,0))
+        isotope_bounds = (UInt8(1), UInt8(0))
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
@@ -110,20 +111,11 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
             @user_warn "Warning. MS2 reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
 
-        # Parse MS1 regularization type
-        ms1_reg_type = deconv_params.ms1.reg_type
-        if ms1_reg_type == "none"
-            ms1_reg_type = NoNorm()
-        elseif ms1_reg_type == "l1"
-            ms1_reg_type = L1Norm()
-        elseif ms1_reg_type == "l2"
-            ms1_reg_type = L2Norm()
-        else
-            ms1_reg_type = NoNorm()
-            @user_warn "Warning. MS1 reg type `$ms1_reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
-        end
+        # Hardcoded MS1 deconvolution parameters
+        ms1_reg_type = L2Norm()
 
-        ms1_scoring = Bool(global_params.ms1_scoring)
+        # Hardcoded: ms1_scoring always true, match_between_runs always false
+        ms1_scoring = true
 
         # Global prescore q-value threshold (default 0.05 if not in JSON)
         global_prescore_qval = if haskey(quant_params, :global_prescore_qvalue_threshold)
@@ -132,13 +124,14 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
             0.05f0
         end
 
-        # Prescore fragment settings default to same as second_search fragment_settings
+        # Prescore fragment settings default to same as search fragment_settings
         prescore_n_frag_isotopes = Int64(frag_params.n_isotopes)
         prescore_max_frag_rank = UInt8(frag_params.max_rank)
         prescore_min_frag_count = Int64(frag_params.min_count)
-        prescore_min_spectral_contrast = Float32(frag_params.min_spectral_contrast)
-        prescore_min_log2_matched_ratio = Float32(frag_params.min_log2_ratio)
-        prescore_min_topn_of_m = (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n)))
+        # Hardcoded prescore filter values
+        prescore_min_spectral_contrast = 0.0f0
+        prescore_min_log2_matched_ratio = -10.0f0
+        prescore_min_topn_of_m = (0, 3)
 
         # Dynamic range filter (backward compatible defaults)
         dynamic_range = if haskey(frag_params, :dynamic_range)
@@ -148,44 +141,35 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
         end
         prescore_dynamic_range = dynamic_range
 
-        # Prescore aggregation strategy (default: PEPCalibratedAggregation)
-        prescore_aggregation = if haskey(quant_params, :prescore_aggregation)
-            agg_str = string(quant_params.prescore_aggregation)
-            if agg_str == "raw_logodds"
-                RawLogOddsAggregation()
-            else
-                PEPCalibratedAggregation()
-            end
-        else
-            PEPCalibratedAggregation()
-        end
+        # Hardcoded prescore aggregation strategy
+        prescore_aggregation = PEPCalibratedAggregation()
 
         new{typeof(prec_estimation), typeof(isotope_trace_type), typeof(prescore_aggregation)}(
-            (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
+            isotope_bounds,
             Float32(min_fraction_transmitted),
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             Set{Int64}([2]),
-            Bool(global_params.match_between_runs),
+            false,  # match_between_runs hardcoded false
 
             Float32(deconv_params.ms2.lambda),
             reg_type,
-            Int64(deconv_params.newton_iters),
-            Int64(deconv_params.bisection_iters),
+            Int64(50),   # max_iter_newton hardcoded
+            Int64(100),  # max_iter_bisection hardcoded
             Int64(deconv_params.outer_iters),
-            Float32(deconv_params.newton_accuracy),
-            Float32(deconv_params.newton_accuracy),
+            Float32(10),  # accuracy_newton hardcoded
+            Float32(10),  # accuracy_bisection hardcoded
             Float32(deconv_params.max_diff),
 
-            Float32(deconv_params.ms1.lambda),
+            Float32(0.0001),  # ms1_lambda hardcoded
             ms1_reg_type,
-            Float32(deconv_params.ms1.huber_delta),
+            Float32(1e9),     # ms1_huber_delta hardcoded
 
-            Int64(frag_params.min_y_count),
+            Int64(0),   # min_y_count hardcoded
             Int64(frag_params.min_count),
-            Float32(frag_params.min_spectral_contrast),
-            Float32(frag_params.min_log2_ratio),
-            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
+            Float32(0), # min_spectral_contrast hardcoded
+            Float32(-10),  # min_log2_matched_ratio hardcoded
+            (0, 3),     # min_topn_of_m hardcoded
             Int64(frag_params.max_rank),
 
             isotope_trace_type,

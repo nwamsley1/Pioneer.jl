@@ -5,17 +5,9 @@
     },
     "global": {
         "isotope_settings": {
-            "err_bounds_first_pass": [
-                1,
-                0
-            ],
             "combine_traces": true,
             "partial_capture": true,
-            "min_fraction_transmitted": 0.25,
-            "err_bounds_second_search": [
-                3,
-                0
-            ]
+            "min_fraction_transmitted": 0.25
         },
         "scoring": {
             "q_value_threshold": 0.01
@@ -30,7 +22,7 @@
         },
         "ms1_scoring": true,
         "ms1_quant": false,
-        "match_between_runs": true
+        "match_between_runs": false
     },
     "parameter_tuning": {
         "fragment_settings": {
@@ -98,25 +90,23 @@
         "global_prescore_qvalue_threshold": 0.05,
         "prescore_aggregation": "pep_calibrated"
     },
-    "second_search": {
+    "search": {
         "fragment_settings": {
             "min_count": 3,
-            "min_y_count": 2,
             "max_rank": 255,
-            "min_spectral_contrast": 0.0,
-            "min_log2_ratio": -1.7,
-            "min_top_n": [
-                2,
-                3
-            ],
             "n_isotopes": 2,
             "dynamic_range": 0.001
         },
-        "chromatogram": {
-            "smoothing_strength": 1e-06,
-            "padding": 0,
-            "max_apex_offset": 2
-        }
+        "global_prescore_qvalue_threshold": 0.01
+    },
+    "chromatogram": {
+        "smoothing_strength": 1e-06,
+        "padding": 0,
+        "max_apex_offset": 2,
+        "err_bounds": [
+            3,
+            0
+        ]
     },
     "acquisition": {
         "nce": 26,
@@ -137,11 +127,6 @@
     },
     "optimization": {
         "deconvolution": {
-            "ms1": {
-                "lambda": 0.0001,
-                "reg_type": "l2",
-                "huber_delta": 1000000000.0
-            },
             "ms2": {
                 "lambda": 0.0,
                 "reg_type": "none",
@@ -149,11 +134,7 @@
             },
             "huber_exp": 1.5,
             "huber_iters": 15,
-            "newton_iters": 50,
-            "bisection_iters": 100,
             "outer_iters": 1000,
-            "newton_accuracy": 10,
-            "bisection_accuracy": 10,
             "max_diff": 0.01
         },
         "machine_learning": {

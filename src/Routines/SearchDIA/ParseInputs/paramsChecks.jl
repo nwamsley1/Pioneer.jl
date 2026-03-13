@@ -42,8 +42,8 @@ function checkParams(json_path::String)
 
     # Check top-level sections
     required_sections = [
-        "global", "parameter_tuning", "fragment_index_search", "second_search",
-        "acquisition", "rt_alignment", "optimization", "output", "paths"
+        "global", "parameter_tuning", "fragment_index_search", "search",
+        "chromatogram", "acquisition", "rt_alignment", "optimization", "output", "paths"
     ]
     
     for section in required_sections
@@ -53,8 +53,6 @@ function checkParams(json_path::String)
     # Validate global parameters
     global_params = params["global"]
     check_param(global_params, "isotope_settings", Dict)
-    check_param(global_params["isotope_settings"], "err_bounds_first_pass", Vector)
-    check_param(global_params["isotope_settings"], "err_bounds_second_search", Vector)
     check_param(global_params["isotope_settings"], "combine_traces", Bool)
     check_param(global_params["isotope_settings"], "partial_capture", Bool)
     check_param(global_params["isotope_settings"], "min_fraction_transmitted", Real)
@@ -63,9 +61,6 @@ function checkParams(json_path::String)
 
     check_param(global_params["huber_override"], "override_huber_delta_fit", Bool)
     check_param(global_params["huber_override"], "huber_delta", Real)
-    check_param(global_params, "ms1_scoring", Bool)
-    check_param(global_params, "ms1_quant", Bool)
-    check_param(global_params, "match_between_runs", Bool)
 
     # Validate parameter tuning parameters
     tuning_params = params["parameter_tuning"]
@@ -201,24 +196,21 @@ function checkParams(json_path::String)
     frag_idx_search = params["fragment_index_search"]
     check_param(frag_idx_search, "min_score", Integer)
 
-    # Validate second search parameters
-    second_search = params["second_search"]
-    check_param(second_search, "fragment_settings", Dict)
-    check_param(second_search, "chromatogram", Dict)
+    # Validate search parameters
+    search_section = params["search"]
+    check_param(search_section, "fragment_settings", Dict)
 
-    second_frag = second_search["fragment_settings"]
-    check_param(second_frag, "min_count", Integer)
-    check_param(second_frag, "min_y_count", Integer)
-    check_param(second_frag, "max_rank", Integer)
-    check_param(second_frag, "min_spectral_contrast", Real)
-    check_param(second_frag, "min_log2_ratio", Real)
-    check_param(second_frag, "min_top_n", Vector)
-    check_param(second_frag, "n_isotopes", Integer)
+    search_frag = search_section["fragment_settings"]
+    check_param(search_frag, "min_count", Integer)
+    check_param(search_frag, "max_rank", Integer)
+    check_param(search_frag, "n_isotopes", Integer)
 
-    chrom_settings = second_search["chromatogram"]
+    # Validate chromatogram parameters (top-level)
+    chrom_settings = params["chromatogram"]
     check_param(chrom_settings, "smoothing_strength", Real)
     check_param(chrom_settings, "padding", Integer)
     check_param(chrom_settings, "max_apex_offset", Integer)
+    check_param(chrom_settings, "err_bounds", Vector)
 
     # Validate acquisition parameters
     acq_params = params["acquisition"]
@@ -243,14 +235,8 @@ function checkParams(json_path::String)
 
     deconv = opt_params["deconvolution"]
 
-    # Check MS1 and MS2 specific parameters
-    check_param(deconv, "ms1", Dict)
+    # Check MS2 specific parameters
     check_param(deconv, "ms2", Dict)
-
-    ms1_params = deconv["ms1"]
-    check_param(ms1_params, "lambda", Real)
-    check_param(ms1_params, "reg_type", String)
-    check_param(ms1_params, "huber_delta", Real)
 
     ms2_params = deconv["ms2"]
     check_param(ms2_params, "lambda", Real)
@@ -260,8 +246,6 @@ function checkParams(json_path::String)
     # Check shared parameters
     check_param(deconv, "huber_exp", Real)
     check_param(deconv, "huber_iters", Integer)
-    check_param(deconv, "newton_iters", Integer)
-    check_param(deconv, "newton_accuracy", Real)
     check_param(deconv, "max_diff", Real)
 
     ml_params = opt_params["machine_learning"]

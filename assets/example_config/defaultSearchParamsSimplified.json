@@ -17,9 +17,7 @@
     "global": {
         "scoring": {
             "q_value_threshold": 0.01
-        },
-        "match_between_runs": true,
-        "ms1_quant": false
+        }
     },
     "fragment_index_search": {
         "min_score": 15

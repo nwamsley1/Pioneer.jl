@@ -167,12 +167,12 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             Set{Int64}([2]),
             Float32(frag_params.relative_improvement_threshold),
             
-            # Deconvolution parameters
-            Int64(deconv_params.newton_iters),
-            Int64(deconv_params.bisection_iters),
+            # Deconvolution parameters (hardcoded)
+            Int64(50),   # max_iter_newton
+            Int64(100),  # max_iter_bisection
             Int64(deconv_params.outer_iters),
-            Float32(deconv_params.newton_accuracy),
-            Float32(deconv_params.newton_accuracy),
+            Float32(10),  # accuracy_newton
+            Float32(10),  # accuracy_bisection
             Float32(deconv_params.max_diff),
             
             # Quad tuning specific parameters

@@ -53,10 +53,9 @@ struct FirstPassSearchParameters <: FragmentIndexSearchParameters
     spec_order::Set{Int64}
 
     function FirstPassSearchParameters(params::PioneerParameters)
-        isotope_bounds = params.global_settings.isotope_settings.err_bounds_first_pass
         frag_idx_params = params.fragment_index_search
         new(
-            (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
+            (UInt8(1), UInt8(0)),  # isotope_err_bounds hardcoded
             UInt8(frag_idx_params.min_score),
             Set{Int64}([2])
         )

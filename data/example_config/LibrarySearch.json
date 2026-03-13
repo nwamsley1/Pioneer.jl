@@ -1,120 +1,113 @@
 {
+    "acquisition": {
+        "nce": 26,
+        "quad_transmission": {
+            "fit_from_data": false,
+            "smoothness": 5.0,
+            "overhang": 0.25
+        }
+    },
     "global": {
+        "scoring": {
+            "q_value_threshold": 0.01
+        },
         "isotope_settings": {
             "err_bounds": [
                 1,
                 0
             ],
             "combine_traces": false,
-            "partial_capture": true,
-            "min_fraction_transmitted": 0.25
-        },
-        "scoring": {
-            "q_value_threshold": 0.01
+            "min_fraction_transmitted": 0.25,
+            "partial_capture": true
         },
         "normalization": {
             "n_rt_bins": 100,
             "spline_n_knots": 7
-        },
-        "match_between_runs": true
+        }
+    },
+    "output": {
+        "plots_per_page": 12,
+        "write_decoys": false,
+        "write_csv": true,
+        "delete_temp": true
+    },
+    "chromatogram": {
+        "err_bounds": [
+            3,
+            0
+        ],
+        "padding": 0,
+        "max_apex_offset": 2,
+        "smoothing_strength": 1.0e-6
     },
     "parameter_tuning": {
+        "iteration_settings": {
+            "init_mass_tol_ppm": 20.0,
+            "iterations_per_phase": 3,
+            "mass_tolerance_scale_factor": 1.5
+        },
         "fragment_settings": {
-            "min_count": 7,
-            "max_rank": 25,
-            "min_score": 22,
             "min_spectral_contrast": 0.9,
-            "relative_improvement_threshold": 1.25,
-            "min_log2_ratio": 1.5,
+            "max_rank": 25,
             "min_top_n": [
                 3,
                 3
             ],
+            "min_count": 7,
+            "relative_improvement_threshold": 1.25,
+            "min_log2_ratio": 1.5,
+            "min_score": 22,
             "n_isotopes": 1
         },
         "search_settings": {
+            "frag_err_quantile": 0.01,
             "min_samples": 3500,
-            "max_presearch_iters": 10,
-            "frag_err_quantile": 0.01
-        },
-        "iteration_settings": {
-            "init_mass_tol_ppm": 20.0,
-            "mass_tolerance_scale_factor": 1.5,
-            "iterations_per_phase": 3
-        }
-    },
-    "fragment_index_search": {
-        "min_score": 15
-    },
-    "second_search": {
-        "fragment_settings": {
-            "min_count": 3,
-            "min_y_count": 2,
-            "max_rank": 255,
-            "min_spectral_contrast": 0.0,
-            "min_log2_ratio": -1.7,
-            "min_top_n": [
-                2,
-                3
-            ],
-            "n_isotopes": 2
-        },
-        "global_prescore_qvalue_threshold": 0.05,
-        "prescore_aggregation": "pep_calibrated",
-        "chromatogram": {
-            "smoothing_strength": 1e-06,
-            "padding": 0,
-            "max_apex_offset": 2
-        }
-    },
-    "acquisition": {
-        "nce": 26,
-        "quad_transmission": {
-            "fit_from_data": false,
-            "overhang": 0.25,
-            "smoothness": 5.0
-        }
-    },
-    "rt_alignment": {
-        "n_bins": 200,
-        "bandwidth": 0.25,
-        "sigma_tolerance": 4,
-        "min_probability": 0.95
-    },
-    "optimization": {
-        "deconvolution": {
-            "lambda": 0.0,
-            "huber_delta": 300,
-            "huber_exp": 1.5,
-            "huber_iters": 15,
-            "newton_iters": 100,
-            "newton_accuracy": 10,
-            "max_diff": 0.01
-        },
-        "machine_learning": {
-            "max_samples": 10000000,
-            "min_trace_prob": 0.75,
-            "max_q_value_mbr_itr": 0.2,
-            "min_PEP_neg_threshold_itr": 0.9,
-            "spline_points": 500,
-            "interpolation_points": 10
+            "max_presearch_iters": 10
         }
     },
     "proteinInference": {
         "min_peptides": 2
     },
+    "rt_alignment": {
+        "n_bins": 200,
+        "min_probability": 0.95,
+        "bandwidth": 0.25,
+        "sigma_tolerance": 4
+    },
     "maxLFQ": {
         "run_to_run_normalization": true
     },
-    "output": {
-        "write_csv": true,
-        "write_decoys": false,
-        "delete_temp": true,
-        "plots_per_page": 12
+    "optimization": {
+        "deconvolution": {
+            "lambda": 0.0,
+            "max_diff": 0.01,
+            "huber_delta": 300,
+            "huber_exp": 1.5,
+            "huber_iters": 15
+        },
+        "machine_learning": {
+            "min_PEP_neg_threshold_itr": 0.9,
+            "interpolation_points": 10,
+            "spline_points": 500,
+            "max_samples": 10000000,
+            "min_trace_prob": 0.75,
+            "max_q_value_mbr_itr": 0.2
+        }
+    },
+    "fragment_index_search": {
+        "min_score": 15
+    },
+    "search": {
+        "fragment_settings": {
+            "max_rank": 255,
+            "min_count": 3,
+            "n_isotopes": 2
+        },
+        "global_prescore_qvalue_threshold": 0.01
     },
     "paths": {
-        "library": "/abs/path/to/lib",
         "ms_data": "/abs/path/to/ms_data",
+        "library": "/abs/path/to/lib",
         "results": "/abs/path/to/results"
     }
 }

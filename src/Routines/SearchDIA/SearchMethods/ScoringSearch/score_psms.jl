@@ -264,13 +264,14 @@ function create_default_advanced_lightgbm_config(ms1_scoring::Bool = true)
         features,
         Dict(
             :feature_fraction => 0.5,
-            :min_data_in_leaf => 500,
-            :min_gain_to_split => 0.5,
-            :bagging_fraction => 0.25,
-            :max_depth => 10,
-            :num_leaves => 63,
+            :min_data_in_leaf => 5,
+            :min_gain_to_split => 0.0,
+            :bagging_fraction => 0.5,
+            :max_depth => 3,
+            :num_leaves => 10,
             :learning_rate => 0.05,
-            :iter_scheme => [200]
+            :iter_scheme => [200],
+            :bagging_freq => 1
         )
     )
 end

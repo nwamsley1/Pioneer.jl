@@ -100,13 +100,14 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
         # Extract relevant parameter groups
         deconv_params = params.optimization.deconvolution
         global_params = params.global_settings
-        frag_params = params.second_search.fragment_settings
+        frag_params = params.search.fragment_settings
         # Calculate Huber delta grid
         delta0 = Float32(deconv_params.ms2.huber_delta)
         delta_exp = Float32(deconv_params.huber_exp)
         delta_iters = Int64(deconv_params.huber_iters)
         huber_δs = Float32[delta0 * (delta_exp^i) for i in range(-4,delta_iters+6)]
-        isotope_bounds = global_params.isotope_settings.err_bounds_second_search
+        # Hardcoded isotope error bounds (always (1,0))
+        isotope_bounds = (1, 0)
 
         # Always use partial capture for Huber tuning
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
@@ -132,12 +133,12 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
             Set{Int64}([2]),
             
             Float32(deconv_params.ms2.lambda),
-            reg_type, 
-            Int64(deconv_params.newton_iters),
-            Int64(deconv_params.bisection_iters),
+            reg_type,
+            Int64(50),   # max_iter_newton hardcoded
+            Int64(100),  # max_iter_bisection hardcoded
             Int64(deconv_params.outer_iters),
-            Float32(deconv_params.newton_accuracy),
-            Float32(deconv_params.newton_accuracy),
+            Float32(10),  # accuracy_newton hardcoded
+            Float32(10),  # accuracy_bisection hardcoded
             Float32(deconv_params.max_diff),
             
             huber_δs,
