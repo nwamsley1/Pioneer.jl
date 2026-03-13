@@ -1499,8 +1499,8 @@ function train_lgbm_and_select_best(
 
     # Train LightGBM classifier
     classifier = build_lightgbm_classifier(
-        num_iterations = 50,
-        learning_rate = 0.2,
+        num_iterations = 100,
+        learning_rate = 0.1,
         max_depth = 5,
         num_leaves = 15,
         min_data_in_leaf = 200,
@@ -1509,18 +1509,9 @@ function train_lgbm_and_select_best(
         bagging_freq = 1,
         is_unbalance = true,
     )
-    # Subsample for training if > 5M PSMs
-    max_train = 5_000_000
     n_total = size(X_all, 1)
-    if n_total > max_train
-        train_idx = randperm(n_total)[1:max_train]
-        @info "  LightGBM training: subsampled $max_train / $n_total PSMs"
-        X_train = X_all[train_idx, :]
-        y_train = _prepare_labels(targets_col[train_idx])
-    else
-        X_train = X_all
-        y_train = _prepare_labels(targets_col)
-    end
+    X_train = X_all
+    y_train = _prepare_labels(targets_col)
 
     # Check for degenerate case (all same label)
     unique_labels = unique(y_train)
