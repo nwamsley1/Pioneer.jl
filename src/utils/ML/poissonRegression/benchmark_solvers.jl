@@ -31,6 +31,103 @@ function sse_from_residuals(r::Vector{Float32}, m::Int)
     s = 0.0; @inbounds for i in 1:m; s += Float64(r[i])^2; end; s
 end
 
+# ── Instrumented solvers (compiled functions, not top-level) ────
+
+function solveOLS_instrumented!(sa, r, w, cn, max_outer, rel_conv)
+    @inbounds for col in 1:sa.n
+        s = 0f0
+        for i in sa.colptr[col]:(sa.colptr[col+1]-1)
+            s += sa.nzval[i]^2
+        end
+        cn[col] = s
+    end
+    max_weight = 0f0
+    iters = 0
+    for iter in 1:max_outer
+        _diff = 0f0
+        weight_floor = iter > 5 ? max_weight * Float32(1e-7) : 0f0
+        max_weight = 0f0
+        for col in 1:sa.n
+            L2 = cn[col]; iszero(L2) && continue
+            L1 = 0f0
+            @inbounds @fastmath for k in sa.colptr[col]:(sa.colptr[col+1]-1)
+                L1 += sa.nzval[k] * r[sa.rowval[k]]
+            end
+            X0 = w[col]; w[col] = max(w[col] - L1/L2, 0f0)
+            updateResiduals!(sa, r, col, w[col], X0)
+            δx = abs(w[col] - X0)
+            w[col] > max_weight && (max_weight = w[col])
+            if w[col] > weight_floor
+                rc = δx / abs(w[col]); rc > _diff && (_diff = rc)
+            end
+        end
+        iters = iter
+        _diff < rel_conv && break
+    end
+    return iters
+end
+
+function solvePMM_instrumented!(sa, μ, y, w, max_outer, rel_conv)
+    # Y-scaling
+    y_scale = maximum(y[1:sa.m])
+    if y_scale > 1f0
+        @inbounds for i in 1:sa.m; y[i] /= y_scale; end
+        @inbounds for j in 1:sa.n; w[j] /= y_scale; end
+        initMu!(μ, sa, w)
+    end
+    ε_pmm = Float32(POISSON_MU_FLOOR)
+    max_weight = 0f0
+    iters = 0
+    for iter in 1:max_outer
+        _diff = 0f0
+        weight_floor = iter > 5 ? max_weight * Float32(1e-4) : 0f0
+        max_weight = 0f0
+        for col in 1:sa.n
+            L1, L2 = getPoissonDerivativesObs!(sa, μ, y, col)
+            if L2 > ε_pmm && !isnan(L1)
+                X0 = w[col]
+                w[col] = max(w[col] - L1/L2, 0f0)
+                updateMu!(sa, μ, col, w[col], X0)
+                δx = abs(w[col] - X0)
+                w[col] > max_weight && (max_weight = w[col])
+                if w[col] > weight_floor
+                    rc = δx / abs(w[col]); rc > _diff && (_diff = rc)
+                end
+            end
+        end
+        iters = iter
+        _diff < rel_conv && break
+    end
+    # Unscale
+    if y_scale > 1f0
+        @inbounds for i in 1:sa.m; y[i] *= y_scale; end
+        @inbounds for j in 1:sa.n; w[j] *= y_scale; end
+        initMu!(μ, sa, w)
+    end
+    return iters
+end
+
+function solveHuber_instrumented!(sa, r, w, δ_hub, λ_hub, nr_max, bs_max, max_outer, nr_acc, bs_acc, rel_conv, reg)
+    max_weight = 0f0
+    iters = 0
+    for iter in 1:max_outer
+        _diff = 0f0
+        weight_floor = iter > 5 ? max_weight * Float32(1e-7) : 0f0
+        max_weight = 0f0
+        for col in 1:sa.n
+            δx = abs(newton_bisection!(sa, r, w, col, δ_hub, λ_hub,
+                        nr_max, bs_max, nr_acc, bs_acc, reg, rel_conv))
+            w[col] > max_weight && (max_weight = w[col])
+            if w[col] > weight_floor
+                rc = δx / abs(w[col]); rc > _diff && (_diff = rc)
+            end
+        end
+        iters = iter
+        _diff < rel_conv && break
+    end
+    return iters
+end
+
 # ── Load all problems ────────────────────────────────────────────
 
 problem_dir = "/Users/nathanwamsley/Desktop/solveHuber_problems"
@@ -41,10 +138,20 @@ println("Found $(length(files)) problems in $problem_dir\n")
 
 println("Warming up solvers...")
 d0 = deserialize(joinpath(problem_dir, files[1]))
+begin
+    x_row0 = d0[:x]
+    rowval0_i64 = Vector{Int64}(d0[:rowval])
+    if length(x_row0) == d0[:m]
+        x_nz0 = Vector{Float32}(undef, d0[:n_vals])
+        for k in 1:d0[:n_vals]; x_nz0[k] = x_row0[rowval0_i64[k]]; end
+    else
+        x_nz0 = x_row0
+    end
+end
 sa0 = Main.SparseArray(
     d0[:n_vals], d0[:m], d0[:n],
-    Vector{Int64}(d0[:rowval]), Vector{UInt16}(d0[:colval]), d0[:nzval],
-    ones(Bool, d0[:n_vals]), zeros(UInt8, d0[:n_vals]), d0[:x],
+    rowval0_i64, Vector{UInt16}(d0[:colval]), d0[:nzval],
+    ones(Bool, d0[:n_vals]), zeros(UInt8, d0[:n_vals]), x_nz0,
     Vector{Int64}(d0[:colptr])
 )
 w0 = ones(Float32, sa0.n)
@@ -108,10 +215,20 @@ println("  " * "─" ^ 126)
 for (fi, fname) in enumerate(files)
     data = deserialize(joinpath(problem_dir, fname))
 
+    begin
+        x_row = data[:x]
+        rowval_i64 = Vector{Int64}(data[:rowval])
+        if length(x_row) == data[:m]
+            x_nz = Vector{Float32}(undef, data[:n_vals])
+            for k in 1:data[:n_vals]; x_nz[k] = x_row[rowval_i64[k]]; end
+        else
+            x_nz = x_row
+        end
+    end
     sa = Main.SparseArray(
         data[:n_vals], data[:m], data[:n],
-        Vector{Int64}(data[:rowval]), Vector{UInt16}(data[:colval]), data[:nzval],
-        ones(Bool, data[:n_vals]), zeros(UInt8, data[:n_vals]), data[:x],
+        rowval_i64, Vector{UInt16}(data[:colval]), data[:nzval],
+        ones(Bool, data[:n_vals]), zeros(UInt8, data[:n_vals]), x_nz,
         Vector{Int64}(data[:colptr])
     )
 
@@ -135,36 +252,7 @@ for (fi, fname) in enumerate(files)
 
     ols_iters = 0
     ols_time = @elapsed begin
-        # Inline instrumented solve to count iterations
-        @inbounds for col in 1:sa.n
-            s = 0f0
-            for i in sa.colptr[col]:(sa.colptr[col+1]-1)
-                s += sa.nzval[i]^2
-            end
-            cn_ols[col] = s
-        end
-        max_weight = 0f0
-        for iter in 1:max_outer_i64
-            _diff = 0f0
-            weight_floor = iter > 5 ? max_weight * Float32(1e-7) : 0f0
-            max_weight = 0f0
-            for col in 1:sa.n
-                L2 = cn_ols[col]; iszero(L2) && continue
-                L1 = 0f0
-                @inbounds @fastmath for k in sa.colptr[col]:(sa.colptr[col+1]-1)
-                    L1 += sa.nzval[k] * r_ols[sa.rowval[k]]
-                end
-                X0 = w_ols[col]; w_ols[col] = max(w_ols[col] - L1/L2, 0f0)
-                updateResiduals!(sa, r_ols, col, w_ols[col], X0)
-                δx = abs(w_ols[col] - X0)
-                w_ols[col] > max_weight && (max_weight = w_ols[col])
-                if w_ols[col] > weight_floor
-                    rc = δx / abs(w_ols[col]); rc > _diff && (_diff = rc)
-                end
-            end
-            ols_iters = iter
-            _diff < rel_conv && break
-        end
+        ols_iters = solveOLS_instrumented!(sa, r_ols, w_ols, cn_ols, max_outer_i64, rel_conv)
     end
     ols_sse = sse_from_residuals(r_ols, sa.m)
 
@@ -177,41 +265,7 @@ for (fi, fname) in enumerate(files)
 
     pmm_iters = 0
     pmm_time = @elapsed begin
-        # Y-scaling
-        y_scale = maximum(y_pmm[1:sa.m])
-        if y_scale > 1f0
-            @inbounds for i in 1:sa.m; y_pmm[i] /= y_scale; end
-            @inbounds for j in 1:sa.n; w_pmm[j] /= y_scale; end
-            initMu!(μ_pmm, sa, w_pmm)
-        end
-        ε_pmm = Float32(POISSON_MU_FLOOR)
-        max_weight = 0f0
-        for iter in 1:max_outer_i64
-            _diff = 0f0
-            weight_floor = iter > 5 ? max_weight * Float32(1e-4) : 0f0
-            max_weight = 0f0
-            for col in 1:sa.n
-                L1, L2 = getPoissonDerivativesObs!(sa, μ_pmm, y_pmm, col)
-                if L2 > ε_pmm && !isnan(L1)
-                    X0 = w_pmm[col]
-                    w_pmm[col] = max(w_pmm[col] - L1/L2, 0f0)
-                    updateMu!(sa, μ_pmm, col, w_pmm[col], X0)
-                    δx = abs(w_pmm[col] - X0)
-                    w_pmm[col] > max_weight && (max_weight = w_pmm[col])
-                    if w_pmm[col] > weight_floor
-                        rc = δx / abs(w_pmm[col]); rc > _diff && (_diff = rc)
-                    end
-                end
-            end
-            pmm_iters = iter
-            _diff < rel_conv && break
-        end
-        # Unscale
-        if y_scale > 1f0
-            @inbounds for i in 1:sa.m; y_pmm[i] *= y_scale; end
-            @inbounds for j in 1:sa.n; w_pmm[j] *= y_scale; end
-            initMu!(μ_pmm, sa, w_pmm)
-        end
+        pmm_iters = solvePMM_instrumented!(sa, μ_pmm, y_pmm, w_pmm, max_outer_i64, rel_conv)
     end
     # Compute SSE for PMM by building residuals
     r_pmm = zeros(Float32, sa.m)
@@ -226,22 +280,8 @@ for (fi, fname) in enumerate(files)
 
     hub_iters = 0
     hub_time = @elapsed begin
-        max_weight = 0f0
-        for iter in 1:max_outer_i64
-            _diff = 0f0
-            weight_floor = iter > 5 ? max_weight * Float32(1e-7) : 0f0
-            max_weight = 0f0
-            for col in 1:sa.n
-                δx = abs(newton_bisection!(sa, r_hub, w_hub, col, δ_hub, λ_hub,
-                            nr_max, bs_max, nr_acc, bs_acc, reg, rel_conv))
-                w_hub[col] > max_weight && (max_weight = w_hub[col])
-                if w_hub[col] > weight_floor
-                    rc = δx / abs(w_hub[col]); rc > _diff && (_diff = rc)
-                end
-            end
-            hub_iters = iter
-            _diff < rel_conv && break
-        end
+        hub_iters = solveHuber_instrumented!(sa, r_hub, w_hub, δ_hub, λ_hub,
+                        nr_max, bs_max, max_outer_i64, nr_acc, bs_acc, rel_conv, reg)
     end
     hub_sse = sse_from_residuals(r_hub, sa.m)
 

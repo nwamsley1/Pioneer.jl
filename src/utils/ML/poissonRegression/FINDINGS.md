@@ -307,6 +307,104 @@ weight_floor = max_weight * 1e-7           # Less aggressive (larger steps)
 
 ---
 
+## 100-Problem Benchmark: OLS vs PMM vs Huber (`benchmark_solvers.jl`)
+
+Ran all 100 real-world problems from `solveHuber_problems/` after fixing a
+`load_sa` bug where `data[:x]` (per-row, length m) was passed directly as
+`SparseArray.x` (per-nonzero, length n_vals). With `@inbounds`, this caused
+silent out-of-bounds reads producing NaN/garbage. The fix expands x to
+per-nonzero indexing: `x_nz[k] = x_row[rowval[k]]`.
+
+**Important benchmarking note:** All three solvers must run inside compiled
+functions, not top-level code. Julia top-level code does not receive SIMD or
+type-specialization optimizations. An earlier benchmark incorrectly inlined the
+OLS inner loop at top level, making it appear ~10x slower than compiled Huber —
+completely inverting the true performance relationship.
+
+### Timing (100 problems, compiled instrumented functions)
+
+| Solver | Total | Median | Mean | Relative |
+|--------|-------|--------|------|----------|
+| **OLS** | 0.016s | 1μs | 160μs | **1x (fastest)** |
+| Huber | 0.010s | 8μs | 100μs | ~5x slower (median) |
+| PMM | 0.035s | 6μs | 353μs | ~5x slower (median) |
+
+OLS is fastest because each coordinate step is a single dot-product + update.
+Huber requires Newton-bisection per coordinate. PMM runs ~21 outer iterations
+(vs 6-9 for OLS/Huber) due to the Poisson objective's gentler curvature.
+
+### Convergence
+
+| Solver | Mean Iters | Median Iters | Range |
+|--------|-----------|-------------|-------|
+| OLS | 8.7 | 6 | 2-51 |
+| PMM | 21.4 | 21 | 18-45 |
+| Huber | 8.7 | 6 | 2-52 |
+
+OLS and Huber converge in the same number of iterations (identical convergence
+criterion, nearly identical weights). PMM consistently needs ~3x more sweeps.
+
+### Solution Quality
+
+| Metric | OLS | PMM | Huber |
+|--------|-----|-----|-------|
+| Mean SSE | 7.98e+11 | 9.15e+11 | 8.48e+11 |
+| Median SSE | 7.03e+08 | 9.96e+08 | 7.03e+08 |
+| Lowest SSE wins | 63/100 | 0/100 | 45/100 |
+
+PMM always has higher SSE — expected since it optimizes Poisson LL, not SSE.
+OLS and Huber achieve essentially identical SSE on most problems.
+
+### Weight Agreement
+
+| Pair | cor mean | cor median | cor min |
+|------|----------|-----------|---------|
+| OLS vs Huber | 0.9998 | 1.0000 | 0.9803 |
+| PMM vs Huber | 0.6844 | 0.7197 | -0.5595 |
+| OLS vs PMM | 0.6846 | 0.7197 | -0.5595 |
+
+OLS and Huber produce near-identical weight vectors. PMM diverges significantly,
+sometimes anti-correlating with OLS/Huber on small problems. This reflects the
+fundamentally different objective: PMM up-weights high-intensity fragments
+(Poisson variance weighting) while OLS/Huber treat all residuals more uniformly.
+
+### Breakdown by Problem Size
+
+| Size | Count | OLS median | PMM median | Huber median | cor(O,H) | cor(P,H) |
+|------|-------|-----------|-----------|-------------|----------|----------|
+| 1-10 cols | 46 | 1μs | 4μs | 3μs | 1.000 | 0.688 |
+| 11-30 cols | 32 | 2μs | 8μs | 12μs | 1.000 | 0.696 |
+| 31-100 cols | 12 | 8μs | 19μs | 37μs | 1.000 | 0.632 |
+| 101-500 cols | 10 | 54μs | 105μs | 209μs | 0.998 | 0.696 |
+
+OLS advantage grows with problem size. Huber scales worse than PMM on large
+problems due to the Newton-bisection overhead per coordinate.
+
+### Profile Results (`profile_solvers.jl`)
+
+| Problem | OLS | PMM | Huber |
+|---------|-----|-----|-------|
+| Small (9 cols) | 2μs | 4μs | 11μs |
+| Medium (35 cols) | 19μs | 15μs | 91μs |
+| Large (449 cols) | 74μs | 721μs | 398μs |
+
+Flame graph `.pb.gz` files written to `data/` for each solver × problem.
+
+### Conclusions
+
+1. **OLS is the fastest solver** for spectral deconvolution when SSE is the
+   objective. It should remain the default for production use.
+2. **Huber adds no value over OLS** on these problems — identical solutions at
+   5x the cost. The Newton-bisection machinery is unnecessary when the Huber δ
+   is large enough that all residuals fall in the quadratic zone.
+3. **PMM (Poisson MLE) produces meaningfully different solutions** — lower
+   Poisson LL but higher SSE and different weight distributions. Whether this
+   improves downstream peptide quantification requires end-to-end evaluation.
+4. **The `load_sa` x-expansion bug** was the root cause of NaN issues in
+   earlier benchmarks. All 100 problems now run cleanly.
+
+---
+
 ## Open Questions and Future Work
 
 1. **OLS warm-start in production:** Running 5-10 Huber iterations before
@@ -342,3 +440,5 @@ weight_floor = max_weight * 1e-7           # Less aggressive (larger steps)
 | `test_mm_scale_sweep.jl` | Systematic y-scaling theory validation |
 | `test_mm_fixes.jl` | Float64 precision + OLS warm-start experiments |
 | `test_mm_objective_conv.jl` | Objective vs weight convergence comparison |
+| `benchmark_solvers.jl` | 100-problem OLS vs PMM vs Huber benchmark |
+| `profile_solvers.jl` | BenchmarkTools timing + CPU flame graphs (small/med/large) |

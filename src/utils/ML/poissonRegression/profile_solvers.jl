@@ -56,12 +56,20 @@ function load_problem(path::String)
     colval = Vector{UInt16}(data[:colval])
     n_vals = data[:n_vals]
 
+    x_row = data[:x]
+    if length(x_row) == data[:m]
+        x_nz = Vector{Float32}(undef, n_vals)
+        for k in 1:n_vals; x_nz[k] = x_row[rowval[k]]; end
+    else
+        x_nz = x_row
+    end
+
     sa = Main.SparseArray(
         n_vals, data[:m], data[:n],
         rowval, colval, data[:nzval],
         haskey(data, :matched) ? data[:matched] : ones(Bool, n_vals),
         haskey(data, :isotope) ? data[:isotope] : zeros(UInt8, n_vals),
-        data[:x], colptr
+        x_nz, colptr
     )
 
     max_outer = Int64(data[:max_iter_outer])
