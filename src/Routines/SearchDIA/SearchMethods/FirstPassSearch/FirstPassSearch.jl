@@ -235,7 +235,7 @@ function process_search_results!(
         println()
         @info "FirstPassSearch scoring: $(n_total_psms) PSMs → $(nrow(best_psms)) precursors ($n_pass_1 @ 1%, $n_pass_5 @ 5% FDR)\n" *
               "  features=$(r(t_features - t_start))s, recal=$(r(t_recal - t_lgbm))s, phase2=$(r(t_phase2 - t_prescore_write))s, write=$(r(t_write - t_phase2))s\n" *
-              "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train=$(r(lgbm_timings.train))s, predict=$(r(lgbm_timings.predict))s, best=$(r(lgbm_timings.best))s, qval=$(r(lgbm_timings.qval))s\n" *
+              "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train_cv=$(r(lgbm_timings.train_cv))s, best=$(r(lgbm_timings.best))s, qval=$(r(lgbm_timings.qval))s\n" *
               "  total=$(r(t_total))s"
         println()
 

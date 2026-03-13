@@ -1495,44 +1495,56 @@ function train_lgbm_and_select_best(
 
     # Build feature matrix ONCE (e.g. 13M×14 Float32)
     X_all = feature_matrix(psms, available_features)
+    n_total = size(X_all, 1)
     t_matrix = time()
 
-    # Train LightGBM classifier
-    classifier = build_lightgbm_classifier(
-        num_iterations = 100,
-        learning_rate = 0.1,
-        max_depth = 5,
-        num_leaves = 15,
-        min_data_in_leaf = 200,
-        feature_fraction = 0.5,
-        bagging_fraction = 0.5,
-        bagging_freq = 1,
-        is_unbalance = true,
-    )
-    n_total = size(X_all, 1)
-    X_train = X_all
-    y_train = _prepare_labels(targets_col)
+    # Two-fold cross-validation using existing cv_fold column
+    cv_fold = psms[!, :cv_fold]
+    idx0 = findall(cv_fold .== 0)
+    idx1 = findall(cv_fold .== 1)
+    all_scores = Vector{Float64}(undef, n_total)
+    max_train = 10_000_000
+    last_classifier = nothing
 
-    # Check for degenerate case (all same label)
-    unique_labels = unique(y_train)
-    if length(unique_labels) == 1
-        constant_prob = unique_labels[1] == 0 ? 0.0f0 : 1.0f0
-        model = LightGBMModel(nothing, available_features, constant_prob)
-    else
-        LightGBM.fit!(classifier, X_train, y_train; verbosity = -1)
-        model = LightGBMModel(classifier, available_features, nothing)
-    end
-    t_train = time()
+    for (train_idx, test_idx) in [(idx1, idx0), (idx0, idx1)]
+        classifier = build_lightgbm_classifier(
+            num_iterations = 50,
+            learning_rate = 0.2,
+            max_depth = 3,
+            num_leaves = 10,
+            min_data_in_leaf = 5,
+            feature_fraction = 0.5,
+            bagging_fraction = 0.5,
+            bagging_freq = 1,
+            is_unbalance = false,
+            max_bin = 1023,
+        )
+        # Subsample training set if > 10M PSMs
+        n_train_available = length(train_idx)
+        if n_train_available > max_train
+            train_idx = train_idx[randperm(n_train_available)[1:max_train]]
+            @info "  LightGBM CV fold: subsampled $max_train / $n_train_available training PSMs"
+        end
+        X_train = X_all[train_idx, :]
+        y_train = _prepare_labels(targets_col[train_idx])
 
-    # Predict on ALL PSMs using pre-built matrix
-    if model.booster === nothing
-        prob = model.constant_prediction === nothing ? 0.0f0 : model.constant_prediction
-        all_scores = fill(Float64(prob), n_total)
-    else
-        raw = LightGBM.predict(classifier, X_all)
-        all_scores = ndims(raw) == 2 ? dropdims(raw; dims=2) : raw
+        # Check for degenerate case (all same label)
+        unique_labels = unique(y_train)
+        if length(unique_labels) == 1
+            all_scores[test_idx] .= (unique_labels[1] == 0 ? 0.0 : 1.0)
+        else
+            LightGBM.fit!(classifier, X_train, y_train; verbosity = -1)
+            raw = LightGBM.predict(classifier, X_all[test_idx, :])
+            all_scores[test_idx] .= ndims(raw) == 2 ? dropdims(raw; dims=2) : raw
+            last_classifier = classifier
+        end
     end
-    t_predict = time()
+    model = if last_classifier !== nothing
+        LightGBMModel(last_classifier, available_features, nothing)
+    else
+        LightGBMModel(nothing, available_features, 0.0f0)
+    end
+    t_train_cv = time()
 
     # Add scores to psms for best-per-precursor selection
     psms[!, :lgbm_score] = Float32.(all_scores)
@@ -1562,9 +1574,8 @@ function train_lgbm_and_select_best(
 
     timings = (
         matrix = t_matrix - t0,
-        train = t_train - t_matrix,
-        predict = t_predict - t_train,
-        best = t_best - t_predict,
+        train_cv = t_train_cv - t_matrix,
+        best = t_best - t_train_cv,
         qval = t_qval - t_best,
     )
 
