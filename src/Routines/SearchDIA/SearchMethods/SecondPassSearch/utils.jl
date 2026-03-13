@@ -1997,12 +1997,11 @@ function aggregate_prescore_globally!(search_context::SearchContext,
     end
     =#
 
-    # ── Build lookup dicts: precursor_idx → global_prob and global_qval ──
+    # ── DIA-NN diagnostics ──────────────────────────────────────
+    # Build lookup: precursor_idx → global_qval for all scored precursors
     prec_to_global_qval = Dictionary{UInt32, Float32}()
-    prec_to_global_prob = Dictionary{UInt32, Float32}()
     for i in eachindex(global_prec_idxs)
         insert!(prec_to_global_qval, global_prec_idxs[i], global_qvals[i])
-        insert!(prec_to_global_prob, global_prec_idxs[i], global_probs[i])
     end
 
     # Global DIA-NN reference
@@ -2036,7 +2035,7 @@ function aggregate_prescore_globally!(search_context::SearchContext,
     t_total = time() - t_total_start
     @info "Prescore aggregation: file_reads=$(r(t_reads))s, calibration=$(r(t_calibration))s, loop=$(r(t_loop))s, combination+qvalues=$(r(t_qval))s, total=$(r(t_total))s"
 
-    return passing, prec_best_scan, prec_to_global_prob, prec_to_global_qval
+    return passing, prec_best_scan
 end
 
 """

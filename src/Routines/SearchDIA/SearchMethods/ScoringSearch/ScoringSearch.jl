@@ -282,8 +282,9 @@ function summarize_results!(
     search_context::SearchContext
 )
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
-
+    
     # Set up output folders
+    second_pass_folder = joinpath(temp_folder, "second_pass_psms")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
     passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
     
@@ -292,54 +293,113 @@ function summarize_results!(
     end
 
     try
-        # Step 1: Load pre-scored PSM files (LightGBM training skipped — using FirstPass scores)
+        # Step 1: Train LightGBM Models
+        ##@debug_l1 "Step 1: Training LightGBM models..."
+        # Filter to only include valid (non-failed) files
         valid_file_data = get_valid_file_paths(search_context, getSecondPassPsms)
         valid_file_indices = [idx for (idx, _) in valid_file_data]
 
+        # Check if any valid files remain
         if isempty(valid_file_data)
             @user_warn "No valid files for ScoringSearch - all files failed in previous search methods"
             return nothing
         end
 
-        step1_time = @elapsed begin
-            # FirstPassSearch already wrote single .arrow files with global_prob, global_qval,
-            # and trace_prob = lgbm_prob. No LightGBM training or fold merging needed.
-            second_pass_paths = String[]
-            for (_, base_path) in valid_file_data
-                merged_path = "$(base_path).arrow"
-                if isfile(merged_path)
-                    push!(second_pass_paths, merged_path)
-                else
-                    @user_warn "Missing second pass PSM file: $merged_path"
-                end
-            end
+        # Get all fold-split file paths for LightGBM training and downstream processing
+        # SecondPassSearch now writes separate files per CV fold: *_fold0.arrow, *_fold1.arrow
+        valid_fold_paths = get_valid_fold_file_paths(search_context)
 
-            if isempty(second_pass_paths)
-                @user_warn "No second pass PSM files found for ScoringSearch"
-                return nothing
-            end
-
-            second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
-            @user_info "Loaded $(length(second_pass_paths)) pre-scored PSM files (FirstPass LightGBM scores)"
+        if isempty(valid_fold_paths)
+            @user_warn "No valid fold-split PSM files found for ScoringSearch"
+            return nothing
         end
+
+        step1_time = @elapsed begin
+            max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
+            @user_info "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
+            score_precursor_isotope_traces(
+                second_pass_folder,
+                valid_fold_paths,
+                getPrecursors(getSpecLib(search_context)),
+                params.match_between_runs,
+                params.max_q_value_lightgbm_rescore,
+                params.max_q_value_mbr_itr,
+                params.min_PEP_neg_threshold_itr,
+                max_psms,
+                params.n_quantile_bins,
+                params.q_value_threshold,
+                params.ms1_scoring,
+                params.force_oom
+            )
+        end
+        #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
+
+        # Step 1b: Merge fold files back into single files per MS run
+        # After ML scoring, we merge fold0 and fold1 files back together
+        # This simplifies downstream processing which expects one file per MS run
+        merged_psm_paths = String[]
+        fold_paths_to_delete = String[]
+        for (idx, base_path) in valid_file_data
+            fold0_path = "$(base_path)_fold0.arrow"
+            fold1_path = "$(base_path)_fold1.arrow"
+            merged_path = "$(base_path).arrow"
+
+            # Collect data from both folds
+            fold_dfs = DataFrame[]
+            if isfile(fold0_path)
+                push!(fold_dfs, DataFrame(Arrow.Table(fold0_path)))
+            end
+            if isfile(fold1_path)
+                push!(fold_dfs, DataFrame(Arrow.Table(fold1_path)))
+            end
+
+            if !isempty(fold_dfs)
+                # Merge and write combined file
+                combined_df = vcat(fold_dfs...)
+                writeArrow(merged_path, combined_df)
+                push!(merged_psm_paths, merged_path)
+
+                # Update search context with merged path
+                setSecondPassPsms!(getMSData(search_context), idx, merged_path)
+
+                # Collect fold file paths for batch deletion after loop
+                isfile(fold0_path) && push!(fold_paths_to_delete, fold0_path)
+                isfile(fold1_path) && push!(fold_paths_to_delete, fold1_path)
+            end
+        end
+
+        # Release all mmap handles with a single GC, then batch-delete (Windows EACCES fix)
+        GC.gc(false)
+        for fpath in fold_paths_to_delete
+            safeRm(fpath, nothing)
+        end
+
+        # Create references for second pass PSMs (now using merged files)
+        second_pass_paths = merged_psm_paths
+        second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
         # Step 2: Apply MBR filtering and calculate precursor probabilities (per-file OOM)
         step2_time = @elapsed begin
             apply_mbr_filter_and_aggregate_per_file!(second_pass_refs, valid_file_indices, params)
         end
+        #@debug_l1 "Step 2 completed in $(round(step2_time, digits=2)) seconds"
 
         # Step 3: Find Best Isotope Traces
+        #@debug_l1 "Step 3: Finding best isotope traces..."
         step3_time = @elapsed begin
             best_traces = get_best_traces(
                 second_pass_paths,
                 params.min_best_trace_prob
             )
         end
+        #@debug_l1 "Step 3 completed in $(round(step3_time, digits=2)) seconds"
 
         # Step 4: Process Quantification Results
+        #@debug_l1 "Step 4: Processing quantification results..."
         step4_time = @elapsed begin
             necessary_cols = get_quant_necessary_columns(params.match_between_runs)
 
+            # Note: Removed sorting by global_prob - it will be calculated in Step 5
             quant_processing_pipeline = TransformPipeline() |>
                 add_best_trace_indicator(params.isotope_tracetype, best_traces) |>
                 select_columns(vcat(necessary_cols, :best_trace)) |>
@@ -349,31 +409,32 @@ function summarize_results!(
             apply_pipeline!(second_pass_refs, quant_processing_pipeline)
             filtered_refs = second_pass_refs
         end
+        #@debug_l1 "Step 4 completed in $(round(step4_time, digits=2)) seconds"
 
-        # Steps 5-10: Experiment-wide q-values from PEP (global q-values already in table)
-        # Global FDR was applied in FirstPassSearch. Here we compute experiment-wide
-        # (per-file) q-values using PEP-calibrated scores pooled across all files.
+        # Steps 5-10 (combined): Build dictionaries + sidecar splines + single pipeline pass
+        # Replaces 6 separate sort-merge-load-split cycles with:
+        #   - Streaming dict accumulation for global_prob (reads ~12 bytes/row)
+        #   - In-memory q-value computation from dicts (no I/O)
+        #   - Lightweight 2-column sidecar files for spline computation
+        #   - Single per-file pipeline combining all column additions + filtering
         step5_10_time = @elapsed begin
+            sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
             fdr_scale = getLibraryFdrScaleFactor(search_context)
             has_mbr = params.match_between_runs
 
-            # Read global_qval from table columns into dict (for downstream protein steps)
-            global_qval_dict = Dict{UInt32, Float32}()
-            for ref in filtered_refs
-                tbl = Arrow.Table(file_path(ref))
-                n = length(tbl.precursor_idx)
-                has_global_qval = hasproperty(tbl, :global_qval)
-                @inbounds for i in 1:n
-                    pid = tbl.precursor_idx[i]
-                    if has_global_qval && !haskey(global_qval_dict, pid)
-                        global_qval_dict[pid] = tbl.global_qval[i]
-                    end
-                end
-            end
+            # Pre-allocation size from spectral library
+            n_precursors = length(getPrecursors(getSpecLib(search_context)))
+
+            # A1: Stream per-file to build global_prob dictionaries (~12 bytes/row read)
+            global_prob_dict, mbr_global_prob_dict, target_dict =
+                build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, has_mbr, n_precursors)
+
+            # A2: Compute global q-value dict from global_prob dict (NO file I/O)
+            score_dict_for_qval = has_mbr ? mbr_global_prob_dict : global_prob_dict
+            global_qval_dict = build_global_qval_dict_from_scores(score_dict_for_qval, target_dict, fdr_scale)
             results.precursor_global_qval_dict[] = global_qval_dict
 
-            # Build experiment-wide q-values from per-file PEP
-            # PEP values are calibrated probabilities, comparable across files
+            # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
             score_col = has_mbr ? :MBR_boosted_prec_prob : :prec_prob
             spline_result = build_qvalue_spline_from_refs(filtered_refs, score_col, results.merged_quant_path;
                 compute_pep=true, min_pep_points_per_bin=params.precursor_q_value_interpolation_points_per_bin,
@@ -382,13 +443,24 @@ function summarize_results!(
             results.precursor_qval_interp[] = qval_spline
             results.precursor_pep_interp[] = spline_result.pep_interp
 
-            # Filter by experiment-wide q-value (global q-value filter already applied in FirstPassSearch)
+            # Phase B — Single per-file pipeline combining Steps 5+10
+            global_qval_col = has_mbr ? :MBR_boosted_global_qval : :global_qval
             qval_col = has_mbr ? :MBR_boosted_qval : :qval
 
             combined_pipeline = TransformPipeline() |>
+                add_dict_column(:global_prob, :precursor_idx, global_prob_dict)
+
+            if has_mbr
+                combined_pipeline = combined_pipeline |>
+                    add_dict_column(:MBR_boosted_global_prob, :precursor_idx, mbr_global_prob_dict)
+            end
+
+            combined_pipeline = combined_pipeline |>
+                add_dict_column(global_qval_col, :precursor_idx, global_qval_dict) |>
                 add_interpolated_column(qval_col, score_col, qval_spline) |>
                 add_interpolated_column(:pep, score_col, results.precursor_pep_interp[]) |>
                 filter_by_multiple_thresholds([
+                    (global_qval_col, params.q_value_threshold),
                     (qval_col, params.q_value_threshold)
                 ])
 

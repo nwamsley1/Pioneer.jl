@@ -300,9 +300,9 @@ function summarize_results!(
 
     @info "=== FirstPassSearch: Global prescore aggregation + fragment index filtering ==="
 
-    # Step 1: Global prescore aggregation → passing precursor set + Phase 1 scan lookup + global dicts
+    # Step 1: Global prescore aggregation → passing precursor set + Phase 1 scan lookup
     t1_start = time()
-    passing_precs, prec_best_scan, global_prob_dict, global_qval_dict = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold, params.prescore_aggregation)
+    passing_precs, prec_best_scan = aggregate_prescore_globally!(search_context, params.global_prescore_qvalue_threshold, params.prescore_aggregation)
     t1 = time() - t1_start
 
     # Store results for SecondPassSearch to retrieve Phase 1 best scans
@@ -360,22 +360,24 @@ function summarize_results!(
         tbl[!, :pair_id] = pair_id_col
         tbl[!, :entrapment_group_id] = entrap_col
 
-        # Add global prescore columns (from aggregate_prescore_globally!)
-        tbl[!, :global_prob] = Float32[get(global_prob_dict, pid, 0.0f0) for pid in tbl[!, :precursor_idx]]
-        tbl[!, :global_qval] = Float32[get(global_qval_dict, pid, 1.0f0) for pid in tbl[!, :precursor_idx]]
-
         sort!(tbl, :rt)
         initialize_prob_group_features!(tbl, params.match_between_runs)
         dropVectorColumns!(tbl)
 
-        # Set trace_prob = lgbm_prob so ScoringSearch's trace→precursor aggregation
-        # produces prec_prob from FirstPass LightGBM scores (no second LightGBM needed)
-        tbl[!, :trace_prob] = Float32.(tbl[!, :lgbm_prob])
-
-        # Write single file (no fold-split — ScoringSearch no longer trains LightGBM)
+        # Register base path for ScoringSearch to find fold files
         base_path = joinpath(second_pass_dir, file_name)
         setSecondPassPsms!(ms_data, ms_file_idx, base_path)
-        writeArrow("$(base_path).arrow", tbl)
+
+        # Write fold-split Arrow files
+        for fold in UInt8[0, 1]
+            fold_path = "$(base_path)_fold$(fold).arrow"
+            fold_mask = tbl[!, :cv_fold] .== fold
+            if any(fold_mask)
+                writeArrow(fold_path, tbl[fold_mask, :])
+            elseif isfile(fold_path)
+                rm(fold_path)
+            end
+        end
 
         n_processed_files += 1
         pct = round(100.0 * n_after / max(1, n_before), digits=1)

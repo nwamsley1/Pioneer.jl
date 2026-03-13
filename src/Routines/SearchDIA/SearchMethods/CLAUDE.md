@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Se
 
 ## SearchMethods Overview
 
-SearchMethods implements a 9-stage sequential pipeline where each method performs a specific aspect of DIA analysis. All methods follow a common interface pattern and share state through SearchContext.
+SearchMethods implements an 8-stage sequential pipeline (SecondPassSearch is bypassed) where each method performs a specific aspect of DIA analysis. All methods follow a common interface pattern and share state through SearchContext.
 
 ## Interface Pattern
 
@@ -51,26 +51,34 @@ processChunk!(method::SearchMethod, batch_id::Int, thread_id::Int) -> Nothing
 - **Key Output**: Huber delta parameters for downstream scoring
 - **Performance**: Iterative optimization, moderate memory
 
-### Stage 2: PSM Identification
-**FirstPassSearch** - Initial PSM discovery
-- **Purpose**: First-pass peptide identification with RT calibration
-- **Algorithm**: Fragment matching + RT model building
-- **Key Output**: Initial PSM set + RT conversion models
+### Stage 2: PSM Identification + Global FDR
+**FragmentIndexSearch** - Fragment index construction
+- **Purpose**: Builds fragment-level index for candidate precursor selection
+- **Key Output**: Per-file fragment match tables in `temp_data/fragment_index_matches/`
+- **Memory**: Loads spectral library fragments
+
+**FirstPassSearch** - PSM identification, scoring, and global FDR filtering
+- **Purpose**: Full PSM identification pipeline — deconvolution, per-file LightGBM scoring (15 features), global prescore aggregation, and fold-split output for ScoringSearch
+- **Algorithm**: Fragment matching → spectral deconvolution → per-file LightGBM (2-fold CV) → PEP calibration → log-odds aggregation across files (top-√n) → global q-values → filter to passing precursors → write fold-split Arrow files
+- **Key Outputs**:
+  - `temp_data/prescore_scores/{file}.arrow` — unfiltered per-file LightGBM scores
+  - `temp_data/first_pass_psms/{file}.arrow` — best-per-precursor PSMs (before global filter)
+  - `temp_data/second_pass_psms/{file}_fold{0,1}.arrow` — globally filtered, fold-split PSMs for ScoringSearch
+  - RT calibration models, chromatographic iRT tolerance
+  - Filtered fragment index matches (restricted to passing precursors)
 - **Memory**: Loads full fragment index, high memory usage
 - **Threading**: Parallel chunk processing by scan ranges
 
-**SecondPassSearch** - Comprehensive PSM identification
-- **Purpose**: Exhaustive search with calibrated parameters
-- **Algorithm**: Full library search using optimized tolerances/models
-- **Key Output**: Complete PSM catalog for downstream analysis
-- **Memory**: Highest memory usage - full library + data
-- **Threading**: Most CPU-intensive stage
+**SecondPassSearch** - BYPASSED (code exists but not in pipeline)
+- Previously performed a second fragment-index search with calibrated parameters
+- Now bypassed: FirstPassSearch writes fold-split files directly to `temp_data/second_pass_psms/`
+- Prescore aggregation utilities (`prescore_aggregation.jl`, `utils.jl:aggregate_prescore_globally!`) are still used by FirstPassSearch
 
-### Stage 3: Scoring & FDR Control
-**ScoringSearch** - ML training and FDR control
-- **Purpose**: LightGBM training, PSM rescoring, protein grouping
-- **Algorithm**: Cross-validation training + FDR filtering + protein inference
-- **Key Output**: High-confidence PSMs + protein groups
+### Stage 3: Rescoring & FDR Control
+**ScoringSearch** - Rescoring with additional features, FDR control, protein grouping
+- **Purpose**: Trains a second LightGBM (20 features) on globally-filtered PSMs, applies final FDR, protein inference
+- **Algorithm**: Reads fold-split Arrow files from FirstPassSearch → adds features (log2_intensity_explained, prec_mz, irt_pred, longest_y, b_count, charge) → cross-validation LightGBM training → per-file FDR → protein inference
+- **Key Output**: High-confidence PSMs + protein groups per file
 - **Memory**: Stores all features for ML training
 - **Threading**: Parallel model training per CV fold
 
@@ -311,3 +319,37 @@ end
   - `{MethodName}.jl` - Main implementation
   - `utils.jl` - Method-specific utilities
 - Common utilities in parent `CommonSearchUtils/`
+
+## Recent Changes (2025-03)
+
+### SecondPassSearch Bypass
+SecondPassSearch is no longer executed in the pipeline. FirstPassSearch now handles the
+complete flow from deconvolution through global FDR filtering and writes fold-split Arrow
+files directly for ScoringSearch. The `routines` array in `SearchDIA.jl` has
+SecondPassSearch commented out. The prescore aggregation code (`prescore_aggregation.jl`,
+`aggregate_prescore_globally!` in `SecondPassSearch/utils.jl`) is still used — it's called
+from `FirstPassSearch.summarize_results!`.
+
+### Two-Stage LightGBM Pipeline
+The pipeline now trains two LightGBM models:
+1. **FirstPass LightGBM** (15 features) — per-file, used for global prescore aggregation
+2. **ScoringSearch LightGBM** (20 features) — trained on globally-filtered PSMs with
+   additional features from the library (log2_intensity_explained, prec_mz, irt_pred, etc.)
+
+Whether the second LightGBM adds significant value over the first is an open question
+(see `docs/two_stage_fdr_analysis.md` and `scripts/two_stage_fdr.jl`).
+
+### Future Direction: Eliminate ScoringSearch LightGBM
+A prototype (commit `238f57ac` on feature/bypass-first-pass, reverted) showed that the
+ScoringSearch LightGBM can be eliminated entirely with no loss in unique target precursors:
+
+- **Approach**: FirstPassSearch writes `global_prob`, `global_qval`, and `trace_prob=lgbm_prob`
+  directly into output tables (single files, no fold-split). ScoringSearch skips LightGBM
+  training and computes experiment-wide q-values from **per-file PEP values** pooled across
+  files. PEP is used because it's a calibrated probability comparable across files, unlike
+  raw model scores.
+- **Result on OlsenAstral 3-file**: 200,084 unique targets vs 199,383 with 20-feature
+  ScoringSearch LightGBM (+701). ScoringSearch step: 21.5s vs ~45s.
+- **Key design decisions**: `global_prescore_qvalue_threshold` stays tunable (default 5%);
+  experiment-wide q-value at `q_value_threshold` (default 1%) provides the final filter.
+- **Plan**: See `docs/plan_eliminate_scoring_lgbm.md` for full implementation details.
