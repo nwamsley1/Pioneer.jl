@@ -54,10 +54,10 @@ function updateResiduals!(Hs::SparseArray{Ti, T}, r::Vector{T}, col::Int64, X1, 
     end
 end
 
-function getDerivatives!(Hs::SparseArray{Ti, T}, 
-                            r::Vector{Float32}, 
-                            col::Int64, 
-                            δ::Float32, 
+function getDerivatives!(Hs::SparseArray{Ti, T},
+                            r::Vector{Float32},
+                            col::Int64,
+                            δ::Float32,
                             λ::Float32,
                             xk::Float32,
                             regularization_type::RegularizationType
@@ -67,26 +67,29 @@ function getDerivatives!(Hs::SparseArray{Ti, T},
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
-        RS = (1 + (rval/δ)^2)
-        # Quake's Fast Inverse Square Root Algorithm 
+        rval_d = rval / δ
+        RS = 1 + rval_d * rval_d
+        # Quake's Fast Inverse Square Root Algorithm
         R = RS
         int32 = reinterpret(UInt32, R)
-        int32 = 0x5f3759df - int32 >> 1 
+        int32 = 0x5f3759df - int32 >> 1
         R = reinterpret(Float32, int32)
-        R *= 1.5f0 - RS * 0.5f0 * R^2
+        R2 = R * R
+        R *= 1.5f0 - RS * 0.5f0 * R2
         HSVAL_R = hsval * R
+        R2 = R * R
 
         L1 += HSVAL_R * rval
-        L2 += (hsval) * HSVAL_R * ((R)^(2))
+        L2 += hsval * HSVAL_R * R2
     end
 
     return Float32(L1) + getRegL1(λ, xk, regularization_type), Float32(L2) + getRegL2(λ, xk, regularization_type)
 end
 
-function getL1(Hs::SparseArray{Ti, Float32}, 
-                r::Vector{Float32}, 
-                col::Int64, 
-                δ::Float32, 
+function getL1(Hs::SparseArray{Ti, Float32},
+                r::Vector{Float32},
+                col::Int64,
+                δ::Float32,
                 λ::Float32,
                 xk::Float32,
                 regularization_type::RegularizationType) where {Ti<:Integer}
@@ -94,13 +97,15 @@ function getL1(Hs::SparseArray{Ti, Float32},
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
-        RS = (1 + (rval/δ)^2)
-        # Quake's Fast Inverse Square Root Algorithm 
+        rval_d = rval / δ
+        RS = 1 + rval_d * rval_d
+        # Quake's Fast Inverse Square Root Algorithm
         R = RS
         int32 = reinterpret(UInt32, R)
-        int32 = 0x5f3759df - int32 >> 1 #Magic 
+        int32 = 0x5f3759df - int32 >> 1
         R = reinterpret(Float32, int32)
-        R *= 1.5f0 - RS * 0.5f0 * R^2
+        R2 = R * R
+        R *= 1.5f0 - RS * 0.5f0 * R2
         L1 += rval * hsval * R
     end
     return Float32(L1) + getRegL1(λ, xk, regularization_type)
@@ -362,78 +367,3 @@ function solveOLS!(
     return nothing
 end
 
-function reinitResiduals!(r::Vector{T}, Hs::SparseArray{Ti, T}, X₁::Vector{T}) where {Ti<:Integer, T<:AbstractFloat}
-    @inbounds for i in 1:Hs.m
-        r[i] = zero(T)
-    end
-    @inbounds for n in 1:Hs.n_vals
-        if iszero(r[Hs.rowval[n]])
-            r[Hs.rowval[n]] = -Hs.x[n]
-        end
-    end
-    @inbounds for col in 1:Hs.n
-        for n in Hs.colptr[col]:(Hs.colptr[col+1] - 1)
-            r[Hs.rowval[n]] += X₁[col] * Hs.nzval[n]
-        end
-    end
-end
-
-function solveOLS_v2!(
-    Hs::SparseArray{Ti, T},
-    r::Vector{T},
-    X₁::Vector{T},
-    colnorm2::Vector{T},
-    max_iter_outer::Int64,
-    relative_convergence_threshold::T;
-    reinit_period::Int64 = Int64(10)
-) where {Ti<:Integer, T<:AbstractFloat}
-
-    @inbounds for col in 1:Hs.n
-        s = zero(T)
-        for i in Hs.colptr[col]:(Hs.colptr[col+1]-1)
-            s += Hs.nzval[i]^2
-        end
-        colnorm2[col] = s
-    end
-
-    max_weight = T(0)
-    i = 0
-    while i < max_iter_outer
-        # Periodic residual recomputation to prevent Float32 drift
-        if i > 0 && mod(i, reinit_period) == 0
-            reinitResiduals!(r, Hs, X₁)
-        end
-
-        _diff = T(0)
-        weight_floor = i >= 5 ? max_weight * T(1e-7) : T(0)
-        max_weight = T(0)
-
-        for col in 1:Hs.n
-            L2 = colnorm2[col]
-            iszero(L2) && continue
-
-            L1 = zero(T)
-            @inbounds @fastmath for k in Hs.colptr[col]:(Hs.colptr[col+1]-1)
-                L1 += Hs.nzval[k] * r[Hs.rowval[k]]
-            end
-
-            X0 = X₁[col]
-            X₁[col] = max(X₁[col] - L1 / L2, zero(T))
-
-            updateResiduals!(Hs, r, col, X₁[col], X0)
-
-            δx = abs(X₁[col] - X0)
-            if X₁[col] > max_weight
-                max_weight = X₁[col]
-            end
-            if X₁[col] > weight_floor
-                rc = δx / abs(X₁[col])
-                rc > _diff && (_diff = rc)
-            end
-        end
-
-        _diff < relative_convergence_threshold && break
-        i += 1
-    end
-    return nothing
-end
