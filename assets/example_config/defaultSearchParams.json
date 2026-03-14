@@ -87,8 +87,7 @@
             ],
             "dynamic_range": 0.001
         },
-        "global_prescore_qvalue_threshold": 0.05,
-        "prescore_aggregation": "raw_logodds"
+        "global_prescore_qvalue_threshold": 0.05
     },
     "search": {
         "fragment_settings": {

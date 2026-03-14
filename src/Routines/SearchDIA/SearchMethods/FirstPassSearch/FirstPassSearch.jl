@@ -312,10 +312,10 @@ function summarize_results!(
     # Step 1: Per-fold global prescore aggregation → passing precursor sets + Phase 1 scan lookup
     t1_start = time()
     passing_fold0, best_scan_fold0 = aggregate_prescore_globally!(
-        search_context, params.global_prescore_qvalue_threshold, params.prescore_aggregation;
+        search_context, params.global_prescore_qvalue_threshold;
         fold_suffix="_fold0")
     passing_fold1, best_scan_fold1 = aggregate_prescore_globally!(
-        search_context, params.global_prescore_qvalue_threshold, params.prescore_aggregation;
+        search_context, params.global_prescore_qvalue_threshold;
         fold_suffix="_fold1")
     passing_precs = union(passing_fold0, passing_fold1)
     prec_best_scan = merge(best_scan_fold0, best_scan_fold1)

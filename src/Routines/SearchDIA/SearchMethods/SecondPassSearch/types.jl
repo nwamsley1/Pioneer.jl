@@ -21,7 +21,7 @@ end
 """
 Parameters for second pass search.
 """
-struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:PrescoreAggregationStrategy} <: FragmentIndexSearchParameters
+struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentIndexSearchParameters
     # Core parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
     min_fraction_transmitted::Float32
@@ -74,9 +74,6 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
     # Dynamic range filter
     dynamic_range::Float32
     prescore_dynamic_range::Float32
-
-    # Prescore aggregation strategy
-    prescore_aggregation::A
 
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -141,10 +138,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
         end
         prescore_dynamic_range = dynamic_range
 
-        # Hardcoded prescore aggregation strategy
-        prescore_aggregation = RawLogOddsAggregation()
-
-        new{typeof(prec_estimation), typeof(isotope_trace_type), typeof(prescore_aggregation)}(
+        new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             isotope_bounds,
             Float32(min_fraction_transmitted),
             Int64(frag_params.n_isotopes),
@@ -187,9 +181,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
             prescore_min_topn_of_m,
 
             dynamic_range,
-            prescore_dynamic_range,
-
-            prescore_aggregation
+            prescore_dynamic_range
         )
     end
 end

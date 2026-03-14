@@ -1780,14 +1780,18 @@ const DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD = 0.05f0
     aggregate_prescore_globally!(search_context, qvalue_threshold, aggregation; fold_suffix="") -> (Set{UInt32}, Dictionary{UInt32, Dictionary{Int, UInt32}})
 
 Load per-file LightGBM prescore arrow files (with optional `fold_suffix` appended to
-filenames), calibrate per-file scores via `calibrate_file_scores(aggregation, ...)`,
-aggregate via `combine_scores(aggregation, ...)`, compute global q-values, and return
-(1) the set of precursor indices passing at q ≤ qvalue_threshold and (2) per-precursor
-Phase 1 best scan lookup mapping precursor_idx → (file_idx → scan_idx).
+filenames), aggregate raw LightGBM probabilities via log-odds averaging of top-√n values,
+compute global q-values, and return (1) the set of precursor indices passing at
+q ≤ qvalue_threshold and (2) per-precursor Phase 1 best scan lookup mapping
+precursor_idx → (file_idx → scan_idx).
+
+Uses raw log-odds aggregation (no PEP calibration). Simulation showed that isotonic
+regression PEP calibration introduces systematic anti-conservative FDR bias because
+each sample's own label influences its own PEP estimate (label leakage). Raw log-odds
+of CV-scored LightGBM probabilities is perfectly calibrated.
 """
 function aggregate_prescore_globally!(search_context::SearchContext,
-                                      qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD,
-                                      aggregation::PrescoreAggregationStrategy=RawLogOddsAggregation();
+                                      qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD;
                                       fold_suffix::String="")
     r(t) = round(t; digits=2)
     t_total_start = time()
@@ -1808,10 +1812,7 @@ function aggregate_prescore_globally!(search_context::SearchContext,
     prec_best_scan = Dictionary{UInt32, Dictionary{Int, UInt32}}()  # pid → (file_idx → scan_idx)
     n_valid_files = 0
 
-    @info "Prescore aggregation strategy: $(typeof(aggregation))"
-
     t_reads = 0.0
-    t_calibration = 0.0
     t_loop = 0.0
 
     for ms_file_idx in 1:n_files
@@ -1829,17 +1830,13 @@ function aggregate_prescore_globally!(search_context::SearchContext,
         has_peak_width = :irt_peak_width in Tables.columnnames(scores)
         has_scan = :scan_idx in Tables.columnnames(scores)
 
-        # Calibrate per-file scores using the aggregation strategy
-        t_c = time()
+        # Use raw LightGBM probabilities directly (no PEP calibration)
         file_probs = Float32.(scores[:lgbm_prob])
         file_targets = Bool.(scores[:target])
-        calibrated_probs = calibrate_file_scores(aggregation, file_probs, file_targets)
-        t_calibration += time() - t_c
 
-        # Pass Arrow columns directly — _aggregate_file_scores! specializes on concrete types
         t_l = time()
         _aggregate_file_scores!(
-            scores[:precursor_idx], calibrated_probs, file_targets,
+            scores[:precursor_idx], file_probs, file_targets,
             has_irt ? scores[:irt_obs] : nothing,
             has_peak_width ? scores[:irt_peak_width] : nothing,
             has_scan ? scores[:scan_idx] : nothing,
@@ -1861,7 +1858,7 @@ function aggregate_prescore_globally!(search_context::SearchContext,
 
     for (i, (pid, probs)) in enumerate(pairs(prec_probs_by_run))
         global_prec_idxs[i] = pid
-        global_probs[i] = combine_scores(aggregation, probs, sqrt_n)
+        global_probs[i] = _logodds_combine(probs, sqrt_n, 0.1f0)
         global_targets[i] = prec_is_target[pid]
     end
 
