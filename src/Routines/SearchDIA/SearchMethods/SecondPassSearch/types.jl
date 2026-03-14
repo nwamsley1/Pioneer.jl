@@ -142,7 +142,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType, A<:Pre
         prescore_dynamic_range = dynamic_range
 
         # Hardcoded prescore aggregation strategy
-        prescore_aggregation = PEPCalibratedAggregation()
+        prescore_aggregation = RawLogOddsAggregation()
 
         new{typeof(prec_estimation), typeof(isotope_trace_type), typeof(prescore_aggregation)}(
             isotope_bounds,

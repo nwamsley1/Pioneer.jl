@@ -1787,7 +1787,7 @@ Phase 1 best scan lookup mapping precursor_idx → (file_idx → scan_idx).
 """
 function aggregate_prescore_globally!(search_context::SearchContext,
                                       qvalue_threshold::Float32=DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD,
-                                      aggregation::PrescoreAggregationStrategy=PEPCalibratedAggregation();
+                                      aggregation::PrescoreAggregationStrategy=RawLogOddsAggregation();
                                       fold_suffix::String="")
     r(t) = round(t; digits=2)
     t_total_start = time()
