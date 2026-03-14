@@ -170,7 +170,7 @@ end
 
 function protein_probit_feature_names(; include_n_possible_peptides::Bool = false)
     feature_names = Symbol[
-        :pg_score,
+        #:pg_score,
         :peptide_coverage
     ]
 
@@ -180,16 +180,11 @@ function protein_probit_feature_names(; include_n_possible_peptides::Bool = fals
 
     append!(feature_names, [
         :any_common_peps,
-        :consensus_precursor_rank_support,
-        :consensus_precursor_rank_enrichment,
-        :coverage_miss_surprisal,
-        :coverage_deficit_z,
-        :top_weight_vs_threshold_z,
-        :pg_score_x_coverage_miss_surprisal,
-        :pg_score_x_coverage_deficit_z,
-        :pg_score_x_top_weight_vs_threshold_z,
+        #:consensus_precursor_rank_support,
+        #:consensus_precursor_rank_enrichment,
+        :pg_score_x_coverage_match_from_top,
         :pg_score_x_consensus_precursor_rank_support,
-        :pg_score_x_consensus_precursor_rank_enrichment
+        #:pg_score_x_consensus_precursor_rank_enrichment
     ])
 
     return feature_names
@@ -1140,12 +1135,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         :n_possible_peptides,
         :log_binom_coeff,
         :any_common_peps,
-        :coverage_miss_surprisal,
-        :coverage_deficit_z,
-        :top_weight_vs_threshold_z,
-        :pg_score_x_coverage_miss_surprisal,
-        :pg_score_x_coverage_deficit_z,
-        :pg_score_x_top_weight_vs_threshold_z
+        :pg_score_x_coverage_match_from_top
     ]
 
     # Apply feature filtering
@@ -2131,7 +2121,7 @@ function perform_probit_analysis_multifold(
         return
     end
 
-    write_protein_probit_training_debug(all_protein_groups, feature_names, qc_folder)
+    #write_protein_probit_training_debug(all_protein_groups, feature_names, qc_folder)
     
     # 5. Train probit model for each fold (skip if skip_scoring = true)
     models = Dict{UInt8, Vector{Float64}}()

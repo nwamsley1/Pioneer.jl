@@ -248,11 +248,18 @@ Estimate per-file weight calibration for protein coverage surprise features.
 Uses unique inferred peptides with valid positive weight values.
 """
 function estimate_weight_detection_model(df::DataFrame)
+    max_rank = 12
+    min_rank_support = 8
     default_model = (
         log_threshold = 0.0f0,
         sigma_log = 1.0f0,
         n_unique_peptides = 0,
-        used_fallback = true
+        used_fallback = true,
+        rank_drop_profile = Float32[0.0f0],
+        rank_scale_profile = Float32[1.0f0],
+        profiled_rank_count = 1,
+        rank_profile_examples = 0,
+        used_rank_profile_fallback = true
     )
 
     n_rows = nrow(df)
@@ -260,7 +267,7 @@ function estimate_weight_detection_model(df::DataFrame)
         return default_model
     end
 
-    best_weight_by_protein_peptide = Dict{Tuple{String, String}, Float64}()
+    best_weight_by_protein_peptide = Dict{Tuple{String, Bool, UInt8, String}, Float64}()
 
     for i in 1:n_rows
         if df.use_for_protein_quant[i] != true
@@ -273,8 +280,13 @@ function estimate_weight_detection_model(df::DataFrame)
         end
 
         weight_val = Float64(df.weight[i])
+        if !isfinite(weight_val) || weight_val <= 0.0
+            continue
+        end
 
-        key = (String(protein_name), String(df.sequence[i]))
+        target_val = hasproperty(df, :target) ? Bool(df.target[i]) : true
+        entrap_val = hasproperty(df, :entrap_id) ? UInt8(df.entrap_id[i]) : UInt8(0)
+        key = (String(protein_name), target_val, entrap_val, String(df.sequence[i]))
         if haskey(best_weight_by_protein_peptide, key)
             if weight_val > best_weight_by_protein_peptide[key]
                 best_weight_by_protein_peptide[key] = weight_val
@@ -291,9 +303,10 @@ function estimate_weight_detection_model(df::DataFrame)
     log_weights = Float64[log(weight) for weight in values(best_weight_by_protein_peptide)]
     log_threshold = Float64(Statistics.quantile(log_weights, 0.05))
 
-    protein_to_log_weights = Dict{String, Vector{Float64}}()
-    for ((protein_name, _), weight) in best_weight_by_protein_peptide
-        push!(get!(protein_to_log_weights, protein_name, Float64[]), log(weight))
+    protein_to_log_weights = Dict{Tuple{String, Bool, UInt8}, Vector{Float64}}()
+    for ((protein_name, target_val, entrap_val, _), weight) in best_weight_by_protein_peptide
+        protein_key = (protein_name, target_val, entrap_val)
+        push!(get!(protein_to_log_weights, protein_key, Float64[]), log(weight))
     end
 
     pooled_residuals = Float64[]
@@ -317,68 +330,128 @@ function estimate_weight_detection_model(df::DataFrame)
         end
     end
 
+    rank_drop_profile = fill(0.0f0, max_rank)
+    rank_scale_profile = fill(Float32(sigma_log), max_rank)
+    profiled_rank_count = 1
+    rank_profile_examples = 0
+    used_rank_profile_fallback = true
+    rank_drop_samples = [Float64[] for _ in 1:max_rank]
+
+    for ((_, target_val, _), log_vals) in protein_to_log_weights
+        target_val || continue
+        length(log_vals) >= 2 || continue
+
+        sort!(log_vals; rev = true)
+        top_log_weight = log_vals[1]
+        local_max_rank = min(length(log_vals), max_rank)
+        for rank_idx in 2:local_max_rank
+            push!(rank_drop_samples[rank_idx], log_vals[rank_idx] - top_log_weight)
+        end
+    end
+
+    for rank_idx in 2:max_rank
+        samples = rank_drop_samples[rank_idx]
+        if length(samples) < min_rank_support
+            break
+        end
+
+        drop_median = Statistics.median(samples)
+        residuals = Float64[]
+        sizehint!(residuals, length(samples))
+        for sample in samples
+            push!(residuals, sample - drop_median)
+        end
+
+        drop_scale = sigma_log
+        mad_val = _median_abs_deviation(residuals)
+        if isfinite(mad_val) && mad_val > 0.0
+            drop_scale = clamp(mad_val / 0.6744897501960817, 0.25, 2.5)
+        end
+
+        rank_drop_profile[rank_idx] = Float32(drop_median)
+        rank_scale_profile[rank_idx] = Float32(drop_scale)
+        profiled_rank_count = rank_idx
+        rank_profile_examples += length(samples)
+        used_rank_profile_fallback = false
+    end
+
     return (
         log_threshold = Float32(log_threshold),
         sigma_log = Float32(sigma_log),
         n_unique_peptides = length(log_weights),
-        used_fallback = used_fallback
+        used_fallback = used_fallback,
+        rank_drop_profile = rank_drop_profile[1:profiled_rank_count],
+        rank_scale_profile = rank_scale_profile[1:profiled_rank_count],
+        profiled_rank_count = profiled_rank_count,
+        rank_profile_examples = rank_profile_examples,
+        used_rank_profile_fallback = used_rank_profile_fallback
     )
 end
 
 """
     add_weight_observation_features(calibration)
 
-Add weight-based protein coverage surprise features using a log-normal observation model.
+Add weight-based protein coverage features using an empirical top-rank companion model.
 """
 function add_weight_observation_features(calibration::NamedTuple)
     desc = "add_weight_observation_features"
 
     op = function(df)
         n_rows = nrow(df)
-        coverage_miss_pval = Vector{Float32}(undef, n_rows)
-        coverage_miss_surprisal = Vector{Float32}(undef, n_rows)
-        coverage_deficit_z = Vector{Float32}(undef, n_rows)
-        top_weight_vs_threshold_z = Vector{Float32}(undef, n_rows)
+        expected_additional_from_top = Vector{Float32}(undef, n_rows)
+        coverage_match_from_top = Vector{Float32}(undef, n_rows)
 
         log_threshold = Float64(calibration.log_threshold)
-        sigma_log = Float64(calibration.sigma_log)
-        sigma_log = (isfinite(sigma_log) && sigma_log > 0.0) ? sigma_log : 1.0
         std_normal = Distributions.Normal()
+        rank_drop_profile = Float64.(calibration.rank_drop_profile)
+        rank_scale_profile = Float64.(calibration.rank_scale_profile)
+        profiled_rank_count = max(Int(calibration.profiled_rank_count), 1)
 
         for i in 1:n_rows
             top_weight = Float64(df.top_pep_weight[i])
             N_total = max(Int(df.n_possible_peptides[i]), 0)
             k_obs = max(Int(df.n_peptides[i]), 0)
 
-            N_add = max(N_total - 1, 0)
-            k_add = max(k_obs - 1, 0)
-
-            if top_weight <= 0.0 || N_add == 0
-                coverage_miss_pval[i] = 1.0f0
-                coverage_miss_surprisal[i] = 0.0f0
-                coverage_deficit_z[i] = 0.0f0
-                top_weight_vs_threshold_z[i] = 0.0f0
+            if top_weight <= 0.0
+                expected_additional_from_top[i] = 0.0f0
+                coverage_match_from_top[i] = 1.0f0
                 continue
             end
 
-            z_norm = (log(top_weight) - log_threshold) / sigma_log
-            z_pair = z_norm / sqrt(2.0)
-            p_other = clamp(Distributions.cdf(std_normal, z_pair), 1e-6, 1.0 - 1e-6)
+            log_top_weight = log(top_weight)
+            effective_rank_count = min(max(N_total, 1), profiled_rank_count)
+            if effective_rank_count <= 1
+                expected_additional_from_top[i] = 0.0f0
+                coverage_match_from_top[i] = 1.0f0
+                continue
+            end
 
-            pval = Distributions.cdf(Distributions.Binomial(N_add, p_other), min(k_add, N_add))
-            expected = N_add * p_other
-            variance = (N_add * p_other * (1.0 - p_other)) + 1e-6
+            expected_additional = 0.0
+            for rank_idx in 2:effective_rank_count
+                rank_scale = rank_scale_profile[rank_idx]
+                rank_scale = (isfinite(rank_scale) && rank_scale > 0.0) ? rank_scale : 1.0
+                expected_log_weight = log_top_weight + rank_drop_profile[rank_idx]
+                rank_detect_prob = clamp(
+                    Distributions.cdf(
+                        std_normal,
+                        (expected_log_weight - log_threshold) / rank_scale
+                    ),
+                    1e-6,
+                    1.0 - 1e-6
+                )
+                expected_additional += rank_detect_prob
+            end
 
-            coverage_miss_pval[i] = Float32(pval)
-            coverage_miss_surprisal[i] = Float32(-log10(max(pval, 1e-12)))
-            coverage_deficit_z[i] = Float32((k_add - expected) / sqrt(variance))
-            top_weight_vs_threshold_z[i] = Float32(z_norm)
+            observed_additional = min(max(k_obs - 1, 0), effective_rank_count - 1)
+            coverage_deficit = max(expected_additional - observed_additional, 0.0)
+            match_denominator = max(expected_additional, 1.0)
+
+            expected_additional_from_top[i] = Float32(expected_additional)
+            coverage_match_from_top[i] = Float32(clamp(1.0 - (coverage_deficit / match_denominator), 0.0, 1.0))
         end
 
-        df.coverage_miss_pval = coverage_miss_pval
-        df.coverage_miss_surprisal = coverage_miss_surprisal
-        df.coverage_deficit_z = coverage_deficit_z
-        df.top_weight_vs_threshold_z = top_weight_vs_threshold_z
+        df.expected_additional_from_top = expected_additional_from_top
+        df.coverage_match_from_top = coverage_match_from_top
         return df
     end
 
@@ -395,30 +468,21 @@ function add_pg_score_interaction_features()
 
     op = function(df)
         pg_score = df.pg_score
-        coverage_miss_surprisal = df.coverage_miss_surprisal
-        coverage_deficit_z = df.coverage_deficit_z
-        top_weight_vs_threshold_z = df.top_weight_vs_threshold_z
+        coverage_match_from_top = df.coverage_match_from_top
 
         n_rows = length(pg_score)
-        pg_score_x_coverage_miss_surprisal = Vector{Float32}(undef, n_rows)
-        pg_score_x_coverage_deficit_z = Vector{Float32}(undef, n_rows)
-        pg_score_x_top_weight_vs_threshold_z = Vector{Float32}(undef, n_rows)
+        pg_score_x_coverage_match_from_top = Vector{Float32}(undef, n_rows)
 
         @inbounds for i in eachindex(
             pg_score,
-            coverage_miss_surprisal,
-            coverage_deficit_z,
-            top_weight_vs_threshold_z
+            coverage_match_from_top
         )
             pg_score_val = Float32(pg_score[i])
-            pg_score_x_coverage_miss_surprisal[i] = pg_score_val * Float32(coverage_miss_surprisal[i])
-            pg_score_x_coverage_deficit_z[i] = pg_score_val * Float32(coverage_deficit_z[i])
-            pg_score_x_top_weight_vs_threshold_z[i] = pg_score_val * Float32(top_weight_vs_threshold_z[i])
+            pg_score_x_coverage_match_from_top[i] =
+                pg_score_val * Float32(clamp(Float64(coverage_match_from_top[i]), 0.0, 1.0))
         end
 
-        df.pg_score_x_coverage_miss_surprisal = pg_score_x_coverage_miss_surprisal
-        df.pg_score_x_coverage_deficit_z = pg_score_x_coverage_deficit_z
-        df.pg_score_x_top_weight_vs_threshold_z = pg_score_x_top_weight_vs_threshold_z
+        df.pg_score_x_coverage_match_from_top = pg_score_x_coverage_match_from_top
         return df
     end
 
@@ -505,17 +569,32 @@ function _harmonic_number(n::Int)
     return total
 end
 
+const CONSENSUS_PRECURSOR_MAX_RUNS = 5
+const CONSENSUS_PRECURSOR_RUN_DECAY_RATE = 1.0
+const ConsensusRunVote = @NamedTuple{
+    pg_score::Float32,
+    run_order::Int64,
+    ranked_precursors::Vector{Pair{UInt32, Float32}}
+}
+
+@inline function _consensus_run_decay(selected_rank::Int)::Float64
+    return exp(-CONSENSUS_PRECURSOR_RUN_DECAY_RATE * Float64(selected_rank - 1))
+end
+
 """
     build_precursor_rank_consensus(psm_refs::Vector{PSMFileReference})
 
 Build a dataset-level precursor rank consensus within each inferred protein group.
 Consensus ranks are derived from direct (non-MBR) quant precursors, while each
-run's vote is weighted by that run's current protein `pg_score`.
+run's vote is weighted by that run's current protein `pg_score`. Only the top
+`CONSENSUS_PRECURSOR_MAX_RUNS` runs per protein group are retained, with an
+exponential decay applied by run rank within that top set.
 """
 function build_precursor_rank_consensus(psm_refs::Vector{PSMFileReference})
     consensus_scores = Dict{Tuple{String, Bool, UInt8, UInt32}, Float64}()
+    protein_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
 
-    for psm_ref in psm_refs
+    for (run_order, psm_ref) in enumerate(psm_refs)
         if !exists(psm_ref)
             continue
         end
@@ -550,16 +629,40 @@ function build_precursor_rank_consensus(psm_refs::Vector{PSMFileReference})
                 continue
             end
 
-            protein_name = String(gdf.inferred_protein_group[1])
+            protein_name_val = gdf.inferred_protein_group[1]
+            if ismissing(protein_name_val)
+                continue
+            end
+
+            protein_name = String(protein_name_val)
             target = Bool(gdf.target[1])
             entrap_id = UInt8(gdf.entrap_id[1])
 
             ranked_precursors = collect(best_weight_by_precursor)
             sort!(ranked_precursors, by = x -> (-x.second, x.first))
+            protein_key = (protein_name, target, entrap_id)
+            push!(
+                get!(protein_run_votes, protein_key, ConsensusRunVote[]),
+                (
+                    pg_score = pg_score,
+                    run_order = Int64(run_order),
+                    ranked_precursors = ranked_precursors
+                )
+            )
+        end
+    end
 
-            for (rank, precursor) in enumerate(ranked_precursors)
-                key = (protein_name, target, entrap_id, precursor.first)
-                consensus_scores[key] = get(consensus_scores, key, 0.0) + (Float64(pg_score) / rank)
+    for (protein_key, run_votes) in protein_run_votes
+        sort!(run_votes, by = x -> (-x.pg_score, x.run_order))
+        n_selected = min(length(run_votes), CONSENSUS_PRECURSOR_MAX_RUNS)
+
+        for selected_rank in 1:n_selected
+            run_vote = run_votes[selected_rank]
+            run_weight = Float64(run_vote.pg_score) * _consensus_run_decay(selected_rank)
+
+            for (rank, precursor) in enumerate(run_vote.ranked_precursors)
+                key = (protein_key[1], protein_key[2], protein_key[3], precursor.first)
+                consensus_scores[key] = get(consensus_scores, key, 0.0) + (run_weight / rank)
             end
         end
     end
@@ -883,7 +986,7 @@ function perform_protein_inference_pipeline(
 
         updated_psms = load_dataframe(psm_ref)
         weight_calibration = estimate_weight_detection_model(updated_psms)
-        @user_info "Weight protein coverage calibration file_idx=$(idx) n_unique_peptides=$(weight_calibration.n_unique_peptides) log_threshold=$(weight_calibration.log_threshold) sigma_log=$(weight_calibration.sigma_log) used_fallback=$(weight_calibration.used_fallback)"
+        @user_info "Weight protein coverage calibration file_idx=$(idx) n_unique_peptides=$(weight_calibration.n_unique_peptides) log_threshold=$(weight_calibration.log_threshold) sigma_log=$(weight_calibration.sigma_log) used_fallback=$(weight_calibration.used_fallback) profiled_rank_count=$(weight_calibration.profiled_rank_count) rank_profile_examples=$(weight_calibration.rank_profile_examples) used_rank_profile_fallback=$(weight_calibration.used_rank_profile_fallback)"
 
         protein_groups_df = group_psms_by_protein(
             updated_psms;
