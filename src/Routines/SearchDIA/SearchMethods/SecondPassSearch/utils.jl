@@ -1503,7 +1503,7 @@ function train_lgbm_and_select_best(
     idx0 = findall(cv_fold .== 0)
     idx1 = findall(cv_fold .== 1)
     all_scores = Vector{Float64}(undef, n_total)
-    max_train = 10_000_000
+    max_train = max(1_000_000, n_total ÷ 4)
     last_classifier = nothing
 
     for (train_idx, test_idx) in [(idx1, idx0), (idx0, idx1)]
@@ -2031,7 +2031,7 @@ function aggregate_prescore_globally!(search_context::SearchContext,
 
     t_qval = time() - t_qval_start
     t_total = time() - t_total_start
-    @info "Prescore aggregation: file_reads=$(r(t_reads))s, calibration=$(r(t_calibration))s, loop=$(r(t_loop))s, combination+qvalues=$(r(t_qval))s, total=$(r(t_total))s"
+    @info "Prescore aggregation: file_reads=$(r(t_reads))s, loop=$(r(t_loop))s, combination+qvalues=$(r(t_qval))s, total=$(r(t_total))s"
 
     return passing, prec_best_scan
 end
