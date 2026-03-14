@@ -21,6 +21,7 @@ FASTX = "c2308a5c-f048-11e8-3e8a-31650f418d12"
 FastGaussQuadrature = "442a2c76-b920-505d-bb47-c5924d526838"
 GR = "28b8d3ca-fb5f-59d9-8090-bfdbd6d07a71"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+HostCPUFeatures = "3e5b6fbb-0976-4d2c-9146-d79de83f2fb0"
 InlineStrings = "842dd82b-1e85-43dc-bf29-5d0ee9dffc48"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
@@ -71,6 +72,7 @@ FASTX = "2.1"
 FastGaussQuadrature = "1"
 GR = "0.73.13"
 HTTP = "1.10.15"
+HostCPUFeatures = "0.1.18"
 InlineStrings = "1"
 Interpolations = "0.15"
 JLD2 = "0.6"
@@ -103,8 +105,8 @@ julia = "1.11"
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[targets]
-test = ["Test"]
-
 [preferences.HostCPUFeatures]
 allow_runtime_invalidation = true
+
+[targets]
+test = ["Test"]
