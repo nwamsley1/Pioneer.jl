@@ -79,7 +79,7 @@ KernelDensity = "0.6"
 LaTeXStrings = "1"
 LightGBM = "2.0.0"
 LightXML = "0.9"
-LinearSolve = "2.31"
+LinearSolve = "2.31, 3"
 Logging = "1.11.0"
 LoggingExtras = "1.1.0"
 LoopVectorization = "0.12"
@@ -103,8 +103,8 @@ julia = "1.11"
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[targets]
-test = ["Test"]
-
 [preferences.HostCPUFeatures]
 allow_runtime_invalidation = true
+
+[targets]
+test = ["Test"]
