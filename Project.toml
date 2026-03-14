@@ -63,7 +63,7 @@ CSV = "0.10"
 CodecZlib = "0.7"
 Combinatorics = "1.0"
 DataFrames = "1.6"
-DataStructures = "0.18"
+DataStructures = "0.18, 0.19"
 Dictionaries = "0.4"
 Distributions = "0.25"
 EzXML = "1"
@@ -103,8 +103,8 @@ julia = "1.11"
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[targets]
-test = ["Test"]
-
 [preferences.HostCPUFeatures]
 allow_runtime_invalidation = true
+
+[targets]
+test = ["Test"]
