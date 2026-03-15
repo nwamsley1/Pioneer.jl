@@ -200,26 +200,4 @@ function summarize_results!(
     search_context::SearchContext
 )
 
-    r(t) = round(t; digits=2)
-    t_total_start = time()
-
-    # Collect unique precursor IDs from all fragment index match files
-    valid_indices = get_valid_file_indices(search_context)
-
-    # Collect all unique precursor IDs across all fragment index match files
-    t1_start = time()
-    all_prec_ids = Set{UInt32}()
-    for idx in valid_indices
-        match_path = getFragmentIndexMatches(getMSData(search_context), idx)
-        isempty(match_path) && continue
-        !isfile(match_path) && continue
-        tbl = Arrow.Table(match_path)
-        union!(all_prec_ids, Set{UInt32}(tbl[:precursor_idx]))
-    end
-    t1 = time() - t1_start
-
-    @user_info "FragmentIndexSearch: $(length(all_prec_ids)) unique precursors from fragment index"
-
-    t_total = time() - t_total_start
-    @info "FragmentIndexSearch summarize: arrow_read=$(r(t1))s, total=$(r(t_total))s"
 end

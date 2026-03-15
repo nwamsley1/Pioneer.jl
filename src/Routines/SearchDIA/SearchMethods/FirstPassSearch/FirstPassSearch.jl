@@ -37,7 +37,6 @@ Results container for first pass prescore search.
 """
 struct FirstPassSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
-    file_fwhms::Dict{Int, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}
 end
 
 #==========================================================
@@ -56,8 +55,7 @@ function init_search_results(::FirstPassSearch, ::P, search_context::SearchConte
     second_pass_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
     mkpath(second_pass_psms_dir)
     return FirstPassSearchResults(
-        DataFrame(),
-        Dict{Int, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}()
+        DataFrame()
     )
 end
 
@@ -173,27 +171,22 @@ function process_search_results!(
 
         # Train LightGBM on ALL PSMs, select best scan per precursor
         n_total_psms = nrow(psms)
-        best_psms, scores, q_values, lgbm_timings = train_lgbm_and_select_best(psms)
+        best_psms, scores, lgbm_timings = train_lgbm_and_select_best(psms)
         best_psms[!, :lgbm_prob] = scores
-        best_psms[!, :prescore_q_value] = q_values
         t_lgbm = time()
 
         # RT recalibration: refit iRT spline from high-confidence PSMs
         recalibrate_rt!(search_context, ms_file_idx, best_psms, best_psms[!, :lgbm_prob])
         t_recal = time()
 
-        # Write per-fold prescore tables (scores only — needed by aggregate_prescore_globally!)
+        # Write per-fold prescore tables (needed by aggregate_prescore_globally!)
         prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
         mkpath(prescore_dir)
         precursors = getPrecursors(getSpecLib(search_context))
         score_df = DataFrame(
             precursor_idx = best_psms[!, :precursor_idx],
             lgbm_prob = best_psms[!, :lgbm_prob],
-            target = best_psms[!, :target],
-            irt_obs = best_psms[!, :irt_obs],
-            irt_pred = best_psms[!, :irt_pred],
-            rt = best_psms[!, :rt],
-            scan_idx = best_psms[!, :scan_idx]
+            irt_range = best_psms[!, :irt_range]
         )
         score_cv_fold = UInt8[getCvFold(precursors, pid) for pid in score_df.precursor_idx]
         for fold in UInt8[0, 1]
@@ -221,9 +214,6 @@ function process_search_results!(
         best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
         t_phase2 = time()
 
-        # Hardcoded FWHM — replace with real estimation when bypassing SecondPass
-        results.file_fwhms[ms_file_idx] = (median_fwhm=0.2f0, mad_fwhm=0.2f0)
-
         # Drop vector columns that can't be serialized to Arrow
         dropVectorColumns!(best_psms)
 
@@ -237,14 +227,12 @@ function process_search_results!(
         t_write = time()
 
         # Timing summary
-        n_pass_1 = count((best_psms[!, :prescore_q_value] .<= 0.01) .& best_psms[!, :target])
-        n_pass_5 = count((best_psms[!, :prescore_q_value] .<= 0.05) .& best_psms[!, :target])
         t_total = t_write - t_start
         r = s -> round(s, digits=2)
         println()
-        @info "FirstPassSearch scoring: $(n_total_psms) PSMs → $(nrow(best_psms)) precursors ($n_pass_1 @ 1%, $n_pass_5 @ 5% FDR)\n" *
+        @info "FirstPassSearch scoring: $(n_total_psms) PSMs → $(nrow(best_psms)) precursors\n" *
               "  features=$(r(t_features - t_start))s, recal=$(r(t_recal - t_lgbm))s, phase2=$(r(t_phase2 - t_prescore_write))s, write=$(r(t_write - t_phase2))s\n" *
-              "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train_cv=$(r(lgbm_timings.train_cv))s, best=$(r(lgbm_timings.best))s, qval=$(r(lgbm_timings.qval))s\n" *
+              "  lgbm: matrix=$(r(lgbm_timings.matrix))s, train_cv=$(r(lgbm_timings.train_cv))s, best=$(r(lgbm_timings.best))s\n" *
               "  total=$(r(t_total))s"
         println()
 
@@ -309,20 +297,19 @@ function summarize_results!(
 
     @info "=== FirstPassSearch: Global prescore aggregation + fragment index filtering ==="
 
-    # Step 1: Per-fold global prescore aggregation → passing precursor sets + Phase 1 scan lookup
+    # Step 1: Per-fold global prescore aggregation → passing precursor sets + FWHM estimate
     t1_start = time()
-    passing_fold0, best_scan_fold0 = aggregate_prescore_globally!(
+    passing_fold0, fwhm_fold0 = aggregate_prescore_globally!(
         search_context, params.global_prescore_qvalue_threshold;
         fold_suffix="_fold0")
-    passing_fold1, best_scan_fold1 = aggregate_prescore_globally!(
+    passing_fold1, fwhm_fold1 = aggregate_prescore_globally!(
         search_context, params.global_prescore_qvalue_threshold;
         fold_suffix="_fold1")
     passing_precs = union(passing_fold0, passing_fold1)
-    prec_best_scan = merge(best_scan_fold0, best_scan_fold1)
+    global_fwhm = (fwhm_fold0 + fwhm_fold1) / 2.0f0
     t1 = time() - t1_start
 
-    # Store results for SecondPassSearch to retrieve Phase 1 best scans
-    store_results!(search_context, FirstPassSearch, (passing_precs=passing_precs, prec_best_scan=prec_best_scan))
+    store_results!(search_context, FirstPassSearch, (passing_precs=passing_precs,))
 
     # Step 2: Load first_pass_psms, filter to passing precursors, add deferred columns, write fold-split second_pass_psms
     t2_start = time()
@@ -421,7 +408,7 @@ function summarize_results!(
     # Step 3: Compute chromatographic tolerance from fold files
     t3_start = time()
     if n_processed_files > 0
-        compute_chromatographic_tolerance!(search_context, results.file_fwhms, ms_data, n_files)
+        compute_chromatographic_tolerance!(search_context, global_fwhm, ms_data, n_files)
     else
         @warn "No files processed in FirstPassSearch — skipping chromatographic tolerance computation"
     end

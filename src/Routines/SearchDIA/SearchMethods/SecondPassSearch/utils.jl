@@ -1473,15 +1473,15 @@ function prepare_psm_features!(
 end
 
 """
-    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, q_values, timings)
+    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, timings)
 
 Train LightGBM on ALL PSMs (all scans), predict scores, select best scan
-per precursor by LightGBM score, compute q-values, and log diagnostics.
+per precursor by LightGBM score, and log diagnostics.
 
 Returns:
 - best_psms: DataFrame with one row per precursor (best by LightGBM score)
 - scores: Vector{Float32} of LightGBM probabilities for best_psms
-- q_values: Vector{Float64} of q-values for best_psms
+- timings: NamedTuple with timing breakdowns
 """
 function train_lgbm_and_select_best(
     psms::DataFrame;
@@ -1556,12 +1556,6 @@ function train_lgbm_and_select_best(
     scores = psms[!, :lgbm_score]
     t_best = time()
 
-    # Compute q-values
-    best_targets = psms[!, :target]
-    q_values = zeros(Float64, nrow(psms))
-    get_qvalues!(scores, best_targets, q_values)
-    t_qval = time()
-
     # Feature importances
     imp = importance(model)
     if imp !== nothing
@@ -1576,10 +1570,9 @@ function train_lgbm_and_select_best(
         matrix = t_matrix - t0,
         train_cv = t_train_cv - t_matrix,
         best = t_best - t_train_cv,
-        qval = t_qval - t_best,
     )
 
-    return psms, Vector{Float32}(scores), q_values, timings
+    return psms, Vector{Float32}(scores), timings
 end
 
 """
@@ -1598,28 +1591,51 @@ end
 """
     select_best_per_precursor!(psms::DataFrame, score_col::Symbol) -> DataFrame
 
-In-place version: keeps one row per precursor_idx (highest `score_col`),
-deletes all other rows via `deleteat!`. Returns the mutated `psms`.
+Keeps one row per precursor_idx (highest `score_col`). Also computes `irt_range`
+(max - min observed iRT across all scans) per precursor if `:irt_obs` exists.
+Returns the filtered DataFrame with the added `irt_range` column.
 """
 function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     scores = psms[!, score_col]::Vector{Float32}
     prec_ids = psms[!, :precursor_idx]::Vector{UInt32}
+    has_irt = hasproperty(psms, :irt_obs)
+    irt_obs = has_irt ? psms[!, :irt_obs]::Vector{Float32} : nothing
     n = nrow(psms)
 
-    # Single pass: track best row index per precursor (pre-allocate to avoid resizes)
+    # Single pass: track best row index, best score, and iRT range per precursor
     best_idx = Dict{UInt32, Int}()
     best_score = Dict{UInt32, Float32}()
     sizehint!(best_idx, n)
     sizehint!(best_score, n)
+
+    min_irt = has_irt ? Dict{UInt32, Float32}() : nothing
+    max_irt = has_irt ? Dict{UInt32, Float32}() : nothing
+    if has_irt
+        sizehint!(min_irt, n)
+        sizehint!(max_irt, n)
+    end
+
     @inbounds for i in 1:n
         pid = prec_ids[i]
         s = scores[i]
         if !haskey(best_idx, pid)
             best_idx[pid] = i
             best_score[pid] = s
-        elseif s > best_score[pid]
-            best_idx[pid] = i
-            best_score[pid] = s
+            if has_irt
+                irt = irt_obs[i]
+                min_irt[pid] = irt
+                max_irt[pid] = irt
+            end
+        else
+            if s > best_score[pid]
+                best_idx[pid] = i
+                best_score[pid] = s
+            end
+            if has_irt
+                irt = irt_obs[i]
+                min_irt[pid] = min(min_irt[pid], irt)
+                max_irt[pid] = max(max_irt[pid], irt)
+            end
         end
     end
 
@@ -1629,7 +1645,20 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
         keep[idx] = true
     end
 
-    return psms[keep, :]
+    result = psms[keep, :]
+
+    # Add irt_range column to the reduced table
+    if has_irt
+        result_pids = result[!, :precursor_idx]::Vector{UInt32}
+        irt_range_col = Vector{Float32}(undef, nrow(result))
+        @inbounds for i in eachindex(result_pids)
+            pid = result_pids[i]
+            irt_range_col[i] = max_irt[pid] - min_irt[pid]
+        end
+        result[!, :irt_range] = irt_range_col
+    end
+
+    return result
 end
 
 """
@@ -1694,81 +1723,31 @@ Global Cross-Run Prescore Aggregation
 Typed inner function for the per-file aggregation loop in `aggregate_prescore_globally!`.
 Accepts Arrow columns as `AbstractVector` so the compiler specializes on concrete column
 types at each call site, eliminating dynamic dispatch inside the hot loop.
+
+Accumulates per-file probabilities and tracks the iRT range from the file with the
+highest lgbm_prob per precursor (for FWHM estimation).
 """
 function _aggregate_file_scores!(
         prec_idx_col::AbstractVector{UInt32},
         calibrated_probs::AbstractVector{Float32},
-        file_targets::AbstractVector{Bool},
-        irt_obs_col::Union{AbstractVector{Float32}, Nothing},
-        peak_width_col::Union{AbstractVector{Float32}, Nothing},
-        scan_idx_col::Union{AbstractVector{UInt32}, Nothing},
-        ms_file_idx::Int,
+        irt_range_col::AbstractVector{Float32},
         prec_probs_by_run::Dictionary{UInt32, Vector{Float32}},
-        prec_is_target::Dictionary{UInt32, Bool},
-        prec_min_irt::Dictionary{UInt32, Float32},
-        prec_max_irt::Dictionary{UInt32, Float32},
         prec_best_prob::Dictionary{UInt32, Float32},
-        prec_best_irt::Dictionary{UInt32, Float32},
-        prec_irt_by_file::Dictionary{UInt32, Vector{Pair{Int,Float32}}},
-        prec_peak_widths::Dictionary{UInt32, Vector{Float32}},
-        prec_best_scan::Dictionary{UInt32, Dictionary{Int, UInt32}})
-
-    has_irt = irt_obs_col !== nothing
-    has_peak_width = peak_width_col !== nothing
-    has_scan = scan_idx_col !== nothing
+        prec_best_irt_range::Dictionary{UInt32, Float32})
 
     @inbounds for i in eachindex(prec_idx_col)
         pid = prec_idx_col[i]
         p = calibrated_probs[i]
         if haskey(prec_probs_by_run, pid)
             push!(prec_probs_by_run[pid], p)
+            if p > prec_best_prob[pid]
+                prec_best_prob[pid] = p
+                prec_best_irt_range[pid] = irt_range_col[i]
+            end
         else
             insert!(prec_probs_by_run, pid, Float32[p])
-        end
-        if !haskey(prec_is_target, pid)
-            insert!(prec_is_target, pid, file_targets[i])
-        end
-
-        # Track iRT range per precursor
-        if has_irt
-            irt = Float32(irt_obs_col[i])
-            if haskey(prec_min_irt, pid)
-                prec_min_irt[pid] = min(prec_min_irt[pid], irt)
-                prec_max_irt[pid] = max(prec_max_irt[pid], irt)
-                if p > prec_best_prob[pid]
-                    prec_best_prob[pid] = p
-                    prec_best_irt[pid] = irt
-                end
-            else
-                insert!(prec_min_irt, pid, irt)
-                insert!(prec_max_irt, pid, irt)
-                insert!(prec_best_prob, pid, p)
-                insert!(prec_best_irt, pid, irt)
-            end
-            if haskey(prec_irt_by_file, pid)
-                push!(prec_irt_by_file[pid], ms_file_idx => irt)
-            else
-                insert!(prec_irt_by_file, pid, [ms_file_idx => irt])
-            end
-        end
-
-        # Track within-file iRT peak width per precursor
-        if has_peak_width
-            pw = Float32(peak_width_col[i])
-            if haskey(prec_peak_widths, pid)
-                push!(prec_peak_widths[pid], pw)
-            else
-                insert!(prec_peak_widths, pid, Float32[pw])
-            end
-        end
-
-        # Track Phase 1 best scan per precursor per file
-        if has_scan
-            sid = UInt32(scan_idx_col[i])
-            if !haskey(prec_best_scan, pid)
-                insert!(prec_best_scan, pid, Dictionary{Int, UInt32}())
-            end
-            insert!(prec_best_scan[pid], ms_file_idx, sid)
+            insert!(prec_best_prob, pid, p)
+            insert!(prec_best_irt_range, pid, irt_range_col[i])
         end
     end
     return nothing
@@ -1777,13 +1756,13 @@ end
 const DEFAULT_GLOBAL_PRESCORE_QVALUE_THRESHOLD = 0.05f0
 
 """
-    aggregate_prescore_globally!(search_context, qvalue_threshold, aggregation; fold_suffix="") -> (Set{UInt32}, Dictionary{UInt32, Dictionary{Int, UInt32}})
+    aggregate_prescore_globally!(search_context, qvalue_threshold; fold_suffix="") -> (Set{UInt32}, Float32)
 
 Load per-file LightGBM prescore arrow files (with optional `fold_suffix` appended to
 filenames), aggregate raw LightGBM probabilities via log-odds averaging of top-√n values,
 compute global q-values, and return (1) the set of precursor indices passing at
-q ≤ qvalue_threshold and (2) per-precursor Phase 1 best scan lookup mapping
-precursor_idx → (file_idx → scan_idx).
+q ≤ qvalue_threshold and (2) the median iRT range (FWHM proxy) from high-confidence
+target precursors (q ≤ 0.1%).
 
 Uses raw log-odds aggregation (no PEP calibration). Simulation showed that isotonic
 regression PEP calibration introduces systematic anti-conservative FDR bias because
@@ -1800,16 +1779,10 @@ function aggregate_prescore_globally!(search_context::SearchContext,
     n_files = length(ms_data)
     prescore_dir = joinpath(getDataOutDir(search_context), "temp_data", "prescore_scores")
 
-    # Collect per-file best probs per precursor + iRT tracking
+    # Collect per-file probs and iRT ranges per precursor
     prec_probs_by_run = Dictionary{UInt32, Vector{Float32}}()
-    prec_is_target = Dictionary{UInt32, Bool}()
-    prec_best_prob = Dictionary{UInt32, Float32}()    # best lgbm_prob seen so far
-    prec_best_irt = Dictionary{UInt32, Float32}()     # iRT of globally best-scoring scan
-    prec_min_irt = Dictionary{UInt32, Float32}()       # min iRT across files
-    prec_max_irt = Dictionary{UInt32, Float32}()       # max iRT across files
-    prec_peak_widths = Dictionary{UInt32, Vector{Float32}}()  # within-file iRT peak widths
-    prec_irt_by_file = Dictionary{UInt32, Vector{Pair{Int,Float32}}}()  # (file_idx => irt) per observation
-    prec_best_scan = Dictionary{UInt32, Dictionary{Int, UInt32}}()  # pid → (file_idx → scan_idx)
+    prec_best_prob = Dictionary{UInt32, Float32}()
+    prec_best_irt_range = Dictionary{UInt32, Float32}()
     n_valid_files = 0
 
     t_reads = 0.0
@@ -1826,30 +1799,17 @@ function aggregate_prescore_globally!(search_context::SearchContext,
         t_reads += time() - t_r
         n_valid_files += 1
 
-        has_irt = :irt_obs in Tables.columnnames(scores)
-        has_peak_width = :irt_peak_width in Tables.columnnames(scores)
-        has_scan = :scan_idx in Tables.columnnames(scores)
-
-        # Use raw LightGBM probabilities directly (no PEP calibration)
-        file_probs = Float32.(scores[:lgbm_prob])
-        file_targets = Bool.(scores[:target])
-
         t_l = time()
         _aggregate_file_scores!(
-            scores[:precursor_idx], file_probs, file_targets,
-            has_irt ? scores[:irt_obs] : nothing,
-            has_peak_width ? scores[:irt_peak_width] : nothing,
-            has_scan ? scores[:scan_idx] : nothing,
-            ms_file_idx,
-            prec_probs_by_run, prec_is_target,
-            prec_min_irt, prec_max_irt, prec_best_prob, prec_best_irt,
-            prec_irt_by_file, prec_peak_widths, prec_best_scan
+            scores[:precursor_idx], scores[:lgbm_prob], scores[:irt_range],
+            prec_probs_by_run, prec_best_prob, prec_best_irt_range
         )
         t_loop += time() - t_l
     end
 
-    # Aggregate via log-odds
+    # Aggregate via log-odds; look up target/decoy from spectral library
     t_qval_start = time()
+    is_decoy = getIsDecoy(getPrecursors(getSpecLib(search_context)))
     sqrt_n = max(1, floor(Int, sqrt(n_valid_files)))
     n_unique = length(prec_probs_by_run)
     global_prec_idxs = Vector{UInt32}(undef, n_unique)
@@ -1859,7 +1819,7 @@ function aggregate_prescore_globally!(search_context::SearchContext,
     for (i, (pid, probs)) in enumerate(pairs(prec_probs_by_run))
         global_prec_idxs[i] = pid
         global_probs[i] = _logodds_combine(probs, sqrt_n, 0.1f0)
-        global_targets[i] = prec_is_target[pid]
+        global_targets[i] = !is_decoy[pid]
     end
 
     # Q-values on global scores
@@ -1885,115 +1845,23 @@ function aggregate_prescore_globally!(search_context::SearchContext,
 
     @info "Global prescore filter: $(length(passing)) precursors pass at q≤$(qvalue_threshold)"
 
-    #= ── iRT spread diagnostics for 1% FDR targets ──────────────
-    if !isempty(prec_min_irt)
-        # Collect iRT diffs for target precursors at 1% global FDR
-        irt_diffs = Float32[]
-        for i in eachindex(global_prec_idxs)
+    # Estimate FWHM from iRT ranges of high-confidence targets (q ≤ 0.1%)
+    fwhm_qval_cutoff = 0.001f0
+    hc_irt_ranges = Float32[]
+    for i in eachindex(global_prec_idxs)
+        if global_qvals[i] <= fwhm_qval_cutoff && global_targets[i]
             pid = global_prec_idxs[i]
-            global_qvals[i] <= 0.01f0 && global_targets[i] && haskey(prec_min_irt, pid) || continue
-            push!(irt_diffs, prec_max_irt[pid] - prec_min_irt[pid])
-        end
-
-        if !isempty(irt_diffs)
-            sorted_diffs = sort(irt_diffs)
-            n_d = length(sorted_diffs)
-            med = sorted_diffs[max(1, div(n_d + 1, 2))]
-            avg = sum(sorted_diffs) / n_d
-            sd = sqrt(sum((d - avg)^2 for d in sorted_diffs) / max(1, n_d - 1))
-            p25 = sorted_diffs[max(1, ceil(Int, 0.25 * n_d))]
-            p75 = sorted_diffs[max(1, ceil(Int, 0.75 * n_d))]
-            p90 = sorted_diffs[max(1, ceil(Int, 0.90 * n_d))]
-            p95 = sorted_diffs[max(1, ceil(Int, 0.95 * n_d))]
-            @info "iRT spread (max-min) for $(n_d) target precursors at q≤0.01:"
-            @info "  median=$(round(med; digits=2)), mean=$(round(avg; digits=2)), std=$(round(sd; digits=2))"
-            @info "  p25=$(round(p25; digits=2)), p75=$(round(p75; digits=2)), p90=$(round(p90; digits=2)), p95=$(round(p95; digits=2))"
-
-            # Save histogram
-            try
-                results_dir = getDataOutDir(search_context)
-                p_hist = histogram(irt_diffs;
-                    xlabel = "iRT spread (max - min across files)",
-                    ylabel = "Count",
-                    title = "Prescore iRT spread ($(n_d) targets, q≤1%)",
-                    legend = false,
-                    bins = min(100, max(20, div(n_d, 50)))
-                )
-                savefig(p_hist, joinpath(results_dir, "prescore_irt_spread.pdf"))
-                @info "Saved prescore_irt_spread.pdf to $results_dir"
-            catch e
-                @warn "Failed to save iRT spread histogram: $e"
-            end
-
-            # ── iRT outlier detection (per-file observations) ──
-            med_spread = sorted_diffs[max(1, div(length(sorted_diffs) + 1, 2))]
-            abs_devs = sort([abs(d - med_spread) for d in sorted_diffs])
-            mad_raw = abs_devs[max(1, div(length(abs_devs) + 1, 2))]
-            mad_normalized = mad_raw * 1.4826f0
-            irt_outlier_threshold = 3.0f0 * mad_normalized
-
-            n_outlier = 0
-            n_total_obs = 0
-            for i in eachindex(global_prec_idxs)
-                pid = global_prec_idxs[i]
-                global_qvals[i] <= 0.01f0 && global_targets[i] && haskey(prec_irt_by_file, pid) || continue
-                best_irt = prec_best_irt[pid]
-                for (file_idx, file_irt) in prec_irt_by_file[pid]
-                    n_total_obs += 1
-                    if abs(file_irt - best_irt) > irt_outlier_threshold
-                        n_outlier += 1
-                    end
-                end
-            end
-
-            pct = round(100.0 * n_outlier / max(1, n_total_obs); digits=2)
-            @info "iRT outlier detection (q≤0.01 targets): MAD=$(round(mad_raw; digits=4)), threshold=$(round(irt_outlier_threshold; digits=4))"
-            @info "  $n_outlier / $n_total_obs observations ($pct%) exceed 3σ from best-scoring iRT (diagnostic only, not filtering)"
+            haskey(prec_best_irt_range, pid) && push!(hc_irt_ranges, prec_best_irt_range[pid])
         end
     end
-
-    # ── Within-file iRT peak width diagnostics for 1% FDR targets ──
-    if !isempty(prec_peak_widths)
-        # Collect all per-file peak widths for target precursors at 1% global FDR
-        pw_all = Float32[]
-        for i in eachindex(global_prec_idxs)
-            pid = global_prec_idxs[i]
-            global_qvals[i] <= 0.01f0 && global_targets[i] && haskey(prec_peak_widths, pid) || continue
-            append!(pw_all, prec_peak_widths[pid])
-        end
-
-        if !isempty(pw_all)
-            sorted_pw = sort(pw_all)
-            n_pw = length(sorted_pw)
-            med = sorted_pw[max(1, div(n_pw + 1, 2))]
-            avg = sum(sorted_pw) / n_pw
-            sd = sqrt(sum((w - avg)^2 for w in sorted_pw) / max(1, n_pw - 1))
-            p25 = sorted_pw[max(1, ceil(Int, 0.25 * n_pw))]
-            p75 = sorted_pw[max(1, ceil(Int, 0.75 * n_pw))]
-            p90 = sorted_pw[max(1, ceil(Int, 0.90 * n_pw))]
-            p95 = sorted_pw[max(1, ceil(Int, 0.95 * n_pw))]
-            @info "iRT peak width (within-file) for $(n_pw) observations from target precursors at q≤0.01:"
-            @info "  median=$(round(med; digits=2)), mean=$(round(avg; digits=2)), std=$(round(sd; digits=2))"
-            @info "  p25=$(round(p25; digits=2)), p75=$(round(p75; digits=2)), p90=$(round(p90; digits=2)), p95=$(round(p95; digits=2))"
-
-            # Save histogram
-            try
-                results_dir = getDataOutDir(search_context)
-                p_hist = histogram(pw_all;
-                    xlabel = "iRT peak width (within-file)",
-                    ylabel = "Count",
-                    title = "Prescore iRT peak width ($(n_pw) obs, q≤1%)",
-                    legend = false,
-                    bins = min(100, max(20, div(n_pw, 50)))
-                )
-                savefig(p_hist, joinpath(results_dir, "prescore_irt_peak_width.pdf"))
-                @info "Saved prescore_irt_peak_width.pdf to $results_dir"
-            catch e
-                @warn "Failed to save iRT peak width histogram: $e"
-            end
-        end
+    if !isempty(hc_irt_ranges)
+        median_irt_range = Float32(median(hc_irt_ranges))
+        n_hc = length(hc_irt_ranges)
+        @info "  FWHM estimate: median_irt_range=$(round(median_irt_range, digits=4)) from $n_hc targets at q≤$(fwhm_qval_cutoff)"
+    else
+        median_irt_range = 0.2f0
+        @info "  FWHM estimate: no targets at q≤$(fwhm_qval_cutoff), using default $(median_irt_range)"
     end
-    =#
 
     # ── DIA-NN diagnostics ──────────────────────────────────────
     # Build lookup: precursor_idx → global_qval for all scored precursors
@@ -2033,7 +1901,7 @@ function aggregate_prescore_globally!(search_context::SearchContext,
     t_total = time() - t_total_start
     @info "Prescore aggregation: file_reads=$(r(t_reads))s, loop=$(r(t_loop))s, combination+qvalues=$(r(t_qval))s, total=$(r(t_total))s"
 
-    return passing, prec_best_scan
+    return passing, median_irt_range
 end
 
 """
