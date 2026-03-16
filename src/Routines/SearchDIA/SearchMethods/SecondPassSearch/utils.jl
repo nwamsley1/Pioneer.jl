@@ -1136,6 +1136,9 @@ function get_fraction_transmitted!(chroms::DataFrame,
                                    isolationWidthMz::AbstractVector{Union{Missing, Float32}})
     precursor_fraction_transmitted = Vector{Float32}(undef, size(chroms, 1))
 
+    # Cache column vector once (avoid 25M DataFrame row-indexing lookups)
+    prec_idx_col = chroms[!, :precursor_idx]
+
     tasks_per_thread = 5
     chunk_size = max(1, size(chroms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
     data_chunks = partition(1:size(chroms, 1), chunk_size)
@@ -1144,9 +1147,11 @@ function get_fraction_transmitted!(chroms::DataFrame,
         Threads.@spawn begin
             thread_id = (first(chunk) % Threads.nthreads()) + 1
             iso_splines = getIsoSplines(search_data[thread_id])
+            # Pre-allocate transmission buffer per task (eliminates 25M×zeros(Float32,5) allocations)
+            precursor_transmission = zeros(Float32, 5)
 
             for i in chunk
-                prec_id = chroms[i,:precursor_idx]
+                prec_id = prec_idx_col[i]
                 mz = prec_mz[prec_id]
                 charge = prec_charge[prec_id]
                 sulfur = sulfur_count[prec_id]
@@ -1155,6 +1160,7 @@ function get_fraction_transmitted!(chroms::DataFrame,
                 window_width = coalesce(isolationWidthMz[scan_id], zero(Float32))::Float32
 
                 precursor_fraction_transmitted[i] = getPrecursorFractionTransmitted!(
+                    precursor_transmission,
                     iso_splines,
                     (1,5),
                     getQuadTransmissionFunction(quad_transmission_model, scan_mz, window_width),
