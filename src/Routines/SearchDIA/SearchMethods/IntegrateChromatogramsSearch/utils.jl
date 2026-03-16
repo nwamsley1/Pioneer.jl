@@ -61,14 +61,98 @@ function integrate_precursors(chromatograms::DataFrame,
     if seperateTraces(isotope_trace_type)
         chromatogram_keys = [:precursor_idx,:isotopes_captured]
     end
-    alloc_groupby = @allocated grouped_chroms = groupby(chromatograms, chromatogram_keys)
-    @info "  integrate_precursors groupby alloc: $(round(alloc_groupby/1e9, digits=2)) GB ($(nrow(chromatograms)) rows, $(length(chromatogram_keys)) keys)"
+    grouped_chroms = groupby(chromatograms, chromatogram_keys)
     dtype = Float32
-    thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
     #Maximal size of a chromatogram
     N = maximum(size(c,1) for c in grouped_chroms) + (2*n_pad)
-
     group_keys = keys(grouped_chroms)
+
+    if SINGLE_THREAD_INTEGRATE[]
+        # Single-threaded path for accurate allocation profiling
+        # (@allocated is unreliable in multi-threaded code due to gc_live_bytes() contamination)
+        b = zeros(Float32, N)
+        u2 = zeros(Float32, length(b))
+        ws = WHWorkspace(N)
+        state = Chromatogram(zeros(dtype, N), zeros(dtype, N), N)
+        _alloc_lookup = Int64(0)
+        _alloc_prep = Int64(0)
+        _alloc_strings = Int64(0)
+        _alloc_integrate = Int64(0)
+        _n_precs = 0
+
+        for i in 1:length(precursor_idx)
+            prec_id = precursor_idx[i]
+            iso_set = isotopes_captured[i]
+            apex_scan = apex_scan_idx[i]
+
+            _alloc_lookup += @allocated begin
+            if seperateTraces(isotope_trace_type)
+                (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys ? continue : nothing
+                chrom = grouped_chroms[(precursor_idx = prec_id, isotopes_captured = iso_set)]
+            else
+                (precursor_idx = prec_id,) ∉ group_keys ? continue : nothing
+                chrom = grouped_chroms[(precursor_idx = prec_id,)]
+            end
+            end # @allocated lookup
+
+            _alloc_prep += @allocated begin
+            avg_cycle_time = (chrom.rt[end] - chrom.rt[1]) /  length(chrom.rt)
+            first_pos = findfirst(x->x>0.0, chrom[!,:intensity])
+            last_pos = findlast(x->x>0.0, chrom[!,:intensity])
+            isnothing(first_pos) ? continue : nothing
+            chrom = view(chrom, first_pos:last_pos, :)
+            chrom_scan_idx = chrom[!, :scan_idx]::AbstractVector{UInt32}
+            if test_print == false
+                apex_scan = findfirst(x->x==apex_scan, chrom_scan_idx)
+                isnothing(apex_scan) ? continue : nothing
+            else
+                min_diff = typemax(Int64)
+                nearest_idx = i
+                for i in range(1, size(chrom, 1))
+                    if abs(chrom[i,:scan_idx] - apex_scan) < min_diff
+                        min_diff = abs(chrom[i,:scan_idx] - apex_scan)
+                        nearest_idx = i
+                    end
+                end
+                for i in range(max(1, nearest_idx - 5), min(size(chrom, 1), nearest_idx + 5))
+                    if chrom[i,:intensity] > chrom[nearest_idx,:intensity]
+                        nearest_idx = i
+                    end
+                end
+                apex_scan = nearest_idx
+            end
+            end # @allocated prep
+
+            if !ismissing(precursor_fraction_transmitted_traces)
+                _alloc_strings += @allocated begin
+                precursor_fraction_transmitted_traces[i], isotopes_captured_traces[i] = get_isolated_isotopes_strings(chrom[!, :precursor_fraction_transmitted], chrom[!, :isotopes_captured])
+                end # @allocated strings
+            end
+
+            _alloc_integrate += @allocated begin
+            peak_area[i], new_best_scan[i], points_integrated[i] = integrate_chrom(
+                            chrom,
+                            apex_scan,
+                            b,
+                            u2,
+                            ws,
+                            state,
+                            avg_cycle_time,
+                            λ,
+                            n_pad = n_pad,
+                            max_apex_offset = max_apex_offset,
+                            isplot = false
+                            );
+            end # @allocated integrate
+
+            _n_precs += 1
+            reset!(state)
+        end
+        @info "  integrate_precursors SINGLE-THREAD ($_n_precs precs): lookup=$(round(_alloc_lookup/1e9,digits=3))GB prep=$(round(_alloc_prep/1e9,digits=3))GB strings=$(round(_alloc_strings/1e9,digits=3))GB integrate=$(round(_alloc_integrate/1e9,digits=3))GB total=$(round((_alloc_lookup+_alloc_prep+_alloc_strings+_alloc_integrate)/1e9,digits=3))GB"
+        return nothing
+    end
+
+    thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
             #chromdf = DataFrame()
@@ -82,19 +166,11 @@ function integrate_precursors(chromatograms::DataFrame,
                 N #max index
                 )
 
-            # Per-thread allocation tracking
-            _alloc_lookup = Int64(0)
-            _alloc_prep = Int64(0)
-            _alloc_strings = Int64(0)
-            _alloc_integrate = Int64(0)
-            _n_precs = 0
-
             for i in chunk
                 prec_id = precursor_idx[i]
                 iso_set = isotopes_captured[i]
                 apex_scan = apex_scan_idx[i]
-                # Note: grouped_chroms groups are already sorted by rt (pre-sorted before grouping)
-                _alloc_lookup += @allocated begin
+
                 if seperateTraces(isotope_trace_type)
                     (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys ? continue : nothing
                     chrom = grouped_chroms[(precursor_idx = prec_id, isotopes_captured = iso_set)]
@@ -102,18 +178,15 @@ function integrate_precursors(chromatograms::DataFrame,
                     (precursor_idx = prec_id,) ∉ group_keys ? continue : nothing
                     chrom = grouped_chroms[(precursor_idx = prec_id,)]
                 end
-                end # @allocated lookup
 
-                # Note: No sorting needed - chromatograms are pre-sorted by [:precursor_idx, :rt]
-                # Groups from groupby() inherit this ordering
-                _alloc_prep += @allocated begin
                 avg_cycle_time = (chrom.rt[end] - chrom.rt[1]) /  length(chrom.rt)
-                first_pos = findfirst(x->x>0.0, chrom[!,:intensity]) # start from first positive weight
-                last_pos = findlast(x->x>0.0, chrom[!,:intensity]) # end at last positive weight
+                first_pos = findfirst(x->x>0.0, chrom[!,:intensity])
+                last_pos = findlast(x->x>0.0, chrom[!,:intensity])
                 isnothing(first_pos) ? continue : nothing
                 chrom = view(chrom, first_pos:last_pos, :)
+                chrom_scan_idx = chrom[!, :scan_idx]::AbstractVector{UInt32}
                 if test_print == false
-                    apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) # scan first/last
+                    apex_scan = findfirst(x->x==apex_scan, chrom_scan_idx)
                     isnothing(apex_scan) ? continue : nothing
                 else
                     min_diff = typemax(Int64)
@@ -129,17 +202,13 @@ function integrate_precursors(chromatograms::DataFrame,
                             nearest_idx = i
                         end
                     end
-                    apex_scan = nearest_idx#argmax(chrom[!,:intensity])
+                    apex_scan = nearest_idx
                 end
-                end # @allocated prep
 
                 if !ismissing(precursor_fraction_transmitted_traces)
-                    _alloc_strings += @allocated begin
-                    precursor_fraction_transmitted_traces[i], isotopes_captured_traces[i] = get_isolated_isotopes_strings(chrom[!, :precursor_fraction_transmitted],                                                                                                          chrom[!, :isotopes_captured])
-                    end # @allocated strings
+                    precursor_fraction_transmitted_traces[i], isotopes_captured_traces[i] = get_isolated_isotopes_strings(chrom[!, :precursor_fraction_transmitted], chrom[!, :isotopes_captured])
                 end
 
-                _alloc_integrate += @allocated begin
                 peak_area[i], new_best_scan[i], points_integrated[i] = integrate_chrom(
                                 chrom,
                                 apex_scan,
@@ -153,13 +222,10 @@ function integrate_precursors(chromatograms::DataFrame,
                                 max_apex_offset = max_apex_offset,
                                 isplot = false
                                 );
-                end # @allocated integrate
 
-                _n_precs += 1
                 reset!(state)
             end
-            @info "  integrate_precursors thread ($_n_precs precs): lookup=$(round(_alloc_lookup/1e9,digits=3))GB prep=$(round(_alloc_prep/1e9,digits=3))GB strings=$(round(_alloc_strings/1e9,digits=3))GB integrate=$(round(_alloc_integrate/1e9,digits=3))GB total=$(round((_alloc_lookup+_alloc_prep+_alloc_strings+_alloc_integrate)/1e9,digits=3))GB"
-            return #chromdf
+            return
         end
     end
     return fetch.(tasks)
@@ -180,6 +246,7 @@ Uses parallel processing to build chromatograms across scan ranges.
 Set `SINGLE_THREAD_CHROM_EXTRACT[] = true` to run single-threaded for profiling.
 """
 const SINGLE_THREAD_CHROM_EXTRACT = Ref(false)
+const SINGLE_THREAD_INTEGRATE = Ref(false)
 
 function extract_chromatograms(
     spectra::MassSpecData,
@@ -241,9 +308,7 @@ function extract_chromatograms(
             end
         end
         thread_dfs = fetch.(tasks)
-        alloc_vcat = @allocated merged = vcat(thread_dfs...)
-        @info "  extract_chromatograms vcat alloc: $(round(alloc_vcat/1e9, digits=2)) GB ($(length(thread_dfs)) DataFrames → $(nrow(merged)) rows)"
-        return merged
+        return vcat(thread_dfs...)
     end
 end
 
@@ -310,12 +375,6 @@ function build_chromatograms(
     spectral_scores = getSpectralScores(search_data)
     unscored_psms = getUnscoredPsms(search_data)
 
-    # Allocation tracking for drill-down
-    alloc_select = Int64(0)
-    alloc_match = Int64(0)
-    alloc_deconv = Int64(0)
-    alloc_record = Int64(0)
-
     i = 1
     for scan_idx in scan_range
         ((scan_idx<1) | (scan_idx > length(spectra))) && continue
@@ -343,7 +402,6 @@ function build_chromatograms(
                 getIsolationWidthMz(spectra, scan_idx)
             )
 
-            alloc_select += @allocated begin
             ion_idx, prec_temp_size = selectTransitions!(
                 ion_templates,
                 RTIndexedTransitionSelection(),
@@ -369,11 +427,9 @@ function build_chromatograms(
                 block_size = 10000,
                 min_fraction_transmitted = params.min_fraction_transmitted
             )
-            end # @allocated select
         end
 
         # Match peaks
-        alloc_match += @allocated begin
         nmatches, nmisses = matchPeaks!(
             ion_matches,
             ion_misses,
@@ -387,14 +443,12 @@ function build_chromatograms(
             UInt32(ms_file_idx)
         )
 
-        sort!(@view(ion_matches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
-        end # @allocated match
+        sort!(@view(ion_matches[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
 
         # Process matches
         if nmatches > 2
             i += 1
             # Build design matrix + deconvolution
-            alloc_deconv += @allocated begin
             buildDesignMatrix!(
                 Hs,
                 ion_matches,
@@ -435,10 +489,8 @@ function build_chromatograms(
                 params.max_iter_outer,
                 params.max_diff
             )
-            end # @allocated deconv
 
             # Record chromatogram points with weights
-            alloc_record += @allocated begin
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
@@ -462,7 +514,6 @@ function build_chromatograms(
                     )
                 end
             end
-            end # @allocated record (matched)
 
             # Update precursor weights
             for i in 1:id_to_col.size
@@ -472,7 +523,6 @@ function build_chromatograms(
 
         else
             # Record zero intensity points for non-matching precursors
-            alloc_record += @allocated begin
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
@@ -486,7 +536,6 @@ function build_chromatograms(
                     precs_temp[j]
                 )
             end
-            end # @allocated record (unmatched)
         end
 
         # Reset arrays
@@ -497,9 +546,7 @@ function build_chromatograms(
         reset!(Hs)
     end
 
-    alloc_df = @allocated result_df = DataFrame(@view(chromatograms[1:rt_idx]))
-    @info "  build_chromatograms allocs ($(length(scan_range)) scans, $(rt_idx) points): select=$(round(alloc_select/1e9,digits=3))GB match=$(round(alloc_match/1e9,digits=3))GB deconv=$(round(alloc_deconv/1e9,digits=3))GB record=$(round(alloc_record/1e9,digits=3))GB df=$(round(alloc_df/1e9,digits=3))GB total=$(round((alloc_select+alloc_match+alloc_deconv+alloc_record+alloc_df)/1e9,digits=3))GB"
-    return result_df
+    return DataFrame(@view(chromatograms[1:rt_idx]))
 end
 
 """
@@ -632,7 +679,7 @@ function build_chromatograms(
         )
 
         #nmisses -= 1
-        sort!(@view(ion_matches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
+        sort!(@view(ion_matches[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
         #println("nmatches $nmatches nmisses $nmisses")
         # Process matches
         if nmatches > 2

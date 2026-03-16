@@ -160,7 +160,7 @@ function getPSMS(
             ms_file_idx
         )
         
-        sort!(@view(getIonMatches(search_data)[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
+        sort!(@view(getIonMatches(search_data)[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
         # Process matches
         if nmatches > 2
             buildDesignMatrix!(Hs, getIonMatches(search_data), getIonMisses(search_data), 

@@ -17,6 +17,14 @@
 
 abstract type MatchIon{T<:AbstractFloat} <: Ion{T} end
 
+"""
+    ion_match_lt(a, b) -> Bool
+
+Compare two MatchIon instances by (peak_ind, prec_id) without tuple allocation.
+Used as `lt` argument to `sort!` in hot loops (~40k calls per file).
+"""
+@inline ion_match_lt(a, b) = (a.peak_ind < b.peak_ind) || (a.peak_ind == b.peak_ind && a.prec_id < b.prec_id)
+
 function reset!(fms::Vector{M}, last_non_empty::Int64) where {M<:MatchIon{Float32}}
     for i in range(1, last_non_empty)
         fms[i] = M()

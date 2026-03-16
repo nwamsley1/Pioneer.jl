@@ -95,29 +95,29 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     # Cache DataFrame columns once (avoid repeated column lookups)
     rt_col = chrom[!, :rt]
     scan_idx_col = chrom[!, :scan_idx]
+    intensity_col = chrom[!, :intensity]
+    fraction_col = chrom[!, :precursor_fraction_transmitted]
+    m = size(chrom, 1)
 
     #########
     #Helper Functions
     #########
     function WHSmooth!( b::Vector{Float32},
                         ws::WHWorkspace,
-                        chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
+                        intensity_col::AbstractVector,
+                        fraction_col::AbstractVector,
+                        rt_col::AbstractVector,
+                        m::Int,
                         n_pad::Int64,
                         λ::Float32)
 
         n = length(b)
-        m = size(chrom, 1)
 
         # Reset b and second derivative
         @inbounds for i in range(1, n)
             b[i] = zero(Float32)
             u2[i] = zero(Float32)
         end
-
-        # Cache column views once before loops
-        intensity_col = chrom[!, :intensity]
-        fraction_col = chrom[!, :precursor_fraction_transmitted]
-        rts = chrom[!, :rt]
 
         # Copy data to b
         @inbounds for i in range(1, m)
@@ -136,9 +136,9 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
 
         # Get RT spacing using workspace (no allocation)
         x = ws.x_tmp
-        start_rt = rts[1]
-        last_rt = rts[end]
-        default_spacing = m < 2 ? 1.0f0 : rts[2] - start_rt
+        start_rt = rt_col[1]
+        last_rt = rt_col[end]
+        default_spacing = m < 2 ? 1.0f0 : rt_col[2] - start_rt
 
         # left padding
         for i in range(1, n_pad)
@@ -146,7 +146,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         end
         # real values
         for i in range(1, m)
-            x[i + n_pad] = rts[i]
+            x[i + n_pad] = rt_col[i]
         end
         # right padding
         for i in range(n_pad+m+1, n)
@@ -394,7 +394,10 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     z, x = WHSmooth!(
         b,
         ws,
-        chrom,
+        intensity_col,
+        fraction_col,
+        rt_col,
+        m,
         n_pad,
         λ
     )
@@ -406,17 +409,17 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         x
     )
 
-    apex_scan = getApexScan(
+    apex_scan = clamp(getApexScan(
         apex_scan,
         n_pad,
         z
-    )
+    ), 1, m)
 
     #Integration boundaries based on smoothed second derivative
     scan_range = getIntegrationBounds!(
         u2,
         z,
-        size(chrom, 1),
+        m,
         apex_scan,
         n_pad
     )
@@ -445,7 +448,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         mi = state.max_index
         start = max(apex_scan - 18, 1)
         stop = min(apex_scan + 18, length(rt_col))
-        plot(rt_col[start:stop], chrom.intensity[start:stop], seriestype=:scatter, alpha = 0.5, show = true, label = "raw")
+        plot(rt_col[start:stop], intensity_col[start:stop], seriestype=:scatter, alpha = 0.5, show = true, label = "raw")
         vline!([rt_col[first(scan_range)], rt_col[last(scan_range)]], label = nothing)
         plot!(state.t[1:mi].*rt_norm .+ start_rt, norm_factor.*state.data[1:mi], seriestype=:scatter, alpha = 1.0, show = true, label = "smooth", color = "purple")
         #savefig("/Users/dennisgoldfarb/Downloads/" * string(chrom.precursor_idx[1]) * " " * string(chrom.intensity[1]) * ".png")
