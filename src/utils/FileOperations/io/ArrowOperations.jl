@@ -79,7 +79,7 @@ function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...;
     end
     
     # Sort dataframe
-    sort!(df, collect(sort_keys), rev=rev_vec)
+    fast_df_sort!(df, collect(sort_keys), rev=rev_vec)
     
     # Write back to same file using writeArrow for Windows compatibility
     writeArrow(file_path(ref), df)

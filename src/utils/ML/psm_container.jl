@@ -132,7 +132,7 @@ function get_train_indices(container::DataFramePSMContainer, test_fold)
 end
 
 function sort_container!(container::DataFramePSMContainer, cols::Vector{Symbol})
-    sort!(container.data, cols)
+    fast_df_sort!(container.data, cols)
     return nothing
 end
 

@@ -204,7 +204,7 @@ function prepare_training_data!(container::ArrowFilePSMContainer, config::Scorin
         df[!, :irt_bin_idx] = global_irt_bins[rows]
 
         # Sort for MBR memory locality (same order as in-memory path)
-        sort!(df, [:pair_id, :isotopes_captured, :precursor_idx, :ms_file_idx])
+        fast_df_sort!(df, [:pair_id, :isotopes_captured, :precursor_idx, :ms_file_idx])
 
         # Write sorted main data back (immutable after this point)
         writeArrow(group.data_path, df)

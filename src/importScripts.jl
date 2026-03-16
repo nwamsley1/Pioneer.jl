@@ -132,6 +132,9 @@ function importScripts()
     )
 
     
+    # Sort utilities (needed by ML and FileOperations)
+    safe_include!(joinpath(package_root, "src", "utils", "sortUtils.jl"))
+
     # Utilities/ML - core utilities first, then trait-based scoring system
     include_files!(
         joinpath(package_root, "src", "utils", "ML"),

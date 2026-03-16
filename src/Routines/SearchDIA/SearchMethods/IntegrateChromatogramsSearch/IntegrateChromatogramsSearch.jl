@@ -28,28 +28,6 @@ This search:
 """
 struct IntegrateChromatogramSearch <: SearchMethod end
 
-"""
-    _sort_chromatograms!(df, cols)
-
-Sort a chromatogram DataFrame by the given columns using zip+sortperm,
-which avoids DataFrames' DFPerm overhead and is ~3.5x faster than `sort!`.
-"""
-function _sort_chromatograms!(df::DataFrame, cols::Vector{Symbol})
-    if length(cols) == 2
-        keys = collect(zip(df[!, cols[1]], df[!, cols[2]]))
-    elseif length(cols) == 3
-        keys = collect(zip(df[!, cols[1]], df[!, cols[2]], df[!, cols[3]]))
-    else
-        sort!(df, cols)
-        return df
-    end
-    perm = sortperm(keys)
-    for col in names(df)
-        df[!, col] = df[!, col][perm]
-    end
-    return df
-end
-
 #==========================================================
 Type Definitions
 ==========================================================#
@@ -267,7 +245,7 @@ function process_file!(
                 MS1CHROM(),
             )
             # MS1 always uses CombineTraces, so sort by [:precursor_idx, :rt]
-            _sort_chromatograms!(ms1_chromatograms, [:precursor_idx, :rt])
+            fast_df_sort!(ms1_chromatograms, [:precursor_idx, :rt])
             ms1_chromatograms[!,:precursor_fraction_transmitted] = ones(Float32, size(ms1_chromatograms, 1))
         end
         #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
@@ -292,9 +270,9 @@ function process_file!(
 
         t_sort = @elapsed begin
         if seperateTraces(params.isotope_tracetype)
-            _sort_chromatograms!(chromatograms, [:precursor_idx, :isotopes_captured, :rt])
+            fast_df_sort!(chromatograms, [:precursor_idx, :isotopes_captured, :rt])
         else
-            _sort_chromatograms!(chromatograms, [:precursor_idx, :rt])
+            fast_df_sort!(chromatograms, [:precursor_idx, :rt])
         end
         end  # t_sort
         @user_info "  Sort chromatograms: $(round(t_sort, digits=2))s"

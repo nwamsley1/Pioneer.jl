@@ -118,7 +118,7 @@ Sort DataFrame by specified columns. Includes post-action to update FileReferenc
 function sort_by(cols::Vector{Symbol}; rev::Vector{Bool}=fill(false, length(cols)))
     desc = "sort_by_$(join(cols, '_'))"
     op = function(df)
-        sort!(df, cols, rev=rev, alg=QuickSort)
+        fast_df_sort!(df, cols, rev=rev)
         return df
     end
     # Create post-action to mark the file as sorted
