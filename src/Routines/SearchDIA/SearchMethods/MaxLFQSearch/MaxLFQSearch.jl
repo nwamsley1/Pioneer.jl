@@ -229,6 +229,7 @@ function summarize_results!(
             params.q_value_threshold,
             batch_size = params.batch_size
         )
+        chunk_paths = [file_path(ref) for ref in chunk_refs]
 
         # Create FileReference for output metadata tracking
         protein_ref = ProteinQuantFileReference(protein_long_path)
@@ -282,12 +283,16 @@ function summarize_results!(
         if isdir(chunk_dir)
             GC.gc()
             try
+                for chunk_path in chunk_paths
+                    isfile(chunk_path) && safeRm(chunk_path, nothing; force=true)
+                end
                 rm(chunk_dir; recursive=true, force=true)
             catch e
                 # On Windows, a chunk file may still be briefly locked by Arrow mmap state.
                 @debug "merge_chunks cleanup deferred" exception=e
             end
         end
+        chunk_paths = nothing
 
         if params.delete_temp
             @user_info "Removing temporary data..."
