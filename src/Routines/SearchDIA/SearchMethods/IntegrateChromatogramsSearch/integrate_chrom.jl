@@ -42,15 +42,17 @@ function reset!(state::Chromatogram)
         state.t[i], state.data[i] = zero(eltype(state.t)), zero(eltype(state.data))
     end
     state.max_index = 0
-    return 
+    return
 end
 
 
 """
     integrate_chrom(chrom::SubDataFrame, apex_scan::Int64,
-                   linsolve::LinearSolve.LinearCache, u2::Vector{Float32},
-                   state::Chromatogram; max_apex_offset=2, n_pad::Int64=0,
-                   isplot::Bool=false) -> Tuple{Float32, UInt32}
+                   b::Vector{Float32}, u2::Vector{Float32},
+                   ws::WHWorkspace, state::Chromatogram,
+                   avg_cycle_time::Float32, λ::Float32;
+                   max_apex_offset=2, n_pad::Int64=0,
+                   isplot::Bool=false) -> Tuple{Float32, UInt32, Int}
 
 Integrate a single chromatographic peak.
 
@@ -66,6 +68,7 @@ Integrate a single chromatographic peak.
 # Returns
 - Peak area
 - Updated apex scan index
+- Number of points integrated
 
 #Internal Chromatogram Processing Functions:
 
@@ -77,55 +80,65 @@ Integrate a single chromatographic peak.
 - `fillState!`: Normalize and fill chromatogram state
 - `integrateTrapezoidal`: Perform trapezoidal integration
 """
-function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
+function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
                                 apex_scan::Int64,
                                 b::Vector{Float32},
                                 u2::Vector{Float32},
+                                ws::WHWorkspace,
                                 state::Chromatogram,
                                 avg_cycle_time::Float32,
                                 λ::Float32;
                                 max_apex_offset = 2,
                                 n_pad::Int64 = 0,
                                 isplot::Bool = false)
-    
+
+    # Cache DataFrame columns once (avoid repeated column lookups)
+    rt_col = chrom[!, :rt]
+    scan_idx_col = chrom[!, :scan_idx]
+
     #########
-    #Helper Functions  
+    #Helper Functions
     #########
-    function WHSmooth!( b::Vector{Float32}, 
+    function WHSmooth!( b::Vector{Float32},
+                        ws::WHWorkspace,
                         chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
                         n_pad::Int64,
                         λ::Float32)
-        
+
         n = length(b)
         m = size(chrom, 1)
 
-        # Reset b and second derivative 
+        # Reset b and second derivative
         @inbounds for i in range(1, n)
             b[i] = zero(Float32)
             u2[i] = zero(Float32)
         end
-       
+
+        # Cache column views once before loops
+        intensity_col = chrom[!, :intensity]
+        fraction_col = chrom[!, :precursor_fraction_transmitted]
+        rts = chrom[!, :rt]
+
         # Copy data to b
         @inbounds for i in range(1, m)
-            b[i+n_pad] = chrom[!, :intensity][i]
+            b[i+n_pad] = intensity_col[i]
         end
 
-        # Create weight matrix of precursor isolated percentage
-        max_isolation = maximum(chrom[!, :precursor_fraction_transmitted])
-        
-        w = max_isolation*ones(Float32, n)
-        @inbounds for i in range(1, m)
-            w[i+n_pad] = chrom[!, :precursor_fraction_transmitted][i]
+        # Create weight vector using workspace (no allocation)
+        max_isolation = maximum(fraction_col)
+        w = ws.w_tmp
+        @inbounds for i in range(1, n)
+            w[i] = max_isolation
         end
-        
-        # Get RT spacing 
-        rts = chrom[!, :rt]
+        @inbounds for i in range(1, m)
+            w[i+n_pad] = fraction_col[i]
+        end
+
+        # Get RT spacing using workspace (no allocation)
+        x = ws.x_tmp
         start_rt = rts[1]
         last_rt = rts[end]
         default_spacing = m < 2 ? 1.0f0 : rts[2] - start_rt
-
-        # Fill RT differences
-        x = zeros(Float32, n)
 
         # left padding
         for i in range(1, n_pad)
@@ -140,24 +153,32 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
             x[i] = last_rt + (default_spacing * (i - (n_pad + m)))
         end
 
-        # normalize by RT width so the same smoothing parameter is about optimal for all cases
+        # normalize by RT width in-place
         rt_width = last_rt-start_rt
-        x = x / rt_width
+        @inbounds for i in range(1, n)
+            x[i] /= rt_width
+        end
 
         if m <= 1
             return b, x
         end
 
         active_length = m + (2*n_pad)
-        z = whitsmddw(x, b, w, active_length, λ)
+
+        # Need at least 3 points for d=2 smoothing
+        if active_length < 3
+            return b, x
+        end
+
+        z = whitsmddw!(ws, x, b, w, active_length, λ)
 
         return z, x
     end
 
     function fillU2!(
         u2::Vector{Float32},
-        u::Vector{Float32},
-        t::Vector{Float32}  # time points corresponding to u
+        u::AbstractVector{Float32},
+        t::AbstractVector{Float32}
     )
         u2[1], u2[end] = 0.0f0, 0.0f0
         @inbounds @fastmath for i in 2:(length(u) - 1)
@@ -203,7 +224,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     Returns a `UnitRange{Int}` with indices **in the un-padded domain** (`1:N`).
     """
     function getIntegrationBounds!(u2::Vector{Float32},
-                                u::Vector{Float32},
+                                u::AbstractVector{Float32},
                                 N::Int,
                                 apex_scan::Int,
                                 n_pad::Int)::UnitRange{Int}
@@ -212,7 +233,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         pad_start   = n_pad + 1                   # first index of the real window
         pad_end     = n_pad + N
         apex_padded = n_pad + apex_scan           # apex index in padded coords
-        
+
         #return pad_start:pad_end
 
         # initialise search bounds
@@ -264,7 +285,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     function fillState!(state::Chromatogram,
                         u::AbstractVector{Float32},
                         rt::AbstractVector{Float32},
-                        start::Int64, 
+                        start::Int64,
                         stop::Int64,
                         apex_scan::Int64,
                         n_pad::Int64
@@ -278,11 +299,11 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         norm_factor = u[apex_scan+n_pad]
 
         #Write data to state
-        #Normalize so that maximum intensity is 1 
-        #And time difference from start to finish is 1. 
+        #Normalize so that maximum intensity is 1
+        #And time difference from start to finish is 1.
         @inbounds @fastmath for i in range(1, stop - start + 1)
             n = start + i - 1
-            state.t[i] = (chrom[n,:rt] - start_rt)/rt_width
+            state.t[i] = (rt[n] - start_rt)/rt_width
             state.data[i] = u[n+n_pad]/norm_factor
         end
 
@@ -292,8 +313,8 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     end
 
     function subtractBaseline!(
-        x::Vector{Float32},  # time (or x-axis values)
-        u::Vector{Float32},  # smoothed signal values
+        x::AbstractVector{Float32},  # time (or x-axis values)
+        u::AbstractVector{Float32},  # smoothed signal values
         apex_scan::Int,      # peak apex index
         scan_range::UnitRange{Int},
         n_pad::Int
@@ -302,7 +323,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         apex_idx  = apex_scan + n_pad
         scan_start = first(scan_range) + n_pad
         scan_stop  = last(scan_range) + n_pad
-    
+
         # Find left baseline: minimum value between scan_start and apex_idx
         lmin, li = typemax(Float32), scan_start
         @inbounds @fastmath for i in scan_start:apex_idx
@@ -311,7 +332,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
                 li = i
             end
         end
-    
+
         # Find right baseline: minimum value between apex_idx and scan_stop
         rmin, ri = typemax(Float32), scan_stop
         @inbounds @fastmath for i in apex_idx:scan_stop
@@ -320,7 +341,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
                 ri = i
             end
         end
-    
+
         # Handle special case where li == apex_idx or ri == apex_idx
         if li == apex_idx
             lmin = rmin
@@ -338,14 +359,14 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         end
 
         slope = (rmin - lmin) / dx
-    
+
         # Subtract interpolated baseline
         @inbounds @fastmath for i in scan_start:scan_stop
             xi = x[i]
             baseline = lmin + (xi - x_left) * slope
             u[i] = max(0, u[i] - baseline)
         end
-    
+
         return nothing
     end
 
@@ -372,6 +393,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     #Whittaker Henderson Smoothing
     z, x = WHSmooth!(
         b,
+        ws,
         chrom,
         n_pad,
         λ
@@ -383,14 +405,14 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         z,
         x
     )
-    
+
     apex_scan = getApexScan(
         apex_scan,
         n_pad,
         z
     )
 
-    #Integration boundaries based on smoothed second derivative 
+    #Integration boundaries based on smoothed second derivative
     scan_range = getIntegrationBounds!(
         u2,
         z,
@@ -407,24 +429,24 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         n_pad
     )
 
-    #File `state` to fit EGH function. Get the inensity, and rt normalization factors 
+    #File `state` to fit EGH function. Get the inensity, and rt normalization factors
     norm_factor, start_rt, rt_norm, best_rt = fillState!(
         state,
         z,
-        chrom[!,:rt],
+        rt_col,
         first(scan_range),
         last(scan_range),
         apex_scan,
         n_pad
     )
-    
+
     if isplot
     #if chrom.precursor_idx[1] == 2098
         mi = state.max_index
         start = max(apex_scan - 18, 1)
-        stop = min(apex_scan + 18, length(chrom.rt))
-        plot(chrom.rt[start:stop], chrom.intensity[start:stop], seriestype=:scatter, alpha = 0.5, show = true, label = "raw")
-        vline!([chrom.rt[first(scan_range)], chrom.rt[last(scan_range)]], label = nothing)
+        stop = min(apex_scan + 18, length(rt_col))
+        plot(rt_col[start:stop], chrom.intensity[start:stop], seriestype=:scatter, alpha = 0.5, show = true, label = "raw")
+        vline!([rt_col[first(scan_range)], rt_col[last(scan_range)]], label = nothing)
         plot!(state.t[1:mi].*rt_norm .+ start_rt, norm_factor.*state.data[1:mi], seriestype=:scatter, alpha = 1.0, show = true, label = "smooth", color = "purple")
         #savefig("/Users/dennisgoldfarb/Downloads/" * string(chrom.precursor_idx[1]) * " " * string(chrom.intensity[1]) * ".png")
         #xbins = LinRange(state.t[1]-0.5, state.t[state.max_index]+0.5, 100)
@@ -443,5 +465,5 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     num_points_integrated = count(i -> z[i] >= min_abundance, scan_start:scan_stop)
 
     #trapezoid_area = 0.0f0
-    return trapezoid_area, chrom[!,:scan_idx][apex_scan], num_points_integrated
+    return trapezoid_area, scan_idx_col[apex_scan], num_points_integrated
 end

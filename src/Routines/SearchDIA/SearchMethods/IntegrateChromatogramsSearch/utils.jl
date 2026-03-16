@@ -74,6 +74,7 @@ function integrate_precursors(chromatograms::DataFrame,
             #chromdf = DataFrame()
             b = zeros(Float32, N);
             u2 = zeros(Float32, length(b));
+            ws = WHWorkspace(N)
 
             state = Chromatogram(
                 zeros(dtype, N), #t
@@ -144,6 +145,7 @@ function integrate_precursors(chromatograms::DataFrame,
                                 apex_scan,
                                 b,
                                 u2,
+                                ws,
                                 state,
                                 avg_cycle_time,
                                 λ,
