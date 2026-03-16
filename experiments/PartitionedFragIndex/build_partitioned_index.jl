@@ -4,17 +4,20 @@
 Reorganize a NativeFragmentIndex into a PartitionedFragmentIndex by splitting fragments
 according to their precursor m/z into partitions of width `partition_width` Da.
 
-Every partition gets the full set of RT bins (same iRT boundaries as the original),
-so partition-local searches can reuse the same rt_bin_idx advancement logic.
+Every partition preserves the **full** frag bin and RT bin structure from the original
+index. Frag bins that have no fragments for a given partition get empty ranges
+(first > last), so the exponential + binary search navigates the identical "landscape"
+as the baseline. RT bins are copied verbatim since they index into frag bins at the
+same positions.
 """
 function build_partitioned_index(nfi::Pioneer.NativeFragmentIndex{T};
                                   partition_width::T = T(5.0)) where {T<:AbstractFloat}
-    rt_bins_orig  = Pioneer.getRTBins(nfi)
+    rt_bins_orig   = Pioneer.getRTBins(nfi)
     frag_bins_orig = Pioneer.getFragBins(nfi)
     fragments_orig = Pioneer.getFragments(nfi)
-    n_rt_bins = length(rt_bins_orig)
+    n_frag_bins    = length(frag_bins_orig)
 
-    # Step 1: Find prec_mz range across all fragments
+    # Step 1: Find prec_mz range across all fragments → compute n_partitions
     min_prec_mz = typemax(T)
     max_prec_mz = typemin(T)
     for frag in fragments_orig
@@ -26,108 +29,56 @@ function build_partitioned_index(nfi::Pioneer.NativeFragmentIndex{T};
     println("  Prec m/z range: [$(round(min_prec_mz, digits=2)), $(round(max_prec_mz, digits=2))]")
     println("  Partition width: $partition_width Da → $n_partitions partitions")
 
-    # Step 2: Collect fragments per partition, preserving RT-bin and frag-bin structure.
-    #
-    # For each partition k, we build:
-    #   partition_fragments[k]  — Vector{IndexFragment{T}}
-    #   partition_frag_bins[k]  — Vector{FragIndexBin{T}}  (within each RT bin)
-    #   partition_rt_bins[k]    — Vector{FragIndexBin{T}}
-    #
-    # We walk the original hierarchy: RT bin → frag bin → fragment.
-
-    # Pre-allocate per-partition fragment accumulators
+    # Step 2: Distribute fragments preserving full frag bin structure.
+    # Walk each frag bin in the original and distribute its fragments across partitions.
+    # Each partition gets the same number of frag bins (n_frag_bins) in the same order,
+    # but with partition-local first_bin/last_bin ranges.
     partition_fragments = [Pioneer.IndexFragment{T}[] for _ in 1:n_partitions]
+    partition_fb_first  = [Vector{UInt32}(undef, n_frag_bins) for _ in 1:n_partitions]
+    partition_fb_last   = [Vector{UInt32}(undef, n_frag_bins) for _ in 1:n_partitions]
+    starts = Vector{UInt32}(undef, n_partitions)  # reusable per-frag-bin buffer
 
-    # We'll build frag_bins and rt_bins in a second pass after collecting fragments
-    # per (partition, rt_bin, frag_bin).
-    #
-    # Strategy: iterate RT bins → frag bins → fragments.
-    # For each fragment, assign to partition. Record (rt_bin_idx, frag_bin_idx, partition_k)
-    # groupings so we can reconstruct per-partition frag_bin boundaries.
+    for j in 1:n_frag_bins
+        fbin = frag_bins_orig[j]
+        frag_range = Pioneer.getSubBinRange(fbin)
 
-    # Per-partition, per-RT-bin: list of (frag_bin_lb, frag_bin_ub, fragment_indices_in_partition)
-    # We'll use a simpler approach: for each partition, accumulate fragments grouped by
-    # (rt_bin_idx, frag_bin_idx) and then build bins from those groups.
+        # Snapshot current end of each partition's fragments vector
+        for k in 1:n_partitions
+            starts[k] = UInt32(length(partition_fragments[k]) + 1)
+        end
 
-    # Data structure: partition → rt_bin → Vector of (frag_bin_lb, frag_bin_ub, frag_start, frag_count)
-    # where frag_start/count index into partition_fragments[k].
+        # Distribute this frag bin's fragments to their respective partitions
+        for fi in frag_range
+            frag = fragments_orig[fi]
+            pmz = Pioneer.getPrecMZ(frag)
+            k = clamp(floor(Int, (pmz - min_prec_mz) / partition_width) + 1,
+                       1, n_partitions)
+            push!(partition_fragments[k], frag)
+        end
 
-    FragBinInfo = @NamedTuple{lb::T, ub::T, start::UInt32, count::UInt32}
-
-    # partition → rt_bin → Vector{FragBinInfo}
-    part_rt_fbin = [[FragBinInfo[] for _ in 1:n_rt_bins] for _ in 1:n_partitions]
-
-    # Walk the hierarchy
-    for rt_idx in 1:n_rt_bins
-        rt_bin = rt_bins_orig[rt_idx]
-        frag_bin_range = Pioneer.getSubBinRange(rt_bin)
-        for fb_idx in frag_bin_range
-            fbin = frag_bins_orig[fb_idx]
-            frag_range = Pioneer.getSubBinRange(fbin)
-            fb_lb = Pioneer.getLow(fbin)
-            fb_ub = Pioneer.getHigh(fbin)
-
-            # Temporarily collect per-partition fragments for this frag_bin
-            # Use a dictionary keyed by partition index
-            per_part_start = Dict{Int, UInt32}()
-            per_part_count = Dict{Int, UInt32}()
-
-            for frag_idx in frag_range
-                frag = fragments_orig[frag_idx]
-                pmz = Pioneer.getPrecMZ(frag)
-                k = clamp(floor(Int, (pmz - min_prec_mz) / partition_width) + 1, 1, n_partitions)
-
-                if !haskey(per_part_start, k)
-                    per_part_start[k] = UInt32(length(partition_fragments[k]) + 1)
-                    per_part_count[k] = UInt32(0)
-                end
-                push!(partition_fragments[k], frag)
-                per_part_count[k] += UInt32(1)
-            end
-
-            # Record frag bin info for each partition that got fragments
-            for (k, start) in per_part_start
-                push!(part_rt_fbin[k][rt_idx],
-                      (lb=fb_lb, ub=fb_ub, start=start, count=per_part_count[k]))
-            end
+        # Record first/last for each partition's copy of frag bin j
+        # When no fragments were added, new_end < starts[k] → empty UnitRange
+        for k in 1:n_partitions
+            new_end = UInt32(length(partition_fragments[k]))
+            partition_fb_first[k][j] = starts[k]
+            partition_fb_last[k][j]  = new_end
         end
     end
 
-    # Step 3: Build NativeFragmentIndex for each partition
+    # Step 3: Assemble NativeFragmentIndex per partition.
+    # Each partition gets the full frag bin array (same lb/ub, partition-local ranges)
+    # and a verbatim copy of the original RT bins (indices into frag bins are unchanged).
     partitions = Vector{Pioneer.NativeFragmentIndex{T}}(undef, n_partitions)
-
     for k in 1:n_partitions
-        frags = partition_fragments[k]
-
-        # Build frag_bins and rt_bins for this partition
-        p_frag_bins = Pioneer.FragIndexBin{T}[]
-        p_rt_bins   = Pioneer.FragIndexBin{T}[]
-
-        for rt_idx in 1:n_rt_bins
-            orig_rt = rt_bins_orig[rt_idx]
-            rt_lb = Pioneer.getLow(orig_rt)
-            rt_ub = Pioneer.getHigh(orig_rt)
-
-            fb_infos = part_rt_fbin[k][rt_idx]
-
-            if isempty(fb_infos)
-                # Empty RT bin: point to an empty frag_bin range
-                fb_start = UInt32(length(p_frag_bins) + 1)
-                fb_end   = UInt32(length(p_frag_bins))  # empty range
-            else
-                fb_start = UInt32(length(p_frag_bins) + 1)
-                for info in fb_infos
-                    push!(p_frag_bins, Pioneer.FragIndexBin{T}(
-                        info.lb, info.ub, info.start, info.start + info.count - UInt32(1)
-                    ))
-                end
-                fb_end = UInt32(length(p_frag_bins))
-            end
-
-            push!(p_rt_bins, Pioneer.FragIndexBin{T}(rt_lb, rt_ub, fb_start, fb_end))
+        p_frag_bins = Vector{Pioneer.FragIndexBin{T}}(undef, n_frag_bins)
+        for j in 1:n_frag_bins
+            orig = frag_bins_orig[j]
+            p_frag_bins[j] = Pioneer.FragIndexBin{T}(
+                Pioneer.getLow(orig), Pioneer.getHigh(orig),
+                partition_fb_first[k][j], partition_fb_last[k][j])
         end
-
-        partitions[k] = Pioneer.NativeFragmentIndex{T}(p_frag_bins, p_rt_bins, frags)
+        partitions[k] = Pioneer.NativeFragmentIndex{T}(
+            p_frag_bins, copy(rt_bins_orig), partition_fragments[k])
     end
 
     return PartitionedFragmentIndex{T}(partitions, min_prec_mz, partition_width, n_partitions)
