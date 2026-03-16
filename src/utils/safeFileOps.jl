@@ -18,6 +18,29 @@
 # Safe file operations for cross-platform compatibility
 
 """
+    windows_cmd_path(fpath::String)
+
+Normalize a file path for Windows `cmd.exe` built-ins like `del`.
+Converts relative or mixed-separator paths such as `./data/foo.arrow`
+into an absolute backslash-separated path so `cmd` does not interpret
+`/data` as an invalid switch.
+"""
+function windows_cmd_path(fpath::String)
+    return replace(abspath(normpath(fpath)), "/" => "\\")
+end
+
+"""
+    windows_delete_file(fpath::String)
+
+Delete a file through `cmd /c del` using a path format that Windows
+command parsing accepts reliably.
+"""
+function windows_delete_file(fpath::String)
+    run(Cmd(["cmd", "/c", "del", "/f", "/q", windows_cmd_path(fpath)]))
+    return nothing
+end
+
+"""
     safeRm(fpath::String, file_handle; force::Bool=false)
 
 Safely remove a file with Windows-specific handling for file locks and permissions.
@@ -38,6 +61,7 @@ and other binary formats that may have lingering file handles.
 function safeRm(fpath::String, file_handle; force::Bool=false)
     # Clear the file handle before attempting deletion
     file_handle = nothing
+    fpath = normpath(fpath)
     
     if Sys.iswindows()
         # Return early if file doesn't exist
@@ -48,19 +72,14 @@ function safeRm(fpath::String, file_handle; force::Bool=false)
         max_retries = 3  # Reduced since we're explicitly clearing handles
         for i in 1:max_retries
             try
-                # Try Julia's rm with force flag
-                #rm(fpath, force=force)
-                run(`cmd /c del /f /q "$fpath"`)
+                windows_delete_file(fpath)
                 return nothing
             catch
                 @user_info "safe_rm failed on try i=$i"
                 if i == max_retries
                     # If all retries failed, try Windows-specific deletion
                     try
-                        # Convert to a Windows-style path for the cmd call
-                        win_path = replace(abspath(fpath), "/" => "\\")
-                        cmd_del = Cmd(["cmd", "/c", "del", "/f", "/q", win_path])
-                        run(cmd_del)
+                        windows_delete_file(fpath)
                         return nothing
                     catch
                         # If that also fails, rename the old file instead of deleting
