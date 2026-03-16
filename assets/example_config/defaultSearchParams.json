@@ -125,31 +125,12 @@
         "min_psms_for_spline": 10
     },
     "optimization": {
-        "deconvolution": {
-            "ms2": {
-                "lambda": 0.0,
-                "reg_type": "none",
-                "huber_delta": 300
-            },
-            "huber_exp": 1.5,
-            "huber_iters": 15,
-            "outer_iters": 1000,
-            "max_diff": 0.01
-        },
         "machine_learning": {
             "max_psm_memory_mb": 2000,
             "force_oom": false,
-            "min_trace_prob": 0.75,
-            "max_q_value_mbr_itr": 0.2,
-            "min_PEP_neg_threshold_itr": 0.9,
             "spline_points": 500,
             "interpolation_points": 10,
             "n_quantile_bins": 25,
-            "enable_model_comparison": true,
-            "validation_split_ratio": 0.2,
-            "qvalue_threshold": 0.01,
-            "min_psms_for_comparison": 1000,
-            "max_psms_for_comparison": 100000,
             "max_mbr_training_candidates": 1000000
         }
     },

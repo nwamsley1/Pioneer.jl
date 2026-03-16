@@ -51,13 +51,9 @@ end
 # Override getModel for LinearRtConversionModel since it doesn't wrap another model
 getModel(m::LinearRtConversionModel) = m
 
-struct IdentityModel <: RtConversionModel
-    model::Function
-    function IdentityModel()
-        new(x::Float32 -> x::Float32)
-    end
-end
+struct IdentityModel <: RtConversionModel end
 
-(i::IdentityModel)(x::AbstractFloat) = i.model(x)
+(::IdentityModel)(x::AbstractFloat) = x
+getModel(::IdentityModel) = identity
 
 RtConversionModel() = IdentityModel()

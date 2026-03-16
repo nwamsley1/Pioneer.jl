@@ -27,13 +27,10 @@ const MIN_PSMS_FOR_OOM = 100_000
 const MAX_FOR_MODEL_SELECTION_PSMS = MAX_FOR_MODEL_SELECTION
 
 """
-    score_precursor_isotope_traces(second_pass_folder::String, 
+    score_precursor_isotope_traces(second_pass_folder::String,
                                   file_paths::Vector{String},
                                   precursors::LibraryPrecursors,
                                   match_between_runs::Bool,
-                                  max_q_value_lightgbm_rescore::Float32,
-                                  max_q_value_mbr_itr::Float32,
-                                  min_PEP_neg_threshold_itr::Float32,
                                   max_psms_in_memory::Int64)
 
 Main entry point for PSM scoring with automatic model selection based on dataset size.
@@ -48,9 +45,6 @@ Main entry point for PSM scoring with automatic model selection based on dataset
 - `file_paths`: Vector of PSM file paths
 - `precursors`: Library precursors
 - `match_between_runs`: Whether to perform match between runs
-- `max_q_value_lightgbm_rescore`: Max q-value for LightGBM rescoring
-- `max_q_value_mbr_itr`: Max q-value for MBR transfers retained during iterative training (ITR)
-- `min_PEP_neg_threshold_itr`: Min PEP threshold for relabeling weak targets as negatives during ITR
 - `max_psms_in_memory`: Maximum PSMs to keep in memory
 - `n_quantile_bins`: Number of quantile bins for feature discretization (1-65535)
 - `q_value_threshold`: Q-value threshold for model comparison (default: 0.01)
@@ -65,9 +59,6 @@ function score_precursor_isotope_traces(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
     match_between_runs::Bool,
-    max_q_value_lightgbm_rescore::Float32,
-    max_q_value_mbr_itr::Float32,
-    min_PEP_neg_threshold_itr::Float32,
     max_psms_in_memory::Int64,
     n_quantile_bins::Int64,
     q_value_threshold::Float32 = 0.01f0,
@@ -83,9 +74,7 @@ function score_precursor_isotope_traces(
         max_training = max(max_psms_in_memory, MIN_PSMS_FOR_OOM)
 
         model_config = create_default_advanced_lightgbm_config(ms1_scoring)
-        config = build_scoring_config(model_config, match_between_runs,
-                                       max_q_value_lightgbm_rescore,
-                                       min_PEP_neg_threshold_itr)
+        config = build_scoring_config(model_config, match_between_runs)
 
         container = ArrowFilePSMContainer(file_paths; max_training_psms=max_training)
         models = percolator_scoring!(container, config; show_progress=true, verbose=true, print_importances=true)
@@ -108,8 +97,7 @@ function score_precursor_isotope_traces(
             # Case 3: In-memory with automatic model comparison (<100K)
             model_config = select_psm_scoring_model(
                 best_psms, file_paths, precursors, match_between_runs,
-                max_q_value_lightgbm_rescore, max_q_value_mbr_itr,
-                min_PEP_neg_threshold_itr, q_value_threshold, ms1_scoring
+                q_value_threshold, ms1_scoring
             )
         end
         
@@ -117,8 +105,7 @@ function score_precursor_isotope_traces(
         @user_info "Training final model: $(model_config.name)"
         models = score_precursor_isotope_traces_in_memory(
             best_psms, file_paths, precursors, model_config,
-            match_between_runs, max_q_value_lightgbm_rescore,
-            max_q_value_mbr_itr, min_PEP_neg_threshold_itr
+            match_between_runs
         )
         
         # Write scored PSMs to files
@@ -148,9 +135,6 @@ function select_psm_scoring_model(
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
     match_between_runs::Bool,
-    max_q_value_lightgbm_rescore::Float32,
-    max_q_value_mbr_itr::Float32,
-    min_PEP_neg_threshold_itr::Float32,
     q_value_threshold::Float32,
     ms1_scoring::Bool = true
 )
@@ -177,8 +161,7 @@ function select_psm_scoring_model(
                 # Redirect both stdout AND stderr to suppress all progress bars
                 score_precursor_isotope_traces_in_memory(
                     psms_copy, file_paths, precursors, config,
-                    match_between_runs, max_q_value_lightgbm_rescore,
-                    max_q_value_mbr_itr, min_PEP_neg_threshold_itr,
+                    match_between_runs,
                     false  # show_progress = false during comparison
                 )
                 
@@ -270,7 +253,6 @@ function create_default_advanced_lightgbm_config(ms1_scoring::Bool = true)
             :max_depth => 10,
             :num_leaves => 63,
             :learning_rate => 0.05,
-            :iter_scheme => [200]
         )
     )
 end
@@ -295,23 +277,17 @@ function score_precursor_isotope_traces_in_memory(
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
-    max_q_value_lightgbm_rescore::Float32,
-    max_q_value_mbr_itr::Float32,
-    min_PEP_neg_threshold_itr::Float32,
     show_progress::Bool = true
 )
     
     if model_config.model_type == :lightgbm
         return train_lightgbm_model(
             best_psms, file_paths, precursors, model_config,
-            match_between_runs, max_q_value_lightgbm_rescore,
-            max_q_value_mbr_itr, min_PEP_neg_threshold_itr,
-            show_progress
+            match_between_runs, show_progress
         )
     elseif model_config.model_type == :probit
         return train_probit_model(
-            best_psms, file_paths, precursors, model_config, match_between_runs,
-            min_PEP_neg_threshold_itr
+            best_psms, file_paths, precursors, model_config, match_between_runs
         )
     else
         error("Unsupported model type: $(model_config.model_type)")
@@ -320,9 +296,7 @@ end
 
 """
     train_lightgbm_model(best_psms, file_paths, precursors, model_config,
-                         match_between_runs, max_q_value_lightgbm_rescore,
-                         max_q_value_mbr_itr, min_PEP_neg_threshold_itr;
-                         show_progress=true) -> Models
+                         match_between_runs; show_progress=true) -> Models
 
 Trains LightGBM model using configuration from ModelConfig.
 Delegates to trait-based percolator_scoring! with a ScoringConfig.
@@ -333,9 +307,6 @@ Delegates to trait-based percolator_scoring! with a ScoringConfig.
 - `precursors::LibraryPrecursors`: Library precursor information
 - `model_config::ModelConfig`: Model configuration
 - `match_between_runs::Bool`: Whether to enable MBR
-- `max_q_value_lightgbm_rescore::Float32`: Q-value threshold
-- `max_q_value_mbr_itr::Float32`: MBR q-value threshold (unused in current implementation)
-- `min_PEP_neg_threshold_itr::Float32`: PEP threshold for negative mining
 - `show_progress::Bool`: Whether to show progress bars
 
 # Returns
@@ -347,9 +318,6 @@ function train_lightgbm_model(
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
-    max_q_value_lightgbm_rescore::Float32,
-    ::Float32,  # max_q_value_mbr_itr - unused in current implementation
-    min_PEP_neg_threshold_itr::Float32,
     show_progress::Bool = true
 )
     # Add required columns
@@ -358,12 +326,7 @@ function train_lightgbm_model(
     best_psms[!,:decoy] = best_psms[!,:target].==false
 
     # Build ScoringConfig from ModelConfig
-    config = build_scoring_config(
-        model_config,
-        match_between_runs,
-        max_q_value_lightgbm_rescore,
-        min_PEP_neg_threshold_itr
-    )
+    config = build_scoring_config(model_config, match_between_runs)
 
     # Delegate to trait-based implementation
     return percolator_scoring!(best_psms, config; show_progress=show_progress, print_importances=true)
@@ -372,7 +335,7 @@ end
 
 """
     train_probit_model(best_psms, file_paths, precursors, model_config,
-                        match_between_runs, min_PEP_neg_threshold_itr) -> Nothing
+                        match_between_runs) -> Nothing
 
 Trains probit regression model using configuration from ModelConfig.
 Uses the trait-based percolator_scoring! with ProbitScorer.
@@ -382,8 +345,7 @@ function train_probit_model(
     ::Vector{String},  # file_paths - unused
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
-    match_between_runs::Bool,
-    min_PEP_neg_threshold_itr::Float32
+    match_between_runs::Bool
 )
     # Add required columns
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
@@ -391,12 +353,7 @@ function train_probit_model(
     best_psms[!,:decoy] = best_psms[!,:target].==false
 
     # Build ScoringConfig for probit
-    config = build_scoring_config(
-        model_config,
-        match_between_runs,
-        0.01f0,  # max_q_value - probit doesn't use this
-        min_PEP_neg_threshold_itr
-    )
+    config = build_scoring_config(model_config, match_between_runs)
 
     # Delegate to trait-based implementation
     percolator_scoring!(best_psms, config; show_progress=false)

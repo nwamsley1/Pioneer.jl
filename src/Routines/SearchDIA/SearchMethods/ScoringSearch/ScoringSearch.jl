@@ -35,7 +35,6 @@ Results container for scoring search.
 """
 struct ScoringSearchResults <: SearchResults
     # Paths to results
-    best_traces::Dict{Int64, Float32}
     precursor_global_qval_dict::Base.Ref{Dict{UInt32, Float32}} # Dictionary mapping precursor_idx to global q-values
     precursor_qval_interp::Base.Ref{Any} # Interpolation for run-specific q-values
     precursor_pep_interp::Base.Ref{Any}  # Interpolation for experiment-wide PEPs
@@ -46,32 +45,20 @@ end
 """
 Parameters for scoring search.
 """
-struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
+struct ScoringSearchParameters <: SearchParameters
     # LightGBM parameters
     max_psm_memory_mb::Float64
-    min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
     precursor_q_value_interpolation_points_per_bin::Int64
-    pg_prob_spline_points_per_bin::Int64  # Added based on original struct
-    pg_q_value_interpolation_points_per_bin::Int64  # Added based on original struct
+    pg_prob_spline_points_per_bin::Int64
+    pg_q_value_interpolation_points_per_bin::Int64
     match_between_runs::Bool
     min_peptides::Int64
-    max_q_value_lightgbm_rescore::Float32
-    max_q_value_mbr_itr::Float32
-    min_PEP_neg_threshold_itr::Float32
     max_MBR_false_transfer_rate::Float32
     q_value_threshold::Float32
-    isotope_tracetype::I
 
     # Quantile binning parameter
     n_quantile_bins::Int64
-
-    # Model comparison parameters
-    enable_model_comparison::Bool
-    validation_split_ratio::Float64
-    qvalue_threshold_comparison::Float64
-    min_psms_for_comparison::Int64
-    max_psms_for_comparison::Int64
 
     # MS1 scoring parameter
     ms1_scoring::Bool
@@ -83,19 +70,11 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
         ml_params = params.optimization.machine_learning
-        global_params = params.global_settings 
+        global_params = params.global_settings
         protein_inference_params = params.protein_inference
 
-        # Determine isotope trace type
-        isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && global_params.isotope_settings.combine_traces
-            CombineTraces(0.0f0)  # Default min_fraction_transmitted
-        else
-            SeperateTraces()
-        end
-        
-        new{typeof(isotope_trace_type)}(
+        new(
             Float64(ml_params.max_psm_memory_mb),
-            Float32(ml_params.min_trace_prob),
             Int64(ml_params.spline_points),
             Int64(ml_params.interpolation_points),
             Int64(ml_params.spline_points),        # Using same value for protein groups
@@ -103,21 +82,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Bool(global_params.match_between_runs),
             Int64(protein_inference_params.min_peptides),
             Float32(global_params.scoring.q_value_threshold),
-            Float32(ml_params.max_q_value_mbr_itr),
-            Float32(ml_params.min_PEP_neg_threshold_itr),
             Float32(global_params.scoring.q_value_threshold),
-            Float32(global_params.scoring.q_value_threshold),
-            isotope_trace_type,
 
             # Quantile binning parameter
             Int64(ml_params.n_quantile_bins),
-
-            # Model comparison parameters with defaults
-            Bool(get(ml_params, :enable_model_comparison, true)),
-            Float64(get(ml_params, :validation_split_ratio, 0.2)),
-            Float64(get(ml_params, :qvalue_threshold, 0.01)),
-            Int64(get(ml_params, :min_psms_for_comparison, 1000)),
-            Int64(get(ml_params, :max_psms_for_comparison, 100000)),
 
             # MS1 scoring parameter
             Bool(global_params.ms1_scoring),
@@ -137,7 +105,6 @@ get_parameters(::ScoringSearch, params::Any) = ScoringSearchParameters(params)
 
 function init_search_results(::ScoringSearchParameters, search_context::SearchContext)
     return ScoringSearchResults(
-        Dict{Int64, Float32}(),  # best_traces
         Ref(Dict{UInt32, Float32}()),  # precursor_global_qval_dict
         Ref(undef),  # precursor_qval_interp
         Ref(undef),  # precursor_pep_interp
@@ -322,9 +289,6 @@ function summarize_results!(
                 valid_fold_paths,
                 getPrecursors(getSpecLib(search_context)),
                 params.match_between_runs,
-                params.max_q_value_lightgbm_rescore,
-                params.max_q_value_mbr_itr,
-                params.min_PEP_neg_threshold_itr,
                 max_psms,
                 params.n_quantile_bins,
                 params.q_value_threshold,
@@ -384,32 +348,9 @@ function summarize_results!(
         end
         #@debug_l1 "Step 2 completed in $(round(step2_time, digits=2)) seconds"
 
-        # Step 3: Find Best Isotope Traces
-        #@debug_l1 "Step 3: Finding best isotope traces..."
-        step3_time = @elapsed begin
-            best_traces = get_best_traces(
-                second_pass_paths,
-                params.min_best_trace_prob
-            )
-        end
-        #@debug_l1 "Step 3 completed in $(round(step3_time, digits=2)) seconds"
-
-        # Step 4: Process Quantification Results
-        #@debug_l1 "Step 4: Processing quantification results..."
-        step4_time = @elapsed begin
-            necessary_cols = get_quant_necessary_columns(params.match_between_runs)
-
-            # Note: Removed sorting by global_prob - it will be calculated in Step 5
-            quant_processing_pipeline = TransformPipeline() |>
-                add_best_trace_indicator(params.isotope_tracetype, best_traces) |>
-                select_columns(vcat(necessary_cols, :best_trace)) |>
-                filter_rows(row -> row.best_trace; desc="keep_only_best_traces") |>
-                remove_columns(:best_trace)
-
-            apply_pipeline!(second_pass_refs, quant_processing_pipeline)
-            filtered_refs = second_pass_refs
-        end
-        #@debug_l1 "Step 4 completed in $(round(step4_time, digits=2)) seconds"
+        # FirstPassSearch already selects one row per precursor per file,
+        # so no best-trace selection is needed. Pass refs through directly.
+        filtered_refs = second_pass_refs
 
         # Steps 5-10 (combined): Build dictionaries + sidecar splines + single pipeline pass
         # Replaces 6 separate sort-merge-load-split cycles with:
@@ -616,14 +557,12 @@ function summarize_results!(
             )
         end
         # Summary of all step times
-        total_time = step1_time + step2_time + step3_time + step4_time +
+        total_time = step1_time + step2_time +
                     step5_10_time + step11_time +
                     step12_time + step13_time + step14_time + step15_time +
                     step16_23_time + step24_time
 
         @user_info "ScoringSearch completed - Total time: $(round(total_time, digits=2)) seconds"
-
-        best_traces = nothing # Free memory
     catch e
         @error "Failed to summarize scoring results" exception=e
         rethrow(e)

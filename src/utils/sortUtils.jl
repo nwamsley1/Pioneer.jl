@@ -1,72 +1,64 @@
 """
-    fast_df_sort!(df::DataFrame, cols::Vector{Symbol};
-                  rev::Vector{Bool}=fill(false, length(cols)))
+    fast_df_sort!(df::DataFrame, cols::NTuple{N, Symbol};
+                  rev::NTuple{N, Bool}=ntuple(_ -> false, Val(N))) where N
 
 Sort a DataFrame in-place using zip+sortperm, which avoids DataFrames' DFPerm
 comparison wrapper overhead. ~3.5x faster than `sort!` on large tables (25M rows:
 1.36s vs 4.85s, 1.1GB vs 6GB alloc).
 
-For 1-4 sort keys, builds concrete tuple keys via `zip` and uses `sortperm`.
+Dispatches on `NTuple{N}` so the compiler knows the tuple length at compile time,
+producing type-stable `zip` keys without manual branching per column count.
 For reversed columns, negates numeric values or flips Bools so ascending sort
-produces descending order. Falls back to `sort!` for >4 keys or unsupported types.
+produces descending order. Falls back to `sort!` only for unsupported rev types.
 """
-function fast_df_sort!(df::DataFrame, cols::Vector{Symbol};
-                       rev::Vector{Bool}=fill(false, length(cols)))
-    ncols = length(cols)
+function fast_df_sort!(df::DataFrame, cols::NTuple{N, Symbol};
+                       rev::NTuple{N, Bool}=ntuple(_ -> false, Val(N))) where N
     nrow(df) == 0 && return df
 
-    # Fallback for >4 keys
-    if ncols > 4
-        sort!(df, cols, rev=rev)
-        return df
-    end
-
-    # Check that reversed columns have types we can negate
+    # Fall back if a reversed column has an unsupported type (e.g. String)
     if !_can_fast_rev(df, cols, rev)
-        sort!(df, cols, rev=rev)
+        sort!(df, collect(cols), rev=collect(rev))
         return df
     end
 
-    perm = if ncols == 1
-        # Single column: sortperm supports rev directly
+    perm = if N == 1
+        # Single column: sortperm supports rev directly, no zip needed
         sortperm(df[!, cols[1]], rev=rev[1])
-    elseif ncols == 2
-        c1 = _maybe_rev_col(df[!, cols[1]], rev[1])
-        c2 = _maybe_rev_col(df[!, cols[2]], rev[2])
-        sortperm(collect(zip(c1, c2)))
-    elseif ncols == 3
-        c1 = _maybe_rev_col(df[!, cols[1]], rev[1])
-        c2 = _maybe_rev_col(df[!, cols[2]], rev[2])
-        c3 = _maybe_rev_col(df[!, cols[3]], rev[3])
-        sortperm(collect(zip(c1, c2, c3)))
-    else  # ncols == 4
-        c1 = _maybe_rev_col(df[!, cols[1]], rev[1])
-        c2 = _maybe_rev_col(df[!, cols[2]], rev[2])
-        c3 = _maybe_rev_col(df[!, cols[3]], rev[3])
-        c4 = _maybe_rev_col(df[!, cols[4]], rev[4])
-        sortperm(collect(zip(c1, c2, c3, c4)))
+    else
+        # ntuple with Val(N) builds a concrete-typed tuple at compile time,
+        # so zip(...) produces Vector{Tuple{T1,T2,...}} with known types
+        key_cols = ntuple(i -> _maybe_rev_col(df[!, cols[i]], rev[i]), Val(N))
+        sortperm(collect(zip(key_cols...)))
     end
 
-    # Apply permutation to all columns
     for col in names(df)
         df[!, col] = df[!, col][perm]
     end
     return df
 end
 
+# Convenience: accept Vector{Symbol} from callers that build column lists dynamically.
+# Julia's ntuple(f, n::Int) specializes for small n (≤10), returning a concrete
+# NTuple{n} that dispatches to the typed method above.
+function fast_df_sort!(df::DataFrame, cols::Vector{Symbol};
+                       rev::Vector{Bool}=fill(false, length(cols)))
+    col_t = ntuple(i -> cols[i], length(cols))
+    rev_t = ntuple(i -> rev[i], length(cols))
+    fast_df_sort!(df, col_t; rev=rev_t)
+end
+
 # --- Helpers for reverse-sort negation ---
 
-# Types that support negation for reverse sorting
 _supports_rev(::Type{<:Signed}) = true
 _supports_rev(::Type{<:AbstractFloat}) = true
 _supports_rev(::Type{<:Unsigned}) = true
 _supports_rev(::Type{Bool}) = true
 _supports_rev(::Type) = false
 
-function _can_fast_rev(df::DataFrame, cols::Vector{Symbol}, rev::Vector{Bool})
-    for (col, r) in zip(cols, rev)
-        r || continue  # non-reversed columns always work
-        _supports_rev(eltype(df[!, col])) || return false
+function _can_fast_rev(df::DataFrame, cols::NTuple{N, Symbol}, rev::NTuple{N, Bool}) where N
+    for i in 1:N
+        rev[i] || continue
+        _supports_rev(eltype(df[!, cols[i]])) || return false
     end
     return true
 end

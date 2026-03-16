@@ -8,10 +8,6 @@
         }
     },
     "global": {
-        "huber_override": {
-            "override_huber_delta_fit": false,
-            "huber_delta": 1055
-        },
         "scoring": {
             "q_value_threshold": 0.01
         },
@@ -30,15 +26,6 @@
         "write_decoys": false,
         "write_csv": true,
         "delete_temp": false
-    },
-    "chromatogram": {
-        "err_bounds": [
-            3,
-            0
-        ],
-        "padding": 0,
-        "max_apex_offset": 2,
-        "smoothing_strength": 1.0e-6
     },
     "parameter_tuning": {
         "quad_tuning": {
@@ -103,34 +90,12 @@
         "run_to_run_normalization": false
     },
     "optimization": {
-        "deconvolution": {
-            "outer_iters": 1000,
-            "ms2": {
-                "lambda": 0.0,
-                "reg_type": "none",
-                "huber_delta": 300
-            },
-            "max_diff": 0.01,
-            "huber_exp": 1.5,
-            "huber_iters": 15
-        },
         "machine_learning": {
-            "validation_split_ratio": 0.2,
-            "max_q_value_mbr_itr": 0.2,
-            "interpolation_points": 10,
-            "spline_points": 500,
-            "min_trace_prob": 0.75,
-            "enable_model_comparison": true,
-            "min_PEP_neg_threshold_itr": 0.9,
-            "qvalue_threshold": 0.01,
-            "max_psms_for_comparison": 100000,
-            "min_psms_for_comparison": 1000,
-            "n_quantile_bins": 25,
-            "max_psms_in_memory": 50000000
+            "n_quantile_bins": 25
         }
     },
     "fragment_index_search": {
-        "min_score": 15
+        "min_score": 16
     },
     "logging": {
         "debug_console_level": 0
@@ -142,7 +107,7 @@
             "min_count": 4,
             "n_isotopes": 2
         },
-        "global_prescore_qvalue_threshold": 0.05
+        "global_prescore_qvalue_threshold": 0.02
     },
     "paths": {
         "ms_data": "/Users/nathanwamsley/Data/For_Figures/OlsenAstralThreeProteome200ng",

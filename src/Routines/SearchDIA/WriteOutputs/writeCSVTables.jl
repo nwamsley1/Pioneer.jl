@@ -495,8 +495,15 @@ function writePrecursorCSV_chunked(
                     :new_best_scan ∈ col_names_set && push!(rename_pairs, :new_best_scan => :apex_scan)
                     :prec_prob ∈ col_names_set && push!(rename_pairs, :prec_prob => :score)
                     :global_prob ∈ col_names_set && push!(rename_pairs, :global_prob => :global_score)
-                    :isotopes_captured_traces ∈ col_names_set && push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
-                    :precursor_fraction_transmitted_traces ∈ col_names_set && push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
+                    # Drop originals before renaming _traces variants to avoid collisions
+                    if :isotopes_captured_traces ∈ col_names_set
+                        :isotopes_captured ∈ col_names_set && select!(precursors_long, Not(:isotopes_captured))
+                        push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
+                    end
+                    if :precursor_fraction_transmitted_traces ∈ col_names_set
+                        :precursor_fraction_transmitted ∈ col_names_set && select!(precursors_long, Not(:precursor_fraction_transmitted))
+                        push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
+                    end
                     !isempty(rename_pairs) && rename!(precursors_long, rename_pairs)
 
                     # Reorder columns

@@ -59,9 +59,6 @@ function checkParams(json_path::String)
     check_param(global_params, "scoring", Dict)
     check_param(global_params["scoring"], "q_value_threshold", Real)
 
-    check_param(global_params["huber_override"], "override_huber_delta_fit", Bool)
-    check_param(global_params["huber_override"], "huber_delta", Real)
-
     # Validate parameter tuning parameters
     tuning_params = params["parameter_tuning"]
     check_param(tuning_params, "fragment_settings", Dict)
@@ -205,13 +202,6 @@ function checkParams(json_path::String)
     check_param(search_frag, "max_rank", Integer)
     check_param(search_frag, "n_isotopes", Integer)
 
-    # Validate chromatogram parameters (top-level)
-    chrom_settings = params["chromatogram"]
-    check_param(chrom_settings, "smoothing_strength", Real)
-    check_param(chrom_settings, "padding", Integer)
-    check_param(chrom_settings, "max_apex_offset", Integer)
-    check_param(chrom_settings, "err_bounds", Vector)
-
     # Validate acquisition parameters
     acq_params = params["acquisition"]
     check_param(acq_params, "nce", Integer)
@@ -230,29 +220,10 @@ function checkParams(json_path::String)
 
     # Validate optimization parameters
     opt_params = params["optimization"]
-    check_param(opt_params, "deconvolution", Dict)
     check_param(opt_params, "machine_learning", Dict)
-
-    deconv = opt_params["deconvolution"]
-
-    # Check MS2 specific parameters
-    check_param(deconv, "ms2", Dict)
-
-    ms2_params = deconv["ms2"]
-    check_param(ms2_params, "lambda", Real)
-    check_param(ms2_params, "reg_type", String)
-    check_param(ms2_params, "huber_delta", Real)
-
-    # Check shared parameters
-    check_param(deconv, "huber_exp", Real)
-    check_param(deconv, "huber_iters", Integer)
-    check_param(deconv, "max_diff", Real)
 
     ml_params = opt_params["machine_learning"]
     check_param(ml_params, "max_psm_memory_mb", Real)
-    check_param(ml_params, "min_trace_prob", Real)
-    check_param(ml_params, "max_q_value_mbr_itr", Real)
-    check_param(ml_params, "min_PEP_neg_threshold_itr", Real)
     check_param(ml_params, "spline_points", Integer)
     check_param(ml_params, "interpolation_points", Integer)
     check_param(ml_params, "n_quantile_bins", Integer)

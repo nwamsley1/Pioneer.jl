@@ -116,7 +116,6 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
         tuning_params = params.parameter_tuning
         frag_params = tuning_params.fragment_settings
         search_params = tuning_params.search_settings
-        deconv_params = params.optimization.deconvolution
         
         # Always use partial capture for quad tuning
         prec_estimation = PartialPrecCapture()
@@ -170,10 +169,10 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             # Deconvolution parameters (hardcoded)
             Int64(50),   # max_iter_newton
             Int64(100),  # max_iter_bisection
-            Int64(deconv_params.outer_iters),
+            Int64(1000), # max_iter_outer
             Float32(10),  # accuracy_newton
             Float32(10),  # accuracy_bisection
-            Float32(deconv_params.max_diff),
+            Float32(0.01), # max_diff
             
             # Quad tuning specific parameters
             min_quad_tuning_fragments,

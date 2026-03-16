@@ -847,51 +847,6 @@ function calibrate_ml_threshold(scores::AbstractVector, is_bad_transfer::Abstrac
 end
 
 
-"""
-    get_quant_necessary_columns() -> Vector{Symbol}
-
-Get the standard columns needed for quantification analysis.
-"""
-function get_quant_necessary_columns(match_between_runs::Bool)
-    # Get conditional q-value column names
-    qval_cols = get_qval_column_names(match_between_runs)
-
-    base_cols = [
-        :precursor_idx,
-        :global_prob,
-        :prec_prob,
-        :trace_prob,
-        qval_cols.global_qval,  # Conditional: :MBR_boosted_global_qval or :global_qval
-        :run_specific_qval,
-        :prec_mz,
-        qval_cols.pep,  # Always :pep but included for consistency
-        :weight,
-        :target,
-        :rt,
-        :irt_obs,
-        :missed_cleavage,
-        :Mox,
-        :isotopes_captured,
-        :scan_idx,
-        :entrapment_group_id,
-        :ms_file_idx
-    ]
-
-    if match_between_runs
-        # Add MBR-specific columns including MBR_boosted_qval
-        return vcat(base_cols, [
-            :MBR_boosted_global_prob,
-            :MBR_boosted_prec_prob,
-            :MBR_boosted_trace_prob,
-            :MBR_candidate,
-            :MBR_transfer_q_value,
-            qval_cols.qval  # Add :MBR_boosted_qval
-        ])
-    else
-        # Add standard qval for non-MBR mode
-        return vcat(base_cols, [qval_cols.qval])  # Add :qval
-    end
-end
 
 """
     get_qval_column_names(match_between_runs::Bool) -> NamedTuple
@@ -935,38 +890,6 @@ function get_qval_column_names(match_between_runs::Bool)
     end
 end
 
-"""
-    add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::Set)
-
-Add best trace indicator based on isotope trace type.
-"""
-function add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::Set)
-    op = function(df)  # df is passed by transform_and_write!
-        if seperateTraces(isotope_type)
-            # Extract columns with type assertions for performance
-            precursor_idx_col = df.precursor_idx::AbstractVector{UInt32}
-            isotopes_captured_col = df.isotopes_captured::AbstractVector{Tuple{Int8, Int8}}   
-            
-            # Efficient vectorized operation for separate traces
-            df[!,:best_trace] = [
-                (precursor_idx=precursor_idx_col[i], 
-                 isotopes_captured=isotopes_captured_col[i]) ∈ best_traces
-                for i in eachindex(precursor_idx_col)
-            ]
-        else
-            # Group-based operation for combined traces
-            transform!(groupby(df, :precursor_idx),
-                      :trace_prob => (p -> begin
-                          best_idx = argmax(p)
-                          result = falses(length(p))
-                          result[best_idx] = true
-                          result
-                      end) => :best_trace)
-        end
-        return df
-    end
-    return "" => op
-end
 
 #==========================================================
 Additional Interface Functions (Preserved from Original)

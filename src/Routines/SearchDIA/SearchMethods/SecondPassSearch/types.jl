@@ -80,7 +80,6 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
         global_params = params.global_settings
         quant_params = params.search
         frag_params = quant_params.fragment_settings
-        deconv_params = params.optimization.deconvolution
 
         # Determine isotope trace type based on global settings
         isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) &&
@@ -95,21 +94,6 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
-        # Parse MS2 regularization type
-        reg_type = deconv_params.ms2.reg_type
-        if reg_type == "none"
-            reg_type = NoNorm()
-        elseif reg_type == "l1"
-            reg_type = L1Norm()
-        elseif reg_type == "l2"
-            reg_type = L2Norm()
-        else
-            reg_type = NoNorm()
-            @user_warn "Warning. MS2 reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
-        end
-
-        # Hardcoded MS1 deconvolution parameters
-        ms1_reg_type = L2Norm()
 
         # Hardcoded: ms1_scoring always true, match_between_runs always false
         ms1_scoring = true
@@ -146,18 +130,18 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Set{Int64}([2]),
             false,  # match_between_runs hardcoded false
 
-            Float32(deconv_params.ms2.lambda),
-            reg_type,
-            Int64(50),   # max_iter_newton hardcoded
-            Int64(100),  # max_iter_bisection hardcoded
-            Int64(deconv_params.outer_iters),
-            Float32(10),  # accuracy_newton hardcoded
-            Float32(10),  # accuracy_bisection hardcoded
-            Float32(deconv_params.max_diff),
+            Float32(0.0),     # lambda (no regularization)
+            NoNorm(),         # reg_type
+            Int64(50),        # max_iter_newton
+            Int64(100),       # max_iter_bisection
+            Int64(1000),      # max_iter_outer
+            Float32(10),      # accuracy_newton
+            Float32(10),      # accuracy_bisection
+            Float32(0.01),    # max_diff
 
-            Float32(0.0001),  # ms1_lambda hardcoded
-            ms1_reg_type,
-            Float32(1e9),     # ms1_huber_delta hardcoded
+            Float32(0.0001),  # ms1_lambda
+            L2Norm(),         # ms1_reg_type
+            Float32(1e9),     # ms1_huber_delta
 
             Int64(0),   # min_y_count hardcoded
             Int64(frag_params.min_count),

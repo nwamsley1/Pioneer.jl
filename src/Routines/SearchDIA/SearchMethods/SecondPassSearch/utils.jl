@@ -1119,6 +1119,55 @@ function get_isotopes_captured!(chroms::DataFrame,
     return nothing
 end
 
+"""
+    get_fraction_transmitted!(chroms, quad_transmission_model, search_data, ...)
+
+Compute only `precursor_fraction_transmitted` without isotope set calculation.
+Used for CombineTraces mode where `isotopes_captured` is not needed.
+"""
+function get_fraction_transmitted!(chroms::DataFrame,
+                                   quad_transmission_model::QuadTransmissionModel,
+                                   search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{40, Float32}}},
+                                   scan_idx::AbstractVector{UInt32},
+                                   prec_charge::AbstractArray{UInt8},
+                                   prec_mz::AbstractArray{Float32},
+                                   sulfur_count::AbstractArray{UInt8},
+                                   centerMz::AbstractVector{Union{Missing, Float32}},
+                                   isolationWidthMz::AbstractVector{Union{Missing, Float32}})
+    precursor_fraction_transmitted = Vector{Float32}(undef, size(chroms, 1))
+
+    tasks_per_thread = 5
+    chunk_size = max(1, size(chroms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:size(chroms, 1), chunk_size)
+
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            thread_id = (first(chunk) % Threads.nthreads()) + 1
+            iso_splines = getIsoSplines(search_data[thread_id])
+
+            for i in chunk
+                prec_id = chroms[i,:precursor_idx]
+                mz = prec_mz[prec_id]
+                charge = prec_charge[prec_id]
+                sulfur = sulfur_count[prec_id]
+                scan_id = scan_idx[i]
+                scan_mz = coalesce(centerMz[scan_id], zero(Float32))::Float32
+                window_width = coalesce(isolationWidthMz[scan_id], zero(Float32))::Float32
+
+                precursor_fraction_transmitted[i] = getPrecursorFractionTransmitted!(
+                    iso_splines,
+                    (1,5),
+                    getQuadTransmissionFunction(quad_transmission_model, scan_mz, window_width),
+                    mz,
+                    charge,
+                    sulfur)
+            end
+        end
+    end
+    fetch.(tasks)
+    chroms[!,:precursor_fraction_transmitted] = precursor_fraction_transmitted
+    return nothing
+end
 
 """
     add_features!(psms::DataFrame, search_context::SearchContext, ...)

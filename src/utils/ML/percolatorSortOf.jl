@@ -68,14 +68,14 @@ end
 Generic PSM scoring function using LightGBM with cross-validation.
 Delegates to the trait-based `percolator_scoring!` function.
 
+Uses single-pass training with AllDataSelection (no negative mining).
+
 # Arguments
 - `psms::AbstractPSMContainer`: PSMs to score (modified in-place)
 - `features::Vector{Symbol}`: Feature columns to use
 - `match_between_runs::Bool`: Whether to enable MBR features
 
 # Keyword Arguments
-- `max_q_value_lightgbm_rescore::Float32`: Q-value threshold for training (default: 0.01)
-- `min_PEP_neg_threshold_itr::Float32`: PEP threshold for negative mining (default: 0.90)
 - `feature_fraction::Float64`: LightGBM feature fraction (default: 0.5)
 - `learning_rate::Float64`: LightGBM learning rate (default: 0.15)
 - `min_data_in_leaf::Int`: Minimum samples per leaf (default: 1)
@@ -83,7 +83,7 @@ Delegates to the trait-based `percolator_scoring!` function.
 - `min_gain_to_split::Float64`: Minimum gain to split (default: 0.0)
 - `max_depth::Int`: Maximum tree depth (default: 10)
 - `num_leaves::Int`: Maximum leaves per tree (default: 63)
-- `iter_scheme::Vector{Int}`: Boosting rounds per iteration (default: [100, 200, 200])
+- `iter_scheme::Vector{Int}`: Boosting rounds per iteration (default: [200])
 - `show_progress::Bool`: Show progress bar (default: true)
 - `verbose_logging::Bool`: Enable verbose output (default: false)
 
@@ -93,9 +93,6 @@ Delegates to the trait-based `percolator_scoring!` function.
 function sort_of_percolator!(psms::AbstractPSMContainer,
                   features::Vector{Symbol},
                   match_between_runs::Bool = true;
-                  max_q_value_lightgbm_rescore::Float32 = 0.01f0,
-                  max_q_value_mbr_itr::Float32 = 0.20f0,
-                  min_PEP_neg_threshold_itr = 0.90f0,
                   feature_fraction::Float64 = 0.5,
                   learning_rate::Float64 = 0.15,
                   min_data_in_leaf::Int = 1,
@@ -124,10 +121,10 @@ function sort_of_percolator!(psms::AbstractPSMContainer,
             :num_leaves => num_leaves
         )),
         RandomPairing(),
-        QValueNegativeMining(max_q_value_lightgbm_rescore, Float32(min_PEP_neg_threshold_itr)),
-        IterativeFeatureSelection(base_features, mbr_features, length(iter_scheme)),
+        AllDataSelection(),
+        IterativeFeatureSelection(base_features, mbr_features, 1),
         FixedIterationScheme(iter_scheme),
-        match_between_runs ? PairBasedMBR(max_q_value_lightgbm_rescore) : NoMBR()
+        match_between_runs ? PairBasedMBR(0.01f0) : NoMBR()
     )
 
     # Delegate to trait-based implementation

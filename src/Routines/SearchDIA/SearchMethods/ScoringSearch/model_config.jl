@@ -197,7 +197,6 @@ function create_model_configurations(ms1_scoring::Bool = true)
                 :max_depth => 4,
                 :num_leaves => 15,
                 :learning_rate => 0.1,
-                :iter_scheme => [200]
             )
         ),
 
@@ -214,7 +213,6 @@ function create_model_configurations(ms1_scoring::Bool = true)
                 :max_depth => -1,
                 :num_leaves => 63,
                 :learning_rate => 0.05,
-                :iter_scheme => [200]
             )
         ),
         
@@ -260,7 +258,6 @@ function create_model_configurations(ms1_scoring::Bool = true)
                 :max_depth => 4,
                 :num_leaves => 15,
                 :learning_rate => 0.1,
-                :iter_scheme => [200]
             )
         )
     ]
@@ -440,25 +437,25 @@ end
 #############################################################################
 
 """
-    build_scoring_config(model_config::ModelConfig, match_between_runs, max_q_value, min_pep_threshold) -> ScoringConfig
+    build_scoring_config(model_config::ModelConfig, match_between_runs::Bool) -> ScoringConfig
 
 Build a ScoringConfig from a ModelConfig and parameters.
 This is the bridge between the existing ModelConfig system and the new trait-based system.
 
+Uses single-pass training with AllDataSelection (no negative mining) and a fixed
+iteration scheme of [200] rounds. FirstPassSearch already provides globally-filtered,
+high-quality PSMs, so multi-iteration training with negative mining is unnecessary.
+
 # Arguments
 - `model_config::ModelConfig`: Model configuration from model comparison
 - `match_between_runs::Bool`: Whether MBR is enabled
-- `max_q_value::Float32`: Q-value threshold for training
-- `min_pep_threshold::Float32`: PEP threshold for negative mining
 
 # Returns
 - `ScoringConfig`: Configuration for the trait-based scoring system
 """
 function build_scoring_config(
     model_config::ModelConfig,
-    match_between_runs::Bool,
-    max_q_value::Float32,
-    min_pep_threshold::Float32
+    match_between_runs::Bool
 )
     # Select model type
     model = if model_config.model_type == :lightgbm
@@ -479,15 +476,12 @@ function build_scoring_config(
         :MBR_is_missing
     ] : Symbol[]
 
-    # Get iteration scheme
-    iter_scheme = get(model_config.hyperparams, :iter_scheme, [200])
-
     return ScoringConfig(
         model,
         RandomPairing(),
-        QValueNegativeMining(max_q_value, min_pep_threshold),
-        IterativeFeatureSelection(base_features, mbr_features, length(iter_scheme)),
-        FixedIterationScheme(iter_scheme),
-        match_between_runs ? PairBasedMBR(max_q_value) : NoMBR()
+        AllDataSelection(),
+        IterativeFeatureSelection(base_features, mbr_features, 1),
+        FixedIterationScheme([200]),
+        match_between_runs ? PairBasedMBR(0.01f0) : NoMBR()
     )
 end

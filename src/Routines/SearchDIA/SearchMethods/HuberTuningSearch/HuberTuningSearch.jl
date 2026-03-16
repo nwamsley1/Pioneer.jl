@@ -98,57 +98,42 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
 
     function HuberTuningSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
-        deconv_params = params.optimization.deconvolution
         global_params = params.global_settings
         frag_params = params.search.fragment_settings
-        # Calculate Huber delta grid
-        delta0 = Float32(deconv_params.ms2.huber_delta)
-        delta_exp = Float32(deconv_params.huber_exp)
-        delta_iters = Int64(deconv_params.huber_iters)
+        # Calculate Huber delta grid (hardcoded defaults)
+        delta0 = Float32(300)
+        delta_exp = Float32(1.5)
+        delta_iters = Int64(15)
         huber_δs = Float32[delta0 * (delta_exp^i) for i in range(-4,delta_iters+6)]
         # Hardcoded isotope error bounds (always (1,0))
         isotope_bounds = (1, 0)
 
         # Always use partial capture for Huber tuning
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        reg_type = deconv_params.ms2.reg_type
-        if reg_type == "none"
-            reg_type = NoNorm()
-        elseif reg_type == "l1"
-            reg_type = L1Norm()
-        elseif reg_type == "l2"
-            reg_type = L2Norm()
-        else
-            reg_type = NoNorm()
-            @user_warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
-        end
-
-        # Get max PSMs for huber tuning (default 5000)
-        max_psms_huber = haskey(deconv_params, :max_psms_for_huber) ? Int64(deconv_params.max_psms_for_huber) : 5000
 
         new{typeof(prec_estimation)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Int64(frag_params.n_isotopes),  # Fixed n_frag_isotopes
             UInt8(frag_params.max_rank),  # Using max possible rank
             Set{Int64}([2]),
-            
-            Float32(deconv_params.ms2.lambda),
-            reg_type,
-            Int64(50),   # max_iter_newton hardcoded
-            Int64(100),  # max_iter_bisection hardcoded
-            Int64(deconv_params.outer_iters),
-            Float32(10),  # accuracy_newton hardcoded
-            Float32(10),  # accuracy_bisection hardcoded
-            Float32(deconv_params.max_diff),
+
+            Float32(0.0),     # lambda (no regularization)
+            NoNorm(),         # reg_type
+            Int64(50),        # max_iter_newton
+            Int64(100),       # max_iter_bisection
+            Int64(1000),      # max_iter_outer
+            Float32(10),      # accuracy_newton
+            Float32(10),      # accuracy_bisection
+            Float32(0.01),    # max_diff
             
             huber_δs,
             10.0f0,  # Default min_pct_diff
             0.001f0, # Default q_value_threshold
-            max_psms_huber,
+            5000,    # max_psms_for_huber
             prec_estimation,
 
-            global_params.huber_override.override_huber_delta_fit,
-            Float32(global_params.huber_override.huber_delta)
+            false,              # huber_override_bool
+            Float32(1055)       # huber_override_delta
 
         )
     end
