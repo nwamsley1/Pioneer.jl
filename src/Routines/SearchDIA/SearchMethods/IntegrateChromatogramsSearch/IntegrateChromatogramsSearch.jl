@@ -28,8 +28,30 @@ This search:
 """
 struct IntegrateChromatogramSearch <: SearchMethod end
 
+"""
+    _sort_chromatograms!(df, cols)
+
+Sort a chromatogram DataFrame by the given columns using zip+sortperm,
+which avoids DataFrames' DFPerm overhead and is ~3.5x faster than `sort!`.
+"""
+function _sort_chromatograms!(df::DataFrame, cols::Vector{Symbol})
+    if length(cols) == 2
+        keys = collect(zip(df[!, cols[1]], df[!, cols[2]]))
+    elseif length(cols) == 3
+        keys = collect(zip(df[!, cols[1]], df[!, cols[2]], df[!, cols[3]]))
+    else
+        sort!(df, cols)
+        return df
+    end
+    perm = sortperm(keys)
+    for col in names(df)
+        df[!, col] = df[!, col][perm]
+    end
+    return df
+end
+
 #==========================================================
-Type Definitions  
+Type Definitions
 ==========================================================#
 
 """
@@ -80,8 +102,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         # Extract relevant parameter groups
         global_params = params.global_settings
         frag_params = params.search.fragment_settings
-        chrom_params = params.chromatogram
-        deconv_params = params.optimization.deconvolution
         output_params = params.output
 
         # Determine isotope trace type
@@ -92,52 +112,34 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             SeperateTraces()
         end
 
-        # Read err_bounds from top-level chromatogram section
-        isotope_bounds = chrom_params.err_bounds
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
-        # Parse MS2 regularization type
-        reg_type = deconv_params.ms2.reg_type
-        if reg_type == "none"
-            reg_type = NoNorm()
-        elseif reg_type == "l1"
-            reg_type = L1Norm()
-        elseif reg_type == "l2"
-            reg_type = L2Norm()
-        else
-            reg_type = NoNorm()
-            @user_warn "Warning. MS2 reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
-        end
-
-        # Hardcoded MS1 deconvolution parameters
-        ms1_reg_type = L2Norm()
-
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
-            (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
+            (UInt8(2), UInt8(0)),  # isotope err_bounds
             Float32(min_fraction_transmitted),
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             Set{Int64}([2]),
             false,  # ms1_quant hardcoded false
 
-            Float32(chrom_params.smoothing_strength),
-            Int64(chrom_params.padding),
-            Int64(chrom_params.max_apex_offset),
+            Float32(1e-6),    # wh_smoothing_strength
+            Int64(0),         # n_pad
+            Int64(2),         # max_apex_offset
             Bool(output_params.write_decoys),
 
-            Float32(deconv_params.ms2.lambda),
-            reg_type,
-            Int64(50),   # max_iter_newton hardcoded
-            Int64(100),  # max_iter_bisection hardcoded
-            Int64(deconv_params.outer_iters),
-            Float32(10),  # accuracy_newton hardcoded
-            Float32(10),  # accuracy_bisection hardcoded
-            Float32(deconv_params.max_diff),
+            Float32(0.0),     # lambda (no regularization)
+            NoNorm(),         # reg_type
+            Int64(50),        # max_iter_newton
+            Int64(100),       # max_iter_bisection
+            Int64(1000),      # max_iter_outer
+            Float32(10),      # accuracy_newton
+            Float32(10),      # accuracy_bisection
+            Float32(0.01),    # max_diff
 
-            Float32(0.0001),  # ms1_lambda hardcoded
-            ms1_reg_type,
-            Float32(1e9),     # ms1_huber_delta hardcoded
+            Float32(0.0001),  # ms1_lambda
+            L2Norm(),         # ms1_reg_type
+            Float32(1e9),     # ms1_huber_delta
 
             isotope_trace_type,
             prec_estimation
@@ -219,18 +221,41 @@ function process_file!(
         end
         # Extract chromatograms for all passing PSMs
         # Builds chromatograms using parallel processing across scan ranges
-        chromatograms = extract_chromatograms(
-            spectra,
-            passing_psms,
-            rt_index,
-            search_context,
-            params,
-            ms_file_idx,
-            MS2CHROM(),
-        )
-        #out_dir = getDataOutDir(search_context)
-        #Arrow.write(joinpath(out_dir, "test_chroms_ms2.arrow"), chromatograms)
-        #jldsave("/Users/nathanwamsley/Desktop/rt_index.jld2"; rt_index)
+        # Profile the first file's chromatogram extraction
+        _do_profile = (ms_file_idx == 1)
+        if _do_profile
+            Profile.clear()
+            Profile.@profile chromatograms = extract_chromatograms(
+                spectra,
+                passing_psms,
+                rt_index,
+                search_context,
+                params,
+                ms_file_idx,
+                MS2CHROM(),
+            )
+            _prof_path = joinpath(getDataOutDir(search_context), "chrom_extract_profile.pb.gz")
+            PProf.pprof(; out=_prof_path, web=false)
+            @user_info "  Profile saved to $_prof_path"
+        else
+            chromatograms = extract_chromatograms(
+                spectra,
+                passing_psms,
+                rt_index,
+                search_context,
+                params,
+                ms_file_idx,
+                MS2CHROM(),
+            )
+        end
+        # Save unsorted chromatograms for sorting benchmarks (first file only)
+        if ms_file_idx == 1
+            out_dir = getDataOutDir(search_context)
+            bench_df = copy(chromatograms)
+            bench_df[!, :rt_milliminutes] = round.(UInt32, bench_df.rt .* 1000)
+            Arrow.write(joinpath(out_dir, "unsorted_chroms_ms2.arrow"), bench_df)
+            @user_info "  Saved unsorted chromatograms to $out_dir"
+        end
         if params.ms1_quant==true
             ms1_chromatograms = extract_chromatograms(
                 spectra,
@@ -242,37 +267,61 @@ function process_file!(
                 MS1CHROM(),
             )
             # MS1 always uses CombineTraces, so sort by [:precursor_idx, :rt]
-            sort!(ms1_chromatograms, [:precursor_idx, :rt])
+            _sort_chromatograms!(ms1_chromatograms, [:precursor_idx, :rt])
             ms1_chromatograms[!,:precursor_fraction_transmitted] = ones(Float32, size(ms1_chromatograms, 1))
         end
         #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
         #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
-        # Determine which isotopes are captured in each isolation window
-        # Uses quadrupole transmission model to check isotope coverage
-        get_isotopes_captured!(
-            chromatograms,
-            params.isotope_tracetype,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            chromatograms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
-        )
-
-        # Pre-sort chromatograms to avoid concurrent sorting in threads
-        # Groups will inherit this ordering, eliminating need for per-group sorting
+        t_iso_calc = @elapsed begin
         if seperateTraces(params.isotope_tracetype)
-            sort!(chromatograms, [:precursor_idx, :isotopes_captured, :rt])
+            get_isotopes_captured!(
+                chromatograms,
+                params.isotope_tracetype,
+                getQuadTransmissionModel(search_context, ms_file_idx),
+                getSearchData(search_context),
+                chromatograms[!, :scan_idx],
+                getCharge(getPrecursors(getSpecLib(search_context))),
+                getMz(getPrecursors(getSpecLib(search_context))),
+                getSulfurCount(getPrecursors(getSpecLib(search_context))),
+                getCenterMzs(spectra),
+                getIsolationWidthMzs(spectra)
+            )
+        end
+        end  # t_iso_calc
+        @user_info "  Isotope/transmission calc: $(round(t_iso_calc, digits=2))s"
+
+        t_sort = @elapsed begin
+        if seperateTraces(params.isotope_tracetype)
+            _sort_chromatograms!(chromatograms, [:precursor_idx, :isotopes_captured, :rt])
         else
-            sort!(chromatograms, [:precursor_idx, :rt])
+            _sort_chromatograms!(chromatograms, [:precursor_idx, :rt])
+        end
+        end  # t_sort
+        @user_info "  Sort chromatograms: $(round(t_sort, digits=2))s"
+
+        # CombineTraces: compute fraction_transmitted AFTER sort (order-independent per-row calc)
+        # and fill dummy isotopes_captured (needed by get_isolated_isotopes_strings downstream)
+        if !seperateTraces(params.isotope_tracetype)
+            t_post = @elapsed begin
+            get_fraction_transmitted!(
+                chromatograms,
+                getQuadTransmissionModel(search_context, ms_file_idx),
+                getSearchData(search_context),
+                chromatograms[!, :scan_idx],
+                getCharge(getPrecursors(getSpecLib(search_context))),
+                getMz(getPrecursors(getSpecLib(search_context))),
+                getSulfurCount(getPrecursors(getSpecLib(search_context))),
+                getCenterMzs(spectra),
+                getIsolationWidthMzs(spectra)
+            )
+            chromatograms[!, :isotopes_captured] = fill((Int8(0), Int8(0)), nrow(chromatograms))
+            end  # t_post
+            @user_info "  Post-sort fraction calc: $(round(t_post, digits=2))s"
         end
 
         # Integrate chromatographic peaks for each precursor
         # Updates peak_area and new_best_scan in passing_psms
-        integrate_precursors(
+        t_integrate = @elapsed integrate_precursors(
             chromatograms,
             params.isotope_tracetype,
             params.min_fraction_transmitted,
@@ -289,6 +338,7 @@ function process_file!(
             n_pad = params.n_pad,
             max_apex_offset = params.max_apex_offset
         )
+        @user_info "  Integrate chromatograms: $(round(t_integrate, digits=2))s"
         if params.ms1_quant==true
             integrate_precursors(
                 ms1_chromatograms,
