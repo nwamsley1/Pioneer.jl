@@ -103,10 +103,15 @@ println("  Materialization: $(round(materialize_time, digits=3))s")
 println("  fragment_bins: $n_frag_bins  rt_bins: $n_rt_bins  fragments: $n_frags")
 println("  Native memory: $(round(native_mem_mb, digits=1)) MB")
 
-# ── Build partitioned index ────────────────────────────────────────────────
-println("\nBuilding partitioned index ...")
+# ── Build partitioned index from library ──────────────────────────────────
+println("\nBuilding partitioned index from library ...")
 build_time = @elapsed begin
-    partitioned_index = build_partitioned_index(native_frag_index; partition_width=5.0f0)
+    partitioned_index = build_partitioned_index_from_lib(
+        Pioneer.getSpecLib(SEARCH_CONTEXT);
+        partition_width=5.0f0,
+        frag_bin_tol_ppm=10.0f0,
+        rt_bin_tol=1.0f0,
+    )
 end
 total_part_frags = sum(length(Pioneer.getFragments(p)) for p in partitioned_index.partitions)
 total_part_fbins = sum(length(Pioneer.getFragBins(p)) for p in partitioned_index.partitions)
@@ -206,22 +211,15 @@ end
 
 # Partitioned: mirrors searchFragmentIndexPartitioned scan loop
 partitioned_scores = Dict{Int, Dict{UInt32, UInt8}}()
-let rt_bin_idx = 1
-    reference_rt_bins = Pioneer.getRTBins(getPartition(partitioned_index, 1))
+let
     for scan_idx in all_ms2_scans
         irt_lo, irt_hi = Pioneer.getRTWindow(rt_to_irt_spline(Pioneer.getRetentionTime(spectra, scan_idx)), irt_tol)
-        while rt_bin_idx < length(reference_rt_bins) && Pioneer.getHigh(reference_rt_bins[rt_bin_idx]) < irt_lo
-            rt_bin_idx += 1
-        end
-        while rt_bin_idx > 1 && Pioneer.getLow(reference_rt_bins[rt_bin_idx]) > irt_lo
-            rt_bin_idx -= 1
-        end
 
         quad_func = Pioneer.getQuadTransmissionFunction(qtm, Pioneer.getCenterMz(spectra, scan_idx), Pioneer.getIsolationWidthMz(spectra, scan_idx))
         iso_bounds = Pioneer.getIsotopeErrBounds(search_parameters)
 
         searchScanPartitioned!(
-            counter, partitioned_index, rt_bin_idx, irt_hi,
+            counter, partitioned_index, irt_lo, irt_hi,
             Pioneer.getMzArray(spectra, scan_idx),
             mem, quad_func, iso_bounds
         )
@@ -417,10 +415,8 @@ let
     rt_bins_ref  = Pioneer.getRTBins(native_frag_index)
     frag_bins_ref = Pioneer.getFragBins(native_frag_index)
     fragments_ref = Pioneer.getFragments(native_frag_index)
-    ref_rt = Pioneer.getRTBins(getPartition(partitioned_index, 1))
 
     rt_bin_idx_b = 1
-    rt_bin_idx_p = 1
     n_collected = 0
 
     for scan_idx in all_ms2_scans
@@ -434,12 +430,6 @@ let
         while rt_bin_idx_b > 1 && Pioneer.getLow(rt_bins_ref[rt_bin_idx_b]) > irt_lo
             rt_bin_idx_b -= 1
         end
-        while rt_bin_idx_p < length(ref_rt) && Pioneer.getHigh(ref_rt[rt_bin_idx_p]) < irt_lo
-            rt_bin_idx_p += 1
-        end
-        while rt_bin_idx_p > 1 && Pioneer.getLow(ref_rt[rt_bin_idx_p]) > irt_lo
-            rt_bin_idx_p -= 1
-        end
 
         quad_func = Pioneer.getQuadTransmissionFunction(qtm, Pioneer.getCenterMz(spectra, scan_idx), Pioneer.getIsolationWidthMz(spectra, scan_idx))
         iso_bounds = Pioneer.getIsotopeErrBounds(search_parameters)
@@ -452,7 +442,7 @@ let
         Pioneer.reset!(counter)
 
         # Partitioned
-        searchScanPartitioned!(counter, partitioned_index, rt_bin_idx_p, irt_hi,
+        searchScanPartitioned!(counter, partitioned_index, irt_lo, irt_hi,
             Pioneer.getMzArray(spectra, scan_idx), mem, quad_func, iso_bounds)
         actual_prec_min = Float32(Pioneer.getPrecMinBound(quad_func) - Pioneer.NEUTRON * first(iso_bounds) / 2)
         actual_prec_max = Float32(Pioneer.getPrecMaxBound(quad_func) + Pioneer.NEUTRON * last(iso_bounds) / 2)

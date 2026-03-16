@@ -77,15 +77,18 @@ function queryFragmentPartitioned!(
 end
 
 """
-    searchScanPartitioned!(counter, pfi, rt_bin_idx, irt_high, masses, mass_err_model, quad_func, isotope_err_bounds)
+    searchScanPartitioned!(counter, pfi, irt_low, irt_high, masses, mass_err_model, quad_func, isotope_err_bounds)
 
 For each scan, determine which partitions overlap the quad isolation window, then
 search each relevant partition using the unconditional scoring loop.
+
+Each partition has its own RT bins, so we find the correct starting RT bin per
+partition via binary search on `irt_low`.
 """
 function searchScanPartitioned!(
         prec_id_to_score::Pioneer.Counter{UInt32, UInt8},
         pfi::PartitionedFragmentIndex{T},
-        rt_bin_idx::Int64,
+        irt_low::Float32,
         irt_high::Float32,
         masses::AbstractArray{Union{Missing, U}},
         mass_err_model::Pioneer.MassErrorModel,
@@ -107,12 +110,11 @@ function searchScanPartitioned!(
         p_fragments = Pioneer.getFragments(partition)
 
         isempty(p_frag_bins) && continue
+        n_rt = length(p_rt_bins)
 
-        # Walk RT bins for this partition (same logic as searchScan!)
-        local_rt_bin_idx = rt_bin_idx
-        if local_rt_bin_idx > length(p_rt_bins)
-            local_rt_bin_idx = length(p_rt_bins)
-        end
+        # Find the first RT bin whose upper bound >= irt_low (binary search)
+        local_rt_bin_idx = _find_rt_bin_start(p_rt_bins, irt_low)
+        local_rt_bin_idx > n_rt && continue
 
         @inbounds @fastmath while Pioneer.getLow(p_rt_bins[local_rt_bin_idx]) < irt_high
             sub_bin_range = Pioneer.getSubBinRange(p_rt_bins[local_rt_bin_idx])
@@ -142,14 +144,32 @@ function searchScanPartitioned!(
             end
 
             local_rt_bin_idx += 1
-            if local_rt_bin_idx > length(p_rt_bins)
-                local_rt_bin_idx = length(p_rt_bins)
+            if local_rt_bin_idx > n_rt
                 break
             end
         end
     end
 
     return nothing
+end
+
+"""
+Binary search for the first RT bin whose upper bound (getHigh) >= irt_low.
+Returns index in 1:length(rt_bins), or length(rt_bins)+1 if none qualifies.
+"""
+@inline function _find_rt_bin_start(rt_bins::Vector{Pioneer.FragIndexBin{T}}, irt_low::Float32) where {T}
+    lo, hi = 1, length(rt_bins)
+    result = hi + 1
+    @inbounds while lo <= hi
+        mid = (lo + hi) >>> 1
+        if Pioneer.getHigh(rt_bins[mid]) >= irt_low
+            result = mid
+            hi = mid - 1
+        else
+            lo = mid + 1
+        end
+    end
+    return result
 end
 
 """
@@ -178,11 +198,6 @@ function searchFragmentIndexPartitioned(
 
     prec_id = 0
     precursors_passed_scoring = Vector{UInt32}(undef, 250000)
-    rt_bin_idx = 1
-
-    # Use the first partition's RT bins for RT-bin advancement (all partitions share
-    # the same RT bin boundaries)
-    reference_rt_bins = Pioneer.getRTBins(getPartition(pfi, 1))
 
     for scan_idx in thread_task
         (scan_idx <= 0 || scan_idx > length(spectra)) && continue
@@ -190,21 +205,13 @@ function searchFragmentIndexPartitioned(
 
         irt_lo, irt_hi = Pioneer.getRTWindow(rt_to_irt_spline(Pioneer.getRetentionTime(spectra, scan_idx)), irt_tol)
 
-        # Advance RT bin index (same logic as searchFragmentIndex)
-        while rt_bin_idx < length(reference_rt_bins) && Pioneer.getHigh(reference_rt_bins[rt_bin_idx]) < irt_lo
-            rt_bin_idx += 1
-        end
-        while rt_bin_idx > 1 && Pioneer.getLow(reference_rt_bins[rt_bin_idx]) > irt_lo
-            rt_bin_idx -= 1
-        end
-
         counter = Pioneer.getPrecursorScores(search_data)
 
-        # Partitioned search (no binary search on prec_mz)
+        # Partitioned search — each partition finds its own RT bin via binary search
         searchScanPartitioned!(
             counter,
             pfi,
-            rt_bin_idx,
+            irt_lo,
             irt_hi,
             Pioneer.getMzArray(spectra, scan_idx),
             mem,
