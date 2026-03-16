@@ -154,6 +154,16 @@ function process_file!(
     end
 
     try
+        # Allocation tracking variables
+        alloc_rt_index = Int64(0)
+        alloc_load_psms = Int64(0)
+        alloc_extract = Int64(0)
+        alloc_bench_save = Int64(0)
+        alloc_iso_calc = Int64(0)
+        alloc_sort = Int64(0)
+        alloc_fraction = Int64(0)
+        alloc_integrate = Int64(0)
+
         # Check if required files exist (not empty paths from failed files)
         rt_index_path = getRtIndex(getMSData(search_context), ms_file_idx)
         passing_psms_path = getPassingPsms(getMSData(search_context), ms_file_idx)
@@ -170,13 +180,13 @@ function process_file!(
 
         # Build retention time index for efficient precursor lookup
         # Groups RTs into bins of 0.1 minute width
-        rt_index = buildRtIndex(
+        alloc_rt_index = @allocated rt_index = buildRtIndex(
             DataFrame(Arrow.Table(rt_index_path)),
             bin_rt_size = 0.1)
 
         # Load PSMs that passed previous filtering steps
         # Convert to DataFrame for processing
-        passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))#load_passing_psms(search_context, parsed_fname)
+        alloc_load_psms = @allocated passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))#load_passing_psms(search_context, parsed_fname)
         
         # Keep only target (non-decoy) PSMs
         if !params.write_decoys
@@ -200,6 +210,7 @@ function process_file!(
         # Extract chromatograms for all passing PSMs
         # Builds chromatograms using parallel processing across scan ranges
         # Profile the first file's chromatogram extraction
+        alloc_extract = @allocated begin
         _do_profile = (ms_file_idx == 1)
         if _do_profile
             Profile.clear()
@@ -226,12 +237,15 @@ function process_file!(
                 MS2CHROM(),
             )
         end
+        end # @allocated alloc_extract
         # Save unsorted chromatograms for sorting benchmarks (first file only)
         if ms_file_idx == 1
             out_dir = getDataOutDir(search_context)
+            alloc_bench_save = @allocated begin
             bench_df = copy(chromatograms)
             bench_df[!, :rt_milliminutes] = round.(UInt32, bench_df.rt .* 1000)
             Arrow.write(joinpath(out_dir, "unsorted_chroms_ms2.arrow"), bench_df)
+            end # @allocated bench_save
             @user_info "  Saved unsorted chromatograms to $out_dir"
         end
         if params.ms1_quant==true
@@ -250,6 +264,7 @@ function process_file!(
         end
         #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
         #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
+        alloc_iso_calc = @allocated begin
         t_iso_calc = @elapsed begin
         if seperateTraces(params.isotope_tracetype)
             get_isotopes_captured!(
@@ -266,8 +281,10 @@ function process_file!(
             )
         end
         end  # t_iso_calc
-        @user_info "  Isotope/transmission calc: $(round(t_iso_calc, digits=2))s"
+        end  # @allocated iso_calc
+        @user_info "  Isotope/transmission calc: $(round(t_iso_calc, digits=2))s | $(round(alloc_iso_calc/1e9, digits=2)) GB"
 
+        alloc_sort = @allocated begin
         t_sort = @elapsed begin
         if seperateTraces(params.isotope_tracetype)
             fast_df_sort!(chromatograms, [:precursor_idx, :isotopes_captured, :rt])
@@ -275,11 +292,13 @@ function process_file!(
             fast_df_sort!(chromatograms, [:precursor_idx, :rt])
         end
         end  # t_sort
-        @user_info "  Sort chromatograms: $(round(t_sort, digits=2))s"
+        end  # @allocated sort
+        @user_info "  Sort chromatograms: $(round(t_sort, digits=2))s | $(round(alloc_sort/1e9, digits=2)) GB"
 
         # CombineTraces: compute fraction_transmitted AFTER sort (order-independent per-row calc)
         # and fill dummy isotopes_captured (needed by get_isolated_isotopes_strings downstream)
         if !seperateTraces(params.isotope_tracetype)
+            alloc_fraction = @allocated begin
             t_post = @elapsed begin
             get_fraction_transmitted!(
                 chromatograms,
@@ -294,11 +313,13 @@ function process_file!(
             )
             chromatograms[!, :isotopes_captured] = fill((Int8(0), Int8(0)), nrow(chromatograms))
             end  # t_post
-            @user_info "  Post-sort fraction calc: $(round(t_post, digits=2))s"
+            end  # @allocated fraction
+            @user_info "  Post-sort fraction calc: $(round(t_post, digits=2))s | $(round(alloc_fraction/1e9, digits=2)) GB"
         end
 
         # Integrate chromatographic peaks for each precursor
         # Updates peak_area and new_best_scan in passing_psms
+        alloc_integrate = @allocated begin
         t_integrate = @elapsed integrate_precursors(
             chromatograms,
             params.isotope_tracetype,
@@ -316,7 +337,8 @@ function process_file!(
             n_pad = params.n_pad,
             max_apex_offset = params.max_apex_offset
         )
-        @user_info "  Integrate chromatograms: $(round(t_integrate, digits=2))s"
+        end # @allocated integrate
+        @user_info "  Integrate chromatograms: $(round(t_integrate, digits=2))s | $(round(alloc_integrate/1e9, digits=2)) GB"
         if params.ms1_quant==true
             integrate_precursors(
                 ms1_chromatograms,
@@ -339,6 +361,21 @@ function process_file!(
         end
         # Clear chromatograms to free memory
         chromatograms = nothing
+
+        # Allocation summary
+        alloc_total = alloc_rt_index + alloc_load_psms + alloc_extract + alloc_bench_save + alloc_iso_calc + alloc_sort + alloc_fraction + alloc_integrate
+        @user_info "  ╔══ Allocation Breakdown (file $ms_file_idx) ══════════════"
+        @user_info "  ║ RT index build:       $(lpad(round(alloc_rt_index/1e9, digits=2), 8)) GB"
+        @user_info "  ║ Load PSMs:            $(lpad(round(alloc_load_psms/1e9, digits=2), 8)) GB"
+        @user_info "  ║ Extract chroms:       $(lpad(round(alloc_extract/1e9, digits=2), 8)) GB"
+        @user_info "  ║ Bench save:           $(lpad(round(alloc_bench_save/1e9, digits=2), 8)) GB"
+        @user_info "  ║ Isotope calc:         $(lpad(round(alloc_iso_calc/1e9, digits=2), 8)) GB"
+        @user_info "  ║ Sort:                 $(lpad(round(alloc_sort/1e9, digits=2), 8)) GB"
+        @user_info "  ║ Fraction transmitted: $(lpad(round(alloc_fraction/1e9, digits=2), 8)) GB"
+        @user_info "  ║ Integrate:            $(lpad(round(alloc_integrate/1e9, digits=2), 8)) GB"
+        @user_info "  ║ ─────────────────────────────────"
+        @user_info "  ║ TOTAL measured:       $(lpad(round(alloc_total/1e9, digits=2), 8)) GB"
+        @user_info "  ╚══════════════════════════════════"
 
         # Store processed PSMs in results
         results.psms[] = passing_psms
