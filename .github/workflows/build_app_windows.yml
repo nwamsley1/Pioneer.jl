@@ -200,9 +200,7 @@ jobs:
           $desc       = $info.description
           $identifier = $info.identifier
           $rawVersion = '${{ steps.get_version.outputs.version }}'
-          $isDevBuild = $rawVersion -like "dev-*"
-          $allowDowngrades = if ($isDevBuild) { "yes" } else { "no" }
-          Write-Host "MSI downgrade mode: $allowDowngrades (version=$rawVersion)"
+          Write-Host "MSI will replace any existing Pioneer install (version=$rawVersion)"
 
           & heat.exe dir $pioneerRoot `
             -cg ProductComponents `
@@ -217,7 +215,6 @@ jobs:
             -dProductVersion="${{ steps.norm.outputs.msi }}" `
             -dProductDescription="$desc" `
             -dPackageIdentifier="$identifier" `
-            -dAllowDowngrades="$allowDowngrades" `
             -dPlatform="x64" `
             -arch x64 `
             -ext WixUIExtension `

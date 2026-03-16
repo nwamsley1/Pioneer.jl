@@ -399,12 +399,8 @@ function BuildSpecLib(params_path::String)
         dual_println("\nLibrary location: ", lib_dir)
     end
 
-    # cleanup temp files
-    GC.gc()
-    rm(joinpath(lib_dir, "raw_fragments.arrow"), force=true)
-    rm(joinpath(lib_dir,"fragments_table.arrow"), force=true);
-    rm(joinpath(lib_dir,"prec_to_frag.arrow"), force=true);
-    rm(joinpath(lib_dir,"precursors.arrow"), force=true);
+    # Clean up temp files after build; on Windows these may still be transiently locked.
+    cleanUpLibrary(lib_dir)
     GC.gc()
 
     return nothing
