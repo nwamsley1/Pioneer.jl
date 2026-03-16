@@ -251,15 +251,18 @@ function summarize_results!(
         # Stream-concatenate chunks into precursors_long.arrow for QC plots
         @user_info "Concatenating chunks to precursors_long.arrow..."
         for (i, chunk_ref) in enumerate(chunk_refs)
-            tbl = Arrow.Table(file_path(chunk_ref))
-            if i == 1
-                open(precursors_long_path, "w") do io
-                    Arrow.write(io, tbl; file=false)
+            let tbl = Arrow.Table(file_path(chunk_ref))
+                if i == 1
+                    open(precursors_long_path, "w") do io
+                        Arrow.write(io, tbl; file=false)
+                    end
+                else
+                    Arrow.append(precursors_long_path, tbl)
                 end
-            else
-                Arrow.append(precursors_long_path, tbl)
             end
         end
+        chunk_refs = nothing
+        GC.gc()
 
         @user_info "Creating QC plots..."
         # Create QC plots
@@ -275,13 +278,13 @@ function summarize_results!(
             all_file_names
         )
 
-        # Cleanup chunk files — GC first to release Arrow mmap handles (NFS silly-rename fix)
+        # Cleanup chunk files after dropping Arrow.Table references.
         if isdir(chunk_dir)
-            GC.gc(false)
+            GC.gc()
             try
                 rm(chunk_dir; recursive=true, force=true)
             catch e
-                # On NFS, stale .nfs* handles may linger; temp_data deletion below will retry
+                # On Windows, a chunk file may still be briefly locked by Arrow mmap state.
                 @debug "merge_chunks cleanup deferred" exception=e
             end
         end
@@ -293,7 +296,7 @@ function summarize_results!(
             try
                 isdir(temp_path) && rm(temp_path; recursive=true, force=true)
             catch e
-                @warn "Could not fully remove temp_data (NFS stale handles?)" exception=e
+                @warn "Could not fully remove temp_data (likely lingering file handles)" exception=e
             end
         end
 
