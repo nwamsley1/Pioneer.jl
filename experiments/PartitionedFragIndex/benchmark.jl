@@ -210,7 +210,7 @@ let rt_bin_idx = 1
     end
 end
 
-# Partitioned: mirrors searchFragmentIndexPartitioned scan loop
+# Partitioned: score per-partition into local counter, collect global scores
 partitioned_scores = Dict{Int, Dict{UInt32, UInt8}}()
 let
     max_local = maximum(p -> Int(p.n_local_precs), getPartitions(partitioned_index); init=0)
@@ -220,27 +220,32 @@ let
 
         quad_func = Pioneer.getQuadTransmissionFunction(qtm, Pioneer.getCenterMz(spectra, scan_idx), Pioneer.getIsolationWidthMz(spectra, scan_idx))
         iso_bounds = Pioneer.getIsotopeErrBounds(search_parameters)
-
-        searchScanLocal!(
-            counter, local_counter, partitioned_index, irt_lo, irt_hi,
-            Pioneer.getMzArray(spectra, scan_idx),
-            mem, quad_func, iso_bounds
-        )
-
-        # Post-filter: zero out false positives outside actual quad window
         actual_prec_min = Float32(Pioneer.getPrecMinBound(quad_func) - Pioneer.NEUTRON * first(iso_bounds) / 2)
         actual_prec_max = Float32(Pioneer.getPrecMaxBound(quad_func) + Pioneer.NEUTRON * last(iso_bounds) / 2)
-        @inbounds for idx in 1:(Pioneer.getSize(counter) - 1)
-            pid = Pioneer.getID(counter, idx)
-            pid == 0 && continue
-            pmz = precursor_mzs[pid]
-            if pmz < actual_prec_min || pmz > actual_prec_max
-                counter.counts[pid] = zero(UInt8)
+
+        first_k, last_k = get_partition_range(partitioned_index, actual_prec_min, actual_prec_max)
+        scores = Dict{UInt32, UInt8}()
+
+        for k in first_k:last_k
+            partition = getPartition(partitioned_index, k)
+            _score_partition!(local_counter, partition, irt_lo, irt_hi,
+                             Pioneer.getMzArray(spectra, scan_idx), mem)
+
+            # Collect all non-zero scores with post-filter
+            l2g = partition.local_to_global
+            @inbounds for i in 1:(local_counter.size - 1)
+                lid = local_counter.ids[i]
+                score = local_counter.counts[lid]
+                score == zero(UInt8) && continue
+                global_pid = l2g[lid]
+                pmz = precursor_mzs[global_pid]
+                (pmz < actual_prec_min || pmz > actual_prec_max) && continue
+                scores[global_pid] = score
             end
+            reset!(local_counter)
         end
 
-        partitioned_scores[scan_idx] = snapshot_counter(counter)
-        Pioneer.reset!(counter)
+        partitioned_scores[scan_idx] = scores
     end
 end
 
@@ -446,21 +451,27 @@ let
         base_snap = snapshot_counter(counter)
         Pioneer.reset!(counter)
 
-        # Partitioned
-        searchScanLocal!(counter, local_counter_d, partitioned_index, irt_lo, irt_hi,
-            Pioneer.getMzArray(spectra, scan_idx), mem, quad_func, iso_bounds)
+        # Partitioned — score per-partition, collect with post-filter
         actual_prec_min = Float32(Pioneer.getPrecMinBound(quad_func) - Pioneer.NEUTRON * first(iso_bounds) / 2)
         actual_prec_max = Float32(Pioneer.getPrecMaxBound(quad_func) + Pioneer.NEUTRON * last(iso_bounds) / 2)
-        @inbounds for idx in 1:(Pioneer.getSize(counter) - 1)
-            pid = Pioneer.getID(counter, idx)
-            pid == 0 && continue
-            pmz = precursor_mzs[pid]
-            if pmz < actual_prec_min || pmz > actual_prec_max
-                counter.counts[pid] = zero(UInt8)
+        first_k_d, last_k_d = get_partition_range(partitioned_index, actual_prec_min, actual_prec_max)
+        part_snap = Dict{UInt32, UInt8}()
+        for k_d in first_k_d:last_k_d
+            partition_d = getPartition(partitioned_index, k_d)
+            _score_partition!(local_counter_d, partition_d, irt_lo, irt_hi,
+                             Pioneer.getMzArray(spectra, scan_idx), mem)
+            l2g_d = partition_d.local_to_global
+            @inbounds for i_d in 1:(local_counter_d.size - 1)
+                lid_d = local_counter_d.ids[i_d]
+                sc_d = local_counter_d.counts[lid_d]
+                sc_d == zero(UInt8) && continue
+                gpid = l2g_d[lid_d]
+                pmz_d = precursor_mzs[gpid]
+                (pmz_d < actual_prec_min || pmz_d > actual_prec_max) && continue
+                part_snap[gpid] = sc_d
             end
+            reset!(local_counter_d)
         end
-        part_snap = snapshot_counter(counter)
-        Pioneer.reset!(counter)
 
         # Check for score mismatch
         has_mismatch = false

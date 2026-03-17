@@ -229,87 +229,59 @@ Returns index in 1:length(rt_bins), or length(rt_bins)+1 if none qualifies.
 end
 
 """
-    searchScanLocal!(global_counter, local_counter, pfi, irt_low, irt_high, masses,
-                     mass_err_model, quad_func, isotope_err_bounds)
+    _score_partition!(local_counter, partition, irt_low, irt_high, masses, mass_err_model)
 
-Search a LocalPartitionedFragmentIndex using a small Counter{UInt16, UInt8} per
-partition for cache-friendly scoring, then transfer results to the global counter.
-
-The local counter is reused across partitions within each scan (reset between).
+Score one partition's fragments into the local counter. Does not reset the counter.
 """
-function searchScanLocal!(
-        global_counter::Pioneer.Counter{UInt32, UInt8},
+@inline function _score_partition!(
         local_counter::LocalCounter{UInt16, UInt8},
-        pfi::LocalPartitionedFragmentIndex{T},
+        partition::LocalPartition{T},
         irt_low::Float32,
         irt_high::Float32,
         masses::AbstractArray{Union{Missing, U}},
         mass_err_model::Pioneer.MassErrorModel,
-        quad_transmission_func::Pioneer.QuadTransmissionFunction,
-        isotope_err_bounds::Tuple{UInt8, UInt8}
         ) where {T<:AbstractFloat, U<:AbstractFloat}
 
-    prec_min = T(Pioneer.getPrecMinBound(quad_transmission_func) - Pioneer.NEUTRON * first(isotope_err_bounds) / 2)
-    prec_max = T(Pioneer.getPrecMaxBound(quad_transmission_func) + Pioneer.NEUTRON * last(isotope_err_bounds) / 2)
+    p_rt_bins   = getRTBins(partition)
+    p_frag_bins = getFragBins(partition)
+    p_fragments = getFragments(partition)
 
-    first_k, last_k = get_partition_range(pfi, prec_min, prec_max)
+    isempty(p_frag_bins) && return nothing
+    n_rt = length(p_rt_bins)
 
-    for k in first_k:last_k
-        partition = getPartition(pfi, k)
-        p_rt_bins   = getRTBins(partition)
-        p_frag_bins = getFragBins(partition)
-        p_fragments = getFragments(partition)
+    local_rt_bin_idx = _find_rt_bin_start(p_rt_bins, irt_low)
+    local_rt_bin_idx > n_rt && return nothing
 
-        isempty(p_frag_bins) && continue
-        n_rt = length(p_rt_bins)
+    @inbounds @fastmath while Pioneer.getLow(p_rt_bins[local_rt_bin_idx]) < irt_high
+        sub_bin_range = Pioneer.getSubBinRange(p_rt_bins[local_rt_bin_idx])
+        min_frag_bin = first(sub_bin_range)
+        max_frag_bin = last(sub_bin_range)
 
-        local_rt_bin_idx = _find_rt_bin_start(p_rt_bins, irt_low)
-        local_rt_bin_idx > n_rt && continue
+        if min_frag_bin <= max_frag_bin
+            lower_bound_guess = min_frag_bin
+            upper_bound_guess = min_frag_bin
 
-        # Score into the small local counter (UInt16 IDs)
-        @inbounds @fastmath while Pioneer.getLow(p_rt_bins[local_rt_bin_idx]) < irt_high
-            sub_bin_range = Pioneer.getSubBinRange(p_rt_bins[local_rt_bin_idx])
-            min_frag_bin = first(sub_bin_range)
-            max_frag_bin = last(sub_bin_range)
+            for mass in masses
+                corrected_mz = Pioneer.getCorrectedMz(mass_err_model, mass)
+                frag_min, frag_max = Pioneer.getMzBoundsReverse(mass_err_model, corrected_mz)
 
-            if min_frag_bin <= max_frag_bin
-                lower_bound_guess = min_frag_bin
-                upper_bound_guess = min_frag_bin
-
-                for mass in masses
-                    corrected_mz = Pioneer.getCorrectedMz(mass_err_model, mass)
-                    frag_min, frag_max = Pioneer.getMzBoundsReverse(mass_err_model, corrected_mz)
-
-                    lower_bound_guess, upper_bound_guess = queryFragmentPartitioned!(
-                        local_counter,
-                        max_frag_bin,
-                        lower_bound_guess,
-                        upper_bound_guess,
-                        p_frag_bins,
-                        p_fragments,
-                        frag_min,
-                        frag_max
-                    )
-                end
-            end
-
-            local_rt_bin_idx += 1
-            if local_rt_bin_idx > n_rt
-                break
+                lower_bound_guess, upper_bound_guess = queryFragmentPartitioned!(
+                    local_counter,
+                    max_frag_bin,
+                    lower_bound_guess,
+                    upper_bound_guess,
+                    p_frag_bins,
+                    p_fragments,
+                    frag_min,
+                    frag_max
+                )
             end
         end
 
-        # Transfer local scores → global counter, then reset local
-        l2g = partition.local_to_global
-        @inbounds for i in 1:(local_counter.size - 1)
-            lid = local_counter.ids[i]
-            lid == zero(UInt16) && continue
-            score = local_counter.counts[lid]
-            score == zero(UInt8) && continue
-            global_pid = l2g[lid]
-            Pioneer.inc!(global_counter, global_pid, score)
+        local_rt_bin_idx += 1
+        if local_rt_bin_idx > n_rt
+            break
         end
-        reset!(local_counter)
     end
 
     return nothing
@@ -404,8 +376,12 @@ function searchFragmentIndexPartitioned(
 end
 
 """
-Per-thread entry point for LocalPartitionedFragmentIndex search. Uses a small
-Counter{UInt16, UInt8} for partition-local scoring, translates to global IDs.
+Per-thread entry point for LocalPartitionedFragmentIndex search.
+
+Scores each partition into a small LocalCounter{UInt16, UInt8}, applies the
+score threshold and post-filter on local IDs, then converts only passing
+precursors to global UInt32 IDs. No global counter needed — the local counter
+fits in L1/L2 cache.
 """
 function searchFragmentIndexPartitioned(
         scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
@@ -428,63 +404,56 @@ function searchFragmentIndexPartitioned(
     # Small counter for partition-local scoring (reused across scans+partitions)
     max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
     local_counter = LocalCounter(UInt16, UInt8, max_local + 1)
+    min_score = Pioneer.getMinIndexSearchScore(params)
 
     for scan_idx in thread_task
         (scan_idx <= 0 || scan_idx > length(spectra)) && continue
         Pioneer.getMsOrder(spectra, scan_idx) ∉ Pioneer.getSpecOrder(params) && continue
 
         irt_lo, irt_hi = Pioneer.getRTWindow(rt_to_irt_spline(Pioneer.getRetentionTime(spectra, scan_idx)), irt_tol)
-
-        counter = Pioneer.getPrecursorScores(search_data)
-
-        # Search with local counter → global counter
-        searchScanLocal!(
-            counter,
-            local_counter,
-            pfi,
-            irt_lo,
-            irt_hi,
-            Pioneer.getMzArray(spectra, scan_idx),
-            mem,
-            Pioneer.getQuadTransmissionFunction(qtm, Pioneer.getCenterMz(spectra, scan_idx), Pioneer.getIsolationWidthMz(spectra, scan_idx)),
-            Pioneer.getIsotopeErrBounds(params)
-        )
-
-        # Post-filter: zero out scores for precursors outside the actual quad window
+        masses = Pioneer.getMzArray(spectra, scan_idx)
         quad_func = Pioneer.getQuadTransmissionFunction(qtm, Pioneer.getCenterMz(spectra, scan_idx), Pioneer.getIsolationWidthMz(spectra, scan_idx))
         iso_bounds = Pioneer.getIsotopeErrBounds(params)
         actual_prec_min = Float32(Pioneer.getPrecMinBound(quad_func) - Pioneer.NEUTRON * first(iso_bounds) / 2)
         actual_prec_max = Float32(Pioneer.getPrecMaxBound(quad_func) + Pioneer.NEUTRON * last(iso_bounds) / 2)
 
-        @inbounds for idx in 1:(Pioneer.getSize(counter) - 1)
-            pid = Pioneer.getID(counter, idx)
-            pid == 0 && continue
-            pmz = precursor_mzs[pid]
-            if pmz < actual_prec_min || pmz > actual_prec_max
-                counter.counts[pid] = zero(UInt8)
-            end
-        end
+        first_k, last_k = get_partition_range(pfi, Float32(actual_prec_min), Float32(actual_prec_max))
+        scan_start = prec_id + 1
 
-        _match_count, _prec_count = Pioneer.filterPrecursorMatches!(counter, Pioneer.getMinIndexSearchScore(params))
+        for k in first_k:last_k
+            partition = getPartition(pfi, k)
 
-        if Pioneer.getID(counter, 1) > 0
-            start_idx = prec_id + 1
-            n = 1
-            while n <= counter.matches
+            # Score this partition's fragments into the local counter
+            _score_partition!(local_counter, partition, irt_lo, irt_hi, masses, mem)
+
+            # Filter + collect: only convert passing local IDs to global
+            l2g = partition.local_to_global
+            @inbounds for i in 1:(local_counter.size - 1)
+                lid = local_counter.ids[i]
+                score = local_counter.counts[lid]
+                score < min_score && continue
+
+                # Post-filter: check prec_mz against quad window
+                global_pid = l2g[lid]
+                pmz = precursor_mzs[global_pid]
+                (pmz < actual_prec_min || pmz > actual_prec_max) && continue
+
                 prec_id += 1
                 if prec_id > length(precursors_passed_scoring)
                     append!(precursors_passed_scoring,
                             Vector{eltype(precursors_passed_scoring)}(undef, length(precursors_passed_scoring)))
                 end
-                precursors_passed_scoring[prec_id] = Pioneer.getID(counter, n)
-                n += 1
+                precursors_passed_scoring[prec_id] = global_pid
             end
-            scan_to_prec_idx[scan_idx] = start_idx:prec_id
+
+            reset!(local_counter)
+        end
+
+        if prec_id >= scan_start
+            scan_to_prec_idx[scan_idx] = scan_start:prec_id
         else
             scan_to_prec_idx[scan_idx] = missing
         end
-
-        Pioneer.reset!(counter)
     end
 
     return precursors_passed_scoring[1:prec_id]
