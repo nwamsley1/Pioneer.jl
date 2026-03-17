@@ -116,7 +116,8 @@ end
 total_part_frags = sum(length(getFragments(p)) for p in partitioned_index.partitions)
 total_part_fbins = sum(length(getFragBins(p)) for p in partitioned_index.partitions)
 part_mem_mb = sum(
-    sizeof(getFragBins(p)) + sizeof(getRTBins(p)) + sizeof(getFragments(p))
+    sizeof(getFragBins(p)) + sizeof(getRTBins(p)) + sizeof(getFragments(p)) +
+    (hasproperty(p, :local_to_global) ? sizeof(p.local_to_global) : 0)
     for p in partitioned_index.partitions
 ) / 1024^2
 println("  Build time: $(round(build_time, digits=3))s")
@@ -212,14 +213,16 @@ end
 # Partitioned: mirrors searchFragmentIndexPartitioned scan loop
 partitioned_scores = Dict{Int, Dict{UInt32, UInt8}}()
 let
+    max_local = maximum(p -> Int(p.n_local_precs), getPartitions(partitioned_index); init=0)
+    local_counter = LocalCounter(UInt16, UInt8, max_local + 1)
     for scan_idx in all_ms2_scans
         irt_lo, irt_hi = Pioneer.getRTWindow(rt_to_irt_spline(Pioneer.getRetentionTime(spectra, scan_idx)), irt_tol)
 
         quad_func = Pioneer.getQuadTransmissionFunction(qtm, Pioneer.getCenterMz(spectra, scan_idx), Pioneer.getIsolationWidthMz(spectra, scan_idx))
         iso_bounds = Pioneer.getIsotopeErrBounds(search_parameters)
 
-        searchScanPartitioned!(
-            counter, partitioned_index, irt_lo, irt_hi,
+        searchScanLocal!(
+            counter, local_counter, partitioned_index, irt_lo, irt_hi,
             Pioneer.getMzArray(spectra, scan_idx),
             mem, quad_func, iso_bounds
         )
@@ -418,6 +421,8 @@ let
 
     rt_bin_idx_b = 1
     n_collected = 0
+    max_local_d = maximum(p -> Int(p.n_local_precs), getPartitions(partitioned_index); init=0)
+    local_counter_d = LocalCounter(UInt16, UInt8, max_local_d + 1)
 
     for scan_idx in all_ms2_scans
         n_collected >= 10 && break
@@ -442,7 +447,7 @@ let
         Pioneer.reset!(counter)
 
         # Partitioned
-        searchScanPartitioned!(counter, partitioned_index, irt_lo, irt_hi,
+        searchScanLocal!(counter, local_counter_d, partitioned_index, irt_lo, irt_hi,
             Pioneer.getMzArray(spectra, scan_idx), mem, quad_func, iso_bounds)
         actual_prec_min = Float32(Pioneer.getPrecMinBound(quad_func) - Pioneer.NEUTRON * first(iso_bounds) / 2)
         actual_prec_max = Float32(Pioneer.getPrecMaxBound(quad_func) + Pioneer.NEUTRON * last(iso_bounds) / 2)
