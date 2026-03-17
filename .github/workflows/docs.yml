@@ -36,7 +36,7 @@ jobs:
           path: |
             ~/.julia/registries
             ~/.julia/packages
-          key: docs-${{ runner.os }}-${{ hashFiles('docs/Project.toml','docs/Manifest.toml') }}
+          key: docs-${{ runner.os }}-${{ hashFiles('Project.toml','Manifest.toml','docs/Project.toml','docs/Manifest.toml') }}
 
       - name: Configure doc environment
         shell: julia --threads auto --project=docs --color=yes {0}
