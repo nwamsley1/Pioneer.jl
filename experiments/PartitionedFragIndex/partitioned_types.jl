@@ -197,6 +197,46 @@ end
     return nothing
 end
 
+"""
+    BitmaskCounter{I}
+
+Counter using bitwise OR instead of addition. Each fragment sets a unique
+bit in `counts[id]`. A precursor passes when `counts[id] == pass_mask`
+(all required bits set).
+
+- No overflow — OR is idempotent (duplicate matches are harmless)
+- Threshold check is a single `==` comparison
+- Works with UInt8 counts (supports up to 8 fragment bits)
+"""
+mutable struct BitmaskCounter{I}
+    ids::Vector{I}
+    counts::Vector{UInt8}
+    size::Int64
+end
+
+function BitmaskCounter(::Type{I}, n::Int) where {I}
+    BitmaskCounter{I}(zeros(I, n), zeros(UInt8, n), 1)
+end
+
+@inline function bitmask_inc!(c::BitmaskCounter{I}, id::I, bitmask::UInt8) where {I}
+    @inbounds @fastmath begin
+        no_previous_encounter = c.counts[id] === zero(UInt8)
+        c.ids[c.size] = id
+        c.size += no_previous_encounter
+        c.counts[id] |= bitmask
+    end
+    return nothing
+end
+
+@inline function reset!(c::BitmaskCounter{I}) where {I}
+    @inbounds for i in 1:(c.size - 1)
+        c.counts[c.ids[i]] = zero(UInt8)
+        c.ids[i] = zero(I)
+    end
+    c.size = 1
+    return nothing
+end
+
 @inline function get_partition_range(pfi::LocalPartitionedFragmentIndex{T}, query_min::T, query_max::T) where {T}
     bounds = pfi.partition_bounds
     n = pfi.n_partitions

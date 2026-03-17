@@ -111,6 +111,7 @@ build_time = @elapsed begin
         partition_width=5.0f0,
         frag_bin_tol_ppm=10.0f0,
         rt_bin_tol=1.0f0,
+        rank_to_score=UInt8[1, 1, 1],  # Top 3 fragments, score=1 each, threshold=3
     )
 end
 total_part_frags = sum(length(getFragments(p)) for p in partitioned_index.partitions)
@@ -406,9 +407,47 @@ println("  Partitioned time: $(round(partitioned_time, digits=3))s")
 speedup = baseline_time / partitioned_time
 println("\n" * "-"^40)
 println("  Baseline:    $(round(baseline_time, digits=3))s")
-println("  Partitioned: $(round(partitioned_time, digits=3))s")
+println("  Partitioned (additive, top-3): $(round(partitioned_time, digits=3))s")
 println("  Speedup:     $(round(speedup, digits=2))x")
 println("  Build cost:  $(round(build_time, digits=3))s ($(round(build_time/baseline_time*100, digits=1))% of one baseline search)")
+println("-"^40)
+
+# ── Bitmask benchmark ────────────────────────────────────────────────────
+println("\nBuilding bitmask index (top-3, scores=1|2|4, pass_mask=7) ...")
+bitmask_build_time = @elapsed begin
+    bitmask_index = build_partitioned_index_from_lib(
+        Pioneer.getSpecLib(SEARCH_CONTEXT);
+        partition_width=5.0f0,
+        frag_bin_tol_ppm=10.0f0,
+        rt_bin_tol=1.0f0,
+        rank_to_score=UInt8[1, 2, 4],  # bit positions for 3 fragments
+    )
+end
+println("  Build time: $(round(bitmask_build_time, digits=3))s")
+
+# Warmup bitmask
+println("Warmup bitmask ...")
+let
+    s2p_bm = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    searchFragmentIndexPartitionMajorBitmask(
+        s2p_bm, bitmask_index, spectra, all_ms2_scan_idxs,
+        Threads.nthreads(), UInt8(7), qtm, mem, rt_to_irt_spline, irt_tol,
+        precursor_mzs
+    )
+end
+
+println("Running bitmask (partition-major, OR scoring) ...")
+bitmask_time = @elapsed begin
+    s2p_bm = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    searchFragmentIndexPartitionMajorBitmask(
+        s2p_bm, bitmask_index, spectra, all_ms2_scan_idxs,
+        Threads.nthreads(), UInt8(7), qtm, mem, rt_to_irt_spline, irt_tol,
+        precursor_mzs
+    )
+end
+bm_speedup = baseline_time / bitmask_time
+println("  Bitmask time: $(round(bitmask_time, digits=3))s")
+println("  Speedup:      $(round(bm_speedup, digits=2))x")
 println("-"^40)
 
 # ── Serialize diagnostic data ─────────────────────────────────────────────

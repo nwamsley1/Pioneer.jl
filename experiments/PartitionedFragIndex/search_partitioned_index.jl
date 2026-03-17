@@ -29,6 +29,115 @@ end
     return nothing
 end
 
+# ── Bitmask scoring functions ─────────────────────────────────────────────
+
+@inline function searchFragmentBinBitmask!(
+        counter::BitmaskCounter{I},
+        fragments::AbstractVector,
+        frag_id_range::UnitRange{UInt32}) where {I}
+    @inbounds for i in frag_id_range
+        frag = fragments[i]
+        bitmask_inc!(counter, Pioneer.getPrecID(frag), Pioneer.getScore(frag))
+    end
+    return nothing
+end
+
+function queryFragmentBitmask!(
+        counter::BitmaskCounter{I},
+        frag_bin_max_idx::UInt32,
+        lower_bound_guess::UInt32,
+        upper_bound_guess::UInt32,
+        frag_bins::Vector{Pioneer.FragIndexBin{T}},
+        fragments::AbstractVector,
+        frag_mz_min::Float32,
+        frag_mz_max::Float32) where {I, T<:AbstractFloat}
+
+    lower_bound_guess, upper_bound_guess = Pioneer.exponentialFragmentBinSearch(
+        frag_bins, frag_bin_max_idx, lower_bound_guess, upper_bound_guess,
+        frag_mz_min, frag_mz_max, UInt32(2048))
+
+    frag_bin_idx = Pioneer.findFirstFragmentBin(
+        frag_bins, lower_bound_guess, upper_bound_guess, frag_mz_min)
+
+    @inbounds @fastmath begin
+        if iszero(frag_bin_idx)
+            return lower_bound_guess, upper_bound_guess
+        end
+        while frag_bin_idx <= frag_bin_max_idx
+            frag_bin = frag_bins[frag_bin_idx]
+            if Pioneer.getLow(frag_bin) > frag_mz_max
+                break
+            else
+                if frag_bin_max_idx === frag_bin_idx
+                    if Pioneer.getHigh(frag_bin) < frag_mz_min
+                        break
+                    end
+                end
+                frag_id_range = Pioneer.getSubBinRange(frag_bin)
+                searchFragmentBinBitmask!(counter, fragments, frag_id_range)
+                frag_bin_idx += 1
+            end
+        end
+    end
+    return lower_bound_guess, upper_bound_guess
+end
+
+@inline function _score_partition_bitmask!(
+        counter::BitmaskCounter{UInt16},
+        partition::LocalPartition{T},
+        irt_low::Float32,
+        irt_high::Float32,
+        masses::AbstractArray{Union{Missing, U}},
+        mass_err_model::Pioneer.MassErrorModel,
+        ) where {T<:AbstractFloat, U<:AbstractFloat}
+
+    p_rt_bins   = getRTBins(partition)
+    p_frag_bins = getFragBins(partition)
+    p_fragments = getFragments(partition)
+
+    isempty(p_frag_bins) && return nothing
+    n_rt = length(p_rt_bins)
+
+    local_rt_bin_idx = _find_rt_bin_start(p_rt_bins, irt_low)
+    local_rt_bin_idx > n_rt && return nothing
+
+    @inbounds @fastmath while Pioneer.getLow(p_rt_bins[local_rt_bin_idx]) < irt_high
+        sub_bin_range = Pioneer.getSubBinRange(p_rt_bins[local_rt_bin_idx])
+        min_frag_bin = first(sub_bin_range)
+        max_frag_bin = last(sub_bin_range)
+
+        if min_frag_bin <= max_frag_bin
+            lower_bound_guess = min_frag_bin
+            upper_bound_guess = min_frag_bin
+
+            for mass in masses
+                corrected_mz = Pioneer.getCorrectedMz(mass_err_model, mass)
+                frag_min, frag_max = Pioneer.getMzBoundsReverse(mass_err_model, corrected_mz)
+
+                lower_bound_guess, upper_bound_guess = queryFragmentBitmask!(
+                    counter,
+                    max_frag_bin,
+                    lower_bound_guess,
+                    upper_bound_guess,
+                    p_frag_bins,
+                    p_fragments,
+                    frag_min,
+                    frag_max
+                )
+            end
+        end
+
+        local_rt_bin_idx += 1
+        if local_rt_bin_idx > n_rt
+            break
+        end
+    end
+
+    return nothing
+end
+
+# ── Standard scoring functions ───────────────────────────────────────────
+
 """
     queryFragmentPartitioned!(counter, frag_bin_max_idx, lower_bound_guess, upper_bound_guess,
                               frag_bins, fragments, frag_mz_min, frag_mz_max)
@@ -582,6 +691,122 @@ function searchFragmentIndexPartitionMajor(
     fetch.(tasks)
 
     # ── Collect results into scan_to_prec_idx ────────────────────────────────
+    scan_results = [UInt32[] for _ in 1:n_scans]
+    for tid in 1:n_threads
+        for (si, gpid) in thread_results[tid]
+            push!(scan_results[si], gpid)
+        end
+        empty!(thread_results[tid])
+    end
+
+    precursors_passed = UInt32[]
+    for si in 1:n_scans
+        scan_idx = all_scan_idxs[si]
+        pids = scan_results[si]
+        if isempty(pids)
+            scan_to_prec_idx[scan_idx] = missing
+        else
+            start = length(precursors_passed) + 1
+            append!(precursors_passed, pids)
+            scan_to_prec_idx[scan_idx] = start:length(precursors_passed)
+        end
+    end
+
+    return precursors_passed
+end
+
+"""
+Partition-major search using BitmaskCounter. Fragments store bit positions
+(1, 2, 4) and scoring uses OR. Precursors pass when all bits are set.
+"""
+function searchFragmentIndexPartitionMajorBitmask(
+        scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+        pfi::LocalPartitionedFragmentIndex{Float32},
+        spectra::Pioneer.MassSpecData,
+        all_scan_idxs::Vector{Int},
+        n_threads::Int,
+        pass_mask::UInt8,
+        qtm::Q,
+        mem::M,
+        rt_to_irt_spline::Any,
+        irt_tol::AbstractFloat,
+        precursor_mzs::AbstractVector{Float32}
+        ) where {M<:Pioneer.MassErrorModel, Q<:Pioneer.QuadTransmissionModel}
+
+    iso_bounds = (UInt8(1), UInt8(0))  # match FirstPassSearch defaults
+    n_scans = length(all_scan_idxs)
+
+    scan_irt_lo  = Vector{Float32}(undef, n_scans)
+    scan_irt_hi  = Vector{Float32}(undef, n_scans)
+    scan_prec_min = Vector{Float32}(undef, n_scans)
+    scan_prec_max = Vector{Float32}(undef, n_scans)
+
+    for (si, scan_idx) in enumerate(all_scan_idxs)
+        irt_lo, irt_hi = Pioneer.getRTWindow(
+            rt_to_irt_spline(Pioneer.getRetentionTime(spectra, scan_idx)), irt_tol)
+        quad_func = Pioneer.getQuadTransmissionFunction(
+            qtm, Pioneer.getCenterMz(spectra, scan_idx),
+            Pioneer.getIsolationWidthMz(spectra, scan_idx))
+        prec_min = Float32(Pioneer.getPrecMinBound(quad_func) - Pioneer.NEUTRON * first(iso_bounds) / 2)
+        prec_max = Float32(Pioneer.getPrecMaxBound(quad_func) + Pioneer.NEUTRON * last(iso_bounds) / 2)
+        scan_irt_lo[si]   = irt_lo
+        scan_irt_hi[si]   = irt_hi
+        scan_prec_min[si] = prec_min
+        scan_prec_max[si] = prec_max
+    end
+
+    thread_results = [Vector{Tuple{Int, UInt32}}(undef, 0) for _ in 1:n_threads]
+    max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
+    thread_counters = [BitmaskCounter(UInt16, max_local + 1) for _ in 1:n_threads]
+
+    partition_to_scans = [Int[] for _ in 1:pfi.n_partitions]
+    for si in 1:n_scans
+        first_k, last_k = get_partition_range(pfi, scan_prec_min[si], scan_prec_max[si])
+        for k in first_k:last_k
+            push!(partition_to_scans[k], si)
+        end
+    end
+
+    tasks = map(1:n_threads) do tid
+        Threads.@spawn begin
+            bc = thread_counters[tid]
+            results = thread_results[tid]
+
+            for k in 1:pfi.n_partitions
+                relevant = partition_to_scans[k]
+                partition = getPartition(pfi, k)
+                n_relevant = length(relevant)
+                (n_relevant == 0 || isempty(getFragBins(partition))) && continue
+
+                l2g = partition.local_to_global
+                scan_i = tid
+                while scan_i <= n_relevant
+                    si = relevant[scan_i]
+                    scan_idx = all_scan_idxs[si]
+
+                    _score_partition_bitmask!(bc, partition,
+                        scan_irt_lo[si], scan_irt_hi[si],
+                        Pioneer.getMzArray(spectra, scan_idx), mem)
+
+                    prec_lo = scan_prec_min[si]
+                    prec_hi = scan_prec_max[si]
+                    @inbounds for i in 1:(bc.size - 1)
+                        lid = bc.ids[i]
+                        bc.counts[lid] == pass_mask || continue
+                        global_pid = l2g[lid]
+                        pmz = precursor_mzs[global_pid]
+                        (pmz < prec_lo || pmz > prec_hi) && continue
+                        push!(results, (si, global_pid))
+                    end
+
+                    reset!(bc)
+                    scan_i += n_threads
+                end
+            end
+        end
+    end
+    fetch.(tasks)
+
     scan_results = [UInt32[] for _ in 1:n_scans]
     for tid in 1:n_threads
         for (si, gpid) in thread_results[tid]
