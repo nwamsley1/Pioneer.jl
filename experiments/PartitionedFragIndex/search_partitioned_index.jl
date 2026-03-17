@@ -4,11 +4,13 @@
 Score all fragments in the range unconditionally (no binary search on prec_mz).
 This is the key performance change — partitioning guarantees all fragments in the
 partition have prec_mz within ~partition_width of the query window.
+
+Works with any fragment type that supports `getPrecID` and `getScore`.
 """
 @inline function searchFragmentBinUnconditional!(
         prec_id_to_score::Pioneer.Counter{UInt32, UInt8},
-        fragments::Vector{Pioneer.IndexFragment{T}},
-        frag_id_range::UnitRange{UInt32}) where {T<:AbstractFloat}
+        fragments::AbstractVector,
+        frag_id_range::UnitRange{UInt32})
     @inbounds for i in frag_id_range
         frag = fragments[i]
         Pioneer.inc!(prec_id_to_score, Pioneer.getPrecID(frag), Pioneer.getScore(frag))
@@ -30,7 +32,7 @@ function queryFragmentPartitioned!(
         lower_bound_guess::UInt32,
         upper_bound_guess::UInt32,
         frag_bins::Vector{Pioneer.FragIndexBin{T}},
-        fragments::Vector{Pioneer.IndexFragment{T}},
+        fragments::AbstractVector,
         frag_mz_min::Float32,
         frag_mz_max::Float32) where {T<:AbstractFloat}
 
@@ -84,10 +86,12 @@ search each relevant partition using the unconditional scoring loop.
 
 Each partition has its own RT bins, so we find the correct starting RT bin per
 partition via binary search on `irt_low`.
+
+Works with both PartitionedFragmentIndex and CompactPartitionedFragmentIndex.
 """
 function searchScanPartitioned!(
         prec_id_to_score::Pioneer.Counter{UInt32, UInt8},
-        pfi::PartitionedFragmentIndex{T},
+        pfi::Union{PartitionedFragmentIndex{T}, CompactPartitionedFragmentIndex{T}},
         irt_low::Float32,
         irt_high::Float32,
         masses::AbstractArray{Union{Missing, U}},
@@ -105,9 +109,9 @@ function searchScanPartitioned!(
 
     for k in first_k:last_k
         partition = getPartition(pfi, k)
-        p_rt_bins   = Pioneer.getRTBins(partition)
-        p_frag_bins = Pioneer.getFragBins(partition)
-        p_fragments = Pioneer.getFragments(partition)
+        p_rt_bins   = getRTBins(partition)
+        p_frag_bins = getFragBins(partition)
+        p_fragments = getFragments(partition)
 
         isempty(p_frag_bins) && continue
         n_rt = length(p_rt_bins)
@@ -183,7 +187,7 @@ post-filter to remove false-positive precursors outside the actual quad window.
 """
 function searchFragmentIndexPartitioned(
         scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-        pfi::PartitionedFragmentIndex{Float32},
+        pfi::Union{PartitionedFragmentIndex{Float32}, CompactPartitionedFragmentIndex{Float32}},
         spectra::Pioneer.MassSpecData,
         thread_task::Vector{Int64},
         search_data::S,

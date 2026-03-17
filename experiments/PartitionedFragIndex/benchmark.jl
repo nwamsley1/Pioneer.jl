@@ -113,10 +113,10 @@ build_time = @elapsed begin
         rt_bin_tol=1.0f0,
     )
 end
-total_part_frags = sum(length(Pioneer.getFragments(p)) for p in partitioned_index.partitions)
-total_part_fbins = sum(length(Pioneer.getFragBins(p)) for p in partitioned_index.partitions)
+total_part_frags = sum(length(getFragments(p)) for p in partitioned_index.partitions)
+total_part_fbins = sum(length(getFragBins(p)) for p in partitioned_index.partitions)
 part_mem_mb = sum(
-    sizeof(Pioneer.getFragBins(p)) + sizeof(Pioneer.getRTBins(p)) + sizeof(Pioneer.getFragments(p))
+    sizeof(getFragBins(p)) + sizeof(getRTBins(p)) + sizeof(getFragments(p))
     for p in partitioned_index.partitions
 ) / 1024^2
 println("  Build time: $(round(build_time, digits=3))s")

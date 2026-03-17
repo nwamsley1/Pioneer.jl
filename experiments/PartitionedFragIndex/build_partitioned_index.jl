@@ -90,9 +90,9 @@ end
         rank_to_score=UInt8[8,4,4,2,2,1,1],
         y_start_index=UInt8(4), b_start_index=UInt8(3))
 
-Build a PartitionedFragmentIndex from scratch using the spectral library's
-DetailedFrag data. Each partition gets its own independently-constructed
-NativeFragmentIndex with its own RT bins and frag bins.
+Build a CompactPartitionedFragmentIndex from scratch using the spectral library's
+DetailedFrag data. Each partition gets its own independently-constructed index
+with CompactFragment entries (prec_id + score only, no prec_mz/charge).
 
 This avoids the memory overhead of duplicating the full frag bin array across
 all partitions, and gives each partition a compact, properly-binned index.
@@ -173,42 +173,41 @@ function build_partitioned_index_from_lib(
     total_frags = sum(length, partition_frags)
     println("  Total SimpleFrags across partitions: $total_frags")
 
-    # ── Step 3: Build NativeFragmentIndex per partition ──────────────────────
+    # ── Step 3: Build CompactPartition per partition ─────────────────────────
     # Reuse the standard buildFragIndex!/buildFragBins! algorithm from
-    # BuildSpecLib, inlined here for self-containment.
-    partitions = Vector{Pioneer.NativeFragmentIndex{Float32}}(undef, n_partitions)
+    # BuildSpecLib, producing CompactFragment entries (prec_id + score only).
+    partitions = Vector{CompactPartition{Float32}}(undef, n_partitions)
 
     for k in 1:n_partitions
         frags_k = partition_frags[k]
         if isempty(frags_k)
-            # Empty partition: create minimal valid index
-            partitions[k] = Pioneer.NativeFragmentIndex{Float32}(
+            partitions[k] = CompactPartition{Float32}(
                 Pioneer.FragIndexBin{Float32}[],
                 Pioneer.FragIndexBin{Float32}[],
-                Pioneer.IndexFragment{Float32}[],
+                CompactFragment[],
             )
             continue
         end
 
-        partitions[k] = _build_native_index(frags_k, frag_bin_tol_ppm, rt_bin_tol)
+        partitions[k] = _build_compact_partition(frags_k, frag_bin_tol_ppm, rt_bin_tol)
     end
 
-    part_stats = [(length(Pioneer.getFragBins(p)), length(Pioneer.getRTBins(p)),
-                   length(Pioneer.getFragments(p))) for p in partitions]
+    part_stats = [(length(getFragBins(p)), length(getRTBins(p)),
+                   length(getFragments(p))) for p in partitions]
     total_fb = sum(first, part_stats)
     total_rt = sum(x -> x[2], part_stats)
     total_fr = sum(last, part_stats)
     println("  Total frag_bins: $total_fb  rt_bins: $total_rt  fragments: $total_fr")
 
-    return PartitionedFragmentIndex{Float32}(partitions, min_prec_mz, partition_width, n_partitions)
+    return CompactPartitionedFragmentIndex{Float32}(partitions, min_prec_mz, partition_width, n_partitions)
 end
 
 """
-Build a NativeFragmentIndex from a vector of SimpleFrags using the standard
+Build a CompactPartition from a vector of SimpleFrags using the standard
 hierarchical binning algorithm (sort by iRT → bin by RT → sort by frag m/z →
-bin by m/z → sort by prec_mz).
+bin by m/z), producing CompactFragment entries (prec_id + score only).
 """
-function _build_native_index(
+function _build_compact_partition(
     frag_ions::Vector{Pioneer.SimpleFrag{Float32}},
     frag_bin_tol_ppm::Float32,
     rt_bin_tol::Float32,
@@ -216,7 +215,7 @@ function _build_native_index(
     sort!(frag_ions, by = x -> Pioneer.getIRT(x))
 
     n = length(frag_ions)
-    index_fragments = Vector{Pioneer.IndexFragment{Float32}}(undef, n)
+    compact_fragments = Vector{CompactFragment}(undef, n)
     rt_bins = Vector{Pioneer.FragIndexBin{Float32}}(undef, n)   # upper bound
     frag_bins = Vector{Pioneer.FragIndexBin{Float32}}(undef, n) # upper bound
     rt_bin_idx = 0
@@ -228,13 +227,12 @@ function _build_native_index(
     for i in 1:n
         stop_irt = Pioneer.getIRT(frag_ions[i])
         if (stop_irt - start_irt > rt_bin_tol) && (i > start_idx)
-            # Finalize RT bin [start_idx, i-1]
             stop_idx = i - 1
             stop_irt_val = Pioneer.getIRT(frag_ions[stop_idx])
             sort!(@view(frag_ions[start_idx:stop_idx]), by = x -> Pioneer.getMZ(x))
             first_fb = frag_bin_idx + 1
-            frag_bin_idx = _build_frag_bins!(index_fragments, frag_bins, frag_bin_idx,
-                                             frag_ions, start_idx, stop_idx, frag_bin_tol_ppm)
+            frag_bin_idx = _build_compact_frag_bins!(compact_fragments, frag_bins,
+                frag_bin_idx, frag_ions, start_idx, stop_idx, frag_bin_tol_ppm)
             rt_bin_idx += 1
             rt_bins[rt_bin_idx] = Pioneer.FragIndexBin{Float32}(
                 start_irt, stop_irt_val, UInt32(first_fb), UInt32(frag_bin_idx))
@@ -248,25 +246,26 @@ function _build_native_index(
     stop_irt_val = Pioneer.getIRT(frag_ions[stop_idx])
     sort!(@view(frag_ions[start_idx:stop_idx]), by = x -> Pioneer.getMZ(x))
     first_fb = frag_bin_idx + 1
-    frag_bin_idx = _build_frag_bins!(index_fragments, frag_bins, frag_bin_idx,
-                                     frag_ions, start_idx, stop_idx, frag_bin_tol_ppm)
+    frag_bin_idx = _build_compact_frag_bins!(compact_fragments, frag_bins,
+        frag_bin_idx, frag_ions, start_idx, stop_idx, frag_bin_tol_ppm)
     rt_bin_idx += 1
     rt_bins[rt_bin_idx] = Pioneer.FragIndexBin{Float32}(
         start_irt, stop_irt_val, UInt32(first_fb), UInt32(frag_bin_idx))
 
-    return Pioneer.NativeFragmentIndex{Float32}(
+    return CompactPartition{Float32}(
         frag_bins[1:frag_bin_idx],
         rt_bins[1:rt_bin_idx],
-        index_fragments,
+        compact_fragments,
     )
 end
 
 """
-Build fragment m/z bins within an RT bin. Sorts each bin's fragments by prec_mz
-and writes IndexFragment entries. Returns updated frag_bin_idx.
+Build fragment m/z bins within an RT bin, producing CompactFragment entries.
+Sorts each bin's fragments by prec_mz (preserves the standard binning algorithm).
+Returns updated frag_bin_idx.
 """
-function _build_frag_bins!(
-    index_fragments::Vector{Pioneer.IndexFragment{Float32}},
+function _build_compact_frag_bins!(
+    compact_fragments::Vector{CompactFragment},
     frag_bins::Vector{Pioneer.FragIndexBin{Float32}},
     frag_bin_idx::Int,
     frag_ions::Vector{Pioneer.SimpleFrag{Float32}},
@@ -281,7 +280,6 @@ function _build_frag_bins!(
         diff_mz = stop_mz - start_mz
         mean_mz = (stop_mz + start_mz) / 2
         if (diff_mz / (mean_mz / 1.0f6) > frag_bin_tol_ppm) && (i > start_idx)
-            # Finalize frag bin [start_idx, i-1]
             bin_stop = i - 1
             bin_stop_mz = Pioneer.getMZ(frag_ions[bin_stop])
             sort!(@view(frag_ions[start_idx:bin_stop]), by = x -> Pioneer.getPrecMZ(x))
@@ -290,9 +288,8 @@ function _build_frag_bins!(
                 start_mz, bin_stop_mz, UInt32(start_idx), UInt32(bin_stop))
             for idx in start_idx:bin_stop
                 sf = frag_ions[idx]
-                index_fragments[idx] = Pioneer.IndexFragment{Float32}(
-                    Pioneer.getPrecID(sf), Pioneer.getPrecMZ(sf),
-                    Pioneer.getScore(sf), sf.prec_charge)
+                compact_fragments[idx] = CompactFragment(
+                    Pioneer.getPrecID(sf), Pioneer.getScore(sf))
             end
             start_idx = i
             start_mz = Pioneer.getMZ(frag_ions[i])
@@ -307,9 +304,8 @@ function _build_frag_bins!(
         start_mz, stop_mz, UInt32(start_idx), UInt32(stop))
     for idx in start_idx:stop
         sf = frag_ions[idx]
-        index_fragments[idx] = Pioneer.IndexFragment{Float32}(
-            Pioneer.getPrecID(sf), Pioneer.getPrecMZ(sf),
-            Pioneer.getScore(sf), sf.prec_charge)
+        compact_fragments[idx] = CompactFragment(
+            Pioneer.getPrecID(sf), Pioneer.getScore(sf))
     end
 
     return frag_bin_idx
