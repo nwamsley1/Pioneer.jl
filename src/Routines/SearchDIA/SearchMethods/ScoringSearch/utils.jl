@@ -180,11 +180,11 @@ function protein_probit_feature_names(; include_n_possible_peptides::Bool = fals
 
     append!(feature_names, [
         :any_common_peps,
-        #:consensus_precursor_rank_support,
-        #:consensus_precursor_rank_enrichment,
+        #:consensus_precursor_relative_weight_support,
+        #:consensus_precursor_relative_weight_enrichment,
         :pg_score_x_coverage_match_from_top,
-        :pg_score_x_consensus_precursor_rank_support,
-        #:pg_score_x_consensus_precursor_rank_enrichment
+        :pg_score_x_consensus_precursor_relative_weight_support,
+        #:pg_score_x_consensus_precursor_relative_weight_enrichment
     ])
 
     return feature_names
