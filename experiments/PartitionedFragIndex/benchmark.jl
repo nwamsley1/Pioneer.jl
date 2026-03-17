@@ -103,15 +103,27 @@ println("  Materialization: $(round(materialize_time, digits=3))s")
 println("  fragment_bins: $n_frag_bins  rt_bins: $n_rt_bins  fragments: $n_frags")
 println("  Native memory: $(round(native_mem_mb, digits=1)) MB")
 
-# ── Build partitioned index from library ──────────────────────────────────
-println("\nBuilding partitioned index from library ...")
+# ── Build partitioned indices ─────────────────────────────────────────────
+println("\nBuilding partitioned index (7 frags, weighted) ...")
+build_time_7 = @elapsed begin
+    partitioned_index_7 = build_partitioned_index_from_lib(
+        Pioneer.getSpecLib(SEARCH_CONTEXT);
+        partition_width=5.0f0,
+        frag_bin_tol_ppm=10.0f0,
+        rt_bin_tol=1.0f0,
+        rank_to_score=UInt8[8, 4, 4, 2, 2, 1, 1],
+    )
+end
+println("  Build time: $(round(build_time_7, digits=3))s")
+
+println("\nBuilding partitioned index (3 frags, uniform) ...")
 build_time = @elapsed begin
     partitioned_index = build_partitioned_index_from_lib(
         Pioneer.getSpecLib(SEARCH_CONTEXT);
         partition_width=5.0f0,
         frag_bin_tol_ppm=10.0f0,
         rt_bin_tol=1.0f0,
-        rank_to_score=UInt8[1, 1, 1],  # Top 3 fragments, score=1 each, threshold=3
+        rank_to_score=UInt8[1, 1, 1],
     )
 end
 total_part_frags = sum(length(getFragments(p)) for p in partitioned_index.partitions)
@@ -369,7 +381,13 @@ let
 
     s2p2 = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
     searchFragmentIndexPartitionMajor(
-        s2p2, partitioned_index, spectra, all_ms2_scan_idxs,
+        s2p2, partitioned_index_7, spectra, all_ms2_scan_idxs,
+        Threads.nthreads(), search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
+        precursor_mzs
+    )
+    s2p3 = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    searchFragmentIndexPartitionMajor(
+        s2p3, partitioned_index, spectra, all_ms2_scan_idxs,
         Threads.nthreads(), search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
         precursor_mzs
     )
@@ -392,8 +410,20 @@ baseline_time = @elapsed begin
 end
 println("  Baseline time: $(round(baseline_time, digits=3))s")
 
-# Timed partitioned (partition-major)
-println("Running partitioned (partition-major) ...")
+# Timed partitioned — 7 frags (weighted)
+println("Running partitioned (7 frags, weighted) ...")
+partitioned_time_7 = @elapsed begin
+    s2p_7 = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    searchFragmentIndexPartitionMajor(
+        s2p_7, partitioned_index_7, spectra, all_ms2_scan_idxs,
+        Threads.nthreads(), search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
+        precursor_mzs
+    )
+end
+println("  7-frag time: $(round(partitioned_time_7, digits=3))s")
+
+# Timed partitioned — 3 frags (uniform)
+println("Running partitioned (3 frags, uniform) ...")
 partitioned_time = @elapsed begin
     s2p_part = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
     searchFragmentIndexPartitionMajor(
@@ -402,15 +432,16 @@ partitioned_time = @elapsed begin
         precursor_mzs
     )
 end
-println("  Partitioned time: $(round(partitioned_time, digits=3))s")
+println("  3-frag time: $(round(partitioned_time, digits=3))s")
 
-speedup = baseline_time / partitioned_time
-println("\n" * "-"^40)
-println("  Baseline:    $(round(baseline_time, digits=3))s")
-println("  Partitioned (additive, top-3): $(round(partitioned_time, digits=3))s")
-println("  Speedup:     $(round(speedup, digits=2))x")
-println("  Build cost:  $(round(build_time, digits=3))s ($(round(build_time/baseline_time*100, digits=1))% of one baseline search)")
-println("-"^40)
+speedup_7 = baseline_time / partitioned_time_7
+speedup_3 = baseline_time / partitioned_time
+println("\n" * "-"^60)
+println("  Baseline (7 frags, weighted):     $(round(baseline_time, digits=3))s")
+println("  Partitioned (7 frags, weighted):   $(round(partitioned_time_7, digits=3))s  $(round(speedup_7, digits=2))x")
+println("  Partitioned (3 frags, uniform):    $(round(partitioned_time, digits=3))s  $(round(speedup_3, digits=2))x")
+println("  3-frag improvement over 7-frag:    $(round(partitioned_time_7/partitioned_time, digits=2))x faster")
+println("-"^60)
 
 # ── Bitmask benchmark ────────────────────────────────────────────────────
 println("\nBuilding bitmask index (top-3, scores=1|2|4, pass_mask=7) ...")
