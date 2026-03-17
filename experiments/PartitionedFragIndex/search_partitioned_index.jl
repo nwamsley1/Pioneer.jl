@@ -458,3 +458,150 @@ function searchFragmentIndexPartitioned(
 
     return precursors_passed_scoring[1:prec_id]
 end
+
+"""
+    searchFragmentIndexPartitionMajor(scan_to_prec_idx, pfi, spectra, all_scan_idxs,
+        n_threads, params, qtm, mem, rt_to_irt_spline, irt_tol, precursor_mzs)
+
+Partition-major search: outer loop over partitions, inner loop fans MS2 scans
+across threads. All threads working at any given time read the same partition's
+fragment/bin arrays, maximizing shared cache utilization.
+
+Returns a flat vector of global precursor IDs (concatenated across all scans).
+"""
+function searchFragmentIndexPartitionMajor(
+        scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+        pfi::LocalPartitionedFragmentIndex{Float32},
+        spectra::Pioneer.MassSpecData,
+        all_scan_idxs::Vector{Int},
+        n_threads::Int,
+        params::P,
+        qtm::Q,
+        mem::M,
+        rt_to_irt_spline::Any,
+        irt_tol::AbstractFloat,
+        precursor_mzs::AbstractVector{Float32}
+        ) where {M<:Pioneer.MassErrorModel, Q<:Pioneer.QuadTransmissionModel,
+                 P<:Pioneer.FragmentIndexSearchParameters}
+
+    min_score = Pioneer.getMinIndexSearchScore(params)
+    iso_bounds = Pioneer.getIsotopeErrBounds(params)
+    n_scans = length(all_scan_idxs)
+
+    # ── Pre-compute per-scan properties ──────────────────────────────────────
+    scan_irt_lo  = Vector{Float32}(undef, n_scans)
+    scan_irt_hi  = Vector{Float32}(undef, n_scans)
+    scan_prec_min = Vector{Float32}(undef, n_scans)
+    scan_prec_max = Vector{Float32}(undef, n_scans)
+
+    for (si, scan_idx) in enumerate(all_scan_idxs)
+        irt_lo, irt_hi = Pioneer.getRTWindow(
+            rt_to_irt_spline(Pioneer.getRetentionTime(spectra, scan_idx)), irt_tol)
+        quad_func = Pioneer.getQuadTransmissionFunction(
+            qtm, Pioneer.getCenterMz(spectra, scan_idx),
+            Pioneer.getIsolationWidthMz(spectra, scan_idx))
+        prec_min = Float32(Pioneer.getPrecMinBound(quad_func) - Pioneer.NEUTRON * first(iso_bounds) / 2)
+        prec_max = Float32(Pioneer.getPrecMaxBound(quad_func) + Pioneer.NEUTRON * last(iso_bounds) / 2)
+        scan_irt_lo[si]   = irt_lo
+        scan_irt_hi[si]   = irt_hi
+        scan_prec_min[si] = prec_min
+        scan_prec_max[si] = prec_max
+    end
+
+    # ── Per-thread result buffers and local counters ─────────────────────────
+    thread_results = [Vector{Tuple{Int, UInt32}}(undef, 0) for _ in 1:n_threads]
+    max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
+    thread_counters = [LocalCounter(UInt16, UInt8, max_local + 1) for _ in 1:n_threads]
+
+    # ── Pre-compute partition → scan mapping ────────────────────────────────
+    partition_to_scans = [Int[] for _ in 1:pfi.n_partitions]
+    for si in 1:n_scans
+        first_k, last_k = get_partition_range(pfi, scan_prec_min[si], scan_prec_max[si])
+        for k in first_k:last_k
+            push!(partition_to_scans[k], si)
+        end
+    end
+
+    # ── Build flat work list: (partition_idx, scan_si) pairs ────────────────
+    # Group by partition so all threads working on the same partition share cache
+    work_items = Tuple{Int, Int}[]  # (partition_idx, scan_si)
+    for k in 1:pfi.n_partitions
+        isempty(getFragBins(getPartition(pfi, k))) && continue
+        for si in partition_to_scans[k]
+            push!(work_items, (k, si))
+        end
+    end
+    n_work = length(work_items)
+
+    # ── Partition-major parallel execution ───────────────────────────────────
+    # Spawn n_threads persistent workers that iterate all partitions. Within
+    # each partition, threads take interleaved slices of scans. All threads
+    # process the same partition before moving to the next, sharing cache.
+    # Barrier synchronization between partitions via a shared atomic counter.
+    partition_barrier = Threads.Atomic{Int}(0)
+
+    tasks = map(1:n_threads) do tid
+        Threads.@spawn begin
+            lc = thread_counters[tid]
+            results = thread_results[tid]
+
+            for k in 1:pfi.n_partitions
+                relevant = partition_to_scans[k]
+                partition = getPartition(pfi, k)
+                n_relevant = length(relevant)
+                (n_relevant == 0 || isempty(getFragBins(partition))) && continue
+
+                l2g = partition.local_to_global
+                scan_i = tid
+                while scan_i <= n_relevant
+                    si = relevant[scan_i]
+                    scan_idx = all_scan_idxs[si]
+
+                    _score_partition!(lc, partition,
+                        scan_irt_lo[si], scan_irt_hi[si],
+                        Pioneer.getMzArray(spectra, scan_idx), mem)
+
+                    prec_lo = scan_prec_min[si]
+                    prec_hi = scan_prec_max[si]
+                    @inbounds for i in 1:(lc.size - 1)
+                        lid = lc.ids[i]
+                        score = lc.counts[lid]
+                        score < min_score && continue
+                        global_pid = l2g[lid]
+                        pmz = precursor_mzs[global_pid]
+                        (pmz < prec_lo || pmz > prec_hi) && continue
+                        push!(results, (si, global_pid))
+                    end
+
+                    reset!(lc)
+                    scan_i += n_threads
+                end
+            end
+        end
+    end
+    fetch.(tasks)
+
+    # ── Collect results into scan_to_prec_idx ────────────────────────────────
+    scan_results = [UInt32[] for _ in 1:n_scans]
+    for tid in 1:n_threads
+        for (si, gpid) in thread_results[tid]
+            push!(scan_results[si], gpid)
+        end
+        empty!(thread_results[tid])
+    end
+
+    precursors_passed = UInt32[]
+    for si in 1:n_scans
+        scan_idx = all_scan_idxs[si]
+        pids = scan_results[si]
+        if isempty(pids)
+            scan_to_prec_idx[scan_idx] = missing
+        else
+            start = length(precursors_passed) + 1
+            append!(precursors_passed, pids)
+            scan_to_prec_idx[scan_idx] = start:length(precursors_passed)
+        end
+    end
+
+    return precursors_passed
+end

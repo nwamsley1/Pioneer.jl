@@ -339,6 +339,18 @@ println("\n" * "="^80)
 println("BENCHMARK")
 println("="^80)
 
+# Collect all valid MS2 scan indices for partition-major search
+all_ms2_scan_idxs = Int[]
+for (_, task_scans) in thread_tasks
+    for s in task_scans
+        (s <= 0 || s > length(spectra)) && continue
+        Pioneer.getMsOrder(spectra, s) ∉ Pioneer.getSpecOrder(search_parameters) && continue
+        push!(all_ms2_scan_idxs, s)
+    end
+end
+sort!(all_ms2_scan_idxs)
+println("Total MS2 scans for benchmark: $(length(all_ms2_scan_idxs))")
+
 # Warmup both paths
 println("Warmup ...")
 let
@@ -355,17 +367,11 @@ let
     fetch.(tasks)
 
     s2p2 = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-    tasks2 = map(thread_tasks) do thread_task
-        Threads.@spawn begin
-            tid = first(thread_task)
-            searchFragmentIndexPartitioned(
-                s2p2, partitioned_index, spectra, last(thread_task),
-                search_data[tid], search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
-                precursor_mzs
-            )
-        end
-    end
-    fetch.(tasks2)
+    searchFragmentIndexPartitionMajor(
+        s2p2, partitioned_index, spectra, all_ms2_scan_idxs,
+        Threads.nthreads(), search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
+        precursor_mzs
+    )
 end
 
 # Timed baseline
@@ -385,21 +391,15 @@ baseline_time = @elapsed begin
 end
 println("  Baseline time: $(round(baseline_time, digits=3))s")
 
-# Timed partitioned
-println("Running partitioned (PartitionedFragmentIndex) ...")
+# Timed partitioned (partition-major)
+println("Running partitioned (partition-major) ...")
 partitioned_time = @elapsed begin
     s2p_part = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-    tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin
-            tid = first(thread_task)
-            searchFragmentIndexPartitioned(
-                s2p_part, partitioned_index, spectra, last(thread_task),
-                search_data[tid], search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
-                precursor_mzs
-            )
-        end
-    end
-    fetch.(tasks)
+    searchFragmentIndexPartitionMajor(
+        s2p_part, partitioned_index, spectra, all_ms2_scan_idxs,
+        Threads.nthreads(), search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
+        precursor_mzs
+    )
 end
 println("  Partitioned time: $(round(partitioned_time, digits=3))s")
 
