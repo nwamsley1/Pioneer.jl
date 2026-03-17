@@ -149,8 +149,7 @@ function perform_second_pass_search(
     dynamic_range::Float32 = params.dynamic_range,
     first_pass::Bool = false
 )
-    # Use single thread for first_pass to enable clean profiling
-    n_threads = first_pass ? 1 : Threads.nthreads()
+    n_threads = Threads.nthreads()
     thread_tasks = partition_scans(spectra, n_threads)
 
     tasks = map(thread_tasks) do thread_task

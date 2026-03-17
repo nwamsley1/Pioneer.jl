@@ -87,10 +87,10 @@ function selectTransitions!(
     transition_idx, n_precursors = _select_transitions_impl!(transitions, strategy, prec_estimation_type, transition_idx, common_args...; kwargs...)
     
     # Common cleanup/sorting code
-    sort!(@view(transitions[1:transition_idx]), 
-          by = x->getMZ(x),
-          alg=PartialQuickSort(1:transition_idx))
-          
+    sort!(@view(transitions[1:transition_idx]),
+          lt = (a, b) -> a.mz < b.mz,
+          alg=QuickSort)
+
     return transition_idx, n_precursors
 end
 
