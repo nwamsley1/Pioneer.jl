@@ -53,6 +53,7 @@ This function handles common Windows file locking issues that occur with Arrow f
 function safe_replace_file(temp_path::String, target_path::String, file_handle)
     # Clear the file handle before attempting replacement
     file_handle = nothing
+    target_path = normpath(target_path)
     
     if Sys.iswindows()
         # Try to delete the existing file with retries (if it exists)
@@ -60,18 +61,14 @@ function safe_replace_file(temp_path::String, target_path::String, file_handle)
             max_retries = 3  # Reduced retries since we're not relying on GC
             for i in 1:max_retries
                 try
-                    # Try to delete using Julia's rm with force flag
-                    run(`cmd /c del /f /q "$fpath"`)
-                    #rm(target_path, force=true)
+                    windows_delete_file(target_path)
                     break
                 catch
                     @user_info "safe_replace failed on try i=$i"
                     if i == max_retries
                         # If all retries failed, try Windows-specific deletion
                         try
-                            win_path = replace(abspath(target_path), "/" => "\\")
-                            cmd_del = Cmd(["cmd", "/c", "del", "/f", "/q", win_path])
-                            run(cmd_del)
+                            windows_delete_file(target_path)
                         catch
                             # If that also fails, rename the old file instead of deleting
                             backup_path = target_path * ".backup_" * string(time_ns())
@@ -249,4 +246,3 @@ function add_column_and_sort!(ref::FileReference, col_name::Symbol,
     
     return ref
 end
-
