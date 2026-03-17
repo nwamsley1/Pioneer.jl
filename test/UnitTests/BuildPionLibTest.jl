@@ -389,6 +389,7 @@ end
         
         # Create test files
         test_files = [
+            "raw_fragments.arrow",
             "fragments_table.arrow",
             "prec_to_frag.arrow",
             "precursors.arrow",
@@ -404,6 +405,7 @@ end
         cleanUpLibrary(test_dir)
 
         # Check that specified files were removed
+        @test !isfile(joinpath(test_dir, "raw_fragments.arrow"))
         @test !isfile(joinpath(test_dir, "fragments_table.arrow"))
         @test !isfile(joinpath(test_dir, "prec_to_frag.arrow"))
         @test !isfile(joinpath(test_dir, "precursors.arrow"))

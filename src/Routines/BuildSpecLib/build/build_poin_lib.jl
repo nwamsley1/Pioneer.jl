@@ -190,6 +190,15 @@ function buildPionLib(spec_lib_path::String,
         pid_to_fid
     )
 
+    # Arrow tables can keep Windows file handles alive until GC runs.
+    # Release references before BuildSpecLib removes the intermediate Arrow files.
+    fragments_table = nothing
+    prec_to_frag = nothing
+    precursors_table = nothing
+    detailed_frags = nothing
+    pid_to_fid = nothing
+    GC.gc()
+
     return nothing
 end
 
@@ -386,6 +395,15 @@ function buildPionLib(spec_lib_path::String,
         pid_to_fid
     )
 
+    # Arrow tables can keep Windows file handles alive until GC runs.
+    # Release references before BuildSpecLib removes the intermediate Arrow files.
+    fragments_table = nothing
+    prec_to_frag = nothing
+    precursors_table = nothing
+    detailed_frags = nothing
+    pid_to_fid = nothing
+    GC.gc()
+
     return nothing
 end
 
@@ -399,6 +417,7 @@ Remove intermediate files after library building is complete.
 
 # Effects
 Removes the following files if they exist:
+- raw_fragments.arrow
 - fragments_table.arrow
 - prec_to_frag.arrow
 - precursors.arrow
@@ -408,12 +427,17 @@ Removes the following files if they exist:
 """
 function cleanUpLibrary(spec_lib_path::String)
     GC.gc()
-    for fname in ["fragments_table.arrow", "prec_to_frag.arrow", "precursors.arrow"]
+    for fname in ["raw_fragments.arrow", "fragments_table.arrow", "prec_to_frag.arrow", "precursors.arrow"]
         fpath = joinpath(spec_lib_path, fname)
         if isfile(fpath)
-            rm(fpath, force=true)
+            try
+                safeRm(fpath, nothing; force=true)
+            catch e
+                @user_warn "Failed to remove temporary file $(fpath): $(sprint(showerror, e))"
+            end
         end
     end
+    return nothing
 end
 
 """

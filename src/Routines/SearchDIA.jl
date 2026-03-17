@@ -58,6 +58,20 @@ function asset_path(parts...)
     
 end
 
+function clean_search_output_dir(results_dir::String)
+    GC.gc()
+    for fpath in readdir(results_dir, join=true)
+        if endswith(fpath, ".tsv") || endswith(fpath, ".arrow")
+            try
+                safeRm(fpath, nothing; force=true)
+            catch e
+                @user_warn "Failed to remove stale search output $(fpath): $(sprint(showerror, e))"
+            end
+        end
+    end
+    return nothing
+end
+
 """
     Locate the isotope spline XML file bundled with the application.
 """
@@ -219,6 +233,7 @@ function SearchDIA(params_path::String)
     
     # Log initialization message
     @user_info "Pioneer logging system initialized"
+    previous_tmpdir = get(ENV, "TMPDIR", nothing)
     
     try
         @user_print "\n" * repeat("=", 90)
@@ -297,8 +312,7 @@ function SearchDIA(params_path::String)
             write(joinpath(normpath(params.paths[:results]), "config.json"), merged_json)
             nothing
         end
-        [rm(fpath) for fpath in readdir(getDataOutDir(SEARCH_CONTEXT), join=true) if endswith(fpath, ".tsv")]
-        [rm(fpath) for fpath in readdir(getDataOutDir(SEARCH_CONTEXT), join=true) if endswith(fpath, ".arrow")]
+        clean_search_output_dir(getDataOutDir(SEARCH_CONTEXT))
         timings["Search Context Initialization"] = context_timing
 
         # === Execute search pipeline ===
@@ -339,6 +353,12 @@ function SearchDIA(params_path::String)
         @user_error "Stacktrace: $(stacktrace(catch_backtrace()))"
         rethrow(e)
     finally
+        if previous_tmpdir === nothing
+            haskey(ENV, "TMPDIR") && delete!(ENV, "TMPDIR")
+        else
+            ENV["TMPDIR"] = previous_tmpdir
+        end
+
         # Count warnings if any exist
         warning_count = 0
         warnings_full_path = ""  # Store full path for display
