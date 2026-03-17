@@ -89,6 +89,9 @@ jobs:
       - name: Compile application
         shell: bash
         run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          fresh_depot="$(mktemp -d)"
+          export JULIA_DEPOT_PATH="$(cygpath -w "$fresh_depot");$(cygpath -w "$HOME/.julia")"
           julia --threads auto --project=dev -e '
             using PackageCompiler;
             create_app(
