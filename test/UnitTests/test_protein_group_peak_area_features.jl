@@ -139,6 +139,35 @@ using Pioneer
         @test out.pg_score_x_coverage_match_from_top[3] > out.pg_score_x_coverage_match_from_top[4]
     end
 
+    @testset "Protein Semi-Supervised Training Set Mines Negatives by PEP" begin
+        scores = Float32[
+            0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90,
+            0.89, 0.88, 0.87, 0.86, 0.85, 0.84, 0.83, 0.82, 0.81, 0.80,
+            0.79, 0.78, 0.77, 0.76, 0.20, 0.19, 0.18, 0.17, 0.16, 0.15,
+            0.14, 0.13, 0.12, 0.11, 0.10, 0.09
+        ]
+        targets = Bool[
+            true, true, true, true, true, true, true, true, true, true,
+            true, true, true, true, true, true, true, true, false, false,
+            false, false, true, true, false, false, false, false, false, false,
+            false, false, false, false, false, false
+        ]
+
+        ss = Pioneer.build_protein_semisupervised_training_set(
+            scores,
+            targets;
+            q_value_threshold = 0.01f0,
+            min_pep_neg_threshold = 0.90f0
+        )
+
+        @test any(ss.positive_mask)
+        @test any(ss.mined_negative_mask)
+        @test all(ss.keep_mask[.!targets])
+        @test sum(ss.labels) < sum(ss.positive_mask) + sum(ss.mined_negative_mask)
+        @test sum(ss.labels) == sum(ss.positive_mask[ss.keep_mask])
+        @test any(.!ss.labels)
+    end
+
     @testset "Consensus Relative Weight Builder Ignores MBR Candidates and Uses Ranked pg_score Weighting" begin
         temp_dir = mktempdir()
 

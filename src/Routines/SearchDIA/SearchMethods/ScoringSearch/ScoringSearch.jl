@@ -538,7 +538,9 @@ function summarize_results!(
                 qc_folder,
                 getPrecursors(getSpecLib(search_context));
                 protein_to_cv_fold = protein_to_cv_fold,
-                ms1_scoring = params.ms1_scoring
+                ms1_scoring = params.ms1_scoring,
+                train_q_value_threshold = params.q_value_threshold,
+                min_pep_neg_threshold_itr = params.min_PEP_neg_threshold_itr
             )
         end
 

@@ -851,7 +851,9 @@ function perform_protein_probit_regression(
     qc_folder::String,
     precursors::LibraryPrecursors;
     protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
-    ms1_scoring::Bool = true
+    ms1_scoring::Bool = true,
+    train_q_value_threshold::Float32 = 0.01f0,
+    min_pep_neg_threshold_itr::Float32 = 0.90f0
 )
     # Extract paths for compatibility with existing code
     passing_pg_paths = [file_path(ref) for ref in pg_refs]
@@ -887,8 +889,16 @@ function perform_protein_probit_regression(
         
         skip_scoring_oom = !(est_targets > 10 && est_decoys > 10 && total_protein_groups > 1000)
         
-        perform_probit_analysis_oom(pg_refs, total_protein_groups, max_protein_groups_in_memory_limit, qc_folder;
-                                   skip_scoring = skip_scoring_oom, ms1_scoring = ms1_scoring)
+        perform_probit_analysis_oom(
+            pg_refs,
+            total_protein_groups,
+            max_protein_groups_in_memory_limit,
+            qc_folder;
+            skip_scoring = skip_scoring_oom,
+            ms1_scoring = ms1_scoring,
+            train_q_value_threshold = train_q_value_threshold,
+            min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
+        )
     else
         # Load all protein group tables into a single DataFrame
         all_protein_groups = DataFrame()
@@ -913,9 +923,51 @@ function perform_protein_probit_regression(
             precursors;
             protein_to_cv_fold = protein_to_cv_fold,
             skip_scoring = skip_scoring,
-            ms1_scoring = ms1_scoring
+            ms1_scoring = ms1_scoring,
+            train_q_value_threshold = train_q_value_threshold,
+            min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
         )
     end
+end
+
+function build_protein_semisupervised_training_set(
+    scores::AbstractVector{<:Real},
+    targets::AbstractVector{Bool};
+    q_value_threshold::Float32 = 0.01f0,
+    min_pep_neg_threshold::Float32 = 0.90f0
+)
+    n = length(scores)
+    qvals = Vector{Float32}(undef, n)
+    peps = Vector{Float32}(undef, n)
+    get_qvalues!(scores, targets, qvals)
+    get_PEP!(scores, targets, peps)
+
+    positive_mask = BitVector(undef, n)
+    mined_negative_mask = BitVector(undef, n)
+    keep_mask = BitVector(undef, n)
+
+    @inbounds for i in eachindex(scores, targets, qvals, peps)
+        positive_mask[i] = targets[i] && (qvals[i] <= q_value_threshold)
+        mined_negative_mask[i] = targets[i] && (peps[i] >= min_pep_neg_threshold)
+        keep_mask[i] = (!targets[i]) || positive_mask[i] || mined_negative_mask[i]
+    end
+
+    second_pass_labels = copy(targets[keep_mask])
+    mined_relative_mask = mined_negative_mask[keep_mask]
+    @inbounds for i in eachindex(second_pass_labels, mined_relative_mask)
+        if mined_relative_mask[i]
+            second_pass_labels[i] = false
+        end
+    end
+
+    return (
+        keep_mask = keep_mask,
+        labels = second_pass_labels,
+        positive_mask = positive_mask,
+        mined_negative_mask = mined_negative_mask,
+        qvals = qvals,
+        peps = peps
+    )
 end
 
 """
@@ -1092,7 +1144,9 @@ Perform out-of-memory probit regression analysis on protein groups.
 """
 function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference}, total_protein_groups::Int,
                                     max_protein_groups_in_memory::Int, qc_folder::String;
-                                    skip_scoring = false, ms1_scoring::Bool = true)
+                                    skip_scoring = false, ms1_scoring::Bool = true,
+                                    train_q_value_threshold::Float32 = 0.01f0,
+                                    min_pep_neg_threshold_itr::Float32 = 0.90f0)
     
     # Calculate sampling ratio
     sampling_ratio = max_protein_groups_in_memory / total_protein_groups
@@ -1152,8 +1206,14 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     
     # Fit probit model on sampled data (skip if skip_scoring = true)
     if !skip_scoring
-        β_fitted = fit_probit_model(X, y)
-        log_probit_feature_importance(feature_names, β_fitted, X; context = "protein_probit_oom_sampled")
+        β_fitted = fit_probit_model_semisupervised(
+            X,
+            y,
+            feature_names;
+            q_value_threshold = train_q_value_threshold,
+            min_pep_neg_threshold = min_pep_neg_threshold_itr,
+            context = "protein_probit_oom_sampled"
+        )
         sampled_protein_groups[!, :pg_score] = Float32.(calculate_probit_scores(X, β_fitted))
     else
         β_fitted = Float64[]  # Empty model when skipping
@@ -1208,7 +1268,9 @@ Perform probit regression analysis on protein groups with comparison to baseline
 """
 function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String,
                                pg_refs::Vector{ProteinGroupFileReference};
-                               show_improvement = true)
+                               show_improvement = true,
+                               train_q_value_threshold::Float32 = 0.01f0,
+                               min_pep_neg_threshold_itr::Float32 = 0.90f0)
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
     feature_names = protein_probit_feature_names(include_n_possible_peptides = true)
@@ -1227,8 +1289,14 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
 
     # Fit probit model
     #β_fitted, X_mean, X_std = fit_probit_model(X, y)
-    β_fitted = fit_probit_model(X, y)
-    log_probit_feature_importance(feature_names, β_fitted, X; context = "protein_probit")
+    β_fitted = fit_probit_model_semisupervised(
+        X,
+        y,
+        feature_names;
+        q_value_threshold = train_q_value_threshold,
+        min_pep_neg_threshold = min_pep_neg_threshold_itr,
+        context = "protein_probit"
+    )
     all_protein_groups[!, :pg_score] = Float32.(calculate_probit_scores(X, β_fitted))
     # Re-process individual files if references are provided
     if !isempty(pg_refs)
@@ -1290,6 +1358,42 @@ function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
     β_fitted = Pioneer.ProbitRegression(β, X_df, y, data_chunks, max_iter=30)
 
     return β_fitted#, vec(X_mean), vec(X_std)
+end
+
+function fit_probit_model_semisupervised(
+    X::Matrix{Float64},
+    y::Vector{Bool},
+    feature_names::Vector{Symbol};
+    q_value_threshold::Float32 = 0.01f0,
+    min_pep_neg_threshold::Float32 = 0.90f0,
+    context::AbstractString = "protein_probit"
+)
+    β_pass1 = fit_probit_model(X, y)
+    log_probit_feature_importance(feature_names, β_pass1, X; context = context * "_pass1")
+
+    pass1_scores = calculate_probit_scores(X, β_pass1)
+    ss = build_protein_semisupervised_training_set(
+        pass1_scores,
+        y;
+        q_value_threshold = q_value_threshold,
+        min_pep_neg_threshold = min_pep_neg_threshold
+    )
+
+    second_pass_count = sum(ss.keep_mask)
+    second_pass_targets = sum(ss.labels)
+    second_pass_decoys = second_pass_count - second_pass_targets
+
+    @user_info "Protein probit semi-supervised selection context=$(context) q_value_threshold=$(q_value_threshold) min_pep_neg_threshold=$(min_pep_neg_threshold) pass1_rows=$(length(y)) pass2_rows=$(second_pass_count) pass2_targets=$(second_pass_targets) pass2_decoys=$(second_pass_decoys) confident_targets=$(sum(ss.positive_mask)) mined_negatives=$(sum(ss.mined_negative_mask))"
+
+    if second_pass_targets < 10 || second_pass_decoys < 10
+        @user_warn "Protein probit semi-supervised pass 2 has insufficient data; using pass 1 model" context = context pass2_targets = second_pass_targets pass2_decoys = second_pass_decoys
+        return β_pass1
+    end
+
+    X_pass2 = X[ss.keep_mask, :]
+    β_pass2 = fit_probit_model(X_pass2, ss.labels)
+    log_probit_feature_importance(feature_names, β_pass2, X_pass2; context = context * "_pass2")
+    return β_pass2
 end
 
 """
@@ -2086,7 +2190,9 @@ function perform_probit_analysis_multifold(
     protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
     show_improvement = true,
     skip_scoring = false,
-    ms1_scoring::Bool = true
+    ms1_scoring::Bool = true,
+    train_q_value_threshold::Float32 = 0.01f0,
+    min_pep_neg_threshold_itr::Float32 = 0.90f0
 )
 
     #skip_scoring = true 
@@ -2127,16 +2233,9 @@ function perform_probit_analysis_multifold(
     models = Dict{UInt8, Vector{Float64}}()
 
     if !skip_scoring
-        # Determine positive training examples using 1% FDR on pg_score
-        n_proteins = nrow(all_protein_groups)
-        qvals = Vector{Float32}(undef, n_proteins)
-        get_qvalues!(all_protein_groups.pg_score, all_protein_groups.target, qvals)
-        passing_mask = (qvals .<= 0.01f0) .& all_protein_groups.target
-        train_mask_FDR = passing_mask .| .!all_protein_groups.target
-
         for test_fold in unique_cv_folds
             # Get training data (all folds except test_fold)
-            train_mask = (all_protein_groups.cv_fold .!= test_fold) #.& train_mask_FDR
+            train_mask = (all_protein_groups.cv_fold .!= test_fold)
             
             # Check if we have sufficient data
             n_train_targets = sum(all_protein_groups[train_mask, :target])
@@ -2151,8 +2250,14 @@ function perform_probit_analysis_multifold(
             y_train = all_protein_groups[train_mask, :target]
             
             # Fit model
-            β_fitted = fit_probit_model(X_train, y_train)
-            log_probit_feature_importance(feature_names, β_fitted, X_train; context = "protein_probit_multifold_fold_$(test_fold)")
+            β_fitted = fit_probit_model_semisupervised(
+                X_train,
+                y_train,
+                feature_names;
+                q_value_threshold = train_q_value_threshold,
+                min_pep_neg_threshold = min_pep_neg_threshold_itr,
+                context = "protein_probit_multifold_fold_$(test_fold)"
+            )
             models[test_fold] = β_fitted
         end
     end
