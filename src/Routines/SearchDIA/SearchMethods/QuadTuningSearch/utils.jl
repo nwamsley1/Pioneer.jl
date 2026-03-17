@@ -902,9 +902,7 @@ function perform_quad_transmission_search(
             getMzArray(spectra, scan_idx),
             getIntensityArray(spectra, scan_idx),
             getMassErrorModel(search_context, ms_file_idx),
-            getHighMz(spectra, scan_idx),
-            UInt32(scan_idx),
-            UInt32(ms_file_idx)
+            getHighMz(spectra, scan_idx)
         )
         
         nmatches ≤ 2 && return

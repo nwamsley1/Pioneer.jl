@@ -170,7 +170,7 @@ Contains pre-allocated arrays and intermediate data structures.
 mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructures
     # Match data
     ion_matches::Vector{FragmentMatch{Float32}}
-    ion_misses::Vector{FragmentMatch{Float32}}
+    ion_misses::Vector{UnmatchedIon}
     mass_err_matches::Vector{FragmentMatch{Float32}}
     
     # Indexing and scoring

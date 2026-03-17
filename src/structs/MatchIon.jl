@@ -32,57 +32,26 @@ function reset!(fms::Vector{M}, last_non_empty::Int64) where {M<:MatchIon{Float3
 end
 
 """
-    FragmentMatch
+    FragmentMatch{T} <: MatchIon{T}
 
-Type that represents a match between a fragment ion and a mass spectrum peak
-
-### Fields
-
-- transition::Transition -- Represents a fragment ion
-- intensity::Float32 -- Intensity of the matching peak
-- match_mz::Float32 -- M/Z of the matching empirical peak. 
-    NOT the transition mass and may differ from getMZ(transition) by some error
-- count::UInt8 -- Number of matches (may want to count the number of matches if the spectrum is researched at 
-    different mass offsets, such as in a cross correlation score)
-- peak_int::Int64 -- Index of the matching peak in the mass spectrum. 
-
-### Examples
-
-- `FragmentMatch(transition::Transition, intensity::Float32, mass::Float32, count::UInt8, peak_ind::Int64) --
-    default internal constructor
-- `FragmentMatch()` -- constructor for null/empty precursor
-
-### GetterMethods
-
-- getMZ(f::FragmentMatch) = getMZ(f.transition)
-- getLow(f::FragmentMatch) = getLow(f.transition)
-- getHigh(f::FragmentMatch) = getHigh(f.transition)
-- getPrecID(f::FragmentMatch) = getPrecID(f.transition)
-- getCharge(f::FragmentMatch) = getCharge(f.transition)
-- getIsotope(f::FragmentMatch) = getIsotope(f.transition)
-- getIonType(f::FragmentMatch) = getIonType(f.transition)
-- getInd(f::FragmentMatch) = getInd(f.transition)
+Match between a fragment ion and a mass spectrum peak. 32 bytes for Float32.
 """
 struct FragmentMatch{T<:AbstractFloat} <: MatchIon{T}
-    predicted_intensity::T
-    intensity::T
-    theoretical_mz::T
-    match_mz::T
-    peak_ind::Int64
-    frag_index::UInt8
-    frag_charge::UInt8
-    frag_isotope::UInt8
-    ion_type::UInt8
-    is_isotope::Bool
-    prec_id::UInt32
-    count::UInt8
-    scan_idx::UInt32
-    ms_file_idx::UInt32
-    predicted_rank::UInt8
-end
+    predicted_intensity::T    # 4B  (offset 0)
+    intensity::T              # 4B  (offset 4)
+    theoretical_mz::T         # 4B  (offset 8)
+    match_mz::T               # 4B  (offset 12)
+    peak_ind::UInt32          # 4B  (offset 16) — was Int64
+    prec_id::UInt32           # 4B  (offset 20)
+    frag_index::UInt8         # 1B  (offset 24)
+    frag_charge::UInt8        # 1B  (offset 25)
+    ion_type::UInt8           # 1B  (offset 26)
+    is_isotope::Bool          # 1B  (offset 27)
+    predicted_rank::UInt8     # 1B  (offset 28)
+end                           # 29B → padded to 32B
 
-FragmentMatch{Float64}() = FragmentMatch(Float64(0), Float64(0), Float64(0), Float64(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
-FragmentMatch{Float32}() = FragmentMatch(Float32(0), Float32(0), Float32(0), Float32(0), 0, UInt8(0), UInt8(0), UInt8(0), zero(UInt8), false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
+FragmentMatch{Float64}() = FragmentMatch(Float64(0), Float64(0), Float64(0), Float64(0), zero(UInt32), zero(UInt32), UInt8(0), UInt8(0), zero(UInt8), false, zero(UInt8))
+FragmentMatch{Float32}() = FragmentMatch(Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt32), zero(UInt32), UInt8(0), UInt8(0), zero(UInt8), false, zero(UInt8))
 
 
 getMZ(f::FragmentMatch) = f.theoretical_mz
@@ -94,16 +63,29 @@ getIntensity(f::FragmentMatch) = f.intensity
 getPeakInd(f::FragmentMatch) = f.peak_ind
 getFragInd(f::FragmentMatch) = f.frag_index
 getCharge(f::FragmentMatch) = f.frag_charge
-getIsotope(f::FragmentMatch) = f.frag_isotope
 getIonType(f::FragmentMatch) = f.ion_type
 
 getPrecID(f::FragmentMatch) = f.prec_id
-getCount(f::FragmentMatch) = f.count
-getScanID(f::FragmentMatch) = f.scan_idx
-getMSFileID(f::FragmentMatch) = f.ms_file_idx
 getRank(f::FragmentMatch) = f.predicted_rank
 isIsotope(f::FragmentMatch) = f.is_isotope
 getIsoIdx(f::FragmentMatch) = UInt8(f.is_isotope)
+
+"""
+    UnmatchedIon
+
+Lightweight struct for unmatched (missed) fragment/precursor ions.
+Only stores the three fields actually read by buildDesignMatrix!.
+"""
+struct UnmatchedIon
+    prec_id::UInt32              # 4B
+    predicted_intensity::Float32  # 4B
+    is_isotope::Bool             # 1B
+end                              # 9B → padded to 12B
+
+UnmatchedIon() = UnmatchedIon(zero(UInt32), zero(Float32), false)
+getPrecID(f::UnmatchedIon) = f.prec_id
+getPredictedIntensity(f::UnmatchedIon) = f.predicted_intensity
+getIsoIdx(f::UnmatchedIon) = UInt8(f.is_isotope)
 
 struct PrecursorMatch{T<:AbstractFloat} <: MatchIon{T}
     predicted_intensity::T

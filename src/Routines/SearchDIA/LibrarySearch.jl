@@ -148,16 +148,14 @@ function getPSMS(
 
         # Match peaks
         nmatches, nmisses = matchPeaks!(
-            getIonMatches(search_data), 
-            getIonMisses(search_data), 
-            getIonTemplates(search_data), 
-            ion_idx, 
-            getMzArray(spectra, scan_idx), 
-            getIntensityArray(spectra, scan_idx), 
+            getIonMatches(search_data),
+            getIonMisses(search_data),
+            getIonTemplates(search_data),
+            ion_idx,
+            getMzArray(spectra, scan_idx),
+            getIntensityArray(spectra, scan_idx),
             mem,
-            getHighMz(spectra, scan_idx),
-            UInt32(scan_idx), 
-            ms_file_idx
+            getHighMz(spectra, scan_idx)
         )
         
         sort!(@view(getIonMatches(search_data)[1:nmatches]), alg=QuickSort, lt=ion_match_lt)

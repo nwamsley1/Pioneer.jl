@@ -328,15 +328,11 @@ function adjustMatchMz(match::FragmentMatch{T}, ppm_offset::Float32) where T<:Ab
         getMZ(match),  # theoretical_mz stays the same
         adjusted_mz,   # adjusted match_mz
         getPeakInd(match),
+        getPrecID(match),
         getFragInd(match),
         getCharge(match),
-        getIsotope(match),
         getIonType(match),
         isIsotope(match),
-        getPrecID(match),
-        getCount(match),
-        getScanID(match),
-        getMSFileID(match),
         getRank(match)
     )
 end
@@ -526,9 +522,7 @@ function mass_error_search(
                     getMzArray(spectra, scan_idx),
                     getIntensityArray(spectra, scan_idx),
                     mem,
-                    getHighMz(spectra, scan_idx),
-                    UInt32(scan_idx),
-                    ms_file_idx
+                    getHighMz(spectra, scan_idx)
                 )
 
                 frag_err_idx = collectFragErrs(
@@ -602,7 +596,7 @@ function mass_error_search(
             peak_intensities = Vector{Float32}(undef, 1000)
             ion_templates = Vector{Isotope{Float32}}(undef, 10000)
             ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 1000)]
-            ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 1000)]
+            ion_misses = [UnmatchedIon() for _ in range(1, 1000)]
             ion_idx = 0
             frag_err_idx = 0
             ion_idx = 0
@@ -652,9 +646,7 @@ function mass_error_search(
                     getMzArray(spectra, scan_idx),
                     getIntensityArray(spectra, scan_idx),
                     mem,
-                    getHighMz(spectra, scan_idx),
-                    UInt32(scan_idx),
-                    UInt32(ms_file_idx)
+                    getHighMz(spectra, scan_idx)
                 )
 
                 #Which precursors matched isotopes

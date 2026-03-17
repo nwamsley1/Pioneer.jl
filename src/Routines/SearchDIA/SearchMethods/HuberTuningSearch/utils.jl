@@ -360,9 +360,7 @@ function match_peaks_for_huber!(
         getMzArray(spectra, scan_idx),
         getIntensityArray(spectra, scan_idx),
         getMassErrorModel(search_context, ms_file_idx),
-        getHighMz(spectra, scan_idx),
-        UInt32(scan_idx),
-        UInt32(ms_file_idx)
+        getHighMz(spectra, scan_idx)
     )
 end
 

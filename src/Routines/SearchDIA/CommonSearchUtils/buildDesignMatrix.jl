@@ -77,12 +77,12 @@ function reset!(grouping::MzGroupingMap)
     return nothing
 end
 
-function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, 
-                            matches::Vector{m},  
-                            misses::Vector{m}, 
-                            nmatches::Int64, 
-                            nmisses::Int64, 
-                            precID_to_col::ArrayDict{UInt32, UInt16}; 
+function buildDesignMatrix!(H::SparseArray{UInt32,Float32},
+                            matches::Vector{m},
+                            misses::Vector{UnmatchedIon},
+                            nmatches::Int64,
+                            nmisses::Int64,
+                            precID_to_col::ArrayDict{UInt32, UInt16};
                             block_size = 10000) where {m<:MatchIon{Float32}}
     T = Float32
     #Number of rows equals the number of unique matched peaks
@@ -185,7 +185,7 @@ assigned to the same design matrix column to avoid multicollinearity.
 function buildDesignMatrixMS1!(
     H::SparseArray{UInt32,Float32},
     matches::Vector{m},
-    misses::Vector{m},
+    misses::Vector{UnmatchedIon},
     nmatches::Int64,
     nmisses::Int64,
     mz_grouping::MzGroupingMap,

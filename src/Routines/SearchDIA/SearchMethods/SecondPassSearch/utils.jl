@@ -149,7 +149,9 @@ function perform_second_pass_search(
     dynamic_range::Float32 = params.dynamic_range,
     first_pass::Bool = false
 )
-    thread_tasks = partition_scans(spectra, Threads.nthreads())
+    # Use single thread for first_pass to enable clean profiling
+    n_threads = first_pass ? 1 : Threads.nthreads()
+    thread_tasks = partition_scans(spectra, n_threads)
 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
@@ -330,9 +332,7 @@ function process_scans_fragindex!(
             getMzArray(spectra, scan_idx),
             getIntensityArray(spectra, scan_idx),
             getMassErrorModel(search_context, ms_file_idx),
-            getHighMz(spectra, scan_idx),
-            UInt32(scan_idx),
-            UInt32(ms_file_idx)
+            getHighMz(spectra, scan_idx)
         )
 
         nmatches ≤ 2 && continue
@@ -551,9 +551,7 @@ function process_scans!(
             getMzArray(spectra, scan_idx),
             getIntensityArray(spectra, scan_idx),
             getMassErrorModel(search_context, ms_file_idx),
-            getHighMz(spectra, scan_idx),
-            UInt32(scan_idx),
-            UInt32(ms_file_idx)
+            getHighMz(spectra, scan_idx)
         )
 
         nmatches ≤ 2 && continue
@@ -679,7 +677,7 @@ function process_scans!(
     residuals = getResiduals(search_data)
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
-    ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
+    ion_misses = [UnmatchedIon() for _ in range(1, 10000)]
     precursors = getPrecursors(getSpecLib(search_context))
     pair_ids = getPairIdx(precursors)
     pair_id_dict = Dictionary{
@@ -748,7 +746,7 @@ function process_scans!(
             append!(ion_matches, [PrecursorMatch{Float32}() for _ in 1:max(ion_idx - length(ion_matches), length(ion_matches))])
         end
         if ion_idx > length(ion_misses)
-            append!(ion_misses, [PrecursorMatch{Float32}() for _ in 1:max(ion_idx - length(ion_misses), length(ion_misses))])
+            append!(ion_misses, [UnmatchedIon() for _ in 1:max(ion_idx - length(ion_misses), length(ion_misses))])
         end
         nmatches, nmisses = matchPeaks!(
             ion_matches,
@@ -758,9 +756,7 @@ function process_scans!(
             getMzArray(spectra, scan_idx),
             getIntensityArray(spectra, scan_idx),
             mem,
-            getHighMz(spectra, scan_idx),
-            UInt32(scan_idx),
-            UInt32(ms_file_idx)
+            getHighMz(spectra, scan_idx)
         )
 
         #Which precursors matched isotopes

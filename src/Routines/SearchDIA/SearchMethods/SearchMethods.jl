@@ -388,7 +388,7 @@ function initSimpleSearchContext(
 
     SimpleLibrarySearch(
         [FragmentMatch{Float32}() for _ in range(1, M)],
-        [FragmentMatch{Float32}() for _ in range(1, M)],
+        [UnmatchedIon() for _ in range(1, M)],
         [FragmentMatch{Float32}() for _ in range(1, M)],
         ArrayDict(UInt32, UInt16, n_precursors),
         Counter(UInt32, UInt8,n_precursors ),

@@ -438,9 +438,7 @@ function build_chromatograms(
             getMzArray(spectra, scan_idx),
             getIntensityArray(spectra, scan_idx),
             mass_error_model,
-            getHighMz(spectra, scan_idx),
-            UInt32(scan_idx),
-            UInt32(ms_file_idx)
+            getHighMz(spectra, scan_idx)
         )
 
         sort!(@view(ion_matches[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
@@ -585,7 +583,7 @@ function build_chromatograms(
     chromatograms = Vector{MS1ChromObject}(undef, 500000)  # Initial size
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
-    ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
+    ion_misses = [UnmatchedIon() for _ in range(1, 10000)]
     precursors = getPrecursors(getSpecLib(search_context))
     seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
     pids = [pid for pid in precursors_passing]
@@ -673,9 +671,7 @@ function build_chromatograms(
             getMzArray(spectra, scan_idx),
             getIntensityArray(spectra, scan_idx),
             mem,
-            getHighMz(spectra, scan_idx),
-            UInt32(scan_idx),
-            UInt32(ms_file_idx)
+            getHighMz(spectra, scan_idx)
         )
 
         #nmisses -= 1
