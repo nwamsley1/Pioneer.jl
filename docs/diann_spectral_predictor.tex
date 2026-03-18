@@ -1,0 +1,732 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[margin=1in]{geometry}
+\usepackage{caption}
+\usepackage{array}
+\usepackage{longtable}
+
+% Code listing style
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codeframe}{RGB}{200,200,200}
+\definecolor{keyword}{RGB}{0,0,180}
+\definecolor{comment}{RGB}{0,128,0}
+\definecolor{string}{RGB}{163,21,21}
+
+\lstdefinestyle{cppstyle}{
+    language=C++,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{keyword}\bfseries,
+    commentstyle=\color{comment}\itshape,
+    stringstyle=\color{string},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    numbersep=5pt,
+    breaklines=true,
+    breakatwhitespace=false,
+    tabsize=4,
+    showstringspaces=false,
+    columns=flexible,
+    morekeywords={vector,string,map,pair,auto,size_t,extern},
+    literate={->}{{$\rightarrow$}}1
+}
+
+\lstset{style=cppstyle}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+}
+
+% Title
+\title{DIA-NN Spectral Library Predictor Architecture\\[0.5em]
+\large Reverse-Engineering the Prediction System from the DIA-NN 1.8 Source Code}
+\author{Technical Reference Document}
+\date{March 2026}
+
+\begin{document}
+\maketitle
+
+\tableofcontents
+\newpage
+
+%=============================================================================
+\section{Introduction}
+%=============================================================================
+
+DIA-NN (Data Independent Acquisition by Neural Networks)~\cite{demichev2020} is a software tool for processing data-independent acquisition (DIA) proteomics data. A central component of DIA-NN is its ability to generate \emph{in silico} spectral libraries---predicted fragment ion spectra and retention times for any peptide sequence---which can substitute for or augment experimentally acquired spectral libraries.
+
+DIA-NN 1.8 contains two distinct prediction systems:
+\begin{enumerate}
+    \item A \textbf{deep learning predictor} (closed-source, compiled into \texttt{predictor.lib}, built on PyTorch/LibTorch) that predicts fragment intensities, retention times, and (in later versions) ion mobility values.
+    \item A set of \textbf{legacy linear models} (open-source, using Eigen SparseQR) that predict y-ion intensity ratios (\texttt{yDelta}), neutral loss intensities (\texttt{yLoss}), and retention times (\texttt{InSilicoRT}).
+\end{enumerate}
+
+The entire DIA-NN search engine is implemented primarily in a single ${\sim}11{,}260$-line C++ file, \texttt{diann.cpp}, supplemented by three embedded neural network libraries:
+\begin{itemize}
+    \item \texttt{cranium/} --- a from-scratch C neural network library used for PSM scoring (target/decoy classification), \emph{not} spectral prediction.
+    \item \texttt{MiniDNN/} --- an Eigen-based C++ neural network library (included but not used for the primary predictor).
+    \item \texttt{predictor/} --- the closed-source deep learning predictor interface, compiled into \texttt{predictor.lib}.
+\end{itemize}
+
+This document reconstructs the architecture of all prediction components from the open-source interface code in \texttt{diann.cpp} and the open-source fallback models. All line numbers refer to the DIA-NN 1.8 source at \texttt{DiaNN-1.8/src/diann.cpp} unless otherwise noted.
+
+%=============================================================================
+\section{Deep Learning Predictor (\texttt{\#ifdef PREDICTOR})}
+\label{sec:deep-predictor}
+%=============================================================================
+
+The deep learning predictor is conditionally compiled via the \texttt{PREDICTOR} preprocessor flag. When this flag is absent (e.g., Linux builds in DIA-NN 1.8), the predictor is unavailable and the software falls back to the linear models described in Sections~\ref{sec:ydelta}--\ref{sec:rt}.
+
+%-----------------------------------------------------------------------------
+\subsection{Interface}
+%-----------------------------------------------------------------------------
+
+The predictor interface is declared at lines 750--766:
+
+\begin{lstlisting}[caption={Predictor interface declarations (lines 750--766)}]
+bool Predictor = false;
+#ifdef PREDICTOR
+namespace predictor {
+    extern void init_predictor(int id_range, int threads);
+    extern bool code_from_precursor(
+        vector<long long> &code,
+        const string &precursor,
+        string &temp_s,
+        vector<string> &temp_sv,
+        const vector<pair<string, int> > &dict);
+
+    class Predictor {
+    public:
+        Predictor();
+        void set_instance(int instance_id);
+        map<string, int> get_aa_indices();
+        void predict(
+            vector<vector<float> > &spectra,
+            vector<pair<vector<long long>, int> > &codes,
+            int mode, bool verbose = false);
+    };
+}
+
+predictor::Predictor P;  // global singleton
+#endif
+\end{lstlisting}
+
+Key interface points:
+\begin{itemize}
+    \item \texttt{init\_predictor(id\_range, threads)} initializes the model and sets LibTorch thread count.
+    \item \texttt{get\_aa\_indices()} returns the model's internal token vocabulary as a \texttt{map<string,int>}.
+    \item \texttt{set\_instance(instance\_id)} selects a model instance (only instance 0 is used).
+    \item \texttt{predict(spectra, codes, mode)} runs inference in one of two modes:
+    \begin{itemize}
+        \item \textbf{Mode 1}: fragment intensity prediction.
+        \item \textbf{Mode 2}: retention time prediction.
+    \end{itemize}
+    \item A single global instance \texttt{predictor::Predictor P} is used throughout the application.
+\end{itemize}
+
+%-----------------------------------------------------------------------------
+\subsection{Peptide Encoding}
+%-----------------------------------------------------------------------------
+
+Peptide sequences are tokenized into integer codes for the deep learning model. The encoding pipeline is:
+
+\begin{enumerate}
+    \item \texttt{to\_charged\_eg(name, charge)} strips the peptide to a canonical form like \texttt{PEPTM(UniMod:35)IDEK/2}, preserving only the sequence, recognized modifications, and charge state.
+    \item \texttt{code\_from\_precursor()} tokenizes this string into a \texttt{vector<long long>} using the vocabulary returned by \texttt{get\_aa\_indices()}.
+\end{enumerate}
+
+The token vocabulary is model-internal and returned as a \texttt{map<string, int>} mapping amino acid and modification tokens to integer indices. The first element of the code vector encodes the precursor charge state. For retention time prediction, this first element is zeroed out because RT is charge-independent:
+
+\begin{lstlisting}[caption={Charge zeroing for RT codes (from generate\_predictions, line 3905)}]
+auto rt_codes = codes;
+for (auto &c : rt_codes)
+    if (c.first.size()) c.first[0] = 0;
+\end{lstlisting}
+
+The encoding is parallelized across threads via \texttt{smp\_generate\_codes()} (lines 3815--3828), which calls \texttt{code\_from\_precursor()} for each library entry.
+
+%-----------------------------------------------------------------------------
+\subsection{Prediction Pipeline}
+%-----------------------------------------------------------------------------
+
+The full prediction pipeline is implemented in \texttt{generate\_predictions()} (lines 3873--3945):
+
+\begin{enumerate}
+    \item \textbf{Initialization}: \texttt{predictor::init\_predictor(1, Threads)} loads the model and configures threading.
+    \item \textbf{Encoding}: Multi-threaded peptide encoding via \texttt{smp\_generate\_codes()}.
+    \item \textbf{Deduplication}: Codes are sorted and identical sequences are deduplicated. Spectra and RT codes are deduplicated separately because they differ in the charge token.
+    \item \textbf{Prediction}:
+    \begin{itemize}
+        \item \texttt{P.predict(spectra, codes, 1)} produces fragment intensity vectors.
+        \item \texttt{P.predict(rts, rt\_codes, 2)} produces retention time scalars.
+    \end{itemize}
+    \item \textbf{Decoding}: Multi-threaded spectrum decoding via \texttt{smp\_decode\_spectra()} and direct RT rescaling.
+\end{enumerate}
+
+\begin{lstlisting}[caption={Core prediction calls (lines 3920--3930)}]
+std::vector<std::vector<float> > spectra, rts;
+try {
+    if (Verbose >= 1) Time(),
+        std::cout << "Predicting spectra\n";
+    P.predict(spectra, codes, 1, Verbose >= 3);
+    if (Verbose >= 1) Time(),
+        std::cout << "Predicting RTs\n";
+    P.predict(rts, rt_codes, 2, Verbose >= 3);
+} catch (std::exception &e) {
+    std::cout << "ERROR: " << e.what() << '\n';
+}
+\end{lstlisting}
+
+%-----------------------------------------------------------------------------
+\subsection{Output Format}
+%-----------------------------------------------------------------------------
+
+\subsubsection{Fragment Intensity Spectra}
+
+The predictor outputs a flat \texttt{vector<float>} of size $2 \times \texttt{max\_frc} \times L$ for each peptide, where $\texttt{max\_frc} = 3$ (charge states) and $L$ is the peptide length. The total output size is $6L$ floats. The layout, as revealed by the decoding loop in \texttt{smp\_decode\_spectra()} (lines 3830--3871), is:
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+\textbf{Index range} & \textbf{Ion type} & \textbf{Charge} & \textbf{Ion series} \\
+\midrule
+$[0, L)$       & y-ion & $1+$ & $y_1, y_2, \ldots, y_L$ \\
+$[L, 2L)$      & y-ion & $2+$ & $y_1, y_2, \ldots, y_L$ \\
+$[2L, 3L)$     & y-ion & $3+$ & $y_1, y_2, \ldots, y_L$ \\
+$[3L, 4L)$     & b-ion & $1+$ & $b_3, b_4, \ldots, b_{L+2}$ \\
+$[4L, 5L)$     & b-ion & $2+$ & $b_3, b_4, \ldots, b_{L+2}$ \\
+$[5L, 6L)$     & b-ion & $3+$ & $b_3, b_4, \ldots, b_{L+2}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Notable properties:
+\begin{itemize}
+    \item Three charge states ($1+$, $2+$, $3+$) are predicted for both y-ions and b-ions.
+    \item y-ions span $y_1$ through $y_L$; b-ions start at $b_3$ (the minimum useful b-ion index).
+    \item No neutral losses are predicted---all ions are assigned \texttt{loss\_none}.
+    \item Values represent relative intensities (not normalized to any particular scale).
+\end{itemize}
+
+The decoding code explicitly constructs \texttt{Ion} objects from these positions:
+
+\begin{lstlisting}[caption={Fragment ion decoding (lines 3843--3855)}]
+for (int c = 1; c <= max_frc; c++)
+    for (j = 0; j < L; j++) {
+        // y-ions: first half
+        int index = L * (c - 1) + j;
+        ions[index] = Ion(fTypeY, j + 1,
+            loss_none, c, sp[index]);
+        // b-ions: second half (offset by L * max_frc)
+        index += L * max_frc;
+        ions[index] = Ion(fTypeB, j + 3,
+            loss_none, c, sp[index]);
+    }
+\end{lstlisting}
+
+\subsubsection{Retention Times}
+
+The RT predictor outputs a single float per peptide, which is rescaled to indexed retention time (iRT) units:
+
+\begin{equation}
+\text{iRT} = \text{output} \times 243.19 - 58.4
+\label{eq:rt-rescale}
+\end{equation}
+
+This linear transformation (line 3941) maps the model's internal scale to the conventional iRT scale~\cite{escher2012}.
+
+%-----------------------------------------------------------------------------
+\subsection{Post-Prediction Filtering}
+\label{sec:filtering}
+%-----------------------------------------------------------------------------
+
+After raw prediction, the fragment ions are filtered through several criteria before being stored in the spectral library. The filtering is implemented in \texttt{smp\_decode\_spectra()} (lines 3844--3871), using global parameters defined at lines 311--321:
+
+\begin{center}
+\begin{tabular}{llr}
+\toprule
+\textbf{Parameter} & \textbf{Description} & \textbf{Default} \\
+\midrule
+\texttt{MinGenFrNum} & Min.\ fragments above noise & 4 \\
+\texttt{MinFrAAs} & Min.\ AAs from cleavage to terminus & 3 \\
+\texttt{MinFrMz} & Min.\ fragment $m/z$ & 200.0 \\
+\texttt{MaxFrMz} & Max.\ fragment $m/z$ & 1800.0 \\
+\texttt{auxF} & Max.\ stored fragments per entry & 12 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The filtering pipeline proceeds as follows:
+
+\begin{enumerate}
+    \item \textbf{Sort} all $6L$ predicted ions by intensity (descending).
+    \item \textbf{Minimum count check}: Reject the precursor entirely if the $\texttt{MinGenFrNum}$-th ion (4th) has near-zero intensity.
+    \item \textbf{Intensity margin}: Compute a threshold as:
+    \begin{equation}
+        \text{margin} = \min\!\Big(\text{top\_intensity} \times 0.001,\;\; I_{\texttt{MinGenFrNum}}\Big)
+    \end{equation}
+    where $I_{\texttt{MinGenFrNum}}$ is the intensity of the 4th-ranked ion. This keeps ions that are either within 0.1\% of the most intense fragment or above the 4th-best intensity.
+    \item \textbf{Amino acid distance filter}: For y-ions, require $L + 3 - \text{index} \geq \texttt{MinFrAAs}$; for b-ions, require $\text{index} \geq \texttt{MinFrAAs}$. This ensures at least 3 amino acid residues on the retained side of the cleavage.
+    \item \textbf{Compute actual $m/z$} values via \texttt{generate\_fragments()} from the peptide sequence and ion identity.
+    \item \textbf{$m/z$ range filter}: Keep only fragments with $200 \leq m/z \leq 1800$.
+    \item \textbf{Cap at \texttt{auxF}}: Keep at most 12 fragments per precursor (sorted by predicted intensity).
+\end{enumerate}
+
+%-----------------------------------------------------------------------------
+\subsection{Architecture Clues}
+%-----------------------------------------------------------------------------
+
+Although the predictor model itself is closed-source, several architectural details can be inferred:
+
+\begin{itemize}
+    \item \textbf{Framework}: PyTorch/LibTorch. The DIA-NN README and Windows installer bundle \texttt{torch.dll} and related LibTorch dependencies.
+    \item \textbf{Input format}: Variable-length integer token sequences (\texttt{vector<long long>}). This is consistent with an RNN, Transformer, or 1D CNN architecture that processes sequence tokens.
+    \item \textbf{Platform}: Windows-only in DIA-NN 1.8. Linux builds are compiled without \texttt{-DPREDICTOR}, disabling deep learning prediction. (Later versions add Linux support.)
+    \item \textbf{Prosit compatibility}: The \texttt{--prosit} export flag hardcodes collision energy to 30 NCE and strips all modifications except M(ox), suggesting the model was trained on or calibrated against Prosit-style training data.
+    \item \textbf{Ion mobility}: Mentioned in the documentation as a future prediction target but not called through the predictor interface in version 1.8.
+\end{itemize}
+
+%=============================================================================
+\section{Legacy Linear Fragment Intensity Model (\texttt{yDelta})}
+\label{sec:ydelta}
+%=============================================================================
+
+When the deep learning predictor is unavailable, DIA-NN can train a linear model from an existing spectral library to predict y-ion intensity ratios. This model, stored in the \texttt{yDelta} vector, predicts the log-ratio of consecutive y-ion intensities.
+
+%-----------------------------------------------------------------------------
+\subsection{Feature Vector}
+%-----------------------------------------------------------------------------
+
+The feature vector has 156 coefficients organized into 5 blocks:
+
+\begin{center}
+\begin{longtable}{p{3.5cm}p{6cm}rr}
+\toprule
+\textbf{Block} & \textbf{Features} & \textbf{Count} & \textbf{Indices} \\
+\midrule
+\endhead
+Amino acid composition & Count of each of 20 standard amino acids in the full peptide sequence & 20 & 0--19 \\
+\addlinespace
+Precursor charge & Charge state as a continuous value & 1 & 20 \\
+\addlinespace
+Local context window & Identity of the amino acid at each of 5 positions relative to the cleavage site $[i{-}2, \ldots, i{+}2]$, one-hot encoded per position & 100 & 21--120 \\
+\addlinespace
+C-terminal features & Distance from the cleavage site to the C-terminus (0--8, clipped), crossed with the identity of the C-terminal residue (K, R, or other) & 27 & 121--147 \\
+\addlinespace
+N-terminal distance & Distance from the N-terminus to the cleavage site (0--7, clipped) & 8 & 148--155 \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+The index functions are defined at lines 1435--1450:
+
+\begin{lstlisting}[caption={Feature index functions for yDelta (lines 1435--1450)}]
+int yDeltaS = 2, yDeltaW = (yDeltaS * 2 + 1);  // window size
+
+inline int y_delta_composition_index(char aa) {
+    return AA_index[aa]; }                       // 0-19
+inline int y_delta_charge_index() {
+    return y_delta_composition_index(AAs[19]) + 1; } // 20
+inline int y_delta_index(char aa, int shift) {
+    return y_delta_charge_index()
+        + AA_index[aa] * yDeltaW + shift + yDeltaS + 1; } // 21-120
+int yCTermD = 9, yNTermD = 8;
+inline int y_cterm_index(char aa, int shift) {
+    int row = (aa == 'K' ? 0 : (aa == 'R' ? 1 : 2));
+    return row * yCTermD + Min(shift, yCTermD - 1)
+        + y_delta_index(AAs[19], yDeltaS) + 1; }  // 121-147
+inline int y_nterm_index(int shift) {
+    return Min(shift, yNTermD - 1)
+        + y_cterm_index(AAs[19], yCTermD - 1) + 1; } // 148-155
+\end{lstlisting}
+
+%-----------------------------------------------------------------------------
+\subsection{Mathematical Model}
+%-----------------------------------------------------------------------------
+
+The model predicts the log-ratio of consecutive y-ion intensities at cleavage position $i$ (lines 1451--1461):
+
+\begin{equation}
+\log\!\frac{I(y_i)}{I(y_{i-1})} = \beta_{\text{charge}} \cdot z + \sum_{j=1}^{n} \beta_{\text{comp}}[a_j] + \sum_{\substack{j \in \{i{-}2,\ldots,i{+}2\} \\ 0 \leq j < n}} \beta_{\text{ctx}}[a_j,\, j{-}i] + \beta_{\text{nterm}}[\min(i{-}2,\,7)] + \beta_{\text{cterm}}[\text{class}(a_n),\, \min(n{-}1{-}i,\, 8)]
+\label{eq:ydelta}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $z$ is the precursor charge state,
+    \item $a_j$ is the amino acid at position $j$ in the peptide of length $n$,
+    \item $\text{class}(a_n) \in \{\text{K}, \text{R}, \text{other}\}$ categorizes the C-terminal residue.
+\end{itemize}
+
+Cumulative intensities are built from these log-ratios (lines 1463--1471):
+\begin{equation}
+I(y_1) = I(y_2) = 1.0, \qquad I(y_i) = \exp\!\left(\sum_{k=2}^{i} \log\frac{I(y_k)}{I(y_{k-1})}\right) \quad \text{for } i \geq 2
+\end{equation}
+
+\begin{lstlisting}[caption={Cumulative y-ion intensity computation (lines 1463--1471)}]
+void y_scores(std::vector<double> &s, int charge,
+              const std::string &aas) {
+    int n = aas.length(), i;
+    s.resize(n);
+    s[0] = s[1] = 0.0;
+    for (i = 2; i < n; i++)
+        s[i] = s[i - 1] + y_ratio(i, charge, aas);
+}
+void to_exp(std::vector<double> &s) {
+    for (int i = 0; i < s.size(); i++) s[i] = exp(s[i]);
+}
+\end{lstlisting}
+
+\paragraph{Limitations.} The \texttt{yDelta} model only predicts:
+\begin{itemize}
+    \item y-ions (no b-ions),
+    \item charge state $1+$ only (no multi-charge fragments),
+    \item no neutral losses (these are handled separately by \texttt{yLoss}).
+\end{itemize}
+
+%-----------------------------------------------------------------------------
+\subsection{Training}
+%-----------------------------------------------------------------------------
+
+The model is trained via ordinary least squares using Eigen's \texttt{SparseQR} solver (lines 6416--6439). Training data consists of observed log-ratios $\log(I(y_i) / I(y_{i-1}))$ from a spectral library, with an outlier filter that discards observations where $|\text{log-ratio}| \geq 5.0$:
+
+\begin{lstlisting}[caption={Training data construction (lines 6416--6430)}]
+for (i = 2; i < y_index.size(); i++)
+    if (y_index[i] >= 0 && y_index[i - 1] >= 0) {
+        double ratio = log(
+            e.target.fragments[y_index[i]].height
+            / e.target.fragments[y_index[i - 1]].height);
+        if (Abs(ratio) >= 5.0) continue;  // outlier filter
+        b_y.push_back(ratio);
+        // ... construct sparse feature row ...
+        pos_y++;
+    }
+\end{lstlisting}
+
+\begin{lstlisting}[caption={SparseQR solve (lines 6432--6439)}]
+if (pos_y) {
+    auto B = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(
+        b_y.data(), b_y.size());
+    Eigen::SparseMatrix<double, Eigen::ColMajor> A(pos_y, P_y);
+    A.setFromTriplets(TL_y.begin(), TL_y.end());
+    Eigen::SparseQR<Eigen::SparseMatrix<double>,
+        Eigen::COLAMDOrdering<int> > SQR;
+    SQR.compute(A);
+    auto X = SQR.solve(B);
+    for (i = 0; i < P_y; i++) yDelta[i] = X[i];
+}
+\end{lstlisting}
+
+No regularization is applied.
+
+%=============================================================================
+\section{Neutral Loss Model (\texttt{yLoss})}
+\label{sec:yloss}
+%=============================================================================
+
+The neutral loss model predicts the relative intensity of water ($\text{H}_2\text{O}$) and ammonia ($\text{NH}_3$) loss peaks relative to the corresponding no-loss y-ion. The model has 42 coefficients.
+
+%-----------------------------------------------------------------------------
+\subsection{Feature Vector}
+%-----------------------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{llrr}
+\toprule
+\textbf{Block} & \textbf{Features} & \textbf{Count} & \textbf{Indices} \\
+\midrule
+Per-AA, H$_2$O loss & AA identity contribution to H$_2$O loss & 20 & 0--19 \\
+Per-AA, NH$_3$ loss & AA identity contribution to NH$_3$ loss & 20 & 20--39 \\
+Intercept, H$_2$O & Global baseline for H$_2$O loss & 1 & 40 \\
+Intercept, NH$_3$ & Global baseline for NH$_3$ loss & 1 & 41 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%-----------------------------------------------------------------------------
+\subsection{Mathematical Model}
+%-----------------------------------------------------------------------------
+
+For a y-ion at cleavage position $i$ in a peptide of length $n$ with amino acid sequence $a_1 \ldots a_n$, the predicted log-ratio of the loss peak to the no-loss peak is:
+
+\begin{equation}
+\log\!\frac{I(y_i^{\text{loss}})}{I(y_i^{\text{noloss}})} = \beta_{\text{intercept}}[\text{type}] + \sum_{j=i}^{n} \beta_{\text{aa}}[a_j, \text{type}]
+\label{eq:yloss}
+\end{equation}
+
+where $\text{type} \in \{\text{H}_2\text{O},\, \text{NH}_3\}$. The sum accumulates contributions from all amino acids retained in the y-ion fragment (positions $i$ through $n$, i.e., from the cleavage site toward the C-terminus). This reflects the physical reality that neutral loss probability depends on which amino acids are present in the fragment.
+
+\begin{lstlisting}[caption={Neutral loss prediction (lines 1478--1486)}]
+void y_loss_scores(std::vector<double> &s,
+                   const std::string &aas, bool NH3) {
+    int n = aas.length(), i;
+    double sum = yLoss[y_loss(NH3)];  // global intercept
+    s.resize(n); s[0] = 0.0;
+    for (i = n - 1; i >= 1; i--) {
+        sum += yLoss[y_loss_aa(aas[i], NH3)];  // accumulate
+        s[i] = sum;
+    }
+}
+\end{lstlisting}
+
+The model iterates from the C-terminus backward, cumulatively adding per-amino-acid contributions. This means larger y-ions (retaining more of the sequence) have progressively larger neutral loss propensities, modulated by the specific amino acids present. Training uses the same Eigen SparseQR approach as \texttt{yDelta}, with the target being the observed log intensity ratio between loss and no-loss peaks.
+
+%=============================================================================
+\section{Retention Time Model (\texttt{InSilicoRT})}
+\label{sec:rt}
+%=============================================================================
+
+The open-source retention time model predicts indexed retention times (iRT) from peptide sequence features. The \texttt{InSilicoRT} parameter vector contains approximately 241+ coefficients, depending on the number of recognized modifications.
+
+%-----------------------------------------------------------------------------
+\subsection{Feature Vector}
+%-----------------------------------------------------------------------------
+
+The feature vector is organized into the following blocks:
+
+\begin{center}
+\begin{tabular}{p{4cm}p{6.5cm}r}
+\toprule
+\textbf{Block} & \textbf{Description} & \textbf{Count} \\
+\midrule
+Intercept & Global bias term & 1 \\
+\addlinespace
+Unscaled N-terminal & AA identity at positions from N-terminus (1 bin $\times$ 20 AAs) & 20 \\
+\addlinespace
+Unscaled C-terminal & AA identity at positions from C-terminus (1 bin $\times$ 20 AAs) & 20 \\
+\addlinespace
+Scaled N-terminal & AA identity $\times$ position bin from N-terminus (5 bins $\times$ 20 AAs), weighted by $1/L$ & 100 \\
+\addlinespace
+Scaled C-terminal & AA identity $\times$ position bin from C-terminus (5 bins $\times$ 20 AAs), weighted by $1/L$ & 100 \\
+\addlinespace
+Modification terms & One coefficient per recognized UniMod modification & variable \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Here $L$ denotes the peptide length. The \texttt{RTTermD}${}=1$ parameter controls the number of absolute positional bins (just 1 in this version), while \texttt{RTTermDScaled}${}=5$ controls the number of length-scaled positional bins.
+
+%-----------------------------------------------------------------------------
+\subsection{Mathematical Model}
+%-----------------------------------------------------------------------------
+
+The prediction function \texttt{predict\_irt()} (lines 1726--1749) computes:
+
+\begin{equation}
+\text{iRT} = \beta_0 + \sum_{j=1}^{L} \Big[\beta_{\text{Nabs}}[a_j,\, \min(j{-}1,\, 0)] + \beta_{\text{Cabs}}[a_j,\, \min(L{-}j,\, 0)]\Big] + \frac{1}{L}\sum_{j=1}^{L} \Big[\beta_{\text{Nscl}}[a_j,\, \min(j{-}1,\, 4)] + \beta_{\text{Cscl}}[a_j,\, \min(L{-}j,\, 4)]\Big] + \sum_{m \in \text{mods}} \beta_{\text{mod}}[m]
+\label{eq:insilicoRT}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\beta_0$ is the intercept (index 0),
+    \item $\beta_{\text{Nabs}}$ and $\beta_{\text{Cabs}}$ are unscaled positional terms (with \texttt{RTTermD}${}=1$, the position is always bin 0, so these reduce to simple composition terms counted from each terminus),
+    \item $\beta_{\text{Nscl}}$ and $\beta_{\text{Cscl}}$ are length-scaled positional terms with 5 bins, each weighted by $1/L$ to normalize for peptide length,
+    \item $\beta_{\text{mod}}[m]$ is an additive correction for each modification $m$.
+\end{itemize}
+
+\begin{lstlisting}[caption={Retention time prediction (lines 1726--1749)}]
+double predict_irt(const std::string &name) {
+    int i, pos, l = peptide_length(name);
+    double iRT = InSilicoRT[0];          // intercept
+    double scale = 1.0 / (double)l;
+
+    for (i = pos = 0; i < name.size(); i++) {
+        char symbol = name[i];
+        if (symbol < 'A' || symbol > 'Z') {
+            if (symbol != '(' && symbol != '[') continue;
+            i++;
+            int end = closing_bracket(name, symbol, i);
+            // modification term
+            iRT += InSilicoRT[mod_rt_index(
+                name.substr(i, end - i))];
+            i = end; continue;
+        }
+        // absolute positional terms (RTTermD=1)
+        iRT += InSilicoRT[aa_rt_nterm(symbol, pos)];
+        iRT += InSilicoRT[aa_pointsterm(symbol,
+            l - 1 - pos)];
+        // length-scaled positional terms (RTTermDScaled=5)
+        iRT += InSilicoRT[aa_rt_nterm_scaled(symbol, pos)]
+            * scale;
+        iRT += InSilicoRT[aa_pointsterm_scaled(symbol,
+            l - 1 - pos)] * scale;
+        pos++;
+    }
+    return iRT;
+}
+\end{lstlisting}
+
+The model is trained via SparseQR regression on observed iRT values from the spectral library.
+
+%=============================================================================
+\section{PSM Scoring Neural Network (\texttt{cranium} Library)}
+\label{sec:cranium}
+%=============================================================================
+
+Distinct from the spectral predictor, DIA-NN uses a neural network for \emph{PSM scoring}---discriminating between correct (target) and incorrect (decoy) peptide-spectrum matches. This network is implemented using the \texttt{cranium} C library embedded in the DIA-NN source tree.
+
+%-----------------------------------------------------------------------------
+\subsection{Architecture}
+%-----------------------------------------------------------------------------
+
+The scoring network is a multi-layer perceptron (MLP) with the following architecture:
+
+\begin{center}
+\begin{tabular}{lrl}
+\toprule
+\textbf{Layer} & \textbf{Width} & \textbf{Activation} \\
+\midrule
+Input & $\sim$50--60 features & --- \\
+Hidden 1 & 25 & tanh \\
+Hidden 2 & 20 & tanh \\
+Hidden 3 & 15 & tanh \\
+Hidden 4 & 10 & tanh \\
+Hidden 5 & 5 & tanh \\
+Output & 2 & softmax \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The hidden layer widths follow a tapering rule (lines 6283--6322): with \texttt{nnHidden}${}=5$ hidden layers, layer $k$ has width $5 \times (\texttt{nnHidden} - k + 1)$, yielding $\{25, 20, 15, 10, 5\}$:
+
+\begin{lstlisting}[caption={Hidden layer size computation (from NNClassifier constructor)}]
+for (i = 0; i < hidden; i++) {
+    hiddenSize[i] = (hidden - i) * 5;  // 25, 20, 15, 10, 5
+    hiddenActivation[i] = tanH;
+}
+\end{lstlisting}
+
+%-----------------------------------------------------------------------------
+\subsection{Training Configuration}
+%-----------------------------------------------------------------------------
+
+The network is trained as a bagged ensemble of 12 models with the following hyperparameters (lines 191--195 and 6283--6322):
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Ensemble size (\texttt{nnBagging}) & 12 \\
+Epochs (\texttt{nnEpochs}) & 1 \\
+Optimizer & Adam ($\beta_1 = 0.9$, $\beta_2 = 0.999$) \\
+Learning rate & 0.003 \\
+Loss function & Cross-entropy \\
+Batch size & $\min(50, \max(1, N/100))$ \\
+Regularization & $\varepsilon$ (effectively none) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%-----------------------------------------------------------------------------
+\subsection{Input Features}
+%-----------------------------------------------------------------------------
+
+The input feature vector contains $\sim$50--100 score features computed during the DIA-NN search, indexed via an enumeration at lines 776--811. These include:
+
+\begin{itemize}
+    \item Fragment ion correlations and cosine similarity between predicted and observed spectra
+    \item Mass accuracy features (precursor and fragment $m/z$ errors)
+    \item Chromatographic peak shape metrics
+    \item Library dot product scores
+    \item Top-$N$ fragment reference intensities (\texttt{TopF}${}=6$ and \texttt{auxF}${}=12$ slots)
+    \item Shadow channel correlations
+    \item Isotope pattern matching scores
+    \item Retention time deviation from predicted iRT
+\end{itemize}
+
+%-----------------------------------------------------------------------------
+\subsection{Training Procedure}
+%-----------------------------------------------------------------------------
+
+The neural network classifier is trained during the iterative search process and activates at a specific iteration (lines 9437--9446):
+
+\begin{lstlisting}[caption={NN training trigger}]
+if (curr_iter != nnIter) goto finish;
+if ((t50 < 200 && t10 < 100) || dall < 100) {
+    if (Verbose >= 1) Time(), dsout <<
+        "Too few confident identifications, "
+        "neural network will not be used\n";
+    goto finish;
+}
+if (Verbose >= 1) Time(), dsout
+    << "Training the neural network: "
+    << nnCnt - dall << " targets, "
+    << dall << " decoys\n";
+{
+    NNClassifier NNC(nnBagging, pN, nnHidden,
+        nn_cnt, training, training_classes);
+    NNC.run(nnEpochs);
+    nn_trained = true;
+    nn_scores(all, &NNC.net);
+}
+\end{lstlisting}
+
+If the neural network produces fewer identifications than the linear discriminant at 1\% FDR, DIA-NN falls back to the linear discriminant scores. This safety check ensures the NN never degrades performance.
+
+%=============================================================================
+\section{Decompilation Feasibility}
+\label{sec:decomp}
+%=============================================================================
+
+For researchers interested in fully characterizing the deep learning predictor architecture, several reverse-engineering approaches are available:
+
+\begin{enumerate}
+    \item \textbf{Obtaining the binary}: \texttt{predictor.lib} is not included in the open-source repository but is distributed with the Windows DIA-NN installer. The compiled library links against LibTorch.
+
+    \item \textbf{Static analysis}: Tools such as Ghidra or IDA Pro can decompile \texttt{predictor.lib} and trace LibTorch API calls. Key functions to search for:
+    \begin{itemize}
+        \item \texttt{torch::jit::load()} --- indicates a TorchScript serialized model.
+        \item \texttt{torch::nn::Module} subclass constructors --- reveals layer definitions.
+        \item \texttt{torch::Tensor} operations --- exposes the forward pass computation graph.
+    \end{itemize}
+
+    \item \textbf{Model weight extraction}: Weights are likely stored either as:
+    \begin{itemize}
+        \item A TorchScript serialized model (a ZIP archive containing \texttt{data.pkl}, \texttt{constants.pkl}, and tensor files).
+        \item Raw float arrays embedded in the binary or a companion data file.
+    \end{itemize}
+
+    \item \textbf{Empirical probing}: Instrument the \texttt{P.predict()} calls to study input/output shapes across diverse peptide inputs. The output size of $6L$ (where $L$ is peptide length) already constrains the architecture significantly.
+
+    \item \textbf{Architecture constraints from the interface}:
+    \begin{itemize}
+        \item Variable-length integer input (token sequences) --- consistent with RNN, Transformer, or 1D CNN.
+        \item Output dimensionality scales linearly with sequence length --- suggests either a sequence-to-sequence model or a model with length-dependent output projection.
+        \item Separate modes for spectra vs.\ RT --- likely two prediction heads sharing a common encoder, or two separate models.
+    \end{itemize}
+\end{enumerate}
+
+%=============================================================================
+\section*{Acknowledgments}
+%=============================================================================
+
+This document was produced by analyzing the open-source DIA-NN 1.8 codebase (\texttt{DiaNN-1.8/src/diann.cpp}). All line numbers and code excerpts reference that file unless otherwise noted.
+
+\begin{thebibliography}{9}
+\bibitem{demichev2020}
+V.~Demichev, C.~B.~Messner, S.~I.~Vernardis, K.~S.~Lilley, M.~Ralser,
+``DIA-NN: neural networks and interference correction enable deep proteome coverage in high throughput,''
+\emph{Nature Methods}, vol.~17, pp.~41--44, 2020.
+
+\bibitem{escher2012}
+C.~Escher, L.~Reiter, B.~MacLean, R.~Ossola, F.~Herzog, J.~Chilton, M.~J.~MacCoss, O.~Rinner,
+``Using iRT, a normalized retention time for more targeted measurement of peptides,''
+\emph{Proteomics}, vol.~12, no.~8, pp.~1111--1121, 2012.
+\end{thebibliography}
+
+\end{document}
