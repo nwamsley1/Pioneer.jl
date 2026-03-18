@@ -878,6 +878,7 @@ function perform_quad_transmission_search(
         # Select transitions
         ion_idx, _ = selectTransitions!(
             getIonTemplates(search_data),
+            getMzIndex(search_data),
             QuadEstimationTransitionSelection(),
             PartialPrecCapture(),
             getFragmentLookupTable(getSpecLib(search_context)),
@@ -897,6 +898,7 @@ function perform_quad_transmission_search(
         nmatches, nmisses = matchPeaks!(
             getIonMatches(search_data),
             getIonMisses(search_data),
+            getMzIndex(search_data),
             getIonTemplates(search_data),
             ion_idx,
             getMzArray(spectra, scan_idx),
@@ -904,13 +906,8 @@ function perform_quad_transmission_search(
             getMassErrorModel(search_context, ms_file_idx),
             getHighMz(spectra, scan_idx)
         )
-        
+
         nmatches ≤ 2 && return
-        
-        # Sort matches
-        sort!(@view(getIonMatches(search_data)[1:nmatches]), 
-            by = x->(x.peak_ind, x.prec_id),
-            alg=QuickSort)
         
         # Build design matrix and deconvolve
         perform_deconvolution!(

@@ -504,6 +504,7 @@ function mass_error_search(
                 # Uses top N fragments per precursor for mass tolerance calibration
                 ion_idx, _ = selectTransitions!(
                     getIonTemplates(search_data[thread_id]),
+                    getMzIndex(search_data[thread_id]),
                     MassErrEstimationStrategy(),
                     getPrecEstimation(params),
                     getFragmentLookupTable(spec_lib),
@@ -517,6 +518,7 @@ function mass_error_search(
                 nmatches, nmisses = matchPeaks!(
                     getIonMatches(search_data[thread_id]),
                     getIonMisses(search_data[thread_id]),
+                    getMzIndex(search_data[thread_id]),
                     getIonTemplates(search_data[thread_id]),
                     ion_idx,
                     getMzArray(spectra, scan_idx),

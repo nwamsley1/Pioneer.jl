@@ -393,6 +393,7 @@ function initSimpleSearchContext(
         ArrayDict(UInt32, UInt16, n_precursors),
         Counter(UInt32, UInt8,n_precursors ),
         [DetailedFrag{Float32}() for _ in range(1, M)],
+        [MzSortEntry(zero(Float32), zero(UInt32)) for _ in range(1, M)],
         iso_splines,
         Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000),
         [SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)],
