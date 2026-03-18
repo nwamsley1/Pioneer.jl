@@ -797,6 +797,7 @@ function process_scans!(
         nmatches = new_nmatches
         nmisses = new_nmisses
 
+        sort!(@view(ion_matches[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
         # Process matches
         if nmatches > 2
 

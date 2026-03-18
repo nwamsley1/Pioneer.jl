@@ -908,7 +908,12 @@ function perform_quad_transmission_search(
         )
 
         nmatches ≤ 2 && return
-        
+
+        # Sort matches for buildDesignMatrix! deduplication
+        sort!(@view(getIonMatches(search_data)[1:nmatches]),
+            by = x->(x.peak_ind, x.prec_id),
+            alg=QuickSort)
+
         # Build design matrix and deconvolve
         perform_deconvolution!(
             Hs,

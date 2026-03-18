@@ -159,9 +159,11 @@ function getPSMS(
             mem,
             getHighMz(spectra, scan_idx)
         )
+
+        sort!(@view(getIonMatches(search_data)[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
         # Process matches
         if nmatches > 2
-            buildDesignMatrix!(Hs, getIonMatches(search_data), getIonMisses(search_data), 
+            buildDesignMatrix!(Hs, getIonMatches(search_data), getIonMisses(search_data),
                              nmatches, nmisses, getIdToCol(search_data))
 
             if getIdToCol(search_data).size > length(getSpectralScores(search_data))

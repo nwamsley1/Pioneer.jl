@@ -444,6 +444,8 @@ function build_chromatograms(
             getHighMz(spectra, scan_idx)
         )
 
+        sort!(@view(ion_matches[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
+
         # Process matches
         if nmatches > 2
             i += 1
@@ -676,6 +678,7 @@ function build_chromatograms(
         )
 
         #nmisses -= 1
+        sort!(@view(ion_matches[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
         # Process matches
         if nmatches > 2
             i += 1
