@@ -30,6 +30,7 @@ Each partition uses:
 | `test_synthetic.jl` | 10 synthetic correctness tests |
 | `profile_partitioned.jl` | PProf profiling of the partitioned search |
 | `diagnose.jl` | Diagnostic tool for score mismatch analysis |
+| `diagnose_hint_jumps.jl` | Diagnostic v2: validates 5-Da hint + advancing lb approach |
 
 ## Search Optimization Experiments (SearchOpt*)
 
@@ -56,6 +57,28 @@ and **13%** in `exponentialFragmentBinSearch`. These are the main optimization t
 - **No exponential search, no binary search**
 - **Result: 4.21x speedup** (17.2s vs 72.4s baseline, 22.8s variable-bin partitioned)
 - Memory: 2.04 GB (1.85 GB frag_ptrs + 167 MB fragments + 24 MB local-to-global)
+
+### SearchOptD: 5-Da Direct Hint + Advancing LB
+- **Idea**: Two synergistic changes to the variable-bin hinted search:
+  1. **New hint**: `hint[j] = k` where `getLow(frag_bins[j+k]) - getLow(frag_bins[j]) >= 5.0 Da`
+     (direct measurement, not density average). Stored as UInt16. `est_step = hint[lb] * (delta_mz / 5.0)`
+  2. **lb = first_matching_bin**: Return `(first_match, ub)` instead of `(saved_lb, ub)`.
+     Provably safe: `findFirstFragmentBin` returns the first bin with `getHigh >= frag_mz_min`;
+     all prior bins have `getHigh < frag_mz_min`, so next peak (higher m/z) can never match them.
+  3. **Hint-based lb advancement**: Before searching, advance lb using the hint.
+     `delta_mz > 5 Da`: advance by hint (provably safe — only 5 Da in getLow).
+     `delta_mz <= 5 Da`: advance by `hint * delta_mz / 5 * factor`.
+  4. **Hint-based UB guess**: `ub_guess = new_lb + est_step * overshoot_factor`.
+     Exponential doubling only when guess is insufficient.
+- **Diagnostic v2 results** (100 Astral scans):
+  - Per-peak jump: median 13 bins (vs ~1409 with old non-advancing lb)
+  - Hint accuracy (est/actual): median 0.86 — well-calibrated
+  - UB guess sufficient: 90% (only 10% need exponential fallback)
+  - **LB overshoot: 0.0% at ALL factors (0.5–1.0)** — linearity within 5 Da validated
+  - Range sizes: median 17, 49% ≤16 (linear scan), 82% ≤64
+  - Bin widths: tiny (median ~0.003 Da)
+  - Recommended: `lb_factor=1.0`, `ub_overshoot_factor=1.5`
+- **Status**: diagnostic validated, implementing in search functions
 
 ## Performance Progression
 
