@@ -8,8 +8,9 @@ binary search on precursor m/z and enables cache-friendly scoring with small cou
 
 ## Current Best Result
 
-**Fixed-width bin O(1) lookup (SearchOptC): 4.21x speedup** over the baseline monolithic
-index on Astral data (72.4s → 17.2s, 16 threads).
+**5-Da hint + SoA + hybrid binary→SIMD (SearchOptE): 5.86x speedup** over the baseline
+monolithic index on Astral data (74.5s → 12.7s, 16 threads). With conservative
+threshold=32 for cross-hardware safety: 5.74x (12.98s).
 
 ## Architecture
 
@@ -18,14 +19,17 @@ Each partition uses:
 - **LocalFragment** (4 bytes): `UInt16` local precursor ID + `UInt8` score
 - **LocalCounter** (192 KB per thread): type-correct `UInt16`/`UInt8` counter that fits in L1 cache
 - **Partition-major threading**: all threads process the same partition simultaneously for shared L2/L3 cache utilization
+- **SoAFragBins**: struct-of-arrays layout for fragment bins (4 contiguous arrays instead of array-of-structs), enabling SIMD scans on the `highs` array
+- **Hybrid binary→SIMD search**: binary search narrows the range, SIMD `_find_first_ge` finishes the last ≤32 elements
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `partitioned_types.jl` | All type definitions: `LocalFragment`, `LocalCounter`, `LocalPartition`, etc. |
-| `build_partitioned_index.jl` | Build `LocalPartitionedFragmentIndex` from spectral library |
-| `search_partitioned_index.jl` | Search functions: partition-major, local counter scoring, no global counter |
+| `partitioned_types.jl` | Type definitions: `SoAFragBins`, `LocalFragment`, `LocalCounter`, `LocalPartition`, etc. |
+| `build_partitioned_index.jl` | Build `LocalPartitionedFragmentIndex` from spectral library (SoA construction) |
+| `search_partitioned_index.jl` | SIMD primitives, hybrid search, partition-major scoring |
+| `benchmark_step_and_hints.jl` | Benchmark: baseline vs hybrid binary→SIMD with threshold sweep |
 | `benchmark.jl` | Full benchmark comparing baseline vs partitioned (7-frag, 3-frag, bitmask) |
 | `test_synthetic.jl` | 10 synthetic correctness tests |
 | `profile_partitioned.jl` | PProf profiling of the partitioned search |
@@ -50,7 +54,7 @@ and **13%** in `exponentialFragmentBinSearch`. These are the main optimization t
 - **Status**: implemented, not yet benchmarked standalone
 - **Issue**: `inv_avg_bin_width` is a poor estimate because variable-width bins have wildly different widths
 
-### SearchOptC: Fixed-Width Bins with O(1) Lookup ← CURRENT BEST
+### SearchOptC: Fixed-Width Bins with O(1) Lookup
 - Replace variable-width frag bins with fixed 0.005 Da bins
 - CSR-style `UInt16` pointer array per RT bin maps bin index → fragment range
 - Given peak m/z: `bin = floor(Int32, (mz - mz_min) * INV_BIN_WIDTH) + 1` → one multiply + one load
@@ -78,18 +82,50 @@ and **13%** in `exponentialFragmentBinSearch`. These are the main optimization t
   - Range sizes: median 17, 49% ≤16 (linear scan), 82% ≤64
   - Bin widths: tiny (median ~0.003 Da)
   - Recommended: `lb_factor=1.0`, `ub_overshoot_factor=1.5`
-- **Status**: diagnostic validated, implementing in search functions
+- **Result: 5.68x speedup** (12.6s, AoS layout)
+
+### SearchOptE: SoA Layout + SIMD Linear Scan ← CURRENT BEST
+- **SoA layout** (`SoAFragBins{T}`): Split `FragIndexBin` array-of-structs into 4 parallel
+  arrays (`lows`, `highs`, `first_bins`, `last_bins`). Each `getHigh` scan now touches
+  only the contiguous `highs` array (4 bytes/element) instead of striding through 16-byte
+  AoS records. 4x better cache utilization for field-specific scans.
+- **SIMD primitives**: `_find_first_ge(highs, start, stop, threshold)` uses `F32x8`
+  (`NTuple{8, Core.VecElement{Float32}}`) with `llvmcall` for `fcmp oge` + `bitcast` to
+  scan 8 elements per iteration. Scalar tail handles remaining elements.
+- **Hybrid binary→SIMD** (`_findFirstFragBin_hybrid`): For ranges > threshold, branchless
+  binary search narrows to ≤threshold elements, then `_find_first_ge` finishes with SIMD.
+  For ranges ≤ threshold, direct SIMD scan (no binary overhead).
+- **Default threshold=32**: Safe across hardware. 82% of ranges are ≤64, so most queries
+  take the direct SIMD fast path. The 18% of larger ranges get binary→SIMD.
+- **SIMD padding**: `highs` array gets 7 extra `Inf` sentinel elements for safe `_vload8`.
+- **Result: 5.74x at threshold=32, 5.86x at threshold=1M (pure SIMD)**
+- Memory: ~585 MB (same as SearchOptD — SoA is same total size as AoS)
+
+#### Hybrid Threshold Sweep Results
+
+| Threshold | Time (s) | Speedup | Strategy |
+|-----------|----------|---------|----------|
+| 1 (pure binary) | 14.80 | 5.04x | Binary all the way |
+| 8 | 13.68 | 5.45x | ≤8 SIMD, >8 binary→SIMD-8 |
+| 16 | 13.18 | 5.65x | ≤16 SIMD, >16 binary→SIMD-16 |
+| **32 (default)** | **12.98** | **5.74x** | **≤32 SIMD, >32 binary→SIMD-32** |
+| 64 | 12.80 | 5.82x | ≤64 SIMD, >64 binary→SIMD-64 |
+| 128 | 13.08 | 5.70x | ≤128 SIMD, >128 binary→SIMD-128 |
+| 256 | 12.87 | 5.79x | ≤256 SIMD, >256 binary→SIMD-256 |
+| 1M (pure SIMD) | 12.73 | 5.86x | SIMD the whole range |
 
 ## Performance Progression
 
 | Version | Speedup | Search Time | Memory |
 |---------|---------|-------------|--------|
-| Baseline (monolithic, 7 frags) | 1.0x | 72s | 525 MB |
+| Baseline (monolithic, 7 frags) | 1.0x | 72–74s | 525 MB |
 | Full frag bin copy (reference) | 1.46x | 49s | 3,367 MB |
 | Variable bins, CompactFragment | 3.13x | 23s | 680 MB |
 | Variable bins, LocalFragment + local counter | 3.12x | 23s | 541 MB |
 | Partition-major threading | 3.17x | 23s | 541 MB |
-| **Fixed-width bins, O(1) lookup** | **4.21x** | **17s** | **2,037 MB** |
+| Fixed-width bins, O(1) lookup (SearchOptC) | 4.21x | 17s | 2,037 MB |
+| 5-Da hint + advancing lb, AoS (SearchOptD) | 5.68x | 12.6s | ~585 MB |
+| **5-Da hint + SoA + hybrid binary→SIMD (SearchOptE)** | **5.74x** | **13.0s** | **~585 MB** |
 
 ## Profile Breakdown (variable-bin partitioned, before SearchOptC)
 
@@ -110,6 +146,10 @@ ID set differences (a few dozen precursors per scan near bin boundaries). This i
 expected cost of independent binning, not a bug. End-to-end proteomics validation (PSMs
 passing FDR) is the appropriate correctness metric.
 
+The SIMD and binary search paths produce **identical results**: threshold=1 (pure binary)
+vs threshold=1000000 (pure SIMD) validated on 500 scans with 92,359 precursor IDs,
+0 mismatches in both ID sets and scores.
+
 ## Checkpoints (git tags)
 
 - `checkpoint/compact-fragment-3x-speedup` — CompactFragment, 3.13x, safe fallback
@@ -125,6 +165,9 @@ julia --project=. experiments/PartitionedFragIndex/test_synthetic.jl
 
 # Full benchmark (requires Astral data)
 julia --threads=auto --project=. experiments/PartitionedFragIndex/benchmark.jl /path/to/params.json
+
+# Hybrid binary→SIMD benchmark with threshold sweep
+julia --threads=auto --project=. experiments/PartitionedFragIndex/benchmark_step_and_hints.jl /path/to/params.json
 
 # Fixed-bin benchmark
 julia --threads=auto --project=. experiments/PartitionedFragIndex/SearchOptC/benchmark_opt_c.jl /path/to/params.json

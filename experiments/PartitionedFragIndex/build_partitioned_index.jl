@@ -224,7 +224,7 @@ function build_partitioned_index_from_lib(
 
         if isempty(frags_k)
             partitions[k] = LocalPartition{Float32}(
-                Pioneer.FragIndexBin{Float32}[],
+                SoAFragBins{Float32}(Float32[], Float32[], UInt32[], UInt32[]),
                 Pioneer.FragIndexBin{Float32}[],
                 LocalFragment[],
                 l2g,
@@ -245,7 +245,9 @@ function build_partitioned_index_from_lib(
     total_fr = sum(last, part_stats)
     println("  Total frag_bins: $total_fb  rt_bins: $total_rt  fragments: $total_fr")
     frag_mem = sum(sizeof(getFragments(p)) for p in partitions)
-    bin_mem = sum(sizeof(getFragBins(p)) + sizeof(getRTBins(p)) for p in partitions)
+    bin_mem = sum(p -> let fb = getFragBins(p)
+            sizeof(fb.lows) + sizeof(fb.highs) + sizeof(fb.first_bins) + sizeof(fb.last_bins) + sizeof(getRTBins(p))
+        end, partitions)
     l2g_mem = sum(sizeof(p.local_to_global) for p in partitions)
     hint_mem = sum(sizeof(getSkipHints(p)) for p in partitions)
     println("  Memory: fragments=$(round(frag_mem/1024^2, digits=1))MB  bins=$(round(bin_mem/1024^2, digits=1))MB  l2g=$(round(l2g_mem/1024^2, digits=1))MB  hints=$(round(hint_mem/1024^2, digits=1))MB")
@@ -398,7 +400,13 @@ function _build_local_partition(
     n = length(frag_ions)
     local_fragments = Vector{LocalFragment}(undef, n)
     rt_bins = Vector{Pioneer.FragIndexBin{Float32}}(undef, n)
-    frag_bins = Vector{Pioneer.FragIndexBin{Float32}}(undef, n)
+    # SoA layout: 4 parallel arrays instead of Vector{FragIndexBin}
+    soa = SoAFragBins{Float32}(
+        Vector{Float32}(undef, n),
+        Vector{Float32}(undef, n),
+        Vector{UInt32}(undef, n),
+        Vector{UInt32}(undef, n),
+    )
     rt_bin_idx = 0
     frag_bin_idx = 0
 
@@ -412,7 +420,7 @@ function _build_local_partition(
             stop_irt_val = Pioneer.getIRT(frag_ions[stop_idx])
             sort!(@view(frag_ions[start_idx:stop_idx]), by = x -> Pioneer.getMZ(x))
             first_fb = frag_bin_idx + 1
-            frag_bin_idx = _build_local_frag_bins!(local_fragments, frag_bins,
+            frag_bin_idx = _build_local_frag_bins!(local_fragments, soa,
                 frag_bin_idx, frag_ions, start_idx, stop_idx, frag_bin_tol_ppm)
             rt_bin_idx += 1
             rt_bins[rt_bin_idx] = Pioneer.FragIndexBin{Float32}(
@@ -427,18 +435,26 @@ function _build_local_partition(
     stop_irt_val = Pioneer.getIRT(frag_ions[stop_idx])
     sort!(@view(frag_ions[start_idx:stop_idx]), by = x -> Pioneer.getMZ(x))
     first_fb = frag_bin_idx + 1
-    frag_bin_idx = _build_local_frag_bins!(local_fragments, frag_bins,
+    frag_bin_idx = _build_local_frag_bins!(local_fragments, soa,
         frag_bin_idx, frag_ions, start_idx, stop_idx, frag_bin_tol_ppm)
     rt_bin_idx += 1
     rt_bins[rt_bin_idx] = Pioneer.FragIndexBin{Float32}(
         start_irt, stop_irt_val, UInt32(first_fb), UInt32(frag_bin_idx))
 
-    fb_final = frag_bins[1:frag_bin_idx]
+    # Resize SoA arrays to actual count + SIMD padding on highs
+    resize!(soa.lows, frag_bin_idx)
+    # Pad highs with 7 extra elements for safe SIMD _vload8 reads past end
+    resize!(soa.highs, frag_bin_idx + 7)
+    for pad_i in (frag_bin_idx + 1):(frag_bin_idx + 7)
+        soa.highs[pad_i] = Float32(Inf)  # always >= threshold, safe sentinel
+    end
+    resize!(soa.first_bins, frag_bin_idx)
+    resize!(soa.last_bins, frag_bin_idx)
     rb_final = rt_bins[1:rt_bin_idx]
-    skip_hints = _compute_skip_hints(fb_final, rb_final)
+    skip_hints = _compute_skip_hints(soa, rb_final)
 
     return LocalPartition{Float32}(
-        fb_final,
+        soa,
         rb_final,
         local_fragments,
         local_to_global,
@@ -450,10 +466,11 @@ end
 """
 Build fragment m/z bins producing LocalFragment entries (UInt16 local IDs).
 The SimpleFrag prec_id field already contains the local ID as UInt32.
+Writes bin metadata into SoA parallel arrays.
 """
 function _build_local_frag_bins!(
     local_fragments::Vector{LocalFragment},
-    frag_bins::Vector{Pioneer.FragIndexBin{Float32}},
+    soa::SoAFragBins{Float32},
     frag_bin_idx::Int,
     frag_ions::Vector{Pioneer.SimpleFrag{Float32}},
     start::Int, stop::Int,
@@ -471,8 +488,10 @@ function _build_local_frag_bins!(
             bin_stop_mz = Pioneer.getMZ(frag_ions[bin_stop])
             sort!(@view(frag_ions[start_idx:bin_stop]), by = x -> Pioneer.getPrecMZ(x))
             frag_bin_idx += 1
-            frag_bins[frag_bin_idx] = Pioneer.FragIndexBin{Float32}(
-                start_mz, bin_stop_mz, UInt32(start_idx), UInt32(bin_stop))
+            soa.lows[frag_bin_idx] = start_mz
+            soa.highs[frag_bin_idx] = bin_stop_mz
+            soa.first_bins[frag_bin_idx] = UInt32(start_idx)
+            soa.last_bins[frag_bin_idx] = UInt32(bin_stop)
             for idx in start_idx:bin_stop
                 sf = frag_ions[idx]
                 local_fragments[idx] = LocalFragment(
@@ -487,8 +506,10 @@ function _build_local_frag_bins!(
     stop_mz = Pioneer.getMZ(frag_ions[stop])
     sort!(@view(frag_ions[start_idx:stop]), by = x -> Pioneer.getPrecMZ(x))
     frag_bin_idx += 1
-    frag_bins[frag_bin_idx] = Pioneer.FragIndexBin{Float32}(
-        start_mz, stop_mz, UInt32(start_idx), UInt32(stop))
+    soa.lows[frag_bin_idx] = start_mz
+    soa.highs[frag_bin_idx] = stop_mz
+    soa.first_bins[frag_bin_idx] = UInt32(start_idx)
+    soa.last_bins[frag_bin_idx] = UInt32(stop)
     for idx in start_idx:stop
         sf = frag_ions[idx]
         local_fragments[idx] = LocalFragment(
@@ -500,16 +521,17 @@ end
 
 """
 Compute per-frag-bin skip hints for the hinted search.
-hints[j] = k where getLow(frag_bins[j+k]) - getLow(frag_bins[j]) >= 5.0 Da.
-Direct measurement: "how many bins ahead is +5 Da in getLow?"
+hints[j] = k where frag_bins.lows[j+k] - frag_bins.lows[j] >= 5.0 Da.
+Direct measurement: "how many bins ahead is +5 Da in lows?"
 Stored as UInt16 (dense regions may exceed 255). Clamped to RT bin range.
 """
 function _compute_skip_hints(
-    frag_bins::Vector{Pioneer.FragIndexBin{Float32}},
+    frag_bins::SoAFragBins{Float32},
     rt_bins::Vector{Pioneer.FragIndexBin{Float32}},
 )
     n_fb = length(frag_bins)
     hints = ones(UInt16, n_fb)
+    lows = frag_bins.lows
 
     for rt_bin in rt_bins
         range = Pioneer.getSubBinRange(rt_bin)
@@ -518,23 +540,23 @@ function _compute_skip_hints(
         fb_start > fb_end && continue
 
         for j in fb_start:fb_end
-            target_low = Pioneer.getLow(frag_bins[j]) + 5.0f0
+            target_low = lows[j] + 5.0f0
             max_k = fb_end - j
             max_k <= 0 && continue
 
             # If even the last bin doesn't reach +5 Da, set hint to max available
-            if Pioneer.getLow(frag_bins[fb_end]) < target_low
+            if lows[fb_end] < target_low
                 hints[j] = UInt16(max_k)
                 continue
             end
 
-            # Binary search for smallest k where getLow(frag_bins[j+k]) >= target_low
+            # Binary search for smallest k where lows[j+k] >= target_low
             lo_k = 1
             hi_k = max_k
             result_k = hi_k
             while lo_k <= hi_k
                 mid_k = (lo_k + hi_k) >>> 1
-                if Pioneer.getLow(frag_bins[j + mid_k]) >= target_low
+                if lows[j + mid_k] >= target_low
                     result_k = mid_k
                     hi_k = mid_k - 1
                 else

@@ -1,3 +1,94 @@
+# ── SIMD primitives for SoA linear scan ──────────────────────────────────────
+
+const F32x8 = NTuple{8, Core.VecElement{Float32}}
+
+@inline function _vbroadcast8(x::Float32)::F32x8
+    ntuple(_ -> Core.VecElement(x), Val(8))
+end
+
+@inline function _vload8(arr::Vector{Float32}, i::Int)::F32x8
+    unsafe_load(Ptr{F32x8}(pointer(arr, i)))
+end
+
+@inline function _vcmpge_mask(a::F32x8, b::F32x8)::UInt8
+    Core.Intrinsics.llvmcall("""
+        %cmp = fcmp oge <8 x float> %0, %1
+        %mask = bitcast <8 x i1> %cmp to i8
+        ret i8 %mask
+    """, UInt8, Tuple{F32x8, F32x8}, a, b)
+end
+
+"""
+    _find_first_ge(highs, start, stop, threshold) -> UInt32
+
+SIMD-accelerated scan: find first index i in start:stop where highs[i] >= threshold.
+Returns stop + 1 if no match found.
+"""
+@inline function _find_first_ge(highs::Vector{Float32}, start::UInt32, stop::UInt32, threshold::Float32)::UInt32
+    thr_vec = _vbroadcast8(threshold)
+    i = Int(start)
+    stop_i = Int(stop)
+    # SIMD: 8 elements per iteration
+    while i + 7 <= stop_i
+        mask = _vcmpge_mask(_vload8(highs, i), thr_vec)
+        mask != 0x00 && return UInt32(i + trailing_zeros(mask))
+        i += 8
+    end
+    # Scalar tail
+    while i <= stop_i
+        @inbounds highs[i] >= threshold && return UInt32(i)
+        i += 1
+    end
+    return stop + one(UInt32)
+end
+
+"""
+    _findFirstFragBin_soa(highs, lb, ub, frag_min) -> UInt32
+
+Branchless binary search on the SoA `highs` array.
+Equivalent to Pioneer.findFirstFragmentBin but operates on a contiguous Float32 array.
+"""
+@inline function _findFirstFragBin_soa(highs::Vector{Float32}, lb::UInt32, ub::UInt32, frag_min::Float32)
+    @inbounds @fastmath begin
+        len = ub - lb + one(UInt32)
+        mid = len >>> 0x01
+        base = lb
+        while len > 1
+            base += (highs[base + mid - one(UInt32)] < frag_min) * mid
+            len -= mid
+            mid = len >>> 0x01
+        end
+    end
+    return base
+end
+
+"""
+    _findFirstFragBin_hybrid(highs, lb, ub, frag_min, simd_cutoff) -> UInt32
+
+Hybrid binary+SIMD search. Runs branchless binary search iterations until the
+remaining range is ≤ simd_cutoff, then finishes with a SIMD linear scan.
+Gets the best of both: O(log n) narrowing for large ranges, cache-friendly
+SIMD scan for the final stretch.
+"""
+@inline function _findFirstFragBin_hybrid(highs::Vector{Float32}, lb::UInt32, ub::UInt32,
+                                           frag_min::Float32, simd_cutoff::UInt32)
+    @inbounds @fastmath begin
+        len = ub - lb + one(UInt32)
+        mid = len >>> 0x01
+        base = lb
+        # Binary search until range is small enough for SIMD
+        while len > simd_cutoff
+            base += (highs[base + mid - one(UInt32)] < frag_min) * mid
+            len -= mid
+            mid = len >>> 0x01
+        end
+    end
+    # Finish with SIMD linear scan over the remaining ≤simd_cutoff elements
+    return _find_first_ge(highs, base, base + len - one(UInt32), frag_min)
+end
+
+# ── Scoring functions ────────────────────────────────────────────────────────
+
 """
     searchFragmentBinUnconditional!(counter, fragments, frag_id_range)
 
@@ -833,25 +924,25 @@ end
 
 # ── Hint-based search functions ──────────────────────────────────────────
 
-const HINT_LINEAR_THRESHOLD = 16
+const HINT_LINEAR_THRESHOLD = 32
 
 """
     queryFragmentHinted!(counter, frag_bin_max_idx, lower_bound_guess, upper_bound_guess,
                           frag_bins, fragments, frag_mz_min, frag_mz_max,
                           hints, prev_mz, linear_threshold)
 
-5-Da direct hint search with advancing lb.
+5-Da direct hint search with advancing lb, SoA layout + SIMD linear scan.
 
-Hint semantics: hints[j] = k where getLow(frag_bins[j+k]) >= getLow(frag_bins[j]) + 5 Da.
+Hint semantics: hints[j] = k where frag_bins.lows[j+k] >= frag_bins.lows[j] + 5 Da.
 est_step = hint * (delta_mz / 5.0).
 
 Algorithm:
-1. Hint-based lb advancement (provably safe: hint measures exactly 5 Da in getLow,
+1. Hint-based lb advancement (provably safe: hint measures exactly 5 Da in lows,
    so advancing by hint when delta >= 5 Da cannot overshoot).
    For delta < 5 Da, linear interpolation with factor=1.0 (validated zero-overshoot).
 2. Hint-based UB guess: new_lb + est_step * 1.5.
 3. Exponential doubling only if UB guess insufficient (covers ~10% of cases).
-4. findFirstFragmentBin in [new_lb, ub] for exact first match.
+4. SIMD _find_first_ge on highs array for small ranges, binary search for large ranges.
 5. Return (first_match, ub) so lb advances for next peak.
 """
 @inline function queryFragmentHinted!(
@@ -859,7 +950,7 @@ Algorithm:
         frag_bin_max_idx::UInt32,
         lower_bound_guess::UInt32,
         upper_bound_guess::UInt32,
-        frag_bins::Vector{Pioneer.FragIndexBin{T}},
+        frag_bins::SoAFragBins{T},
         fragments::AbstractVector,
         frag_mz_min::Float32,
         frag_mz_max::Float32,
@@ -867,22 +958,24 @@ Algorithm:
         prev_mz::Float32,
         linear_threshold::Int) where {T<:AbstractFloat}
 
+    fb_lows = frag_bins.lows
+    fb_highs = frag_bins.highs
+    fb_first = frag_bins.first_bins
+    fb_last = frag_bins.last_bins
+
     # ── Hint-based lb advancement ────────────────────────────────────
     new_lb = lower_bound_guess
     est_step_f = 0.0f0
 
     if prev_mz > 0.0f0 && lower_bound_guess <= frag_bin_max_idx
-        delta_mz = frag_mz_min - Pioneer.getLow(frag_bins[lower_bound_guess])
+        delta_mz = frag_mz_min - @inbounds fb_lows[lower_bound_guess]
         if delta_mz > 0.0f0
             hint = @inbounds hints[lower_bound_guess]
             est_step_f = Float32(hint) * (delta_mz / 5.0f0)
 
             if delta_mz > 5.0f0
-                # Provably safe: hint says k bins = 5 Da in getLow.
-                # At lb+k, getLow is only 5 Da higher — still below +delta_mz.
                 new_lb = min(lower_bound_guess + UInt32(hint), frag_bin_max_idx)
             else
-                # Linear interpolation, factor=1.0 (validated zero-overshoot)
                 advance = UInt32(max(floor(Int, est_step_f), 1))
                 new_lb = min(lower_bound_guess + advance, frag_bin_max_idx)
             end
@@ -895,9 +988,9 @@ Algorithm:
 
     # ── Check if UB guess is sufficient, exponential doubling if not ─
     ub_final = ub_guess
-    if @inbounds Pioneer.getHigh(frag_bins[ub_final]) < frag_mz_max
+    if @inbounds fb_highs[ub_final] < frag_mz_max
         step = one(UInt32)
-        while @inbounds Pioneer.getHigh(frag_bins[ub_final]) < frag_mz_max
+        while @inbounds fb_highs[ub_final] < frag_mz_max
             ub_final += step
             step = step << one(UInt8)
             if ub_final > frag_bin_max_idx
@@ -907,17 +1000,15 @@ Algorithm:
         end
     end
 
-    # ── Find first matching bin ──────────────────────────────────────
+    # ── Find first matching bin (SIMD or binary→SIMD) ──────────────
     range_size = ub_final - new_lb + one(UInt32)
     if range_size <= UInt32(linear_threshold)
-        frag_bin_idx = new_lb
-        @inbounds while frag_bin_idx <= ub_final &&
-                Pioneer.getHigh(frag_bins[frag_bin_idx]) < frag_mz_min
-            frag_bin_idx += one(UInt32)
-        end
+        # Small range: direct SIMD scan
+        frag_bin_idx = _find_first_ge(fb_highs, new_lb, ub_final, frag_mz_min)
     else
-        frag_bin_idx = Pioneer.findFirstFragmentBin(
-            frag_bins, new_lb, ub_final, frag_mz_min)
+        # Large range: binary search narrows to ≤threshold, then SIMD finishes
+        frag_bin_idx = _findFirstFragBin_hybrid(fb_highs, new_lb, ub_final,
+                                                 frag_mz_min, UInt32(linear_threshold))
     end
 
     first_match = frag_bin_idx
@@ -925,16 +1016,15 @@ Algorithm:
     # ── Score matching bins ──────────────────────────────────────────
     @inbounds @fastmath begin
         while frag_bin_idx <= frag_bin_max_idx
-            frag_bin = frag_bins[frag_bin_idx]
-            if Pioneer.getLow(frag_bin) > frag_mz_max
+            if fb_lows[frag_bin_idx] > frag_mz_max
                 break
             else
                 if frag_bin_max_idx === frag_bin_idx
-                    if Pioneer.getHigh(frag_bin) < frag_mz_min
+                    if fb_highs[frag_bin_idx] < frag_mz_min
                         break
                     end
                 end
-                frag_id_range = Pioneer.getSubBinRange(frag_bin)
+                frag_id_range = fb_first[frag_bin_idx]:fb_last[frag_bin_idx]
                 searchFragmentBinUnconditional!(counter, fragments, frag_id_range)
                 frag_bin_idx += one(UInt32)
             end

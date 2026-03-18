@@ -94,6 +94,27 @@ getNPartitions(pfi::CompactPartitionedFragmentIndex) = pfi.n_partitions
     return clamp(floor(Int, (prec_mz - pfi.prec_mz_min) / pfi.partition_width) + 1, 1, pfi.n_partitions)
 end
 
+# ── SoA layout for fragment bins (cache-friendly for field-specific scans) ────
+
+"""
+    SoAFragBins{T}
+
+Struct-of-arrays layout for fragment bin data. Each field-specific scan
+(e.g., scanning `highs` to find first bin ≥ threshold) touches only one
+contiguous array instead of striding through 16-byte AoS records.
+
+Enables SIMD "find first ≥ threshold" over the `highs` array.
+"""
+struct SoAFragBins{T<:AbstractFloat}
+    lows::Vector{T}
+    highs::Vector{T}
+    first_bins::Vector{UInt32}
+    last_bins::Vector{UInt32}
+end
+
+@inline Base.length(s::SoAFragBins) = length(s.lows)
+@inline Base.isempty(s::SoAFragBins) = isempty(s.lows)
+
 # ── Local-ID fragment type for partitioned index ─────────────────────────────
 
 const MAX_LOCAL_PRECS = 65535  # UInt16 max
@@ -123,7 +144,7 @@ A single partition's index using LocalFragment with partition-local UInt16 IDs.
 Includes `local_to_global` mapping to recover global UInt32 precursor IDs.
 """
 struct LocalPartition{T<:AbstractFloat}
-    fragment_bins::Vector{Pioneer.FragIndexBin{T}}
+    fragment_bins::SoAFragBins{T}
     rt_bins::Vector{Pioneer.FragIndexBin{T}}
     fragments::Vector{LocalFragment}
     local_to_global::Vector{UInt32}  # local_id → global prec_id
