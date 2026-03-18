@@ -66,6 +66,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     accuracy_newton::Float32
     accuracy_bisection::Float32
     max_diff::Float32
+    deconvolution_solver::DeconvolutionSolver
 
     # MS1 deconvolution parameters
     ms1_lambda::Float32
@@ -114,6 +115,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             Float32(10),      # accuracy_newton
             Float32(10),      # accuracy_bisection
             Float32(0.01),    # max_diff
+            OLSSolver(),      # deconvolution_solver (IntegrateChromatograms always OLS)
 
             Float32(0.0001),  # ms1_lambda
             L2Norm(),         # ms1_reg_type

@@ -354,15 +354,11 @@ function process_scans_fragindex!(
         initialize_weights!(search_data, weights, precursor_weights)
 
         # Solve deconvolution
-        initResiduals!(residuals, Hs, weights)
-
-        converged, _ = solveOLS!(
-            Hs,
-            residuals,
-            weights,
-            colnorm2,
-            params.max_iter_outer,
-            params.max_diff
+        converged, _ = solve_deconvolution!(
+            params.deconvolution_solver,
+            Hs, residuals, weights, colnorm2,
+            getMu(search_data), getObserved(search_data),
+            params.max_iter_outer, params.max_diff
         )
         if !converged
             reset_arrays!(search_data, Hs)
@@ -573,14 +569,11 @@ function process_scans!(
         initialize_weights!(search_data, weights, precursor_weights)
 
         # Solve deconvolution problem
-        initResiduals!(residuals, Hs, weights)
-        converged, _ = solveOLS!(
-            Hs,
-            residuals,
-            weights,
-            colnorm2,
-            params.max_iter_outer,
-            params.max_diff
+        converged, _ = solve_deconvolution!(
+            params.deconvolution_solver,
+            Hs, residuals, weights, colnorm2,
+            getMu(search_data), getObserved(search_data),
+            params.max_iter_outer, params.max_diff
         )
         if !converged
             reset_arrays!(search_data, Hs)
@@ -839,14 +832,11 @@ function process_scans!(
             end
 
             # Solve deconvolution
-            initResiduals!(residuals, Hs, weights)
-            solveOLS!(
-                Hs,
-                residuals,
-                weights,
-                colnorm2,
-                params.max_iter_outer,
-                params.max_diff
+            solve_deconvolution!(
+                params.deconvolution_solver,
+                Hs, residuals, weights, colnorm2,
+                getMu(search_data), getObserved(search_data),
+                params.max_iter_outer, params.max_diff
             )
 
             # NEW: Distribute grouped coefficients back to individual precursors

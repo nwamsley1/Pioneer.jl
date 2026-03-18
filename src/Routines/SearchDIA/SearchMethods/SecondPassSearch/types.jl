@@ -39,6 +39,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     accuracy_newton::Float32
     accuracy_bisection::Float32
     max_diff::Float32
+    deconvolution_solver::DeconvolutionSolver
 
     # MS1 deconvolution parameters
     ms1_lambda::Float32
@@ -138,6 +139,8 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Float32(10),      # accuracy_newton
             Float32(10),      # accuracy_bisection
             Float32(0.01),    # max_diff
+            (haskey(quant_params, :deconvolution_solver) &&
+             quant_params.deconvolution_solver == "pmm") ? PoissonMMSolver() : OLSSolver(),
 
             Float32(0.0001),  # ms1_lambda
             L2Norm(),         # ms1_reg_type

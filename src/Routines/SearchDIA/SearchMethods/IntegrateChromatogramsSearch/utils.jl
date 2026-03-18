@@ -477,15 +477,11 @@ function build_chromatograms(
             end
 
             # Solve deconvolution
-            initResiduals!(residuals, Hs, weights)
-
-            solveOLS!(
-                Hs,
-                residuals,
-                weights,
-                colnorm2,
-                params.max_iter_outer,
-                params.max_diff
+            solve_deconvolution!(
+                params.deconvolution_solver,
+                Hs, residuals, weights, colnorm2,
+                getMu(search_data), getObserved(search_data),
+                params.max_iter_outer, params.max_diff
             )
 
             # Record chromatogram points with weights
@@ -716,14 +712,11 @@ function build_chromatograms(
             end
 
             # Solve deconvolution
-            initResiduals!(residuals, Hs, weights)
-            solveOLS!(
-                Hs,
-                residuals,
-                weights,
-                colnorm2,
-                params.max_iter_outer,
-                params.max_diff
+            solve_deconvolution!(
+                params.deconvolution_solver,
+                Hs, residuals, weights, colnorm2,
+                getMu(search_data), getObserved(search_data),
+                params.max_iter_outer, params.max_diff
             )
 
             # NEW: Distribute grouped coefficients back to individual precursors

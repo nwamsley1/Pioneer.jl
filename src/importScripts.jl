@@ -145,6 +145,7 @@ function importScripts()
             "probitRegression.jl",
             "piecewiseLinearFunction.jl",
             "spectralLinearRegression.jl",
+            "spectralPoissonRegression.jl",
             "uniformBasisCubicSpline.jl",
             "wittakerHendersonSmoothing.jl",
             "libraryBSpline.jl",
