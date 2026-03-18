@@ -177,7 +177,6 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     id_to_col::ArrayDict{UInt32, UInt16}
     prec_count::Counter{UInt32, UInt8}
     ion_templates::Vector{DetailedFrag{Float32}}
-    mz_index::Vector{MzSortEntry}
     iso_splines::I
     
     # PSM scoring
@@ -410,7 +409,6 @@ getMassErrMatches(s::SearchDataStructures) = s.mass_err_matches
 getIdToCol(s::SearchDataStructures) = s.id_to_col
 getPrecursorScores(s::SearchDataStructures) = s.prec_count
 getIonTemplates(s::SearchDataStructures) = s.ion_templates
-getMzIndex(s::SearchDataStructures) = s.mz_index
 getIsoSplines(s::SearchDataStructures) = s.iso_splines
 
 getScoredPsms(s::SearchDataStructures) = s.scored_psms

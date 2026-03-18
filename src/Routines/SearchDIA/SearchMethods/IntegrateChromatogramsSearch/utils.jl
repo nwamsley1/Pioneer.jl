@@ -369,7 +369,6 @@ function build_chromatograms(
     prec_sulfur_arr = getSulfurCount(precursors)
     frag_lookup = getFragmentLookupTable(spec_lib)
     ion_templates = getIonTemplates(search_data)
-    mz_index = getMzIndex(search_data)
     ion_matches = getIonMatches(search_data)
     ion_misses = getIonMisses(search_data)
     id_to_col = getIdToCol(search_data)
@@ -405,7 +404,6 @@ function build_chromatograms(
 
             ion_idx, prec_temp_size = selectTransitions!(
                 ion_templates,
-                mz_index,
                 RTIndexedTransitionSelection(),
                 params.prec_estimation,
                 frag_lookup,
@@ -435,7 +433,6 @@ function build_chromatograms(
         nmatches, nmisses = matchPeaks!(
             ion_matches,
             ion_misses,
-            mz_index,
             ion_templates,
             ion_idx,
             getMzArray(spectra, scan_idx),
@@ -679,6 +676,7 @@ function build_chromatograms(
 
         #nmisses -= 1
         sort!(@view(ion_matches[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
+        #println("nmatches $nmatches nmisses $nmisses")
         # Process matches
         if nmatches > 2
             i += 1

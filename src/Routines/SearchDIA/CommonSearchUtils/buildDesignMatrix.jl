@@ -96,10 +96,8 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32},
     M += nmisses
 
     #If M exceeds pre-allocated size
-    # Ensure capacity >= 2*(nmatches+nmisses) so countingSortByCol! never allocates
-    required = nmatches + nmisses
-    if required >= length(H.colval) ÷ 2
-        block_size = max(block_size, 2 * required - length(H.colval))
+    if (nmatches + nmisses) >= length(H.colval) - 1
+        block_size = max(block_size,nmatches + nmisses - length(H.colval))
         append!(H.colval, zeros(eltype(H.colval), block_size))
         append!(H.rowval, zeros(eltype(H.rowval), block_size))
         append!(H.nzval, zeros(eltype(H.nzval), block_size))
@@ -209,10 +207,9 @@ function buildDesignMatrixMS1!(
     end
     M += nmisses
 
-    # Handle array resizing — ensure 2x capacity for countingSortByCol!
-    required = nmatches + nmisses
-    if required >= length(H.colval) ÷ 2
-        block_size = max(block_size, 2 * required - length(H.colval))
+    # Handle array resizing (same logic as original)
+    if (nmatches + nmisses) >= length(H.colval) - 1
+        block_size = max(block_size, nmatches + nmisses - length(H.colval))
         append!(H.colval, zeros(eltype(H.colval), block_size))
         append!(H.rowval, zeros(eltype(H.rowval), block_size))
         append!(H.nzval, zeros(eltype(H.nzval), block_size))

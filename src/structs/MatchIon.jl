@@ -18,18 +18,6 @@
 abstract type MatchIon{T<:AbstractFloat} <: Ion{T} end
 
 """
-    MzSortEntry
-
-8-byte sidecar for sorting fragment ions by m/z without moving full 24B DetailedFrag structs.
-The hot comparison loop in matchPeaks! reads only the 4B mz field; the idx field resolves
-to the full template only on match/miss writes (infrequent relative to comparisons).
-"""
-struct MzSortEntry
-    mz::Float32     # 4B — sort key, used directly by matchPeaks! comparisons
-    idx::UInt32     # 4B — index into ion_templates array
-end               # 8B, no padding
-
-"""
     ion_match_lt(a, b) -> Bool
 
 Compare two MatchIon instances by (peak_ind, prec_id) without tuple allocation.

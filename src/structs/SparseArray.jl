@@ -26,20 +26,19 @@ mutable struct SparseArray{Ti<:Integer,T<:AbstractFloat}
     isotope::Vector{UInt8}
     x::Vector{T}
     colptr::Vector{Ti}
-    cursors::Vector{Ti}   # pre-allocated, reused per scan for countingSortByCol!
 end
 SparseArray(N::I) where {I<:Integer} = SparseArray(
                     0,
                     0,
                     0,
-                    zeros(I, N), #rowval
-                    zeros(UInt16, N), #colval
+                    zeros(I, N), #rowval 
+                    zeros(UInt16, N), #colval 
                     zeros(Float32, N), #nzval
                     ones(Bool, N), #matched,
                     zeros(UInt8, N), #isotope
                     zeros(Float32, N), #x
                     zeros(I, N), #colptr
-                    zeros(I, 200), #cursors
+
 )
 
 @inline function selectpivot!(v::SparseArray{Ti, T}, lo::Integer, hi::Integer, o::Ordering) where {Ti<:Integer, T<:AbstractFloat}
@@ -190,82 +189,33 @@ end
 
 
 
-"""
-    countingSortByCol!(sa::SparseArray)
-
-O(n) counting sort by column index, replacing the O(n log n) quicksort.
-Uses slack space after n_vals in existing arrays as temp storage — zero allocation.
-Builds colptr as a natural byproduct of the sort.
-"""
-function countingSortByCol!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
-    n = sa.n_vals
-    n == 0 && return
-
-    # Find max column and max row
-    max_col = zero(UInt16)
-    max_row = zero(Ti)
-    @inbounds for i in 1:n
-        if sa.colval[i] > max_col; max_col = sa.colval[i]; end
-        if sa.rowval[i] > max_row; max_row = sa.rowval[i]; end
-    end
-
-    # Ensure cursors buffer is large enough
-    mc = Int(max_col)
-    if mc > length(sa.cursors)
-        resize!(sa.cursors, mc + 64)
-    end
-
-    # Arrays must have capacity >= 2n for temp space.
-    # buildDesignMatrix! guarantees this via 2x growth policy.
-    @assert length(sa.colval) >= 2 * n "SparseArray capacity $(length(sa.colval)) < 2*$n — buildDesignMatrix! should pre-allocate"
-
-    # Count per column → build colptr via prefix sum
-    @inbounds for c in 1:mc+1; sa.colptr[c] = zero(Ti); end
-    @inbounds for i in 1:n; sa.colptr[Int(sa.colval[i])] += one(Ti); end
-    total = one(Ti)
-    @inbounds for c in 1:mc
-        count = sa.colptr[c]
-        sa.colptr[c] = total
-        total += count
-    end
-    sa.colptr[mc + 1] = total
-
-    # Copy to temp space (slack after n_vals)
-    @inbounds for i in 1:n
-        sa.colval[n + i] = sa.colval[i]
-        sa.rowval[n + i] = sa.rowval[i]
-        sa.nzval[n + i]  = sa.nzval[i]
-        sa.x[n + i]      = sa.x[i]
-        sa.matched[n + i] = sa.matched[i]
-        sa.isotope[n + i] = sa.isotope[i]
-    end
-
-    # Scatter back in column order
-    @inbounds for c in 1:mc; sa.cursors[c] = sa.colptr[c]; end
-    @inbounds for i in 1:n
-        c = Int(sa.colval[n + i])
-        dest = Int(sa.cursors[c])
-        sa.colval[dest] = sa.colval[n + i]
-        sa.rowval[dest] = sa.rowval[n + i]
-        sa.nzval[dest]  = sa.nzval[n + i]
-        sa.x[dest]      = sa.x[n + i]
-        sa.matched[dest] = sa.matched[n + i]
-        sa.isotope[dest] = sa.isotope[n + i]
-        sa.cursors[c] += one(Ti)
-    end
-
-    # Zero nzval in temp space to prevent stale accumulation
-    # (buildDesignMatrix! uses nzval[j] += which requires clean slate)
-    @inbounds for i in 1:n
-        sa.nzval[n + i] = zero(T)
-    end
-
-    sa.n = mc
-    sa.m = Int(max_row)
-end
-
 function sortSparse!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
-    countingSortByCol!(sa)
+    #Get sorted indices by column
+    #partialsort!(sa.row_col_nzval[1:sa.n_vals], 
+    #                    1:sa.n_vals, 
+    #                    by = x -> x[2])
+    #println("sa.n_vals ", sa.n_vals)
+    specialsort!(sa, 1, sa.n_vals, Base.Order.Forward);
+    max_col = 1
+    max_row  = 1
+    sa.colptr[1] = 1
+    for i in range(1, sa.n_vals - 1)
+        #If row greater than max row
+        if sa.rowval[i + 1] > max_row
+            max_row = sa.rowval[i + 1]
+        end 
+
+        if sa.colval[i + 1] == sa.colval[i]
+            continue
+        else
+            max_col += 1
+            sa.colptr[max_col] = i + 1
+        end
+    end
+    sa.colptr[max_col + 1] = sa.n_vals + 1
+    #Number of columns
+    sa.n = max_col
+    sa.m = max_row
 end
 
 function initResiduals!( r::Vector{T}, sa::SparseArray{Ti,T}, w::Vector{T}) where {Ti<:Integer,T<:AbstractFloat}

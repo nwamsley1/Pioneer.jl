@@ -124,7 +124,6 @@ function getPSMS(
         # Ion Template Selection
         ion_idx, _ = selectTransitions!(
             getIonTemplates(search_data),
-            getMzIndex(search_data),
             StandardTransitionSelection(),
             getPrecEstimation(params),
             ion_list,
@@ -151,7 +150,6 @@ function getPSMS(
         nmatches, nmisses = matchPeaks!(
             getIonMatches(search_data),
             getIonMisses(search_data),
-            getMzIndex(search_data),
             getIonTemplates(search_data),
             ion_idx,
             getMzArray(spectra, scan_idx),
@@ -159,11 +157,11 @@ function getPSMS(
             mem,
             getHighMz(spectra, scan_idx)
         )
-
+        
         sort!(@view(getIonMatches(search_data)[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
         # Process matches
         if nmatches > 2
-            buildDesignMatrix!(Hs, getIonMatches(search_data), getIonMisses(search_data),
+            buildDesignMatrix!(Hs, getIonMatches(search_data), getIonMisses(search_data), 
                              nmatches, nmisses, getIdToCol(search_data))
 
             if getIdToCol(search_data).size > length(getSpectralScores(search_data))

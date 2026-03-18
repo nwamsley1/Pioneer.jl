@@ -294,7 +294,6 @@ function process_scans_fragindex!(
         # Select transitions using StandardTransitionSelection with explicit precursor list
         ion_idx, _ = selectTransitions!(
             getIonTemplates(search_data),
-            getMzIndex(search_data),
             StandardTransitionSelection(),
             params.prec_estimation,
             getFragmentLookupTable(getSpecLib(search_context)),
@@ -327,7 +326,6 @@ function process_scans_fragindex!(
         nmatches, nmisses = matchPeaks!(
             getIonMatches(search_data),
             getIonMisses(search_data),
-            getMzIndex(search_data),
             getIonTemplates(search_data),
             ion_idx,
             getMzArray(spectra, scan_idx),
@@ -516,7 +514,6 @@ function process_scans!(
 
             ion_idx, _ = selectTransitions!(
                 getIonTemplates(search_data),
-                getMzIndex(search_data),
                 RTIndexedTransitionSelection(),
                 params.prec_estimation,
                 getFragmentLookupTable(getSpecLib(search_context)),
@@ -548,7 +545,6 @@ function process_scans!(
         nmatches, nmisses = matchPeaks!(
             getIonMatches(search_data),
             getIonMisses(search_data),
-            getMzIndex(search_data),
             getIonTemplates(search_data),
             ion_idx,
             getMzArray(spectra, scan_idx),
@@ -795,8 +791,8 @@ function process_scans!(
         end
 
         nmatches = new_nmatches
-        nmisses = new_nmisses
-
+        nmisses = new_nmisses 
+        
         sort!(@view(ion_matches[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
         # Process matches
         if nmatches > 2

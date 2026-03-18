@@ -75,30 +75,19 @@ end
 # Core function that handles common setup and cleanup
 function selectTransitions!(
     transitions::Vector{DetailedFrag{Float32}},
-    mz_index::Vector{MzSortEntry},
     strategy::TransitionSelectionStrategy,
     prec_estimation_type::PrecEstimation,
     common_args...;
     kwargs...)
-
+    
     # Common setup code here
     transition_idx = 0
-
+    
     # Delegate to specific implementation
     transition_idx, n_precursors = _select_transitions_impl!(transitions, strategy, prec_estimation_type, transition_idx, common_args...; kwargs...)
-
-    # Ensure mz_index has enough capacity (transitions may have grown during impl)
-    if transition_idx > length(mz_index)
-        resize!(mz_index, length(transitions))
-    end
-
-    # Build MzSortEntry sidecar (O(n), no allocation)
-    @inbounds for i in 1:transition_idx
-        mz_index[i] = MzSortEntry(transitions[i].mz, UInt32(i))
-    end
-
-    # Sort 8B entries instead of 24B structs
-    sort!(@view(mz_index[1:transition_idx]),
+    
+    # Common cleanup/sorting code
+    sort!(@view(transitions[1:transition_idx]),
           lt = (a, b) -> a.mz < b.mz,
           alg=QuickSort)
 

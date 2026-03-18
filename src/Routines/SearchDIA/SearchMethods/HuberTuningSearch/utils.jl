@@ -308,7 +308,6 @@ function select_transitions_for_huber!(
 
     return selectTransitions!(
         getIonTemplates(search_data),
-        getMzIndex(search_data),
         RTIndexedTransitionSelection(),
         params.prec_estimation,
         getFragmentLookupTable(getSpecLib(search_context)),
@@ -356,7 +355,6 @@ function match_peaks_for_huber!(
     return matchPeaks!(
         getIonMatches(search_data),
         getIonMisses(search_data),
-        getMzIndex(search_data),
         getIonTemplates(search_data),
         ion_idx,
         getMzArray(spectra, scan_idx),
