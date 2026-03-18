@@ -88,7 +88,7 @@ let
     fetch.(tasks)
 
     # Hybrid binary→SIMD (warmup with several threshold values)
-    for lt in [1, 8, 32, 128, 1000000]
+    for lt in UInt32[1, 8, 32, 128, 1000000]
         s2p3 = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
         searchFragmentIndexPartitionMajorHinted(s2p3, pi, spectra, all_scans,
             Threads.nthreads(), search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
@@ -127,8 +127,8 @@ end
 # Threshold sweep: binary narrows to ≤threshold, then SIMD finishes
 # threshold=1 → almost all binary (SIMD scans 1 element)
 # threshold=1000000 → almost all SIMD (binary never runs)
-linear_thresholds = [1, 8, 16, 32, 64, 128, 256, 1000000]
-hint_threshold_times = Dict{Int, Float64}()
+linear_thresholds = UInt32[1, 8, 16, 32, 64, 128, 256, 1000000]
+hint_threshold_times = Dict{UInt32, Float64}()
 for lt in linear_thresholds
     label = lt >= 1000000 ? "all-SIMD" : "$lt"
     println("Running hybrid threshold=$label ...")
@@ -183,7 +183,7 @@ max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pi); init=0)
 const VALIDATION_MIN_SCORE = UInt8(1)
 
 function score_scan_hinted(pfi, scan_idx, spectra, qtm, mem, rt_to_irt_spline, irt_tol,
-                            precursor_mzs; linear_threshold::Int=HINT_LINEAR_THRESHOLD)
+                            precursor_mzs; linear_threshold::UInt32=HINT_LINEAR_THRESHOLD)
     irt_lo, irt_hi = Pioneer.getRTWindow(
         rt_to_irt_spline(Pioneer.getRetentionTime(spectra, scan_idx)), irt_tol)
     quad_func = Pioneer.getQuadTransmissionFunction(
@@ -229,9 +229,9 @@ n_mismatch_ids, n_mismatch_scores, n_total_ids, n_scans_with_hits = let
     _n_scans_with_hits = 0
     for scan_idx in validate_scans
         binary = score_scan_hinted(pi, scan_idx, spectra, qtm, mem, rt_to_irt_spline, irt_tol,
-                                    precursor_mzs; linear_threshold=1)
+                                    precursor_mzs; linear_threshold=UInt32(1))
         linear = score_scan_hinted(pi, scan_idx, spectra, qtm, mem, rt_to_irt_spline, irt_tol,
-                                    precursor_mzs; linear_threshold=1000000)
+                                    precursor_mzs; linear_threshold=UInt32(1000000))
 
         bin_ids = Set(keys(binary))
         lin_ids = Set(keys(linear))

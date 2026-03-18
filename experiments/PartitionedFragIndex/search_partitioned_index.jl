@@ -924,7 +924,7 @@ end
 
 # ── Hint-based search functions ──────────────────────────────────────────
 
-const HINT_LINEAR_THRESHOLD = 32
+const HINT_LINEAR_THRESHOLD = UInt32(32)
 
 """
     queryFragmentHinted!(counter, frag_bin_max_idx, lower_bound_guess, upper_bound_guess,
@@ -956,7 +956,7 @@ Algorithm:
         frag_mz_max::Float32,
         hints::Vector{UInt16},
         prev_mz::Float32,
-        linear_threshold::Int) where {T<:AbstractFloat}
+        linear_threshold::UInt32) where {T<:AbstractFloat}
 
     fb_lows = frag_bins.lows
     fb_highs = frag_bins.highs
@@ -976,14 +976,14 @@ Algorithm:
             if delta_mz > 5.0f0
                 new_lb = min(lower_bound_guess + UInt32(hint), frag_bin_max_idx)
             else
-                advance = UInt32(max(floor(Int, est_step_f), 1))
+                advance = max(unsafe_trunc(UInt32, est_step_f), one(UInt32))
                 new_lb = min(lower_bound_guess + advance, frag_bin_max_idx)
             end
         end
     end
 
     # ── Hint-based UB guess ──────────────────────────────────────────
-    ub_guess = new_lb + UInt32(max(1, ceil(Int, est_step_f * 1.5f0)))
+    ub_guess = new_lb + max(one(UInt32), unsafe_trunc(UInt32, est_step_f * 1.5f0) + one(UInt32))
     ub_guess = min(ub_guess, frag_bin_max_idx)
 
     # ── Check if UB guess is sufficient, exponential doubling if not ─
@@ -1002,13 +1002,13 @@ Algorithm:
 
     # ── Find first matching bin (SIMD or binary→SIMD) ──────────────
     range_size = ub_final - new_lb + one(UInt32)
-    if range_size <= UInt32(linear_threshold)
+    if range_size <= linear_threshold
         # Small range: direct SIMD scan
         frag_bin_idx = _find_first_ge(fb_highs, new_lb, ub_final, frag_mz_min)
     else
         # Large range: binary search narrows to ≤threshold, then SIMD finishes
         frag_bin_idx = _findFirstFragBin_hybrid(fb_highs, new_lb, ub_final,
-                                                 frag_mz_min, UInt32(linear_threshold))
+                                                 frag_mz_min, linear_threshold)
     end
 
     first_match = frag_bin_idx
@@ -1050,7 +1050,7 @@ per-bin density hints, then falls back to the proven exponential + binary search
         irt_high::Float32,
         masses::AbstractArray{Union{Missing, U}},
         mass_err_model::Pioneer.MassErrorModel;
-        linear_threshold::Int = HINT_LINEAR_THRESHOLD,
+        linear_threshold::UInt32 = HINT_LINEAR_THRESHOLD,
         ) where {T<:AbstractFloat, U<:AbstractFloat}
 
     p_rt_bins   = getRTBins(partition)
@@ -1113,7 +1113,7 @@ function searchFragmentIndexPartitionMajorHinted(
         rt_to_irt_spline::Any,
         irt_tol::AbstractFloat,
         precursor_mzs::AbstractVector{Float32};
-        linear_threshold::Int = HINT_LINEAR_THRESHOLD,
+        linear_threshold::UInt32 = HINT_LINEAR_THRESHOLD,
         ) where {M<:Pioneer.MassErrorModel, Q<:Pioneer.QuadTransmissionModel,
                  P<:Pioneer.FragmentIndexSearchParameters}
 

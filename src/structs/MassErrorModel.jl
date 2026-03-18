@@ -75,7 +75,7 @@ end
 =#
 #Correct an empeirical mass. 
 function getCorrectedMz(mem::MassErrorModel, mz::Float32)
-    return Float32(mz - getMassOffset(mem)*(mz/1e6))
+    return mz - getMassOffset(mem)*(mz/1f6)
 end
 
 """
@@ -102,16 +102,16 @@ A theoretical mass of 1000000.0f0 m/z, would have a tolerance of (999990.0f0, 10
 """
 #Bounds for the theoretical mass 
 function getMzBoundsReverse(mem::MassErrorModel, mass::Float32)
-    ppm = mass/(1e6)
+    ppm = mass/1f6
     r_tol = getRightTol(mem)*ppm
     l_tol = getLeftTol(mem)*ppm
-    return Float32(mass - r_tol), Float32(mass + l_tol)
+    return mass - r_tol, mass + l_tol
 end
 
 #Bounds for the empirical mass 
 function getMzBounds(mem::MassErrorModel, mass::Float32)
-    ppm = mass/(1e6)
+    ppm = mass/1f6
     r_tol = getRightTol(mem)*ppm
     l_tol = getLeftTol(mem)*ppm
-    return Float32(mass - l_tol), Float32(mass + r_tol)
+    return mass - l_tol, mass + r_tol
 end
