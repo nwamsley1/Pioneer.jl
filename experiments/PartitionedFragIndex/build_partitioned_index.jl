@@ -229,6 +229,7 @@ function build_partitioned_index_from_lib(
                 LocalFragment[],
                 l2g,
                 n_local,
+                UInt16[],
             )
             continue
         end
@@ -246,7 +247,8 @@ function build_partitioned_index_from_lib(
     frag_mem = sum(sizeof(getFragments(p)) for p in partitions)
     bin_mem = sum(sizeof(getFragBins(p)) + sizeof(getRTBins(p)) for p in partitions)
     l2g_mem = sum(sizeof(p.local_to_global) for p in partitions)
-    println("  Memory: fragments=$(round(frag_mem/1024^2, digits=1))MB  bins=$(round(bin_mem/1024^2, digits=1))MB  l2g=$(round(l2g_mem/1024^2, digits=1))MB")
+    hint_mem = sum(sizeof(getSkipHints(p)) for p in partitions)
+    println("  Memory: fragments=$(round(frag_mem/1024^2, digits=1))MB  bins=$(round(bin_mem/1024^2, digits=1))MB  l2g=$(round(l2g_mem/1024^2, digits=1))MB  hints=$(round(hint_mem/1024^2, digits=1))MB")
 
     # Compute per-partition prec_mz bounds (sorted by prec_mz_min)
     partition_bounds = Vector{Tuple{Float32, Float32}}(undef, n_partitions)
@@ -431,12 +433,17 @@ function _build_local_partition(
     rt_bins[rt_bin_idx] = Pioneer.FragIndexBin{Float32}(
         start_irt, stop_irt_val, UInt32(first_fb), UInt32(frag_bin_idx))
 
+    fb_final = frag_bins[1:frag_bin_idx]
+    rb_final = rt_bins[1:rt_bin_idx]
+    skip_hints = _compute_skip_hints(fb_final, rb_final)
+
     return LocalPartition{Float32}(
-        frag_bins[1:frag_bin_idx],
-        rt_bins[1:rt_bin_idx],
+        fb_final,
+        rb_final,
         local_fragments,
         local_to_global,
         n_local,
+        skip_hints,
     )
 end
 
@@ -489,4 +496,55 @@ function _build_local_frag_bins!(
     end
 
     return frag_bin_idx
+end
+
+"""
+Compute per-frag-bin skip hints for the hinted search.
+hints[j] = k where getLow(frag_bins[j+k]) - getLow(frag_bins[j]) >= 5.0 Da.
+Direct measurement: "how many bins ahead is +5 Da in getLow?"
+Stored as UInt16 (dense regions may exceed 255). Clamped to RT bin range.
+"""
+function _compute_skip_hints(
+    frag_bins::Vector{Pioneer.FragIndexBin{Float32}},
+    rt_bins::Vector{Pioneer.FragIndexBin{Float32}},
+)
+    n_fb = length(frag_bins)
+    hints = ones(UInt16, n_fb)
+
+    for rt_bin in rt_bins
+        range = Pioneer.getSubBinRange(rt_bin)
+        fb_start = Int(first(range))
+        fb_end = Int(last(range))
+        fb_start > fb_end && continue
+
+        for j in fb_start:fb_end
+            target_low = Pioneer.getLow(frag_bins[j]) + 5.0f0
+            max_k = fb_end - j
+            max_k <= 0 && continue
+
+            # If even the last bin doesn't reach +5 Da, set hint to max available
+            if Pioneer.getLow(frag_bins[fb_end]) < target_low
+                hints[j] = UInt16(max_k)
+                continue
+            end
+
+            # Binary search for smallest k where getLow(frag_bins[j+k]) >= target_low
+            lo_k = 1
+            hi_k = max_k
+            result_k = hi_k
+            while lo_k <= hi_k
+                mid_k = (lo_k + hi_k) >>> 1
+                if Pioneer.getLow(frag_bins[j + mid_k]) >= target_low
+                    result_k = mid_k
+                    hi_k = mid_k - 1
+                else
+                    lo_k = mid_k + 1
+                end
+            end
+
+            hints[j] = UInt16(clamp(result_k, 1, 65535))
+        end
+    end
+
+    return hints
 end

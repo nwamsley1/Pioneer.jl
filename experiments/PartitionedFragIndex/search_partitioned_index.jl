@@ -54,7 +54,7 @@ function queryFragmentBitmask!(
 
     lower_bound_guess, upper_bound_guess = Pioneer.exponentialFragmentBinSearch(
         frag_bins, frag_bin_max_idx, lower_bound_guess, upper_bound_guess,
-        frag_mz_min, frag_mz_max, UInt32(2048))
+        frag_mz_min, frag_mz_max, UInt32(4))
 
     frag_bin_idx = Pioneer.findFirstFragmentBin(
         frag_bins, lower_bound_guess, upper_bound_guess, frag_mz_min)
@@ -163,7 +163,7 @@ function queryFragmentPartitioned!(
         upper_bound_guess,
         frag_mz_min,
         frag_mz_max,
-        UInt32(2048)
+        UInt32(4)
     )
 
     frag_bin_idx = Pioneer.findFirstFragmentBin(
@@ -211,7 +211,7 @@ function queryFragmentPartitioned!(
 
     lower_bound_guess, upper_bound_guess = Pioneer.exponentialFragmentBinSearch(
         frag_bins, frag_bin_max_idx, lower_bound_guess, upper_bound_guess,
-        frag_mz_min, frag_mz_max, UInt32(2048))
+        frag_mz_min, frag_mz_max, UInt32(4))
 
     frag_bin_idx = Pioneer.findFirstFragmentBin(
         frag_bins, lower_bound_guess, upper_bound_guess, frag_mz_min)
@@ -807,6 +807,308 @@ function searchFragmentIndexPartitionMajorBitmask(
     end
     fetch.(tasks)
 
+    scan_results = [UInt32[] for _ in 1:n_scans]
+    for tid in 1:n_threads
+        for (si, gpid) in thread_results[tid]
+            push!(scan_results[si], gpid)
+        end
+        empty!(thread_results[tid])
+    end
+
+    precursors_passed = UInt32[]
+    for si in 1:n_scans
+        scan_idx = all_scan_idxs[si]
+        pids = scan_results[si]
+        if isempty(pids)
+            scan_to_prec_idx[scan_idx] = missing
+        else
+            start = length(precursors_passed) + 1
+            append!(precursors_passed, pids)
+            scan_to_prec_idx[scan_idx] = start:length(precursors_passed)
+        end
+    end
+
+    return precursors_passed
+end
+
+# ── Hint-based search functions ──────────────────────────────────────────
+
+const HINT_LINEAR_THRESHOLD = 16
+
+"""
+    queryFragmentHinted!(counter, frag_bin_max_idx, lower_bound_guess, upper_bound_guess,
+                          frag_bins, fragments, frag_mz_min, frag_mz_max,
+                          hints, prev_mz, linear_threshold)
+
+5-Da direct hint search with advancing lb.
+
+Hint semantics: hints[j] = k where getLow(frag_bins[j+k]) >= getLow(frag_bins[j]) + 5 Da.
+est_step = hint * (delta_mz / 5.0).
+
+Algorithm:
+1. Hint-based lb advancement (provably safe: hint measures exactly 5 Da in getLow,
+   so advancing by hint when delta >= 5 Da cannot overshoot).
+   For delta < 5 Da, linear interpolation with factor=1.0 (validated zero-overshoot).
+2. Hint-based UB guess: new_lb + est_step * 1.5.
+3. Exponential doubling only if UB guess insufficient (covers ~10% of cases).
+4. findFirstFragmentBin in [new_lb, ub] for exact first match.
+5. Return (first_match, ub) so lb advances for next peak.
+"""
+@inline function queryFragmentHinted!(
+        counter,
+        frag_bin_max_idx::UInt32,
+        lower_bound_guess::UInt32,
+        upper_bound_guess::UInt32,
+        frag_bins::Vector{Pioneer.FragIndexBin{T}},
+        fragments::AbstractVector,
+        frag_mz_min::Float32,
+        frag_mz_max::Float32,
+        hints::Vector{UInt16},
+        prev_mz::Float32,
+        linear_threshold::Int) where {T<:AbstractFloat}
+
+    # ── Hint-based lb advancement ────────────────────────────────────
+    new_lb = lower_bound_guess
+    est_step_f = 0.0f0
+
+    if prev_mz > 0.0f0 && lower_bound_guess <= frag_bin_max_idx
+        delta_mz = frag_mz_min - Pioneer.getLow(frag_bins[lower_bound_guess])
+        if delta_mz > 0.0f0
+            hint = @inbounds hints[lower_bound_guess]
+            est_step_f = Float32(hint) * (delta_mz / 5.0f0)
+
+            if delta_mz > 5.0f0
+                # Provably safe: hint says k bins = 5 Da in getLow.
+                # At lb+k, getLow is only 5 Da higher — still below +delta_mz.
+                new_lb = min(lower_bound_guess + UInt32(hint), frag_bin_max_idx)
+            else
+                # Linear interpolation, factor=1.0 (validated zero-overshoot)
+                advance = UInt32(max(floor(Int, est_step_f), 1))
+                new_lb = min(lower_bound_guess + advance, frag_bin_max_idx)
+            end
+        end
+    end
+
+    # ── Hint-based UB guess ──────────────────────────────────────────
+    ub_guess = new_lb + UInt32(max(1, ceil(Int, est_step_f * 1.5f0)))
+    ub_guess = min(ub_guess, frag_bin_max_idx)
+
+    # ── Check if UB guess is sufficient, exponential doubling if not ─
+    ub_final = ub_guess
+    if @inbounds Pioneer.getHigh(frag_bins[ub_final]) < frag_mz_max
+        step = one(UInt32)
+        while @inbounds Pioneer.getHigh(frag_bins[ub_final]) < frag_mz_max
+            ub_final += step
+            step = step << one(UInt8)
+            if ub_final > frag_bin_max_idx
+                ub_final = frag_bin_max_idx
+                break
+            end
+        end
+    end
+
+    # ── Find first matching bin ──────────────────────────────────────
+    range_size = ub_final - new_lb + one(UInt32)
+    if range_size <= UInt32(linear_threshold)
+        frag_bin_idx = new_lb
+        @inbounds while frag_bin_idx <= ub_final &&
+                Pioneer.getHigh(frag_bins[frag_bin_idx]) < frag_mz_min
+            frag_bin_idx += one(UInt32)
+        end
+    else
+        frag_bin_idx = Pioneer.findFirstFragmentBin(
+            frag_bins, new_lb, ub_final, frag_mz_min)
+    end
+
+    first_match = frag_bin_idx
+
+    # ── Score matching bins ──────────────────────────────────────────
+    @inbounds @fastmath begin
+        while frag_bin_idx <= frag_bin_max_idx
+            frag_bin = frag_bins[frag_bin_idx]
+            if Pioneer.getLow(frag_bin) > frag_mz_max
+                break
+            else
+                if frag_bin_max_idx === frag_bin_idx
+                    if Pioneer.getHigh(frag_bin) < frag_mz_min
+                        break
+                    end
+                end
+                frag_id_range = Pioneer.getSubBinRange(frag_bin)
+                searchFragmentBinUnconditional!(counter, fragments, frag_id_range)
+                frag_bin_idx += one(UInt32)
+            end
+        end
+    end
+
+    # Return (first_match, ub) — lb advances for next peak
+    return first_match, ub_final
+end
+
+"""
+    _score_partition_hinted!(local_counter, partition, irt_low, irt_high, masses, mass_err_model;
+                              linear_threshold=HINT_LINEAR_THRESHOLD)
+
+Score one partition's fragments using hint-informed exponential search.
+Uses queryFragmentHinted! which computes a smarter initial step_size from
+per-bin density hints, then falls back to the proven exponential + binary search.
+"""
+@inline function _score_partition_hinted!(
+        local_counter::LocalCounter{UInt16, UInt8},
+        partition::LocalPartition{T},
+        irt_low::Float32,
+        irt_high::Float32,
+        masses::AbstractArray{Union{Missing, U}},
+        mass_err_model::Pioneer.MassErrorModel;
+        linear_threshold::Int = HINT_LINEAR_THRESHOLD,
+        ) where {T<:AbstractFloat, U<:AbstractFloat}
+
+    p_rt_bins   = getRTBins(partition)
+    p_frag_bins = getFragBins(partition)
+    p_fragments = getFragments(partition)
+    p_hints     = getSkipHints(partition)
+
+    isempty(p_frag_bins) && return nothing
+    n_rt = length(p_rt_bins)
+
+    local_rt_bin_idx = _find_rt_bin_start(p_rt_bins, irt_low)
+    local_rt_bin_idx > n_rt && return nothing
+
+    @inbounds @fastmath while Pioneer.getLow(p_rt_bins[local_rt_bin_idx]) < irt_high
+        sub_bin_range = Pioneer.getSubBinRange(p_rt_bins[local_rt_bin_idx])
+        min_frag_bin = first(sub_bin_range)
+        max_frag_bin = last(sub_bin_range)
+
+        if min_frag_bin <= max_frag_bin
+            lower_bound_guess = min_frag_bin
+            upper_bound_guess = min_frag_bin
+            prev_mz = Float32(0)
+
+            for mass in masses
+                corrected_mz = Pioneer.getCorrectedMz(mass_err_model, mass)
+                frag_min, frag_max = Pioneer.getMzBoundsReverse(mass_err_model, corrected_mz)
+
+                lower_bound_guess, upper_bound_guess = queryFragmentHinted!(
+                    local_counter, max_frag_bin,
+                    lower_bound_guess, upper_bound_guess,
+                    p_frag_bins, p_fragments,
+                    frag_min, frag_max,
+                    p_hints, prev_mz, linear_threshold)
+                prev_mz = frag_min
+            end
+        end
+
+        local_rt_bin_idx += 1
+        if local_rt_bin_idx > n_rt
+            break
+        end
+    end
+
+    return nothing
+end
+
+"""
+Partition-major search using hint-informed exponential search.
+Same as searchFragmentIndexPartitionMajor but calls _score_partition_hinted!.
+"""
+function searchFragmentIndexPartitionMajorHinted(
+        scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+        pfi::LocalPartitionedFragmentIndex{Float32},
+        spectra::Pioneer.MassSpecData,
+        all_scan_idxs::Vector{Int},
+        n_threads::Int,
+        params::P,
+        qtm::Q,
+        mem::M,
+        rt_to_irt_spline::Any,
+        irt_tol::AbstractFloat,
+        precursor_mzs::AbstractVector{Float32};
+        linear_threshold::Int = HINT_LINEAR_THRESHOLD,
+        ) where {M<:Pioneer.MassErrorModel, Q<:Pioneer.QuadTransmissionModel,
+                 P<:Pioneer.FragmentIndexSearchParameters}
+
+    min_score = Pioneer.getMinIndexSearchScore(params)
+    iso_bounds = Pioneer.getIsotopeErrBounds(params)
+    n_scans = length(all_scan_idxs)
+
+    # ── Pre-compute per-scan properties ──────────────────────────────────────
+    scan_irt_lo  = Vector{Float32}(undef, n_scans)
+    scan_irt_hi  = Vector{Float32}(undef, n_scans)
+    scan_prec_min = Vector{Float32}(undef, n_scans)
+    scan_prec_max = Vector{Float32}(undef, n_scans)
+
+    for (si, scan_idx) in enumerate(all_scan_idxs)
+        irt_lo, irt_hi = Pioneer.getRTWindow(
+            rt_to_irt_spline(Pioneer.getRetentionTime(spectra, scan_idx)), irt_tol)
+        quad_func = Pioneer.getQuadTransmissionFunction(
+            qtm, Pioneer.getCenterMz(spectra, scan_idx),
+            Pioneer.getIsolationWidthMz(spectra, scan_idx))
+        prec_min = Float32(Pioneer.getPrecMinBound(quad_func) - Pioneer.NEUTRON * first(iso_bounds) / 2)
+        prec_max = Float32(Pioneer.getPrecMaxBound(quad_func) + Pioneer.NEUTRON * last(iso_bounds) / 2)
+        scan_irt_lo[si]   = irt_lo
+        scan_irt_hi[si]   = irt_hi
+        scan_prec_min[si] = prec_min
+        scan_prec_max[si] = prec_max
+    end
+
+    # ── Per-thread result buffers and local counters ─────────────────────────
+    thread_results = [Vector{Tuple{Int, UInt32}}(undef, 0) for _ in 1:n_threads]
+    max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
+    thread_counters = [LocalCounter(UInt16, UInt8, max_local + 1) for _ in 1:n_threads]
+
+    # ── Pre-compute partition → scan mapping ────────────────────────────────
+    partition_to_scans = [Int[] for _ in 1:pfi.n_partitions]
+    for si in 1:n_scans
+        first_k, last_k = get_partition_range(pfi, scan_prec_min[si], scan_prec_max[si])
+        for k in first_k:last_k
+            push!(partition_to_scans[k], si)
+        end
+    end
+
+    # ── Partition-major parallel execution (hinted) ──────────────────────────
+    tasks = map(1:n_threads) do tid
+        Threads.@spawn begin
+            lc = thread_counters[tid]
+            results = thread_results[tid]
+
+            for k in 1:pfi.n_partitions
+                relevant = partition_to_scans[k]
+                partition = getPartition(pfi, k)
+                n_relevant = length(relevant)
+                (n_relevant == 0 || isempty(getFragBins(partition))) && continue
+
+                l2g = partition.local_to_global
+                scan_i = tid
+                while scan_i <= n_relevant
+                    si = relevant[scan_i]
+                    scan_idx = all_scan_idxs[si]
+
+                    _score_partition_hinted!(lc, partition,
+                        scan_irt_lo[si], scan_irt_hi[si],
+                        Pioneer.getMzArray(spectra, scan_idx), mem;
+                        linear_threshold=linear_threshold)
+
+                    prec_lo = scan_prec_min[si]
+                    prec_hi = scan_prec_max[si]
+                    @inbounds for i in 1:(lc.size - 1)
+                        lid = lc.ids[i]
+                        score = lc.counts[lid]
+                        score < min_score && continue
+                        global_pid = l2g[lid]
+                        pmz = precursor_mzs[global_pid]
+                        (pmz < prec_lo || pmz > prec_hi) && continue
+                        push!(results, (si, global_pid))
+                    end
+
+                    reset!(lc)
+                    scan_i += n_threads
+                end
+            end
+        end
+    end
+    fetch.(tasks)
+
+    # ── Collect results into scan_to_prec_idx ────────────────────────────────
     scan_results = [UInt32[] for _ in 1:n_scans]
     for tid in 1:n_threads
         for (si, gpid) in thread_results[tid]

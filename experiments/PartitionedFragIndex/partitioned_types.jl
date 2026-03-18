@@ -128,11 +128,13 @@ struct LocalPartition{T<:AbstractFloat}
     fragments::Vector{LocalFragment}
     local_to_global::Vector{UInt32}  # local_id → global prec_id
     n_local_precs::UInt16
+    skip_hints::Vector{UInt16}  # per-frag-bin: bins to +5 Da in getLow (direct measurement)
 end
 
 getFragBins(lp::LocalPartition) = lp.fragment_bins
 getRTBins(lp::LocalPartition) = lp.rt_bins
 getFragments(lp::LocalPartition) = lp.fragments
+getSkipHints(lp::LocalPartition) = lp.skip_hints
 
 """
     LocalPartitionedFragmentIndex{T}
