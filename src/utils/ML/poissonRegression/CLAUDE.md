@@ -1,6 +1,20 @@
 # CLAUDE.md — Poisson Regression Solver Development
 
-## Current State (2026-03-13)
+## Current Best: `solvePoissonMM_fast!` (as of 2026-03-18)
+
+**Production solver:** `solvePoissonMM_fast!` in `spectralPoissonRegression.jl`
+
+Observed-Hessian coordinate descent maximizing Poisson log-likelihood with y-scaling and fused inner loops. **1.37x faster** than original PMM, zero allocations, identical solutions (correlation = 1.000000, relative LL diff < 2.5e-8).
+
+**Production settings:** K=5 inner Newton iterations, weight floor 1e-4, weight-based convergence with `rel_conv=0.001`, no L2 regularization.
+
+| Solver | Median (μs) | vs OLS |
+|--------|------------|--------|
+| OLS | 2.3 | 1.0x |
+| **PMM fast** | **9.4** | **4.5x** |
+| PMM original | 12.8 | 6.1x |
+
+## Development History
 
 ### What exists
 
