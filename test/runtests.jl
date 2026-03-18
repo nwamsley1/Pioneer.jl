@@ -28,10 +28,10 @@ using Pioneer: H2O, PROTON, NEUTRON, NCE_MODEL_BREAKPOINT
 using Pioneer: InterpolationTypeAlias
 using Pioneer: DetailedFrag, SimpleFrag, LibraryFragmentLookup
 using Pioneer: DEBUG_CONSOLE_LEVEL
-using Pioneer: buildDesignMatrix!  # For buildDesignMatrix.jl test
+using Pioneer: buildDesignMatrix!  # For SparseArray/test_matching_pipeline.jl
 using Pioneer: IsotopeSplineModel   # For isotopeSplines.jl test
 using Pioneer: getPrecursorIsotopeSet, getFragIsotopes!  # For isotopeSplines.jl test
-using Pioneer: MassErrorModel, matchPeaks!, reset!  # For matchPeaks.jl test
+using Pioneer: MassErrorModel, matchPeaks!, reset!  # For SparseArray/test_matching_pipeline.jl
 using Pioneer: FragIndexBin, findFirstFragmentBin  # For queryFragmentIndex.jl test
 using Pioneer: exponentialFragmentBinSearch, searchFragmentBin!  # For queryFragmentIndex.jl test
 using Pioneer: getHigh, Counter, IndexFragment, queryFragment!  # For queryFragmentIndex.jl test
@@ -149,9 +149,7 @@ end
     include("./Routines/BuildSpecLib/test_build_spec_lib.jl")
 
     # # Unit tests - commented out for faster Koina test development
-    include("./UnitTests/buildDesignMatrix.jl")
     include("./UnitTests/isotopeSplines.jl")
-    include("./UnitTests/matchPeaks.jl")
     include("./UnitTests/queryFragmentIndex.jl")
     include("./UnitTests/testIsotopesJun13.jl")
     include("./UnitTests/uniformBassisCubicSpline.jl")
@@ -170,6 +168,17 @@ end
     include("./UnitTests/MassSpecAndFilteredDataTests.jl")
     include("./UnitTests/LoggingTests.jl")
     include("./UnitTests/LogTruncationTests.jl")
+
+    # SparseArray pipeline tests (matchPeaks!, buildDesignMatrix!, sortSparse!, initResiduals!)
+    include("./UnitTests/SparseArray/test_matching_pipeline.jl")
+    include("./UnitTests/SparseArray/sortSparse_colptr_bug.jl")
+
+    # Spectral deconvolution pipeline tests
+    include("./UnitTests/test_solveOLS.jl")
+    include("./UnitTests/test_filter_precursors.jl")
+    include("./UnitTests/test_score_fragment_matches.jl")
+    include("./UnitTests/test_distance_metrics.jl")
+
     # Add focused FileOperations tests (Arrow IO, core, streaming)
     include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
     include("./utils/FileOperations/core/test_core_references_basic.jl")
