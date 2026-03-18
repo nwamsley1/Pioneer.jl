@@ -107,17 +107,31 @@ struct FragmentIndex{T<:AbstractFloat}
     rt_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}
     fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}
 end
-#struct FragmentIndex{T<:AbstractFloat}
-#    fragment_bins::Vector{FragIndexBin{T}}
-#    rt_bins::Vector{FragIndexBin{T}}
-#    fragments::Vector{IndexFragment{T}}
-#end
-
 getFragBins(fi::FragmentIndex{T}) where {T<:AbstractFloat} = fi.fragment_bins
 getRTBins(fi::FragmentIndex{T}) where {T<:AbstractFloat} = fi.rt_bins
 getFragmentBin(fi::FragmentIndex{T}, frag_bin_idx::I) where {T<:AbstractFloat,I<:Integer} = getFragBins(fi)[frag_bin_idx]
 getRTBin(fi::FragmentIndex{T}, rt_bin_idx::I) where {T<:AbstractFloat,I<:Integer} = getRTBins(fi)[rt_bin_idx]
 getFragments(fi::FragmentIndex{T}) where {T<:AbstractFloat} = fi.fragments
+
+struct NativeFragmentIndex{T<:AbstractFloat}
+    fragment_bins::Vector{FragIndexBin{T}}
+    rt_bins::Vector{FragIndexBin{T}}
+    fragments::Vector{IndexFragment{T}}
+end
+
+getFragBins(fi::NativeFragmentIndex) = fi.fragment_bins
+getRTBins(fi::NativeFragmentIndex) = fi.rt_bins
+getFragmentBin(fi::NativeFragmentIndex, i) = fi.fragment_bins[i]
+getRTBin(fi::NativeFragmentIndex, i) = fi.rt_bins[i]
+getFragments(fi::NativeFragmentIndex) = fi.fragments
+
+function materialize(fi::FragmentIndex{T}) where T
+    NativeFragmentIndex{T}(
+        FragIndexBin{T}[x for x in fi.fragment_bins],
+        FragIndexBin{T}[x for x in fi.rt_bins],
+        IndexFragment{T}[x for x in fi.fragments]
+    )
+end
 
 
 abstract type SpectralLibrary end

@@ -149,7 +149,7 @@ end
 
 # ── Run warmup ──────────────────────────────────────────────────
 
-problem_dir = "/Users/nathanwamsley/Desktop/solveHuber_problems"
+problem_dir = "/Users/n.t.wamsley/Desktop/solveHuber_problems"
 files = sort(filter(f -> endswith(f, ".jls"), readdir(problem_dir)))
 println("Found $(length(files)) problems\n")
 

@@ -94,10 +94,10 @@ sort!(all_ms2_scan_idxs)
 println("Total MS2 scans: $(length(all_ms2_scan_idxs))")
 
 # ── Warmup ───────────────────────────────────────────────────────────────────
-println("\nWarmup ...")
+println("\nWarmup (hinted SoA+SIMD) ...")
 let
     s2p = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-    searchFragmentIndexPartitionMajor(
+    searchFragmentIndexPartitionMajorHinted(
         s2p, partitioned_index, spectra, all_ms2_scan_idxs,
         Threads.nthreads(), search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
         precursor_mzs
@@ -108,7 +108,7 @@ end
 println("Timed run ...")
 timed = @elapsed begin
     s2p = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-    searchFragmentIndexPartitionMajor(
+    searchFragmentIndexPartitionMajorHinted(
         s2p, partitioned_index, spectra, all_ms2_scan_idxs,
         Threads.nthreads(), search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
         precursor_mzs
@@ -121,7 +121,7 @@ println("\nProfiling (3 iterations) ...")
 Profile.clear()
 @profile for _ in 1:3
     s2p = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-    searchFragmentIndexPartitionMajor(
+    searchFragmentIndexPartitionMajorHinted(
         s2p, partitioned_index, spectra, all_ms2_scan_idxs,
         Threads.nthreads(), search_parameters, qtm, mem, rt_to_irt_spline, irt_tol,
         precursor_mzs

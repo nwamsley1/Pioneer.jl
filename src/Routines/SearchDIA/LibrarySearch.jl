@@ -17,7 +17,7 @@
 
 function searchFragmentIndex(
                     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-                    frag_index::FragmentIndex{Float32},
+                    frag_index::Union{FragmentIndex{Float32}, NativeFragmentIndex{Float32}},
                     spectra::MassSpecData,
                     thread_task::Vector{Int64},
                     search_data::S,
@@ -281,14 +281,15 @@ function LibrarySearch(
         S<:SearchDataStructures,
         P<:FragmentIndexSearchParameters}
     thread_tasks = partition_scans(spectra, Threads.nthreads())
+    native_frag_index = materialize(fragment_index)
 
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
     tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin 
+        Threads.@spawn begin
             thread_id = first(thread_task)
                 return searchFragmentIndex(
                         scan_to_prec_idx,
-                        fragment_index,
+                        native_frag_index,
                         spectra,
                         last(thread_task),
                         search_data[thread_id],
@@ -300,7 +301,7 @@ function LibrarySearch(
                     )
         end
     end
-    
+
     precursors_passed_scoring = fetch.(tasks)
 
     tasks = map(thread_tasks) do thread_task
@@ -361,6 +362,7 @@ function LibrarySearchNceTuning(
         @debug_l2 "  Thread $i: $n_scans scans"
     end
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    native_frag_index = materialize(fragment_index)
     # Do fragment index search once
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
@@ -368,7 +370,7 @@ function LibrarySearchNceTuning(
             try
                 return searchFragmentIndex(
                     scan_to_prec_idx,
-                    fragment_index,
+                    native_frag_index,
                     spectra,
                     last(thread_task),
                     search_data[thread_id],

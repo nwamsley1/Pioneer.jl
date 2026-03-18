@@ -13,7 +13,7 @@ include("spectralPoissonRegression.jl")
 include("spectralLinearRegression_reference.jl")
 
 # ── Load real data ────────────────────────────────────────────────
-data = deserialize("/Users/nathanwamsley/Desktop/solveHuber_inputs_scan342335.jls")
+data = deserialize("/Users/n.t.wamsley/Desktop/solveHuber_inputs_scan342335.jls")
 
 # Reconstruct using the LOCAL SparseArray (from SparseArray.jl include)
 sa = Main.SparseArray(

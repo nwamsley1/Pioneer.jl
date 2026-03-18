@@ -7,7 +7,7 @@
 #
 # This runs the calibration pipeline (ParameterTuning, NceTuning, QuadTuning),
 # then profiles ONLY the `searchFragmentIndex` calls using the full fragment index
-# (not the smaller presearch index). Opens a PProf flame graph in the browser.
+# (not the smaller presearch index).
 
 using Pioneer
 using Profile
@@ -86,8 +86,23 @@ irt_tol          = Pioneer.getIrtErrors(SEARCH_CONTEXT)[ms_file_idx]
 
 thread_tasks = Pioneer.partition_scans(spectra, Threads.nthreads())
 
+# ── Materialize Arrow arrays to native Julia vectors ─────────────────────────
+println("Materializing fragment index to native vectors ...")
+materialize_time = @elapsed begin
+    native_frag_index = Pioneer.materialize(fragment_index)
+end
+n_frag_bins = length(native_frag_index.fragment_bins)
+n_rt_bins   = length(native_frag_index.rt_bins)
+n_frags     = length(native_frag_index.fragments)
+mem_mb = (sizeof(native_frag_index.fragment_bins) +
+          sizeof(native_frag_index.rt_bins) +
+          sizeof(native_frag_index.fragments)) / 1024^2
+println("  Materialization: $(round(materialize_time, digits=3))s")
+println("  fragment_bins: $n_frag_bins  rt_bins: $n_rt_bins  fragments: $n_frags")
+println("  Native memory: $(round(mem_mb, digits=1)) MB")
+
 # ── Warmup (compile everything, exclude JIT from profile) ────────────────────
-println("Warmup run ...")
+println("Warmup run (native vectors) ...")
 let
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
     tasks = map(thread_tasks) do thread_task
@@ -95,6 +110,55 @@ let
             thread_id = first(thread_task)
             Pioneer.searchFragmentIndex(
                 scan_to_prec_idx,
+                native_frag_index,
+                spectra,
+                last(thread_task),
+                search_data[thread_id],
+                search_parameters,
+                qtm,
+                mem,
+                rt_to_irt_spline,
+                irt_tol
+            )
+        end
+    end
+    fetch.(tasks)
+end
+
+# ── Benchmark: timed runs for comparison ─────────────────────────────────────
+println("\nBenchmarking searchFragmentIndex ...")
+
+# Native vectors
+native_time = @elapsed begin
+    scan_to_prec_idx_native = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin
+            thread_id = first(thread_task)
+            Pioneer.searchFragmentIndex(
+                scan_to_prec_idx_native,
+                native_frag_index,
+                spectra,
+                last(thread_task),
+                search_data[thread_id],
+                search_parameters,
+                qtm,
+                mem,
+                rt_to_irt_spline,
+                irt_tol
+            )
+        end
+    end
+    fetch.(tasks)
+end
+
+# Arrow (original)
+arrow_time = @elapsed begin
+    scan_to_prec_idx_arrow = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin
+            thread_id = first(thread_task)
+            Pioneer.searchFragmentIndex(
+                scan_to_prec_idx_arrow,
                 fragment_index,
                 spectra,
                 last(thread_task),
@@ -110,8 +174,13 @@ let
     fetch.(tasks)
 end
 
-# ── Profile Phase 1 (searchFragmentIndex) ────────────────────────────────────
-println("Profiling searchFragmentIndex ($(Threads.nthreads()) threads) ...")
+println("  Arrow (original): $(round(arrow_time, digits=3))s")
+println("  Native vectors:   $(round(native_time, digits=3))s")
+println("  Speedup:          $(round(arrow_time / native_time, digits=2))x")
+println("  Materialize cost: $(round(materialize_time, digits=3))s ($(round(materialize_time/native_time*100, digits=1))% of one search)")
+
+# ── Profile Phase 1 (searchFragmentIndex) with native vectors ────────────────
+println("\nProfiling searchFragmentIndex with native vectors ($(Threads.nthreads()) threads) ...")
 Profile.clear()
 scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
 @profile begin
@@ -120,7 +189,7 @@ scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectr
             thread_id = first(thread_task)
             Pioneer.searchFragmentIndex(
                 scan_to_prec_idx,
-                fragment_index,
+                native_frag_index,
                 spectra,
                 last(thread_task),
                 search_data[thread_id],
@@ -137,13 +206,12 @@ end
 
 # ── Print flat profile summary ───────────────────────────────────────────────
 println("\n", "="^80)
-println("FLAT PROFILE (top 40 by count)")
+println("FLAT PROFILE — NATIVE VECTORS (top 40 by count)")
 println("="^80)
 Profile.print(IOContext(stdout, :displaysize => (200, 200)), maxdepth=40, noisefloor=1.0, sortedby=:count)
 
 # ── Save profile & generate flame graph ──────────────────────────────────────
-prof_path = joinpath(dirname(PARAMS_PATH), "fragment_index_profile.pb.gz")
+prof_path = joinpath(dirname(PARAMS_PATH), "fragment_index_profile_native.pb.gz")
 println("\nSaving profile to $prof_path ...")
 pprof(out=prof_path, web=false)
 println("Done. Open with:  go tool pprof -http=:8080 $prof_path")
-println("Or in Julia:  using PProf; PProf.refresh(file=\"$prof_path\"); pprof()")

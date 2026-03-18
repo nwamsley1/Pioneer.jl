@@ -39,9 +39,9 @@ end
 # ── Load problems ────────────────────────────────────────────────
 
 problems = [
-    ("small_88280",  "/Users/nathanwamsley/Desktop/solveHuber_problems/problem_88280_9cols.jls"),
-    ("med_97068",    "/Users/nathanwamsley/Desktop/solveHuber_problems/problem_97068_35cols.jls"),
-    ("large_342335", "/Users/nathanwamsley/Desktop/solveHuber_inputs_scan342335.jls"),
+    ("small_88280",  "/Users/n.t.wamsley/Desktop/solveHuber_problems/problem_88280_9cols.jls"),
+    ("med_97068",    "/Users/n.t.wamsley/Desktop/solveHuber_problems/problem_97068_35cols.jls"),
+    ("large_342335", "/Users/n.t.wamsley/Desktop/solveHuber_inputs_scan342335.jls"),
 ]
 
 profile_dir = joinpath(@__DIR__, "..", "..", "..", "..", "data")

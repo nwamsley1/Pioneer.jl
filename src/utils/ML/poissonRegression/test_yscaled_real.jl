@@ -53,7 +53,7 @@ function load_sa(path)
     return sa, max_outer, rel_conv
 end
 
-problem_dir = "/Users/nathanwamsley/Desktop/solveHuber_problems"
+problem_dir = "/Users/n.t.wamsley/Desktop/solveHuber_problems"
 
 # Run ALL problems
 test_files = sort(filter(f -> endswith(f, ".jls"), readdir(problem_dir)))

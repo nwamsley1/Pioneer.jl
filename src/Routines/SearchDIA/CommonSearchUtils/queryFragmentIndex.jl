@@ -43,7 +43,7 @@ Find new lower and upper bounds for fragment bin search using exponential search
 # Returns
 Tuple of (new_lower_bound, new_upper_bound) for fragment bin search
 """
-function exponentialFragmentBinSearch(frag_index_bins::AbstractArray{FragIndexBin},
+function exponentialFragmentBinSearch(frag_index_bins::AbstractVector{<:FragIndexBin},
                                         frag_bin_max_idx::UInt32,
                                         lower_bound_guess::UInt32,
                                         upper_bound_guess::UInt32,
@@ -113,7 +113,7 @@ Index of first fragment bin that could contain frag_min
 
 Uses branchless binary search for performance optimization.
 """
-function findFirstFragmentBin(frag_index_bins::AbstractArray{FragIndexBin},
+function findFirstFragmentBin(frag_index_bins::AbstractVector{<:FragIndexBin},
                                 lower_bound_guess::UInt32,
                                 upper_bound_guess::UInt32,
                                 frag_min::Float32) #where {T<:AbstractFloat}
@@ -155,10 +155,10 @@ Search a fragment bin for matches within precursor mass window.
 
 Updates prec_id_to_score in place with new matches.
 """
-function searchFragmentBin!(prec_id_to_score::Counter{UInt32, UInt8}, 
-                            fragments::AbstractArray{IndexFragment},
+function searchFragmentBin!(prec_id_to_score::Counter{UInt32, UInt8},
+                            fragments::AbstractVector{<:IndexFragment},
                             frag_id_range::UnitRange{UInt32},
-                            window_min::Float32, 
+                            window_min::Float32,
                             window_max::Float32)
 
     #Index of first and last fragments to search 
@@ -203,8 +203,8 @@ function searchFragmentBin!(prec_id_to_score::Counter{UInt32, UInt8},
         end
     end
         
-    function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
-                                    fragments::AbstractArray{IndexFragment},
+    function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8},
+                                    fragments::AbstractVector{<:IndexFragment},
                                     matched_frag_range::UnitRange{UInt32})
         @inline @inbounds for i in matched_frag_range
             frag = fragments[i]
@@ -219,12 +219,12 @@ function searchFragmentBin!(prec_id_to_score::Counter{UInt32, UInt8},
 
 end
 
-function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8}, 
+function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8},
                         frag_bin_max_idx::UInt32,
                         lower_bound_guess::UInt32,
                         upper_bound_guess::UInt32,
-                        frag_bins::AbstractArray{FragIndexBin},
-                        fragments::AbstractArray{IndexFragment},
+                        frag_bins::AbstractVector{<:FragIndexBin},
+                        fragments::AbstractVector{<:IndexFragment},
                         frag_mz_min::Float32, 
                         frag_mz_max::Float32, 
                         prec_mz_min::Float32,
@@ -285,10 +285,10 @@ function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8},
     return lower_bound_guess, upper_bound_guess
 end
 
-function searchScan!(prec_id_to_score::Counter{UInt32, UInt8}, 
-                    rt_bins::AbstractArray{FragIndexBin},
-                    frag_bins::AbstractArray{FragIndexBin},
-                    fragments::AbstractArray{IndexFragment},
+function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
+                    rt_bins::AbstractVector{<:FragIndexBin},
+                    frag_bins::AbstractVector{<:FragIndexBin},
+                    fragments::AbstractVector{<:IndexFragment},
                     masses::AbstractArray{Union{Missing, U}}, 
                     intensities::AbstractArray{Union{Missing, U}}, 
                     rt_bin_idx::Int64,
@@ -300,8 +300,7 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
     prec_min = U(getPrecMinBound(quad_transmission_func) - NEUTRON*first(isotope_err_bounds)/2)
     prec_max = U(getPrecMaxBound(quad_transmission_func) + NEUTRON*last(isotope_err_bounds)/2)
 
-    #@inbounds @fastmath while getLow(rt_bins[rt_bin_idx]) < irt_high
-    while getLow(rt_bins[rt_bin_idx]) < irt_high
+    @inbounds @fastmath while getLow(rt_bins[rt_bin_idx]) < irt_high
         #BinRanges
         sub_bin_range = getSubBinRange(rt_bins[rt_bin_idx])
         min_frag_bin, max_frag_bin = first(sub_bin_range), last(sub_bin_range)

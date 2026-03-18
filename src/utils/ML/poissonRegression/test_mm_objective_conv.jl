@@ -16,7 +16,7 @@ include("spectralPoissonRegression.jl")
 include("spectralLinearRegression_reference.jl")
 
 # ── Load real data ────────────────────────────────────────────────
-data = deserialize("/Users/nathanwamsley/Desktop/solveHuber_inputs_scan342335.jls")
+data = deserialize("/Users/n.t.wamsley/Desktop/solveHuber_inputs_scan342335.jls")
 
 sa = Main.SparseArray(
     data[:n_vals], data[:m], data[:n],

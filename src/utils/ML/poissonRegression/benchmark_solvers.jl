@@ -1,5 +1,5 @@
 ## Benchmark OLS v1, PMM v1, and Huber across all real-world problems
-## in /Users/nathanwamsley/Desktop/solveHuber_problems/
+## in /Users/n.t.wamsley/Desktop/solveHuber_problems/
 ##
 ## Run:  julia --project=<Pioneer root> src/utils/ML/poissonRegression/benchmark_solvers.jl
 
@@ -130,7 +130,7 @@ end
 
 # ── Load all problems ────────────────────────────────────────────
 
-problem_dir = "/Users/nathanwamsley/Desktop/solveHuber_problems"
+problem_dir = "/Users/n.t.wamsley/Desktop/solveHuber_problems"
 files = sort(filter(f -> endswith(f, ".jls"), readdir(problem_dir)))
 println("Found $(length(files)) problems in $problem_dir\n")
 

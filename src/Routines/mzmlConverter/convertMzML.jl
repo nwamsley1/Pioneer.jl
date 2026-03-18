@@ -120,7 +120,8 @@ function parseScanDictToScanElement(
     scan_number::Int64,
     mz_array::Vector{Float32},
     intensity_array::Vector{Float32},
-    skip_scan_header::Bool)::PioneerScanElement
+    skip_scan_header::Bool;
+    isolation_width_override::Union{Nothing, Float32}=nothing)::PioneerScanElement
 
     centerMz,isolationWidthMz = missing, missing
     scanHeader = ""
@@ -137,8 +138,12 @@ function parseScanDictToScanElement(
     if msOrder > 1
         targetMz = parse(Float32, spectrum_dict["isolation window target m/z"])
         lowerOffset = parse(Float32, spectrum_dict["isolation window lower offset"])
-        upperOffset = parse(Float32, spectrum_dict["isolation window lower offset"])
-        isolationWidthMz = lowerOffset + upperOffset
+        upperOffset = parse(Float32, spectrum_dict["isolation window upper offset"])
+        if isolation_width_override !== nothing
+            isolationWidthMz = isolation_width_override
+        else
+            isolationWidthMz = lowerOffset + upperOffset
+        end
         centerMz = targetMz + (upperOffset - lowerOffset)/2.0f0
     end
     TIC = parse(Float32, spectrum_dict["total ion current"])
@@ -229,7 +234,8 @@ function parseSpectrumElement!(
     spectrum_dict::Dict{String, String},
     spectrumElement::EzXML.Node,
     scanIndex::Int,
-    skip_scan_header::Bool)
+    skip_scan_header::Bool;
+    isolation_width_override::Union{Nothing, Float32}=nothing)
     mz_array, intensity_array = missing, missing
     for scanElement in eachelement(spectrumElement)
         if scanElement.name=="binaryDataArrayList"
@@ -247,13 +253,15 @@ function parseSpectrumElement!(
                                 scanIndex,
                                 mz_array,
                                 intensity_array,
-                                skip_scan_header)
+                                skip_scan_header;
+                                isolation_width_override=isolation_width_override)
 
 end
 
 function readMzML(
     mzML_path::String,
-    skip_scan_header::Bool)
+    skip_scan_header::Bool;
+    isolation_width_override::Union{Nothing, Float32}=nothing)
     root_elements = EzXML.root(EzXML.readxml(mzML_path))
     # Create a namespace map
     ns = Dict("ms" => "http://psi.hupo.org/ms/mzml")
@@ -280,10 +288,11 @@ function readMzML(
     pairedSpectra = Vector{PioneerScanElement}(undef, length(collect(eachelement(spectrum_list))))
     for (i, spectrum_element) in enumerate(collect(eachelement(spectrum_list)))
         pairedSpectra[i] = parseSpectrumElement!(
-                                        spectrum_dict, 
-                                        spectrum_element, 
+                                        spectrum_dict,
+                                        spectrum_element,
                                         i,
-                                        skip_scan_header
+                                        skip_scan_header;
+                                        isolation_width_override=isolation_width_override
         )
     end
 
@@ -294,16 +303,19 @@ function readMzML(
 end
 
 """
-    convertMzML(mzml_dir::String; skip_scan_header::Bool=true)
+    convertMzML(mzml_dir::String; skip_scan_header::Bool=true, isolation_width_override::Union{Nothing, Float32}=nothing)
 
 Convert mzML mass spectrometry data files to Arrow IPC format.
 
-Takes either a directory containing mzML files or a path to a single mzML file and converts them to 
+Takes either a directory containing mzML files or a path to a single mzML file and converts them to
 Arrow format, preserving scan data including m/z arrays, intensity arrays, and scan metadata.
 
 # Arguments
 - `mzml_dir::String`: Path to either a directory containing mzML files or a path to a single mzML file
 - `skip_scan_header::Bool=true`: When true, omits scan header information from the output to reduce file size
+- `isolation_width_override::Union{Nothing, Float32}=nothing`: When provided, overrides the isolation width
+  read from the mzML for all MS2 scans. Useful for scanning DIA methods (e.g., Sciex ZT scan DIA) where
+  the mzML encodes the per-slice width rather than the true quadrupole window width.
 
 # Returns
 `nothing`
@@ -319,8 +331,8 @@ convertMzML("path/to/mzml/files")
 # Convert a single mzML file
 convertMzML("path/to/single/file.mzML")
 
-# Include scan headers in output
-convertMzML("path/to/mzml/files", skip_scan_header=false)
+# Override isolation width for ZT scan DIA (5 Da window + 1 Da slide = 6 Da effective)
+convertMzML("path/to/mzml/files", isolation_width_override=Float32(6.0))
 ```
 # Notes
 
@@ -328,7 +340,8 @@ Each mzML file is converted to a corresponding Arrow IPC (.arrow) file in the sa
 """
 function convertMzML(
     mzml_dir::String;
-    skip_scan_header= true)
+    skip_scan_header= true,
+    isolation_width_override::Union{Nothing, Float32}=nothing)
 
     # Clean up any old file handlers in case the program crashed
     GC.gc()
@@ -349,7 +362,7 @@ function convertMzML(
     end
 
     for mzml_path in ProgressBar(mzml_paths)
-        readMzML(mzml_path, skip_scan_header)
+        readMzML(mzml_path, skip_scan_header; isolation_width_override=isolation_width_override)
     end
     return nothing
 end
