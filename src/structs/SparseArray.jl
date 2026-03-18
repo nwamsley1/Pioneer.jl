@@ -204,7 +204,7 @@ function countingSortByCol!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:Abstrac
     # Find max column and max row
     max_col = zero(UInt16)
     max_row = zero(Ti)
-    for i in 1:n
+    @inbounds for i in 1:n
         if sa.colval[i] > max_col; max_col = sa.colval[i]; end
         if sa.rowval[i] > max_row; max_row = sa.rowval[i]; end
     end
@@ -215,23 +215,15 @@ function countingSortByCol!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:Abstrac
         resize!(sa.cursors, mc + 64)
     end
 
-    # Ensure arrays have capacity >= 2n for temp space
-    capacity = length(sa.colval)
-    if capacity < 2 * n
-        grow = 2 * n - capacity
-        append!(sa.colval, zeros(eltype(sa.colval), grow))
-        append!(sa.rowval, zeros(eltype(sa.rowval), grow))
-        append!(sa.nzval, zeros(eltype(sa.nzval), grow))
-        append!(sa.x, zeros(eltype(sa.x), grow))
-        append!(sa.matched, zeros(eltype(sa.matched), grow))
-        append!(sa.isotope, zeros(eltype(sa.isotope), grow))
-    end
+    # Arrays must have capacity >= 2n for temp space.
+    # buildDesignMatrix! guarantees this via 2x growth policy.
+    @assert length(sa.colval) >= 2 * n "SparseArray capacity $(length(sa.colval)) < 2*$n — buildDesignMatrix! should pre-allocate"
 
     # Count per column → build colptr via prefix sum
-    for c in 1:mc+1; sa.colptr[c] = zero(Ti); end
-    for i in 1:n; sa.colptr[Int(sa.colval[i])] += one(Ti); end
+    @inbounds for c in 1:mc+1; sa.colptr[c] = zero(Ti); end
+    @inbounds for i in 1:n; sa.colptr[Int(sa.colval[i])] += one(Ti); end
     total = one(Ti)
-    for c in 1:mc
+    @inbounds for c in 1:mc
         count = sa.colptr[c]
         sa.colptr[c] = total
         total += count
@@ -239,7 +231,7 @@ function countingSortByCol!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:Abstrac
     sa.colptr[mc + 1] = total
 
     # Copy to temp space (slack after n_vals)
-    for i in 1:n
+    @inbounds for i in 1:n
         sa.colval[n + i] = sa.colval[i]
         sa.rowval[n + i] = sa.rowval[i]
         sa.nzval[n + i]  = sa.nzval[i]
@@ -249,8 +241,8 @@ function countingSortByCol!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:Abstrac
     end
 
     # Scatter back in column order
-    for c in 1:mc; sa.cursors[c] = sa.colptr[c]; end
-    for i in 1:n
+    @inbounds for c in 1:mc; sa.cursors[c] = sa.colptr[c]; end
+    @inbounds for i in 1:n
         c = Int(sa.colval[n + i])
         dest = Int(sa.cursors[c])
         sa.colval[dest] = sa.colval[n + i]
@@ -264,7 +256,7 @@ function countingSortByCol!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:Abstrac
 
     # Zero nzval in temp space to prevent stale accumulation
     # (buildDesignMatrix! uses nzval[j] += which requires clean slate)
-    for i in 1:n
+    @inbounds for i in 1:n
         sa.nzval[n + i] = zero(T)
     end
 
@@ -273,24 +265,7 @@ function countingSortByCol!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:Abstrac
 end
 
 function sortSparse!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
-    specialsort!(sa, 1, sa.n_vals, Base.Order.Forward);
-    max_col = 1
-    max_row  = 1
-    sa.colptr[1] = 1
-    for i in range(1, sa.n_vals - 1)
-        if sa.rowval[i + 1] > max_row
-            max_row = sa.rowval[i + 1]
-        end
-        if sa.colval[i + 1] == sa.colval[i]
-            continue
-        else
-            max_col += 1
-            sa.colptr[max_col] = i + 1
-        end
-    end
-    sa.colptr[max_col + 1] = sa.n_vals
-    sa.n = max_col
-    sa.m = max_row
+    countingSortByCol!(sa)
 end
 
 function initResiduals!( r::Vector{T}, sa::SparseArray{Ti,T}, w::Vector{T}) where {Ti<:Integer,T<:AbstractFloat}
