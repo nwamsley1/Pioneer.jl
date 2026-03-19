@@ -43,24 +43,7 @@ struct FragmentIndexSearchResults <: SearchResults
     qc_plots_folder_path::String
 end
 
-"""
-Parameters for fragment index search.
-Only needs isotope error bounds, minimum score, and spec order.
-"""
-struct FirstPassSearchParameters <: FragmentIndexSearchParameters
-    isotope_err_bounds::Tuple{UInt8, UInt8}
-    min_index_search_score::UInt8
-    spec_order::Set{Int64}
-
-    function FirstPassSearchParameters(params::PioneerParameters)
-        frag_idx_params = params.fragment_index_search
-        new(
-            (UInt8(1), UInt8(0)),  # isotope_err_bounds hardcoded
-            UInt8(frag_idx_params.min_score),
-            Set{Int64}([2])
-        )
-    end
-end
+# FirstPassSearchParameters is now defined in FirstPassSearch/FirstPassSearch.jl
 
 #==========================================================
 Interface Implementation

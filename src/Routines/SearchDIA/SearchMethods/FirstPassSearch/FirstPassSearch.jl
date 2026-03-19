@@ -18,10 +18,10 @@
 """
     FirstPassSearch
 
-First pass deconvolution and LightGBM prescore search.
+First pass fragment index search, deconvolution, and LightGBM prescore search.
 
 Pipeline:
-1. process_file!: Load fragment_index_matches, deconvolve with prescore fragment settings
+1. process_file!: Run fragment index search, deconvolve with prescore fragment settings
 2. process_search_results!: Compute prescore features, train LightGBM, select best scan per precursor
 3. summarize_results!: Global prescore aggregation, filter fragment_index_matches to passing precursors,
    write filtered_fragment_matches for SecondPassSearch
@@ -31,6 +31,24 @@ struct FirstPassSearch <: SearchMethod end
 #==========================================================
 Type Definitions
 ==========================================================#
+
+"""
+Parameters for fragment index search phase within FirstPassSearch.
+"""
+struct FirstPassSearchParameters <: FragmentIndexSearchParameters
+    isotope_err_bounds::Tuple{UInt8, UInt8}
+    min_index_search_score::UInt8
+    spec_order::Set{Int64}
+
+    function FirstPassSearchParameters(params::PioneerParameters)
+        frag_idx_params = params.fragment_index_search
+        new(
+            (UInt8(1), UInt8(0)),  # isotope_err_bounds hardcoded
+            UInt8(frag_idx_params.min_score),
+            Set{Int64}([2])
+        )
+    end
+end
 
 """
 Results container for first pass prescore search.
@@ -54,6 +72,8 @@ function init_search_results(::FirstPassSearch, ::P, search_context::SearchConte
     mkpath(first_pass_psms_dir)
     second_pass_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
     mkpath(second_pass_psms_dir)
+    frag_match_dir = joinpath(getDataOutDir(search_context), "temp_data", "fragment_index_matches")
+    mkpath(frag_match_dir)
     return FirstPassSearchResults(
         DataFrame()
     )
@@ -81,11 +101,37 @@ function process_file!(
     try
         t_start = time()
 
-        # Load fragment index mapping from FragmentIndexSearch
-        frag_match_path = getFragmentIndexMatches(getMSData(search_context), ms_file_idx)
-        scan_to_prec_idx, precursors_passed = load_fragment_index_matches(
-            frag_match_path, length(spectra)
+        # Run fragment index search inline (no Arrow round-trip)
+        spec_lib = getSpecLib(search_context)
+        partitioned_index = getPartitionedIndex(spec_lib)
+        precursor_mzs = getMz(getPrecursors(spec_lib))
+        qtm = getQuadTransmissionModel(search_context, ms_file_idx)
+        mem = getMassErrorModel(search_context, ms_file_idx)
+        rt_to_irt_spline = getRtIrtModel(search_context, ms_file_idx)
+        irt_tol = haskey(getIrtErrors(search_context), ms_file_idx) ? getIrtErrors(search_context)[ms_file_idx] : Float32(Inf)
+        n_threads = Threads.nthreads()
+
+        thread_tasks = partition_scans(spectra, n_threads)
+        all_scan_idxs = Int[]
+        for tt in thread_tasks
+            append!(all_scan_idxs, last(tt))
+        end
+        filter!(si -> si > 0 && si <= length(spectra) && getMsOrder(spectra, si) ∈ getSpecOrder(params), all_scan_idxs)
+
+        scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+        precursors_passed = searchFragmentIndexPartitionMajorHinted(
+            scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
+            n_threads, params, qtm, mem, rt_to_irt_spline, irt_tol, precursor_mzs)
+
+        # Write fragment index matches to Arrow (needed by summarize_results!)
+        parsed_fname = getParsedFileName(search_context, ms_file_idx)
+        frag_match_output_path = joinpath(
+            getDataOutDir(search_context), "temp_data", "fragment_index_matches",
+            parsed_fname * ".arrow"
         )
+        write_fragment_index_matches(scan_to_prec_idx, precursors_passed, frag_match_output_path)
+        setFragmentIndexMatches!(getMSData(search_context), ms_file_idx, frag_match_output_path)
+
         n_input_pairs = sum(ismissing(r) ? 0 : length(r) for r in scan_to_prec_idx)
         file_name = getParsedFileName(search_context, ms_file_idx)
         @info "FirstPassSearch input: $file_name — $(n_input_pairs) (scan, precursor) pairs" *

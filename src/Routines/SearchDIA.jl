@@ -342,7 +342,7 @@ function SearchDIA(params_path::String)
             ("Parameter Tuning", ParameterTuningSearch()),
             ("NCE Tuning", NceTuningSearch()),
             ("Quadrupole Tuning", QuadTuningSearch()),
-            ("Fragment Index Search", FragmentIndexSearch()),
+            #("Fragment Index Search", FragmentIndexSearch()),  # Merged into FirstPassSearch
             ("First Pass Search", FirstPassSearch()),
             #("Second Pass Search", SecondPassSearch()),  # Bypassed: FirstPassSearch now writes fold files directly
             ("Scoring", ScoringSearch()),

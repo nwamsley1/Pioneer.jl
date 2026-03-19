@@ -423,45 +423,6 @@ function LibrarySearchNceTuning(
 end
 
 """
-    fragment_index_search_only(spectra, search_context, params, ms_file_idx)
-
-Run only Phase 1 of LibrarySearch (fragment index search) without getPSMS scoring.
-Returns (scan_to_prec_idx, precursors_passed) for direct use in second pass.
-"""
-function fragment_index_search_only(
-    spectra::MassSpecData,
-    search_context::SearchContext,
-    params::P,
-    ms_file_idx::Int64
-) where {P<:FragmentIndexSearchParameters}
-    spec_lib = getSpecLib(search_context)
-    qtm = getQuadTransmissionModel(search_context, ms_file_idx)
-    mem = getMassErrorModel(search_context, ms_file_idx)
-    rt_to_irt_spline = getRtIrtModel(search_context, ms_file_idx)
-    irt_tol = haskey(getIrtErrors(search_context), ms_file_idx) ? getIrtErrors(search_context)[ms_file_idx] : Float32(Inf)
-    precursor_mzs = getMz(getPrecursors(spec_lib))
-    n_threads = Threads.nthreads()
-    partitioned_index = getPartitionedIndex(spec_lib)
-
-    thread_tasks = partition_scans(spectra, n_threads)
-
-    # Collect valid MS2 scan indices
-    all_scan_idxs = Int[]
-    for tt in thread_tasks
-        append!(all_scan_idxs, last(tt))
-    end
-    filter!(si -> si > 0 && si <= length(spectra) && getMsOrder(spectra, si) ∈ getSpecOrder(params), all_scan_idxs)
-
-    # Single call — handles threading internally
-    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-    precursors_passed = searchFragmentIndexPartitionMajorHinted(
-        scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
-        n_threads, params, qtm, mem, rt_to_irt_spline, irt_tol, precursor_mzs)
-
-    return scan_to_prec_idx, precursors_passed
-end
-
-"""
     write_fragment_index_matches(scan_to_prec_idx, precursors_passed, output_path)
 
 Flatten (scan_idx, precursor_idx) pairs from fragment index search and write to Arrow.

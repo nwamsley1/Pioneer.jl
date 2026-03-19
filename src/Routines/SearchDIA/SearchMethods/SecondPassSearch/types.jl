@@ -76,6 +76,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     dynamic_range::Float32
     prescore_dynamic_range::Float32
 
+    # Fragment index search parameter (used when FirstPassSearch runs fragment index inline)
+    min_index_search_score::UInt8
+
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -168,7 +171,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             prescore_min_topn_of_m,
 
             dynamic_range,
-            prescore_dynamic_range
+            prescore_dynamic_range,
+
+            UInt8(params.fragment_index_search.min_score)
         )
     end
 end
