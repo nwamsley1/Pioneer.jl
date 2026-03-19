@@ -142,11 +142,12 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
 
         # normalize by RT width so the same smoothing parameter is about optimal for all cases
         rt_width = last_rt-start_rt
-        x = x / rt_width
 
         if m <= 1
             return b, x
         end
+
+        x = x / rt_width
 
         active_length = m + (2*n_pad)
         z = whitsmddw(x, b, w, active_length, λ)
@@ -274,6 +275,9 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         best_rt = rt[apex_scan]
         #start_rt, best_rt = rt[start], rt[best_scan]
         rt_width = rt[stop] - start_rt
+        if rt_width <= 0.0f0
+            rt_width = 1.0f0
+        end
 
         norm_factor = u[apex_scan+n_pad]
 
