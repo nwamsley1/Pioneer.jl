@@ -539,15 +539,33 @@ function _quant_peptides_and_pg_score(
     quant_mask::AbstractVector{Bool},
     prob_col::Symbol
 )
-    quant_peptides = unique(gdf[quant_mask, :sequence])
-    if isempty(quant_peptides)
-        return quant_peptides, 0.0f0
+    sequences = gdf.sequence
+    probs = gdf[!, prob_col]
+
+    quant_peptides = String[]
+    unique_pep_probs = Float32[]
+    peptide_to_idx = Dict{String, Int}()
+
+    @inbounds for i in eachindex(quant_mask)
+        quant_mask[i] || continue
+
+        pep = sequences[i]
+        prob = Float32(probs[i])
+
+        if haskey(peptide_to_idx, pep)
+            pep_idx = peptide_to_idx[pep]
+            if prob > unique_pep_probs[pep_idx]
+                unique_pep_probs[pep_idx] = prob
+            end
+        else
+            push!(quant_peptides, pep)
+            push!(unique_pep_probs, prob)
+            peptide_to_idx[pep] = length(quant_peptides)
+        end
     end
 
-    unique_pep_probs = Vector{Float32}(undef, length(quant_peptides))
-    for (i, pep) in pairs(quant_peptides)
-        pep_mask = (gdf.sequence .== pep) .& quant_mask
-        unique_pep_probs[i] = maximum(gdf[pep_mask, prob_col])
+    if isempty(quant_peptides)
+        return quant_peptides, 0.0f0
     end
 
     return quant_peptides, -sum(log.(1.0f0 .- unique_pep_probs))
@@ -571,6 +589,40 @@ const ConsensusRunVote = @NamedTuple{
 
 @inline function _consensus_run_decay(selected_rank::Int)::Float64
     return exp(-CONSENSUS_PRECURSOR_RUN_DECAY_RATE * Float64(selected_rank - 1))
+end
+
+@inline function _consensus_vote_precedes(
+    left_pg_score::Float32,
+    left_run_order::Int64,
+    right_vote::ConsensusRunVote
+)::Bool
+    return (left_pg_score > right_vote.pg_score) ||
+           ((left_pg_score == right_vote.pg_score) && (left_run_order < right_vote.run_order))
+end
+
+function _insert_top_consensus_vote!(
+    run_votes::Vector{ConsensusRunVote},
+    vote::ConsensusRunVote
+)
+    insert_idx = length(run_votes) + 1
+
+    @inbounds for i in eachindex(run_votes)
+        if _consensus_vote_precedes(vote.pg_score, vote.run_order, run_votes[i])
+            insert_idx = i
+            break
+        end
+    end
+
+    if insert_idx > CONSENSUS_PRECURSOR_MAX_RUNS
+        return run_votes
+    end
+
+    insert!(run_votes, insert_idx, vote)
+    if length(run_votes) > CONSENSUS_PRECURSOR_MAX_RUNS
+        pop!(run_votes)
+    end
+
+    return run_votes
 end
 
 """
@@ -646,10 +698,13 @@ function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
                     precursor_idx => Float32(clamp(precursor_weight / run_max_weight, 0.0f0, 1.0f0))
                 )
             end
-            sort!(normalized_precursors, by = x -> (-x.second, x.first))
             protein_key = (protein_name, target, entrap_id)
-            push!(
-                get!(protein_run_votes, protein_key, ConsensusRunVote[]),
+            _insert_top_consensus_vote!(
+                get!(
+                    () -> sizehint!(ConsensusRunVote[], CONSENSUS_PRECURSOR_MAX_RUNS),
+                    protein_run_votes,
+                    protein_key
+                ),
                 (
                     pg_score = pg_score,
                     run_order = Int64(run_order),
@@ -660,10 +715,7 @@ function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
     end
 
     for (protein_key, run_votes) in protein_run_votes
-        sort!(run_votes, by = x -> (-x.pg_score, x.run_order))
-        n_selected = min(length(run_votes), CONSENSUS_PRECURSOR_MAX_RUNS)
-
-        for selected_rank in 1:n_selected
+        for selected_rank in eachindex(run_votes)
             run_vote = run_votes[selected_rank]
             run_weight = Float64(run_vote.pg_score) * _consensus_run_decay(selected_rank)
             protein_total_vote[protein_key] = get(protein_total_vote, protein_key, 0.0) + run_weight
@@ -868,6 +920,10 @@ Add protein-level features like peptide coverage.
 """
 function add_protein_features(protein_catalog::Dict)
     desc = "add_protein_features"
+    grouped_catalog_cache = Dict{
+        @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
+        Set{String}
+    }()
     
     op = function(df)
         if !hasproperty(df, :protein_name)
@@ -877,10 +933,6 @@ function add_protein_features(protein_catalog::Dict)
         n_rows = nrow(df)
         n_possible = Vector{Int64}(undef, n_rows)
         peptide_coverage = Vector{Float32}(undef, n_rows)
-        grouped_catalog_cache = Dict{
-            @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
-            Set{String}
-        }()
         
         for i in 1:n_rows
             key = (
