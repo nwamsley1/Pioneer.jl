@@ -235,8 +235,8 @@ function BuildSpecLib(params_path::String)
                     raw_fragments_arrow_path,
                     koina_model_type,
                     instrument_type,
-                    params["max_koina_requests"],
-                    params["max_koina_batch"],
+                    24,     # max_koina_requests
+                    1000,   # max_koina_batch
                     prediction_model
                 )
                 nothing
@@ -360,24 +360,24 @@ function BuildSpecLib(params_path::String)
         index_timing = @timed begin
             buildPionLib(
                 lib_dir,
-                UInt8(_params.library_params["y_start_index"]),
-                UInt8(_params.library_params["y_start"]),
-                UInt8(_params.library_params["b_start_index"]),
-                UInt8(_params.library_params["b_start"]),
-                _params.library_params["include_p_index"],
-                _params.library_params["include_p"],
-                _params.library_params["include_isotope"],
-                _params.library_params["include_immonium"],
-                _params.library_params["include_internal"],
-                _params.library_params["include_neutral_diff"],
-                UInt8(_params.library_params["max_frag_charge"]),
-                UInt8(_params.library_params["max_frag_rank"]),
-                Float32(_params.library_params["length_to_frag_count_multiple"]),
-                Float32(_params.library_params["min_frag_intensity"]),
-                UInt8.(_params.library_params["rank_to_score"]),
+                UInt8(4),       # y_start_index
+                UInt8(3),       # y_start
+                UInt8(3),       # b_start_index
+                UInt8(2),       # b_start
+                false,          # include_p_index
+                false,          # include_p
+                false,          # include_isotope
+                false,          # include_immonium
+                false,          # include_internal
+                true,           # include_neutral_diff
+                UInt8(3),       # max_frag_charge
+                UInt8(10),      # max_frag_rank
+                Float32(1000),  # length_to_frag_count_multiple (disabled — max_frag_rank=10 always wins)
+                0.0f0,          # min_frag_intensity
+                UInt8[8, 4, 4, 2, 2, 1, 1],  # rank_to_score
                 frag_bounds,
-                Float32(_params.library_params["frag_bin_tol_ppm"]),
-                Float32(_params.library_params["rt_bin_tol"]),
+                2.5f0,          # frag_bin_tol_ppm
+                3.0f0,          # rt_bin_tol
                 koina_model_type
             )          
 

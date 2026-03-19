@@ -217,7 +217,7 @@ function ParseSpecLib(params_path::String)
     
     # Extract parameters
     lib_path = params["library_params"]["input_lib_path"]
-    rt_bin_tol = Float32(params["library_params"]["rt_bin_tol"])
+    rt_bin_tol = 1.0f0  # hardcoded internal default for library sorting
     output_path = params["library_params"]["output_lib_path"]
     generate_decoys = params["library_params"]["generate_decoys"]
     generate_entrapment = params["library_params"]["generate_entrapment"]
@@ -357,27 +357,27 @@ function ParseSpecLib(params_path::String)
 
     buildPionLib(
         output_path,
-        UInt8(params["library_params"]["y_start_index"]),
-        UInt8(params["library_params"]["y_start"]),
-        UInt8(params["library_params"]["b_start_index"]),
-        UInt8(params["library_params"]["b_start"]),
-        params["library_params"]["include_p_index"],
-        params["library_params"]["include_p"],
-        params["library_params"]["include_isotope"],
-        params["library_params"]["include_immonium"],
-        params["library_params"]["include_internal"],
-        params["library_params"]["include_neutral_diff"],
-        UInt8(params["library_params"]["max_frag_charge"]),
-        UInt8(params["library_params"]["max_frag_rank"]),
-        Float32(params["library_params"]["length_to_frag_count_multiple"]),
-        Float32(params["library_params"]["min_frag_intensity"]),
-        UInt8.(params["library_params"]["rank_to_score"]),
+        UInt8(4),       # y_start_index
+        UInt8(3),       # y_start
+        UInt8(3),       # b_start_index
+        UInt8(2),       # b_start
+        false,          # include_p_index
+        false,          # include_p
+        false,          # include_isotope
+        false,          # include_immonium
+        false,          # include_internal
+        false,          # include_neutral_diff
+        UInt8(3),       # max_frag_charge
+        UInt8(10),      # max_frag_rank
+        Float32(1000),  # length_to_frag_count_multiple (disabled — max_frag_rank=10 always wins)
+        0.0f0,          # min_frag_intensity
+        UInt8[8, 4, 4, 2, 2, 1, 1],  # rank_to_score
         FragBoundModel(
             ImmutablePolynomial(zero(Float32)),
-            ImmutablePolynomial(Float32(10000.0f0)) 
+            ImmutablePolynomial(Float32(10000.0f0))
         ),
-        Float32(params["library_params"]["frag_bin_tol_ppm"]),
-        Float32(params["library_params"]["rt_bin_tol"]),
+        2.5f0,          # frag_bin_tol_ppm
+        3.0f0,          # rt_bin_tol
         InstrumentSpecificModel(params["library_params"]["instrument_type"])
     )   
 

@@ -48,7 +48,7 @@ function check_params_bsp(json_string::String)
     end
 
     # Check required top-level parameters
-    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "max_koina_requests", "max_koina_batch", "match_lib_build_batch", "fasta_paths", "fasta_names", "library_path", "predict_fragments", "include_contaminants"]
+    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "match_lib_build_batch", "fasta_paths", "fasta_names", "library_path", "predict_fragments", "include_contaminants"]
     for param in required_params
         check_param(params, param, param in ["predict_fragments", "include_contaminants"] ? Bool : Any)
     end
@@ -108,15 +108,6 @@ function check_params_bsp(json_string::String)
 
     # Check library_params (defaults now come from JSON file)
     library_params = params["library_params"]
-    check_param(library_params, "rt_bin_tol", Real)
-    check_param(library_params, "frag_bin_tol_ppm", Real)
-    check_param(library_params, "rank_to_score", Vector)
-    check_param(library_params, "y_start_index", Integer)
-    check_param(library_params, "b_start_index", Integer)
-    check_param(library_params, "y_start", Integer)
-    check_param(library_params, "b_start", Integer)
-    check_param(library_params, "include_p_index", Bool)
-    check_param(library_params, "include_p", Bool)
     check_param(library_params, "auto_detect_frag_bounds", Bool)
     # calibration_raw_file is optional - only check if it exists
     # check_param(library_params, "calibration_raw_file", String)  # Commented out - optional parameter
@@ -124,14 +115,6 @@ function check_params_bsp(json_string::String)
     check_param(library_params, "frag_mz_max", Real)
     check_param(library_params, "prec_mz_min", Real)
     check_param(library_params, "prec_mz_max", Real)
-    check_param(library_params, "max_frag_charge", Integer)
-    check_param(library_params, "max_frag_rank", Integer)
-    check_param(library_params, "length_to_frag_count_multiple", Real)
-    check_param(library_params, "min_frag_intensity", Real)
-    check_param(library_params, "include_isotope", Bool)
-    check_param(library_params, "include_internal", Bool)
-    check_param(library_params, "include_immonium", Bool)
-    check_param(library_params, "include_neutral_diff", Bool)
     check_param(library_params, "instrument_type", String)
     check_param(library_params, "prediction_model", String)
 
@@ -248,23 +231,6 @@ function checkParseSpecLibParams(json_path::String)
     required_lib_params = [
         ("input_lib_path", String),
         ("output_lib_path", String),
-        ("rt_bin_tol", Number),
-        ("frag_bin_tol_ppm", Number),
-        ("rank_to_score", Vector),
-        ("y_start_index", Number),
-        ("b_start_index", Number),
-        ("y_start", Number),
-        ("b_start", Number),
-        ("include_p_index", Bool),
-        ("include_p", Bool),
-        ("include_isotope", Bool),
-        ("include_immonium", Bool),
-        ("include_internal", Bool),
-        ("include_neutral_diff", Bool),
-        ("max_frag_charge", Number),
-        ("max_frag_rank", Number),
-        ("length_to_frag_count_multiple", Number),
-        ("min_frag_intensity", Number),
         ("generate_decoys", Bool),
         ("generate_entrapment", Bool),
         ("entrapment_groups", Number),

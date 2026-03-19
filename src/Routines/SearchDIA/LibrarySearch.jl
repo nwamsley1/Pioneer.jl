@@ -283,46 +283,46 @@ function LibrarySearch(
         S<:SearchDataStructures,
         P<:FragmentIndexSearchParameters}
     thread_tasks = partition_scans(spectra, Threads.nthreads())
+    n_threads = Threads.nthreads()
+    precursor_mzs = getMz(getPrecursors(spec_lib))
 
-    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-    tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin 
-            thread_id = first(thread_task)
-                return searchFragmentIndex(
-                        scan_to_prec_idx,
-                        fragment_index,
-                        spectra,
-                        last(thread_task),
-                        search_data[thread_id],
-                        params,
-                        qtm,
-                        mem,
-                        rt_to_irt_spline,
-                        irt_tol
-                    )
-        end
+    # Build partitioned index
+    rt_bin_tol = irt_tol >= typemax(Float32) ? typemax(Float32) : 3.0f0
+    partitioned_index = build_partitioned_index_from_lib(spec_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=2.5f0, rt_bin_tol=rt_bin_tol)
+
+    # Collect valid MS2 scan indices
+    all_scan_idxs = Int[]
+    for tt in thread_tasks
+        append!(all_scan_idxs, last(tt))
     end
-    
-    precursors_passed_scoring = fetch.(tasks)
+    filter!(si -> si > 0 && si <= length(spectra) && getMsOrder(spectra, si) ∈ getSpecOrder(params), all_scan_idxs)
 
+    # Single call — handles threading internally
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    precursors_passed_scoring = searchFragmentIndexPartitionMajorHinted(
+        scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
+        n_threads, params, qtm, mem, rt_to_irt_spline, irt_tol, precursor_mzs)
+
+    # getPSMS phase: pass the single flat vector
     tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin 
+        Threads.@spawn begin
             thread_id = first(thread_task)
             return getPSMS(
-                                ms_file_idx,
-                                spectra,
-                                last(thread_task), #getRange(thread_task),
-                                getPrecursors(spec_lib),
-                                getFragmentLookupTable(spec_lib),
-                                nce_model,
-                                scan_to_prec_idx,
-                                precursors_passed_scoring[thread_id],
-                                search_data[thread_id],
-                                params,
-                                qtm,
-                                mem,
-                                rt_to_irt_spline,
-                                irt_tol)
+                ms_file_idx,
+                spectra,
+                last(thread_task),
+                getPrecursors(spec_lib),
+                getFragmentLookupTable(spec_lib),
+                nce_model,
+                scan_to_prec_idx,
+                precursors_passed_scoring,
+                search_data[thread_id],
+                params,
+                qtm,
+                mem,
+                rt_to_irt_spline,
+                irt_tol)
         end
     end
 
@@ -355,6 +355,8 @@ function LibrarySearchNceTuning(
     @debug_l2 "LibrarySearchNceTuning: Starting with $(length(spectra)) scans, NCE grid: $nce_grid"
 
     thread_tasks = partition_scans(spectra, Threads.nthreads())
+    n_threads = Threads.nthreads()
+    precursor_mzs = getMz(getPrecursors(spec_lib))
 
     @debug_l2 "LibrarySearchNceTuning: Created $(length(thread_tasks)) thread tasks"
     for (i, task) in enumerate(thread_tasks)
@@ -362,32 +364,24 @@ function LibrarySearchNceTuning(
         n_scans = length(task_range)
         @debug_l2 "  Thread $i: $n_scans scans"
     end
-    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-    # Do fragment index search once
-    tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin
-            thread_id = first(thread_task)
-            try
-                return searchFragmentIndex(
-                    scan_to_prec_idx,
-                    fragment_index,
-                    spectra,
-                    last(thread_task),
-                    search_data[thread_id],
-                    params,
-                    qtm,
-                    mem,
-                    rt_to_irt_spline,
-                    irt_tol
-                )
-            catch e
-                @user_warn "Fragment index search failed on thread $thread_id: $e"
-                return UInt32[]  # Return empty result on error
-            end
-        end
-    end
 
-    precursors_passed_scoring = fetch.(tasks)
+    # Build partitioned index once
+    rt_bin_tol = irt_tol >= typemax(Float32) ? typemax(Float32) : 3.0f0
+    partitioned_index = build_partitioned_index_from_lib(spec_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=2.5f0, rt_bin_tol=rt_bin_tol)
+
+    # Collect valid MS2 scan indices
+    all_scan_idxs = Int[]
+    for tt in thread_tasks
+        append!(all_scan_idxs, last(tt))
+    end
+    filter!(si -> si > 0 && si <= length(spectra) && getMsOrder(spectra, si) ∈ getSpecOrder(params), all_scan_idxs)
+
+    # Single fragment index search
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
+    precursors_passed_scoring = searchFragmentIndexPartitionMajorHinted(
+        scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
+        n_threads, params, qtm, mem, rt_to_irt_spline, irt_tol, precursor_mzs)
 
     # For each NCE value, run getPSMS using the same fragment index results
     all_results = map(nce_grid) do nce
@@ -407,7 +401,7 @@ function LibrarySearchNceTuning(
                         getFragmentLookupTable(spec_lib),
                         nce_model,
                         scan_to_prec_idx,
-                        precursors_passed_scoring[thread_id],
+                        precursors_passed_scoring,
                         search_data[thread_id],
                         params,
                         qtm,
@@ -450,56 +444,33 @@ function fragment_index_search_only(
     params::P,
     ms_file_idx::Int64
 ) where {P<:FragmentIndexSearchParameters}
-    fragment_index = getFragmentIndex(getSpecLib(search_context))
-    search_data = getSearchData(search_context)
+    spec_lib = getSpecLib(search_context)
     qtm = getQuadTransmissionModel(search_context, ms_file_idx)
     mem = getMassErrorModel(search_context, ms_file_idx)
     rt_to_irt_spline = getRtIrtModel(search_context, ms_file_idx)
     irt_tol = haskey(getIrtErrors(search_context), ms_file_idx) ? getIrtErrors(search_context)[ms_file_idx] : Float32(Inf)
+    precursor_mzs = getMz(getPrecursors(spec_lib))
+    n_threads = Threads.nthreads()
 
-    thread_tasks = partition_scans(spectra, Threads.nthreads())
+    thread_tasks = partition_scans(spectra, n_threads)
+
+    # Build partitioned index
+    rt_bin_tol = irt_tol >= typemax(Float32) ? typemax(Float32) : 3.0f0
+    partitioned_index = build_partitioned_index_from_lib(spec_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=2.5f0, rt_bin_tol=rt_bin_tol)
+
+    # Collect valid MS2 scan indices
+    all_scan_idxs = Int[]
+    for tt in thread_tasks
+        append!(all_scan_idxs, last(tt))
+    end
+    filter!(si -> si > 0 && si <= length(spectra) && getMsOrder(spectra, si) ∈ getSpecOrder(params), all_scan_idxs)
+
+    # Single call — handles threading internally
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-
-    tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin
-            thread_id = first(thread_task)
-            return searchFragmentIndex(
-                scan_to_prec_idx,
-                fragment_index,
-                spectra,
-                last(thread_task),
-                search_data[thread_id],
-                params,
-                qtm,
-                mem,
-                rt_to_irt_spline,
-                irt_tol
-            )
-        end
-    end
-
-    per_thread_precs = fetch.(tasks)
-
-    # Merge per-thread precursor lists into a single flat vector with updated ranges
-    total_precs = sum(length, per_thread_precs)
-    precursors_passed = Vector{UInt32}(undef, total_precs)
-    offset = 0
-    for (tid, thread_task) in enumerate(thread_tasks)
-        thread_precs = per_thread_precs[tid]
-        n = length(thread_precs)
-        if n > 0
-            copyto!(precursors_passed, offset + 1, thread_precs, 1, n)
-        end
-        # Update scan_to_prec_idx ranges for this thread's scans
-        for scan_idx in last(thread_task)
-            (scan_idx <= 0 || scan_idx > length(scan_to_prec_idx)) && continue
-            if !ismissing(scan_to_prec_idx[scan_idx])
-                r = scan_to_prec_idx[scan_idx]
-                scan_to_prec_idx[scan_idx] = (first(r) + offset):(last(r) + offset)
-            end
-        end
-        offset += n
-    end
+    precursors_passed = searchFragmentIndexPartitionMajorHinted(
+        scan_to_prec_idx, partitioned_index, spectra, all_scan_idxs,
+        n_threads, params, qtm, mem, rt_to_irt_spline, irt_tol, precursor_mzs)
 
     return scan_to_prec_idx, precursors_passed
 end
