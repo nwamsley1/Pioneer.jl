@@ -86,7 +86,7 @@ end
 
 """
     build_partitioned_index_from_lib(spec_lib; partition_width=5.0f0,
-        frag_bin_tol_ppm=10.0f0, rt_bin_tol=1.0f0,
+        frag_bin_tol_ppm=2.5f0, rt_bin_tol=3.0f0,
         rank_to_score=UInt8[8,4,4,2,2,1,1],
         y_start_index=UInt8(4), b_start_index=UInt8(3))
 
@@ -100,8 +100,8 @@ Partitions that would exceed 65535 unique precursors are automatically split.
 function build_partitioned_index_from_lib(
     spec_lib::Pioneer.SpectralLibrary;
     partition_width::Float32 = 5.0f0,
-    frag_bin_tol_ppm::Float32 = 10.0f0,
-    rt_bin_tol::Float32 = 1.0f0,
+    frag_bin_tol_ppm::Float32 = 2.5f0,
+    rt_bin_tol::Float32 = 3.0f0,
     rank_to_score::Vector{UInt8} = UInt8[8, 4, 4, 2, 2, 1, 1],
     y_start_index::UInt8 = UInt8(4),
     b_start_index::UInt8 = UInt8(3),

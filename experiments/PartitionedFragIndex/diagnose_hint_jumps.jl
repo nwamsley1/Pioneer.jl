@@ -366,7 +366,7 @@ precursor_mzs = Pioneer.getMz(Pioneer.getPrecursors(Pioneer.getSpecLib(SC)))
 # ── Build partitioned index ─────────────────────────────────────────────
 println("\nBuilding partitioned index (7 frags, weighted) ...")
 pi = build_partitioned_index_from_lib(Pioneer.getSpecLib(SC);
-    partition_width=5.0f0, frag_bin_tol_ppm=10.0f0, rt_bin_tol=1.0f0,
+    partition_width=5.0f0, frag_bin_tol_ppm=2.5f0, rt_bin_tol=3.0f0,
     rank_to_score=UInt8[8, 4, 4, 2, 2, 1, 1])
 
 # ── Compute 5-Da hints for each partition ───────────────────────────────
