@@ -231,6 +231,11 @@ function add_quantification_flag(inference_result::InferenceResult)
     return desc => op
 end
 
+"""
+    _median_abs_deviation(values)
+
+Return the median absolute deviation of `values`.
+"""
 function _median_abs_deviation(values::Vector{Float64})::Float64
     isempty(values) && return 0.0
     med = Statistics.median(values)
@@ -252,14 +257,9 @@ function estimate_weight_detection_model(df::DataFrame)
     min_rank_support = 8
     default_model = (
         log_threshold = 0.0f0,
-        sigma_log = 1.0f0,
-        n_unique_peptides = 0,
-        used_fallback = true,
         rank_drop_profile = Float32[0.0f0],
         rank_scale_profile = Float32[1.0f0],
-        profiled_rank_count = 1,
-        rank_profile_examples = 0,
-        used_rank_profile_fallback = true
+        profiled_rank_count = 1
     )
 
     n_rows = nrow(df)
@@ -284,8 +284,8 @@ function estimate_weight_detection_model(df::DataFrame)
             continue
         end
 
-        target_val = hasproperty(df, :target) ? Bool(df.target[i]) : true
-        entrap_val = hasproperty(df, :entrap_id) ? UInt8(df.entrap_id[i]) : UInt8(0)
+        target_val = Bool(df.target[i])
+        entrap_val = UInt8(df.entrap_id[i])
         key = (String(protein_name), target_val, entrap_val, String(df.sequence[i]))
         if haskey(best_weight_by_protein_peptide, key)
             if weight_val > best_weight_by_protein_peptide[key]
@@ -321,20 +321,16 @@ function estimate_weight_detection_model(df::DataFrame)
     end
 
     sigma_log = 1.0
-    used_fallback = true
     if !isempty(pooled_residuals)
         mad_val = _median_abs_deviation(pooled_residuals)
         if isfinite(mad_val) && mad_val > 0.0
             sigma_log = clamp(mad_val / 0.6744897501960817, 0.25, 2.5)
-            used_fallback = false
         end
     end
 
     rank_drop_profile = fill(0.0f0, max_rank)
     rank_scale_profile = fill(Float32(sigma_log), max_rank)
     profiled_rank_count = 1
-    rank_profile_examples = 0
-    used_rank_profile_fallback = true
     rank_drop_samples = [Float64[] for _ in 1:max_rank]
 
     for ((_, target_val, _), log_vals) in protein_to_log_weights
@@ -371,20 +367,13 @@ function estimate_weight_detection_model(df::DataFrame)
         rank_drop_profile[rank_idx] = Float32(drop_median)
         rank_scale_profile[rank_idx] = Float32(drop_scale)
         profiled_rank_count = rank_idx
-        rank_profile_examples += length(samples)
-        used_rank_profile_fallback = false
     end
 
     return (
         log_threshold = Float32(log_threshold),
-        sigma_log = Float32(sigma_log),
-        n_unique_peptides = length(log_weights),
-        used_fallback = used_fallback,
         rank_drop_profile = rank_drop_profile[1:profiled_rank_count],
         rank_scale_profile = rank_scale_profile[1:profiled_rank_count],
-        profiled_rank_count = profiled_rank_count,
-        rank_profile_examples = rank_profile_examples,
-        used_rank_profile_fallback = used_rank_profile_fallback
+        profiled_rank_count = profiled_rank_count
     )
 end
 
@@ -526,6 +515,11 @@ function add_precursor_consensus_interaction_features()
     return desc => op
 end
 
+"""
+    _protein_group_probability_column(df)
+
+Choose the protein-group probability column present in `df`.
+"""
 function _protein_group_probability_column(df::DataFrame)
     if hasproperty(df, :MBR_boosted_prec_prob)
         return :MBR_boosted_prec_prob
@@ -534,6 +528,11 @@ function _protein_group_probability_column(df::DataFrame)
     end
 end
 
+"""
+    _quant_peptides_and_pg_score(gdf, quant_mask, prob_col)
+
+Collapse each peptide to its best probability and rebuild the raw `pg_score`.
+"""
 function _quant_peptides_and_pg_score(
     gdf::AbstractDataFrame,
     quant_mask::AbstractVector{Bool},
@@ -571,6 +570,11 @@ function _quant_peptides_and_pg_score(
     return quant_peptides, -sum(log.(1.0f0 .- unique_pep_probs))
 end
 
+"""
+    _direct_quant_mask(df)
+
+Return the quant mask used for direct, non-MBR precursor consensus evidence.
+"""
 function _direct_quant_mask(df::AbstractDataFrame)
     quant_mask = df.use_for_protein_quant .== true
     if hasproperty(df, :MBR_candidate)
@@ -591,6 +595,11 @@ const ConsensusRunVote = @NamedTuple{
     return exp(-CONSENSUS_PRECURSOR_RUN_DECAY_RATE * Float64(selected_rank - 1))
 end
 
+"""
+    _consensus_vote_precedes(left_pg_score, left_run_order, right_vote)
+
+Return whether a candidate run vote should rank ahead of `right_vote`.
+"""
 @inline function _consensus_vote_precedes(
     left_pg_score::Float32,
     left_run_order::Int64,
@@ -600,6 +609,11 @@ end
            ((left_pg_score == right_vote.pg_score) && (left_run_order < right_vote.run_order))
 end
 
+"""
+    _insert_top_consensus_vote!(run_votes, vote)
+
+Insert `vote` into the in-place top-N run list for one protein.
+"""
 function _insert_top_consensus_vote!(
     run_votes::Vector{ConsensusRunVote},
     vote::ConsensusRunVote
@@ -760,40 +774,26 @@ Returns a DataFrame with one row per protein group.
 """
 function group_psms_by_protein(
     df::DataFrame;
-    precursor_consensus::Union{Nothing, NamedTuple} = nothing
+    precursor_consensus::NamedTuple
 )
     if nrow(df) == 0
-        # Return empty protein groups DataFrame with expected schema
-        if precursor_consensus === nothing
-            return DataFrame(
-                protein_name = String[],
-                target = Bool[],
-                entrap_id = UInt8[],
-                n_peptides = Int64[],
-                peptide_list = String[],
-                pg_score = Float32[],
-                any_common_peps = Bool[],
-                top_pep_weight = Float32[]
-            )
-        else
-            return DataFrame(
-                protein_name = String[],
-                target = Bool[],
-                entrap_id = UInt8[],
-                n_peptides = Int64[],
-                peptide_list = String[],
-                pg_score = Float32[],
-                any_common_peps = Bool[],
-                top_pep_weight = Float32[],
-                precursor_consensus_support = Float32[],
-                precursor_consensus_enrichment = Float32[]
-            )
-        end
+        return DataFrame(
+            protein_name = String[],
+            target = Bool[],
+            entrap_id = UInt8[],
+            n_peptides = Int64[],
+            peptide_list = String[],
+            pg_score = Float32[],
+            any_common_peps = Bool[],
+            top_pep_weight = Float32[],
+            precursor_consensus_support = Float32[],
+            precursor_consensus_enrichment = Float32[]
+        )
     end
 
     prob_col = _protein_group_probability_column(df)
-    consensus_relative_weight = precursor_consensus === nothing ? nothing : precursor_consensus.relative_weight
-    mean_relative_weight = precursor_consensus === nothing ? nothing : precursor_consensus.mean_relative_weight
+    consensus_relative_weight = precursor_consensus.relative_weight
+    mean_relative_weight = precursor_consensus.mean_relative_weight
 
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
@@ -827,37 +827,35 @@ function group_psms_by_protein(
 
         precursor_consensus_support = 0.0f0
         precursor_consensus_enrichment = 0.0f0
-        if precursor_consensus !== nothing
-            observed_precursors = Set{UInt32}()
-            for i in eachindex(quant_mask)
-                if quant_mask[i]
-                    push!(observed_precursors, UInt32(gdf.precursor_idx[i]))
+        observed_precursors = Set{UInt32}()
+        for i in eachindex(quant_mask)
+            if quant_mask[i]
+                push!(observed_precursors, UInt32(gdf.precursor_idx[i]))
+            end
+        end
+
+        if !isempty(observed_precursors)
+            protein_key = (
+                String(gdf.inferred_protein_group[1]),
+                Bool(gdf.target[1]),
+                UInt8(gdf.entrap_id[1])
+            )
+            matched_precursors = 0
+
+            for precursor_idx in observed_precursors
+                key = (protein_key[1], protein_key[2], protein_key[3], precursor_idx)
+                if haskey(consensus_relative_weight, key)
+                    precursor_consensus_support += Float32(consensus_relative_weight[key])
+                    matched_precursors += 1
                 end
             end
 
-            if !isempty(observed_precursors)
-                protein_key = (
-                    String(gdf.inferred_protein_group[1]),
-                    Bool(gdf.target[1]),
-                    UInt8(gdf.entrap_id[1])
-                )
-                matched_precursors = 0
-
-                for precursor_idx in observed_precursors
-                    key = (protein_key[1], protein_key[2], protein_key[3], precursor_idx)
-                    if haskey(consensus_relative_weight, key)
-                        precursor_consensus_support += Float32(consensus_relative_weight[key])
-                        matched_precursors += 1
-                    end
-                end
-
-                protein_mean_weight = get(mean_relative_weight, protein_key, 0.0f0)
-                if matched_precursors > 0 && protein_mean_weight > 0.0f0
-                    expected_random_support =
-                        Float32(matched_precursors) * protein_mean_weight
-                    precursor_consensus_enrichment =
-                        precursor_consensus_support / expected_random_support
-                end
+            protein_mean_weight = get(mean_relative_weight, protein_key, 0.0f0)
+            if matched_precursors > 0 && protein_mean_weight > 0.0f0
+                expected_random_support =
+                    Float32(matched_precursors) * protein_mean_weight
+                precursor_consensus_enrichment =
+                    precursor_consensus_support / expected_random_support
             end
         end
 
@@ -867,25 +865,15 @@ function group_psms_by_protein(
             (gdf.Mox .== 0)
         )
 
-        if precursor_consensus === nothing
-            DataFrame(
-                n_peptides = n_peptides,
-                peptide_list = join(quant_peptides, ";"),
-                pg_score = pg_score,
-                any_common_peps = has_common,
-                top_pep_weight = top_pep_weight
-            )
-        else
-            DataFrame(
-                n_peptides = n_peptides,
-                peptide_list = join(quant_peptides, ";"),
-                pg_score = pg_score,
-                any_common_peps = has_common,
-                top_pep_weight = top_pep_weight,
-                precursor_consensus_support = precursor_consensus_support,
-                precursor_consensus_enrichment = precursor_consensus_enrichment
-            )
-        end
+        DataFrame(
+            n_peptides = n_peptides,
+            peptide_list = join(quant_peptides, ";"),
+            pg_score = pg_score,
+            any_common_peps = has_common,
+            top_pep_weight = top_pep_weight,
+            precursor_consensus_support = precursor_consensus_support,
+            precursor_consensus_enrichment = precursor_consensus_enrichment
+        )
     end
     
     # Rename the grouping column

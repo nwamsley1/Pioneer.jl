@@ -168,6 +168,11 @@ function remove_zero_variance_columns!(feature_names::Vector{Symbol}, df::Abstra
     return feature_names
 end
 
+"""
+    protein_probit_feature_names(; include_n_possible_peptides = false)
+
+Return the active protein feature set used for probit rescoring.
+"""
 function protein_probit_feature_names(; include_n_possible_peptides::Bool = false)
     feature_names = Symbol[
         #:pg_score,
@@ -190,6 +195,11 @@ function protein_probit_feature_names(; include_n_possible_peptides::Bool = fals
     return feature_names
 end
 
+"""
+    write_protein_probit_training_debug(all_protein_groups, feature_names, qc_folder)
+
+Write the exact protein probit training table and feature list to disk.
+"""
 function write_protein_probit_training_debug(
     all_protein_groups::DataFrame,
     feature_names::Vector{Symbol},
@@ -257,6 +267,11 @@ function filter_ms1_features_if_disabled!(feature_names::Vector{Symbol}, ms1_sco
     return feature_names
 end
 
+"""
+    log_probit_feature_importance(feature_names, β_fitted, X; context = "protein_probit")
+
+Log fitted protein probit coefficients together with one-sigma effects.
+"""
 function log_probit_feature_importance(
     feature_names::Vector{Symbol},
     β_fitted::AbstractVector{<:Real},
@@ -930,6 +945,11 @@ function perform_protein_probit_regression(
     end
 end
 
+"""
+    build_protein_semisupervised_training_set(scores, targets; q_value_threshold = 0.01f0, min_pep_neg_threshold = 0.90f0)
+
+Build the second-pass labels for semi-supervised protein probit training.
+"""
 function build_protein_semisupervised_training_set(
     scores::AbstractVector{<:Real},
     targets::AbstractVector{Bool};
@@ -1360,6 +1380,11 @@ function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
     return β_fitted#, vec(X_mean), vec(X_std)
 end
 
+"""
+    fit_probit_model_semisupervised(X, y, feature_names; q_value_threshold = 0.01f0, min_pep_neg_threshold = 0.90f0, context = "protein_probit")
+
+Fit the protein probit model with one supervised pass and one mined-label pass.
+"""
 function fit_probit_model_semisupervised(
     X::Matrix{Float64},
     y::Vector{Bool},

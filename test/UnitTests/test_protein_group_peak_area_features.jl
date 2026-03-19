@@ -6,6 +6,12 @@ using Distributions
 using Pioneer
 
 @testset "Protein Group Weight Coverage Features" begin
+    empty_precursor_consensus = (
+        relative_weight = Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}(),
+        mean_relative_weight = Dict{Tuple{String, Bool, UInt8}, Float32}(),
+        profiled_precursor_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
+    )
+
     @testset "Quant Necessary Columns Include Weight" begin
         cols_nombr = Pioneer.get_quant_necessary_columns(false)
         cols_mbr = Pioneer.get_quant_necessary_columns(true)
@@ -19,6 +25,7 @@ using Pioneer
             inferred_protein_group = ["P1", "P1", "P1", "P2"],
             target = Bool[true, true, true, false],
             entrap_id = UInt8[1, 1, 1, 1],
+            precursor_idx = UInt32[11, 12, 13, 21],
             sequence = ["PEP1", "PEP1", "PEP2", "PEP3"],
             use_for_protein_quant = Bool[true, true, true, true],
             missed_cleavage = Int64[0, 1, 0, 0],
@@ -27,7 +34,7 @@ using Pioneer
             weight = Float32[100.0, 80.0, 50.0, 25.0]
         )
 
-        grouped = Pioneer.group_psms_by_protein(psms)
+        grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = empty_precursor_consensus)
 
         @test hasproperty(grouped, :top_pep_weight)
 
@@ -61,24 +68,23 @@ using Pioneer
             use_for_protein_quant = Bool[true, true, true, true, true, false],
             sequence = ["P1A", "P1A", "P1B", "P2A", "P2B", "P3A"],
             inferred_protein_group = Union{Missing, String}["P1", "P1", "P1", "P2", "P2", missing],
+            target = Bool[true, true, true, true, true, true],
+            entrap_id = UInt8[1, 1, 1, 1, 1, 1],
             weight = Float32[60.0f0, 40.0f0, 40.0f0, 80.0f0, 10.0f0, 500.0f0]
         )
 
         model = Pioneer.estimate_weight_detection_model(psms)
 
         expected_threshold = Float32(quantile(log.([60.0, 40.0, 80.0, 10.0]), 0.05))
-        @test model.n_unique_peptides == 4
         @test model.log_threshold ≈ expected_threshold
-        @test 0.25f0 <= model.sigma_log <= 2.5f0
-        @test model.used_fallback == false
+        @test length(model.rank_scale_profile) == model.profiled_rank_count
+        @test all(x -> x > 0.0f0, model.rank_scale_profile)
         @test model.profiled_rank_count == 1
-        @test model.used_rank_profile_fallback == true
     end
 
     @testset "Coverage Match From Top Behaves as Expected" begin
         calibration = (
             log_threshold = Float32(log(10.0)),
-            sigma_log = 1.0f0,
             rank_drop_profile = Float32[0.0f0, -0.1f0, -0.8f0, -1.5f0],
             rank_scale_profile = Float32[1.0f0, 0.25f0, 0.35f0, 0.45f0],
             profiled_rank_count = 4
