@@ -162,6 +162,8 @@ end
     include("./UnitTests/BuildPionLibTest.jl")
     # include("./utils/FileOperations/test_file_operations_suite.jl")  # File doesn't exist
     include("./UnitTests/RazoQuadModel.jl")
+    include("./UnitTests/partitionedFragmentIndex.jl")
+    include("./UnitTests/buildPartitionedIndex.jl")
     
     # Lightweight coverage for MassSpecData + FilteredMassSpecData
     # include("./UnitTests/MassSpecAndFilteredDataTests.jl")
