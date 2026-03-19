@@ -45,7 +45,9 @@ function compute_metrics(H, w)
     r = zeros(Float32, H.m)
     scores = [SpectralScoresFirstPass(
         zero(Float32), zero(Float32), zero(Float32),
-        zero(Float32), zero(Float32), zero(Float32)
+        zero(Float32), zero(Float32), zero(Float32),
+        zero(Float32), zero(Float32), zero(Float32),
+        zero(Float32), zero(Float32)
     ) for _ in 1:H.n]
     getDistanceMetrics(w, r, H, scores)
     return scores

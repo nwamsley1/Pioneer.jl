@@ -112,6 +112,13 @@ struct FirstPassScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     percent_theoretical_ignored::L
     weight::H
 
+    #Poisson-derived metrics
+    fitted_hellinger::L
+    poisson_deviance::L
+    poisson_dispersion::L
+    max_dev_resid_matched::L
+    max_dev_resid_unmatched::L
+
     #Non-scores/Labels
     precursor_idx::UInt32
     ms_file_idx::UInt32
@@ -442,6 +449,12 @@ function Score!(scored_psms::Vector{FirstPassScoredPSM{H, L}},
             spectral_scores[scores_idx].fitted_manhattan_distance,
             spectral_scores[scores_idx].percent_theoretical_ignored,
             weight[scores_idx],
+
+            spectral_scores[scores_idx].fitted_hellinger,
+            spectral_scores[scores_idx].poisson_deviance,
+            spectral_scores[scores_idx].poisson_dispersion,
+            spectral_scores[scores_idx].max_dev_resid_matched,
+            spectral_scores[scores_idx].max_dev_resid_unmatched,
 
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(cycle_idx),

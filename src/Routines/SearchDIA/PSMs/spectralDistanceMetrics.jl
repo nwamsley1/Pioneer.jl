@@ -57,6 +57,12 @@ struct SpectralScoresFirstPass{T<:AbstractFloat} <: SpectralScores{T}
     max_unmatched_residual::T
     fitted_manhattan_distance::T
     percent_theoretical_ignored::T
+    # Poisson-derived metrics
+    fitted_hellinger::T
+    poisson_deviance::T
+    poisson_dispersion::T
+    max_dev_resid_matched::T
+    max_dev_resid_unmatched::T
 end
 
 function getDistanceMetrics(H::SparseArray{Ti,T}, 
@@ -353,7 +359,8 @@ function getDistanceMetrics(w::Vector{T},
         # Skip zero-weight columns
         if w[col] <= zero(T)
             spectral_scores[col] = SpectralScoresFirstPass(
-                zero(U), zero(U), zero(U), zero(U), zero(U), zero(U)
+                zero(U), zero(U), zero(U), zero(U), zero(U), zero(U),
+                zero(U), zero(U), zero(U), zero(U), zero(U)
             )
             continue
         end
@@ -368,6 +375,15 @@ function getDistanceMetrics(w::Vector{T},
         fitted_dotp = zero(T)
         fitted_dotp_norm1 = zero(T)
         sum_of_fitted_peaks_squared = zero(T)
+        # Poisson-derived accumulators
+        bc_sum = zero(T)         # Bhattacharyya coefficient for Hellinger
+        sum_fitted = zero(T)     # sum of fitted_peak (for Hellinger normalization)
+        sum_shadow = zero(T)     # sum of clamped shadow_peak (for Hellinger normalization)
+        deviance_sum = zero(T)   # Poisson deviance accumulator
+        chi2_sum = zero(T)       # Pearson chi-squared for dispersion
+        max_dev_resid_matched = zero(T)
+        max_dev_resid_unmatched = zero(T)
+        n_frags = 0
 
         @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
             x_sum += H.x[i]
@@ -379,6 +395,31 @@ function getDistanceMetrics(w::Vector{T},
             sum_of_residuals += r_abs
             sum_of_fitted_peaks_squared += fitted_peak^2
 
+            # Clamp shadow_peak for Poisson metrics (deconvolution can produce negative values)
+            x_i = max(shadow_peak, zero(T))
+
+            # Hellinger: accumulate Bhattacharyya coefficient
+            sum_fitted += fitted_peak
+            sum_shadow += x_i
+            bc_sum += sqrt(fitted_peak * x_i)
+
+            # Poisson deviance and deviance residuals
+            n_frags += 1
+            if x_i > zero(T) && fitted_peak > zero(T)
+                log_ratio = log(x_i / fitted_peak)
+                dev_contrib = T(2) * (x_i * log_ratio - (x_i - fitted_peak))
+                deviance_sum += x_i * log_ratio - (x_i - fitted_peak)
+            else
+                dev_contrib = T(2) * fitted_peak  # x_i = 0 case
+                deviance_sum += fitted_peak
+            end
+            dev_resid = sqrt(max(dev_contrib, zero(T)))
+
+            # Poisson dispersion (Pearson chi-squared)
+            if fitted_peak > zero(T)
+                chi2_sum += (x_i - fitted_peak)^2 / fitted_peak
+            end
+
             if H.matched[i]
                 sum_of_fitted_peaks_matched += fitted_peak
                 fitted_dotp += shadow_peak*fitted_peak
@@ -386,10 +427,16 @@ function getDistanceMetrics(w::Vector{T},
                 if r_abs > max_matched_residual
                     max_matched_residual = r_abs
                 end
+                if dev_resid > max_dev_resid_matched
+                    max_dev_resid_matched = dev_resid
+                end
             else
                 sum_of_fitted_peaks_unmatched += fitted_peak
                 if r_abs > max_unmatched_residual
                     max_unmatched_residual = r_abs
+                end
+                if dev_resid > max_dev_resid_unmatched
+                    max_dev_resid_unmatched = dev_resid
                 end
             end
         end
@@ -402,13 +449,29 @@ function getDistanceMetrics(w::Vector{T},
         max_unmatched_residual = sum_of_fitted_peaks > 0 ? -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10) : zero(T)
         fitted_manhattan_distance = x_sum > 0 ? -log2(manhattan_distance/x_sum + 1e-10) : zero(T)
 
+        # Hellinger distance: H² = 1 - BC/sqrt(Σμ · Σx)
+        hellinger_denom = sqrt(sum_fitted * sum_shadow)
+        hellinger_sq = hellinger_denom > 0 ? one(T) - bc_sum / hellinger_denom : one(T)
+        fitted_hellinger = -log2(max(hellinger_sq, T(1e-10)))
+
+        # Poisson deviance: -D/(2n), higher = better fit
+        poisson_deviance = n_frags > 0 ? -deviance_sum / n_frags : zero(T)
+
+        # Poisson dispersion: χ²/(n-1), ≈1 for true PSMs, >>1 for chimeras
+        poisson_dispersion = n_frags > 1 ? chi2_sum / (n_frags - 1) : zero(T)
+
         spectral_scores[col] = SpectralScoresFirstPass(
             U(fitted_spectral_contrast),
             U(gof),
             U(max_matched_residual),
             U(max_unmatched_residual),
             U(fitted_manhattan_distance),
-            zero(U)  # percent_theoretical_ignored (single-pass, no iterative removal)
+            zero(U),  # percent_theoretical_ignored (single-pass, no iterative removal)
+            U(fitted_hellinger),
+            U(poisson_deviance),
+            U(poisson_dispersion),
+            U(max_dev_resid_matched),
+            U(max_dev_resid_unmatched)
         )
     end
 end
