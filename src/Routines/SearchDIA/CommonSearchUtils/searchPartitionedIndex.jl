@@ -136,28 +136,19 @@ Algorithm:
     fb_first = frag_bins.first_bins
     fb_last = frag_bins.last_bins
 
-    # ── Hint-based lb advancement ────────────────────────────────────
+    # ── Lower bound: previous first_match (always safe, peaks sorted by m/z) ──
     new_lb = lower_bound_guess
-    est_step_f = 0.0f0
 
+    # ── Hint-based UB guess (safe: exponential doubling corrects if too low) ──
+    est_step = one(UInt32)
     if prev_mz > 0.0f0 && lower_bound_guess <= frag_bin_max_idx
         delta_mz = frag_mz_min - @inbounds fb_lows[lower_bound_guess]
         if delta_mz > 0.0f0
             hint = @inbounds hints[lower_bound_guess]
-            est_step_f = Float32(hint) * (delta_mz / 5.0f0)
-
-            if delta_mz > 5.0f0
-                new_lb = min(lower_bound_guess + UInt32(hint), frag_bin_max_idx)
-            else
-                advance = max(unsafe_trunc(UInt32, est_step_f), one(UInt32))
-                new_lb = min(lower_bound_guess + advance, frag_bin_max_idx)
-            end
+            est_step = max(one(UInt32), unsafe_trunc(UInt32, Float32(hint) * (delta_mz / 5.0f0)))
         end
     end
-
-    # ── Hint-based UB guess ──────────────────────────────────────────
-    ub_guess = new_lb + max(one(UInt32), unsafe_trunc(UInt32, est_step_f * 1.5f0) + one(UInt32))
-    ub_guess = min(ub_guess, frag_bin_max_idx)
+    ub_guess = min(new_lb + est_step + est_step, frag_bin_max_idx)
 
     # ── Check if UB guess is sufficient, exponential doubling if not ─
     ub_final = ub_guess
