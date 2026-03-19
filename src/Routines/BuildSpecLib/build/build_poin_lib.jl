@@ -94,58 +94,6 @@ function buildPionLib(spec_lib_path::String,
         return nothing
     end
 
-    #Simple fragments that go into the fragment index 
-    #println("Get index fragments...")
-    simple_frags = getSimpleFrags(
-        fragments_table[:mz],
-        fragments_table[:is_y],
-        fragments_table[:is_b],
-        fragments_table[:is_p],
-        fragments_table[:fragment_index],
-        fragments_table[:charge],
-        fragments_table[:isotope],
-        fragments_table[:is_internal],
-        fragments_table[:is_immonium],
-        fragments_table[:has_neutral_diff],
-        precursors_table[:mz],
-        precursors_table[:irt],
-        precursors_table[:prec_charge],#precursor_charge],
-        prec_to_frag[:start_idx],
-        y_start_index,
-        b_start_index,
-        include_p_index,
-        include_isotope,
-        include_immonium,
-        include_internal,
-        include_neutral_diff,
-        max_frag_charge,
-        frag_bounds,
-        rank_to_score
-    );
-
-    #println("Build fragment index...")
-    ##########
-    #Builds fragment indexes and saves them for the spec_lib_path
-    sort!(simple_frags, by = x->x.prec_irt)
-    buildFragmentIndex!(
-        spec_lib_path,
-        simple_frags,
-        frag_bin_tol_ppm, #frag_tol_ppm
-        rt_bin_tol_ppm,  #irt_bin_width
-        index_name = ""
-    );
-    #println("Build presearch fragment index...")
-    sort!(simple_frags, by = x->x.prec_irt)
-    buildFragmentIndex!(
-        spec_lib_path,
-        simple_frags,
-        frag_bin_tol_ppm, #frag_tol_ppm
-        typemax(Float32),  #irt_tol
-        index_name = "presearch_"
-    );
-    simple_frags = nothing
-    GC.gc()
-
     #println("Get full fragments list...")
     detailed_frags, pid_to_fid = getDetailedFrags(
     fragments_table[:mz],
@@ -179,7 +127,7 @@ function buildPionLib(spec_lib_path::String,
     min_frag_intensity,
     model_type
     );
-    
+
     serialize_to_jls(
         joinpath(spec_lib_path, "detailed_fragments.jls"),
         detailed_frags
@@ -189,6 +137,23 @@ function buildPionLib(spec_lib_path::String,
         joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"),
         pid_to_fid
     )
+
+    # Build partitioned fragment indexes from the detailed frags we just created
+    precursors_arrow = Arrow.Table(joinpath(spec_lib_path, "precursors_table.arrow"))
+    temp_precursors = SetPrecursors(precursors_arrow)
+    temp_lookup = StandardFragmentLookup(detailed_frags, pid_to_fid)
+    temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
+    # Use a dummy empty partitioned index for construction — we'll replace it immediately
+    empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
+    temp_lib = FragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup)
+
+    partitioned_index = build_partitioned_index_from_lib(temp_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=rt_bin_tol_ppm)
+    serialize_to_jls(joinpath(spec_lib_path, "partitioned_fragment_index.jls"), partitioned_index)
+
+    presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=typemax(Float32))
+    serialize_to_jls(joinpath(spec_lib_path, "presearch_partitioned_fragment_index.jls"), presearch_partitioned_index)
 
     return nothing
 end
@@ -289,58 +254,6 @@ function buildPionLib(spec_lib_path::String,
         return nothing
     end
 
-    #Simple fragments that go into the fragment index 
-    #println("Get index fragments...")
-    simple_frags = getSimpleFrags(
-        fragments_table[:mz],
-        fragments_table[:is_y],
-        fragments_table[:is_b],
-        fragments_table[:is_p],
-        fragments_table[:fragment_index],
-        fragments_table[:charge],
-        fragments_table[:isotope],
-        fragments_table[:is_internal],
-        fragments_table[:is_immonium],
-        fragments_table[:has_neutral_diff],
-        precursors_table[:mz],
-        precursors_table[:irt],
-        precursors_table[:prec_charge],#precursor_charge],
-        prec_to_frag[:start_idx],
-        y_start_index,
-        b_start_index,
-        include_p_index,
-        include_isotope,
-        include_immonium,
-        include_internal,
-        include_neutral_diff,
-        max_frag_charge,
-        frag_bounds,
-        rank_to_score
-    );
-
-    #println("Build fragment index...")
-    ##########
-    #Builds fragment indexes and saves them for the spec_lib_path
-    sort!(simple_frags, by = x->x.prec_irt)
-    buildFragmentIndex!(
-        spec_lib_path,
-        simple_frags,
-        frag_bin_tol_ppm, #frag_tol_ppm
-        rt_bin_tol_ppm,  #irt_bin_width
-        index_name = ""
-    );
-    #println("Build presearch fragment index...")
-    sort!(simple_frags, by = x->x.prec_irt)
-    buildFragmentIndex!(
-        spec_lib_path,
-        simple_frags,
-        frag_bin_tol_ppm, #frag_tol_ppm
-        typemax(Float32),  #irt_tol
-        index_name = "presearch_"
-    );
-    simple_frags = nothing
-    GC.gc()
-
     #println("Get full fragments list...")
     detailed_frags, pid_to_fid = getDetailedFrags(
     fragments_table[:mz],
@@ -375,7 +288,7 @@ function buildPionLib(spec_lib_path::String,
     min_frag_intensity,
     model_type
     );
-    
+
     serialize_to_jls(
         joinpath(spec_lib_path, "detailed_fragments.jls"),
         detailed_frags
@@ -385,6 +298,30 @@ function buildPionLib(spec_lib_path::String,
         joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"),
         pid_to_fid
     )
+
+    # Build partitioned fragment indexes from the detailed frags we just created
+    precursors_arrow = Arrow.Table(joinpath(spec_lib_path, "precursors_table.arrow"))
+    temp_precursors = SetPrecursors(precursors_arrow)
+    # Load spline knots for SplineFragmentLookup
+    spl_knots = if isfile(joinpath(spec_lib_path, "spline_knots.jls"))
+        deserialize_from_jls(joinpath(spec_lib_path, "spline_knots.jls"))
+    elseif isfile(joinpath(spec_lib_path, "spline_knots.jld2"))
+        load(joinpath(spec_lib_path, "spline_knots.jld2"))["spl_knots"]
+    else
+        error("spline_knots file not found in $spec_lib_path")
+    end
+    temp_lookup = SplineFragmentLookup(detailed_frags, pid_to_fid, Tuple(spl_knots), 3)
+    temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
+    empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
+    temp_lib = SplineFragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup)
+
+    partitioned_index = build_partitioned_index_from_lib(temp_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=rt_bin_tol_ppm)
+    serialize_to_jls(joinpath(spec_lib_path, "partitioned_fragment_index.jls"), partitioned_index)
+
+    presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=typemax(Float32))
+    serialize_to_jls(joinpath(spec_lib_path, "presearch_partitioned_fragment_index.jls"), presearch_partitioned_index)
 
     return nothing
 end

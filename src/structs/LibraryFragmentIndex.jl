@@ -122,25 +122,25 @@ getFragments(fi::FragmentIndex{T}) where {T<:AbstractFloat} = fi.fragments
 
 abstract type SpectralLibrary end
 
-struct FragmentIndexLibrary <: SpectralLibrary
-    presearch_fragment_index::FragmentIndex{Float32}
-    fragment_index::FragmentIndex{Float32}
+struct FragmentIndexLibrary{P} <: SpectralLibrary
+    presearch_partitioned_index::P
+    partitioned_index::P
     precursors::LibraryPrecursors
     proteins::LibraryProteins
     fragment_lookup_table::StandardFragmentLookup
 end
 
-struct SplineFragmentIndexLibrary <: SpectralLibrary
-    presearch_fragment_index::FragmentIndex{Float32}
-    fragment_index::FragmentIndex{Float32}
+struct SplineFragmentIndexLibrary{P} <: SpectralLibrary
+    presearch_partitioned_index::P
+    partitioned_index::P
     precursors::LibraryPrecursors
     proteins::LibraryProteins
     fragment_lookup_table::SplineFragmentLookup
 end
 
 
-getPresearchFragmentIndex(sl::SpectralLibrary) = sl.presearch_fragment_index
-getFragmentIndex(sl::SpectralLibrary) = sl.fragment_index
+getPresearchPartitionedIndex(sl::SpectralLibrary) = sl.presearch_partitioned_index
+getPartitionedIndex(sl::SpectralLibrary) = sl.partitioned_index
 getPrecursors(sl::SpectralLibrary) = sl.precursors
-getFragmentLookupTable(sl::SpectralLibrary) = sl.fragment_lookup_table 
+getFragmentLookupTable(sl::SpectralLibrary) = sl.fragment_lookup_table
 getProteins(sl::SpectralLibrary) = sl.proteins

@@ -216,7 +216,7 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
     return vcat(LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
-                    getPresearchFragmentIndex(getSpecLib(search_context)),
+                    getPresearchPartitionedIndex(getSpecLib(search_context)),
                     getSpecLib(search_context),
                     getSearchData(search_context),
                     getQuadTransmissionModel(search_context, ms_file_idx),
@@ -233,7 +233,7 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
     return vcat(LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
-                    getFragmentIndex(getSpecLib(search_context)),
+                    getPartitionedIndex(getSpecLib(search_context)),
                     getSpecLib(search_context),
                     getSearchData(search_context),
                     getQuadTransmissionModel(search_context, ms_file_idx),
@@ -254,7 +254,7 @@ function library_search(
     return LibrarySearchNceTuning(
         spectra,
         UInt32(ms_file_idx),
-        getFragmentIndex(getSpecLib(search_context)),
+        getPartitionedIndex(getSpecLib(search_context)),
         getSpecLib(search_context),
         getSearchData(search_context),
         getQuadTransmissionModel(search_context, ms_file_idx),
@@ -269,7 +269,7 @@ end
 function LibrarySearch(
     spectra::MassSpecData,
     ms_file_idx::UInt32,
-    fragment_index::FragmentIndex{Float32},
+    partitioned_index::LocalPartitionedFragmentIndex{Float32},
     spec_lib::SpectralLibrary,
     search_data::AbstractVector{S},
     qtm::Q,
@@ -285,11 +285,6 @@ function LibrarySearch(
     thread_tasks = partition_scans(spectra, Threads.nthreads())
     n_threads = Threads.nthreads()
     precursor_mzs = getMz(getPrecursors(spec_lib))
-
-    # Build partitioned index
-    rt_bin_tol = irt_tol >= typemax(Float32) ? typemax(Float32) : 3.0f0
-    partitioned_index = build_partitioned_index_from_lib(spec_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=2.5f0, rt_bin_tol=rt_bin_tol)
 
     # Collect valid MS2 scan indices
     all_scan_idxs = Int[]
@@ -332,7 +327,7 @@ end
 function LibrarySearchNceTuning(
     spectra::MassSpecData,
     ms_file_idx::UInt32,
-    fragment_index::FragmentIndex{Float32},
+    partitioned_index::LocalPartitionedFragmentIndex{Float32},
     spec_lib::SpectralLibrary,
     search_data::AbstractVector{S},
     qtm::Q,
@@ -364,11 +359,6 @@ function LibrarySearchNceTuning(
         n_scans = length(task_range)
         @debug_l2 "  Thread $i: $n_scans scans"
     end
-
-    # Build partitioned index once
-    rt_bin_tol = irt_tol >= typemax(Float32) ? typemax(Float32) : 3.0f0
-    partitioned_index = build_partitioned_index_from_lib(spec_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=2.5f0, rt_bin_tol=rt_bin_tol)
 
     # Collect valid MS2 scan indices
     all_scan_idxs = Int[]
@@ -451,13 +441,9 @@ function fragment_index_search_only(
     irt_tol = haskey(getIrtErrors(search_context), ms_file_idx) ? getIrtErrors(search_context)[ms_file_idx] : Float32(Inf)
     precursor_mzs = getMz(getPrecursors(spec_lib))
     n_threads = Threads.nthreads()
+    partitioned_index = getPartitionedIndex(spec_lib)
 
     thread_tasks = partition_scans(spectra, n_threads)
-
-    # Build partitioned index
-    rt_bin_tol = irt_tol >= typemax(Float32) ? typemax(Float32) : 3.0f0
-    partitioned_index = build_partitioned_index_from_lib(spec_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=2.5f0, rt_bin_tol=rt_bin_tol)
 
     # Collect valid MS2 scan indices
     all_scan_idxs = Int[]

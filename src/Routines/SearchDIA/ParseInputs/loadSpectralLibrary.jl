@@ -61,19 +61,8 @@ end
 
 function loadSpectralLibrary(SPEC_LIB_DIR::String,
                              params::PioneerParameters)
-    f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"))
-    f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
-    f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragment_bins.arrow"))
-
-
-    presearch_f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragments.arrow"))
-    presearch_f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_rt_bins.arrow"))
-    presearch_f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragment_bins.arrow"))
-
-
     # Note: Can't use @user_info here as LoggingSystem is loaded after ParseInputs
     # This message will be captured by the logging system when SearchDIA runs
-    # println("Loading spectral library from $SPEC_LIB_DIR into main memory...")
     spec_lib = Dict{String, Any}()
 
     # Load detailed fragments (load_detailed_frags handles backwards compatibility)
@@ -124,35 +113,24 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursors_table.arrow"))
     proteins = Arrow.Table(joinpath(SPEC_LIB_DIR, "proteins_table.arrow"))
 
-    f_index = FragmentIndex(
-        f_index_frag_bins[:FragIndexBin],
-        f_index_rt_bins[:FragIndexBin],
-        f_index_fragments[:IndexFragment],
-    );
-    presearch_f_index = FragmentIndex(
-        presearch_f_index_frag_bins[:FragIndexBin],
-        presearch_f_index_rt_bins[:FragIndexBin],
-        presearch_f_index_fragments[:IndexFragment],
-    );
-    spec_lib["f_index"] = f_index;
-    spec_lib["presearch_f_index"] = presearch_f_index;
-    spec_lib["precursors"] = precursors;
-    spec_lib["proteins"] = proteins;
+    # Load partitioned fragment indexes
+    partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, "partitioned_fragment_index.jls"))
+    presearch_partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, "presearch_partitioned_fragment_index.jls"))
 
     if typeof(library_fragment_lookup_table) == Pioneer.StandardFragmentLookup{Float32}
         return FragmentIndexLibrary(
-            spec_lib["presearch_f_index"], 
-            spec_lib["f_index"], 
-            SetPrecursors(spec_lib["precursors"]), 
-            SetProteins(spec_lib["proteins"]),
+            presearch_partitioned_index,
+            partitioned_index,
+            SetPrecursors(precursors),
+            SetProteins(proteins),
             spec_lib["f_det"]
         )
     else
         return SplineFragmentIndexLibrary(
-            spec_lib["presearch_f_index"], 
-            spec_lib["f_index"], 
-            SetPrecursors(spec_lib["precursors"]), 
-            SetProteins(spec_lib["proteins"]),
+            presearch_partitioned_index,
+            partitioned_index,
+            SetPrecursors(precursors),
+            SetProteins(proteins),
             spec_lib["f_det"]
         )
     end
