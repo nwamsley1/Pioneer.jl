@@ -207,16 +207,16 @@ using Pioneer
             Arrow.write(path1, file1)
             Arrow.write(path2, file2)
 
-            consensus = Pioneer.build_precursor_relative_weight_consensus([
+            consensus = Pioneer.build_precursor_consensus([
                 Pioneer.PSMFileReference(path1),
                 Pioneer.PSMFileReference(path2)
             ])
 
-            @test consensus.precursor_relative_weight[("P", true, UInt8(1), UInt32(1))] >
-                  consensus.precursor_relative_weight[("P", true, UInt8(1), UInt32(2))]
-            @test consensus.precursor_relative_weight[("P", true, UInt8(1), UInt32(1))] > 0.9f0
-            @test consensus.precursor_relative_weight[("P", true, UInt8(1), UInt32(2))] > 0.4f0
-            @test !haskey(consensus.precursor_relative_weight, ("P", true, UInt8(1), UInt32(3)))
+            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(1))] >
+                  consensus.relative_weight[("P", true, UInt8(1), UInt32(2))]
+            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(1))] > 0.9f0
+            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(2))] > 0.4f0
+            @test !haskey(consensus.relative_weight, ("P", true, UInt8(1), UInt32(3)))
         finally
             rm(temp_dir, recursive = true, force = true)
         end
@@ -263,11 +263,11 @@ using Pioneer
                 push!(refs, Pioneer.PSMFileReference(path))
             end
 
-            consensus = Pioneer.build_precursor_relative_weight_consensus(refs)
+            consensus = Pioneer.build_precursor_consensus(refs)
 
-            @test consensus.protein_profiled_precursor_count[("P", true, UInt8(1))] == 1
-            @test consensus.precursor_relative_weight[("P", true, UInt8(1), UInt32(1))] == 1.0f0
-            @test !haskey(consensus.precursor_relative_weight, ("P", true, UInt8(1), UInt32(2)))
+            @test consensus.profiled_precursor_count[("P", true, UInt8(1))] == 1
+            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(1))] == 1.0f0
+            @test !haskey(consensus.relative_weight, ("P", true, UInt8(1), UInt32(2)))
         finally
             rm(temp_dir, recursive = true, force = true)
         end
@@ -309,13 +309,13 @@ using Pioneer
             Arrow.write(path1, run1)
             Arrow.write(path2, run2)
 
-            consensus = Pioneer.build_precursor_relative_weight_consensus([
+            consensus = Pioneer.build_precursor_consensus([
                 Pioneer.PSMFileReference(path1),
                 Pioneer.PSMFileReference(path2)
             ])
 
-            @test consensus.precursor_relative_weight[("P", true, UInt8(1), UInt32(2))] >
-                  consensus.precursor_relative_weight[("P", true, UInt8(1), UInt32(1))]
+            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(2))] >
+                  consensus.relative_weight[("P", true, UInt8(1), UInt32(1))]
         finally
             rm(temp_dir, recursive = true, force = true)
         end
@@ -323,14 +323,14 @@ using Pioneer
 
     @testset "Consensus Relative Weight Support Uses Observed MBR Precursors" begin
         consensus = (
-            precursor_relative_weight = Dict(
+            relative_weight = Dict(
                 ("P", true, UInt8(1), UInt32(11)) => 1.0f0,
                 ("P", true, UInt8(1), UInt32(12)) => 0.2f0
             ),
-            protein_mean_relative_weight = Dict(
+            mean_relative_weight = Dict(
                 ("P", true, UInt8(1)) => 0.4f0
             ),
-            protein_profiled_precursor_count = Dict(
+            profiled_precursor_count = Dict(
                 ("P", true, UInt8(1)) => Int32(5)
             )
         )
@@ -351,28 +351,28 @@ using Pioneer
         )
 
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
-        @test grouped.consensus_precursor_relative_weight_support[1] ≈ 1.2f0
-        @test grouped.consensus_precursor_relative_weight_enrichment[1] ≈ (1.2f0 / (0.4f0 * 2.0f0)) atol = 1e-5
+        @test grouped.precursor_consensus_support[1] ≈ 1.2f0
+        @test grouped.precursor_consensus_enrichment[1] ≈ (1.2f0 / (0.4f0 * 2.0f0)) atol = 1e-5
 
-        (_, interaction_op) = Pioneer.add_consensus_precursor_relative_weight_interaction_feature()
+        (_, interaction_op) = Pioneer.add_precursor_consensus_interaction_features()
         out = interaction_op(copy(grouped))
-        @test out.pg_score_x_consensus_precursor_relative_weight_support[1] ==
-              out.pg_score[1] * out.consensus_precursor_relative_weight_support[1]
-        @test out.pg_score_x_consensus_precursor_relative_weight_enrichment[1] ==
-              out.pg_score[1] * out.consensus_precursor_relative_weight_enrichment[1]
+        @test out.pg_score_x_precursor_consensus_support[1] ==
+              out.pg_score[1] * out.precursor_consensus_support[1]
+        @test out.pg_score_x_precursor_consensus_enrichment[1] ==
+              out.pg_score[1] * out.precursor_consensus_enrichment[1]
     end
 
     @testset "Consensus Relative Weight Enrichment Rewards Top Support Among Many Possibilities" begin
         consensus = (
-            precursor_relative_weight = Dict(
+            relative_weight = Dict(
                 ("P_many", true, UInt8(1), UInt32(101)) => 1.0f0,
                 ("P_one", true, UInt8(1), UInt32(201)) => 1.0f0
             ),
-            protein_mean_relative_weight = Dict(
+            mean_relative_weight = Dict(
                 ("P_many", true, UInt8(1)) => 0.2f0,
                 ("P_one", true, UInt8(1)) => 1.0f0
             ),
-            protein_profiled_precursor_count = Dict(
+            profiled_precursor_count = Dict(
                 ("P_many", true, UInt8(1)) => Int32(10),
                 ("P_one", true, UInt8(1)) => Int32(1)
             )
@@ -397,9 +397,9 @@ using Pioneer
         many = grouped[grouped.protein_name .== "P_many", :]
         one = grouped[grouped.protein_name .== "P_one", :]
 
-        @test many.consensus_precursor_relative_weight_support[1] == 1.0f0
-        @test one.consensus_precursor_relative_weight_support[1] == 1.0f0
-        @test many.consensus_precursor_relative_weight_enrichment[1] > one.consensus_precursor_relative_weight_enrichment[1]
+        @test many.precursor_consensus_support[1] == 1.0f0
+        @test one.precursor_consensus_support[1] == 1.0f0
+        @test many.precursor_consensus_enrichment[1] > one.precursor_consensus_enrichment[1]
     end
 
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
@@ -416,7 +416,7 @@ using Pioneer
             :peptide_coverage,
             :any_common_peps,
             :pg_score_x_coverage_match_from_top,
-            :pg_score_x_consensus_precursor_relative_weight_support
+            :pg_score_x_precursor_consensus_support
         ]
 
         @test Pioneer.protein_probit_feature_names(include_n_possible_peptides = true) == [
@@ -424,7 +424,7 @@ using Pioneer
             :n_possible_peptides,
             :any_common_peps,
             :pg_score_x_coverage_match_from_top,
-            :pg_score_x_consensus_precursor_relative_weight_support
+            :pg_score_x_precursor_consensus_support
         ]
     end
 

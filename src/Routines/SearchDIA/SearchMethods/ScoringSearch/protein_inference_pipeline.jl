@@ -490,44 +490,40 @@ function add_pg_score_interaction_features()
 end
 
 """
-    add_consensus_precursor_relative_weight_interaction_feature()
+    add_precursor_consensus_interaction_features()
 
-Add the interaction terms between `pg_score` and the consensus precursor
-relative-weight support and enrichment features.
+Add the interaction terms between `pg_score` and the precursor consensus
+support and enrichment features.
 """
-function add_consensus_precursor_relative_weight_interaction_feature()
-    desc = "add_consensus_precursor_relative_weight_interaction_feature"
+function add_precursor_consensus_interaction_features()
+    desc = "add_precursor_consensus_interaction_features"
 
     op = function(df)
         pg_score = df.pg_score
-        consensus_precursor_relative_weight_support = df.consensus_precursor_relative_weight_support
-        consensus_precursor_relative_weight_enrichment = df.consensus_precursor_relative_weight_enrichment
+        precursor_consensus_support = df.precursor_consensus_support
+        precursor_consensus_enrichment = df.precursor_consensus_enrichment
 
         n_rows = length(pg_score)
-        pg_score_x_consensus_precursor_relative_weight_support = Vector{Float32}(undef, n_rows)
-        pg_score_x_consensus_precursor_relative_weight_enrichment = Vector{Float32}(undef, n_rows)
+        pg_score_x_precursor_consensus_support = Vector{Float32}(undef, n_rows)
+        pg_score_x_precursor_consensus_enrichment = Vector{Float32}(undef, n_rows)
 
         @inbounds for i in eachindex(
             pg_score,
-            consensus_precursor_relative_weight_support,
-            consensus_precursor_relative_weight_enrichment
+            precursor_consensus_support,
+            precursor_consensus_enrichment
         )
-            pg_score_x_consensus_precursor_relative_weight_support[i] =
-                Float32(pg_score[i]) * Float32(consensus_precursor_relative_weight_support[i])
-            pg_score_x_consensus_precursor_relative_weight_enrichment[i] =
-                Float32(pg_score[i]) * Float32(consensus_precursor_relative_weight_enrichment[i])
+            pg_score_x_precursor_consensus_support[i] =
+                Float32(pg_score[i]) * Float32(precursor_consensus_support[i])
+            pg_score_x_precursor_consensus_enrichment[i] =
+                Float32(pg_score[i]) * Float32(precursor_consensus_enrichment[i])
         end
 
-        df.pg_score_x_consensus_precursor_relative_weight_support = pg_score_x_consensus_precursor_relative_weight_support
-        df.pg_score_x_consensus_precursor_relative_weight_enrichment = pg_score_x_consensus_precursor_relative_weight_enrichment
+        df.pg_score_x_precursor_consensus_support = pg_score_x_precursor_consensus_support
+        df.pg_score_x_precursor_consensus_enrichment = pg_score_x_precursor_consensus_enrichment
         return df
     end
 
     return desc => op
-end
-
-function add_consensus_precursor_rank_interaction_feature()
-    return add_consensus_precursor_relative_weight_interaction_feature()
 end
 
 function _protein_group_probability_column(df::DataFrame)
@@ -578,7 +574,7 @@ const ConsensusRunVote = @NamedTuple{
 end
 
 """
-    build_precursor_relative_weight_consensus(psm_refs::Vector{PSMFileReference})
+    build_precursor_consensus(psm_refs::Vector{PSMFileReference})
 
 Build a dataset-level precursor relative-weight consensus within each inferred
 protein group. Consensus weights are derived from direct (non-MBR) quant
@@ -588,7 +584,7 @@ protein run. Each run's vote is weighted by the run's current protein
 are retained, with an exponential decay applied by run rank within that top
 set.
 """
-function build_precursor_relative_weight_consensus(psm_refs::Vector{PSMFileReference})
+function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
     consensus_weight_sums = Dict{Tuple{String, Bool, UInt8, UInt32}, Float64}()
     protein_total_vote = Dict{Tuple{String, Bool, UInt8}, Float64}()
     protein_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
@@ -679,33 +675,29 @@ function build_precursor_relative_weight_consensus(psm_refs::Vector{PSMFileRefer
         end
     end
 
-    precursor_relative_weight = Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}()
+    relative_weight = Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}()
     protein_precursor_values = Dict{Tuple{String, Bool, UInt8}, Vector{Float32}}()
     for ((protein_name, target, entrap_id, precursor_idx), score_sum) in consensus_weight_sums
         protein_key = (protein_name, target, entrap_id)
         total_vote = get(protein_total_vote, protein_key, 0.0)
         total_vote > 0.0 || continue
-        relative_weight = Float32(clamp(score_sum / total_vote, 0.0, 1.0))
-        precursor_relative_weight[(protein_name, target, entrap_id, precursor_idx)] = relative_weight
-        push!(get!(protein_precursor_values, protein_key, Float32[]), relative_weight)
+        precursor_relative_weight = Float32(clamp(score_sum / total_vote, 0.0, 1.0))
+        relative_weight[(protein_name, target, entrap_id, precursor_idx)] = precursor_relative_weight
+        push!(get!(protein_precursor_values, protein_key, Float32[]), precursor_relative_weight)
     end
 
-    protein_mean_relative_weight = Dict{Tuple{String, Bool, UInt8}, Float32}()
-    protein_profiled_precursor_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
+    mean_relative_weight = Dict{Tuple{String, Bool, UInt8}, Float32}()
+    profiled_precursor_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
     for (protein_key, relative_weights) in protein_precursor_values
-        protein_mean_relative_weight[protein_key] = isempty(relative_weights) ? 0.0f0 : Float32(sum(relative_weights) / length(relative_weights))
-        protein_profiled_precursor_count[protein_key] = Int32(length(relative_weights))
+        mean_relative_weight[protein_key] = isempty(relative_weights) ? 0.0f0 : Float32(sum(relative_weights) / length(relative_weights))
+        profiled_precursor_count[protein_key] = Int32(length(relative_weights))
     end
 
     return (
-        precursor_relative_weight = precursor_relative_weight,
-        protein_mean_relative_weight = protein_mean_relative_weight,
-        protein_profiled_precursor_count = protein_profiled_precursor_count
+        relative_weight = relative_weight,
+        mean_relative_weight = mean_relative_weight,
+        profiled_precursor_count = profiled_precursor_count
     )
-end
-
-function build_precursor_rank_consensus(psm_refs::Vector{PSMFileReference})
-    return build_precursor_relative_weight_consensus(psm_refs)
 end
 
 """
@@ -741,15 +733,15 @@ function group_psms_by_protein(
                 pg_score = Float32[],
                 any_common_peps = Bool[],
                 top_pep_weight = Float32[],
-                consensus_precursor_relative_weight_support = Float32[],
-                consensus_precursor_relative_weight_enrichment = Float32[]
+                precursor_consensus_support = Float32[],
+                precursor_consensus_enrichment = Float32[]
             )
         end
     end
 
     prob_col = _protein_group_probability_column(df)
-    consensus_relative_weight = precursor_consensus === nothing ? nothing : precursor_consensus.precursor_relative_weight
-    protein_mean_relative_weight = precursor_consensus === nothing ? nothing : precursor_consensus.protein_mean_relative_weight
+    consensus_relative_weight = precursor_consensus === nothing ? nothing : precursor_consensus.relative_weight
+    mean_relative_weight = precursor_consensus === nothing ? nothing : precursor_consensus.mean_relative_weight
 
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
@@ -781,8 +773,8 @@ function group_psms_by_protein(
             top_pep_weight = maximum(values(best_weight_by_peptide))
         end
 
-        consensus_precursor_relative_weight_support = 0.0f0
-        consensus_precursor_relative_weight_enrichment = 0.0f0
+        precursor_consensus_support = 0.0f0
+        precursor_consensus_enrichment = 0.0f0
         if precursor_consensus !== nothing
             observed_precursors = Set{UInt32}()
             for i in eachindex(quant_mask)
@@ -802,17 +794,17 @@ function group_psms_by_protein(
                 for precursor_idx in observed_precursors
                     key = (protein_key[1], protein_key[2], protein_key[3], precursor_idx)
                     if haskey(consensus_relative_weight, key)
-                        consensus_precursor_relative_weight_support += Float32(consensus_relative_weight[key])
+                        precursor_consensus_support += Float32(consensus_relative_weight[key])
                         matched_precursors += 1
                     end
                 end
 
-                mean_relative_weight = get(protein_mean_relative_weight, protein_key, 0.0f0)
-                if matched_precursors > 0 && mean_relative_weight > 0.0f0
+                protein_mean_weight = get(mean_relative_weight, protein_key, 0.0f0)
+                if matched_precursors > 0 && protein_mean_weight > 0.0f0
                     expected_random_support =
-                        Float32(matched_precursors) * mean_relative_weight
-                    consensus_precursor_relative_weight_enrichment =
-                        consensus_precursor_relative_weight_support / expected_random_support
+                        Float32(matched_precursors) * protein_mean_weight
+                    precursor_consensus_enrichment =
+                        precursor_consensus_support / expected_random_support
                 end
             end
         end
@@ -838,8 +830,8 @@ function group_psms_by_protein(
                 pg_score = pg_score,
                 any_common_peps = has_common,
                 top_pep_weight = top_pep_weight,
-                consensus_precursor_relative_weight_support = consensus_precursor_relative_weight_support,
-                consensus_precursor_relative_weight_enrichment = consensus_precursor_relative_weight_enrichment
+                precursor_consensus_support = precursor_consensus_support,
+                precursor_consensus_enrichment = precursor_consensus_enrichment
             )
         end
     end
@@ -976,6 +968,8 @@ function perform_protein_inference_pipeline(
     pg_refs = ProteinGroupFileReference[]
     psm_to_pg_mapping = Dict{String, String}()
     indexed_refs = collect(enumerate(psm_refs))
+
+    @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags"
     
     for (idx, psm_ref) in ProgressBar(indexed_refs)
         if !exists(psm_ref)
@@ -999,7 +993,9 @@ function perform_protein_inference_pipeline(
         
     end
 
-    precursor_consensus = build_precursor_relative_weight_consensus(psm_refs)
+    precursor_consensus = build_precursor_consensus(psm_refs)
+
+    @user_info "Building per-run protein group tables and protein scoring features"
 
     for (idx, psm_ref) in ProgressBar(indexed_refs)
         if !exists(psm_ref)
@@ -1008,7 +1004,6 @@ function perform_protein_inference_pipeline(
 
         updated_psms = load_dataframe(psm_ref)
         weight_calibration = estimate_weight_detection_model(updated_psms)
-        @user_info "Weight protein coverage calibration file_idx=$(idx) n_unique_peptides=$(weight_calibration.n_unique_peptides) log_threshold=$(weight_calibration.log_threshold) sigma_log=$(weight_calibration.sigma_log) used_fallback=$(weight_calibration.used_fallback) profiled_rank_count=$(weight_calibration.profiled_rank_count) rank_profile_examples=$(weight_calibration.rank_profile_examples) used_rank_profile_fallback=$(weight_calibration.used_rank_profile_fallback)"
 
         protein_groups_df = group_psms_by_protein(
             updated_psms;
@@ -1020,7 +1015,7 @@ function perform_protein_inference_pipeline(
             add_protein_features(protein_catalog) |>
             add_weight_observation_features(weight_calibration) |>
             add_pg_score_interaction_features() |>
-            add_consensus_precursor_relative_weight_interaction_feature()
+            add_precursor_consensus_interaction_features()
 
         initial_rows = nrow(protein_groups_df)
         for (desc, op) in post_inference_pipeline.operations
