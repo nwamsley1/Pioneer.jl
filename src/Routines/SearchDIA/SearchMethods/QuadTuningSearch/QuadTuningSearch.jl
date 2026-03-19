@@ -105,6 +105,9 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     accuracy_bisection::Float32
     max_diff::Float32
     
+    # Deconvolution solver
+    deconvolution_solver::DeconvolutionSolver
+
     # Quad tuning specific parameters
     min_quad_tuning_fragments::Int64
     min_quad_tuning_psms_per_thompson::Int64
@@ -173,7 +176,11 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             Float32(10),  # accuracy_newton
             Float32(10),  # accuracy_bisection
             Float32(0.01), # max_diff
-            
+
+            # Deconvolution solver (matches search setting)
+            (haskey(params.search, :deconvolution_solver) &&
+             params.search.deconvolution_solver == "pmm") ? PoissonMMSolver() : OLSSolver(),
+
             # Quad tuning specific parameters
             min_quad_tuning_fragments,
             min_quad_tuning_psms_per_thompson,

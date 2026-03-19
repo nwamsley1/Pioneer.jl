@@ -782,12 +782,14 @@ function perform_quad_transmission_search(
         end
 
         # Solve deconvolution problem
-        initResiduals!(residuals, Hs, weights)
-        solveOLS!(
+        solve_deconvolution!(
+            params.deconvolution_solver,
             Hs,
             residuals,
             weights,
             getColNorm2(search_data),
+            getMu(search_data),
+            getObserved(search_data),
             params.max_iter_outer,
             params.max_diff
         )
