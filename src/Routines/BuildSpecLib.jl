@@ -213,7 +213,7 @@ function BuildSpecLib(params_path::String)
                     Dict{String,Int8}(),
                     iso_mod_to_mass,
                     params["isotope_mod_groups"],
-                    1.0f0  # rt_bin_tol for precursor sorting
+                    3.0f0  # rt_bin_tol for precursor sorting (matches fragment index)
                 )
                 #println("precursors_arrow_path $precursors_arrow_path")
                 # Cleanup temporary files

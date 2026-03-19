@@ -217,7 +217,7 @@ function ParseSpecLib(params_path::String)
     
     # Extract parameters
     lib_path = params["library_params"]["input_lib_path"]
-    rt_bin_tol = 1.0f0  # hardcoded internal default for library sorting
+    rt_bin_tol = 3.0f0  # hardcoded internal default for library sorting (matches fragment index)
     output_path = params["library_params"]["output_lib_path"]
     generate_decoys = params["library_params"]["generate_decoys"]
     generate_entrapment = params["library_params"]["generate_entrapment"]
