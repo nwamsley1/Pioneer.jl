@@ -124,91 +124,154 @@ end
 """
     apply_diann_decoy_style!(lib_path::String)
 
-Post-process a built Pioneer library to convert decoy fragments to DIA-NN style.
+Add DIA-NN-style decoys to a target-only Pioneer library.
 
-For each target-decoy pair:
-1. Computes N_shift and C_shift from the DIA-NN mutation of the target sequence
-2. Replaces decoy fragments with shifted copies of the target's fragments
-3. Copies target iRT to the decoy
+For each target precursor, creates a decoy by:
+1. Mutating terminal AAs (DIA-NN mutation table) to get a new sequence
+2. Shifting target fragment m/z by the terminal mass differences
+3. Copying target iRT and fragment intensities unchanged
+4. Shifting precursor m/z by (n_shift + c_shift) / charge
+
+The resulting library has targets followed by decoys, with proper
+pairing (pair_id, partner_precursor_idx) and all required columns.
 
 Modifies `detailed_fragments.jls`, `precursor_to_fragment_indices.jls`,
 `precursors_table.arrow`, and rebuilds `partitioned_fragment_index.jls` in place.
 """
 function apply_diann_decoy_style!(lib_path::String)
-    # Load precursors table
+    # Load target-only precursors table
     prec_df = DataFrame(Arrow.Table(joinpath(lib_path, "precursors_table.arrow")))
+    n_targets = nrow(prec_df)
 
     # Load existing fragments and index
     detailed_frags = load_detailed_frags(joinpath(lib_path, "detailed_fragments.jls"))
     pid_to_fid = deserialize_from_jls(joinpath(lib_path, "precursor_to_fragment_indices.jls"))
 
-    n_precs = nrow(prec_df)
+    @info "DIA-NN decoy generation: $n_targets target precursors, $(length(detailed_frags)) fragments"
 
-    # Build new fragments array and new pid_to_fid
-    new_frags = DetailedFrag{Float32}[]
-    new_pid_to_fid = Vector{UInt64}(undef, n_precs + 1)
-    new_pid_to_fid[1] = UInt64(1)
+    # Build decoy fragments
+    all_new_frags = DetailedFrag{Float32}[]  # will hold target frags + decoy frags
+    new_pid_to_fid = UInt64[UInt64(1)]  # start indices, 1-indexed
 
-    n_converted = 0
-    n_skipped = 0
-
-    for pid in 1:n_precs
+    # First: copy all target fragments as-is
+    for pid in 1:n_targets
         frag_start = Int(pid_to_fid[pid])
         frag_end = Int(pid_to_fid[pid + 1]) - 1
-
-        if !prec_df.is_decoy[pid]
-            # Target: keep existing fragments
-            append!(new_frags, @view detailed_frags[frag_start:frag_end])
-        else
-            # Decoy: find paired target and create shifted fragments
-            partner_idx = prec_df.partner_precursor_idx[pid]
-
-            if ismissing(partner_idx) || prec_df.is_decoy[partner_idx]
-                # No valid target partner — keep existing fragments as fallback
-                append!(new_frags, @view detailed_frags[frag_start:frag_end])
-                n_skipped += 1
-            else
-                # Get target sequence and compute shifts
-                target_seq = prec_df.sequence[partner_idx]
-                # Get mod positions for the target (positions where mods exist)
-                target_mods = prec_df.structural_mods[partner_idx]
-                mod_positions = extract_mod_positions(target_mods)
-
-                n_shift, c_shift = compute_diann_mutation_shifts(target_seq, mod_positions)
-
-                # Get target fragment range
-                target_frag_start = Int(pid_to_fid[partner_idx])
-                target_frag_end = Int(pid_to_fid[partner_idx + 1]) - 1
-                target_range = target_frag_start:target_frag_end
-
-                # Create shifted copies of target fragments
-                shifted = create_diann_decoy_fragments(
-                    detailed_frags, target_range,
-                    n_shift, c_shift, UInt32(pid)
-                )
-                append!(new_frags, shifted)
-
-                # Copy target iRT to decoy
-                prec_df.irt[pid] = prec_df.irt[partner_idx]
-
-                n_converted += 1
-            end
-        end
-
-        new_pid_to_fid[pid + 1] = UInt64(length(new_frags) + 1)
+        append!(all_new_frags, @view detailed_frags[frag_start:frag_end])
+        push!(new_pid_to_fid, UInt64(length(all_new_frags) + 1))
     end
 
-    @info "DIA-NN decoy conversion: $n_converted decoys converted, $n_skipped skipped (no target partner)"
+    # Build decoy precursor rows
+    decoy_rows = DataFrame()
+    for col in names(prec_df)
+        decoy_rows[!, col] = similar(prec_df[!, col], 0)
+    end
 
-    # Save updated data
-    serialize_to_jls(joinpath(lib_path, "detailed_fragments.jls"), new_frags)
+    n_created = 0
+    n_skipped = 0
+
+    for pid in 1:n_targets
+        seq = prec_df.sequence[pid]
+        if length(seq) < 3
+            n_skipped += 1
+            continue
+        end
+
+        # Compute mutation shifts
+        mod_positions = extract_mod_positions(
+            hasproperty(prec_df, :structural_mods) ? prec_df.structural_mods[pid] : missing
+        )
+        n_shift, c_shift = compute_diann_mutation_shifts(seq, mod_positions)
+
+        # Create mutated sequence string
+        chars = collect(seq)
+        n = length(chars)
+        # Apply same position selection as compute_diann_mutation_shifts
+        n_pos = if 2 ∉ mod_positions; 2
+        elseif min(3, n-1) ∉ mod_positions; min(3, n-1)
+        elseif 1 ∉ mod_positions; 1
+        else; 2; end
+
+        c_pos = if (n-1) ∉ mod_positions; n-1
+        elseif max(1, n-2) ∉ mod_positions; max(1, n-2)
+        elseif n ∉ mod_positions; n
+        else; n-1; end
+
+        n_aa = chars[n_pos]
+        c_aa = chars[c_pos]
+        chars[n_pos] = get(DIANN_MUTATION_TABLE, n_aa, n_aa)
+        chars[c_pos] = get(DIANN_MUTATION_TABLE, c_aa, c_aa)
+        decoy_seq = String(chars)
+
+        # Decoy precursor ID (targets are 1:n_targets, decoys are n_targets+1:2*n_targets)
+        decoy_pid = UInt32(n_targets + n_created + 1)
+
+        # Create shifted fragments
+        target_frag_start = Int(pid_to_fid[pid])
+        target_frag_end = Int(pid_to_fid[pid + 1]) - 1
+        target_range = target_frag_start:target_frag_end
+
+        shifted = create_diann_decoy_fragments(
+            detailed_frags, target_range,
+            n_shift, c_shift, decoy_pid
+        )
+        append!(all_new_frags, shifted)
+        push!(new_pid_to_fid, UInt64(length(all_new_frags) + 1))
+
+        # Build decoy precursor row (copy target row, modify key fields)
+        decoy_row = copy(prec_df[pid:pid, :])
+        decoy_row.sequence[1] = decoy_seq
+        decoy_row.is_decoy[1] = true
+        # Shift precursor m/z
+        prec_charge = Float32(decoy_row.prec_charge[1])
+        decoy_row.mz[1] = prec_df.mz[pid] + Float32((n_shift + c_shift) / prec_charge)
+        # Copy target iRT (unchanged)
+        decoy_row.irt[1] = prec_df.irt[pid]
+
+        append!(decoy_rows, decoy_row)
+        n_created += 1
+    end
+
+    @info "DIA-NN decoy generation: created $n_created decoys, skipped $n_skipped (too short)"
+
+    # Combine target + decoy precursor tables
+    combined_df = vcat(prec_df, decoy_rows)
+    n_total = nrow(combined_df)
+
+    # Set up pairing columns
+    combined_df.is_decoy = vcat(falses(n_targets), trues(n_created))
+
+    # pair_id: each target-decoy pair gets the same ID
+    pair_ids = Vector{UInt32}(undef, n_total)
+    for i in 1:n_targets
+        pair_ids[i] = UInt32(i)
+    end
+    for i in 1:n_created
+        pair_ids[n_targets + i] = UInt32(i)  # same pair_id as target
+    end
+    combined_df.pair_id = pair_ids
+
+    # partner_precursor_idx: target → decoy, decoy → target
+    partner_idx = Vector{Union{Missing, UInt32}}(missing, n_total)
+    for i in 1:n_created
+        target_i = i  # targets that weren't skipped map 1:1
+        decoy_i = n_targets + i
+        partner_idx[target_i] = UInt32(decoy_i)
+        partner_idx[decoy_i] = UInt32(target_i)
+    end
+    # Handle skipped targets (no decoy partner)
+    # They already have missing partner_idx
+    combined_df.partner_precursor_idx = partner_idx
+
+    # Save everything
+    Arrow.write(joinpath(lib_path, "precursors_table.arrow"), combined_df)
+    serialize_to_jls(joinpath(lib_path, "detailed_fragments.jls"), all_new_frags)
     serialize_to_jls(joinpath(lib_path, "precursor_to_fragment_indices.jls"), new_pid_to_fid)
-    Arrow.write(joinpath(lib_path, "precursors_table.arrow"), prec_df)
 
     # Rebuild partitioned fragment indexes
     temp_precursors = SetPrecursors(Arrow.Table(joinpath(lib_path, "precursors_table.arrow")))
     temp_proteins = SetProteins(Arrow.Table(joinpath(lib_path, "proteins_table.arrow")))
-    temp_lookup = StandardFragmentLookup(new_frags, new_pid_to_fid)
+    temp_lookup = StandardFragmentLookup(all_new_frags, new_pid_to_fid)
 
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
     temp_lib = FragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup)
@@ -227,7 +290,7 @@ function apply_diann_decoy_style!(lib_path::String)
         partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=typemax(Float32))
     serialize_to_jls(joinpath(lib_path, "presearch_partitioned_fragment_index.jls"), presearch_partitioned_index)
 
-    @info "DIA-NN decoy conversion complete. Rebuilt partitioned fragment indexes."
+    @info "DIA-NN decoy generation complete: $n_total total precursors ($n_targets targets + $n_created decoys)"
     return nothing
 end
 

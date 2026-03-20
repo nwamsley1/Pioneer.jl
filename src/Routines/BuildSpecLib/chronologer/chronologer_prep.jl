@@ -199,8 +199,10 @@ function prepare_chronologer_input(
     assign_base_target_ids!(fasta_entries)
 
     # Step 6: Add decoys (GROUPED by base sequence; all mods share same decoy)
-    if _params.fasta_digest_params["add_decoys"]
-        decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
+    # For diann_mutation, skip decoy generation here — decoys are created post-build
+    # by apply_diann_decoy_style!() which shifts target fragment m/z values
+    decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
+    if _params.fasta_digest_params["add_decoys"] && decoy_method != "diann_mutation"
         fasta_entries = add_decoy_sequences_grouped(fasta_entries; decoy_method=decoy_method)
     end
         
