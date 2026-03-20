@@ -1291,81 +1291,6 @@ end
 
 
 #==========================================================
-DIA-NN Recovery Diagnostics
-==========================================================#
-
-const DIANN_PERFILE_DIR = "/Users/nathanwamsley/Data/MS_DATA/OlsenEclipse/DIA-NN_results/per_file_precursor_indices"
-const DIANN_GLOBAL_ARROW = "/Users/nathanwamsley/Data/MS_DATA/OlsenEclipse/DIA-NN_results/diann_precursor_indices_3P_rank_based.arrow"
-
-"""
-    load_diann_reference(file_name::String) -> (per_file::Set{UInt32}, global_set::Set{UInt32})
-
-Load DIA-NN reference precursor indices for diagnostics.
-Returns empty sets if files are not found (non-fatal).
-"""
-function load_diann_reference(file_name::String)
-    per_file = Set{UInt32}()
-    global_set = Set{UInt32}()
-
-    # Per-file reference
-    pf_path = joinpath(DIANN_PERFILE_DIR, "$(file_name).arrow")
-    if isfile(pf_path)
-        t = Arrow.Table(pf_path)
-        per_file = Set{UInt32}(t.precursor_idx)
-        @debug "  DIA-NN per-file ($file_name): $(length(per_file)) unique precursor_idx values"
-    end
-
-    # Global reference
-    if isfile(DIANN_GLOBAL_ARROW)
-        t = Arrow.Table(DIANN_GLOBAL_ARROW)
-        global_set = Set{UInt32}(t.precursor_idx)
-        @debug "  DIA-NN global: $(length(global_set)) unique precursor_idx values"
-    end
-
-    return per_file, global_set
-end
-
-"""
-Typed inner function to collect target precursor indices, avoiding dynamic dispatch
-on Arrow/DataFrame column types.
-"""
-function _collect_target_precs!(out::Set{UInt32}, targets::AbstractVector{Bool}, precs::AbstractVector{UInt32})
-    @inbounds for i in eachindex(targets, precs)
-        if targets[i]
-            push!(out, precs[i])
-        end
-    end
-    return out
-end
-
-"""
-    log_diann_recovery(label, psms, diann_file, diann_global)
-
-Log how many DIA-NN precursors have at least one surviving target PSM.
-"""
-function log_diann_recovery(label::String, psms::DataFrame,
-                            diann_file::Set{UInt32}, diann_global::Set{UInt32})
-    (isempty(diann_file) && isempty(diann_global)) && return
-
-    # Unique target precursor_idxs with surviving PSMs
-    surviving_precs = Set{UInt32}()
-    _collect_target_precs!(surviving_precs, psms[!, :target], psms[!, :precursor_idx])
-
-    if !isempty(diann_file)
-        n_recovered = length(intersect(surviving_precs, diann_file))
-        n_total = length(diann_file)
-        pct = round(100.0 * n_recovered / max(1, n_total), digits=1)
-        @debug "  [$label] DIA-NN file recovery: $n_recovered / $n_total ($pct%)"
-    end
-    if !isempty(diann_global)
-        n_recovered = length(intersect(surviving_precs, diann_global))
-        n_total = length(diann_global)
-        pct = round(100.0 * n_recovered / max(1, n_total), digits=1)
-        @debug "  [$label] DIA-NN global recovery: $n_recovered / $n_total ($pct%)"
-    end
-end
-
-#==========================================================
 LightGBM Feature Set
 ==========================================================#
 
@@ -1394,44 +1319,6 @@ const LGBM_RECOVERY_FEATURES = [
     # Other
     :tic, :best_rank, :matched_ratio, :spectrum_peak_count,
 ]
-
-"""
-    _sanitize_column!(col::Vector{<:AbstractFloat}) -> Int
-
-Replace Inf/NaN values with zero in a float column. Returns count of values fixed.
-Typed inner function so Julia compiles a tight loop per concrete element type.
-"""
-function _sanitize_column!(col::Vector{T}) where {T<:AbstractFloat}
-    n = 0
-    @inbounds for i in eachindex(col)
-        if !isfinite(col[i])
-            col[i] = zero(T)
-            n += 1
-        end
-    end
-    return n
-end
-
-# No-op for integer/bool columns (always finite)
-_sanitize_column!(::AbstractVector{<:Union{Integer, Bool}}) = 0
-
-"""
-    sanitize_prescore_features!(psms::DataFrame, features::Vector{Symbol})
-
-Replace Inf/NaN values with 0.0 in feature columns.
-Float16 columns (e.g., err_norm) can overflow to Inf, which would
-crash downstream ML models. Integer/Bool columns are skipped (always finite).
-"""
-function sanitize_prescore_features!(psms::DataFrame, features::Vector{Symbol})
-    n_fixed = 0
-    for f in features
-        hasproperty(psms, f) || continue
-        n_fixed += _sanitize_column!(psms[!, f])
-    end
-    if n_fixed > 0
-        @info "  Sanitized $n_fixed non-finite feature values (Inf/NaN → 0)\n"
-    end
-end
 
 """
     prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra) -> DataFrame
@@ -1617,19 +1504,6 @@ function train_lgbm_and_select_best(
 end
 
 """
-    get_best_psm_per_precursor(psms::DataFrame) -> DataFrame
-
-Reduce to one PSM per precursor_idx, keeping the row with highest `weight`.
-Returns a copy (does not modify input).
-"""
-function get_best_psm_per_precursor(psms::DataFrame)
-    sorted = sort(psms, [:precursor_idx, order(:weight, rev=true)])
-    best = combine(groupby(sorted, :precursor_idx), first)
-    return best
-end
-
-
-"""
     select_best_per_precursor!(psms::DataFrame, score_col::Symbol) -> DataFrame
 
 Keeps one row per precursor_idx (highest `score_col`). Also computes `irt_range`
@@ -1702,59 +1576,7 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     return result
 end
 
-"""
-    get_best_psm_per_precursor_by_prescore_scan(psms::DataFrame, best_scans::Dictionary{UInt32, UInt32}) -> DataFrame
 
-Select one PSM per precursor using the Phase 1 LightGBM-selected scan_idx.
-Falls back to highest deconvolution weight if the preferred scan isn't present.
-`best_scans` maps precursor_idx → preferred scan_idx for this file.
-"""
-function get_best_psm_per_precursor_by_prescore_scan(
-    psms::DataFrame,
-    best_scans::Dictionary{UInt32, UInt32}
-)
-    # Sort by weight descending as fallback ordering
-    sorted = sort(psms, [:precursor_idx, order(:weight, rev=true)])
-
-    best = combine(groupby(sorted, :precursor_idx)) do group
-        pid = first(group.precursor_idx)
-        if haskey(best_scans, pid)
-            target_scan = best_scans[pid]
-            match_idx = findfirst(==(target_scan), group.scan_idx)
-            if match_idx !== nothing
-                return group[match_idx:match_idx, :]
-            end
-        end
-        # Fallback: highest weight (first row, since sorted desc)
-        return group[1:1, :]
-    end
-
-    return best
-end
-
-"""
-    add_multi_scan_aggregates!(best_psms, all_psms)
-
-Compute per-precursor aggregate features from all scans and join them onto
-the best-scan DataFrame. Gives ScoringSearch multi-scan signal.
-"""
-function add_multi_scan_aggregates!(best_psms::DataFrame, all_psms::DataFrame)
-    aggs = combine(groupby(all_psms, :precursor_idx),
-        nrow => :num_scans,
-        :y_count => maximum => :max_y_ions,
-        :y_count => sum => :y_ions_sum,
-        :gof => maximum => :max_gof,
-        :fitted_manhattan_distance => maximum => :max_fitted_manhattan_distance,
-        :fitted_spectral_contrast => maximum => :max_fitted_spectral_contrast,
-        :matched_ratio => maximum => :max_matched_ratio,
-        :scribe => maximum => :max_scribe,
-        :weight => maximum => :max_weight,
-    )
-    aggs[!, :num_scans] = UInt16.(aggs[!, :num_scans])
-    aggs[!, :y_ions_sum] = UInt16.(aggs[!, :y_ions_sum])
-    leftjoin!(best_psms, aggs, on = :precursor_idx)
-    return best_psms
-end
 
 #==========================================================
 Global Cross-Run Prescore Aggregation
@@ -1904,40 +1726,6 @@ function aggregate_prescore_globally!(search_context::SearchContext,
         @info "  FWHM estimate: no targets at q≤$(fwhm_qval_cutoff), using default $(median_irt_range)"
     end
 
-    # ── DIA-NN diagnostics ──────────────────────────────────────
-    # Build lookup: precursor_idx → global_qval for all scored precursors
-    prec_to_global_qval = Dictionary{UInt32, Float32}()
-    for i in eachindex(global_prec_idxs)
-        insert!(prec_to_global_qval, global_prec_idxs[i], global_qvals[i])
-    end
-
-    # Global DIA-NN reference
-    if isfile(DIANN_GLOBAL_ARROW)
-        diann_global = Set{UInt32}(Arrow.Table(DIANN_GLOBAL_ARROW).precursor_idx)
-        n_diann = length(diann_global)
-        n_pass = count(pid -> pid in passing, diann_global)
-        n_scored_fail = count(pid -> haskey(prec_to_global_qval, pid) && !(pid in passing), diann_global)
-        n_not_scored = n_diann - n_pass - n_scored_fail
-        @debug "DIA-NN global ($n_diann): pass=$n_pass, scored-but-filtered=$n_scored_fail, not-scored=$n_not_scored"
-    end
-
-    # Per-file DIA-NN references
-    if isdir(DIANN_PERFILE_DIR)
-        for ms_file_idx in 1:n_files
-            getFailedIndicator(ms_data, ms_file_idx) && continue
-            file_name = getParsedFileName(ms_data, ms_file_idx)
-            pf_path = joinpath(DIANN_PERFILE_DIR, "$(file_name).arrow")
-            !isfile(pf_path) && continue
-
-            diann_file = Set{UInt32}(Arrow.Table(pf_path).precursor_idx)
-            n_diann_f = length(diann_file)
-            n_pass_f = count(pid -> pid in passing, diann_file)
-            n_scored_fail_f = count(pid -> haskey(prec_to_global_qval, pid) && !(pid in passing), diann_file)
-            n_not_scored_f = n_diann_f - n_pass_f - n_scored_fail_f
-            @debug "  DIA-NN file $file_name ($n_diann_f): pass=$n_pass_f, scored-but-filtered=$n_scored_fail_f, not-scored=$n_not_scored_f"
-        end
-    end
-
     t_qval = time() - t_qval_start
     t_total = time() - t_total_start
     @info "Prescore aggregation: file_reads=$(r(t_reads))s, loop=$(r(t_loop))s, combination+qvalues=$(r(t_qval))s, total=$(r(t_total))s"
@@ -1945,38 +1733,4 @@ function aggregate_prescore_globally!(search_context::SearchContext,
     return passing, median_irt_range
 end
 
-"""
-    filter_arrow_files_to_passing!(search_context::SearchContext, passing_precs::Set{UInt32})
-
-Read each fold-split second pass arrow file, filter rows to keep only precursors
-in the passing set, and rewrite in-place.
-"""
-function filter_arrow_files_to_passing!(search_context::SearchContext, passing_precs::Set{UInt32})
-    ms_data = getMSData(search_context)
-    n_files = length(ms_data)
-    n_removed_total = 0
-    n_kept_total = 0
-
-    for ms_file_idx in 1:n_files
-        getFailedIndicator(ms_data, ms_file_idx) && continue
-        base_path = getSecondPassPsms(ms_data, ms_file_idx)
-        isempty(base_path) && continue
-
-        for fold in UInt8[0, 1]
-            fold_path = getSecondPassPsmsFold(ms_data, ms_file_idx, fold)
-            !isfile(fold_path) && continue
-
-            tbl = DataFrame(Tables.columntable(Arrow.Table(fold_path)))
-            n_before = nrow(tbl)
-            filter!(row -> row.precursor_idx in passing_precs, tbl)
-            n_after = nrow(tbl)
-            n_removed_total += (n_before - n_after)
-            n_kept_total += n_after
-
-            writeArrow(fold_path, tbl)  # Overwrite in-place
-        end
-    end
-
-    @info "Global filter applied: kept $n_kept_total PSMs, removed $n_removed_total across all files"
-end
 

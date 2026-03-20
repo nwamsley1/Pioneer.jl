@@ -242,17 +242,11 @@ function importScripts()
     # Must be included before FragmentIndexSearch since it defines FirstPassSearchParameters
     include_files!(joinpath(search_methods_dir, "FirstPassSearch"), ["utils.jl", "FirstPassSearch.jl"])
 
-    # FragmentIndexSearch (legacy, no longer in pipeline — merged into FirstPassSearch)
-    include_files!(joinpath(search_methods_dir, "FragmentIndexSearch"), ["FragmentIndexSearch.jl"])
-
-    # SecondPassSearch main file (Phase 2 full features + fold files)
-    include_files!(joinpath(search_methods_dir, "SecondPassSearch"), ["SecondPassSearch.jl"])
 
     # Include remaining SearchMethods files (excluding explicitly loaded directories)
     for (root, dirs, files) in walkdir(search_methods_dir)
         if occursin("ParameterTuningSearch", root) || occursin("ScoringSearch", root) ||
-           occursin("SecondPassSearch", root) || occursin("FirstPassSearch", root) ||
-           occursin("FragmentIndexSearch", root)
+           occursin("SecondPassSearch", root) || occursin("FirstPassSearch", root)
             continue
         end
         for file in files

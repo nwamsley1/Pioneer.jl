@@ -87,22 +87,22 @@ Create decoy fragments by copying target fragments and shifting m/z values.
 Y-ions shift by c_shift/charge, everything else by n_shift/charge.
 Intensities are copied unchanged.
 
-Returns a Vector{DetailedFrag{Float32}}.
+Returns a vector of the same fragment type as input.
 """
 function create_diann_decoy_fragments(
-    target_frags::AbstractVector{DetailedFrag{Float32}},
+    target_frags::AbstractVector{F},
     target_range::UnitRange,
     n_shift::Float64,
     c_shift::Float64,
     decoy_prec_id::UInt32
-)
-    decoy_frags = Vector{DetailedFrag{Float32}}(undef, length(target_range))
+) where {F <: AltimeterFragment{Float32}}
+    decoy_frags = Vector{F}(undef, length(target_range))
     for (j, i) in enumerate(target_range)
         frag = target_frags[i]
         charge = max(frag.frag_charge, UInt8(1))
         mz_shift = frag.is_y ? Float32(c_shift / charge) : Float32(n_shift / charge)
 
-        decoy_frags[j] = DetailedFrag{Float32}(
+        decoy_frags[j] = F(
             decoy_prec_id,
             frag.mz + mz_shift,
             frag.intensity,
@@ -150,7 +150,8 @@ function apply_diann_decoy_style!(lib_path::String)
     @info "DIA-NN decoy generation: $n_targets target precursors, $(length(detailed_frags)) fragments"
 
     # Build decoy fragments
-    all_new_frags = DetailedFrag{Float32}[]  # will hold target frags + decoy frags
+    F = eltype(detailed_frags)
+    all_new_frags = F[]  # will hold target frags + decoy frags
     new_pid_to_fid = UInt64[UInt64(1)]  # start indices, 1-indexed
 
     # First: copy all target fragments as-is
@@ -271,10 +272,21 @@ function apply_diann_decoy_style!(lib_path::String)
     # Rebuild partitioned fragment indexes
     temp_precursors = SetPrecursors(Arrow.Table(joinpath(lib_path, "precursors_table.arrow")))
     temp_proteins = SetProteins(Arrow.Table(joinpath(lib_path, "proteins_table.arrow")))
-    temp_lookup = StandardFragmentLookup(all_new_frags, new_pid_to_fid)
-
     empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
-    temp_lib = FragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup)
+    if F <: SplineDetailedFrag
+        spl_knots = if isfile(joinpath(lib_path, "spline_knots.jls"))
+            deserialize_from_jls(joinpath(lib_path, "spline_knots.jls"))
+        elseif isfile(joinpath(lib_path, "spline_knots.jld2"))
+            load(joinpath(lib_path, "spline_knots.jld2"))["spl_knots"]
+        else
+            error("spline_knots file not found in $lib_path")
+        end
+        temp_lookup = SplineFragmentLookup(all_new_frags, new_pid_to_fid, Tuple(spl_knots), 3)
+        temp_lib = SplineFragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup)
+    else
+        temp_lookup = StandardFragmentLookup(all_new_frags, new_pid_to_fid)
+        temp_lib = FragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup)
+    end
 
     # Read library config for bin tolerances
     config = JSON.parsefile(joinpath(lib_path, "config.json"))

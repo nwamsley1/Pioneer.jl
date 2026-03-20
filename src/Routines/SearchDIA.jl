@@ -525,5 +525,4 @@ function print_summary_statistics(total_time, total_memory, peak_memory, total_g
     @user_print "Average Runtime per Step: $(round(total_time/n_steps, digits=2)) seconds"
     @user_print "Average Runtime per Raw File: $(round(total_time/n_files, digits=2)) seconds"
     @user_print "\n" * repeat("=", 102)
-    @user_print "Huber δ: " * string(getHuberDelta(search_context))
 end

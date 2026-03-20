@@ -1,25 +1,5 @@
 """
-    SecondPassSearch
-
-Second pass search: full-feature deconvolution on globally-filtered precursors.
-"""
-struct SecondPassSearch <: SearchMethod end
-
-#==========================================================
-Type Definitions
-==========================================================#
-
-"""
-Results container for second pass search.
-"""
-struct SecondPassSearchResults <: SearchResults
-    psms::Base.Ref{DataFrame}
-    ms1_psms::Base.Ref{DataFrame}
-    file_fwhms::Dict{Int, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}
-end
-
-"""
-Parameters for second pass search.
+Parameters for second pass search (used by FirstPassSearch as its parameter type).
 """
 struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentIndexSearchParameters
     # Core parameters
@@ -44,7 +24,6 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     # MS1 deconvolution parameters
     ms1_lambda::Float32
     ms1_reg_type::RegularizationType
-    ms1_huber_delta::Float32
 
     # PSM filtering
     min_y_count::Int64
@@ -147,7 +126,6 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
 
             Float32(0.0001),  # ms1_lambda
             L2Norm(),         # ms1_reg_type
-            Float32(1e9),     # ms1_huber_delta
 
             Int64(0),   # min_y_count hardcoded
             Int64(frag_params.min_count),

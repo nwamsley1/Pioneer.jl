@@ -71,7 +71,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     # MS1 deconvolution parameters
     ms1_lambda::Float32
     ms1_reg_type::RegularizationType
-    ms1_huber_delta::Float32
 
     # Analysis strategies
     isotope_tracetype::I
@@ -119,7 +118,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
             Float32(0.0001),  # ms1_lambda
             L2Norm(),         # ms1_reg_type
-            Float32(1e9),     # ms1_huber_delta
 
             isotope_trace_type,
             prec_estimation

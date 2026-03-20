@@ -227,7 +227,6 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     ms1_mass_error_model::Dict{Int64, MassErrorModel}
     #rt_to_irt_model::Dict{Int64, RtConversionModel}
     nce_model::Dict{Int64, NceModel}
-    huber_delta::Base.Ref{Float32}
     deconvolution_stop_tolerance::Base.Ref{Float32}
     # Results and paths
     irt_rt_map::Dict{Int64, RtConversionModel}
@@ -274,7 +273,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, QuadTransmissionModel}(),
             Dict{Int64, MassErrorModel}(),
             Dict{Int64, MassErrorModel}(),
-            Dict{Int64, NceModel}(), Ref(100000.0f0), 10.0f0,
+            Dict{Int64, NceModel}(), 10.0f0,
             Dict{Int64, RtConversionModel}(), 
             Dict{Int64, RtConversionModel}(), 
             Ref{Dictionary}(), 
@@ -468,7 +467,6 @@ getIrtErrors(s::SearchContext) = s.irt_errors
 getPredIrt(s::SearchContext) = getIrt(getPrecursors(getSpecLib(s)))
 getPredIrt(s::SearchContext, prec_idx::Int64) = getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
 getPredIrt(s::SearchContext, prec_idx::UInt32) = getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
-getHuberDelta(s::SearchContext) = s.huber_delta[]
 # irt_obs Dict on SearchContext is now unused; setPredIrt! removed
 getLibraryTargetCount(s::SearchContext) = s.n_library_targets
 getLibraryDecoyCount(s::SearchContext) = s.n_library_decoys
@@ -569,7 +567,6 @@ function setPrecursorDict!(s::SearchContext, dict::Dictionary{UInt32, @NamedTupl
     s.precursor_dict[] = dict
 end
 setRtIndexPaths!(s::SearchContext, paths::Vector{String}) = (s.rt_index_paths[] = paths)
-setHuberDelta!(s::SearchContext, delta::Float32) = (s.huber_delta[] = delta)
 function setIrtErrors!(s::SearchContext, errs::Dictionary{Int64, Float32})
     for (k,v) in pairs(errs)
         s.irt_errors[k] = v

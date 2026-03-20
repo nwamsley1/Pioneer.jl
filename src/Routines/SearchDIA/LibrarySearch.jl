@@ -444,35 +444,6 @@ function write_fragment_index_matches(
     Arrow.write(output_path, (scan_idx=scan_idxs, precursor_idx=prec_idxs))
 end
 
-"""
-    load_fragment_index_matches(path, n_scans)
-
-Read Arrow file and reconstruct scan_to_prec_idx + precursors_passed vectors.
-"""
-function load_fragment_index_matches(path::String, n_scans::Int)
-    tbl = Arrow.Table(path)
-    scan_idxs = tbl[:scan_idx]
-    prec_idxs = tbl[:precursor_idx]
-
-    precursors_passed = Vector{UInt32}(prec_idxs)
-    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(missing, n_scans)
-
-    n = length(scan_idxs)
-    n == 0 && return scan_to_prec_idx, precursors_passed
-
-    i = 1
-    while i <= n
-        current_scan = scan_idxs[i]
-        start_idx = i
-        while i <= n && scan_idxs[i] == current_scan
-            i += 1
-        end
-        scan_to_prec_idx[current_scan] = start_idx:(i - 1)
-    end
-
-    return scan_to_prec_idx, precursors_passed
-end
-
 function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
     return Float32(irt - irt_tol), Float32(irt + irt_tol)
 end
