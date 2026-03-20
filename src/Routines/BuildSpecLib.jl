@@ -385,6 +385,17 @@ function BuildSpecLib(params_path::String)
         end
         timings["Index Building"] = index_timing
 
+        # Apply DIA-NN-style decoy conversion if requested
+        decoy_method = get(params["fasta_digest_params"], "decoy_method", "shuffle")
+        if decoy_method == "diann_mutation"
+            dual_println("\nApplying DIA-NN-style decoy conversion...")
+            diann_timing = @timed begin
+                apply_diann_decoy_style!(lib_dir)
+                nothing
+            end
+            timings["DIA-NN Decoy Conversion"] = diann_timing
+        end
+
         # Print performance report
         print_performance_report(timings, dual_println,
         N_PRECURSORS = N_PRECURSORS,

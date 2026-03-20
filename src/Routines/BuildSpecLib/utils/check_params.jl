@@ -78,8 +78,8 @@ function check_params_bsp(json_string::String)
         fasta_digest_params["decoy_method"] = "shuffle"
     else
         decoy_method = fasta_digest_params["decoy_method"]
-        if !(decoy_method in ["shuffle", "reverse"])
-            error("decoy_method must be either 'shuffle' or 'reverse', got: $decoy_method")
+        if !(decoy_method in ["shuffle", "reverse", "diann_mutation"])
+            error("decoy_method must be 'shuffle', 'reverse', or 'diann_mutation', got: $decoy_method")
         end
     end
     
