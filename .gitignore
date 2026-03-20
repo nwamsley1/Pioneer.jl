@@ -12,3 +12,15 @@ data/ecoli_test/
 data/convert_test/
 PioneerApp/
 /build/
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+
+# Profiling data
+*.pb.gz
+
+# Plot images in repo root
+/p_*.png
