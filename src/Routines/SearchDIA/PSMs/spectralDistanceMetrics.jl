@@ -57,12 +57,7 @@ struct SpectralScoresFirstPass{T<:AbstractFloat} <: SpectralScores{T}
     max_unmatched_residual::T
     fitted_manhattan_distance::T
     percent_theoretical_ignored::T
-    # Poisson-derived metrics
     fitted_hellinger::T
-    poisson_deviance::T
-    poisson_dispersion::T
-    max_dev_resid_matched::T
-    max_dev_resid_unmatched::T
 end
 
 function getDistanceMetrics(H::SparseArray{Ti,T}, 
@@ -360,7 +355,7 @@ function getDistanceMetrics(w::Vector{T},
         if w[col] <= zero(T)
             spectral_scores[col] = SpectralScoresFirstPass(
                 zero(U), zero(U), zero(U), zero(U), zero(U), zero(U),
-                zero(U), zero(U), zero(U), zero(U), zero(U)
+                zero(U)
             )
             continue
         end
@@ -379,11 +374,6 @@ function getDistanceMetrics(w::Vector{T},
         bc_sum = zero(T)         # Bhattacharyya coefficient for Hellinger
         sum_fitted = zero(T)     # sum of fitted_peak (for Hellinger normalization)
         sum_shadow = zero(T)     # sum of clamped shadow_peak (for Hellinger normalization)
-        deviance_sum = zero(T)   # Poisson deviance accumulator
-        chi2_sum = zero(T)       # Pearson chi-squared for dispersion
-        max_dev_resid_matched = zero(T)
-        max_dev_resid_unmatched = zero(T)
-        n_frags = 0
 
         @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
             x_sum += H.x[i]
@@ -401,30 +391,6 @@ function getDistanceMetrics(w::Vector{T},
             sum_shadow += x_i
             bc_sum += sqrt(fitted_peak * x_i)
 
-            # Poisson deviance, dispersion, and deviance residuals use
-            # raw observed vs total model prediction (all precursors):
-            #   x_raw = H.x[i]  (raw observed intensity)
-            #   mu_total = H.x[i] + r[H.rowval[i]]  (= Σ_j w_j H_{ij})
-            #   residual r_i = mu_total - x_raw
-            n_frags += 1
-            x_raw = H.x[i]
-            mu_total = x_raw + r[H.rowval[i]]
-            mu_total = max(mu_total, T(1e-10))  # guard against zero/negative total prediction
-
-            # Poisson deviance: 2 * [x*log(x/μ) - (x - μ)]
-            if x_raw > zero(T)
-                log_ratio = log(x_raw / mu_total)
-                dev_contrib = T(2) * (x_raw * log_ratio - (x_raw - mu_total))
-                deviance_sum += x_raw * log_ratio - (x_raw - mu_total)
-            else
-                dev_contrib = T(2) * mu_total  # x=0 case: contributes 2μ
-                deviance_sum += mu_total
-            end
-            dev_resid = sqrt(max(dev_contrib, zero(T)))
-
-            # Poisson dispersion: Pearson chi-squared = (x - μ)² / μ = r² / μ
-            chi2_sum += r[H.rowval[i]]^2 / mu_total
-
             if H.matched[i]
                 sum_of_fitted_peaks_matched += fitted_peak
                 fitted_dotp += shadow_peak*fitted_peak
@@ -432,16 +398,10 @@ function getDistanceMetrics(w::Vector{T},
                 if r_abs > max_matched_residual
                     max_matched_residual = r_abs
                 end
-                if dev_resid > max_dev_resid_matched
-                    max_dev_resid_matched = dev_resid
-                end
             else
                 sum_of_fitted_peaks_unmatched += fitted_peak
                 if r_abs > max_unmatched_residual
                     max_unmatched_residual = r_abs
-                end
-                if dev_resid > max_dev_resid_unmatched
-                    max_dev_resid_unmatched = dev_resid
                 end
             end
         end
@@ -459,12 +419,6 @@ function getDistanceMetrics(w::Vector{T},
         hellinger_sq = hellinger_denom > 0 ? one(T) - bc_sum / hellinger_denom : one(T)
         fitted_hellinger = -log2(max(hellinger_sq, T(1e-10)))
 
-        # Poisson deviance: -D/(2n), higher = better fit
-        poisson_deviance = n_frags > 0 ? -deviance_sum / n_frags : zero(T)
-
-        # Poisson dispersion: χ²/(n-1), ≈1 for true PSMs, >>1 for chimeras
-        poisson_dispersion = n_frags > 1 ? chi2_sum / (n_frags - 1) : zero(T)
-
         spectral_scores[col] = SpectralScoresFirstPass(
             U(fitted_spectral_contrast),
             U(gof),
@@ -472,11 +426,7 @@ function getDistanceMetrics(w::Vector{T},
             U(max_unmatched_residual),
             U(fitted_manhattan_distance),
             zero(U),  # percent_theoretical_ignored (single-pass, no iterative removal)
-            U(fitted_hellinger),
-            U(poisson_deviance),
-            U(poisson_dispersion),
-            U(max_dev_resid_matched),
-            U(max_dev_resid_unmatched)
+            U(fitted_hellinger)
         )
     end
 end

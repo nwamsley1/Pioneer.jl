@@ -1375,9 +1375,7 @@ const PRESCORE_FEATURES = [
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :max_unmatched_residual, :max_matched_residual, :Mox, :spectrum_peak_count,
     :sequence_length,
-    # Poisson-derived metrics
-    :fitted_hellinger, :poisson_deviance, :poisson_dispersion,
-    :max_dev_resid_matched, :max_dev_resid_unmatched,
+    :fitted_hellinger,
 ]
 
 # Full feature set used in Phase 2 (ScoringSearch gets these via fold Arrow files)
