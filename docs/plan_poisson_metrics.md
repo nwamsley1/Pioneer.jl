@@ -76,7 +76,7 @@ The paper's Poisson dispersion is defined as:
 
 where:
 - **x_i** = raw observed intensity at peak i (`H.x[i]`)
-- **μ_total_i** = total model prediction = `Σ_j w_j * H_{ij}` for all precursors j
+- **μ_total_i** = total model prediction = `\` for all precursors j
 
 This measures whether the **overall fit residuals** at peaks belonging to precursor j are consistent with Poisson noise. A chimeric spectrum has extra signal from an un-modeled co-eluting precursor, inflating residuals above Poisson expectation.
 
