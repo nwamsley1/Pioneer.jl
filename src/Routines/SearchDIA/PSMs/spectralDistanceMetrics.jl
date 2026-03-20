@@ -51,7 +51,6 @@ struct SpectralScoresMs1{T<:AbstractFloat} <: SpectralScores{T}
 end
 
 struct SpectralScoresFirstPass{T<:AbstractFloat} <: SpectralScores{T}
-    fitted_spectral_contrast::T
     gof::T
     max_matched_residual::T
     max_unmatched_residual::T
@@ -354,8 +353,7 @@ function getDistanceMetrics(w::Vector{T},
         # Skip zero-weight columns
         if w[col] <= zero(T)
             spectral_scores[col] = SpectralScoresFirstPass(
-                zero(U), zero(U), zero(U), zero(U), zero(U), zero(U),
-                zero(U)
+                zero(U), zero(U), zero(U), zero(U), zero(U), zero(U)
             )
             continue
         end
@@ -367,13 +365,10 @@ function getDistanceMetrics(w::Vector{T},
         sum_of_residuals = zero(T)
         sum_of_fitted_peaks_matched = zero(T)
         sum_of_fitted_peaks_unmatched = zero(T)
-        fitted_dotp = zero(T)
-        fitted_dotp_norm1 = zero(T)
-        sum_of_fitted_peaks_squared = zero(T)
-        # Poisson-derived accumulators
-        bc_sum = zero(T)         # Bhattacharyya coefficient for Hellinger
-        sum_fitted = zero(T)     # sum of fitted_peak (for Hellinger normalization)
-        sum_shadow = zero(T)     # sum of clamped shadow_peak (for Hellinger normalization)
+        # Hellinger accumulators
+        bc_sum = zero(T)         # Bhattacharyya coefficient
+        sum_fitted = zero(T)     # sum of fitted_peak (for normalization)
+        sum_shadow = zero(T)     # sum of clamped shadow_peak (for normalization)
 
         @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
             x_sum += H.x[i]
@@ -383,7 +378,6 @@ function getDistanceMetrics(w::Vector{T},
             shadow_peak = fitted_peak - r[H.rowval[i]]
             r_abs = abs(r[H.rowval[i]])
             sum_of_residuals += r_abs
-            sum_of_fitted_peaks_squared += fitted_peak^2
 
             # Hellinger: uses shadow_peak (per-precursor deconvolved observed) vs fitted_peak
             x_i = max(shadow_peak, zero(T))  # clamp negative shadows
@@ -393,8 +387,6 @@ function getDistanceMetrics(w::Vector{T},
 
             if H.matched[i]
                 sum_of_fitted_peaks_matched += fitted_peak
-                fitted_dotp += shadow_peak*fitted_peak
-                fitted_dotp_norm1 += shadow_peak^2
                 if r_abs > max_matched_residual
                     max_matched_residual = r_abs
                 end
@@ -407,8 +399,6 @@ function getDistanceMetrics(w::Vector{T},
         end
 
         sum_of_fitted_peaks = sum_of_fitted_peaks_matched + sum_of_fitted_peaks_unmatched
-        denom = sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared)
-        fitted_spectral_contrast = denom > 0 ? fitted_dotp/denom : zero(T)
         gof = sum_of_fitted_peaks > 0 ? -log2(sum_of_residuals/sum_of_fitted_peaks) : zero(T)
         max_matched_residual = sum_of_fitted_peaks_matched > 0 ? -log2(max_matched_residual/sum_of_fitted_peaks_matched) : zero(T)
         max_unmatched_residual = sum_of_fitted_peaks > 0 ? -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10) : zero(T)
@@ -420,7 +410,6 @@ function getDistanceMetrics(w::Vector{T},
         fitted_hellinger = -log2(max(hellinger_sq, T(1e-10)))
 
         spectral_scores[col] = SpectralScoresFirstPass(
-            U(fitted_spectral_contrast),
             U(gof),
             U(max_matched_residual),
             U(max_unmatched_residual),

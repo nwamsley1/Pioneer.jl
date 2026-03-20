@@ -104,7 +104,6 @@ struct FirstPassScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     error::L
 
     #Spectral Similarity
-    fitted_spectral_contrast::L
     gof::L
     max_matched_residual::L
     max_unmatched_residual::L
@@ -437,7 +436,6 @@ function Score!(scored_psms::Vector{FirstPassScoredPSM{H, L}},
             Float16(log2(max(unscored_PSMs[i].b_int + unscored_PSMs[i].y_int, Float32(1e-20))/spectrum_intensity)),
             Float16(log2(unscored_PSMs[i].error)),
 
-            spectral_scores[scores_idx].fitted_spectral_contrast,
             spectral_scores[scores_idx].gof,
             spectral_scores[scores_idx].max_matched_residual,
             spectral_scores[scores_idx].max_unmatched_residual,

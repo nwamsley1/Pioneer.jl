@@ -1371,7 +1371,7 @@ LightGBM Feature Set
 
 # Lean feature set for Phase 1 prescore LightGBM (fast per-file ranking)
 const PRESCORE_FEATURES = [
-    :fitted_manhattan_distance, :fitted_spectral_contrast, :irt_error, :poisson, :err_norm,
+    :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :max_unmatched_residual, :max_matched_residual, :Mox, :spectrum_peak_count,
     :sequence_length,
