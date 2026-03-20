@@ -583,16 +583,21 @@ function _direct_quant_mask(df::AbstractDataFrame)
     return quant_mask
 end
 
-const CONSENSUS_PRECURSOR_MAX_RUNS = 5
-const CONSENSUS_PRECURSOR_RUN_DECAY_RATE = 1.0
+const CONSENSUS_PRECURSOR_MIN_RUNS = 5
+const CONSENSUS_PRECURSOR_MAX_RUNS = 25
 const ConsensusRunVote = @NamedTuple{
     pg_score::Float32,
     run_order::Int64,
     normalized_precursors::Vector{Pair{UInt32, Float32}}
 }
 
-@inline function _consensus_run_decay(selected_rank::Int)::Float64
-    return exp(-CONSENSUS_PRECURSOR_RUN_DECAY_RATE * Float64(selected_rank - 1))
+"""
+    _consensus_runs_to_keep(n_runs)
+
+Return how many top runs to retain for one protein when building precursor consensus.
+"""
+@inline function _consensus_runs_to_keep(n_runs::Int)::Int
+    return clamp(ceil(Int, sqrt(n_runs)), CONSENSUS_PRECURSOR_MIN_RUNS, CONSENSUS_PRECURSOR_MAX_RUNS)
 end
 
 """
@@ -646,13 +651,13 @@ Build a dataset-level precursor relative-weight consensus within each inferred
 protein group. Consensus weights are derived from direct (non-MBR) quant
 precursors after normalizing each precursor by the max precursor weight in that
 protein run. Each run's vote is weighted by the run's current protein
-`pg_score`. Only the top `CONSENSUS_PRECURSOR_MAX_RUNS` runs per protein group
-are retained, with an exponential decay applied by run rank within that top
-set.
+`pg_score`. Only the top `clamp(ceil(Int, sqrt(n_runs)), 5, 25)` runs per
+protein group are retained.
 """
 function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
     consensus_weight_sums = Dict{Tuple{String, Bool, UInt8, UInt32}, Float64}()
     protein_total_vote = Dict{Tuple{String, Bool, UInt8}, Float64}()
+    protein_run_count = Dict{Tuple{String, Bool, UInt8}, Int}()
     protein_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
 
     for (run_order, psm_ref) in enumerate(psm_refs)
@@ -713,6 +718,7 @@ function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
                 )
             end
             protein_key = (protein_name, target, entrap_id)
+            protein_run_count[protein_key] = get(protein_run_count, protein_key, 0) + 1
             _insert_top_consensus_vote!(
                 get!(
                     () -> sizehint!(ConsensusRunVote[], CONSENSUS_PRECURSOR_MAX_RUNS),
@@ -729,9 +735,11 @@ function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
     end
 
     for (protein_key, run_votes) in protein_run_votes
-        for selected_rank in eachindex(run_votes)
+        n_selected = min(length(run_votes), _consensus_runs_to_keep(get(protein_run_count, protein_key, 0)))
+
+        for selected_rank in 1:n_selected
             run_vote = run_votes[selected_rank]
-            run_weight = Float64(run_vote.pg_score) * _consensus_run_decay(selected_rank)
+            run_weight = Float64(run_vote.pg_score)
             protein_total_vote[protein_key] = get(protein_total_vote, protein_key, 0.0) + run_weight
 
             for precursor in run_vote.normalized_precursors

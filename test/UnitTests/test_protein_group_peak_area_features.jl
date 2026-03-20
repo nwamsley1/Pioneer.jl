@@ -228,12 +228,12 @@ using Pioneer
         end
     end
 
-    @testset "Consensus Relative Weight Builder Keeps Only Top Five Protein Runs" begin
+    @testset "Consensus Relative Weight Builder Uses Dynamic Top-N Run Selection" begin
         temp_dir = mktempdir()
 
         try
             refs = Pioneer.PSMFileReference[]
-            for run_idx in 1:6
+            for run_idx in 1:36
                 df = if run_idx <= 5
                     DataFrame(
                         inferred_protein_group = ["P"],
@@ -248,7 +248,7 @@ using Pioneer
                         prec_prob = Float32[0.95f0 - 0.01f0 * run_idx],
                         weight = Float32[100.0]
                     )
-                else
+                elseif run_idx == 6
                     DataFrame(
                         inferred_protein_group = ["P"],
                         target = Bool[true],
@@ -259,7 +259,21 @@ using Pioneer
                         MBR_candidate = Bool[false],
                         missed_cleavage = Int64[0],
                         Mox = Int64[0],
-                        prec_prob = Float32[0.05],
+                        prec_prob = Float32[0.89],
+                        weight = Float32[100.0]
+                    )
+                else
+                    DataFrame(
+                        inferred_protein_group = ["P"],
+                        target = Bool[true],
+                        entrap_id = UInt8[1],
+                        precursor_idx = UInt32[3],
+                        sequence = ["PEP3"],
+                        use_for_protein_quant = Bool[true],
+                        MBR_candidate = Bool[false],
+                        missed_cleavage = Int64[0],
+                        Mox = Int64[0],
+                        prec_prob = Float32[0.01],
                         weight = Float32[100.0]
                     )
                 end
@@ -271,15 +285,17 @@ using Pioneer
 
             consensus = Pioneer.build_precursor_consensus(refs)
 
-            @test consensus.profiled_precursor_count[("P", true, UInt8(1))] == 1
-            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(1))] == 1.0f0
-            @test !haskey(consensus.relative_weight, ("P", true, UInt8(1), UInt32(2)))
+            @test consensus.profiled_precursor_count[("P", true, UInt8(1))] == 2
+            @test haskey(consensus.relative_weight, ("P", true, UInt8(1), UInt32(2)))
+            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(1))] >
+                  consensus.relative_weight[("P", true, UInt8(1), UInt32(2))]
+            @test !haskey(consensus.relative_weight, ("P", true, UInt8(1), UInt32(3)))
         finally
             rm(temp_dir, recursive = true, force = true)
         end
     end
 
-    @testset "Consensus Relative Weight Builder Applies Exponential Decay Across Selected Runs" begin
+    @testset "Consensus Relative Weight Builder Uses Raw pg_score Weights Without Rank Decay" begin
         temp_dir = mktempdir()
 
         try
@@ -320,8 +336,8 @@ using Pioneer
                 Pioneer.PSMFileReference(path2)
             ])
 
-            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(2))] >
-                  consensus.relative_weight[("P", true, UInt8(1), UInt32(1))]
+            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(2))] ≈
+                  consensus.relative_weight[("P", true, UInt8(1), UInt32(1))] atol = 1e-6
         finally
             rm(temp_dir, recursive = true, force = true)
         end
