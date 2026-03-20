@@ -395,30 +395,35 @@ function getDistanceMetrics(w::Vector{T},
             sum_of_residuals += r_abs
             sum_of_fitted_peaks_squared += fitted_peak^2
 
-            # Clamp shadow_peak for Poisson metrics (deconvolution can produce negative values)
-            x_i = max(shadow_peak, zero(T))
-
-            # Hellinger: accumulate Bhattacharyya coefficient
+            # Hellinger: uses shadow_peak (per-precursor deconvolved observed) vs fitted_peak
+            x_i = max(shadow_peak, zero(T))  # clamp negative shadows
             sum_fitted += fitted_peak
             sum_shadow += x_i
             bc_sum += sqrt(fitted_peak * x_i)
 
-            # Poisson deviance and deviance residuals
+            # Poisson deviance, dispersion, and deviance residuals use
+            # raw observed vs total model prediction (all precursors):
+            #   x_raw = H.x[i]  (raw observed intensity)
+            #   mu_total = H.x[i] + r[H.rowval[i]]  (= Σ_j w_j H_{ij})
+            #   residual r_i = mu_total - x_raw
             n_frags += 1
-            if x_i > zero(T) && fitted_peak > zero(T)
-                log_ratio = log(x_i / fitted_peak)
-                dev_contrib = T(2) * (x_i * log_ratio - (x_i - fitted_peak))
-                deviance_sum += x_i * log_ratio - (x_i - fitted_peak)
+            x_raw = H.x[i]
+            mu_total = x_raw + r[H.rowval[i]]
+            mu_total = max(mu_total, T(1e-10))  # guard against zero/negative total prediction
+
+            # Poisson deviance: 2 * [x*log(x/μ) - (x - μ)]
+            if x_raw > zero(T)
+                log_ratio = log(x_raw / mu_total)
+                dev_contrib = T(2) * (x_raw * log_ratio - (x_raw - mu_total))
+                deviance_sum += x_raw * log_ratio - (x_raw - mu_total)
             else
-                dev_contrib = T(2) * fitted_peak  # x_i = 0 case
-                deviance_sum += fitted_peak
+                dev_contrib = T(2) * mu_total  # x=0 case: contributes 2μ
+                deviance_sum += mu_total
             end
             dev_resid = sqrt(max(dev_contrib, zero(T)))
 
-            # Poisson dispersion (Pearson chi-squared)
-            if fitted_peak > zero(T)
-                chi2_sum += (x_i - fitted_peak)^2 / fitted_peak
-            end
+            # Poisson dispersion: Pearson chi-squared = (x - μ)² / μ = r² / μ
+            chi2_sum += r[H.rowval[i]]^2 / mu_total
 
             if H.matched[i]
                 sum_of_fitted_peaks_matched += fitted_peak
