@@ -46,8 +46,6 @@ struct PioneerScanElement
     intensity_array::Vector{Union{Missing, Float32}}
     scanHeader::String
     scanNumber::Int32
-    basePeakMz::Float32
-    basePeakIntensity::Float32
     packetType::Int32
     retentionTime::Float32
     lowMz::Float32
@@ -59,6 +57,12 @@ struct PioneerScanElement
     collisionEnergyEvField::Union{Missing, Float32}
     msOrder::UInt8
 end
+
+# PSI-MS activation terms we support when parsing precursor collision energy.
+const CID_ACCESSION = "MS:1000133"  # collision-induced dissociation
+const BEAM_TYPE_CID_ACCESSION = "MS:1000422"  # beam-type collision-induced dissociation
+const COLLISION_ENERGY_ACCESSION = "MS:1000045"  # collision energy
+
 function parseBinaryDataList(binary_data_list::EzXML.Node)
     mz_array, intensity_array = nothing, nothing
     is_mz_array, is_intensity_array = false, false
@@ -114,6 +118,39 @@ function decodeBinaryArray(encoded_data::String, ::Float64)
     end
 end
 
+function init_spectrum_dict()::Dict{String, String}
+    return Dict{String, String}(
+        "ms level" => "",
+        "total ion current" => "",
+        "collision energy" => "",
+        "spectrum title" => "",
+        "scan start time" => "",
+        "scan window upper limit" => "",
+        "scan window lower limit" => "",
+        "isolation window target m/z" => "",
+        "isolation window lower offset" => "",
+        "isolation window upper offset" => ""
+    )
+end
+
+function parse_required_cv_param(::Type{T},
+    spectrum_dict::Dict{String, String},
+    key::String,
+    scan_number::Int64)::T where {T <: Number}
+
+    value = strip(get(spectrum_dict, key, ""))
+    isempty(value) && throw(ArgumentError("missing \"$key\" for spectrum $scan_number"))
+    return parse(T, value)
+end
+
+function parse_optional_cv_param(::Type{T},
+    spectrum_dict::Dict{String, String},
+    key::String)::Union{Missing, T} where {T <: Number}
+
+    value = strip(get(spectrum_dict, key, ""))
+    return isempty(value) ? missing : parse(T, value)
+end
+
 
 function parseScanDictToScanElement(
     spectrum_dict::Dict{String, String},
@@ -128,29 +165,33 @@ function parseScanDictToScanElement(
         scanHeader = spectrum_dict["spectrum title"]
     end
     scanNumber = Int32(scan_number)
-    basePeakMz = parse(Float32, spectrum_dict["base peak m/z"])
-    basePeakIntensity = parse(Float32, spectrum_dict["base peak intensity"])
-    retentionTime = parse(Float32, spectrum_dict["scan start time"])
-    lowMz = parse(Float32, spectrum_dict["scan window lower limit"])
-    highMz = parse(Float32, spectrum_dict["scan window upper limit"])
-    msOrder = parse(UInt8, spectrum_dict["ms level"])
+    retentionTime = parse_required_cv_param(Float32, spectrum_dict, "scan start time", scan_number)
+    lowMz = parse_required_cv_param(Float32, spectrum_dict, "scan window lower limit", scan_number)
+    highMz = parse_required_cv_param(Float32, spectrum_dict, "scan window upper limit", scan_number)
+    msOrder = parse_required_cv_param(UInt8, spectrum_dict, "ms level", scan_number)
     if msOrder > 1
-        targetMz = parse(Float32, spectrum_dict["isolation window target m/z"])
-        lowerOffset = parse(Float32, spectrum_dict["isolation window lower offset"])
-        upperOffset = parse(Float32, spectrum_dict["isolation window lower offset"])
-        isolationWidthMz = lowerOffset + upperOffset
-        centerMz = targetMz + (upperOffset - lowerOffset)/2.0f0
+        targetMz = parse_optional_cv_param(Float32, spectrum_dict, "isolation window target m/z")
+        lowerOffset = parse_optional_cv_param(Float32, spectrum_dict, "isolation window lower offset")
+        upperOffset = parse_optional_cv_param(Float32, spectrum_dict, "isolation window upper offset")
+        if !ismissing(targetMz) && !ismissing(lowerOffset) && !ismissing(upperOffset)
+            isolationWidthMz = lowerOffset + upperOffset
+            centerMz = targetMz + (upperOffset - lowerOffset)/2.0f0
+        end
     end
-    TIC = parse(Float32, spectrum_dict["total ion current"])
-    dissociation = spectrum_dict["beam-type collision-induced dissociation"]
-    collisionEnergyField = (dissociation == "" ? missing : parse(Float32, dissociation))
+    TIC = coalesce(
+        parse_optional_cv_param(Float32, spectrum_dict, "total ion current"),
+        sum(intensity_array; init = zero(Float32))
+    )
+    collisionEnergyField = parse_optional_cv_param(
+        Float32,
+        spectrum_dict,
+        "collision energy"
+    )
     return PioneerScanElement(
         allowmissing(mz_array), 
         allowmissing(intensity_array),
         scanHeader,
         scanNumber,
-        basePeakMz,
-        basePeakIntensity,
         zero(Int32),
         retentionTime,
         lowMz,
@@ -172,6 +213,33 @@ function parseScanCvParam!(
         spectrum_dict[ScanCvParamName] =  ScanCvParam["value"]
     end
 end        
+
+function parseActivation!(
+    spectrum_dict::Dict{String, String},
+    activation::EzXML.Node)
+
+    has_supported_activation = false
+    collision_energy = ""
+
+    for activationElement in eachelement(activation)
+        if activationElement.name != "cvParam"
+            continue
+        end
+
+        accession = activationElement["accession"]
+        if accession == CID_ACCESSION || accession == BEAM_TYPE_CID_ACCESSION
+            has_supported_activation = true
+        elseif accession == COLLISION_ENERGY_ACCESSION
+            collision_energy = activationElement["value"]
+        end
+    end
+
+    if has_supported_activation
+        spectrum_dict["collision energy"] = collision_energy
+    end
+
+    return nothing
+end
 
 function parseScanList!(
     spectrum_dict::Dict{String, String},
@@ -212,11 +280,7 @@ function parsePrecursorList!(
                         end
                     end
                 elseif precursorElement.name == "activation"
-                    for activationElement in eachelement(precursorElement)
-                        if activationElement.name == "cvParam"
-                            parseScanCvParam!(spectrum_dict, activationElement)
-                        end
-                    end
+                    parseActivation!(spectrum_dict, precursorElement)
                 end
             end
         end
@@ -262,25 +326,10 @@ function readMzML(
     run_element = findfirst("//ms:run", mzML, ns)
     spectrum_list = findfirst("//ms:spectrumList", run_element, ns)
 
-    spectrum_dict = Dict{String, String}(
-        "ms level" => "",
-        "base peak intensity" => "",
-        "base peak m/z" => "",
-        "total ion current" => "",
-        "spectrum title" => "",
-        "scan start time" => "",
-        "scan window upper limit" => "",
-        "scan window lower limit" =>"",
-        "isolation window target m/z" => "",
-        "isolation window lower offset" => "",
-        "isolation window upper offset" => "",
-        "beam-type collision-induced dissociation" => ""
-    )
-
     pairedSpectra = Vector{PioneerScanElement}(undef, length(collect(eachelement(spectrum_list))))
     for (i, spectrum_element) in enumerate(collect(eachelement(spectrum_list)))
         pairedSpectra[i] = parseSpectrumElement!(
-                                        spectrum_dict, 
+                                        init_spectrum_dict(),
                                         spectrum_element, 
                                         i,
                                         skip_scan_header

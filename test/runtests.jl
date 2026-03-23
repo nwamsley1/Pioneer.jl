@@ -168,6 +168,7 @@ end
 
     # Active: only run mass-spec data tests for quick iteration
     include("./UnitTests/MassSpecAndFilteredDataTests.jl")
+    include("./UnitTests/convertMzMLTests.jl")
     include("./UnitTests/LoggingTests.jl")
     include("./UnitTests/LogTruncationTests.jl")
     include("./UnitTests/BuildPreferencesTests.jl")
