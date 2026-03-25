@@ -1,6 +1,29 @@
 using Test
+using Arrow
+using DataFrames
 using EzXML
-using Pioneer: init_spectrum_dict, parsePrecursorList!, parseScanDictToScanElement
+using Pioneer: build_convert_mzml_output_dir, get_convert_mzml_output_paths,
+               init_spectrum_dict, parsePrecursorList!, parseScanDictToScanElement,
+               parse_convert_mzml_args, partition_convert_mzml_queue
+
+function write_test_mzml(path::String; n_spectra::Int)
+    spectra = join(["<spectrum id=\"scan=$(i)\"/>" for i in 1:n_spectra], "\n")
+    write(path, """
+    <mzML xmlns="http://psi.hupo.org/ms/mzml">
+      <run>
+        <spectrumList count="$n_spectra">
+          $spectra
+        </spectrumList>
+      </run>
+    </mzML>
+    """)
+    return path
+end
+
+function write_test_scan_numbers(path::String, scan_numbers::Vector{Int32})
+    Arrow.write(path, DataFrame(scanNumber = scan_numbers))
+    return path
+end
 
 @testset "convertMzML metadata parsing" begin
     spectrum_dict = Dict{String, String}(
@@ -104,4 +127,50 @@ end
     parsePrecursorList!(spectrum_dict, precursor_list)
 
     @test isempty(spectrum_dict["collision energy"])
+end
+
+@testset "convertMzML CLI argument parsing" begin
+    options = parse_convert_mzml_args([
+        "input_dir",
+        "-o", "custom_out",
+        "--skip-existing",
+        "-n", "4",
+        "--include-scan-header",
+    ])
+
+    @test options.mzml_path == "input_dir"
+    @test options.output_dir == "custom_out"
+    @test options.skip_existing
+    @test options.concurrent_files == 4
+    @test !options.skip_scan_header
+
+    compat_options = parse_convert_mzml_args(["input_dir", "false"])
+    @test compat_options.mzml_path == "input_dir"
+    @test !compat_options.skip_scan_header
+end
+
+@testset "convertMzML output directory and queue planning" begin
+    temp_dir = mktempdir()
+    mzml_dir = joinpath(temp_dir, "mzml")
+    mkpath(mzml_dir)
+
+    mzml_paths = [
+        write_test_mzml(joinpath(mzml_dir, "complete.mzML"), n_spectra = 3),
+        write_test_mzml(joinpath(mzml_dir, "incomplete.mzML"), n_spectra = 3),
+        write_test_mzml(joinpath(mzml_dir, "missing.mzML"), n_spectra = 2),
+    ]
+
+    output_dir = build_convert_mzml_output_dir(mzml_dir, "")
+    @test output_dir == joinpath(mzml_dir, "arrow_out")
+
+    output_paths = get_convert_mzml_output_paths(output_dir, mzml_paths)
+    write_test_scan_numbers(output_paths[1], Int32[1, 2, 3])
+    write_test_scan_numbers(output_paths[2], Int32[1, 2])
+
+    queue = partition_convert_mzml_queue(mzml_paths, output_paths; skip_existing = true)
+
+    @test queue.files_to_convert == [2, 3]
+    @test queue.skipped_complete_files == 1
+    @test queue.reconverted_incomplete_files == 1
+    @test queue.missing_output_files == 1
 end
