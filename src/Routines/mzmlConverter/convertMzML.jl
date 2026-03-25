@@ -172,6 +172,21 @@ end
 const CID_ACCESSION = "MS:1000133"  # collision-induced dissociation
 const BEAM_TYPE_CID_ACCESSION = "MS:1000422"  # beam-type collision-induced dissociation
 const COLLISION_ENERGY_ACCESSION = "MS:1000045"  # collision energy
+const CENTROID_SPECTRUM_ACCESSION = "MS:1000127"  # centroid spectrum
+const PROFILE_SPECTRUM_ACCESSION = "MS:1000128"  # profile spectrum
+
+struct ProfileModeMzMLError <: Exception
+    mzml_path::String
+    scan_index::Int
+end
+
+function Base.showerror(io::IO, err::ProfileModeMzMLError)
+    print(
+        io,
+        "Profile-mode spectrum detected in $(err.mzml_path) at scan $(err.scan_index). " *
+        "Pioneer only supports centroided mzML data."
+    )
+end
 
 function parseBinaryDataList(binary_data_list::EzXML.Node)
     mz_array, intensity_array = nothing, nothing
@@ -409,6 +424,12 @@ function parseSpectrumElement!(
         if scanElement.name=="binaryDataArrayList"
             mz_array, intensity_array = parseBinaryDataList(scanElement)
         elseif scanElement.name=="cvParam"
+            accession = scanElement["accession"]
+            if accession == PROFILE_SPECTRUM_ACCESSION
+                throw(ProfileModeMzMLError("", scanIndex))
+            elseif accession == CENTROID_SPECTRUM_ACCESSION
+                continue
+            end
             parseScanCvParam!(spectrum_dict, scanElement)
         elseif scanElement.name == "scanList"
             parseScanList!(spectrum_dict, scanElement)
@@ -560,12 +581,19 @@ function readMzML(
 
     pairedSpectra = Vector{PioneerScanElement}(undef, length(collect(eachelement(spectrum_list))))
     for (i, spectrum_element) in enumerate(collect(eachelement(spectrum_list)))
-        pairedSpectra[i] = parseSpectrumElement!(
-                                        init_spectrum_dict(),
-                                        spectrum_element, 
-                                        i,
-                                        skip_scan_header
-        )
+        try
+            pairedSpectra[i] = parseSpectrumElement!(
+                                            init_spectrum_dict(),
+                                            spectrum_element, 
+                                            i,
+                                            skip_scan_header
+            )
+        catch err
+            if err isa ProfileModeMzMLError
+                throw(ProfileModeMzMLError(mzML_path, err.scan_index))
+            end
+            rethrow()
+        end
     end
 
     Arrow.write(output_path, DataFrame(pairedSpectra))
@@ -580,10 +608,22 @@ function process_mzml_file(
     println("Starting Conversion For: $file_label")
 
     start_ns = time_ns()
-    readMzML(input_path, output_path, skip_scan_header)
+    try
+        readMzML(input_path, output_path, skip_scan_header)
+    catch err
+        if err isa ProfileModeMzMLError
+            println(
+                "Warning: skipping $file_label - profile-mode spectra detected. " *
+                "Pioneer only handles centroided mzML data."
+            )
+            return false
+        end
+        rethrow()
+    end
     elapsed_ns = time_ns() - start_ns
 
     println("Execution Time: $(round(Int, elapsed_ns / 1.0e6)) ms for $file_label")
+    return true
 end
 
 """

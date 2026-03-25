@@ -4,10 +4,18 @@ using DataFrames
 using EzXML
 using Pioneer: build_convert_mzml_output_dir, get_convert_mzml_output_paths,
                init_spectrum_dict, parsePrecursorList!, parseScanDictToScanElement,
-               parse_convert_mzml_args, partition_convert_mzml_queue
+               parse_convert_mzml_args, partition_convert_mzml_queue,
+               process_mzml_file
 
-function write_test_mzml(path::String; n_spectra::Int)
-    spectra = join(["<spectrum id=\"scan=$(i)\"/>" for i in 1:n_spectra], "\n")
+function write_test_mzml(path::String; n_spectra::Int, spectrum_body::String = "")
+    spectra = join([
+        """
+        <spectrum id="scan=$(i)">
+          $spectrum_body
+        </spectrum>
+        """
+        for i in 1:n_spectra
+    ], "\n")
     write(path, """
     <mzML xmlns="http://psi.hupo.org/ms/mzml">
       <run>
@@ -173,4 +181,21 @@ end
     @test queue.skipped_complete_files == 1
     @test queue.reconverted_incomplete_files == 1
     @test queue.missing_output_files == 1
+end
+
+@testset "convertMzML skips profile-mode files" begin
+    temp_dir = mktempdir()
+    mzml_path = write_test_mzml(
+        joinpath(temp_dir, "profile.mzML");
+        n_spectra = 1,
+        spectrum_body = """
+        <cvParam accession="MS:1000128" name="profile spectrum" value=""/>
+        """
+    )
+    output_path = joinpath(temp_dir, "profile.arrow")
+
+    converted = process_mzml_file(mzml_path, output_path, true)
+
+    @test !converted
+    @test !isfile(output_path)
 end
