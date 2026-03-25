@@ -647,6 +647,9 @@ Arrow format, preserving scan data including m/z arrays, intensity arrays, and s
 # Output
 Creates Arrow (.arrow) files in the requested output directory with the same base filename as the input mzML files.
 
+# Requirements
+Only centroided mzML is supported. Files containing profile-mode spectra are skipped during conversion.
+
 # Examples
 ```julia
 # Convert all mzML files in a directory
