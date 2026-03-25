@@ -101,13 +101,10 @@ using Pioneer
 
         (_, op) = Pioneer.add_weight_observation_features(calibration)
         out = op(copy(pg_df))
-        (_, interaction_op) = Pioneer.add_pg_score_interaction_features()
-        out = interaction_op(out)
 
         for col in (
             :expected_additional_from_top,
-            :coverage_match_from_top,
-            :pg_score_x_coverage_match_from_top
+            :coverage_match_from_top
         )
             @test hasproperty(out, col)
         end
@@ -123,26 +120,22 @@ using Pioneer
         # N <= 1 -> neutral values
         @test out.expected_additional_from_top[5] == 0.0f0
         @test out.coverage_match_from_top[5] == 1.0f0
-
-        expected_cov_match_1 = out.pg_score[1] * out.coverage_match_from_top[1]
-        expected_cov_match_3 = out.pg_score[3] * out.coverage_match_from_top[3]
-
-        @test out.pg_score_x_coverage_match_from_top[1] ≈ expected_cov_match_1
-        @test out.pg_score_x_coverage_match_from_top[3] ≈ expected_cov_match_3
     end
 
-    @testset "pg_score Coverage Match Interaction Preserves Good to Bad Ordering" begin
+    @testset "Protein Auto-Pass pg_score Threshold Uses Raw Decoy Maximum" begin
         df = DataFrame(
-            pg_score = Float32[100.0, 100.0, 10.0, 10.0],
-            coverage_match_from_top = Float32[0.9, 0.1, 0.9, 0.1]
+            target = Bool[true, false, false, false],
+            n_peptides = Int64[1, 1, 2, 7],
+            pg_score = Float32[0.9, 1.1, 0.7, 2.3],
+            coverage_match_from_top = Float32[0.9, 0.8, 0.7, 0.1],
+            precursor_consensus_support = Float32[0.6, 0.5, 0.4, 0.3],
+            precursor_consensus_enrichment = Float32[1.8, 1.6, 1.4, 1.2],
+            any_common_peps = Bool[true, true, false, true]
         )
 
-        (_, interaction_op) = Pioneer.add_pg_score_interaction_features()
-        out = interaction_op(copy(df))
+        pg_score_threshold = Pioneer.compute_protein_autopass_pg_score_threshold(df; context = "test")
 
-        @test out.pg_score_x_coverage_match_from_top[1] > out.pg_score_x_coverage_match_from_top[2]
-        @test out.pg_score_x_coverage_match_from_top[2] > out.pg_score_x_coverage_match_from_top[3]
-        @test out.pg_score_x_coverage_match_from_top[3] > out.pg_score_x_coverage_match_from_top[4]
+        @test pg_score_threshold == 2.3f0
     end
 
     @testset "Protein Semi-Supervised Training Set Mines Negatives by PEP" begin
@@ -359,13 +352,6 @@ using Pioneer
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
         @test grouped.precursor_consensus_support[1] ≈ 1.2f0
         @test grouped.precursor_consensus_enrichment[1] ≈ (1.2f0 / (0.4f0 * 2.0f0)) atol = 1e-5
-
-        (_, interaction_op) = Pioneer.add_precursor_consensus_interaction_features()
-        out = interaction_op(copy(grouped))
-        @test out.pg_score_x_precursor_consensus_support[1] ==
-              out.pg_score[1] * out.precursor_consensus_support[1]
-        @test out.pg_score_x_precursor_consensus_enrichment[1] ==
-              out.pg_score[1] * out.precursor_consensus_enrichment[1]
     end
 
     @testset "Consensus Relative Weight Enrichment Rewards Top Support Among Many Possibilities" begin
@@ -414,23 +400,25 @@ using Pioneer
 
         Pioneer.remove_zero_variance_columns!(feature_names, df)
 
-        @test isempty(feature_names)
+        @test feature_names == [:pg_score]
     end
 
     @testset "Protein Probit Feature Names Include Consensus Support" begin
         @test Pioneer.protein_probit_feature_names() == [
+            :pg_score,
             :peptide_coverage,
             :any_common_peps,
-            :pg_score_x_coverage_match_from_top,
-            :pg_score_x_precursor_consensus_support
+            :coverage_match_from_top,
+            :precursor_consensus_enrichment
         ]
 
         @test Pioneer.protein_probit_feature_names(include_n_possible_peptides = true) == [
+            :pg_score,
             :peptide_coverage,
             :n_possible_peptides,
             :any_common_peps,
-            :pg_score_x_coverage_match_from_top,
-            :pg_score_x_precursor_consensus_support
+            :coverage_match_from_top,
+            :precursor_consensus_enrichment
         ]
     end
 

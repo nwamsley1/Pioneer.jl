@@ -1304,23 +1304,31 @@ end
 
 """
     apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference},
-                        β_fitted::Vector{Float64}, feature_names::Vector{Symbol})
+                        β_fitted::Vector{Float64}, feature_names::Vector{Symbol},
+                        pg_score_threshold::Float32)
 
 Apply probit regression scores to protein group files.
 Note: This function is called from utils.jl and needs access to calculate_probit_scores.
 """
 function apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference},
                              β_fitted::Vector{Float64},
-                             feature_names::Vector{Symbol})
+                             feature_names::Vector{Symbol},
+                             pg_score_threshold::Float32)
     for ref in pg_refs
         transform_and_write!(ref) do df
-            # Calculate probit scores (function from utils.jl)
-            X_file = Matrix{Float64}(df[:, feature_names])
-            prob_scores = calculate_probit_scores(X_file, β_fitted)
-            
             # Update scores
             df[!, :old_pg_score] = copy(df.pg_score)
-            df[!, :pg_score] = Float32.(prob_scores)
+            trainable_mask = Float32.(df.old_pg_score) .<= pg_score_threshold
+            auto_accept_mask = .!trainable_mask
+
+            if any(trainable_mask)
+                X_file = Matrix{Float64}(df[trainable_mask, feature_names])
+                prob_scores = calculate_probit_scores(X_file, β_fitted)
+                df[trainable_mask, :pg_score] = Float32.(prob_scores)
+            end
+            if any(auto_accept_mask)
+                df[auto_accept_mask, :pg_score] .= 1.0f0
+            end
             
             # Sort by new scores
             sort!(df, [:pg_score, :target], rev = [true, true])

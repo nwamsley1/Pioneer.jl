@@ -448,74 +448,6 @@ function add_weight_observation_features(calibration::NamedTuple)
 end
 
 """
-    add_pg_score_interaction_features()
-
-Add pg_score interaction terms for the current coverage-surprise feature family.
-"""
-function add_pg_score_interaction_features()
-    desc = "add_pg_score_interaction_features"
-
-    op = function(df)
-        pg_score = df.pg_score
-        coverage_match_from_top = df.coverage_match_from_top
-
-        n_rows = length(pg_score)
-        pg_score_x_coverage_match_from_top = Vector{Float32}(undef, n_rows)
-
-        @inbounds for i in eachindex(
-            pg_score,
-            coverage_match_from_top
-        )
-            pg_score_val = Float32(pg_score[i])
-            pg_score_x_coverage_match_from_top[i] =
-                pg_score_val * Float32(clamp(Float64(coverage_match_from_top[i]), 0.0, 1.0))
-        end
-
-        df.pg_score_x_coverage_match_from_top = pg_score_x_coverage_match_from_top
-        return df
-    end
-
-    return desc => op
-end
-
-"""
-    add_precursor_consensus_interaction_features()
-
-Add the interaction terms between `pg_score` and the precursor consensus
-support and enrichment features.
-"""
-function add_precursor_consensus_interaction_features()
-    desc = "add_precursor_consensus_interaction_features"
-
-    op = function(df)
-        pg_score = df.pg_score
-        precursor_consensus_support = df.precursor_consensus_support
-        precursor_consensus_enrichment = df.precursor_consensus_enrichment
-
-        n_rows = length(pg_score)
-        pg_score_x_precursor_consensus_support = Vector{Float32}(undef, n_rows)
-        pg_score_x_precursor_consensus_enrichment = Vector{Float32}(undef, n_rows)
-
-        @inbounds for i in eachindex(
-            pg_score,
-            precursor_consensus_support,
-            precursor_consensus_enrichment
-        )
-            pg_score_x_precursor_consensus_support[i] =
-                Float32(pg_score[i]) * Float32(precursor_consensus_support[i])
-            pg_score_x_precursor_consensus_enrichment[i] =
-                Float32(pg_score[i]) * Float32(precursor_consensus_enrichment[i])
-        end
-
-        df.pg_score_x_precursor_consensus_support = pg_score_x_precursor_consensus_support
-        df.pg_score_x_precursor_consensus_enrichment = pg_score_x_precursor_consensus_enrichment
-        return df
-    end
-
-    return desc => op
-end
-
-"""
     _protein_group_probability_column(df)
 
 Choose the protein-group probability column present in `df`.
@@ -1053,9 +985,7 @@ function perform_protein_inference_pipeline(
         post_inference_pipeline = TransformPipeline() |>
             filter_by_min_peptides(min_peptides) |>
             add_protein_features(protein_catalog) |>
-            add_weight_observation_features(weight_calibration) |>
-            add_pg_score_interaction_features() |>
-            add_precursor_consensus_interaction_features()
+            add_weight_observation_features(weight_calibration)
 
         initial_rows = nrow(protein_groups_df)
         for (desc, op) in post_inference_pipeline.operations

@@ -175,7 +175,7 @@ Return the active protein feature set used for probit rescoring.
 """
 function protein_probit_feature_names(; include_n_possible_peptides::Bool = false)
     feature_names = Symbol[
-        #:pg_score,
+        :pg_score,
         :peptide_coverage
     ]
 
@@ -185,14 +185,46 @@ function protein_probit_feature_names(; include_n_possible_peptides::Bool = fals
 
     append!(feature_names, [
         :any_common_peps,
-        #:precursor_consensus_support,
-        #:precursor_consensus_enrichment,
-        :pg_score_x_coverage_match_from_top,
-        :pg_score_x_precursor_consensus_support,
-        #:pg_score_x_precursor_consensus_enrichment
+        :coverage_match_from_top,
+        :precursor_consensus_support,
+        #:precursor_consensus_enrichment
     ])
 
     return feature_names
+end
+
+"""
+    compute_protein_autopass_pg_score_threshold(df; context = "protein_probit")
+
+Compute the global maximum decoy initial `pg_score` used to auto-pass proteins
+before protein probit rescoring.
+"""
+function compute_protein_autopass_pg_score_threshold(
+    df::AbstractDataFrame;
+    context::AbstractString = "protein_probit"
+)
+    decoy_mask = .!df.target
+    pg_score_threshold = any(decoy_mask) ? maximum(Float32.(df.pg_score[decoy_mask])) : 0.0f0
+    @user_info "Protein auto-pass pg_score threshold context=$(context) pg_score_threshold=$(pg_score_threshold)"
+    return pg_score_threshold
+end
+
+"""
+    log_protein_autopass_partition(df, pg_score_threshold; context = "protein_probit")
+
+Log how many protein groups are auto-passed versus sent to protein probit training/scoring.
+"""
+function log_protein_autopass_partition(
+    df::AbstractDataFrame,
+    pg_score_threshold::Real;
+    context::AbstractString = "protein_probit"
+)
+    auto_pass_mask = Float32.(df.pg_score) .> Float32(pg_score_threshold)
+    train_mask = .!auto_pass_mask
+
+    @user_info "Protein auto-pass partition context=$(context) pg_score_threshold=$(Float32(pg_score_threshold)) auto_pass_rows=$(sum(auto_pass_mask)) auto_pass_targets=$(sum(df.target[auto_pass_mask])) auto_pass_decoys=$(sum(.!df.target[auto_pass_mask])) train_rows=$(sum(train_mask)) train_targets=$(sum(df.target[train_mask])) train_decoys=$(sum(.!df.target[train_mask]))"
+
+    return (auto_pass_mask = auto_pass_mask, train_mask = train_mask)
 end
 
 """
@@ -961,6 +993,7 @@ function build_protein_semisupervised_training_set(
     peps = Vector{Float32}(undef, n)
     get_qvalues!(scores, targets, qvals)
     get_PEP!(scores, targets, peps)
+    min_pep_neg_threshold = 0.50f0
 
     positive_mask = BitVector(undef, n)
     mined_negative_mask = BitVector(undef, n)
@@ -1294,18 +1327,36 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
     feature_names = protein_probit_feature_names(include_n_possible_peptides = true)
+    pg_score_threshold = compute_protein_autopass_pg_score_threshold(
+        all_protein_groups;
+        context = "protein_probit"
+    )
+    partition = log_protein_autopass_partition(
+        all_protein_groups,
+        pg_score_threshold;
+        context = "protein_probit"
+    )
+    train_mask = partition.train_mask
+    feature_df = all_protein_groups[train_mask, :]
 
     # Apply feature filtering
-    adjust_any_common_peps!(feature_names, all_protein_groups)
-    remove_zero_variance_columns!(feature_names, all_protein_groups)
+    adjust_any_common_peps!(feature_names, feature_df)
+    remove_zero_variance_columns!(feature_names, feature_df)
 
     if isempty(feature_names)
         @user_warn "No valid features remaining for probit regression after filtering"
         return
     end
 
-    X = Matrix{Float64}(all_protein_groups[:, feature_names])
-    y = all_protein_groups.target
+    if nrow(feature_df) == 0
+        @user_warn "No protein groups remain at or below the auto-pass pg_score threshold; skipping protein probit regression" pg_score_threshold = pg_score_threshold
+        return
+    end
+
+    @user_info "Protein probit training rows context=protein_probit train_rows=$(nrow(feature_df)) train_targets=$(sum(feature_df.target)) train_decoys=$(sum(.!feature_df.target))"
+
+    X = Matrix{Float64}(feature_df[:, feature_names])
+    y = feature_df.target
 
     # Fit probit model
     #β_fitted, X_mean, X_std = fit_probit_model(X, y)
@@ -1317,11 +1368,17 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         min_pep_neg_threshold = min_pep_neg_threshold_itr,
         context = "protein_probit"
     )
-    all_protein_groups[!, :pg_score] = Float32.(calculate_probit_scores(X, β_fitted))
+    auto_accept_mask = partition.auto_pass_mask
+    if any(train_mask)
+        all_protein_groups[train_mask, :pg_score] = Float32.(calculate_probit_scores(X, β_fitted))
+    end
+    if any(auto_accept_mask)
+        all_protein_groups[auto_accept_mask, :pg_score] .= 1.0f0
+    end
     # Re-process individual files if references are provided
     if !isempty(pg_refs)
         # Use the new apply_probit_scores! function with references
-        apply_probit_scores!(pg_refs, β_fitted, feature_names)
+        apply_probit_scores!(pg_refs, β_fitted, feature_names, Float32(pg_score_threshold))
     end
 end
 
@@ -1381,9 +1438,9 @@ function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
 end
 
 """
-    fit_probit_model_semisupervised(X, y, feature_names; q_value_threshold = 0.01f0, min_pep_neg_threshold = 0.90f0, context = "protein_probit")
+    fit_probit_model_semisupervised(X, y, feature_names; q_value_threshold = 0.01f0, min_pep_neg_threshold = 0.90f0, n_iterations = 10, context = "protein_probit")
 
-Fit the protein probit model with one supervised pass and one mined-label pass.
+Fit the protein probit model with one supervised pass and repeated mined-label refinements.
 """
 function fit_probit_model_semisupervised(
     X::Matrix{Float64},
@@ -1391,34 +1448,50 @@ function fit_probit_model_semisupervised(
     feature_names::Vector{Symbol};
     q_value_threshold::Float32 = 0.01f0,
     min_pep_neg_threshold::Float32 = 0.90f0,
+    n_iterations::Int = 10,
     context::AbstractString = "protein_probit"
 )
-    β_pass1 = fit_probit_model(X, y)
-    log_probit_feature_importance(feature_names, β_pass1, X; context = context * "_pass1")
+    total_targets = sum(y)
+    total_decoys = length(y) - total_targets
 
-    pass1_scores = calculate_probit_scores(X, β_pass1)
-    ss = build_protein_semisupervised_training_set(
-        pass1_scores,
-        y;
-        q_value_threshold = q_value_threshold,
-        min_pep_neg_threshold = min_pep_neg_threshold
-    )
+    @user_info "Protein probit training iteration context=$(context) iteration=1 rows=$(length(y)) targets=$(total_targets) decoys=$(total_decoys) mined_target_negatives=0"
 
-    second_pass_count = sum(ss.keep_mask)
-    second_pass_targets = sum(ss.labels)
-    second_pass_decoys = second_pass_count - second_pass_targets
+    β_current = fit_probit_model(X, y)
+    log_probit_feature_importance(feature_names, β_current, X; context = context * "_iter_1")
 
-    @user_info "Protein probit semi-supervised selection context=$(context) q_value_threshold=$(q_value_threshold) min_pep_neg_threshold=$(min_pep_neg_threshold) pass1_rows=$(length(y)) pass2_rows=$(second_pass_count) pass2_targets=$(second_pass_targets) pass2_decoys=$(second_pass_decoys) confident_targets=$(sum(ss.positive_mask)) mined_negatives=$(sum(ss.mined_negative_mask))"
-
-    if second_pass_targets < 10 || second_pass_decoys < 10
-        @user_warn "Protein probit semi-supervised pass 2 has insufficient data; using pass 1 model" context = context pass2_targets = second_pass_targets pass2_decoys = second_pass_decoys
-        return β_pass1
+    if n_iterations <= 1
+        return β_current
     end
 
-    X_pass2 = X[ss.keep_mask, :]
-    β_pass2 = fit_probit_model(X_pass2, ss.labels)
-    log_probit_feature_importance(feature_names, β_pass2, X_pass2; context = context * "_pass2")
-    return β_pass2
+    for iteration in 2:n_iterations
+        iteration_scores = calculate_probit_scores(X, β_current)
+        ss = build_protein_semisupervised_training_set(
+            iteration_scores,
+            y;
+            q_value_threshold = q_value_threshold,
+            min_pep_neg_threshold = min_pep_neg_threshold
+        )
+
+        iteration_row_count = sum(ss.keep_mask)
+        iteration_target_count = sum(ss.labels)
+        iteration_decoy_count = iteration_row_count - iteration_target_count
+        mined_target_negatives = sum(ss.mined_negative_mask)
+        confident_targets = sum(ss.positive_mask)
+
+        @user_info "Protein probit semi-supervised selection context=$(context) iteration=$(iteration) q_value_threshold=$(q_value_threshold) min_pep_neg_threshold=$(min_pep_neg_threshold) total_rows=$(length(y)) total_targets=$(total_targets) total_decoys=$(total_decoys) selected_rows=$(iteration_row_count) selected_targets=$(iteration_target_count) selected_decoys=$(iteration_decoy_count) confident_targets=$(confident_targets) mined_target_negatives=$(mined_target_negatives)"
+
+        if iteration_target_count < 10 || iteration_decoy_count < 10
+            @user_warn "Protein probit semi-supervised iteration has insufficient data; using previous iteration model" context = context iteration = iteration selected_targets = iteration_target_count selected_decoys = iteration_decoy_count
+            return β_current
+        end
+
+        X_iteration = X[ss.keep_mask, :]
+        @user_info "Protein probit training iteration context=$(context) iteration=$(iteration) rows=$(iteration_row_count) targets=$(iteration_target_count) decoys=$(iteration_decoy_count) mined_target_negatives=$(mined_target_negatives)"
+        β_current = fit_probit_model(X_iteration, ss.labels)
+        log_probit_feature_importance(feature_names, β_current, X_iteration; context = context * "_iter_$(iteration)")
+    end
+
+    return β_current
 end
 
 """
@@ -2133,7 +2206,8 @@ function apply_probit_scores_multifold!(
     pg_refs::Vector{ProteinGroupFileReference},
     protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     models::Dict{UInt8, Vector{Float64}},
-    feature_names::Vector{Symbol};
+    feature_names::Vector{Symbol},
+    pg_score_threshold::Float32;
     skip_scoring = false
 )
     for ref in pg_refs
@@ -2155,10 +2229,15 @@ function apply_probit_scores_multifold!(
             
             # Apply appropriate model to each fold (skip if skip_scoring = true)
             if !skip_scoring
+                auto_accept_mask = Float32.(df.old_pg_score) .> pg_score_threshold
+                if any(auto_accept_mask)
+                    df[auto_accept_mask, :pg_score] .= 1.0f0
+                end
                 for (fold, model) in models
-                    mask = df.cv_fold .== fold
+                    mask = (df.cv_fold .== fold) .& .!auto_accept_mask
                     if sum(mask) > 0
-                        X = Matrix{Float64}(df[mask, feature_names])
+                        scoring_df = df[mask, :]
+                        X = Matrix{Float64}(scoring_df[:, feature_names])
                         df[mask, :pg_score] = Float32.(calculate_probit_scores(X, model))
                     end
                 end
@@ -2243,16 +2322,31 @@ function perform_probit_analysis_multifold(
     end
 
     feature_names = protein_probit_feature_names()
-    # Apply feature filtering
-    adjust_any_common_peps!(feature_names, all_protein_groups)
-    remove_zero_variance_columns!(feature_names, all_protein_groups)
+    pg_score_threshold = compute_protein_autopass_pg_score_threshold(
+        all_protein_groups;
+        context = "protein_probit_multifold_global"
+    )
+    partition = log_protein_autopass_partition(
+        all_protein_groups,
+        pg_score_threshold;
+        context = "protein_probit_multifold_global"
+    )
+    trainable_mask = partition.train_mask
+    feature_filter_df = all_protein_groups[trainable_mask, :]
+    adjust_any_common_peps!(feature_names, feature_filter_df)
+    remove_zero_variance_columns!(feature_names, feature_filter_df)
 
     if isempty(feature_names)
         @user_warn "No valid features remaining for multifold probit regression after filtering"
         return
     end
 
-    #write_protein_probit_training_debug(all_protein_groups, feature_names, qc_folder)
+    if nrow(feature_filter_df) == 0
+        @user_warn "No protein groups remain at or below the auto-pass pg_score threshold; skipping protein probit regression" pg_score_threshold = pg_score_threshold
+        return
+    end
+
+    write_protein_probit_training_debug(all_protein_groups, feature_names, qc_folder)
     
     # 5. Train probit model for each fold (skip if skip_scoring = true)
     models = Dict{UInt8, Vector{Float64}}()
@@ -2260,7 +2354,7 @@ function perform_probit_analysis_multifold(
     if !skip_scoring
         for test_fold in unique_cv_folds
             # Get training data (all folds except test_fold)
-            train_mask = (all_protein_groups.cv_fold .!= test_fold)
+            train_mask = (all_protein_groups.cv_fold .!= test_fold) .& trainable_mask
             
             # Check if we have sufficient data
             n_train_targets = sum(all_protein_groups[train_mask, :target])
@@ -2270,9 +2364,12 @@ function perform_probit_analysis_multifold(
                 @user_warn "Insufficient training data for fold $test_fold" targets=n_train_targets decoys=n_train_decoys
                 continue
             end
-            
-            X_train = Matrix{Float64}(all_protein_groups[train_mask, feature_names])
-            y_train = all_protein_groups[train_mask, :target]
+
+            train_df = all_protein_groups[train_mask, :]
+            @user_info "Protein probit fold training rows context=protein_probit_multifold_fold_$(test_fold) train_rows=$(nrow(train_df)) train_targets=$(sum(train_df.target)) train_decoys=$(sum(.!train_df.target))"
+
+            X_train = Matrix{Float64}(train_df[:, feature_names])
+            y_train = train_df.target
             
             # Fit model
             β_fitted = fit_probit_model_semisupervised(
@@ -2291,13 +2388,17 @@ function perform_probit_analysis_multifold(
     all_protein_groups[!, :old_pg_score] = copy(all_protein_groups[!, :pg_score])  # Save for comparison
     
     if !skip_scoring
+        auto_accept_mask = partition.auto_pass_mask
+        if any(auto_accept_mask)
+            all_protein_groups[auto_accept_mask, :pg_score] .= 1.0f0
+        end
         for test_fold in unique_cv_folds
             if !haskey(models, test_fold)
                 @user_warn "No model available for fold $test_fold, keeping original scores"
                 continue
             end
             
-            test_mask = all_protein_groups.cv_fold .== test_fold
+            test_mask = (all_protein_groups.cv_fold .== test_fold) .& trainable_mask
             n_test = sum(test_mask)
             
             if n_test > 0
@@ -2328,7 +2429,14 @@ function perform_probit_analysis_multifold(
 
     # 8. Update protein group files if provided
     if !isempty(pg_refs)
-        apply_probit_scores_multifold!(pg_refs, protein_to_cv_fold, models, feature_names; skip_scoring = skip_scoring)
+        apply_probit_scores_multifold!(
+            pg_refs,
+            protein_to_cv_fold,
+            models,
+            feature_names,
+            Float32(pg_score_threshold);
+            skip_scoring = skip_scoring
+        )
     end
     
     # Clean up temporary column
