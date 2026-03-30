@@ -34,6 +34,9 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         all_accessions = getAccessionNumbers(precursors)::AbstractVector{String}
         all_is_decoys = getIsDecoy(precursors)::AbstractVector{Bool}
         all_entrap_ids = getEntrapmentGroupId(precursors)::AbstractVector{UInt8}
+        all_base_pep_ids = getBasePepId(precursors)::AbstractVector{UInt32}
+        all_structural_mods = getStructuralMods(precursors)::AbstractVector{Union{Missing, String}}
+        all_isotopic_mods = getIsotopicMods(precursors)::AbstractVector{Union{Missing, String}}
         
         # Extract precursor_idx column with type assertion for performance
         precursor_idx = df.precursor_idx::AbstractVector{UInt32}
@@ -73,6 +76,30 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
             end
             df.entrap_id = entrap_vec
         end
+
+        if !hasproperty(df, :base_pep_id)
+            base_pep_ids = Vector{UInt32}(undef, n_rows)
+            for i in 1:n_rows
+                base_pep_ids[i] = all_base_pep_ids[precursor_idx[i]]
+            end
+            df.base_pep_id = base_pep_ids
+        end
+
+        if !hasproperty(df, :structural_mods)
+            structural_mods = Vector{String}(undef, n_rows)
+            for i in 1:n_rows
+                structural_mods[i] = coalesce(all_structural_mods[precursor_idx[i]], "")
+            end
+            df.structural_mods = structural_mods
+        end
+
+        if !hasproperty(df, :isotopic_mods)
+            isotopic_mods = Vector{String}(undef, n_rows)
+            for i in 1:n_rows
+                isotopic_mods[i] = coalesce(all_isotopic_mods[precursor_idx[i]], "")
+            end
+            df.isotopic_mods = isotopic_mods
+        end
         
         return df
     end
@@ -89,8 +116,16 @@ function validate_peptide_data()
     desc = "validate_peptide_data"
     
     op = function(df)
-        required_cols = [:sequence, :accession_numbers, :is_decoy, 
-                        :entrap_id, :precursor_idx]
+        required_cols = [
+            :sequence,
+            :accession_numbers,
+            :is_decoy,
+            :entrap_id,
+            :precursor_idx,
+            :base_pep_id,
+            :structural_mods,
+            :isotopic_mods
+        ]
         
         missing_cols = setdiff(required_cols, Symbol.(names(df)))
         if !isempty(missing_cols)
@@ -380,18 +415,17 @@ end
 """
     add_weight_observation_features(calibration)
 
-Add weight-based protein coverage features using an empirical top-rank companion model.
+Add weight-based protein coverage features using an empirical top-rank exceedance model.
 """
 function add_weight_observation_features(calibration::NamedTuple)
     desc = "add_weight_observation_features"
 
     op = function(df)
         n_rows = nrow(df)
-        expected_additional_from_top = Vector{Float32}(undef, n_rows)
-        coverage_match_from_top = Vector{Float32}(undef, n_rows)
+        expected_excess_from_top = Vector{Float32}(undef, n_rows)
+        coverage_log_ratio = Vector{Float32}(undef, n_rows)
 
         log_threshold = Float64(calibration.log_threshold)
-        std_normal = Distributions.Normal()
         rank_drop_profile = Float64.(calibration.rank_drop_profile)
         rank_scale_profile = Float64.(calibration.rank_scale_profile)
         profiled_rank_count = max(Int(calibration.profiled_rank_count), 1)
@@ -402,45 +436,43 @@ function add_weight_observation_features(calibration::NamedTuple)
             k_obs = max(Int(df.n_peptides[i]), 0)
 
             if top_weight <= 0.0
-                expected_additional_from_top[i] = 0.0f0
-                coverage_match_from_top[i] = 1.0f0
+                expected_excess_from_top[i] = 0.0f0
+                coverage_log_ratio[i] = 0.0f0
                 continue
             end
 
             log_top_weight = log(top_weight)
             effective_rank_count = min(max(N_total, 1), profiled_rank_count)
             if effective_rank_count <= 1
-                expected_additional_from_top[i] = 0.0f0
-                coverage_match_from_top[i] = 1.0f0
+                expected_excess_from_top[i] = 0.0f0
+                coverage_log_ratio[i] = 0.0f0
                 continue
             end
 
-            expected_additional = 0.0
+            expected_excess = 0.0
             for rank_idx in 2:effective_rank_count
                 rank_scale = rank_scale_profile[rank_idx]
                 rank_scale = (isfinite(rank_scale) && rank_scale > 0.0) ? rank_scale : 1.0
                 expected_log_weight = log_top_weight + rank_drop_profile[rank_idx]
-                rank_detect_prob = clamp(
-                    Distributions.cdf(
-                        std_normal,
-                        (expected_log_weight - log_threshold) / rank_scale
-                    ),
-                    1e-6,
-                    1.0 - 1e-6
-                )
-                expected_additional += rank_detect_prob
+                rank_z = (expected_log_weight - log_threshold) / rank_scale
+                rank_excess = if rank_z > 20.0
+                    rank_z
+                elseif rank_z < -20.0
+                    exp(rank_z)
+                else
+                    log1p(exp(rank_z))
+                end
+                expected_excess += rank_excess
             end
 
             observed_additional = min(max(k_obs - 1, 0), effective_rank_count - 1)
-            coverage_deficit = max(expected_additional - observed_additional, 0.0)
-            match_denominator = max(expected_additional, 1.0)
 
-            expected_additional_from_top[i] = Float32(expected_additional)
-            coverage_match_from_top[i] = Float32(clamp(1.0 - (coverage_deficit / match_denominator), 0.0, 1.0))
+            expected_excess_from_top[i] = Float32(expected_excess)
+            coverage_log_ratio[i] = Float32(log((observed_additional + 0.5) / (expected_excess + 0.5)))
         end
 
-        df.expected_additional_from_top = expected_additional_from_top
-        df.coverage_match_from_top = coverage_match_from_top
+        df.expected_excess_from_top = expected_excess_from_top
+        df.coverage_log_ratio = coverage_log_ratio
         return df
     end
 
@@ -450,81 +482,302 @@ end
 """
     _protein_group_probability_column(df)
 
-Choose the protein-group probability column present in `df`.
+Choose the precursor probability column used for the initial protein roll-up.
+Prefer direct run-specific precursor probabilities when present.
 """
-function _protein_group_probability_column(df::DataFrame)
-    if hasproperty(df, :MBR_boosted_prec_prob)
-        return :MBR_boosted_prec_prob
-    else
+function _protein_group_probability_column(df::AbstractDataFrame)
+    if hasproperty(df, :prec_prob)
         return :prec_prob
     end
+    if hasproperty(df, :MBR_boosted_prec_prob)
+        return :MBR_boosted_prec_prob
+    end
+    error("Missing required precursor probability column for protein roll-up")
+end
+
+const PROTEIN_ROLLUP_PROB_EPS = 1.0f-6
+const PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT = 0.01f0
+const ProteinRollupPrecursorRow = @NamedTuple{
+    precursor_idx::UInt32,
+    base_pep_id::UInt32,
+    sequence::String,
+    charge::UInt8,
+    structural_mods::String,
+    isotopic_mods::String,
+    pep::Float32,
+    prob::Float32,
+    score::Float32,
+    best_weight::Float32
+}
+const ProteinRollupModifiedPeptideRow = @NamedTuple{
+    base_pep_id::UInt32,
+    sequence::String,
+    structural_mods::String,
+    isotopic_mods::String,
+    log_none_sum::Float64,
+    pep::Float32,
+    prob::Float32,
+    score::Float32,
+    best_weight::Float32,
+    precursor_count::Int32
+}
+const ProteinRollupPeptideRow = @NamedTuple{
+    base_pep_id::UInt32,
+    sequence::String,
+    log_none_sum::Float64,
+    pep::Float32,
+    prob::Float32,
+    score::Float32,
+    best_weight::Float32,
+    modified_peptide_count::Int32
+}
+
+@inline function _sanitize_rollup_probability(value)::Float32
+    prob = Float32(value)
+    if !isfinite(prob)
+        return PROTEIN_ROLLUP_PROB_EPS
+    end
+    return clamp(prob, PROTEIN_ROLLUP_PROB_EPS, 1.0f0 - PROTEIN_ROLLUP_PROB_EPS)
+end
+
+@inline function _precursor_log_none_for_rollup(prob::Float32)::Float64
+    adjusted_none_prob = clamp(
+        (1.0f0 - prob) + PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT,
+        PROTEIN_ROLLUP_PROB_EPS,
+        1.0f0
+    )
+    return log(Float64(adjusted_none_prob))
 end
 
 """
-    _quant_peptides_and_pg_score(gdf, quant_mask, prob_col)
+    _protein_rollup_quant_mask(df; q_value_threshold=0.01f0)
 
-Collapse each peptide to its best probability and rebuild the raw `pg_score`.
+Return the precursor mask used for protein roll-up. Rows must be quant-eligible
+and, when available, still pass both run-specific and global precursor q-value
+thresholds.
 """
-function _quant_peptides_and_pg_score(
+function _protein_rollup_quant_mask(
+    df::AbstractDataFrame;
+    q_value_threshold::Float32 = 0.01f0
+)
+    quant_mask = df.use_for_protein_quant .== true
+
+    if hasproperty(df, :MBR_boosted_qval)
+        quant_mask .&= coalesce.(df.MBR_boosted_qval .<= q_value_threshold, false)
+    elseif hasproperty(df, :qval)
+        quant_mask .&= coalesce.(df.qval .<= q_value_threshold, false)
+    end
+
+    if hasproperty(df, :MBR_boosted_global_qval)
+        quant_mask .&= coalesce.(df.MBR_boosted_global_qval .<= q_value_threshold, false)
+    elseif hasproperty(df, :global_qval)
+        quant_mask .&= coalesce.(df.global_qval .<= q_value_threshold, false)
+    end
+
+    return quant_mask
+end
+
+@inline function _probability_from_log_none_sum(log_none_sum::Float64)::Float32
+    if !isfinite(log_none_sum)
+        return 1.0f0 - PROTEIN_ROLLUP_PROB_EPS
+    end
+    return Float32(clamp(-expm1(log_none_sum), Float64(PROTEIN_ROLLUP_PROB_EPS), 1.0 - Float64(PROTEIN_ROLLUP_PROB_EPS)))
+end
+
+@inline function _none_probability_from_log_none_sum(log_none_sum::Float64)::Float32
+    if !isfinite(log_none_sum)
+        return PROTEIN_ROLLUP_PROB_EPS
+    end
+    return Float32(clamp(exp(log_none_sum), Float64(PROTEIN_ROLLUP_PROB_EPS), 1.0))
+end
+
+@inline function _score_from_log_none_sum(log_none_sum::Float64)::Float32
+    if isnan(log_none_sum)
+        return 0.0f0
+    end
+    if isinf(log_none_sum)
+        return log_none_sum < 0.0 ? Float32(-log(Float64(PROTEIN_ROLLUP_PROB_EPS))) : 0.0f0
+    end
+    return Float32(max(-log_none_sum, 0.0))
+end
+
+"""
+    _build_protein_rollup(gdf, quant_mask, prob_col)
+
+Roll up precursor-level probability evidence to modified peptides, then
+peptides, and return the peptide-level protein score plus reusable
+intermediate rows.
+"""
+function _build_protein_rollup(
     gdf::AbstractDataFrame,
     quant_mask::AbstractVector{Bool},
     prob_col::Symbol
 )
-    sequences = gdf.sequence
-    probs = gdf[!, prob_col]
+    if !hasproperty(gdf, prob_col)
+        error("Missing required $(prob_col) column for protein roll-up")
+    end
+    if !hasproperty(gdf, :base_pep_id)
+        error("Missing required :base_pep_id column for protein roll-up")
+    end
 
-    quant_peptides = String[]
-    unique_pep_probs = Float32[]
-    peptide_to_idx = Dict{String, Int}()
+    prob_by_precursor = Dict{UInt32, Float32}()
+    best_weight_by_precursor = Dict{UInt32, Float32}()
+    base_pep_id_by_precursor = Dict{UInt32, UInt32}()
+    sequence_by_precursor = Dict{UInt32, String}()
+    charge_by_precursor = Dict{UInt32, UInt8}()
+    structural_mods_by_precursor = Dict{UInt32, String}()
+    isotopic_mods_by_precursor = Dict{UInt32, String}()
 
     @inbounds for i in eachindex(quant_mask)
         quant_mask[i] || continue
 
-        pep = sequences[i]
-        prob = Float32(probs[i])
+        precursor_idx = UInt32(gdf.precursor_idx[i])
+        prob_val = _sanitize_rollup_probability(gdf[!, prob_col][i])
+        weight_val = Float32(gdf.weight[i])
 
-        if haskey(peptide_to_idx, pep)
-            pep_idx = peptide_to_idx[pep]
-            if prob > unique_pep_probs[pep_idx]
-                unique_pep_probs[pep_idx] = prob
+        if haskey(prob_by_precursor, precursor_idx)
+            prob_by_precursor[precursor_idx] = max(prob_by_precursor[precursor_idx], prob_val)
+            if weight_val > best_weight_by_precursor[precursor_idx]
+                best_weight_by_precursor[precursor_idx] = weight_val
             end
         else
-            push!(quant_peptides, pep)
-            push!(unique_pep_probs, prob)
-            peptide_to_idx[pep] = length(quant_peptides)
+            prob_by_precursor[precursor_idx] = prob_val
+            best_weight_by_precursor[precursor_idx] = weight_val
+            base_pep_id_by_precursor[precursor_idx] = UInt32(gdf.base_pep_id[i])
+            sequence_by_precursor[precursor_idx] = String(gdf.sequence[i])
+            charge_by_precursor[precursor_idx] =
+                hasproperty(gdf, :charge) ? UInt8(gdf.charge[i]) : UInt8(0)
+            structural_mods_by_precursor[precursor_idx] =
+                hasproperty(gdf, :structural_mods) && !ismissing(gdf.structural_mods[i]) ? String(gdf.structural_mods[i]) : ""
+            isotopic_mods_by_precursor[precursor_idx] =
+                hasproperty(gdf, :isotopic_mods) && !ismissing(gdf.isotopic_mods[i]) ? String(gdf.isotopic_mods[i]) : ""
         end
     end
 
-    if isempty(quant_peptides)
-        return quant_peptides, 0.0f0
+    precursor_rows = ProteinRollupPrecursorRow[]
+    sizehint!(precursor_rows, length(prob_by_precursor))
+    for precursor_idx in keys(prob_by_precursor)
+        prob_val = prob_by_precursor[precursor_idx]
+        none_prob_val = Float32(1.0f0 - prob_val)
+        score_val = Float32(-log(none_prob_val))
+        push!(precursor_rows, (
+            precursor_idx = precursor_idx,
+            base_pep_id = base_pep_id_by_precursor[precursor_idx],
+            sequence = sequence_by_precursor[precursor_idx],
+            charge = charge_by_precursor[precursor_idx],
+            structural_mods = structural_mods_by_precursor[precursor_idx],
+            isotopic_mods = isotopic_mods_by_precursor[precursor_idx],
+            pep = none_prob_val,
+            prob = prob_val,
+            score = score_val,
+            best_weight = best_weight_by_precursor[precursor_idx]
+        ))
     end
 
-    return quant_peptides, -sum(log.(1.0f0 .- unique_pep_probs))
-end
-
-"""
-    _direct_quant_mask(df)
-
-Return the quant mask used for direct, non-MBR precursor consensus evidence.
-"""
-function _direct_quant_mask(df::AbstractDataFrame)
-    quant_mask = df.use_for_protein_quant .== true
-    if hasproperty(df, :MBR_candidate)
-        return quant_mask .& .!df.MBR_candidate
+    if isempty(precursor_rows)
+        return (
+            precursor_rows = precursor_rows,
+            modified_peptide_rows = ProteinRollupModifiedPeptideRow[],
+            peptide_rows = ProteinRollupPeptideRow[],
+            pg_score = 0.0f0,
+            n_peptides = 0,
+            peptide_list = String[],
+            top_pep_weight = 0.0f0
+        )
     end
-    return quant_mask
+
+    modified_log_none_sum = Dict{Tuple{UInt32, String, String}, Float64}()
+    modified_best_weight = Dict{Tuple{UInt32, String, String}, Float32}()
+    modified_sequence = Dict{Tuple{UInt32, String, String}, String}()
+    modified_precursor_count = Dict{Tuple{UInt32, String, String}, Int32}()
+
+    for precursor_row in precursor_rows
+        mod_key = (
+            precursor_row.base_pep_id,
+            precursor_row.structural_mods,
+            precursor_row.isotopic_mods
+        )
+        modified_log_none_sum[mod_key] = get(modified_log_none_sum, mod_key, 0.0) + _precursor_log_none_for_rollup(precursor_row.prob)
+        modified_best_weight[mod_key] = max(
+            get(modified_best_weight, mod_key, 0.0f0),
+            precursor_row.best_weight
+        )
+        modified_sequence[mod_key] = precursor_row.sequence
+        modified_precursor_count[mod_key] = get(modified_precursor_count, mod_key, Int32(0)) + Int32(1)
+    end
+
+    modified_peptide_rows = ProteinRollupModifiedPeptideRow[]
+    sizehint!(modified_peptide_rows, length(modified_log_none_sum))
+    for (mod_key, log_none_sum) in modified_log_none_sum
+        push!(modified_peptide_rows, (
+            base_pep_id = mod_key[1],
+            sequence = modified_sequence[mod_key],
+            structural_mods = mod_key[2],
+            isotopic_mods = mod_key[3],
+            log_none_sum = log_none_sum,
+            pep = _none_probability_from_log_none_sum(log_none_sum),
+            prob = _probability_from_log_none_sum(log_none_sum),
+            score = _score_from_log_none_sum(log_none_sum),
+            best_weight = modified_best_weight[mod_key],
+            precursor_count = modified_precursor_count[mod_key]
+        ))
+    end
+    sort!(modified_peptide_rows; by = row -> row.score, rev = true)
+
+    peptide_log_none_sum = Dict{UInt32, Float64}()
+    peptide_best_weight = Dict{UInt32, Float32}()
+    peptide_sequence = Dict{UInt32, String}()
+    peptide_modified_count = Dict{UInt32, Int32}()
+
+    for modified_row in modified_peptide_rows
+        peptide_key = modified_row.base_pep_id
+        peptide_log_none_sum[peptide_key] = get(peptide_log_none_sum, peptide_key, 0.0) + modified_row.log_none_sum
+        peptide_best_weight[peptide_key] = max(
+            get(peptide_best_weight, peptide_key, 0.0f0),
+            modified_row.best_weight
+        )
+        peptide_sequence[peptide_key] = modified_row.sequence
+        peptide_modified_count[peptide_key] = get(peptide_modified_count, peptide_key, Int32(0)) + Int32(1)
+    end
+
+    peptide_rows = ProteinRollupPeptideRow[]
+    sizehint!(peptide_rows, length(peptide_log_none_sum))
+    for (base_pep_id, log_none_sum) in peptide_log_none_sum
+        push!(peptide_rows, (
+            base_pep_id = base_pep_id,
+            sequence = peptide_sequence[base_pep_id],
+            log_none_sum = log_none_sum,
+            pep = _none_probability_from_log_none_sum(log_none_sum),
+            prob = _probability_from_log_none_sum(log_none_sum),
+            score = _score_from_log_none_sum(log_none_sum),
+            best_weight = peptide_best_weight[base_pep_id],
+            modified_peptide_count = peptide_modified_count[base_pep_id]
+        ))
+    end
+    sort!(peptide_rows; by = row -> row.score, rev = true)
+
+    pg_score = isempty(peptide_rows) ? 0.0f0 : Float32(sum(row.score for row in peptide_rows))
+    top_pep_weight = isempty(peptide_rows) ? 0.0f0 : maximum(row.best_weight for row in peptide_rows)
+
+    return (
+        precursor_rows = precursor_rows,
+        modified_peptide_rows = modified_peptide_rows,
+        peptide_rows = peptide_rows,
+        pg_score = pg_score,
+        n_peptides = length(peptide_rows),
+        peptide_list = [row.sequence for row in peptide_rows],
+        top_pep_weight = top_pep_weight
+    )
 end
 
-const CONSENSUS_PRECURSOR_MAX_RUNS = 5
-const CONSENSUS_PRECURSOR_RUN_DECAY_RATE = 1.0
 const ConsensusRunVote = @NamedTuple{
     pg_score::Float32,
     run_order::Int64,
     normalized_precursors::Vector{Pair{UInt32, Float32}}
 }
 
-@inline function _consensus_run_decay(selected_rank::Int)::Float64
-    return exp(-CONSENSUS_PRECURSOR_RUN_DECAY_RATE * Float64(selected_rank - 1))
+@inline function _consensus_runs_to_keep(n_runs::Int)::Int
+    return n_runs <= 0 ? 0 : ceil(Int, sqrt(n_runs))
 end
 
 """
@@ -544,7 +797,7 @@ end
 """
     _insert_top_consensus_vote!(run_votes, vote)
 
-Insert `vote` into the in-place top-N run list for one protein.
+Insert `vote` into the in-place score-sorted run list for one protein.
 """
 function _insert_top_consensus_vote!(
     run_votes::Vector{ConsensusRunVote},
@@ -559,14 +812,7 @@ function _insert_top_consensus_vote!(
         end
     end
 
-    if insert_idx > CONSENSUS_PRECURSOR_MAX_RUNS
-        return run_votes
-    end
-
     insert!(run_votes, insert_idx, vote)
-    if length(run_votes) > CONSENSUS_PRECURSOR_MAX_RUNS
-        pop!(run_votes)
-    end
 
     return run_votes
 end
@@ -575,17 +821,29 @@ end
     build_precursor_consensus(psm_refs::Vector{PSMFileReference})
 
 Build a dataset-level precursor relative-weight consensus within each inferred
-protein group. Consensus weights are derived from direct (non-MBR) quant
-precursors after normalizing each precursor by the max precursor weight in that
-protein run. Each run's vote is weighted by the run's current protein
-`pg_score`. Only the top `CONSENSUS_PRECURSOR_MAX_RUNS` runs per protein group
-are retained, with an exponential decay applied by run rank within that top
-set.
+protein group. Consensus weights are derived from quant precursors after
+normalizing each precursor by the max precursor weight in that protein run.
+Each run's vote is weighted by the run's current protein `pg_score`. After all
+runs are collected for a protein, only the top `ceil(sqrt(n_runs))` runs by
+`pg_score` are retained for the consensus.
 """
-function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
+function build_precursor_consensus(
+    psm_refs::Vector{PSMFileReference};
+    q_value_threshold::Float32 = 0.01f0
+)
     consensus_weight_sums = Dict{Tuple{String, Bool, UInt8, UInt32}, Float64}()
     protein_total_vote = Dict{Tuple{String, Bool, UInt8}, Float64}()
     protein_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
+    precursor_metadata = Dict{
+        Tuple{String, Bool, UInt8, UInt32},
+        @NamedTuple{
+            sequence::String,
+            charge::UInt8,
+            structural_mods::String,
+            isotopic_mods::String
+        }
+    }()
+    precursor_run_counts = Dict{Tuple{String, Bool, UInt8, UInt32}, Int32}()
 
     for (run_order, psm_ref) in enumerate(psm_refs)
         if !exists(psm_ref)
@@ -596,29 +854,10 @@ function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
         prob_col = _protein_group_probability_column(df)
 
         for gdf in groupby(df, [:inferred_protein_group, :target, :entrap_id])
-            quant_mask = gdf.use_for_protein_quant .== true
-            _, pg_score = _quant_peptides_and_pg_score(gdf, quant_mask, prob_col)
+            quant_mask = _protein_rollup_quant_mask(gdf; q_value_threshold = q_value_threshold)
+            rollup = _build_protein_rollup(gdf, quant_mask, prob_col)
 
-            direct_mask = _direct_quant_mask(gdf)
-            best_weight_by_precursor = Dict{UInt32, Float32}()
-
-            @inbounds for i in eachindex(direct_mask)
-                if !direct_mask[i]
-                    continue
-                end
-
-                precursor_idx = UInt32(gdf.precursor_idx[i])
-                weight_val = Float32(gdf.weight[i])
-                if haskey(best_weight_by_precursor, precursor_idx)
-                    if weight_val > best_weight_by_precursor[precursor_idx]
-                        best_weight_by_precursor[precursor_idx] = weight_val
-                    end
-                else
-                    best_weight_by_precursor[precursor_idx] = weight_val
-                end
-            end
-
-            if isempty(best_weight_by_precursor)
+            if isempty(rollup.precursor_rows)
                 continue
             end
 
@@ -631,28 +870,41 @@ function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
             target = Bool(gdf.target[1])
             entrap_id = UInt8(gdf.entrap_id[1])
 
-            run_max_weight = maximum(values(best_weight_by_precursor))
+            for precursor_row in rollup.precursor_rows
+                key = (protein_name, target, entrap_id, precursor_row.precursor_idx)
+                precursor_run_counts[key] = get(precursor_run_counts, key, Int32(0)) + Int32(1)
+                if !haskey(precursor_metadata, key)
+                    precursor_metadata[key] = (
+                        sequence = precursor_row.sequence,
+                        charge = precursor_row.charge,
+                        structural_mods = precursor_row.structural_mods,
+                        isotopic_mods = precursor_row.isotopic_mods
+                    )
+                end
+            end
+
+            run_max_weight = maximum(precursor_row.best_weight for precursor_row in rollup.precursor_rows)
             if !isfinite(run_max_weight) || run_max_weight <= 0.0f0
                 continue
             end
 
             normalized_precursors = Pair{UInt32, Float32}[]
-            sizehint!(normalized_precursors, length(best_weight_by_precursor))
-            for (precursor_idx, precursor_weight) in best_weight_by_precursor
+            sizehint!(normalized_precursors, length(rollup.precursor_rows))
+            for precursor_row in rollup.precursor_rows
                 push!(
                     normalized_precursors,
-                    precursor_idx => Float32(clamp(precursor_weight / run_max_weight, 0.0f0, 1.0f0))
+                    precursor_row.precursor_idx => Float32(clamp(precursor_row.best_weight / run_max_weight, 0.0f0, 1.0f0))
                 )
             end
             protein_key = (protein_name, target, entrap_id)
             _insert_top_consensus_vote!(
                 get!(
-                    () -> sizehint!(ConsensusRunVote[], CONSENSUS_PRECURSOR_MAX_RUNS),
+                    () -> sizehint!(ConsensusRunVote[], length(psm_refs)),
                     protein_run_votes,
                     protein_key
                 ),
                 (
-                    pg_score = pg_score,
+                    pg_score = rollup.pg_score,
                     run_order = Int64(run_order),
                     normalized_precursors = normalized_precursors
                 )
@@ -660,10 +912,13 @@ function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
         end
     end
 
+    selected_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
     for (protein_key, run_votes) in protein_run_votes
-        for selected_rank in eachindex(run_votes)
-            run_vote = run_votes[selected_rank]
-            run_weight = Float64(run_vote.pg_score) * _consensus_run_decay(selected_rank)
+        runs_to_keep = _consensus_runs_to_keep(length(run_votes))
+        selected_votes = run_votes[1:runs_to_keep]
+        selected_run_votes[protein_key] = selected_votes
+        for run_vote in selected_votes
+            run_weight = Float64(run_vote.pg_score)
             protein_total_vote[protein_key] = get(protein_total_vote, protein_key, 0.0) + run_weight
 
             for precursor in run_vote.normalized_precursors
@@ -686,15 +941,191 @@ function build_precursor_consensus(psm_refs::Vector{PSMFileReference})
 
     mean_relative_weight = Dict{Tuple{String, Bool, UInt8}, Float32}()
     profiled_precursor_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
+    shape_strength = Dict{Tuple{String, Bool, UInt8}, Float32}()
+    precursors_by_protein = Dict{Tuple{String, Bool, UInt8}, Vector{Pair{UInt32, Float32}}}()
     for (protein_key, relative_weights) in protein_precursor_values
         mean_relative_weight[protein_key] = isempty(relative_weights) ? 0.0f0 : Float32(sum(relative_weights) / length(relative_weights))
         profiled_precursor_count[protein_key] = Int32(length(relative_weights))
+    end
+    for (protein_key, run_votes) in selected_run_votes
+        total_pg_score = sum(Float64(run_vote.pg_score) for run_vote in run_votes)
+        shape_strength[protein_key] = Float32(log1p(total_pg_score))
+    end
+    shape_strength_values = collect(values(shape_strength))
+    shape_confidence_scale = isempty(shape_strength_values) ? 1.0f0 :
+        Float32(max(Statistics.median(shape_strength_values), eps(Float32)))
+    for ((protein_name, target, entrap_id, precursor_idx), precursor_relative_weight) in relative_weight
+        push!(
+            get!(precursors_by_protein, (protein_name, target, entrap_id), Pair{UInt32, Float32}[]),
+            precursor_idx => precursor_relative_weight
+        )
+    end
+    for precursor_weights in values(precursors_by_protein)
+        sort!(precursor_weights; by = last, rev = true)
     end
 
     return (
         relative_weight = relative_weight,
         mean_relative_weight = mean_relative_weight,
-        profiled_precursor_count = profiled_precursor_count
+        profiled_precursor_count = profiled_precursor_count,
+        shape_strength = shape_strength,
+        shape_confidence_scale = shape_confidence_scale,
+        precursors_by_protein = precursors_by_protein,
+        precursor_metadata = precursor_metadata,
+        precursor_run_counts = precursor_run_counts
+    )
+end
+
+"""
+    _precursor_consensus_prefix_features(best_weight_by_precursor, protein_key, precursor_consensus)
+
+Score how well the run matches the consensus precursor profile up to the weakest
+observed consensus precursor.
+"""
+function _precursor_consensus_prefix_features(
+    best_weight_by_precursor::Dict{UInt32, Float32},
+    protein_key::Tuple{String, Bool, UInt8},
+    precursor_consensus::NamedTuple
+)
+    profiled_precursor_count = Int(get(precursor_consensus.profiled_precursor_count, protein_key, Int32(0)))
+    shape_strength = hasproperty(precursor_consensus, :shape_strength) ?
+        get(precursor_consensus.shape_strength, protein_key, 0.0f0) : 0.0f0
+    shape_confidence_scale = hasproperty(precursor_consensus, :shape_confidence_scale) ?
+        precursor_consensus.shape_confidence_scale : 1.0f0
+    shape_confidence = shape_strength <= 0.0f0 ? 0.0f0 :
+        Float32(shape_strength / (shape_strength + shape_confidence_scale))
+
+    if isempty(best_weight_by_precursor)
+        return (
+            prefix_shape_raw = 0.0f0,
+            prefix_shape = 0.0f0,
+            threshold = 0.0f0,
+            matched_precursors = 0,
+            prefix_consensus_sum = 0.0f0,
+            run_prefix_sum = 0.0f0,
+            profiled_precursor_count = profiled_precursor_count,
+            shape_strength = shape_strength,
+            shape_confidence = shape_confidence
+        )
+    end
+
+    consensus_relative_weight = precursor_consensus.relative_weight
+    consensus_precursors = get(
+        precursor_consensus.precursors_by_protein,
+        protein_key,
+        Pair{UInt32, Float32}[]
+    )
+    isempty(consensus_precursors) && return (
+        prefix_shape_raw = 0.0f0,
+        prefix_shape = 0.0f0,
+        threshold = 0.0f0,
+        matched_precursors = 0,
+        prefix_consensus_sum = 0.0f0,
+        run_prefix_sum = 0.0f0,
+        profiled_precursor_count = profiled_precursor_count,
+        shape_strength = shape_strength,
+        shape_confidence = shape_confidence
+    )
+
+    run_max_weight = maximum(values(best_weight_by_precursor))
+    (!isfinite(run_max_weight) || run_max_weight <= 0.0f0) && return (
+        prefix_shape_raw = 0.0f0,
+        prefix_shape = 0.0f0,
+        threshold = 0.0f0,
+        matched_precursors = 0,
+        prefix_consensus_sum = 0.0f0,
+        run_prefix_sum = 0.0f0,
+        profiled_precursor_count = profiled_precursor_count,
+        shape_strength = shape_strength,
+        shape_confidence = shape_confidence
+    )
+
+    observed_consensus_weights = Float32[]
+    matched_precursors = 0
+    for precursor_idx in keys(best_weight_by_precursor)
+        c = get(consensus_relative_weight, (protein_key[1], protein_key[2], protein_key[3], precursor_idx), 0.0f0)
+        if c > 0.0f0
+            push!(observed_consensus_weights, c)
+            matched_precursors += 1
+        end
+    end
+    isempty(observed_consensus_weights) && return (
+        prefix_shape_raw = 0.0f0,
+        prefix_shape = 0.0f0,
+        threshold = 0.0f0,
+        matched_precursors = 0,
+        prefix_consensus_sum = 0.0f0,
+        run_prefix_sum = 0.0f0,
+        profiled_precursor_count = profiled_precursor_count,
+        shape_strength = shape_strength,
+        shape_confidence = shape_confidence
+    )
+
+    threshold = minimum(observed_consensus_weights)
+    prefix_consensus_sum = 0.0f0
+    run_prefix_sum = 0.0f0
+
+    for precursor in consensus_precursors
+        precursor.second < threshold && continue
+        run_relative_weight = get(best_weight_by_precursor, precursor.first, 0.0f0) / run_max_weight
+        prefix_consensus_sum += precursor.second
+        run_prefix_sum += run_relative_weight
+    end
+
+    prefix_consensus_sum <= 0.0f0 && return (
+        prefix_shape_raw = 0.0f0,
+        prefix_shape = 0.0f0,
+        threshold = threshold,
+        matched_precursors = matched_precursors,
+        prefix_consensus_sum = 0.0f0,
+        run_prefix_sum = run_prefix_sum,
+        profiled_precursor_count = profiled_precursor_count,
+        shape_strength = shape_strength,
+        shape_confidence = shape_confidence
+    )
+
+    if run_prefix_sum <= 0.0f0
+        return (
+            prefix_shape_raw = 0.0f0,
+            prefix_shape = 0.0f0,
+            threshold = threshold,
+            matched_precursors = matched_precursors,
+            prefix_consensus_sum = prefix_consensus_sum,
+            run_prefix_sum = run_prefix_sum,
+            profiled_precursor_count = profiled_precursor_count,
+            shape_strength = shape_strength,
+            shape_confidence = shape_confidence
+        )
+    end
+
+    shape_dot = 0.0f0
+    consensus_norm_sq = 0.0f0
+    run_norm_sq = 0.0f0
+    for precursor in consensus_precursors
+        precursor.second < threshold && continue
+        run_relative_weight = get(best_weight_by_precursor, precursor.first, 0.0f0) / run_max_weight
+        consensus_norm = precursor.second / prefix_consensus_sum
+        run_norm = run_relative_weight / run_prefix_sum
+        shape_dot += run_norm * consensus_norm
+        consensus_norm_sq += consensus_norm * consensus_norm
+        run_norm_sq += run_norm * run_norm
+    end
+
+    if consensus_norm_sq <= 0.0f0 || run_norm_sq <= 0.0f0
+        prefix_shape_raw = 0.0f0
+    else
+        prefix_shape_raw = Float32(clamp(shape_dot / sqrt(consensus_norm_sq * run_norm_sq), 0.0f0, 1.0f0))
+    end
+    return (
+        prefix_shape_raw = prefix_shape_raw,
+        prefix_shape = shape_confidence * prefix_shape_raw,
+        threshold = threshold,
+        matched_precursors = matched_precursors,
+        prefix_consensus_sum = prefix_consensus_sum,
+        run_prefix_sum = run_prefix_sum,
+        profiled_precursor_count = profiled_precursor_count,
+        shape_strength = shape_strength,
+        shape_confidence = shape_confidence
     )
 end
 
@@ -706,7 +1137,8 @@ Returns a DataFrame with one row per protein group.
 """
 function group_psms_by_protein(
     df::DataFrame;
-    precursor_consensus::NamedTuple
+    precursor_consensus::NamedTuple,
+    q_value_threshold::Float32 = 0.01f0
 )
     if nrow(df) == 0
         return DataFrame(
@@ -718,77 +1150,53 @@ function group_psms_by_protein(
             pg_score = Float32[],
             any_common_peps = Bool[],
             top_pep_weight = Float32[],
-            precursor_consensus_support = Float32[],
-            precursor_consensus_enrichment = Float32[]
+            precursor_consensus_prefix_shape = Float32[]
+        )
+    end
+
+    df = df[.!ismissing.(df.inferred_protein_group), :]
+    if nrow(df) == 0
+        return DataFrame(
+            protein_name = String[],
+            target = Bool[],
+            entrap_id = UInt8[],
+            n_peptides = Int64[],
+            peptide_list = String[],
+            pg_score = Float32[],
+            any_common_peps = Bool[],
+            top_pep_weight = Float32[],
+            precursor_consensus_prefix_shape = Float32[]
         )
     end
 
     prob_col = _protein_group_probability_column(df)
-    consensus_relative_weight = precursor_consensus.relative_weight
-    mean_relative_weight = precursor_consensus.mean_relative_weight
-
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
     
     # Aggregate to protein groups
     protein_groups = combine(grouped) do gdf
-        quant_mask = gdf.use_for_protein_quant .== true
-        quant_peptides, pg_score = _quant_peptides_and_pg_score(gdf, quant_mask, prob_col)
-        n_peptides = length(quant_peptides)
+        quant_mask = _protein_rollup_quant_mask(gdf; q_value_threshold = q_value_threshold)
+        rollup = _build_protein_rollup(gdf, quant_mask, prob_col)
+        n_peptides = rollup.n_peptides
+        pg_score = rollup.pg_score
+        top_pep_weight = rollup.top_pep_weight
 
-        top_pep_weight = 0.0f0
-        best_weight_by_peptide = Dict{String, Float32}()
-        for i in 1:nrow(gdf)
-            if quant_mask[i] != true
-                continue
-            end
-            weight_val = Float32(gdf.weight[i])
-            pep = gdf.sequence[i]
-            if haskey(best_weight_by_peptide, pep)
-                if weight_val > best_weight_by_peptide[pep]
-                    best_weight_by_peptide[pep] = weight_val
-                end
-            else
-                best_weight_by_peptide[pep] = weight_val
-            end
-        end
-
-        if !isempty(best_weight_by_peptide)
-            top_pep_weight = maximum(values(best_weight_by_peptide))
-        end
-
-        precursor_consensus_support = 0.0f0
-        precursor_consensus_enrichment = 0.0f0
-        observed_precursors = Set{UInt32}()
-        for i in eachindex(quant_mask)
-            if quant_mask[i]
-                push!(observed_precursors, UInt32(gdf.precursor_idx[i]))
-            end
-        end
-
-        if !isempty(observed_precursors)
+        precursor_consensus_prefix_shape = 0.0f0
+        if !isempty(rollup.precursor_rows)
             protein_key = (
                 String(gdf.inferred_protein_group[1]),
                 Bool(gdf.target[1]),
                 UInt8(gdf.entrap_id[1])
             )
-            matched_precursors = 0
-
-            for precursor_idx in observed_precursors
-                key = (protein_key[1], protein_key[2], protein_key[3], precursor_idx)
-                if haskey(consensus_relative_weight, key)
-                    precursor_consensus_support += Float32(consensus_relative_weight[key])
-                    matched_precursors += 1
-                end
-            end
-
-            protein_mean_weight = get(mean_relative_weight, protein_key, 0.0f0)
-            if matched_precursors > 0 && protein_mean_weight > 0.0f0
-                expected_random_support =
-                    Float32(matched_precursors) * protein_mean_weight
-                precursor_consensus_enrichment =
-                    precursor_consensus_support / expected_random_support
-            end
+            best_weight_by_precursor = Dict(
+                row.precursor_idx => row.best_weight for row in rollup.precursor_rows
+            )
+            prefix_features = _precursor_consensus_prefix_features(
+                best_weight_by_precursor,
+                protein_key,
+                precursor_consensus
+            )
+            precursor_consensus_prefix_shape = prefix_features.prefix_shape
         end
 
         has_common = any(
@@ -799,12 +1207,11 @@ function group_psms_by_protein(
 
         DataFrame(
             n_peptides = n_peptides,
-            peptide_list = join(quant_peptides, ";"),
+            peptide_list = join(rollup.peptide_list, ";"),
             pg_score = pg_score,
             any_common_peps = has_common,
             top_pep_weight = top_pep_weight,
-            precursor_consensus_support = precursor_consensus_support,
-            precursor_consensus_enrichment = precursor_consensus_enrichment
+            precursor_consensus_prefix_shape = precursor_consensus_prefix_shape
         )
     end
     
@@ -853,6 +1260,7 @@ function add_protein_features(protein_catalog::Dict)
         n_rows = nrow(df)
         n_possible = Vector{Int64}(undef, n_rows)
         peptide_coverage = Vector{Float32}(undef, n_rows)
+        peptide_coverage_logit = Vector{Float32}(undef, n_rows)
         
         for i in 1:n_rows
             key = (
@@ -887,18 +1295,35 @@ function add_protein_features(protein_catalog::Dict)
 
             if n_possible[i] > 0
                 peptide_coverage[i] = Float32(df.n_peptides[i]) / Float32(n_possible[i])
+                peptide_coverage_logit[i] = smoothed_coverage_logit(df.n_peptides[i], n_possible[i])
             else
                 peptide_coverage[i] = 0.0f0
+                peptide_coverage_logit[i] = 0.0f0
             end
         end
         
         df.n_possible_peptides = n_possible
         df.peptide_coverage = peptide_coverage
+        df.peptide_coverage_logit = peptide_coverage_logit
         
         return df
     end
     
     return desc => op
+end
+
+"""
+    _precursor_consensus_report_bucket(n_peptides)
+
+Bucket proteins by support size for the precursor consensus QC report.
+"""
+@inline function _precursor_consensus_report_bucket(n_peptides::Int)
+    if n_peptides <= 1
+        return :one_peptide
+    elseif n_peptides <= 3
+        return :two_to_three_peptides
+    end
+    return :four_plus_peptides
 end
 
 #==========================================================
@@ -926,7 +1351,8 @@ function perform_protein_inference_pipeline(
     output_folder::String,
     precursors::LibraryPrecursors,
     protein_catalog::Dict;
-    min_peptides::Int = 2
+    min_peptides::Int = 2,
+    q_value_threshold::Float32 = 0.01f0
 )
     # Ensure output folder exists
     !isdir(output_folder) && mkpath(output_folder)
@@ -965,7 +1391,7 @@ function perform_protein_inference_pipeline(
         
     end
 
-    precursor_consensus = build_precursor_consensus(psm_refs)
+    precursor_consensus = build_precursor_consensus(psm_refs; q_value_threshold = q_value_threshold)
 
     @user_info "Building per-run protein group tables and protein scoring features"
 
@@ -979,7 +1405,8 @@ function perform_protein_inference_pipeline(
 
         protein_groups_df = group_psms_by_protein(
             updated_psms;
-            precursor_consensus = precursor_consensus
+            precursor_consensus = precursor_consensus,
+            q_value_threshold = q_value_threshold
         )
 
         post_inference_pipeline = TransformPipeline() |>
@@ -1007,6 +1434,6 @@ function perform_protein_inference_pipeline(
             @user_warn "No protein groups to write after filtering" file_idx=idx pg_path=pg_path
         end
     end
-    
+
     return pg_refs, psm_to_pg_mapping
 end

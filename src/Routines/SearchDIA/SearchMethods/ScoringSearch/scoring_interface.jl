@@ -1356,7 +1356,7 @@ Compute run-specific precursor probabilities from the given probability column.
 function add_prec_prob(prob_col::Symbol)
     op = function(df)
         transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
-                   prob_col => (p -> 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))) => :prec_prob)
+                   prob_col => (p -> clamp(-expm1(sum(log1p.(-p))), eps(Float32), 1.0f0 - eps(Float32))) => :prec_prob)
         return df
     end
     return "add_prec_prob" => op

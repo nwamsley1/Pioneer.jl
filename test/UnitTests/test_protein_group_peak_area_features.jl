@@ -9,7 +9,8 @@ using Pioneer
     empty_precursor_consensus = (
         relative_weight = Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}(),
         mean_relative_weight = Dict{Tuple{String, Bool, UInt8}, Float32}(),
-        profiled_precursor_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
+        profiled_precursor_count = Dict{Tuple{String, Bool, UInt8}, Int32}(),
+        precursors_by_protein = Dict{Tuple{String, Bool, UInt8}, Vector{Pair{UInt32, Float32}}}()
     )
 
     @testset "Quant Necessary Columns Include Weight" begin
@@ -26,7 +27,10 @@ using Pioneer
             target = Bool[true, true, true, false],
             entrap_id = UInt8[1, 1, 1, 1],
             precursor_idx = UInt32[11, 12, 13, 21],
+            base_pep_id = UInt32[101, 101, 102, 201],
             sequence = ["PEP1", "PEP1", "PEP2", "PEP3"],
+            structural_mods = ["", "", "", ""],
+            isotopic_mods = ["", "", "", ""],
             use_for_protein_quant = Bool[true, true, true, true],
             missed_cleavage = Int64[0, 1, 0, 0],
             Mox = Int64[0, 0, 0, 0],
@@ -42,6 +46,30 @@ using Pioneer
         @test nrow(p1) == 1
         @test p1.n_peptides[1] == 2
         @test p1.top_pep_weight[1] == 100.0f0
+    end
+
+    @testset "Protein Roll-Up Combines Precursors To Modified Peptides To Peptides" begin
+        psms = DataFrame(
+            inferred_protein_group = ["P1", "P1", "P1", "P1"],
+            target = Bool[true, true, true, true],
+            entrap_id = UInt8[1, 1, 1, 1],
+            precursor_idx = UInt32[11, 12, 13, 14],
+            base_pep_id = UInt32[101, 101, 101, 102],
+            sequence = ["PEP1", "PEP1", "PEP1", "PEP2"],
+            structural_mods = ["", "", "(3,M,Oxidation)", ""],
+            isotopic_mods = ["", "", "", ""],
+            use_for_protein_quant = Bool[true, true, true, true],
+            missed_cleavage = Int64[0, 0, 0, 0],
+            Mox = Int64[0, 0, 1, 0],
+            prec_prob = Float32[0.80, 0.90, 0.50, 0.60],
+            weight = Float32[100.0, 80.0, 60.0, 50.0]
+        )
+
+        grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = empty_precursor_consensus)
+
+        @test grouped.n_peptides[1] == 2
+        @test grouped.peptide_list[1] == "PEP1;PEP2"
+        @test grouped.pg_score[1] ≈ Float32(-log(0.01) - log(0.4)) atol = 1e-5
     end
 
     @testset "Grouped Protein Catalog Uses Union Peptide Set" begin
@@ -82,7 +110,7 @@ using Pioneer
         @test model.profiled_rank_count == 1
     end
 
-    @testset "Coverage Match From Top Behaves as Expected" begin
+    @testset "Coverage Log Ratio Uses Exceedance Strength As Expected" begin
         calibration = (
             log_threshold = Float32(log(10.0)),
             rank_drop_profile = Float32[0.0f0, -0.1f0, -0.8f0, -1.5f0],
@@ -103,42 +131,42 @@ using Pioneer
         out = op(copy(pg_df))
 
         for col in (
-            :expected_additional_from_top,
-            :coverage_match_from_top
+            :expected_excess_from_top,
+            :coverage_log_ratio
         )
             @test hasproperty(out, col)
         end
 
-        @test out.expected_additional_from_top[1] > out.expected_additional_from_top[2]
-        @test out.coverage_match_from_top[1] < out.coverage_match_from_top[2]
-        @test out.coverage_match_from_top[3] ≈ 1.0f0
+        @test out.expected_excess_from_top[1] > out.expected_excess_from_top[2]
+        @test out.coverage_log_ratio[1] < out.coverage_log_ratio[2]
+        @test out.coverage_log_ratio[3] > out.coverage_log_ratio[1]
+        @test out.coverage_log_ratio[3] > out.coverage_log_ratio[2]
 
         # Invalid weight -> neutral values
-        @test out.expected_additional_from_top[4] == 0.0f0
-        @test out.coverage_match_from_top[4] == 1.0f0
+        @test out.expected_excess_from_top[4] == 0.0f0
+        @test out.coverage_log_ratio[4] == 0.0f0
 
         # N <= 1 -> neutral values
-        @test out.expected_additional_from_top[5] == 0.0f0
-        @test out.coverage_match_from_top[5] == 1.0f0
+        @test out.expected_excess_from_top[5] == 0.0f0
+        @test out.coverage_log_ratio[5] == 0.0f0
     end
 
-    @testset "Protein Auto-Pass pg_score Threshold Uses Raw Decoy Maximum" begin
+    @testset "Protein Auto-Pass pg_score Threshold Can Be Disabled" begin
         df = DataFrame(
             target = Bool[true, false, false, false],
             n_peptides = Int64[1, 1, 2, 7],
             pg_score = Float32[0.9, 1.1, 0.7, 2.3],
-            coverage_match_from_top = Float32[0.9, 0.8, 0.7, 0.1],
-            precursor_consensus_support = Float32[0.6, 0.5, 0.4, 0.3],
-            precursor_consensus_enrichment = Float32[1.8, 1.6, 1.4, 1.2],
+            coverage_log_ratio = Float32[0.9, 0.8, 0.7, 0.1],
+            precursor_consensus_prefix_shape = Float32[0.8, 0.7, 0.6, 0.5],
             any_common_peps = Bool[true, true, false, true]
         )
 
         pg_score_threshold = Pioneer.compute_protein_autopass_pg_score_threshold(df; context = "test")
 
-        @test pg_score_threshold == 2.3f0
+        @test isinf(pg_score_threshold)
     end
 
-    @testset "Protein Semi-Supervised Training Set Mines Negatives by PEP" begin
+    @testset "Protein Semi-Supervised Training Set Mines Failed Targets By PEP Threshold" begin
         scores = Float32[
             0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90,
             0.89, 0.88, 0.87, 0.86, 0.85, 0.84, 0.83, 0.82, 0.81, 0.80,
@@ -151,23 +179,58 @@ using Pioneer
             false, false, true, true, false, false, false, false, false, false,
             false, false, false, false, false, false
         ]
+        ss = Pioneer.build_protein_semisupervised_training_set(
+            scores,
+            targets;
+            q_value_threshold = 0.01f0
+        )
+        ss_loose_pep = Pioneer.build_protein_semisupervised_training_set(
+            scores,
+            targets;
+            q_value_threshold = 0.01f0,
+            mined_negative_pep_threshold = 1.0f0
+        )
+
+        @test any(ss.positive_mask)
+        @test any(ss.confident_positive_mask)
+        @test any(ss.mined_negative_mask)
+        @test ss.mined_negative_pep_threshold == 0.90f0
+        @test all(ss.keep_mask[.!targets])
+        @test all(ss.keep_mask .== (.!targets .| ss.confident_positive_mask .| ss.mined_negative_mask))
+        @test all(ss.confident_positive_mask .<= ss.positive_mask)
+        @test sum(ss.labels) == sum(ss.positive_mask[ss.keep_mask])
+        @test all(.!ss.labels[.!targets[ss.keep_mask]])
+        @test all(ss.peps[ss.mined_negative_mask] .>= ss.mined_negative_pep_threshold)
+        @test ss.positive_mask == ss.confident_positive_mask
+        @test ss.requested_mined_negative_count == sum(ss.mined_negative_mask)
+        @test sum(ss.mined_negative_mask) == ss.requested_mined_negative_count
+        @test all(ss.peps[ss.confident_positive_mask] .<= 1.0f0)
+        @test sum(ss.mined_negative_mask) <= sum(ss_loose_pep.mined_negative_mask)
+    end
+
+    @testset "Protein Semi-Supervised Training Set Drops Low-PEP Failing Targets" begin
+        scores = Float32.(collect(reverse(range(0.99, 0.70, length = 30))))
+        targets = trues(30)
+        targets[[1, 9, 17]] .= false
 
         ss = Pioneer.build_protein_semisupervised_training_set(
             scores,
             targets;
-            q_value_threshold = 0.01f0,
-            min_pep_neg_threshold = 0.90f0
+            q_value_threshold = 0.01f0
         )
 
-        @test any(ss.positive_mask)
-        @test any(ss.mined_negative_mask)
+        dropped_mask = targets .& .!ss.confident_positive_mask .& .!ss.mined_negative_mask
+
+        @test ss.mined_negative_pep_threshold == 0.90f0
+        @test all(ss.peps[dropped_mask] .< ss.mined_negative_pep_threshold)
+        @test !any(ss.mined_negative_mask)
+        @test any(dropped_mask)
+        @test ss.positive_mask == ss.confident_positive_mask
+        @test all(.!ss.keep_mask[dropped_mask])
         @test all(ss.keep_mask[.!targets])
-        @test sum(ss.labels) < sum(ss.positive_mask) + sum(ss.mined_negative_mask)
-        @test sum(ss.labels) == sum(ss.positive_mask[ss.keep_mask])
-        @test any(.!ss.labels)
     end
 
-    @testset "Consensus Relative Weight Builder Ignores MBR Candidates and Uses Ranked pg_score Weighting" begin
+    @testset "Consensus Relative Weight Builder Uses Quant Precursors And Current pg_score Weighting" begin
         temp_dir = mktempdir()
 
         try
@@ -176,7 +239,10 @@ using Pioneer
                 target = Bool[true, true, true],
                 entrap_id = UInt8[1, 1, 1],
                 precursor_idx = UInt32[1, 2, 3],
+                base_pep_id = UInt32[101, 102, 103],
                 sequence = ["PEP1", "PEP2", "PEP3"],
+                structural_mods = ["", "", ""],
+                isotopic_mods = ["", "", ""],
                 use_for_protein_quant = Bool[true, true, true],
                 MBR_candidate = Bool[false, false, true],
                 missed_cleavage = Int64[0, 0, 0],
@@ -191,7 +257,10 @@ using Pioneer
                 target = Bool[true, true],
                 entrap_id = UInt8[1, 1],
                 precursor_idx = UInt32[1, 2],
+                base_pep_id = UInt32[101, 102],
                 sequence = ["PEP1", "PEP2"],
+                structural_mods = ["", ""],
+                isotopic_mods = ["", ""],
                 use_for_protein_quant = Bool[true, true],
                 MBR_candidate = Bool[false, false],
                 missed_cleavage = Int64[0, 0],
@@ -211,11 +280,10 @@ using Pioneer
                 Pioneer.PSMFileReference(path2)
             ])
 
-            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(1))] >
-                  consensus.relative_weight[("P", true, UInt8(1), UInt32(2))]
-            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(1))] > 0.9f0
-            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(2))] > 0.4f0
-            @test !haskey(consensus.relative_weight, ("P", true, UInt8(1), UInt32(3)))
+            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(3))] >
+                  consensus.relative_weight[("P", true, UInt8(1), UInt32(1))]
+            @test consensus.relative_weight[("P", true, UInt8(1), UInt32(3))] > 0.9f0
+            @test haskey(consensus.relative_weight, ("P", true, UInt8(1), UInt32(3)))
         finally
             rm(temp_dir, recursive = true, force = true)
         end
@@ -233,7 +301,10 @@ using Pioneer
                         target = Bool[true],
                         entrap_id = UInt8[1],
                         precursor_idx = UInt32[1],
+                        base_pep_id = UInt32[101],
                         sequence = ["PEP1"],
+                        structural_mods = [""],
+                        isotopic_mods = [""],
                         use_for_protein_quant = Bool[true],
                         MBR_candidate = Bool[false],
                         missed_cleavage = Int64[0],
@@ -247,7 +318,10 @@ using Pioneer
                         target = Bool[true],
                         entrap_id = UInt8[1],
                         precursor_idx = UInt32[2],
+                        base_pep_id = UInt32[102],
                         sequence = ["PEP2"],
+                        structural_mods = [""],
+                        isotopic_mods = [""],
                         use_for_protein_quant = Bool[true],
                         MBR_candidate = Bool[false],
                         missed_cleavage = Int64[0],
@@ -281,7 +355,10 @@ using Pioneer
                 target = Bool[true, true],
                 entrap_id = UInt8[1, 1],
                 precursor_idx = UInt32[2, 1],
+                base_pep_id = UInt32[102, 101],
                 sequence = ["PEP2", "PEP1"],
+                structural_mods = ["", ""],
+                isotopic_mods = ["", ""],
                 use_for_protein_quant = Bool[true, true],
                 MBR_candidate = Bool[false, false],
                 missed_cleavage = Int64[0, 0],
@@ -294,7 +371,10 @@ using Pioneer
                 target = Bool[true, true],
                 entrap_id = UInt8[1, 1],
                 precursor_idx = UInt32[1, 2],
+                base_pep_id = UInt32[101, 102],
                 sequence = ["PEP1", "PEP2"],
+                structural_mods = ["", ""],
+                isotopic_mods = ["", ""],
                 use_for_protein_quant = Bool[true, true],
                 MBR_candidate = Bool[false, false],
                 missed_cleavage = Int64[0, 0],
@@ -331,6 +411,13 @@ using Pioneer
             ),
             profiled_precursor_count = Dict(
                 ("P", true, UInt8(1)) => Int32(5)
+            ),
+            shape_strength = Dict(
+                ("P", true, UInt8(1)) => 1.0f0
+            ),
+            shape_confidence_scale = 1.0f0,
+            precursors_by_protein = Dict(
+                ("P", true, UInt8(1)) => Pair{UInt32, Float32}[UInt32(11) => 1.0f0, UInt32(12) => 0.2f0]
             )
         )
 
@@ -339,7 +426,10 @@ using Pioneer
             target = Bool[true, true],
             entrap_id = UInt8[1, 1],
             precursor_idx = UInt32[11, 12],
+            base_pep_id = UInt32[101, 102],
             sequence = ["PEP1", "PEP2"],
+            structural_mods = ["", ""],
+            isotopic_mods = ["", ""],
             use_for_protein_quant = Bool[true, true],
             MBR_candidate = Bool[false, true],
             missed_cleavage = Int64[0, 0],
@@ -350,32 +440,45 @@ using Pioneer
         )
 
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
-        @test grouped.precursor_consensus_support[1] ≈ 1.2f0
-        @test grouped.precursor_consensus_enrichment[1] ≈ (1.2f0 / (0.4f0 * 2.0f0)) atol = 1e-5
+        @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.430027f0 atol = 1e-5
     end
 
-    @testset "Consensus Relative Weight Enrichment Rewards Top Support Among Many Possibilities" begin
+    @testset "Consensus Prefix Features Reward Expected Singleton And Penalize Low-Ranked Singleton" begin
         consensus = (
             relative_weight = Dict(
-                ("P_many", true, UInt8(1), UInt32(101)) => 1.0f0,
-                ("P_one", true, UInt8(1), UInt32(201)) => 1.0f0
+                ("P_top", true, UInt8(1), UInt32(101)) => 1.0f0,
+                ("P_top", true, UInt8(1), UInt32(102)) => 0.2f0,
+                ("P_low", true, UInt8(1), UInt32(201)) => 1.0f0,
+                ("P_low", true, UInt8(1), UInt32(202)) => 0.2f0
             ),
             mean_relative_weight = Dict(
-                ("P_many", true, UInt8(1)) => 0.2f0,
-                ("P_one", true, UInt8(1)) => 1.0f0
+                ("P_top", true, UInt8(1)) => 0.6f0,
+                ("P_low", true, UInt8(1)) => 0.6f0
             ),
             profiled_precursor_count = Dict(
-                ("P_many", true, UInt8(1)) => Int32(10),
-                ("P_one", true, UInt8(1)) => Int32(1)
+                ("P_top", true, UInt8(1)) => Int32(2),
+                ("P_low", true, UInt8(1)) => Int32(2)
+            ),
+            shape_strength = Dict(
+                ("P_top", true, UInt8(1)) => 1.0f0,
+                ("P_low", true, UInt8(1)) => 1.0f0
+            ),
+            shape_confidence_scale = 1.0f0,
+            precursors_by_protein = Dict(
+                ("P_top", true, UInt8(1)) => Pair{UInt32, Float32}[UInt32(101) => 1.0f0, UInt32(102) => 0.2f0],
+                ("P_low", true, UInt8(1)) => Pair{UInt32, Float32}[UInt32(201) => 1.0f0, UInt32(202) => 0.2f0]
             )
         )
 
         psms = DataFrame(
-            inferred_protein_group = ["P_many", "P_one"],
+            inferred_protein_group = ["P_top", "P_low"],
             target = Bool[true, true],
             entrap_id = UInt8[1, 1],
-            precursor_idx = UInt32[101, 201],
-            sequence = ["PEP_MANY", "PEP_ONE"],
+            precursor_idx = UInt32[101, 202],
+            base_pep_id = UInt32[101, 202],
+            sequence = ["PEP_TOP", "PEP_LOW"],
+            structural_mods = ["", ""],
+            isotopic_mods = ["", ""],
             use_for_protein_quant = Bool[true, true],
             MBR_candidate = Bool[false, false],
             missed_cleavage = Int64[0, 0],
@@ -386,12 +489,12 @@ using Pioneer
 
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
 
-        many = grouped[grouped.protein_name .== "P_many", :]
-        one = grouped[grouped.protein_name .== "P_one", :]
+        top = grouped[grouped.protein_name .== "P_top", :]
+        low = grouped[grouped.protein_name .== "P_low", :]
 
-        @test many.precursor_consensus_support[1] == 1.0f0
-        @test one.precursor_consensus_support[1] == 1.0f0
-        @test many.precursor_consensus_enrichment[1] > one.precursor_consensus_enrichment[1]
+        @test top.precursor_consensus_prefix_shape[1] ≈ 0.5f0 atol = 1e-5
+        @test low.precursor_consensus_prefix_shape[1] ≈ 0.204124f0 atol = 1e-5
+        @test low.precursor_consensus_prefix_shape[1] >= 0.0f0
     end
 
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
@@ -406,20 +509,61 @@ using Pioneer
     @testset "Protein Probit Feature Names Include Consensus Support" begin
         @test Pioneer.protein_probit_feature_names() == [
             :pg_score,
-            :peptide_coverage,
+            :peptide_coverage_logit,
             :any_common_peps,
-            :coverage_match_from_top,
-            :precursor_consensus_enrichment
+            :coverage_log_ratio,
+            :precursor_consensus_prefix_shape
         ]
 
         @test Pioneer.protein_probit_feature_names(include_n_possible_peptides = true) == [
             :pg_score,
-            :peptide_coverage,
+            :peptide_coverage_logit,
             :n_possible_peptides,
             :any_common_peps,
-            :coverage_match_from_top,
-            :precursor_consensus_enrichment
+            :coverage_log_ratio,
+            :precursor_consensus_prefix_shape
         ]
+    end
+
+    @testset "Protein Probit Fold Label Scatter Writes File" begin
+        temp_dir = mktempdir()
+
+        try
+            df = DataFrame(
+                pg_score = Float32[0.2, 0.5, 0.8],
+                coverage_log_ratio = Float32[-0.7, -0.1, 0.4],
+                precursor_consensus_prefix_shape = Float32[0.1, 0.3, 0.6],
+                target = Bool[true, false, true],
+                n_peptides = Int64[1, 4, 9]
+            )
+            ss = (
+                positive_mask = Bool[true, false, false],
+                mined_negative_mask = Bool[false, false, true]
+            )
+
+            scatter_path = Pioneer.write_protein_probit_fold_label_scatter(
+                df,
+                UInt8(2),
+                temp_dir,
+                ss;
+                stage = "iter_1",
+                context = "test"
+            )
+            coverage_path = Pioneer.write_protein_probit_fold_coverage_scatter(
+                df,
+                UInt8(2),
+                temp_dir,
+                ss;
+                stage = "iter_1",
+                context = "test"
+            )
+            @test scatter_path !== nothing
+            @test isfile(scatter_path)
+            @test coverage_path !== nothing
+            @test isfile(coverage_path)
+        finally
+            rm(temp_dir, recursive = true, force = true)
+        end
     end
 
 end

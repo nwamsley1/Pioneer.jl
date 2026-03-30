@@ -509,7 +509,8 @@ function summarize_results!(
                 passing_proteins_folder,
                 getPrecursors(getSpecLib(search_context)),
                 protein_to_possible_peptides,
-                min_peptides = params.min_peptides
+                min_peptides = params.min_peptides,
+                q_value_threshold = params.q_value_threshold
             )
 
             paired_files = [PairedSearchFiles(psm_path, pg_path, file_idx)

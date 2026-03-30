@@ -176,7 +176,7 @@ Return the active protein feature set used for probit rescoring.
 function protein_probit_feature_names(; include_n_possible_peptides::Bool = false)
     feature_names = Symbol[
         :pg_score,
-        :peptide_coverage
+        :peptide_coverage_logit
     ]
 
     if include_n_possible_peptides
@@ -185,12 +185,23 @@ function protein_probit_feature_names(; include_n_possible_peptides::Bool = fals
 
     append!(feature_names, [
         :any_common_peps,
-        :coverage_match_from_top,
-        :precursor_consensus_support,
-        #:precursor_consensus_enrichment
+        :coverage_log_ratio,
+        :precursor_consensus_prefix_shape
     ])
 
     return feature_names
+end
+
+"""
+    smoothed_coverage_logit(n_peptides, n_possible_peptides)
+
+Compute a smoothed logit transform of peptide coverage to spread out the low end.
+"""
+function smoothed_coverage_logit(n_peptides::Integer, n_possible_peptides::Integer)::Float32
+    n_possible_peptides <= 0 && return 0.0f0
+    observed = Float32(n_peptides)
+    possible = Float32(n_possible_peptides)
+    return log((observed + 0.5f0) / (possible - observed + 0.5f0))
 end
 
 """
@@ -204,8 +215,9 @@ function compute_protein_autopass_pg_score_threshold(
     context::AbstractString = "protein_probit"
 )
     decoy_mask = .!df.target
-    pg_score_threshold = any(decoy_mask) ? maximum(Float32.(df.pg_score[decoy_mask])) : 0.0f0
-    @user_info "Protein auto-pass pg_score threshold context=$(context) pg_score_threshold=$(pg_score_threshold)"
+    raw_decoy_max_pg_score = any(decoy_mask) ? maximum(Float32.(df.pg_score[decoy_mask])) : 0.0f0
+    pg_score_threshold = Float32(Inf)
+    @user_info "Protein auto-pass pg_score threshold context=$(context) autopass_enabled=false raw_decoy_max_pg_score=$(raw_decoy_max_pg_score) applied_pg_score_threshold=$(pg_score_threshold)"
     return pg_score_threshold
 end
 
@@ -228,40 +240,195 @@ function log_protein_autopass_partition(
 end
 
 """
-    write_protein_probit_training_debug(all_protein_groups, feature_names, qc_folder)
+    _write_protein_probit_fold_label_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_probit", y_col = :precursor_consensus_prefix_shape, y_label = "precursor_consensus_prefix_shape", file_suffix = "prefix_shape")
 
-Write the exact protein probit training table and feature list to disk.
+Write a fold-level `log(pg_score)` scatter against a protein feature
+using the semi-supervised training labels from the last fitted iteration.
 """
-function write_protein_probit_training_debug(
-    all_protein_groups::DataFrame,
-    feature_names::Vector{Symbol},
-    qc_folder::String
+function _write_protein_probit_fold_label_scatter(
+    df::AbstractDataFrame,
+    fold,
+    qc_folder::String,
+    ss;
+    stage::AbstractString = "iter1",
+    context::AbstractString = "protein_probit",
+    y_col::Symbol = :precursor_consensus_prefix_shape,
+    y_label::AbstractString = "precursor_consensus_prefix_shape",
+    file_suffix::AbstractString = "prefix_shape"
 )
-    isdir(qc_folder) || mkpath(qc_folder)
-
-    debug_df = copy(all_protein_groups)
-    debug_df[!, :protein_probit_label] = copy(all_protein_groups.target)
-    debug_df[!, :protein_probit_fold] = copy(all_protein_groups.cv_fold)
-
-    tsv_path = joinpath(qc_folder, "protein_probit_training_table.tsv")
-    CSV.write(tsv_path, debug_df; delim = '\t')
-
-    columns_path = joinpath(qc_folder, "protein_probit_training_columns.txt")
-    open(columns_path, "w") do io
-        write(io, "label_column: protein_probit_label\n")
-        write(io, "fold_column: protein_probit_fold\n")
-        write(io, "feature_columns:\n")
-        for feature in feature_names
-            write(io, "  - $(feature)\n")
-        end
-        write(io, "all_columns:\n")
-        for col in names(debug_df)
-            write(io, "  - $(col)\n")
-        end
+    required_cols = (:pg_score, y_col, :target)
+    missing_cols = [col for col in required_cols if !hasproperty(df, col)]
+    if !isempty(missing_cols)
+        @user_warn "Skipping protein probit fold label plots due to missing columns" context = context fold = fold missing_columns = missing_cols
+        return nothing
     end
 
-    @user_info "Wrote protein probit training debug table tsv_path=$(tsv_path) columns_path=$(columns_path) n_rows=$(nrow(debug_df))"
-    return (tsv_path = tsv_path, columns_path = columns_path)
+    isdir(qc_folder) || mkpath(qc_folder)
+
+    target_positive_mask = ss.positive_mask
+    target_confident_positive_mask = hasproperty(ss, :confident_positive_mask) ? ss.confident_positive_mask : target_positive_mask
+    target_negative_mask = ss.mined_negative_mask
+    target_dropped_mask = df.target .& .!target_positive_mask .& .!target_negative_mask
+    decoy_mask = .!df.target
+    log_pg_score = log.(max.(Float64.(df.pg_score), 1e-6))
+    y_values = df[!, y_col]
+    target_marker_size = 3.0
+    target_negative_marker_size = 3.0
+    target_dropped_marker_size = 2.5
+    decoy_marker_size = 6.0
+    plot_size = (1800, 1200)
+    plot_dpi = 200
+
+    p_scatter = Plots.plot(
+        title = "Protein Probit Fold $(fold) $(stage): log(pg_score) vs $(file_suffix)",
+        xlabel = "log(pg_score)",
+        ylabel = y_label,
+        legend = :bottomright,
+        background_color = :white,
+        foreground_color_legend = nothing,
+        size = plot_size,
+        dpi = plot_dpi
+    )
+
+    if any(target_dropped_mask)
+        Plots.scatter!(
+            p_scatter,
+            log_pg_score[target_dropped_mask],
+            y_values[target_dropped_mask];
+            label = "Target (dropped)",
+            color = :dodgerblue,
+            alpha = 0.35,
+            markersize = target_dropped_marker_size,
+            markershape = :diamond,
+            markerstrokewidth = 0.8,
+            markerstrokecolor = :navy
+        )
+    end
+
+    if any(target_confident_positive_mask)
+        Plots.scatter!(
+            p_scatter,
+            log_pg_score[target_confident_positive_mask],
+            y_values[target_confident_positive_mask];
+            label = "Target (+ q/PEP)",
+            color = :forestgreen,
+            alpha = 0.35,
+            markersize = target_marker_size,
+            markerstrokewidth = 0
+        )
+    end
+
+    if any(target_negative_mask)
+        Plots.scatter!(
+            p_scatter,
+            log_pg_score[target_negative_mask],
+            y_values[target_negative_mask];
+            label = "Target (-)",
+            color = :darkorange,
+            alpha = 0.30,
+            markersize = target_negative_marker_size,
+            markerstrokewidth = 0
+        )
+    end
+
+    if any(decoy_mask)
+        Plots.scatter!(
+            p_scatter,
+            log_pg_score[decoy_mask],
+            y_values[decoy_mask];
+            label = "Decoy",
+            color = :firebrick,
+            alpha = 0.20,
+            markersize = decoy_marker_size,
+            markerstrokewidth = 0
+        )
+    end
+
+    scatter_path = joinpath(qc_folder, "protein_probit_fold_$(fold)_$(stage)_pg_score_vs_$(file_suffix).png")
+    savefig(p_scatter, scatter_path)
+    @user_info "Wrote protein probit fold label scatter context=$(context) fold=$(fold) stage=$(stage) feature=$(y_col) scatter_path=$(scatter_path) n_rows=$(nrow(df))"
+    return scatter_path
+end
+
+"""
+    write_protein_probit_fold_label_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_probit")
+
+Write the fold-level `log(pg_score)` vs `precursor_consensus_prefix_shape` scatter
+using the semi-supervised training labels from the last fitted iteration.
+"""
+function write_protein_probit_fold_label_scatter(
+    df::AbstractDataFrame,
+    fold,
+    qc_folder::String,
+    ss;
+    stage::AbstractString = "iter1",
+    context::AbstractString = "protein_probit"
+)
+    return _write_protein_probit_fold_label_scatter(
+        df,
+        fold,
+        qc_folder,
+        ss;
+        stage = stage,
+        context = context,
+        y_col = :precursor_consensus_prefix_shape,
+        y_label = "precursor_consensus_prefix_shape",
+        file_suffix = "prefix_shape"
+    )
+end
+
+"""
+    write_protein_probit_fold_coverage_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_probit")
+
+Write the fold-level `log(pg_score)` vs `coverage_log_ratio` scatter
+using the semi-supervised training labels from the last fitted iteration.
+"""
+function write_protein_probit_fold_coverage_scatter(
+    df::AbstractDataFrame,
+    fold,
+    qc_folder::String,
+    ss;
+    stage::AbstractString = "iter1",
+    context::AbstractString = "protein_probit"
+)
+    return _write_protein_probit_fold_label_scatter(
+        df,
+        fold,
+        qc_folder,
+        ss;
+        stage = stage,
+        context = context,
+        y_col = :coverage_log_ratio,
+        y_label = "coverage_log_ratio",
+        file_suffix = "coverage_log_ratio"
+    )
+end
+
+"""
+    write_protein_probit_fold_peptide_coverage_scatter(df, fold, qc_folder, ss; stage = "iter1", context = "protein_probit")
+
+Write the fold-level `log(pg_score)` vs `peptide_coverage_logit` scatter
+using the semi-supervised training labels from the last fitted iteration.
+"""
+function write_protein_probit_fold_peptide_coverage_scatter(
+    df::AbstractDataFrame,
+    fold,
+    qc_folder::String,
+    ss;
+    stage::AbstractString = "iter1",
+    context::AbstractString = "protein_probit"
+)
+    return _write_protein_probit_fold_label_scatter(
+        df,
+        fold,
+        qc_folder,
+        ss;
+        stage = stage,
+        context = context,
+        y_col = :peptide_coverage_logit,
+        y_label = "peptide_coverage_logit",
+        file_suffix = "peptide_coverage_logit"
+    )
 end
 
 """
@@ -736,6 +903,7 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
     n_peptides = Vector{UInt16}(undef, n_groups)
     n_possible_peptides = Vector{UInt16}(undef, n_groups)
     peptide_coverages = Vector{Float32}(undef, n_groups)
+    peptide_coverage_logits = Vector{Float32}(undef, n_groups)
     total_peptide_lengths = Vector{UInt16}(undef, n_groups)
     log_n_possible_peptides = Vector{Float32}(undef, n_groups)
     log_binom_coeffs = Vector{Float32}(undef, n_groups)
@@ -750,6 +918,7 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
         n_peptides[i] = group.features.n_peptides
         n_possible_peptides[i] = group.features.n_possible_peptides
         peptide_coverages[i] = group.features.peptide_coverage
+        peptide_coverage_logits[i] = smoothed_coverage_logit(group.features.n_peptides, group.features.n_possible_peptides)
         total_peptide_lengths[i] = group.features.total_peptide_length
         log_n_possible_peptides[i] = group.features.log_n_possible_peptides
         log_binom_coeffs[i] = group.features.log_binom_coeff
@@ -765,6 +934,7 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
         n_peptides = n_peptides,
         n_possible_peptides = n_possible_peptides,
         peptide_coverage = peptide_coverages,
+        peptide_coverage_logit = peptide_coverage_logits,
         total_peptide_length = total_peptide_lengths,
         log_n_possible_peptides = log_n_possible_peptides,
         log_binom_coeff = log_binom_coeffs
@@ -978,46 +1148,52 @@ function perform_protein_probit_regression(
 end
 
 """
-    build_protein_semisupervised_training_set(scores, targets; q_value_threshold = 0.01f0, min_pep_neg_threshold = 0.90f0)
+    build_protein_semisupervised_training_set(scores, targets; q_value_threshold = 0.01f0, max_positive_pep_threshold = 1.0f0, mined_negative_pep_threshold = 0.90f0)
 
-Build the second-pass labels for semi-supervised protein probit training.
+Build labels for semi-supervised protein probit training from a score vector.
+Targets passing the q-value and PEP thresholds stay positive, non-passing
+targets with `PEP >= mined_negative_pep_threshold` are mined as negatives,
+and all remaining targets are dropped from training.
 """
 function build_protein_semisupervised_training_set(
     scores::AbstractVector{<:Real},
     targets::AbstractVector{Bool};
     q_value_threshold::Float32 = 0.01f0,
-    min_pep_neg_threshold::Float32 = 0.90f0
+    max_positive_pep_threshold::Float32 = 1.0f0,
+    mined_negative_pep_threshold::Float32 = 0.90f0
 )
     n = length(scores)
     qvals = Vector{Float32}(undef, n)
     peps = Vector{Float32}(undef, n)
     get_qvalues!(scores, targets, qvals)
     get_PEP!(scores, targets, peps)
-    min_pep_neg_threshold = 0.50f0
-
-    positive_mask = BitVector(undef, n)
+    
+    confident_positive_mask = BitVector(undef, n)
+    failed_target_mask = BitVector(undef, n)
     mined_negative_mask = BitVector(undef, n)
+    positive_mask = BitVector(undef, n)
     keep_mask = BitVector(undef, n)
 
     @inbounds for i in eachindex(scores, targets, qvals, peps)
-        positive_mask[i] = targets[i] && (qvals[i] <= q_value_threshold)
-        mined_negative_mask[i] = targets[i] && (peps[i] >= min_pep_neg_threshold)
-        keep_mask[i] = (!targets[i]) || positive_mask[i] || mined_negative_mask[i]
+        confident_positive_mask[i] = targets[i] &&
+                                     (qvals[i] <= q_value_threshold) &&
+                                     (peps[i] <= max_positive_pep_threshold)
+        failed_target_mask[i] = targets[i] && !confident_positive_mask[i]
+        mined_negative_mask[i] = failed_target_mask[i] && (peps[i] >= mined_negative_pep_threshold)
+        positive_mask[i] = confident_positive_mask[i]
+        keep_mask[i] = !targets[i] || confident_positive_mask[i] || mined_negative_mask[i]
     end
 
-    second_pass_labels = copy(targets[keep_mask])
-    mined_relative_mask = mined_negative_mask[keep_mask]
-    @inbounds for i in eachindex(second_pass_labels, mined_relative_mask)
-        if mined_relative_mask[i]
-            second_pass_labels[i] = false
-        end
-    end
+    second_pass_labels = Vector{Bool}(positive_mask[keep_mask])
 
     return (
         keep_mask = keep_mask,
         labels = second_pass_labels,
         positive_mask = positive_mask,
+        confident_positive_mask = confident_positive_mask,
         mined_negative_mask = mined_negative_mask,
+        requested_mined_negative_count = sum(mined_negative_mask),
+        mined_negative_pep_threshold = mined_negative_pep_threshold,
         qvals = qvals,
         peps = peps
     )
@@ -1236,14 +1412,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     end
     
     # Define features to use
-    feature_names = [
-        :pg_score,
-        :peptide_coverage,
-        :n_possible_peptides,
-        :log_binom_coeff,
-        :any_common_peps,
-        :pg_score_x_coverage_match_from_top
-    ]
+    feature_names = protein_probit_feature_names(include_n_possible_peptides = true)
 
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, sampled_protein_groups)
@@ -1357,13 +1526,15 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
 
     X = Matrix{Float64}(feature_df[:, feature_names])
     y = feature_df.target
+    initial_scores = feature_df.pg_score
 
     # Fit probit model
     #β_fitted, X_mean, X_std = fit_probit_model(X, y)
     β_fitted = fit_probit_model_semisupervised(
         X,
         y,
-        feature_names;
+        feature_names,
+        initial_scores;
         q_value_threshold = train_q_value_threshold,
         min_pep_neg_threshold = min_pep_neg_threshold_itr,
         context = "protein_probit"
@@ -1438,26 +1609,76 @@ function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
 end
 
 """
-    fit_probit_model_semisupervised(X, y, feature_names; q_value_threshold = 0.01f0, min_pep_neg_threshold = 0.90f0, n_iterations = 10, context = "protein_probit")
+    fit_probit_model_semisupervised(X, y, feature_names, initial_scores; q_value_threshold = 0.01f0, min_pep_neg_threshold = 0.90f0, max_positive_pep_threshold = 1.0f0, n_iterations = 10, context = "protein_probit", iteration_debug_callback = nothing)
 
-Fit the protein probit model with one supervised pass and repeated mined-label refinements.
+Fit the protein probit model by seeding iteration 1 labels from raw initial scores,
+then fitting and refining with the full feature set.
 """
 function fit_probit_model_semisupervised(
     X::Matrix{Float64},
     y::Vector{Bool},
-    feature_names::Vector{Symbol};
+    feature_names::Vector{Symbol},
+    initial_scores::AbstractVector{<:Real};
     q_value_threshold::Float32 = 0.01f0,
     min_pep_neg_threshold::Float32 = 0.90f0,
+    max_positive_pep_threshold::Float32 = 1.0f0,
     n_iterations::Int = 10,
-    context::AbstractString = "protein_probit"
+    context::AbstractString = "protein_probit",
+    iteration_debug_callback = nothing
 )
     total_targets = sum(y)
     total_decoys = length(y) - total_targets
+    length(initial_scores) == length(y) || throw(ArgumentError("initial_scores must have the same length as y"))
+    last_plot_iteration = 1
+    last_plot_state = nothing
+    ss_initial = build_protein_semisupervised_training_set(
+        initial_scores,
+        y;
+        q_value_threshold = q_value_threshold,
+        max_positive_pep_threshold = max_positive_pep_threshold,
+        mined_negative_pep_threshold = min_pep_neg_threshold
+    )
 
-    @user_info "Protein probit training iteration context=$(context) iteration=1 rows=$(length(y)) targets=$(total_targets) decoys=$(total_decoys) mined_target_negatives=0"
+    initial_row_count = sum(ss_initial.keep_mask)
+    initial_target_count = sum(ss_initial.labels)
+    initial_decoy_count = initial_row_count - initial_target_count
+    initial_mined_target_negatives = sum(ss_initial.mined_negative_mask)
+    initial_confident_targets = sum(ss_initial.confident_positive_mask)
+    initial_dropped_targets = sum(y .& .!ss_initial.positive_mask .& .!ss_initial.mined_negative_mask)
 
-    β_current = fit_probit_model(X, y)
-    log_probit_feature_importance(feature_names, β_current, X; context = context * "_iter_1")
+    @user_info "Protein probit semi-supervised selection context=$(context) iteration=1 source=initial_pg_score q_value_threshold=$(q_value_threshold) max_positive_pep_threshold=$(max_positive_pep_threshold) mined_negative_pep_threshold=$(ss_initial.mined_negative_pep_threshold) requested_mined_target_negatives=$(ss_initial.requested_mined_negative_count) total_rows=$(length(y)) total_targets=$(total_targets) total_decoys=$(total_decoys) selected_rows=$(initial_row_count) selected_targets=$(initial_target_count) selected_decoys=$(initial_decoy_count) confident_targets=$(initial_confident_targets) dropped_failed_targets=$(initial_dropped_targets) mined_target_negatives=$(initial_mined_target_negatives)"
+
+    if initial_target_count < 10 || initial_decoy_count < 10
+        @user_warn "Protein probit semi-supervised iteration has insufficient data; falling back to all rows for initial pg_score fit" context = context iteration = 1 selected_targets = initial_target_count selected_decoys = initial_decoy_count
+        initial_keep_mask = trues(length(y))
+        initial_labels = y
+        initial_row_count = length(y)
+        initial_target_count = total_targets
+        initial_decoy_count = total_decoys
+        initial_mined_target_negatives = 0
+        last_plot_state = (
+            positive_mask = copy(y),
+            confident_positive_mask = ss_initial.confident_positive_mask,
+            mined_negative_mask = falses(length(y))
+        )
+    else
+        initial_keep_mask = ss_initial.keep_mask
+        initial_labels = ss_initial.labels
+        last_plot_state = (
+            positive_mask = ss_initial.positive_mask,
+            confident_positive_mask = ss_initial.confident_positive_mask,
+            mined_negative_mask = ss_initial.mined_negative_mask
+        )
+    end
+
+    X_initial_iteration = X[initial_keep_mask, :]
+    @user_info "Protein probit training iteration context=$(context) iteration=1 feature_subset=full rows=$(initial_row_count) targets=$(initial_target_count) decoys=$(initial_decoy_count) mined_target_negatives=$(initial_mined_target_negatives)"
+    β_current = fit_probit_model(X_initial_iteration, initial_labels)
+    log_probit_feature_importance(feature_names, β_current, X_initial_iteration; context = context * "_iter_1")
+
+    if !isnothing(iteration_debug_callback) && !isnothing(last_plot_state)
+        iteration_debug_callback(1, last_plot_state)
+    end
 
     if n_iterations <= 1
         return β_current
@@ -1469,19 +1690,24 @@ function fit_probit_model_semisupervised(
             iteration_scores,
             y;
             q_value_threshold = q_value_threshold,
-            min_pep_neg_threshold = min_pep_neg_threshold
+            max_positive_pep_threshold = max_positive_pep_threshold,
+            mined_negative_pep_threshold = min_pep_neg_threshold
         )
 
         iteration_row_count = sum(ss.keep_mask)
         iteration_target_count = sum(ss.labels)
         iteration_decoy_count = iteration_row_count - iteration_target_count
         mined_target_negatives = sum(ss.mined_negative_mask)
-        confident_targets = sum(ss.positive_mask)
+        confident_targets = sum(ss.confident_positive_mask)
+        dropped_targets = sum(y .& .!ss.positive_mask .& .!ss.mined_negative_mask)
 
-        @user_info "Protein probit semi-supervised selection context=$(context) iteration=$(iteration) q_value_threshold=$(q_value_threshold) min_pep_neg_threshold=$(min_pep_neg_threshold) total_rows=$(length(y)) total_targets=$(total_targets) total_decoys=$(total_decoys) selected_rows=$(iteration_row_count) selected_targets=$(iteration_target_count) selected_decoys=$(iteration_decoy_count) confident_targets=$(confident_targets) mined_target_negatives=$(mined_target_negatives)"
+        @user_info "Protein probit semi-supervised selection context=$(context) iteration=$(iteration) q_value_threshold=$(q_value_threshold) max_positive_pep_threshold=$(max_positive_pep_threshold) mined_negative_pep_threshold=$(ss.mined_negative_pep_threshold) requested_mined_target_negatives=$(ss.requested_mined_negative_count) total_rows=$(length(y)) total_targets=$(total_targets) total_decoys=$(total_decoys) selected_rows=$(iteration_row_count) selected_targets=$(iteration_target_count) selected_decoys=$(iteration_decoy_count) confident_targets=$(confident_targets) dropped_failed_targets=$(dropped_targets) mined_target_negatives=$(mined_target_negatives)"
 
         if iteration_target_count < 10 || iteration_decoy_count < 10
             @user_warn "Protein probit semi-supervised iteration has insufficient data; using previous iteration model" context = context iteration = iteration selected_targets = iteration_target_count selected_decoys = iteration_decoy_count
+            if !isnothing(iteration_debug_callback) && !isnothing(last_plot_state) && last_plot_iteration > 1
+                iteration_debug_callback(last_plot_iteration, last_plot_state)
+            end
             return β_current
         end
 
@@ -1489,6 +1715,16 @@ function fit_probit_model_semisupervised(
         @user_info "Protein probit training iteration context=$(context) iteration=$(iteration) rows=$(iteration_row_count) targets=$(iteration_target_count) decoys=$(iteration_decoy_count) mined_target_negatives=$(mined_target_negatives)"
         β_current = fit_probit_model(X_iteration, ss.labels)
         log_probit_feature_importance(feature_names, β_current, X_iteration; context = context * "_iter_$(iteration)")
+        last_plot_iteration = iteration
+        last_plot_state = (
+            positive_mask = ss.positive_mask,
+            confident_positive_mask = ss.confident_positive_mask,
+            mined_negative_mask = ss.mined_negative_mask
+        )
+    end
+
+    if !isnothing(iteration_debug_callback) && !isnothing(last_plot_state) && last_plot_iteration > 1
+        iteration_debug_callback(last_plot_iteration, last_plot_state)
     end
 
     return β_current
@@ -2298,7 +2534,6 @@ function perform_probit_analysis_multifold(
     train_q_value_threshold::Float32 = 0.01f0,
     min_pep_neg_threshold_itr::Float32 = 0.90f0
 )
-
     #skip_scoring = true 
     #@user_info "Skipped scoring!!!"
     # 1. Detect unique CV folds from library
@@ -2346,8 +2581,6 @@ function perform_probit_analysis_multifold(
         return
     end
 
-    write_protein_probit_training_debug(all_protein_groups, feature_names, qc_folder)
-    
     # 5. Train probit model for each fold (skip if skip_scoring = true)
     models = Dict{UInt8, Vector{Float64}}()
 
@@ -2370,15 +2603,43 @@ function perform_probit_analysis_multifold(
 
             X_train = Matrix{Float64}(train_df[:, feature_names])
             y_train = train_df.target
+            initial_scores_train = train_df.pg_score
             
             # Fit model
             β_fitted = fit_probit_model_semisupervised(
                 X_train,
                 y_train,
-                feature_names;
+                feature_names,
+                initial_scores_train;
                 q_value_threshold = train_q_value_threshold,
                 min_pep_neg_threshold = min_pep_neg_threshold_itr,
-                context = "protein_probit_multifold_fold_$(test_fold)"
+                context = "protein_probit_multifold_fold_$(test_fold)",
+                iteration_debug_callback = (iteration, plot_state) -> begin
+                    write_protein_probit_fold_label_scatter(
+                        train_df,
+                        test_fold,
+                        qc_folder,
+                        plot_state;
+                        stage = "iter_$(iteration)",
+                        context = "protein_probit_multifold_fold_$(test_fold)"
+                    )
+                    write_protein_probit_fold_coverage_scatter(
+                        train_df,
+                        test_fold,
+                        qc_folder,
+                        plot_state;
+                        stage = "iter_$(iteration)",
+                        context = "protein_probit_multifold_fold_$(test_fold)"
+                    )
+                    write_protein_probit_fold_peptide_coverage_scatter(
+                        train_df,
+                        test_fold,
+                        qc_folder,
+                        plot_state;
+                        stage = "iter_$(iteration)",
+                        context = "protein_probit_multifold_fold_$(test_fold)"
+                    )
+                end
             )
             models[test_fold] = β_fitted
         end
