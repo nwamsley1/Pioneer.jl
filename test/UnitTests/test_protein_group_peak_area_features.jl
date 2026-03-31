@@ -69,7 +69,57 @@ using Pioneer
 
         @test grouped.n_peptides[1] == 2
         @test grouped.peptide_list[1] == "PEP1;PEP2"
-        @test grouped.pg_score[1] ≈ Float32(-log(0.01) - log(0.4)) atol = 1e-5
+        expected_pg_score = Float32(-log((0.2 + 0.01) * (0.1 + 0.01) * (0.5 + 0.01) * (0.4 + 0.01)))
+        @test grouped.pg_score[1] ≈ expected_pg_score atol = 1e-5
+    end
+
+    @testset "Protein Roll-Up Counts Peptides By Sequence" begin
+        psms = DataFrame(
+            inferred_protein_group = ["P1", "P1", "P1"],
+            target = Bool[true, true, true],
+            entrap_id = UInt8[1, 1, 1],
+            precursor_idx = UInt32[11, 12, 13],
+            base_pep_id = UInt32[101, 202, 303],
+            sequence = ["PEP1", "PEP1", "PEP2"],
+            structural_mods = ["", "(3,M,Oxidation)", ""],
+            isotopic_mods = ["", "", ""],
+            use_for_protein_quant = Bool[true, true, true],
+            missed_cleavage = Int64[0, 0, 0],
+            Mox = Int64[0, 1, 0],
+            prec_prob = Float32[0.80, 0.50, 0.60],
+            weight = Float32[100.0, 60.0, 50.0]
+        )
+
+        grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = empty_precursor_consensus)
+
+        @test grouped.n_peptides[1] == 2
+        @test grouped.peptide_list[1] == "PEP1;PEP2"
+        expected_pg_score = Float32(-log((0.2 + 0.01) * (0.5 + 0.01) * (0.4 + 0.01)))
+        @test grouped.pg_score[1] ≈ expected_pg_score atol = 1e-5
+    end
+
+    @testset "MaxLFQ Protein Support Counts Distinguish Precursors Modified Peptides And Sequences" begin
+        peptides = Union{Missing, Vector{Union{Missing, UInt32}}}[
+            Union{Missing, UInt32}[UInt32(1), UInt32(2), UInt32(3), missing],
+            missing,
+        ]
+        precursor_sequences = ["PEP1", "PEP1", "PEP2"]
+        precursor_structural_mods = Union{Missing, String}["", "(3,M,Oxidation)", ""]
+        precursor_isotopic_mods = Union{Missing, String}["", "", ""]
+
+        n_precursors, n_modified_peptides, n_peptides = Pioneer.countProteinSupport(
+            peptides,
+            precursor_sequences,
+            precursor_structural_mods,
+            precursor_isotopic_mods
+        )
+
+        @test n_precursors[1] == 3
+        @test n_modified_peptides[1] == 3
+        @test n_peptides[1] == 2
+        @test ismissing(n_precursors[2])
+        @test ismissing(n_modified_peptides[2])
+        @test ismissing(n_peptides[2])
     end
 
     @testset "Grouped Protein Catalog Uses Union Peptide Set" begin

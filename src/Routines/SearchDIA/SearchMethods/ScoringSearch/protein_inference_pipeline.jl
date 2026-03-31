@@ -522,7 +522,6 @@ const ProteinRollupModifiedPeptideRow = @NamedTuple{
     precursor_count::Int32
 }
 const ProteinRollupPeptideRow = @NamedTuple{
-    base_pep_id::UInt32,
     sequence::String,
     log_none_sum::Float64,
     pep::Float32,
@@ -724,34 +723,31 @@ function _build_protein_rollup(
     end
     sort!(modified_peptide_rows; by = row -> row.score, rev = true)
 
-    peptide_log_none_sum = Dict{UInt32, Float64}()
-    peptide_best_weight = Dict{UInt32, Float32}()
-    peptide_sequence = Dict{UInt32, String}()
-    peptide_modified_count = Dict{UInt32, Int32}()
+    peptide_log_none_sum = Dict{String, Float64}()
+    peptide_best_weight = Dict{String, Float32}()
+    peptide_modified_count = Dict{String, Int32}()
 
     for modified_row in modified_peptide_rows
-        peptide_key = modified_row.base_pep_id
+        peptide_key = modified_row.sequence
         peptide_log_none_sum[peptide_key] = get(peptide_log_none_sum, peptide_key, 0.0) + modified_row.log_none_sum
         peptide_best_weight[peptide_key] = max(
             get(peptide_best_weight, peptide_key, 0.0f0),
             modified_row.best_weight
         )
-        peptide_sequence[peptide_key] = modified_row.sequence
         peptide_modified_count[peptide_key] = get(peptide_modified_count, peptide_key, Int32(0)) + Int32(1)
     end
 
     peptide_rows = ProteinRollupPeptideRow[]
     sizehint!(peptide_rows, length(peptide_log_none_sum))
-    for (base_pep_id, log_none_sum) in peptide_log_none_sum
+    for (sequence, log_none_sum) in peptide_log_none_sum
         push!(peptide_rows, (
-            base_pep_id = base_pep_id,
-            sequence = peptide_sequence[base_pep_id],
+            sequence = sequence,
             log_none_sum = log_none_sum,
             pep = _none_probability_from_log_none_sum(log_none_sum),
             prob = _probability_from_log_none_sum(log_none_sum),
             score = _score_from_log_none_sum(log_none_sum),
-            best_weight = peptide_best_weight[base_pep_id],
-            modified_peptide_count = peptide_modified_count[base_pep_id]
+            best_weight = peptide_best_weight[sequence],
+            modified_peptide_count = peptide_modified_count[sequence]
         ))
     end
     sort!(peptide_rows; by = row -> row.score, rev = true)
@@ -1245,63 +1241,6 @@ end
 
 Add protein-level features like peptide coverage.
 """
-function _summarize_protein_feature_peptides(values::AbstractVector{<:AbstractString}; limit::Int = 12)::String
-    isempty(values) && return "[]"
-    shown = values[1:min(limit, length(values))]
-    suffix = length(values) > limit ? ", ... ($(length(values) - limit) more)" : ""
-    return "[" * join(repr.(shown), ", ") * suffix * "]"
-end
-
-function _throw_protein_feature_count_inconsistency(
-    key::@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
-    observed_n::Int,
-    possible_peptides::Set{String},
-    df,
-    row_idx::Int,
-    protein_catalog::Dict
-)
-    observed_peptides = if hasproperty(df, :peptide_list)
-        filter(!isempty, split(String(df.peptide_list[row_idx]), ';'))
-    else
-        String[]
-    end
-    possible_vec = sort!(collect(possible_peptides))
-    missing_observed = sort!(setdiff(observed_peptides, possible_vec))
-    member_possible_counts = String[]
-    if occursin(';', key.protein_name)
-        for member in split(key.protein_name, ';')
-            member_key = (
-                protein_name = strip(member),
-                target = key.target,
-                entrap_id = key.entrap_id
-            )
-            push!(
-                member_possible_counts,
-                "$(repr(member_key.protein_name))=>$(length(get(protein_catalog, member_key, Set{String}())))"
-            )
-        end
-    else
-        push!(
-            member_possible_counts,
-            "$(repr(key.protein_name))=>$(length(get(protein_catalog, key, Set{String}())))"
-        )
-    end
-
-    error(
-        "Protein feature count inconsistency: " *
-        "protein_name=$(repr(key.protein_name)) " *
-        "target=$(key.target) " *
-        "entrap_id=$(key.entrap_id) " *
-        "n_peptides=$(observed_n) " *
-        "n_possible_peptides=$(length(possible_peptides)) " *
-        "direct_catalog_match=$(haskey(protein_catalog, key)) " *
-        "observed_peptides=" * _summarize_protein_feature_peptides(observed_peptides) * " " *
-        "missing_observed_peptides=" * _summarize_protein_feature_peptides(missing_observed) * " " *
-        "possible_peptides_sample=" * _summarize_protein_feature_peptides(possible_vec) * " " *
-        "member_possible_counts=[" * join(member_possible_counts, ", ") * "]"
-    )
-end
-
 function add_protein_features(protein_catalog::Dict)
     desc = "add_protein_features"
     grouped_catalog_cache = Dict{
@@ -1350,14 +1289,15 @@ function add_protein_features(protein_catalog::Dict)
 
             n_possible[i] = length(possible_peptides)
 
-            if Int(df.n_peptides[i]) > n_possible[i]
-                _throw_protein_feature_count_inconsistency(
-                    key,
-                    Int(df.n_peptides[i]),
-                    possible_peptides,
-                    df,
-                    i,
-                    protein_catalog
+            observed_n = Int(df.n_peptides[i])
+            if observed_n > n_possible[i]
+                error(
+                    "Protein feature count inconsistency: " *
+                    "protein_name=$(repr(key.protein_name)) " *
+                    "target=$(key.target) " *
+                    "entrap_id=$(key.entrap_id) " *
+                    "n_peptides=$(observed_n) " *
+                    "n_possible_peptides=$(n_possible[i])"
                 )
             end
 

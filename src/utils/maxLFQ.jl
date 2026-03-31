@@ -370,6 +370,9 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
              protein_quant_path::String,
             quant_col::Symbol,
             file_id_to_parsed_name::Vector{String},
+            precursor_sequences::AbstractVector{<:AbstractString},
+            precursor_structural_mods::AbstractVector,
+            precursor_isotopic_mods::AbstractVector,
             q_value_threshold::Float32;
             batch_size = 100000,
             append::Bool = false)
@@ -474,7 +477,15 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                             )
         end
         out = DataFrame(out)
-        out[!,:n_peptides] = countPeptides(out[!,:peptides]);
+        n_precursors, n_modified_peptides, n_peptides = countProteinSupport(
+            out[!,:peptides],
+            precursor_sequences,
+            precursor_structural_mods,
+            precursor_isotopic_mods
+        )
+        out[!,:n_precursors] = n_precursors
+        out[!,:n_modified_peptides] = n_modified_peptides
+        out[!,:n_peptides] = n_peptides
         out[!,:file_name] = Vector{Union{Missing, String}}(undef, size(out, 1))
         for i in range(1, size(out, 1))
             if ismissing(out[i,:experiments])
@@ -498,7 +509,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                     [:file_name,
                     :target,
                     :entrap_id,
-                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:pg_pep,:pg_score,:global_pg_score,:abundance]);
+                    :species,:protein,:peptides,:n_precursors,:n_modified_peptides,:n_peptides,:global_qval,:qval,:pg_pep,:pg_score,:global_pg_score,:abundance]);
                 file=false)  # file=false creates stream format
             end
         else
@@ -509,7 +520,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                     [:file_name,
                     :target,
                     :entrap_id,
-                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:pg_pep,:pg_score,:global_pg_score,:abundance])
+                    :species,:protein,:peptides,:n_precursors,:n_modified_peptides,:n_peptides,:global_qval,:qval,:pg_pep,:pg_score,:global_pg_score,:abundance])
             )
         end
         n_writes += 1
@@ -537,6 +548,9 @@ function LFQ_chunked(
     protein_quant_path::String,
     quant_col::Symbol,
     file_id_to_parsed_name::Vector{String},
+    precursor_sequences::AbstractVector{<:AbstractString},
+    precursor_structural_mods::AbstractVector,
+    precursor_isotopic_mods::AbstractVector,
     q_value_threshold::Float32;
     batch_size::Int = 100000
 )
@@ -549,31 +563,53 @@ function LFQ_chunked(
     for (ci, chunk_ref) in enumerate(chunk_refs)
         # First chunk creates file (append=false), subsequent chunks append
         LFQ(chunk_ref, protein_quant_path, quant_col,
-            file_id_to_parsed_name, q_value_threshold;
+            file_id_to_parsed_name,
+            precursor_sequences,
+            precursor_structural_mods,
+            precursor_isotopic_mods,
+            q_value_threshold;
             batch_size=batch_size, append=(ci > 1))
         update(pbar)
     end
     return nothing
 end
 
-function countPeptides(peptides::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}})
-    
-    #Number of identified peptides for the protein group in a sample
-    n_peptides = zeros(Union{Missing, UInt32}, length(peptides))
+function countProteinSupport(
+    peptides::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}},
+    precursor_sequences::AbstractVector{<:AbstractString},
+    precursor_structural_mods::AbstractVector,
+    precursor_isotopic_mods::AbstractVector
+)
+    n_rows = length(peptides)
+    n_precursors = zeros(Union{Missing, UInt32}, n_rows)
+    n_modified_peptides = zeros(Union{Missing, UInt32}, n_rows)
+    n_peptides = zeros(Union{Missing, UInt32}, n_rows)
 
     for (i, pep) in enumerate(peptides)
         if ismissing(pep)
+            n_precursors[i] = missing
+            n_modified_peptides[i] = missing
             n_peptides[i] = missing
             continue
         end
 
         n = 0
+        observed_sequences = Set{String}()
+        observed_modified = Set{Tuple{String, String, String}}()
         for p in pep
             if !ismissing(p)
+                pid = Int(p)
                 n += 1
+                sequence = String(precursor_sequences[pid])
+                structural_mods = ismissing(precursor_structural_mods[pid]) ? "" : String(precursor_structural_mods[pid])
+                isotopic_mods = ismissing(precursor_isotopic_mods[pid]) ? "" : String(precursor_isotopic_mods[pid])
+                push!(observed_sequences, sequence)
+                push!(observed_modified, (sequence, structural_mods, isotopic_mods))
             end
         end
-        n_peptides[i] = n
+        n_precursors[i] = UInt32(n)
+        n_modified_peptides[i] = UInt32(length(observed_modified))
+        n_peptides[i] = UInt32(length(observed_sequences))
     end
-    return n_peptides
+    return n_precursors, n_modified_peptides, n_peptides
 end

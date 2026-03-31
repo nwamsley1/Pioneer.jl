@@ -218,6 +218,8 @@ function summarize_results!(
             write_csv = params.write_csv
         )
 
+        precursors = getPrecursors(getSpecLib(search_context))
+
         @user_info "Performing MaxLFQ..."
         # Chunked MaxLFQ protein quantification (bounded memory per chunk)
         precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
@@ -226,6 +228,9 @@ function summarize_results!(
             protein_long_path,
             precursor_quant_col,
             all_file_names,
+            getSequence(precursors),
+            getStructuralMods(precursors),
+            getIsotopicMods(precursors),
             params.q_value_threshold,
             batch_size = params.batch_size
         )
@@ -237,7 +242,6 @@ function summarize_results!(
 
         @user_info "Writing protein group results..."
         # Create wide format protein table (protein groups table is small, no chunking needed)
-        precursors = getPrecursors(getSpecLib(search_context))
         proteins_wide_path = writeProteinGroupsCSV(
             results.proteins_long_path,
             getSequence(precursors),
