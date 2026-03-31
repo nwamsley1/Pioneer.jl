@@ -1245,6 +1245,63 @@ end
 
 Add protein-level features like peptide coverage.
 """
+function _summarize_protein_feature_peptides(values::Vector{String}; limit::Int = 12)::String
+    isempty(values) && return "[]"
+    shown = values[1:min(limit, length(values))]
+    suffix = length(values) > limit ? ", ... ($(length(values) - limit) more)" : ""
+    return "[" * join(repr.(shown), ", ") * suffix * "]"
+end
+
+function _throw_protein_feature_count_inconsistency(
+    key::@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
+    observed_n::Int,
+    possible_peptides::Set{String},
+    df,
+    row_idx::Int,
+    protein_catalog::Dict
+)
+    observed_peptides = if hasproperty(df, :peptide_list)
+        filter(!isempty, split(String(df.peptide_list[row_idx]), ';'))
+    else
+        String[]
+    end
+    possible_vec = sort!(collect(possible_peptides))
+    missing_observed = sort!(setdiff(observed_peptides, possible_vec))
+    member_possible_counts = String[]
+    if occursin(';', key.protein_name)
+        for member in split(key.protein_name, ';')
+            member_key = (
+                protein_name = strip(member),
+                target = key.target,
+                entrap_id = key.entrap_id
+            )
+            push!(
+                member_possible_counts,
+                "$(repr(member_key.protein_name))=>$(length(get(protein_catalog, member_key, Set{String}())))"
+            )
+        end
+    else
+        push!(
+            member_possible_counts,
+            "$(repr(key.protein_name))=>$(length(get(protein_catalog, key, Set{String}())))"
+        )
+    end
+
+    error(
+        "Protein feature count inconsistency: " *
+        "protein_name=$(repr(key.protein_name)) " *
+        "target=$(key.target) " *
+        "entrap_id=$(key.entrap_id) " *
+        "n_peptides=$(observed_n) " *
+        "n_possible_peptides=$(length(possible_peptides)) " *
+        "direct_catalog_match=$(haskey(protein_catalog, key)) " *
+        "observed_peptides=" * _summarize_protein_feature_peptides(observed_peptides) * " " *
+        "missing_observed_peptides=" * _summarize_protein_feature_peptides(missing_observed) * " " *
+        "possible_peptides_sample=" * _summarize_protein_feature_peptides(possible_vec) * " " *
+        "member_possible_counts=[" * join(member_possible_counts, ", ") * "]"
+    )
+end
+
 function add_protein_features(protein_catalog::Dict)
     desc = "add_protein_features"
     grouped_catalog_cache = Dict{
@@ -1292,6 +1349,17 @@ function add_protein_features(protein_catalog::Dict)
             end
 
             n_possible[i] = length(possible_peptides)
+
+            if Int(df.n_peptides[i]) > n_possible[i]
+                _throw_protein_feature_count_inconsistency(
+                    key,
+                    Int(df.n_peptides[i]),
+                    possible_peptides,
+                    df,
+                    i,
+                    protein_catalog
+                )
+            end
 
             if n_possible[i] > 0
                 peptide_coverage[i] = Float32(df.n_peptides[i]) / Float32(n_possible[i])
