@@ -1070,7 +1070,8 @@ function perform_protein_probit_regression(
     protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
     ms1_scoring::Bool = true,
     train_q_value_threshold::Float32 = 0.01f0,
-    min_pep_neg_threshold_itr::Float32 = 0.90f0
+    min_prefix_shape_neg_threshold_itr::Float32 = 0.10f0,
+    max_pep_neg_threshold_itr::Float32 = 0.90f0
 )
     # Extract paths for compatibility with existing code
     passing_pg_paths = [file_path(ref) for ref in pg_refs]
@@ -1114,7 +1115,8 @@ function perform_protein_probit_regression(
             skip_scoring = skip_scoring_oom,
             ms1_scoring = ms1_scoring,
             train_q_value_threshold = train_q_value_threshold,
-            min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
+            min_prefix_shape_neg_threshold_itr = min_prefix_shape_neg_threshold_itr,
+            max_pep_neg_threshold_itr = max_pep_neg_threshold_itr
         )
     else
         # Load all protein group tables into a single DataFrame
@@ -1142,27 +1144,33 @@ function perform_protein_probit_regression(
             skip_scoring = skip_scoring,
             ms1_scoring = ms1_scoring,
             train_q_value_threshold = train_q_value_threshold,
-            min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
+            min_prefix_shape_neg_threshold_itr = min_prefix_shape_neg_threshold_itr,
+            max_pep_neg_threshold_itr = max_pep_neg_threshold_itr
         )
     end
 end
 
 """
-    build_protein_semisupervised_training_set(scores, targets; q_value_threshold = 0.01f0, max_positive_pep_threshold = 1.0f0, mined_negative_pep_threshold = 0.90f0)
+    build_protein_semisupervised_training_set(scores, targets, prefix_shape; q_value_threshold = 0.01f0, max_positive_pep_threshold = 1.0f0, mined_negative_prefix_shape_threshold = 0.10f0, mined_negative_pep_threshold = 0.90f0)
 
 Build labels for semi-supervised protein probit training from a score vector.
 Targets passing the q-value and PEP thresholds stay positive, non-passing
-targets with `PEP >= mined_negative_pep_threshold` are mined as negatives,
-and all remaining targets are dropped from training.
+targets with `prefix_shape <= mined_negative_prefix_shape_threshold` or
+`PEP >= mined_negative_pep_threshold` are mined as negatives, and all
+remaining targets are dropped from training.
 """
 function build_protein_semisupervised_training_set(
     scores::AbstractVector{<:Real},
-    targets::AbstractVector{Bool};
+    targets::AbstractVector{Bool},
+    prefix_shape::AbstractVector{<:Real};
     q_value_threshold::Float32 = 0.01f0,
     max_positive_pep_threshold::Float32 = 1.0f0,
+    mined_negative_prefix_shape_threshold::Float32 = 0.10f0,
     mined_negative_pep_threshold::Float32 = 0.90f0
 )
     n = length(scores)
+    length(targets) == n || throw(ArgumentError("targets must have the same length as scores"))
+    length(prefix_shape) == n || throw(ArgumentError("prefix_shape must have the same length as scores"))
     qvals = Vector{Float32}(undef, n)
     peps = Vector{Float32}(undef, n)
     get_qvalues!(scores, targets, qvals)
@@ -1174,12 +1182,14 @@ function build_protein_semisupervised_training_set(
     positive_mask = BitVector(undef, n)
     keep_mask = BitVector(undef, n)
 
-    @inbounds for i in eachindex(scores, targets, qvals, peps)
+    @inbounds for i in eachindex(scores, targets, prefix_shape, qvals, peps)
         confident_positive_mask[i] = targets[i] &&
                                      (qvals[i] <= q_value_threshold) &&
                                      (peps[i] <= max_positive_pep_threshold)
         failed_target_mask[i] = targets[i] && !confident_positive_mask[i]
-        mined_negative_mask[i] = failed_target_mask[i] && (peps[i] >= mined_negative_pep_threshold)
+        mined_negative_mask[i] = failed_target_mask[i] &&
+                                 ((Float32(prefix_shape[i]) <= mined_negative_prefix_shape_threshold) ||
+                                  (peps[i] >= mined_negative_pep_threshold))
         positive_mask[i] = confident_positive_mask[i]
         keep_mask[i] = !targets[i] || confident_positive_mask[i] || mined_negative_mask[i]
     end
@@ -1193,6 +1203,7 @@ function build_protein_semisupervised_training_set(
         confident_positive_mask = confident_positive_mask,
         mined_negative_mask = mined_negative_mask,
         requested_mined_negative_count = sum(mined_negative_mask),
+        mined_negative_prefix_shape_threshold = mined_negative_prefix_shape_threshold,
         mined_negative_pep_threshold = mined_negative_pep_threshold,
         qvals = qvals,
         peps = peps
@@ -1375,7 +1386,8 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
                                     max_protein_groups_in_memory::Int, qc_folder::String;
                                     skip_scoring = false, ms1_scoring::Bool = true,
                                     train_q_value_threshold::Float32 = 0.01f0,
-                                    min_pep_neg_threshold_itr::Float32 = 0.90f0)
+                                    min_prefix_shape_neg_threshold_itr::Float32 = 0.10f0,
+                                    max_pep_neg_threshold_itr::Float32 = 0.90f0)
     
     # Calculate sampling ratio
     sampling_ratio = max_protein_groups_in_memory / total_protein_groups
@@ -1431,9 +1443,11 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
         β_fitted = fit_probit_model_semisupervised(
             X,
             y,
-            feature_names;
+            feature_names,
+            sampled_protein_groups.precursor_consensus_prefix_shape;
             q_value_threshold = train_q_value_threshold,
-            min_pep_neg_threshold = min_pep_neg_threshold_itr,
+            min_prefix_shape_neg_threshold = min_prefix_shape_neg_threshold_itr,
+            max_pep_neg_threshold = max_pep_neg_threshold_itr,
             context = "protein_probit_oom_sampled"
         )
         sampled_protein_groups[!, :pg_score] = Float32.(calculate_probit_scores(X, β_fitted))
@@ -1492,7 +1506,8 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
                                pg_refs::Vector{ProteinGroupFileReference};
                                show_improvement = true,
                                train_q_value_threshold::Float32 = 0.01f0,
-                               min_pep_neg_threshold_itr::Float32 = 0.90f0)
+                               min_prefix_shape_neg_threshold_itr::Float32 = 0.10f0,
+                               max_pep_neg_threshold_itr::Float32 = 0.90f0)
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
     feature_names = protein_probit_feature_names(include_n_possible_peptides = true)
@@ -1534,9 +1549,11 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         X,
         y,
         feature_names,
-        initial_scores;
+        initial_scores,
+        feature_df.precursor_consensus_prefix_shape;
         q_value_threshold = train_q_value_threshold,
-        min_pep_neg_threshold = min_pep_neg_threshold_itr,
+        min_prefix_shape_neg_threshold = min_prefix_shape_neg_threshold_itr,
+        max_pep_neg_threshold = max_pep_neg_threshold_itr,
         context = "protein_probit"
     )
     auto_accept_mask = partition.auto_pass_mask
@@ -1609,7 +1626,7 @@ function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
 end
 
 """
-    fit_probit_model_semisupervised(X, y, feature_names, initial_scores; q_value_threshold = 0.01f0, min_pep_neg_threshold = 0.90f0, max_positive_pep_threshold = 1.0f0, n_iterations = 10, context = "protein_probit", iteration_debug_callback = nothing)
+    fit_probit_model_semisupervised(X, y, feature_names, initial_scores, prefix_shape; q_value_threshold = 0.01f0, min_prefix_shape_neg_threshold = 0.10f0, max_pep_neg_threshold = 0.90f0, max_positive_pep_threshold = 1.0f0, n_iterations = 10, context = "protein_probit", iteration_debug_callback = nothing)
 
 Fit the protein probit model by seeding iteration 1 labels from raw initial scores,
 then fitting and refining with the full feature set.
@@ -1618,9 +1635,11 @@ function fit_probit_model_semisupervised(
     X::Matrix{Float64},
     y::Vector{Bool},
     feature_names::Vector{Symbol},
-    initial_scores::AbstractVector{<:Real};
+    initial_scores::AbstractVector{<:Real},
+    prefix_shape::AbstractVector{<:Real};
     q_value_threshold::Float32 = 0.01f0,
-    min_pep_neg_threshold::Float32 = 0.90f0,
+    min_prefix_shape_neg_threshold::Float32 = 0.10f0,
+    max_pep_neg_threshold::Float32 = 0.90f0,
     max_positive_pep_threshold::Float32 = 1.0f0,
     n_iterations::Int = 10,
     context::AbstractString = "protein_probit",
@@ -1629,14 +1648,17 @@ function fit_probit_model_semisupervised(
     total_targets = sum(y)
     total_decoys = length(y) - total_targets
     length(initial_scores) == length(y) || throw(ArgumentError("initial_scores must have the same length as y"))
+    length(prefix_shape) == length(y) || throw(ArgumentError("prefix_shape must have the same length as y"))
     last_plot_iteration = 1
     last_plot_state = nothing
     ss_initial = build_protein_semisupervised_training_set(
         initial_scores,
-        y;
+        y,
+        prefix_shape;
         q_value_threshold = q_value_threshold,
         max_positive_pep_threshold = max_positive_pep_threshold,
-        mined_negative_pep_threshold = min_pep_neg_threshold
+        mined_negative_prefix_shape_threshold = min_prefix_shape_neg_threshold,
+        mined_negative_pep_threshold = max_pep_neg_threshold
     )
 
     initial_row_count = sum(ss_initial.keep_mask)
@@ -1646,7 +1668,7 @@ function fit_probit_model_semisupervised(
     initial_confident_targets = sum(ss_initial.confident_positive_mask)
     initial_dropped_targets = sum(y .& .!ss_initial.positive_mask .& .!ss_initial.mined_negative_mask)
 
-    @user_info "Protein probit semi-supervised selection context=$(context) iteration=1 source=initial_pg_score q_value_threshold=$(q_value_threshold) max_positive_pep_threshold=$(max_positive_pep_threshold) mined_negative_pep_threshold=$(ss_initial.mined_negative_pep_threshold) requested_mined_target_negatives=$(ss_initial.requested_mined_negative_count) total_rows=$(length(y)) total_targets=$(total_targets) total_decoys=$(total_decoys) selected_rows=$(initial_row_count) selected_targets=$(initial_target_count) selected_decoys=$(initial_decoy_count) confident_targets=$(initial_confident_targets) dropped_failed_targets=$(initial_dropped_targets) mined_target_negatives=$(initial_mined_target_negatives)"
+    @user_info "Protein probit semi-supervised selection context=$(context) iteration=1 source=initial_pg_score q_value_threshold=$(q_value_threshold) max_positive_pep_threshold=$(max_positive_pep_threshold) mined_negative_prefix_shape_threshold=$(ss_initial.mined_negative_prefix_shape_threshold) mined_negative_pep_threshold=$(ss_initial.mined_negative_pep_threshold) requested_mined_target_negatives=$(ss_initial.requested_mined_negative_count) total_rows=$(length(y)) total_targets=$(total_targets) total_decoys=$(total_decoys) selected_rows=$(initial_row_count) selected_targets=$(initial_target_count) selected_decoys=$(initial_decoy_count) confident_targets=$(initial_confident_targets) dropped_failed_targets=$(initial_dropped_targets) mined_target_negatives=$(initial_mined_target_negatives)"
 
     if initial_target_count < 10 || initial_decoy_count < 10
         @user_warn "Protein probit semi-supervised iteration has insufficient data; falling back to all rows for initial pg_score fit" context = context iteration = 1 selected_targets = initial_target_count selected_decoys = initial_decoy_count
@@ -1688,10 +1710,12 @@ function fit_probit_model_semisupervised(
         iteration_scores = calculate_probit_scores(X, β_current)
         ss = build_protein_semisupervised_training_set(
             iteration_scores,
-            y;
+            y,
+            prefix_shape;
             q_value_threshold = q_value_threshold,
             max_positive_pep_threshold = max_positive_pep_threshold,
-            mined_negative_pep_threshold = min_pep_neg_threshold
+            mined_negative_prefix_shape_threshold = min_prefix_shape_neg_threshold,
+            mined_negative_pep_threshold = max_pep_neg_threshold
         )
 
         iteration_row_count = sum(ss.keep_mask)
@@ -1701,7 +1725,7 @@ function fit_probit_model_semisupervised(
         confident_targets = sum(ss.confident_positive_mask)
         dropped_targets = sum(y .& .!ss.positive_mask .& .!ss.mined_negative_mask)
 
-        @user_info "Protein probit semi-supervised selection context=$(context) iteration=$(iteration) q_value_threshold=$(q_value_threshold) max_positive_pep_threshold=$(max_positive_pep_threshold) mined_negative_pep_threshold=$(ss.mined_negative_pep_threshold) requested_mined_target_negatives=$(ss.requested_mined_negative_count) total_rows=$(length(y)) total_targets=$(total_targets) total_decoys=$(total_decoys) selected_rows=$(iteration_row_count) selected_targets=$(iteration_target_count) selected_decoys=$(iteration_decoy_count) confident_targets=$(confident_targets) dropped_failed_targets=$(dropped_targets) mined_target_negatives=$(mined_target_negatives)"
+        @user_info "Protein probit semi-supervised selection context=$(context) iteration=$(iteration) q_value_threshold=$(q_value_threshold) max_positive_pep_threshold=$(max_positive_pep_threshold) mined_negative_prefix_shape_threshold=$(ss.mined_negative_prefix_shape_threshold) mined_negative_pep_threshold=$(ss.mined_negative_pep_threshold) requested_mined_target_negatives=$(ss.requested_mined_negative_count) total_rows=$(length(y)) total_targets=$(total_targets) total_decoys=$(total_decoys) selected_rows=$(iteration_row_count) selected_targets=$(iteration_target_count) selected_decoys=$(iteration_decoy_count) confident_targets=$(confident_targets) dropped_failed_targets=$(dropped_targets) mined_target_negatives=$(mined_target_negatives)"
 
         if iteration_target_count < 10 || iteration_decoy_count < 10
             @user_warn "Protein probit semi-supervised iteration has insufficient data; using previous iteration model" context = context iteration = iteration selected_targets = iteration_target_count selected_decoys = iteration_decoy_count
@@ -2532,7 +2556,8 @@ function perform_probit_analysis_multifold(
     skip_scoring = false,
     ms1_scoring::Bool = true,
     train_q_value_threshold::Float32 = 0.01f0,
-    min_pep_neg_threshold_itr::Float32 = 0.90f0
+    min_prefix_shape_neg_threshold_itr::Float32 = 0.10f0,
+    max_pep_neg_threshold_itr::Float32 = 0.90f0
 )
     #skip_scoring = true 
     #@user_info "Skipped scoring!!!"
@@ -2610,9 +2635,11 @@ function perform_probit_analysis_multifold(
                 X_train,
                 y_train,
                 feature_names,
-                initial_scores_train;
+                initial_scores_train,
+                train_df.precursor_consensus_prefix_shape;
                 q_value_threshold = train_q_value_threshold,
-                min_pep_neg_threshold = min_pep_neg_threshold_itr,
+                min_prefix_shape_neg_threshold = min_prefix_shape_neg_threshold_itr,
+                max_pep_neg_threshold = max_pep_neg_threshold_itr,
                 context = "protein_probit_multifold_fold_$(test_fold)",
                 iteration_debug_callback = (iteration, plot_state) -> begin
                     write_protein_probit_fold_label_scatter(

@@ -216,12 +216,18 @@ using Pioneer
         @test isinf(pg_score_threshold)
     end
 
-    @testset "Protein Semi-Supervised Training Set Mines Failed Targets By PEP Threshold" begin
+    @testset "Protein Semi-Supervised Training Set Mines Failed Targets By Shape Or PEP Threshold" begin
         scores = Float32[
             0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90,
             0.89, 0.88, 0.87, 0.86, 0.85, 0.84, 0.83, 0.82, 0.81, 0.80,
             0.79, 0.78, 0.77, 0.76, 0.20, 0.19, 0.18, 0.17, 0.16, 0.15,
             0.14, 0.13, 0.12, 0.11, 0.10, 0.09
+        ]
+        prefix_shape = Float32[
+            0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15,
+            0.12, 0.11, 0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.60, 0.60,
+            0.60, 0.60, 0.09, 0.20, 0.60, 0.60, 0.60, 0.60, 0.60, 0.60,
+            0.60, 0.60, 0.60, 0.60, 0.60, 0.60
         ]
         targets = Bool[
             true, true, true, true, true, true, true, true, true, true,
@@ -231,49 +237,58 @@ using Pioneer
         ]
         ss = Pioneer.build_protein_semisupervised_training_set(
             scores,
-            targets;
+            targets,
+            prefix_shape;
             q_value_threshold = 0.01f0
         )
-        ss_loose_pep = Pioneer.build_protein_semisupervised_training_set(
+        ss_loose_shape = Pioneer.build_protein_semisupervised_training_set(
             scores,
-            targets;
+            targets,
+            prefix_shape;
             q_value_threshold = 0.01f0,
+            mined_negative_prefix_shape_threshold = 1.0f0,
             mined_negative_pep_threshold = 1.0f0
         )
 
         @test any(ss.positive_mask)
         @test any(ss.confident_positive_mask)
         @test any(ss.mined_negative_mask)
+        @test ss.mined_negative_prefix_shape_threshold == 0.10f0
         @test ss.mined_negative_pep_threshold == 0.90f0
         @test all(ss.keep_mask[.!targets])
         @test all(ss.keep_mask .== (.!targets .| ss.confident_positive_mask .| ss.mined_negative_mask))
         @test all(ss.confident_positive_mask .<= ss.positive_mask)
         @test sum(ss.labels) == sum(ss.positive_mask[ss.keep_mask])
         @test all(.!ss.labels[.!targets[ss.keep_mask]])
-        @test all(ss.peps[ss.mined_negative_mask] .>= ss.mined_negative_pep_threshold)
+        @test all((prefix_shape[ss.mined_negative_mask] .<= ss.mined_negative_prefix_shape_threshold) .|
+                  (ss.peps[ss.mined_negative_mask] .>= ss.mined_negative_pep_threshold))
         @test ss.positive_mask == ss.confident_positive_mask
         @test ss.requested_mined_negative_count == sum(ss.mined_negative_mask)
         @test sum(ss.mined_negative_mask) == ss.requested_mined_negative_count
         @test all(ss.peps[ss.confident_positive_mask] .<= 1.0f0)
-        @test sum(ss.mined_negative_mask) <= sum(ss_loose_pep.mined_negative_mask)
+        @test sum(ss.mined_negative_mask) <= sum(ss_loose_shape.mined_negative_mask)
     end
 
-    @testset "Protein Semi-Supervised Training Set Drops Low-PEP Failing Targets" begin
+    @testset "Protein Semi-Supervised Training Set Drops High-Shape Failing Targets" begin
         scores = Float32.(collect(reverse(range(0.99, 0.70, length = 30))))
+        prefix_shape = Float32.(vcat(fill(0.60, 15), fill(0.20, 10), fill(0.05, 5)))
         targets = trues(30)
         targets[[1, 9, 17]] .= false
 
         ss = Pioneer.build_protein_semisupervised_training_set(
             scores,
-            targets;
+            targets,
+            prefix_shape;
             q_value_threshold = 0.01f0
         )
 
         dropped_mask = targets .& .!ss.confident_positive_mask .& .!ss.mined_negative_mask
 
+        @test ss.mined_negative_prefix_shape_threshold == 0.10f0
         @test ss.mined_negative_pep_threshold == 0.90f0
+        @test all(prefix_shape[dropped_mask] .> ss.mined_negative_prefix_shape_threshold)
         @test all(ss.peps[dropped_mask] .< ss.mined_negative_pep_threshold)
-        @test !any(ss.mined_negative_mask)
+        @test any(ss.mined_negative_mask)
         @test any(dropped_mask)
         @test ss.positive_mask == ss.confident_positive_mask
         @test all(.!ss.keep_mask[dropped_mask])
