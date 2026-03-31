@@ -1245,7 +1245,7 @@ end
 
 Add protein-level features like peptide coverage.
 """
-function _summarize_protein_feature_peptides(values::Vector{String}; limit::Int = 12)::String
+function _summarize_protein_feature_peptides(values::AbstractVector{<:AbstractString}; limit::Int = 12)::String
     isempty(values) && return "[]"
     shown = values[1:min(limit, length(values))]
     suffix = length(values) > limit ? ", ... ($(length(values) - limit) more)" : ""
