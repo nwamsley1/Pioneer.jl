@@ -177,6 +177,123 @@ function reset_results!(results::ScoringSearchResults)
     return nothing
 end
 
+function run_integrated_protein_scoring!(
+    search_context::SearchContext;
+    passing_refs::Vector{PSMFileReference},
+    max_psm_memory_mb::Float64,
+    q_value_threshold::Float32,
+    min_peptides::Int64,
+    ms1_scoring::Bool,
+    min_pep_neg_threshold_itr::Float32,
+    pg_q_value_interpolation_points_per_bin::Int64,
+    consensus_debug_protein_names::Vector{String} = String[]
+)
+    isempty(passing_refs) && return nothing
+
+    temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
+    passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
+    !isdir(passing_proteins_folder) && mkpath(passing_proteins_folder)
+
+    qc_folder = joinpath(dirname(temp_folder), "qc_plots")
+    !isdir(qc_folder) && mkpath(qc_folder)
+
+    precursors = getPrecursors(getSpecLib(search_context))
+    protein_to_possible_peptides = count_protein_peptides(precursors)
+
+    file_idx_to_name = Dict{Int64, String}()
+    for (file_idx, file_name) in enumerate(getFileIdToName(getMSData(search_context)))
+        file_idx_to_name[Int64(file_idx)] = String(file_name)
+    end
+
+    pg_refs, psm_to_pg_mapping = perform_protein_inference_pipeline(
+        passing_refs,
+        passing_proteins_folder,
+        precursors,
+        protein_to_possible_peptides,
+        min_peptides = min_peptides,
+        q_value_threshold = q_value_threshold,
+        qc_folder = qc_folder,
+        file_idx_to_name = file_idx_to_name,
+        consensus_debug_protein_names = consensus_debug_protein_names
+    )
+
+    valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
+    paired_files = PairedSearchFiles[]
+    for (file_idx, psm_path) in valid_file_data
+        haskey(psm_to_pg_mapping, psm_path) || continue
+        push!(paired_files, PairedSearchFiles(psm_path, psm_to_pg_mapping[psm_path], file_idx))
+    end
+
+    isempty(paired_files) && error("No protein groups created during protein inference")
+
+    psm_paths = [file_path(ref) for ref in passing_refs]
+    protein_to_cv_fold = build_protein_cv_fold_mapping(psm_paths, precursors)
+
+    max_pgs = estimate_max_rows(max_psm_memory_mb, file_path(first(pg_refs)))
+    @user_info "Memory budget $(max_psm_memory_mb) MB → max_protein_groups = $max_pgs"
+    perform_protein_probit_regression(
+        pg_refs,
+        max_pgs,
+        qc_folder,
+        precursors;
+        protein_to_cv_fold = protein_to_cv_fold,
+        file_idx_to_name = file_idx_to_name,
+        ms1_scoring = ms1_scoring,
+        train_q_value_threshold = q_value_threshold,
+        min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
+    )
+
+    sqrt_n_runs = floor(Int, sqrt(length(pg_refs)))
+    n_proteins = length(getProteins(getSpecLib(search_context)))
+
+    global_pg_score_dict, pg_name_to_global_pg_score =
+        build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
+    search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
+
+    global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)
+    search_context.global_pg_score_to_qval_dict[] = global_pg_qval_dict
+
+    sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
+    spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
+        batch_size = 1_000_000, compute_pep = true,
+        min_pep_points_per_bin = pg_q_value_interpolation_points_per_bin,
+        temp_prefix = "pg_sidecar")
+    search_context.pg_score_to_qval[] = spline_result.qval_spline
+    search_context.pg_score_to_pep[] = spline_result.pep_interp
+
+    protein_combined_pipeline = TransformPipeline() |>
+        add_dict_column_composite_key(:global_pg_score, [:protein_name, :target, :entrap_id], global_pg_score_dict) |>
+        add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], global_pg_qval_dict) |>
+        add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
+        add_interpolated_column(:pg_pep, :pg_score, search_context.pg_score_to_pep[]) |>
+        filter_by_multiple_thresholds([
+            (:global_pg_qval, q_value_threshold),
+            (:pg_qval, q_value_threshold)
+        ])
+
+    apply_pipeline!(pg_refs, protein_combined_pipeline)
+
+    spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
+        batch_size = 1_000_000,
+        min_pep_points_per_bin = pg_q_value_interpolation_points_per_bin,
+        temp_prefix = "pg_recalc")
+    search_context.pg_score_to_qval[] = spline_result.qval_spline
+
+    recalc_pg_pipeline = TransformPipeline() |>
+        add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[])
+
+    pg_refs = apply_pipeline_batch(pg_refs, recalc_pg_pipeline, passing_proteins_folder)
+
+    update_psms_with_probit_scores_refs(
+        paired_files,
+        search_context.pg_name_to_global_pg_score[],
+        search_context.pg_score_to_qval[],
+        search_context.global_pg_score_to_qval_dict[]
+    )
+
+    return nothing
+end
+
 #==========================================================
 Q-value Spline Wrapper Functions
 ==========================================================#
@@ -495,124 +612,10 @@ function summarize_results!(
             setPassingPsms!(getMSData(search_context), file_idx, file_path(ref))
         end
 
-        # Step 12: Count protein peptides
-        step12_time = @elapsed begin
-            protein_to_possible_peptides = count_protein_peptides(
-                getPrecursors(getSpecLib(search_context))
-            )
-        end
-
-        # Step 13: Perform protein inference and initial scoring
-        step13_time = @elapsed begin
-            pg_refs, psm_to_pg_mapping = perform_protein_inference_pipeline(
-                passing_refs,
-                passing_proteins_folder,
-                getPrecursors(getSpecLib(search_context)),
-                protein_to_possible_peptides,
-                min_peptides = params.min_peptides,
-                q_value_threshold = params.q_value_threshold
-            )
-
-            paired_files = [PairedSearchFiles(psm_path, pg_path, file_idx)
-                           for (file_idx, (psm_path, pg_path)) in zip(valid_file_indices, psm_to_pg_mapping)]
-
-            isempty(paired_files) && error("No protein groups created during protein inference")
-        end
-        # Step 14: Build protein CV fold mapping from PSMs
-        step14_time = @elapsed begin
-            # Get PSM paths from passing_refs (these are the high-quality PSMs)
-            psm_paths = [file_path(ref) for ref in passing_refs]
-            protein_to_cv_fold = build_protein_cv_fold_mapping(psm_paths, getPrecursors(getSpecLib(search_context)))
-        end
-
-        # Step 15: Perform protein probit regression
-        step15_time = @elapsed begin
-
-            qc_folder = joinpath(dirname(temp_folder), "qc_plots")
-            !isdir(qc_folder) && mkdir(qc_folder)
-
-            max_pgs = estimate_max_rows(params.max_psm_memory_mb, file_path(first(pg_refs)))
-            @user_info "Memory budget $(params.max_psm_memory_mb) MB → max_protein_groups = $max_pgs"
-            perform_protein_probit_regression(
-                pg_refs,
-                max_pgs,
-                qc_folder,
-                getPrecursors(getSpecLib(search_context));
-                protein_to_cv_fold = protein_to_cv_fold,
-                ms1_scoring = params.ms1_scoring,
-                train_q_value_threshold = params.q_value_threshold,
-                min_pep_neg_threshold_itr = params.min_PEP_neg_threshold_itr
-            )
-        end
-
-        # Steps 16-23 (combined): Build protein dicts + sidecar splines + single pipeline pass
-        # Replaces 4 separate sort-merge-load-split cycles with:
-        #   - Streaming dict accumulation for global_pg_score (reads ~20 bytes/row)
-        #   - In-memory q-value computation from dicts (no I/O)
-        #   - Lightweight 2-column sidecar files for spline computation
-        #   - Single per-file pipeline combining all column additions + filtering
-        step16_23_time = @elapsed begin
-            sqrt_n_runs = floor(Int, sqrt(length(pg_refs)))
-
-            # Pre-allocation size from spectral library
-            n_proteins = length(getProteins(getSpecLib(search_context)))
-
-            # D1: Stream per-file PGs to build global_pg_score dict (~20 bytes/row read)
-            global_pg_score_dict, pg_name_to_global_pg_score =
-                build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
-            search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
-
-            # D2: Compute global PG q-value dict from score dict (NO file I/O)
-            global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)
-            search_context.global_pg_score_to_qval_dict[] = global_pg_qval_dict
-
-            # D3-D5: Sidecar lifecycle → PG spline + PEP interpolation
-            sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
-            spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
-                batch_size=1_000_000, compute_pep=true,
-                min_pep_points_per_bin=params.pg_q_value_interpolation_points_per_bin, temp_prefix="pg_sidecar")
-            search_context.pg_score_to_qval[] = spline_result.qval_spline
-            search_context.pg_score_to_pep[] = spline_result.pep_interp
-
-            # Phase B — Single per-file pipeline combining Steps 16+23
-            protein_combined_pipeline = TransformPipeline() |>
-                add_dict_column_composite_key(:global_pg_score, [:protein_name, :target, :entrap_id], global_pg_score_dict) |>
-                add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], global_pg_qval_dict) |>
-                add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
-                add_interpolated_column(:pg_pep, :pg_score, search_context.pg_score_to_pep[]) |>
-                filter_by_multiple_thresholds([
-                    (:global_pg_qval, params.q_value_threshold),
-                    (:pg_qval, params.q_value_threshold)
-                ])
-
-            apply_pipeline!(pg_refs, protein_combined_pipeline)
-
-            # Post-filtering recalculation of pg_qval on filtered data
-            spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
-                batch_size=1_000_000, min_pep_points_per_bin=params.pg_q_value_interpolation_points_per_bin,
-                temp_prefix="pg_recalc")
-            search_context.pg_score_to_qval[] = spline_result.qval_spline
-
-            recalc_pg_pipeline = TransformPipeline() |>
-                add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[])
-
-            pg_refs = apply_pipeline_batch(pg_refs, recalc_pg_pipeline, passing_proteins_folder)
-        end
-
-        # Step 24: Update PSMs with final protein scores
-        step24_time = @elapsed begin
-            update_psms_with_probit_scores_refs(
-                paired_files,
-                search_context.pg_name_to_global_pg_score[],
-                search_context.pg_score_to_qval[],
-                search_context.global_pg_score_to_qval_dict[]
-            )
-        end
+        @user_info "Deferring protein inference/scoring until after chromatogram integration"
         # Summary of all step times
         total_time = step1_time + step2_time + step3_time + step4_time +
-                    step5_10_time + step11_time +
-                    step12_time + step13_time + step14_time + step15_time +
-                    step16_23_time + step24_time
+                    step5_10_time + step11_time
 
         @user_info "ScoringSearch completed - Total time: $(round(total_time, digits=2)) seconds"
 

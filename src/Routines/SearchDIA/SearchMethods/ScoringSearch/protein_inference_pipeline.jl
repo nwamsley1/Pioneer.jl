@@ -19,6 +19,24 @@
 Pipeline Operations for Protein Inference
 ==========================================================#
 
+const PREFIX_SHAPE_CONFIDENCE_PIVOT = 0.5f0
+
+@inline function _shape_confidence(
+    shape_strength::Float32,
+    shape_confidence_scale::Float32
+)::Float32
+    shape_strength <= 0.0f0 && return 0.0f0
+    tau = max(shape_confidence_scale, eps(Float32))
+    return Float32(1.0 - exp(-Float64(shape_strength) / Float64(tau)))
+end
+
+@inline function _apply_shape_confidence(
+    raw_shape::Float32,
+    shape_confidence::Float32
+)::Float32
+    return Float32(shape_confidence * (raw_shape - PREFIX_SHAPE_CONFIDENCE_PIVOT))
+end
+
 """
     add_peptide_metadata(precursors::LibraryPrecursors)
 
@@ -34,6 +52,7 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         all_accessions = getAccessionNumbers(precursors)::AbstractVector{String}
         all_is_decoys = getIsDecoy(precursors)::AbstractVector{Bool}
         all_entrap_ids = getEntrapmentGroupId(precursors)::AbstractVector{UInt8}
+        all_species = getProteomeIdentifiers(precursors)::AbstractVector{<:AbstractString}
         all_base_pep_ids = getBasePepId(precursors)::AbstractVector{UInt32}
         all_structural_mods = getStructuralMods(precursors)::AbstractVector{Union{Missing, String}}
         all_isotopic_mods = getIsotopicMods(precursors)::AbstractVector{Union{Missing, String}}
@@ -75,6 +94,14 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
                 entrap_vec[i] = all_entrap_ids[precursor_idx[i]]
             end
             df.entrap_id = entrap_vec
+        end
+
+        if !hasproperty(df, :species)
+            species = Vector{String}(undef, n_rows)
+            for i in 1:n_rows
+                species[i] = join(sort(unique(split(coalesce(all_species[precursor_idx[i]], ""), ';'))), ';')
+            end
+            df.species = species
         end
 
         if !hasproperty(df, :base_pep_id)
@@ -284,8 +311,9 @@ end
 """
     estimate_weight_detection_model(df::DataFrame)
 
-Estimate per-file weight calibration for protein coverage surprise features.
-Uses unique inferred peptides with valid positive weight values.
+Estimate per-file abundance calibration for protein coverage surprise features.
+Uses unique inferred peptides with valid positive integrated abundance values
+when available, falling back to the legacy `weight` column otherwise.
 """
 function estimate_weight_detection_model(df::DataFrame)
     max_rank = 12
@@ -314,7 +342,7 @@ function estimate_weight_detection_model(df::DataFrame)
             continue
         end
 
-        weight_val = Float64(df.weight[i])
+        weight_val = Float64(_protein_rollup_weight_value(df, i))
         if !isfinite(weight_val) || weight_val <= 0.0
             continue
         end
@@ -600,6 +628,19 @@ end
     return Float32(max(-log_none_sum, 0.0))
 end
 
+@inline function _protein_rollup_weight_value(
+    gdf::AbstractDataFrame,
+    row_idx::Int
+)::Float32
+    if hasproperty(gdf, :peak_area) && !ismissing(gdf.peak_area[row_idx])
+        peak_area_val = Float32(gdf.peak_area[row_idx])
+        if isfinite(peak_area_val) && peak_area_val > 0.0f0
+            return peak_area_val
+        end
+    end
+    return Float32(gdf.weight[row_idx])
+end
+
 """
     _build_protein_rollup(gdf, quant_mask, prob_col)
 
@@ -632,7 +673,7 @@ function _build_protein_rollup(
 
         precursor_idx = UInt32(gdf.precursor_idx[i])
         prob_val = _sanitize_rollup_probability(gdf[!, prob_col][i])
-        weight_val = Float32(gdf.weight[i])
+        weight_val = _protein_rollup_weight_value(gdf, i)
 
         if haskey(prob_by_precursor, precursor_idx)
             prob_by_precursor[precursor_idx] = max(prob_by_precursor[precursor_idx], prob_val)
@@ -966,6 +1007,7 @@ function build_precursor_consensus(
         profiled_precursor_count = profiled_precursor_count,
         shape_strength = shape_strength,
         shape_confidence_scale = shape_confidence_scale,
+        selected_run_votes = selected_run_votes,
         precursors_by_protein = precursors_by_protein,
         precursor_metadata = precursor_metadata,
         precursor_run_counts = precursor_run_counts
@@ -988,8 +1030,7 @@ function _precursor_consensus_prefix_features(
         get(precursor_consensus.shape_strength, protein_key, 0.0f0) : 0.0f0
     shape_confidence_scale = hasproperty(precursor_consensus, :shape_confidence_scale) ?
         precursor_consensus.shape_confidence_scale : 1.0f0
-    shape_confidence = shape_strength <= 0.0f0 ? 0.0f0 :
-        Float32(shape_strength / (shape_strength + shape_confidence_scale))
+    shape_confidence = _shape_confidence(shape_strength, shape_confidence_scale)
 
     if isempty(best_weight_by_precursor)
         return (
@@ -1114,7 +1155,7 @@ function _precursor_consensus_prefix_features(
     end
     return (
         prefix_shape_raw = prefix_shape_raw,
-        prefix_shape = shape_confidence * prefix_shape_raw,
+        prefix_shape = _apply_shape_confidence(prefix_shape_raw, shape_confidence),
         threshold = threshold,
         matched_precursors = matched_precursors,
         prefix_consensus_sum = prefix_consensus_sum,
@@ -1123,6 +1164,306 @@ function _precursor_consensus_prefix_features(
         shape_strength = shape_strength,
         shape_confidence = shape_confidence
     )
+end
+
+@inline function _protein_group_contains_member(
+    protein_name::AbstractString,
+    member_name::AbstractString
+)::Bool
+    protein_name == member_name && return true
+    occursin(';', protein_name) || return false
+    return any(==(member_name), split(protein_name, ';'))
+end
+
+@inline function _precursor_debug_label(
+    protein_key::Tuple{String, Bool, UInt8},
+    precursor_idx::UInt32,
+    precursor_consensus::NamedTuple
+)::String
+    metadata = get(
+        precursor_consensus.precursor_metadata,
+        (protein_key[1], protein_key[2], protein_key[3], precursor_idx),
+        nothing
+    )
+    metadata === nothing && return "precursor_idx=$(precursor_idx)"
+
+    mods = String[]
+    !isempty(metadata.structural_mods) && push!(mods, metadata.structural_mods)
+    !isempty(metadata.isotopic_mods) && push!(mods, metadata.isotopic_mods)
+    mod_suffix = isempty(mods) ? "" : " [" * join(mods, " | ") * "]"
+
+    return "$(metadata.sequence)/$(metadata.charge)$(mod_suffix) precursor_idx=$(precursor_idx)"
+end
+
+function _collect_precursor_consensus_debug_rows(
+    df::AbstractDataFrame,
+    file_idx::Int64,
+    precursor_consensus::NamedTuple;
+    protein_names::AbstractVector{String},
+    q_value_threshold::Float32 = 0.01f0,
+    file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing
+)
+    isempty(protein_names) && return NamedTuple[]
+
+    prob_col = _protein_group_probability_column(df)
+    debug_rows = NamedTuple[]
+
+    for gdf in groupby(df, [:inferred_protein_group, :target, :entrap_id])
+        protein_name_val = gdf.inferred_protein_group[1]
+        ismissing(protein_name_val) && continue
+
+        protein_name = String(protein_name_val)
+        any(name -> _protein_group_contains_member(protein_name, name), protein_names) || continue
+
+        quant_mask = _protein_rollup_quant_mask(gdf; q_value_threshold = q_value_threshold)
+        rollup = _build_protein_rollup(gdf, quant_mask, prob_col)
+        isempty(rollup.precursor_rows) && continue
+
+        protein_key = (
+            protein_name,
+            Bool(gdf.target[1]),
+            UInt8(gdf.entrap_id[1])
+        )
+        best_weight_by_precursor = Dict(
+            row.precursor_idx => row.best_weight for row in rollup.precursor_rows
+        )
+        prefix_features = _precursor_consensus_prefix_features(
+            best_weight_by_precursor,
+            protein_key,
+            precursor_consensus
+        )
+
+        run_max_weight = maximum(values(best_weight_by_precursor))
+        threshold = prefix_features.threshold
+        consensus_precursors = get(
+            precursor_consensus.precursors_by_protein,
+            protein_key,
+            Pair{UInt32, Float32}[]
+        )
+
+        observed_precursors = NamedTuple[]
+        for precursor_row in sort(collect(rollup.precursor_rows); by = row -> row.best_weight, rev = true)
+            consensus_weight = get(
+                precursor_consensus.relative_weight,
+                (protein_key[1], protein_key[2], protein_key[3], precursor_row.precursor_idx),
+                0.0f0
+            )
+            run_relative_weight = run_max_weight > 0.0f0 ?
+                Float32(precursor_row.best_weight / run_max_weight) : 0.0f0
+            push!(
+                observed_precursors,
+                (
+                    precursor_idx = precursor_row.precursor_idx,
+                    label = _precursor_debug_label(protein_key, precursor_row.precursor_idx, precursor_consensus),
+                    best_weight = precursor_row.best_weight,
+                    run_relative_weight = run_relative_weight,
+                    consensus_weight = consensus_weight,
+                    in_prefix = consensus_weight >= threshold
+                )
+            )
+        end
+
+        prefix_precursors = NamedTuple[]
+        for precursor in consensus_precursors
+            precursor.second < threshold && continue
+            push!(
+                prefix_precursors,
+                (
+                    precursor_idx = precursor.first,
+                    label = _precursor_debug_label(protein_key, precursor.first, precursor_consensus),
+                    consensus_weight = precursor.second,
+                    run_relative_weight = run_max_weight > 0.0f0 ?
+                        Float32(get(best_weight_by_precursor, precursor.first, 0.0f0) / run_max_weight) : 0.0f0,
+                    observed = haskey(best_weight_by_precursor, precursor.first),
+                    run_count = Int(get(
+                        precursor_consensus.precursor_run_counts,
+                        (protein_key[1], protein_key[2], protein_key[3], precursor.first),
+                        Int32(0)
+                    ))
+                )
+            )
+        end
+
+        push!(
+            debug_rows,
+            (
+                protein_key = protein_key,
+                file_idx = file_idx,
+                run_name = isnothing(file_idx_to_name) ?
+                    "file_$(file_idx)" :
+                    get(file_idx_to_name, file_idx, "file_$(file_idx)"),
+                n_peptides = rollup.n_peptides,
+                peptide_list = join(rollup.peptide_list, ";"),
+                pg_score = rollup.pg_score,
+                top_pep_weight = rollup.top_pep_weight,
+                matched_precursors = prefix_features.matched_precursors,
+                threshold = prefix_features.threshold,
+                prefix_consensus_sum = prefix_features.prefix_consensus_sum,
+                run_prefix_sum = prefix_features.run_prefix_sum,
+                prefix_shape_raw = prefix_features.prefix_shape_raw,
+                shape_strength = prefix_features.shape_strength,
+                shape_confidence = prefix_features.shape_confidence,
+                prefix_shape = prefix_features.prefix_shape,
+                observed_precursors = observed_precursors,
+                prefix_precursors = prefix_precursors
+            )
+        )
+    end
+
+    return debug_rows
+end
+
+function _write_precursor_consensus_debug_file(
+    qc_folder::String,
+    precursor_consensus::NamedTuple,
+    debug_rows::AbstractVector{<:NamedTuple};
+    protein_name::String,
+    file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing
+)
+    isdir(qc_folder) || mkpath(qc_folder)
+    debug_path = joinpath(qc_folder, "$(protein_name)_precursor_consensus_debug.txt")
+
+    matching_keys = sort!(
+        unique([row.protein_key for row in debug_rows]);
+        by = key -> (key[1], key[2], key[3])
+    )
+
+    open(debug_path, "w") do io
+        println(io, "Protein precursor consensus debug")
+        println(io, "requested_protein=$(protein_name)")
+        println(io, "shape_confidence_scale=$(precursor_consensus.shape_confidence_scale)")
+        println(io, "shape_confidence_pivot=$(PREFIX_SHAPE_CONFIDENCE_PIVOT)")
+        println(io)
+
+        if isempty(matching_keys)
+            println(io, "No matching protein groups found for $(protein_name).")
+            return
+        end
+
+        for protein_key in matching_keys
+            shape_strength_value = get(precursor_consensus.shape_strength, protein_key, 0.0f0)
+            shape_confidence_value = _shape_confidence(
+                shape_strength_value,
+                precursor_consensus.shape_confidence_scale
+            )
+            println(io, "================================================================================")
+            println(
+                io,
+                "protein_name=$(repr(protein_key[1])) target=$(protein_key[2]) entrap_id=$(protein_key[3])"
+            )
+            println(
+                io,
+                "shape_strength=$(shape_strength_value) shape_confidence=$(shape_confidence_value)"
+            )
+            println(io)
+
+            println(io, "Selected consensus source runs")
+            selected_votes = get(precursor_consensus.selected_run_votes, protein_key, ConsensusRunVote[])
+            if isempty(selected_votes)
+                println(io, "  (none)")
+            else
+                for (vote_idx, vote) in enumerate(selected_votes)
+                    run_name = isnothing(file_idx_to_name) ?
+                        "file_$(vote.run_order)" :
+                        get(file_idx_to_name, Int64(vote.run_order), "file_$(vote.run_order)")
+                    println(
+                        io,
+                        "  [$(vote_idx)] run_order=$(vote.run_order) run_name=$(repr(run_name)) pg_score=$(vote.pg_score)"
+                    )
+                    for precursor in sort(collect(vote.normalized_precursors); by = last, rev = true)
+                        println(
+                            io,
+                            "      normalized_weight=$(precursor.second) " *
+                            _precursor_debug_label(protein_key, precursor.first, precursor_consensus)
+                        )
+                    end
+                end
+            end
+            println(io)
+
+            println(io, "Consensus precursors")
+            consensus_precursors = get(
+                precursor_consensus.precursors_by_protein,
+                protein_key,
+                Pair{UInt32, Float32}[]
+            )
+            if isempty(consensus_precursors)
+                println(io, "  (none)")
+            else
+                for precursor in consensus_precursors
+                    run_count = Int(get(
+                        precursor_consensus.precursor_run_counts,
+                        (protein_key[1], protein_key[2], protein_key[3], precursor.first),
+                        Int32(0)
+                    ))
+                    println(
+                        io,
+                        "  consensus_weight=$(precursor.second) run_count=$(run_count) " *
+                        _precursor_debug_label(protein_key, precursor.first, precursor_consensus)
+                    )
+                end
+            end
+            println(io)
+
+            println(io, "Per-run shape diagnostics")
+            protein_rows = sort!(
+                [row for row in debug_rows if row.protein_key == protein_key];
+                by = row -> row.file_idx
+            )
+            if isempty(protein_rows)
+                println(io, "  (none)")
+            else
+                for row in protein_rows
+                    println(io, "--------------------------------------------------------------------------------")
+                    println(
+                        io,
+                        "file_idx=$(row.file_idx) run_name=$(repr(row.run_name)) " *
+                        "n_peptides=$(row.n_peptides) peptide_list=$(repr(row.peptide_list)) " *
+                        "pg_score=$(row.pg_score) top_pep_weight=$(row.top_pep_weight)"
+                    )
+                    println(
+                        io,
+                        "matched_precursors=$(row.matched_precursors) tau=$(row.threshold) " *
+                        "prefix_consensus_sum=$(row.prefix_consensus_sum) run_prefix_sum=$(row.run_prefix_sum)"
+                    )
+                    println(
+                        io,
+                        "prefix_shape_raw=$(row.prefix_shape_raw) shape_strength=$(row.shape_strength) " *
+                        "shape_confidence=$(row.shape_confidence) prefix_shape=$(row.prefix_shape)"
+                    )
+                    println(io, "  Observed precursors")
+                    if isempty(row.observed_precursors)
+                        println(io, "    (none)")
+                    else
+                        for precursor in row.observed_precursors
+                            println(
+                                io,
+                                "    best_weight=$(precursor.best_weight) run_relative_weight=$(precursor.run_relative_weight) " *
+                                "consensus_weight=$(precursor.consensus_weight) in_prefix=$(precursor.in_prefix) " *
+                                precursor.label
+                            )
+                        end
+                    end
+                    println(io, "  Prefix precursors (consensus_weight >= tau)")
+                    if isempty(row.prefix_precursors)
+                        println(io, "    (none)")
+                    else
+                        for precursor in row.prefix_precursors
+                            println(
+                                io,
+                                "    consensus_weight=$(precursor.consensus_weight) run_relative_weight=$(precursor.run_relative_weight) " *
+                                "observed=$(precursor.observed) run_count=$(precursor.run_count) " *
+                                precursor.label
+                            )
+                        end
+                    end
+                end
+            end
+            println(io)
+        end
+    end
+
+    return debug_path
 end
 
 """
@@ -1139,6 +1480,7 @@ function group_psms_by_protein(
     if nrow(df) == 0
         return DataFrame(
             protein_name = String[],
+            species = String[],
             target = Bool[],
             entrap_id = UInt8[],
             n_peptides = Int64[],
@@ -1154,6 +1496,7 @@ function group_psms_by_protein(
     if nrow(df) == 0
         return DataFrame(
             protein_name = String[],
+            species = String[],
             target = Bool[],
             entrap_id = UInt8[],
             n_peptides = Int64[],
@@ -1176,6 +1519,11 @@ function group_psms_by_protein(
         n_peptides = rollup.n_peptides
         pg_score = rollup.pg_score
         top_pep_weight = rollup.top_pep_weight
+        species = if hasproperty(gdf, :species)
+            join(sort!(unique!(collect(skipmissing(String.(gdf.species))))), ';')
+        else
+            ""
+        end
 
         precursor_consensus_prefix_shape = 0.0f0
         if !isempty(rollup.precursor_rows)
@@ -1202,6 +1550,7 @@ function group_psms_by_protein(
         )
 
         DataFrame(
+            species = species,
             n_peptides = n_peptides,
             peptide_list = join(rollup.peptide_list, ";"),
             pg_score = pg_score,
@@ -1210,7 +1559,7 @@ function group_psms_by_protein(
             precursor_consensus_prefix_shape = precursor_consensus_prefix_shape
         )
     end
-    
+
     # Rename the grouping column
     rename!(protein_groups, :inferred_protein_group => :protein_name)
     
@@ -1360,7 +1709,10 @@ function perform_protein_inference_pipeline(
     precursors::LibraryPrecursors,
     protein_catalog::Dict;
     min_peptides::Int = 2,
-    q_value_threshold::Float32 = 0.01f0
+    q_value_threshold::Float32 = 0.01f0,
+    qc_folder::Union{Nothing, String} = nothing,
+    file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
+    consensus_debug_protein_names::Vector{String} = String[]
 )
     # Ensure output folder exists
     !isdir(output_folder) && mkpath(output_folder)
@@ -1400,6 +1752,7 @@ function perform_protein_inference_pipeline(
     end
 
     precursor_consensus = build_precursor_consensus(psm_refs; q_value_threshold = q_value_threshold)
+    consensus_debug_rows = NamedTuple[]
 
     @user_info "Building per-run protein group tables and protein scoring features"
 
@@ -1410,6 +1763,19 @@ function perform_protein_inference_pipeline(
 
         updated_psms = load_dataframe(psm_ref)
         weight_calibration = estimate_weight_detection_model(updated_psms)
+        if !isempty(consensus_debug_protein_names) && !isnothing(qc_folder)
+            append!(
+                consensus_debug_rows,
+                _collect_precursor_consensus_debug_rows(
+                    updated_psms,
+                    Int64(idx),
+                    precursor_consensus;
+                    protein_names = consensus_debug_protein_names,
+                    q_value_threshold = q_value_threshold,
+                    file_idx_to_name = file_idx_to_name
+                )
+            )
+        end
 
         protein_groups_df = group_psms_by_protein(
             updated_psms;
@@ -1440,6 +1806,18 @@ function perform_protein_inference_pipeline(
             psm_to_pg_mapping[file_path(psm_ref)] = pg_path
         else
             @user_warn "No protein groups to write after filtering" file_idx=idx pg_path=pg_path
+        end
+    end
+
+    if !isempty(consensus_debug_protein_names) && !isnothing(qc_folder)
+        for protein_name in consensus_debug_protein_names
+            _write_precursor_consensus_debug_file(
+                qc_folder,
+                precursor_consensus,
+                filter(row -> _protein_group_contains_member(row.protein_key[1], protein_name), consensus_debug_rows);
+                protein_name = protein_name,
+                file_idx_to_name = file_idx_to_name
+            )
         end
     end
 

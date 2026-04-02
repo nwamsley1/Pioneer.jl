@@ -254,7 +254,8 @@ function _write_protein_probit_fold_label_scatter(
     context::AbstractString = "protein_probit",
     y_col::Symbol = :precursor_consensus_prefix_shape,
     y_label::AbstractString = "precursor_consensus_prefix_shape",
-    file_suffix::AbstractString = "prefix_shape"
+    file_suffix::AbstractString = "prefix_shape",
+    file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing
 )
     required_cols = (:pg_score, y_col, :target)
     missing_cols = [col for col in required_cols if !hasproperty(df, col)]
@@ -270,6 +271,27 @@ function _write_protein_probit_fold_label_scatter(
     target_negative_mask = ss.mined_negative_mask
     target_dropped_mask = df.target .& .!target_positive_mask .& .!target_negative_mask
     decoy_mask = .!df.target
+    pure_yeast_target_mask = falses(nrow(df))
+    has_yeast_named_run = !isnothing(file_idx_to_name) &&
+                          any(occursin("Yeast", String(run_name)) for run_name in values(file_idx_to_name))
+    if has_yeast_named_run && hasproperty(df, :species) && hasproperty(df, :file_idx) && !isnothing(file_idx_to_name)
+        @inbounds for i in eachindex(df.target, df.species, df.file_idx)
+            if !df.target[i] || ismissing(df.species[i]) || ismissing(df.file_idx[i])
+                continue
+            end
+            run_name = get(file_idx_to_name, Int64(df.file_idx[i]), "")
+            pure_yeast_target_mask[i] = df.target[i] &&
+                                        !ismissing(df.species[i]) &&
+                                        (strip(String(df.species[i])) == "YEAST") &&
+                                        !occursin("Yeast", run_name)
+        end
+    end
+    target_dropped_highlight_mask = target_dropped_mask .& pure_yeast_target_mask
+    target_confident_positive_highlight_mask = target_confident_positive_mask .& pure_yeast_target_mask
+    target_negative_highlight_mask = target_negative_mask .& pure_yeast_target_mask
+    target_dropped_mask = target_dropped_mask .& .!pure_yeast_target_mask
+    target_confident_positive_mask = target_confident_positive_mask .& .!pure_yeast_target_mask
+    target_negative_mask = target_negative_mask .& .!pure_yeast_target_mask
     log_pg_score = log.(max.(Float64.(df.pg_score), 1e-6))
     y_values = df[!, y_col]
     target_marker_size = 3.0
@@ -300,8 +322,7 @@ function _write_protein_probit_fold_label_scatter(
             alpha = 0.35,
             markersize = target_dropped_marker_size,
             markershape = :diamond,
-            markerstrokewidth = 0.8,
-            markerstrokecolor = :navy
+            markerstrokewidth = 0
         )
     end
 
@@ -344,6 +365,49 @@ function _write_protein_probit_fold_label_scatter(
         )
     end
 
+    if any(target_dropped_highlight_mask)
+        Plots.scatter!(
+            p_scatter,
+            log_pg_score[target_dropped_highlight_mask],
+            y_values[target_dropped_highlight_mask];
+            label = "YEAST Target (dropped)",
+            color = :dodgerblue,
+            alpha = 0.5,
+            markersize = 2 * target_dropped_marker_size,
+            markershape = :diamond,
+            markerstrokewidth = 0.7,
+            markerstrokecolor = :black
+        )
+    end
+
+    if any(target_confident_positive_highlight_mask)
+        Plots.scatter!(
+            p_scatter,
+            log_pg_score[target_confident_positive_highlight_mask],
+            y_values[target_confident_positive_highlight_mask];
+            label = "YEAST Target (+ q/PEP)",
+            color = :forestgreen,
+            alpha = 0.5,
+            markersize = 2 * target_marker_size,
+            markerstrokewidth = 0.7,
+            markerstrokecolor = :black
+        )
+    end
+
+    if any(target_negative_highlight_mask)
+        Plots.scatter!(
+            p_scatter,
+            log_pg_score[target_negative_highlight_mask],
+            y_values[target_negative_highlight_mask];
+            label = "YEAST Target (-)",
+            color = :darkorange,
+            alpha = 0.5,
+            markersize = 2 * target_negative_marker_size,
+            markerstrokewidth = 0.7,
+            markerstrokecolor = :black
+        )
+    end
+
     scatter_path = joinpath(qc_folder, "protein_probit_fold_$(fold)_$(stage)_pg_score_vs_$(file_suffix).png")
     savefig(p_scatter, scatter_path)
     @user_info "Wrote protein probit fold label scatter context=$(context) fold=$(fold) stage=$(stage) feature=$(y_col) scatter_path=$(scatter_path) n_rows=$(nrow(df))"
@@ -362,7 +426,8 @@ function write_protein_probit_fold_label_scatter(
     qc_folder::String,
     ss;
     stage::AbstractString = "iter1",
-    context::AbstractString = "protein_probit"
+    context::AbstractString = "protein_probit",
+    file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing
 )
     return _write_protein_probit_fold_label_scatter(
         df,
@@ -373,7 +438,8 @@ function write_protein_probit_fold_label_scatter(
         context = context,
         y_col = :precursor_consensus_prefix_shape,
         y_label = "precursor_consensus_prefix_shape",
-        file_suffix = "prefix_shape"
+        file_suffix = "prefix_shape",
+        file_idx_to_name = file_idx_to_name
     )
 end
 
@@ -389,7 +455,8 @@ function write_protein_probit_fold_coverage_scatter(
     qc_folder::String,
     ss;
     stage::AbstractString = "iter1",
-    context::AbstractString = "protein_probit"
+    context::AbstractString = "protein_probit",
+    file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing
 )
     return _write_protein_probit_fold_label_scatter(
         df,
@@ -400,7 +467,8 @@ function write_protein_probit_fold_coverage_scatter(
         context = context,
         y_col = :coverage_log_ratio,
         y_label = "coverage_log_ratio",
-        file_suffix = "coverage_log_ratio"
+        file_suffix = "coverage_log_ratio",
+        file_idx_to_name = file_idx_to_name
     )
 end
 
@@ -416,7 +484,8 @@ function write_protein_probit_fold_peptide_coverage_scatter(
     qc_folder::String,
     ss;
     stage::AbstractString = "iter1",
-    context::AbstractString = "protein_probit"
+    context::AbstractString = "protein_probit",
+    file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing
 )
     return _write_protein_probit_fold_label_scatter(
         df,
@@ -427,8 +496,36 @@ function write_protein_probit_fold_peptide_coverage_scatter(
         context = context,
         y_col = :peptide_coverage_logit,
         y_label = "peptide_coverage_logit",
-        file_suffix = "peptide_coverage_logit"
+        file_suffix = "peptide_coverage_logit",
+        file_idx_to_name = file_idx_to_name
     )
+end
+
+function write_protein_probit_training_debug(
+    qc_folder::String,
+    all_protein_groups::AbstractDataFrame,
+    feature_names::Vector{Symbol},
+    partition
+)
+    isdir(qc_folder) || mkpath(qc_folder)
+
+    debug_df = DataFrame(all_protein_groups)
+    debug_df[!, :protein_probit_auto_pass] = partition.auto_pass_mask
+    debug_df[!, :protein_probit_trainable] = partition.train_mask
+    debug_df[!, :protein_probit_active_features] = fill(join(String.(feature_names), ";"), nrow(debug_df))
+
+    sort_cols = Symbol[]
+    for col in (:cv_fold, :file_idx, :species, :protein_name, :target, :entrap_id)
+        hasproperty(debug_df, col) && push!(sort_cols, col)
+    end
+    if !isempty(sort_cols)
+        sort!(debug_df, sort_cols)
+    end
+
+    debug_path = joinpath(qc_folder, "protein_probit_training_table.tsv")
+    CSV.write(debug_path, debug_df, delim = '\t')
+    @user_info "Wrote protein probit training debug table debug_path=$(debug_path) n_rows=$(nrow(debug_df)) n_columns=$(ncol(debug_df))"
+    return debug_path
 end
 
 """
@@ -1068,9 +1165,10 @@ function perform_protein_probit_regression(
     qc_folder::String,
     precursors::LibraryPrecursors;
     protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
+    file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
     ms1_scoring::Bool = true,
     train_q_value_threshold::Float32 = 0.01f0,
-    min_prefix_shape_neg_threshold_itr::Float32 = 0.10f0,
+    min_prefix_shape_neg_threshold_itr::Float32 = -0.20f0,
     min_pep_neg_threshold_itr::Float32 = 0.90f0
 )
     # Extract paths for compatibility with existing code
@@ -1141,6 +1239,7 @@ function perform_protein_probit_regression(
             pg_refs,
             precursors;
             protein_to_cv_fold = protein_to_cv_fold,
+            file_idx_to_name = file_idx_to_name,
             skip_scoring = skip_scoring,
             ms1_scoring = ms1_scoring,
             train_q_value_threshold = train_q_value_threshold,
@@ -1151,13 +1250,14 @@ function perform_protein_probit_regression(
 end
 
 """
-    build_protein_semisupervised_training_set(scores, targets, prefix_shape; q_value_threshold = 0.01f0, max_positive_pep_threshold = 1.0f0, mined_negative_prefix_shape_threshold = 0.10f0, mined_negative_pep_threshold = 0.90f0)
+    build_protein_semisupervised_training_set(scores, targets, prefix_shape; q_value_threshold = 0.01f0, max_positive_pep_threshold = 1.0f0, mined_negative_prefix_shape_threshold = -0.20f0, mined_negative_pep_threshold = 0.90f0)
 
 Build labels for semi-supervised protein probit training from a score vector.
 Targets passing the q-value and PEP thresholds stay positive, non-passing
-targets with `prefix_shape <= mined_negative_prefix_shape_threshold` or
-`PEP >= mined_negative_pep_threshold` are mined as negatives, and all
-remaining targets are dropped from training.
+targets with `PEP >= mined_negative_pep_threshold` are mined as negatives,
+and any target with `prefix_shape <= mined_negative_prefix_shape_threshold`
+is always mined as negative regardless of q-value status. All remaining
+targets are dropped from training.
 """
 function build_protein_semisupervised_training_set(
     scores::AbstractVector{<:Real},
@@ -1165,7 +1265,7 @@ function build_protein_semisupervised_training_set(
     prefix_shape::AbstractVector{<:Real};
     q_value_threshold::Float32 = 0.01f0,
     max_positive_pep_threshold::Float32 = 1.0f0,
-    mined_negative_prefix_shape_threshold::Float32 = 0.10f0,
+    mined_negative_prefix_shape_threshold::Float32 = -0.20f0,
     mined_negative_pep_threshold::Float32 = 0.90f0
 )
     n = length(scores)
@@ -1183,13 +1283,14 @@ function build_protein_semisupervised_training_set(
     keep_mask = BitVector(undef, n)
 
     @inbounds for i in eachindex(scores, targets, prefix_shape, qvals, peps)
+        low_shape_target = targets[i] && (Float32(prefix_shape[i]) <= mined_negative_prefix_shape_threshold)
         confident_positive_mask[i] = targets[i] &&
+                                     !low_shape_target &&
                                      (qvals[i] <= q_value_threshold) &&
                                      (peps[i] <= max_positive_pep_threshold)
         failed_target_mask[i] = targets[i] && !confident_positive_mask[i]
-        mined_negative_mask[i] = failed_target_mask[i] &&
-                                 ((Float32(prefix_shape[i]) <= mined_negative_prefix_shape_threshold) ||
-                                  (peps[i] >= mined_negative_pep_threshold))
+        mined_negative_mask[i] = low_shape_target ||
+                                 (failed_target_mask[i] && (peps[i] >= mined_negative_pep_threshold))
         positive_mask[i] = confident_positive_mask[i]
         keep_mask[i] = !targets[i] || confident_positive_mask[i] || mined_negative_mask[i]
     end
@@ -1386,7 +1487,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
                                     max_protein_groups_in_memory::Int, qc_folder::String;
                                     skip_scoring = false, ms1_scoring::Bool = true,
                                     train_q_value_threshold::Float32 = 0.01f0,
-                                    min_prefix_shape_neg_threshold_itr::Float32 = 0.10f0,
+                                    min_prefix_shape_neg_threshold_itr::Float32 = -0.20f0,
                                     min_pep_neg_threshold_itr::Float32 = 0.90f0)
     
     # Calculate sampling ratio
@@ -1506,7 +1607,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
                                pg_refs::Vector{ProteinGroupFileReference};
                                show_improvement = true,
                                train_q_value_threshold::Float32 = 0.01f0,
-                               min_prefix_shape_neg_threshold_itr::Float32 = 0.10f0,
+                               min_prefix_shape_neg_threshold_itr::Float32 = -0.20f0,
                                min_pep_neg_threshold_itr::Float32 = 0.90f0)
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
@@ -1626,7 +1727,7 @@ function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
 end
 
 """
-    fit_probit_model_semisupervised(X, y, feature_names, initial_scores, prefix_shape; q_value_threshold = 0.01f0, min_prefix_shape_neg_threshold = 0.10f0, min_pep_neg_threshold = 0.90f0, max_positive_pep_threshold = 1.0f0, n_iterations = 10, context = "protein_probit", iteration_debug_callback = nothing)
+    fit_probit_model_semisupervised(X, y, feature_names, initial_scores, prefix_shape; q_value_threshold = 0.01f0, min_prefix_shape_neg_threshold = -0.20f0, min_pep_neg_threshold = 0.90f0, max_positive_pep_threshold = 1.0f0, n_iterations = 10, context = "protein_probit", iteration_debug_callback = nothing)
 
 Fit the protein probit model by seeding iteration 1 labels from raw initial scores,
 then fitting and refining with the full feature set.
@@ -1638,7 +1739,7 @@ function fit_probit_model_semisupervised(
     initial_scores::AbstractVector{<:Real},
     prefix_shape::AbstractVector{<:Real};
     q_value_threshold::Float32 = 0.01f0,
-    min_prefix_shape_neg_threshold::Float32 = 0.10f0,
+    min_prefix_shape_neg_threshold::Float32 = -0.20f0,
     min_pep_neg_threshold::Float32 = 0.90f0,
     max_positive_pep_threshold::Float32 = 1.0f0,
     n_iterations::Int = 10,
@@ -2552,11 +2653,12 @@ function perform_probit_analysis_multifold(
     pg_refs::Vector{ProteinGroupFileReference},
     precursors::LibraryPrecursors;
     protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
+    file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
     show_improvement = true,
     skip_scoring = false,
     ms1_scoring::Bool = true,
     train_q_value_threshold::Float32 = 0.01f0,
-    min_prefix_shape_neg_threshold_itr::Float32 = 0.10f0,
+    min_prefix_shape_neg_threshold_itr::Float32 = -0.20f0,
     min_pep_neg_threshold_itr::Float32 = 0.90f0
 )
     #skip_scoring = true 
@@ -2648,7 +2750,8 @@ function perform_probit_analysis_multifold(
                         qc_folder,
                         plot_state;
                         stage = "iter_$(iteration)",
-                        context = "protein_probit_multifold_fold_$(test_fold)"
+                        context = "protein_probit_multifold_fold_$(test_fold)",
+                        file_idx_to_name = file_idx_to_name
                     )
                     write_protein_probit_fold_coverage_scatter(
                         train_df,
@@ -2656,7 +2759,8 @@ function perform_probit_analysis_multifold(
                         qc_folder,
                         plot_state;
                         stage = "iter_$(iteration)",
-                        context = "protein_probit_multifold_fold_$(test_fold)"
+                        context = "protein_probit_multifold_fold_$(test_fold)",
+                        file_idx_to_name = file_idx_to_name
                     )
                     write_protein_probit_fold_peptide_coverage_scatter(
                         train_df,
@@ -2664,7 +2768,8 @@ function perform_probit_analysis_multifold(
                         qc_folder,
                         plot_state;
                         stage = "iter_$(iteration)",
-                        context = "protein_probit_multifold_fold_$(test_fold)"
+                        context = "protein_probit_multifold_fold_$(test_fold)",
+                        file_idx_to_name = file_idx_to_name
                     )
                 end
             )

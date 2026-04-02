@@ -103,17 +103,16 @@ function applyNormalization!(
 end
 
 function normalizeQuant(
-    second_quant_folder::String,
+    psms_paths::Vector{String},
     quant_col_name::Symbol;
     N::Int = 100,
     spline_n_knots::Int = 7)
 
-
-    psms_paths = [fpath for fpath in readdir(second_quant_folder, join=true) if endswith(fpath, ".arrow")]
+    isempty(psms_paths) && return nothing
 
     quant_splines_dict, rt_range = getQuantSplines(
         psms_paths,
-        quant_col_name, 
+        quant_col_name,
         N = N,
         spline_n_knots = spline_n_knots)
 
@@ -124,9 +123,24 @@ function normalizeQuant(
     )
 
     applyNormalization!(
-        psms_paths, 
+        psms_paths,
         quant_col_name,
         quant_corrections_dict
     )
     return nothing
+end
+
+function normalizeQuant(
+    second_quant_folder::String,
+    quant_col_name::Symbol;
+    N::Int = 100,
+    spline_n_knots::Int = 7)
+
+    psms_paths = [fpath for fpath in readdir(second_quant_folder, join=true) if endswith(fpath, ".arrow")]
+    return normalizeQuant(
+        psms_paths,
+        quant_col_name;
+        N = N,
+        spline_n_knots = spline_n_knots
+    )
 end

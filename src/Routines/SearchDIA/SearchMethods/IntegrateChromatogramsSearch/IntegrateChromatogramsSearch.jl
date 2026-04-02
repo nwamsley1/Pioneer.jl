@@ -56,6 +56,12 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     n_pad::Int64
     max_apex_offset::Int64
     write_decoys::Bool
+    protein_min_peptides::Int64
+    protein_q_value_threshold::Float32
+    protein_min_pep_neg_threshold_itr::Float32
+    protein_max_psm_memory_mb::Float64
+    protein_pg_q_value_interpolation_points_per_bin::Int64
+    protein_ms1_scoring::Bool
     
     # Deconvolution parameters (MS2)
     lambda::Float32
@@ -83,6 +89,8 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         frag_params = quant_params.fragment_settings
         chrom_params = quant_params.chromatogram
         deconv_params = params.optimization.deconvolution
+        ml_params = params.optimization.machine_learning
+        protein_inference_params = params.protein_inference
         output_params = params.output
         
         # Determine isotope trace type
@@ -135,6 +143,12 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             Int64(chrom_params.padding),
             Int64(chrom_params.max_apex_offset),
             Bool(output_params.write_decoys),
+            Int64(protein_inference_params.min_peptides),
+            Float32(global_params.scoring.q_value_threshold),
+            Float32(ml_params.min_PEP_neg_threshold_itr),
+            Float64(ml_params.max_psm_memory_mb),
+            Int64(ml_params.interpolation_points),
+            Bool(global_params.ms1_scoring),
 
             Float32(deconv_params.ms2.lambda),
             reg_type,
@@ -208,11 +222,6 @@ function process_file!(
         # Convert to DataFrame for processing
         passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))#load_passing_psms(search_context, parsed_fname)
         
-        # Keep only target (non-decoy) PSMs
-        if !params.write_decoys
-            filter!(row -> row.target, passing_psms)
-        end
-
         # Initialize columns to store integration results
         # peak_area: Integrated area of chromatographic peak
         # new_best_scan: Updated apex scan after refinement
@@ -401,8 +410,24 @@ end
 
 function summarize_results!(
     ::IntegrateChromatogramSearchResults,
-    ::P,
-    ::SearchContext
+    params::P,
+    search_context::SearchContext
 ) where {P<:IntegrateChromatogramSearchParameters}
+    valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
+    isempty(valid_file_data) && return nothing
+
+    passing_refs = [PSMFileReference(path) for (_, path) in valid_file_data]
+
+    run_integrated_protein_scoring!(
+        search_context;
+        passing_refs = passing_refs,
+        max_psm_memory_mb = params.protein_max_psm_memory_mb,
+        q_value_threshold = params.protein_q_value_threshold,
+        min_peptides = params.protein_min_peptides,
+        ms1_scoring = params.protein_ms1_scoring,
+        min_pep_neg_threshold_itr = params.protein_min_pep_neg_threshold_itr,
+        pg_q_value_interpolation_points_per_bin = params.protein_pg_q_value_interpolation_points_per_bin
+    )
+
     return nothing
 end

@@ -224,10 +224,10 @@ using Pioneer
             0.14, 0.13, 0.12, 0.11, 0.10, 0.09
         ]
         prefix_shape = Float32[
-            0.60, 0.55, 0.50, 0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15,
-            0.12, 0.11, 0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.60, 0.60,
-            0.60, 0.60, 0.09, 0.20, 0.60, 0.60, 0.60, 0.60, 0.60, 0.60,
-            0.60, 0.60, 0.60, 0.60, 0.60, 0.60
+            0.30, 0.25, 0.20, 0.15, 0.10, 0.05, 0.00, -0.02, -0.05, -0.08,
+            -0.09, -0.095, -0.10, -0.21, -0.22, -0.23, -0.24, -0.25, 0.30, 0.30,
+            0.30, 0.30, -0.21, 0.20, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30,
+            0.30, 0.30, 0.30, 0.30, 0.30, 0.30
         ]
         targets = Bool[
             true, true, true, true, true, true, true, true, true, true,
@@ -253,7 +253,7 @@ using Pioneer
         @test any(ss.positive_mask)
         @test any(ss.confident_positive_mask)
         @test any(ss.mined_negative_mask)
-        @test ss.mined_negative_prefix_shape_threshold == 0.10f0
+        @test ss.mined_negative_prefix_shape_threshold == -0.20f0
         @test ss.mined_negative_pep_threshold == 0.90f0
         @test all(ss.keep_mask[.!targets])
         @test all(ss.keep_mask .== (.!targets .| ss.confident_positive_mask .| ss.mined_negative_mask))
@@ -269,9 +269,28 @@ using Pioneer
         @test sum(ss.mined_negative_mask) <= sum(ss_loose_shape.mined_negative_mask)
     end
 
+    @testset "Protein Semi-Supervised Training Set Mines Low-Shape Targets Even If They Pass Q-value" begin
+        scores = Float32[0.99, 0.98, 0.30, 0.20, 0.10, 0.05]
+        targets = Bool[true, true, false, false, false, false]
+        prefix_shape = Float32[-0.25, 0.40, 0.30, 0.30, 0.30, 0.30]
+
+        ss = Pioneer.build_protein_semisupervised_training_set(
+            scores,
+            targets,
+            prefix_shape;
+            q_value_threshold = 0.01f0
+        )
+
+        @test ss.qvals[1] <= 0.01f0
+        @test ss.mined_negative_mask[1]
+        @test !ss.confident_positive_mask[1]
+        @test !ss.positive_mask[1]
+        @test ss.confident_positive_mask[2]
+    end
+
     @testset "Protein Semi-Supervised Training Set Drops High-Shape Failing Targets" begin
         scores = Float32.(collect(reverse(range(0.99, 0.70, length = 30))))
-        prefix_shape = Float32.(vcat(fill(0.60, 15), fill(0.20, 10), fill(0.05, 5)))
+        prefix_shape = Float32.(vcat(fill(0.30, 15), fill(0.05, 10), fill(-0.25, 5)))
         targets = trues(30)
         targets[[1, 9, 17]] .= false
 
@@ -284,7 +303,7 @@ using Pioneer
 
         dropped_mask = targets .& .!ss.confident_positive_mask .& .!ss.mined_negative_mask
 
-        @test ss.mined_negative_prefix_shape_threshold == 0.10f0
+        @test ss.mined_negative_prefix_shape_threshold == -0.20f0
         @test ss.mined_negative_pep_threshold == 0.90f0
         @test all(prefix_shape[dropped_mask] .> ss.mined_negative_prefix_shape_threshold)
         @test all(ss.peps[dropped_mask] .< ss.mined_negative_pep_threshold)
@@ -505,7 +524,7 @@ using Pioneer
         )
 
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
-        @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.430027f0 atol = 1e-5
+        @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.227598f0 atol = 1e-5
     end
 
     @testset "Consensus Prefix Features Reward Expected Singleton And Penalize Low-Ranked Singleton" begin
@@ -557,9 +576,9 @@ using Pioneer
         top = grouped[grouped.protein_name .== "P_top", :]
         low = grouped[grouped.protein_name .== "P_low", :]
 
-        @test top.precursor_consensus_prefix_shape[1] ≈ 0.5f0 atol = 1e-5
-        @test low.precursor_consensus_prefix_shape[1] ≈ 0.204124f0 atol = 1e-5
-        @test low.precursor_consensus_prefix_shape[1] >= 0.0f0
+        @test top.precursor_consensus_prefix_shape[1] ≈ 0.316060f0 atol = 1e-5
+        @test low.precursor_consensus_prefix_shape[1] ≈ -0.057998f0 atol = 1e-5
+        @test low.precursor_consensus_prefix_shape[1] < 0.0f0
     end
 
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
@@ -595,6 +614,8 @@ using Pioneer
 
         try
             df = DataFrame(
+                file_idx = Int64[1, 2, 3],
+                species = ["YEAST", "HUMAN", "YEAST"],
                 pg_score = Float32[0.2, 0.5, 0.8],
                 coverage_log_ratio = Float32[-0.7, -0.1, 0.4],
                 precursor_consensus_prefix_shape = Float32[0.1, 0.3, 0.6],
@@ -612,7 +633,8 @@ using Pioneer
                 temp_dir,
                 ss;
                 stage = "iter_1",
-                context = "test"
+                context = "test",
+                file_idx_to_name = Dict(1 => "Run_A", 2 => "Run_B", 3 => "Run_with_Yeast")
             )
             coverage_path = Pioneer.write_protein_probit_fold_coverage_scatter(
                 df,
@@ -620,7 +642,8 @@ using Pioneer
                 temp_dir,
                 ss;
                 stage = "iter_1",
-                context = "test"
+                context = "test",
+                file_idx_to_name = Dict(1 => "Run_A", 2 => "Run_B", 3 => "Run_with_Yeast")
             )
             @test scatter_path !== nothing
             @test isfile(scatter_path)
