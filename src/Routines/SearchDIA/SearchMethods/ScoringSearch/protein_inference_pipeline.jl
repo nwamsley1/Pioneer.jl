@@ -1053,7 +1053,10 @@ end
     _precursor_consensus_prefix_features(precursor_rows, protein_key, precursor_consensus)
 
 Score how well the run matches the consensus precursor profile up to the weakest
-observed consensus precursor.
+observed consensus precursor using normalized Manhattan similarity. Off-consensus
+observed precursors are included as extra dimensions with zero consensus
+intensity, but `tau` is still determined only by the matched consensus
+precursors.
 """
 function _precursor_consensus_prefix_features(
     precursor_rows::AbstractVector,
@@ -1117,35 +1120,38 @@ function _precursor_consensus_prefix_features(
     )
 
     observed_consensus_weights = Float32[]
+    off_consensus_precursors = UInt32[]
     matched_precursors = 0
     for precursor_idx in keys(best_weight_by_precursor)
         c = get(consensus_relative_weight, (shape_protein_key[1], shape_protein_key[2], shape_protein_key[3], precursor_idx), 0.0f0)
         if c > 0.0f0
             push!(observed_consensus_weights, c)
             matched_precursors += 1
+        else
+            push!(off_consensus_precursors, precursor_idx)
         end
     end
-    isempty(observed_consensus_weights) && return (
-        prefix_shape_raw = 0.0f0,
-        prefix_shape = 0.0f0,
-        threshold = 0.0f0,
-        matched_precursors = 0,
-        prefix_consensus_sum = 0.0f0,
-        run_prefix_sum = 0.0f0,
-        profiled_precursor_count = profiled_precursor_count,
-        shape_strength = shape_strength,
-        shape_confidence = shape_confidence
-    )
 
-    threshold = minimum(observed_consensus_weights)
+    threshold = isempty(observed_consensus_weights) ? 0.0f0 : minimum(observed_consensus_weights)
     prefix_consensus_sum = 0.0f0
     run_prefix_sum = 0.0f0
+    included_consensus_weights = Float32[]
+    included_run_weights = Float32[]
 
     for precursor in consensus_precursors
         precursor.second < threshold && continue
         run_relative_weight = get(best_weight_by_precursor, precursor.first, 0.0f0) / run_max_weight
         prefix_consensus_sum += precursor.second
         run_prefix_sum += run_relative_weight
+        push!(included_consensus_weights, precursor.second)
+        push!(included_run_weights, run_relative_weight)
+    end
+
+    for precursor_idx in off_consensus_precursors
+        run_relative_weight = get(best_weight_by_precursor, precursor_idx, 0.0f0) / run_max_weight
+        run_prefix_sum += run_relative_weight
+        push!(included_consensus_weights, 0.0f0)
+        push!(included_run_weights, run_relative_weight)
     end
 
     prefix_consensus_sum <= 0.0f0 && return (
@@ -1174,24 +1180,14 @@ function _precursor_consensus_prefix_features(
         )
     end
 
-    shape_dot = 0.0f0
-    consensus_norm_sq = 0.0f0
-    run_norm_sq = 0.0f0
-    for precursor in consensus_precursors
-        precursor.second < threshold && continue
-        run_relative_weight = get(best_weight_by_precursor, precursor.first, 0.0f0) / run_max_weight
-        consensus_norm = precursor.second / prefix_consensus_sum
-        run_norm = run_relative_weight / run_prefix_sum
-        shape_dot += run_norm * consensus_norm
-        consensus_norm_sq += consensus_norm * consensus_norm
-        run_norm_sq += run_norm * run_norm
+    l1_distance = 0.0f0
+    for i in eachindex(included_consensus_weights, included_run_weights)
+        consensus_norm = included_consensus_weights[i] / prefix_consensus_sum
+        run_norm = included_run_weights[i] / run_prefix_sum
+        l1_distance += abs(run_norm - consensus_norm)
     end
 
-    if consensus_norm_sq <= 0.0f0 || run_norm_sq <= 0.0f0
-        prefix_shape_raw = 0.0f0
-    else
-        prefix_shape_raw = Float32(clamp(shape_dot / sqrt(consensus_norm_sq * run_norm_sq), 0.0f0, 1.0f0))
-    end
+    prefix_shape_raw = Float32(clamp(1.0f0 - 0.5f0 * l1_distance, 0.0f0, 1.0f0))
     return (
         prefix_shape_raw = prefix_shape_raw,
         prefix_shape = _apply_shape_confidence(prefix_shape_raw, shape_confidence),

@@ -268,9 +268,11 @@ function _write_protein_probit_fold_label_scatter(
     isdir(qc_folder) || mkpath(qc_folder)
 
     target_positive_mask = ss.positive_mask
-    target_confident_positive_mask = hasproperty(ss, :confident_positive_mask) ? ss.confident_positive_mask : target_positive_mask
-    target_rescued_positive_mask = target_positive_mask .& .!target_confident_positive_mask
     target_negative_mask = ss.mined_negative_mask
+    target_confident_positive_mask = (
+        hasproperty(ss, :confident_positive_mask) ? ss.confident_positive_mask : target_positive_mask
+    ) .& .!target_negative_mask
+    target_rescued_positive_mask = target_positive_mask .& .!target_confident_positive_mask
     target_dropped_mask = df.target .& .!target_positive_mask .& .!target_negative_mask
     decoy_mask = .!df.target
     pure_yeast_target_mask = falses(nrow(df))
@@ -1317,7 +1319,7 @@ function build_protein_semisupervised_training_set(
     get_PEP!(scores, targets, peps)
     
     confident_positive_mask = BitVector(undef, n)
-    failed_target_mask = BitVector(undef, n)
+    candidate_confident_positive_mask = BitVector(undef, n)
     mined_negative_mask = BitVector(undef, n)
     positive_mask = BitVector(undef, n)
     keep_mask = BitVector(undef, n)
@@ -1329,14 +1331,15 @@ function build_protein_semisupervised_training_set(
         low_shape_singleton_target = targets[i] &&
                                      (n_peptides[i] == 1) &&
                                      (Float32(prefix_shape[i]) <= mined_negative_prefix_shape_threshold)
-        confident_positive_mask[i] = targets[i] &&
-                                     (qvals[i] <= q_value_threshold) &&
-                                     (peps[i] <= max_positive_pep_threshold)
-        failed_target_mask[i] = targets[i] && !confident_positive_mask[i]
+        candidate_confident_positive_mask[i] = targets[i] &&
+                                               (qvals[i] <= q_value_threshold) &&
+                                               (peps[i] <= max_positive_pep_threshold)
         mined_negative_mask[i] = targets[i] &&
                                  ((peps[i] >= mined_negative_pep_threshold) ||
                                   low_shape_failed_target ||
                                   low_shape_singleton_target)
+        confident_positive_mask[i] = candidate_confident_positive_mask[i] &&
+                                     !mined_negative_mask[i]
         positive_mask[i] = targets[i] &&
                            !mined_negative_mask[i] &&
                            (keep_non_mined_targets_as_positive || confident_positive_mask[i])

@@ -292,7 +292,7 @@ using Pioneer
         )
 
         @test ss.qvals[1] <= 0.01f0
-        @test ss.confident_positive_mask[1]
+        @test !ss.confident_positive_mask[1]
         @test !ss.positive_mask[1]
         @test ss.mined_negative_mask[1]
         @test ss.qvals[2] > 0.01f0
@@ -584,7 +584,7 @@ using Pioneer
         )
 
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
-        @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.227598f0 atol = 1e-5
+        @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.121988f0 atol = 1e-5
         @test grouped.pg_score_x_precursor_consensus_prefix_shape[1] ≈
               grouped.pg_score[1] * grouped.precursor_consensus_prefix_shape[1] atol = 1e-5
     end
@@ -639,8 +639,52 @@ using Pioneer
         low = grouped[grouped.protein_name .== "P_low", :]
 
         @test top.precursor_consensus_prefix_shape[1] ≈ 0.316060f0 atol = 1e-5
-        @test low.precursor_consensus_prefix_shape[1] ≈ -0.057998f0 atol = 1e-5
+        @test low.precursor_consensus_prefix_shape[1] ≈ -0.210707f0 atol = 1e-5
         @test low.precursor_consensus_prefix_shape[1] < 0.0f0
+    end
+
+    @testset "Consensus Prefix Features Penalize Off-Consensus Observed Precursors" begin
+        consensus = (
+            relative_weight = Dict(
+                ("P", true, UInt8(1), UInt32(101)) => 1.0f0,
+                ("P", true, UInt8(1), UInt32(102)) => 0.2f0
+            ),
+            mean_relative_weight = Dict(
+                ("P", true, UInt8(1)) => 0.6f0
+            ),
+            profiled_precursor_count = Dict(
+                ("P", true, UInt8(1)) => Int32(2)
+            ),
+            shape_strength = Dict(
+                ("P", true, UInt8(1)) => 1.0f0
+            ),
+            shape_confidence_scale = 1.0f0,
+            precursors_by_protein = Dict(
+                ("P", true, UInt8(1)) => Pair{UInt32, Float32}[UInt32(101) => 1.0f0, UInt32(102) => 0.2f0]
+            )
+        )
+
+        psms = DataFrame(
+            inferred_protein_group = ["P", "P"],
+            target = Bool[true, true],
+            entrap_id = UInt8[1, 1],
+            precursor_idx = UInt32[101, 999],
+            base_pep_id = UInt32[101, 999],
+            sequence = ["PEP_TOP", "PEP_OFF"],
+            structural_mods = ["", ""],
+            isotopic_mods = ["", ""],
+            use_for_protein_quant = Bool[true, true],
+            MBR_candidate = Bool[false, false],
+            missed_cleavage = Int64[0, 0],
+            Mox = Int64[0, 0],
+            prec_prob = Float32[0.8, 0.8],
+            weight = Float32[100.0, 100.0]
+        )
+
+        grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
+
+        @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.0f0 atol = 1e-5
+        @test grouped.precursor_consensus_prefix_shape[1] < 0.316060f0
     end
 
     @testset "Decoy Shape Is Scored Against Itself" begin
