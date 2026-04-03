@@ -225,9 +225,15 @@ using Pioneer
         ]
         prefix_shape = Float32[
             0.30, 0.25, 0.20, 0.15, 0.10, 0.05, 0.00, -0.02, -0.05, -0.08,
-            -0.09, -0.095, -0.10, -0.21, -0.22, -0.23, -0.24, -0.25, 0.30, 0.30,
-            0.30, 0.30, -0.21, 0.20, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30,
+            -0.09, -0.095, -0.10, -0.21, -0.22, -0.23, -0.24, -0.55, 0.30, 0.30,
+            0.30, 0.30, -0.55, 0.20, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30,
             0.30, 0.30, 0.30, 0.30, 0.30, 0.30
+        ]
+        n_peptides = Int64[
+            2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+            2, 2, 2, 2, 2, 2, 2, 1, 2, 2,
+            2, 2, 1, 2, 2, 2, 2, 2, 2, 2,
+            2, 2, 2, 2, 2, 2
         ]
         targets = Bool[
             true, true, true, true, true, true, true, true, true, true,
@@ -238,13 +244,15 @@ using Pioneer
         ss = Pioneer.build_protein_semisupervised_training_set(
             scores,
             targets,
-            prefix_shape;
+            prefix_shape,
+            n_peptides;
             q_value_threshold = 0.01f0
         )
         ss_loose_shape = Pioneer.build_protein_semisupervised_training_set(
             scores,
             targets,
-            prefix_shape;
+            prefix_shape,
+            n_peptides;
             q_value_threshold = 0.01f0,
             mined_negative_prefix_shape_threshold = 1.0f0,
             mined_negative_pep_threshold = 1.0f0
@@ -256,62 +264,114 @@ using Pioneer
         @test ss.mined_negative_prefix_shape_threshold == -0.20f0
         @test ss.mined_negative_pep_threshold == 0.90f0
         @test all(ss.keep_mask[.!targets])
-        @test all(ss.keep_mask .== (.!targets .| ss.confident_positive_mask .| ss.mined_negative_mask))
+        @test all(ss.keep_mask)
         @test all(ss.confident_positive_mask .<= ss.positive_mask)
         @test sum(ss.labels) == sum(ss.positive_mask[ss.keep_mask])
         @test all(.!ss.labels[.!targets[ss.keep_mask]])
         @test all((prefix_shape[ss.mined_negative_mask] .<= ss.mined_negative_prefix_shape_threshold) .|
                   (ss.peps[ss.mined_negative_mask] .>= ss.mined_negative_pep_threshold))
-        @test ss.positive_mask == ss.confident_positive_mask
+        @test ss.positive_mask == (targets .& .!ss.mined_negative_mask)
         @test ss.requested_mined_negative_count == sum(ss.mined_negative_mask)
         @test sum(ss.mined_negative_mask) == ss.requested_mined_negative_count
         @test all(ss.peps[ss.confident_positive_mask] .<= 1.0f0)
         @test sum(ss.mined_negative_mask) <= sum(ss_loose_shape.mined_negative_mask)
     end
 
-    @testset "Protein Semi-Supervised Training Set Mines Low-Shape Targets Even If They Pass Q-value" begin
-        scores = Float32[0.99, 0.98, 0.30, 0.20, 0.10, 0.05]
-        targets = Bool[true, true, false, false, false, false]
-        prefix_shape = Float32[-0.25, 0.40, 0.30, 0.30, 0.30, 0.30]
+    @testset "Protein Semi-Supervised Training Set Singleton Low-Shape Targets Are Mined Negative Even If Q-Passing" begin
+        scores = Float32[0.99, 0.76, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90]
+        targets = Bool[true, true, false, false, false, false, false, false]
+        prefix_shape = Float32[-0.25, -0.25, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30]
+        n_peptides = Int64[1, 2, 2, 2, 2, 2, 2, 2]
 
         ss = Pioneer.build_protein_semisupervised_training_set(
             scores,
             targets,
-            prefix_shape;
+            prefix_shape,
+            n_peptides;
             q_value_threshold = 0.01f0
         )
 
         @test ss.qvals[1] <= 0.01f0
-        @test ss.mined_negative_mask[1]
-        @test !ss.confident_positive_mask[1]
+        @test ss.confident_positive_mask[1]
         @test !ss.positive_mask[1]
-        @test ss.confident_positive_mask[2]
+        @test ss.mined_negative_mask[1]
+        @test ss.qvals[2] > 0.01f0
+        @test ss.mined_negative_mask[2]
+        @test !ss.confident_positive_mask[2]
     end
 
-    @testset "Protein Semi-Supervised Training Set Drops High-Shape Failing Targets" begin
+    @testset "Protein Semi-Supervised Training Set Keeps Q-Passing Low-Shape Multi-Peptide Targets Positive" begin
+        scores = Float32[0.99, 0.76, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90]
+        targets = Bool[true, true, false, false, false, false, false, false]
+        prefix_shape = Float32[-0.25, -0.25, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30]
+        n_peptides = Int64[2, 2, 2, 2, 2, 2, 2, 2]
+
+        ss = Pioneer.build_protein_semisupervised_training_set(
+            scores,
+            targets,
+            prefix_shape,
+            n_peptides;
+            q_value_threshold = 0.01f0
+        )
+
+        @test ss.qvals[1] <= 0.01f0
+        @test ss.confident_positive_mask[1]
+        @test ss.positive_mask[1]
+        @test !ss.mined_negative_mask[1]
+        @test ss.qvals[2] > 0.01f0
+        @test ss.mined_negative_mask[2]
+    end
+
+    @testset "Protein Semi-Supervised Training Set Rescues High-Shape Failing Targets On Initial Labels" begin
         scores = Float32.(collect(reverse(range(0.99, 0.70, length = 30))))
         prefix_shape = Float32.(vcat(fill(0.30, 15), fill(0.05, 10), fill(-0.25, 5)))
+        n_peptides = fill(Int64(2), 30)
         targets = trues(30)
         targets[[1, 9, 17]] .= false
 
         ss = Pioneer.build_protein_semisupervised_training_set(
             scores,
             targets,
-            prefix_shape;
+            prefix_shape,
+            n_peptides;
             q_value_threshold = 0.01f0
         )
 
-        dropped_mask = targets .& .!ss.confident_positive_mask .& .!ss.mined_negative_mask
+        rescued_positive_mask = targets .& .!ss.confident_positive_mask .& .!ss.mined_negative_mask
 
         @test ss.mined_negative_prefix_shape_threshold == -0.20f0
         @test ss.mined_negative_pep_threshold == 0.90f0
-        @test all(prefix_shape[dropped_mask] .> ss.mined_negative_prefix_shape_threshold)
-        @test all(ss.peps[dropped_mask] .< ss.mined_negative_pep_threshold)
+        @test all(prefix_shape[rescued_positive_mask] .> ss.mined_negative_prefix_shape_threshold)
+        @test all(ss.peps[rescued_positive_mask] .< ss.mined_negative_pep_threshold)
         @test any(ss.mined_negative_mask)
-        @test any(dropped_mask)
-        @test ss.positive_mask == ss.confident_positive_mask
-        @test all(.!ss.keep_mask[dropped_mask])
+        @test any(rescued_positive_mask)
+        @test all(ss.positive_mask[rescued_positive_mask])
+        @test all(ss.keep_mask[rescued_positive_mask])
         @test all(ss.keep_mask[.!targets])
+    end
+
+    @testset "Protein Semi-Supervised Training Set Drops High-Shape Failing Targets After Iteration One" begin
+        scores = Float32.(collect(reverse(range(0.99, 0.70, length = 30))))
+        prefix_shape = Float32.(vcat(fill(0.30, 15), fill(0.05, 10), fill(-0.25, 5)))
+        n_peptides = fill(Int64(2), 30)
+        targets = trues(30)
+        targets[[1, 9, 17]] .= false
+
+        ss = Pioneer.build_protein_semisupervised_training_set(
+            scores,
+            targets,
+            prefix_shape,
+            n_peptides;
+            q_value_threshold = 0.01f0,
+            keep_non_mined_targets_as_positive = false
+        )
+
+        dropped_target_mask = targets .& .!ss.confident_positive_mask .& .!ss.mined_negative_mask
+
+        @test ss.mined_negative_prefix_shape_threshold == -0.20f0
+        @test any(dropped_target_mask)
+        @test all(.!ss.positive_mask[dropped_target_mask])
+        @test all(.!ss.keep_mask[dropped_target_mask])
     end
 
     @testset "Consensus Relative Weight Builder Uses Quant Precursors And Current pg_score Weighting" begin
@@ -525,6 +585,8 @@ using Pioneer
 
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
         @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.227598f0 atol = 1e-5
+        @test grouped.pg_score_x_precursor_consensus_prefix_shape[1] ≈
+              grouped.pg_score[1] * grouped.precursor_consensus_prefix_shape[1] atol = 1e-5
     end
 
     @testset "Consensus Prefix Features Reward Expected Singleton And Penalize Low-Ranked Singleton" begin
@@ -581,6 +643,50 @@ using Pioneer
         @test low.precursor_consensus_prefix_shape[1] < 0.0f0
     end
 
+    @testset "Decoy Shape Is Scored Against Itself" begin
+        protein_name = "P1"
+        consensus = (
+            relative_weight = Dict(
+                (protein_name, true, UInt8(1), UInt32(101)) => 1.0f0
+            ),
+            mean_relative_weight = Dict(
+                (protein_name, true, UInt8(1)) => 1.0f0
+            ),
+            profiled_precursor_count = Dict(
+                (protein_name, true, UInt8(1)) => Int32(1)
+            ),
+            shape_strength = Dict(
+                (protein_name, true, UInt8(1)) => 1.0f0
+            ),
+            shape_confidence_scale = 1.0f0,
+            precursors_by_protein = Dict(
+                (protein_name, true, UInt8(1)) => Pair{UInt32, Float32}[UInt32(101) => 1.0f0]
+            )
+        )
+
+        psms = DataFrame(
+            inferred_protein_group = [protein_name],
+            target = Bool[false],
+            entrap_id = UInt8[1],
+            precursor_idx = UInt32[201],
+            base_pep_id = UInt32[201],
+            sequence = ["DECOY_PEP"],
+            structural_mods = [""],
+            isotopic_mods = [""],
+            use_for_protein_quant = Bool[true],
+            MBR_candidate = Bool[false],
+            missed_cleavage = Int64[0],
+            Mox = Int64[0],
+            prec_prob = Float32[0.8],
+            weight = Float32[100.0]
+        )
+
+        grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
+
+        @test grouped.precursor_consensus_prefix_shape[1] == 0.0f0
+        @test !hasproperty(grouped, :training_precursor_consensus_prefix_shape)
+    end
+
     @testset "Optional Probit Feature Columns Drop Cleanly" begin
         feature_names = Pioneer.protein_probit_feature_names()
         df = DataFrame(pg_score = Float32[0.1, 0.2, 0.3])
@@ -596,7 +702,8 @@ using Pioneer
             :peptide_coverage_logit,
             :any_common_peps,
             :coverage_log_ratio,
-            :precursor_consensus_prefix_shape
+            :precursor_consensus_prefix_shape,
+            :pg_score_x_precursor_consensus_prefix_shape
         ]
 
         @test Pioneer.protein_probit_feature_names(include_n_possible_peptides = true) == [
@@ -605,7 +712,8 @@ using Pioneer
             :n_possible_peptides,
             :any_common_peps,
             :coverage_log_ratio,
-            :precursor_consensus_prefix_shape
+            :precursor_consensus_prefix_shape,
+            :pg_score_x_precursor_consensus_prefix_shape
         ]
     end
 

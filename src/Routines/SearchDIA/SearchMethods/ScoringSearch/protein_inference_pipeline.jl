@@ -20,7 +20,6 @@ Pipeline Operations for Protein Inference
 ==========================================================#
 
 const PREFIX_SHAPE_CONFIDENCE_PIVOT = 0.5f0
-
 @inline function _shape_confidence(
     shape_strength::Float32,
     shape_confidence_scale::Float32
@@ -56,6 +55,7 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         all_base_pep_ids = getBasePepId(precursors)::AbstractVector{UInt32}
         all_structural_mods = getStructuralMods(precursors)::AbstractVector{Union{Missing, String}}
         all_isotopic_mods = getIsotopicMods(precursors)::AbstractVector{Union{Missing, String}}
+        all_pair_ids = getPairIdx(precursors)
         
         # Extract precursor_idx column with type assertion for performance
         precursor_idx = df.precursor_idx::AbstractVector{UInt32}
@@ -126,6 +126,14 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
                 isotopic_mods[i] = coalesce(all_isotopic_mods[precursor_idx[i]], "")
             end
             df.isotopic_mods = isotopic_mods
+        end
+
+        if !hasproperty(df, :pair_id)
+            pair_ids = Vector{UInt32}(undef, n_rows)
+            for i in 1:n_rows
+                pair_ids[i] = extract_pair_idx(all_pair_ids, precursor_idx[i])
+            end
+            df.pair_id = pair_ids
         end
         
         return df
@@ -527,6 +535,7 @@ const PROTEIN_ROLLUP_PROB_EPS = 1.0f-6
 const PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT = 0.01f0
 const ProteinRollupPrecursorRow = @NamedTuple{
     precursor_idx::UInt32,
+    pair_id::UInt32,
     base_pep_id::UInt32,
     sequence::String,
     charge::UInt8,
@@ -663,6 +672,7 @@ function _build_protein_rollup(
     prob_by_precursor = Dict{UInt32, Float32}()
     best_weight_by_precursor = Dict{UInt32, Float32}()
     base_pep_id_by_precursor = Dict{UInt32, UInt32}()
+    pair_id_by_precursor = Dict{UInt32, UInt32}()
     sequence_by_precursor = Dict{UInt32, String}()
     charge_by_precursor = Dict{UInt32, UInt8}()
     structural_mods_by_precursor = Dict{UInt32, String}()
@@ -684,6 +694,8 @@ function _build_protein_rollup(
             prob_by_precursor[precursor_idx] = prob_val
             best_weight_by_precursor[precursor_idx] = weight_val
             base_pep_id_by_precursor[precursor_idx] = UInt32(gdf.base_pep_id[i])
+            pair_id_by_precursor[precursor_idx] =
+                hasproperty(gdf, :pair_id) && !ismissing(gdf.pair_id[i]) ? UInt32(gdf.pair_id[i]) : zero(UInt32)
             sequence_by_precursor[precursor_idx] = String(gdf.sequence[i])
             charge_by_precursor[precursor_idx] =
                 hasproperty(gdf, :charge) ? UInt8(gdf.charge[i]) : UInt8(0)
@@ -702,6 +714,7 @@ function _build_protein_rollup(
         score_val = Float32(-log(none_prob_val))
         push!(precursor_rows, (
             precursor_idx = precursor_idx,
+            pair_id = pair_id_by_precursor[precursor_idx],
             base_pep_id = base_pep_id_by_precursor[precursor_idx],
             sequence = sequence_by_precursor[precursor_idx],
             charge = charge_by_precursor[precursor_idx],
@@ -874,6 +887,7 @@ function build_precursor_consensus(
     precursor_metadata = Dict{
         Tuple{String, Bool, UInt8, UInt32},
         @NamedTuple{
+            pair_id::UInt32,
             sequence::String,
             charge::UInt8,
             structural_mods::String,
@@ -912,6 +926,7 @@ function build_precursor_consensus(
                 precursor_run_counts[key] = get(precursor_run_counts, key, Int32(0)) + Int32(1)
                 if !haskey(precursor_metadata, key)
                     precursor_metadata[key] = (
+                        pair_id = precursor_row.pair_id,
                         sequence = precursor_row.sequence,
                         charge = precursor_row.charge,
                         structural_mods = precursor_row.structural_mods,
@@ -1000,7 +1015,6 @@ function build_precursor_consensus(
     for precursor_weights in values(precursors_by_protein)
         sort!(precursor_weights; by = last, rev = true)
     end
-
     return (
         relative_weight = relative_weight,
         mean_relative_weight = mean_relative_weight,
@@ -1015,19 +1029,44 @@ function build_precursor_consensus(
 end
 
 """
-    _precursor_consensus_prefix_features(best_weight_by_precursor, protein_key, precursor_consensus)
+    _shape_consensus_inputs(precursor_rows, protein_key, precursor_consensus)
+
+Prepare the observed precursor weights and protein key used for shape scoring.
+"""
+function _shape_consensus_inputs(
+    precursor_rows::AbstractVector,
+    protein_key::Tuple{String, Bool, UInt8},
+    precursor_consensus::NamedTuple
+)
+    best_weight_by_precursor = Dict{UInt32, Float32}()
+    for row in precursor_rows
+        best_weight_by_precursor[row.precursor_idx] = row.best_weight
+    end
+
+    return (
+        protein_key = protein_key,
+        best_weight_by_precursor = best_weight_by_precursor
+    )
+end
+
+"""
+    _precursor_consensus_prefix_features(precursor_rows, protein_key, precursor_consensus)
 
 Score how well the run matches the consensus precursor profile up to the weakest
 observed consensus precursor.
 """
 function _precursor_consensus_prefix_features(
-    best_weight_by_precursor::Dict{UInt32, Float32},
+    precursor_rows::AbstractVector,
     protein_key::Tuple{String, Bool, UInt8},
     precursor_consensus::NamedTuple
 )
-    profiled_precursor_count = Int(get(precursor_consensus.profiled_precursor_count, protein_key, Int32(0)))
+    shape_inputs = _shape_consensus_inputs(precursor_rows, protein_key, precursor_consensus)
+    shape_protein_key = shape_inputs.protein_key
+    best_weight_by_precursor = shape_inputs.best_weight_by_precursor
+
+    profiled_precursor_count = Int(get(precursor_consensus.profiled_precursor_count, shape_protein_key, Int32(0)))
     shape_strength = hasproperty(precursor_consensus, :shape_strength) ?
-        get(precursor_consensus.shape_strength, protein_key, 0.0f0) : 0.0f0
+        get(precursor_consensus.shape_strength, shape_protein_key, 0.0f0) : 0.0f0
     shape_confidence_scale = hasproperty(precursor_consensus, :shape_confidence_scale) ?
         precursor_consensus.shape_confidence_scale : 1.0f0
     shape_confidence = _shape_confidence(shape_strength, shape_confidence_scale)
@@ -1049,7 +1088,7 @@ function _precursor_consensus_prefix_features(
     consensus_relative_weight = precursor_consensus.relative_weight
     consensus_precursors = get(
         precursor_consensus.precursors_by_protein,
-        protein_key,
+        shape_protein_key,
         Pair{UInt32, Float32}[]
     )
     isempty(consensus_precursors) && return (
@@ -1080,7 +1119,7 @@ function _precursor_consensus_prefix_features(
     observed_consensus_weights = Float32[]
     matched_precursors = 0
     for precursor_idx in keys(best_weight_by_precursor)
-        c = get(consensus_relative_weight, (protein_key[1], protein_key[2], protein_key[3], precursor_idx), 0.0f0)
+        c = get(consensus_relative_weight, (shape_protein_key[1], shape_protein_key[2], shape_protein_key[3], precursor_idx), 0.0f0)
         if c > 0.0f0
             push!(observed_consensus_weights, c)
             matched_precursors += 1
@@ -1224,20 +1263,20 @@ function _collect_precursor_consensus_debug_rows(
             Bool(gdf.target[1]),
             UInt8(gdf.entrap_id[1])
         )
-        best_weight_by_precursor = Dict(
-            row.precursor_idx => row.best_weight for row in rollup.precursor_rows
-        )
         prefix_features = _precursor_consensus_prefix_features(
-            best_weight_by_precursor,
+            rollup.precursor_rows,
             protein_key,
             precursor_consensus
         )
+        shape_inputs = _shape_consensus_inputs(rollup.precursor_rows, protein_key, precursor_consensus)
+        best_weight_by_precursor = shape_inputs.best_weight_by_precursor
+        shape_protein_key = shape_inputs.protein_key
 
         run_max_weight = maximum(values(best_weight_by_precursor))
         threshold = prefix_features.threshold
         consensus_precursors = get(
             precursor_consensus.precursors_by_protein,
-            protein_key,
+            shape_protein_key,
             Pair{UInt32, Float32}[]
         )
 
@@ -1245,7 +1284,7 @@ function _collect_precursor_consensus_debug_rows(
         for precursor_row in sort(collect(rollup.precursor_rows); by = row -> row.best_weight, rev = true)
             consensus_weight = get(
                 precursor_consensus.relative_weight,
-                (protein_key[1], protein_key[2], protein_key[3], precursor_row.precursor_idx),
+                (shape_protein_key[1], shape_protein_key[2], shape_protein_key[3], precursor_row.precursor_idx),
                 0.0f0
             )
             run_relative_weight = run_max_weight > 0.0f0 ?
@@ -1277,7 +1316,7 @@ function _collect_precursor_consensus_debug_rows(
                     observed = haskey(best_weight_by_precursor, precursor.first),
                     run_count = Int(get(
                         precursor_consensus.precursor_run_counts,
-                        (protein_key[1], protein_key[2], protein_key[3], precursor.first),
+                        (shape_protein_key[1], shape_protein_key[2], shape_protein_key[3], precursor.first),
                         Int32(0)
                     ))
                 )
@@ -1488,7 +1527,8 @@ function group_psms_by_protein(
             pg_score = Float32[],
             any_common_peps = Bool[],
             top_pep_weight = Float32[],
-            precursor_consensus_prefix_shape = Float32[]
+            precursor_consensus_prefix_shape = Float32[],
+            pg_score_x_precursor_consensus_prefix_shape = Float32[]
         )
     end
 
@@ -1504,7 +1544,8 @@ function group_psms_by_protein(
             pg_score = Float32[],
             any_common_peps = Bool[],
             top_pep_weight = Float32[],
-            precursor_consensus_prefix_shape = Float32[]
+            precursor_consensus_prefix_shape = Float32[],
+            pg_score_x_precursor_consensus_prefix_shape = Float32[]
         )
     end
 
@@ -1532,11 +1573,8 @@ function group_psms_by_protein(
                 Bool(gdf.target[1]),
                 UInt8(gdf.entrap_id[1])
             )
-            best_weight_by_precursor = Dict(
-                row.precursor_idx => row.best_weight for row in rollup.precursor_rows
-            )
             prefix_features = _precursor_consensus_prefix_features(
-                best_weight_by_precursor,
+                rollup.precursor_rows,
                 protein_key,
                 precursor_consensus
             )
@@ -1556,7 +1594,8 @@ function group_psms_by_protein(
             pg_score = pg_score,
             any_common_peps = has_common,
             top_pep_weight = top_pep_weight,
-            precursor_consensus_prefix_shape = precursor_consensus_prefix_shape
+            precursor_consensus_prefix_shape = precursor_consensus_prefix_shape,
+            pg_score_x_precursor_consensus_prefix_shape = pg_score * precursor_consensus_prefix_shape
         )
     end
 

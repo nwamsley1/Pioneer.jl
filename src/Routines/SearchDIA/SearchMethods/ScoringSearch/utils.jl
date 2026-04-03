@@ -186,7 +186,8 @@ function protein_probit_feature_names(; include_n_possible_peptides::Bool = fals
     append!(feature_names, [
         :any_common_peps,
         :coverage_log_ratio,
-        :precursor_consensus_prefix_shape
+        :precursor_consensus_prefix_shape,
+        #:pg_score_x_precursor_consensus_prefix_shape
     ])
 
     return feature_names
@@ -268,6 +269,7 @@ function _write_protein_probit_fold_label_scatter(
 
     target_positive_mask = ss.positive_mask
     target_confident_positive_mask = hasproperty(ss, :confident_positive_mask) ? ss.confident_positive_mask : target_positive_mask
+    target_rescued_positive_mask = target_positive_mask .& .!target_confident_positive_mask
     target_negative_mask = ss.mined_negative_mask
     target_dropped_mask = df.target .& .!target_positive_mask .& .!target_negative_mask
     decoy_mask = .!df.target
@@ -286,9 +288,11 @@ function _write_protein_probit_fold_label_scatter(
                                         !occursin("Yeast", run_name)
         end
     end
+    target_rescued_positive_highlight_mask = target_rescued_positive_mask .& pure_yeast_target_mask
     target_dropped_highlight_mask = target_dropped_mask .& pure_yeast_target_mask
     target_confident_positive_highlight_mask = target_confident_positive_mask .& pure_yeast_target_mask
     target_negative_highlight_mask = target_negative_mask .& pure_yeast_target_mask
+    target_rescued_positive_mask = target_rescued_positive_mask .& .!pure_yeast_target_mask
     target_dropped_mask = target_dropped_mask .& .!pure_yeast_target_mask
     target_confident_positive_mask = target_confident_positive_mask .& .!pure_yeast_target_mask
     target_negative_mask = target_negative_mask .& .!pure_yeast_target_mask
@@ -296,6 +300,7 @@ function _write_protein_probit_fold_label_scatter(
     y_values = df[!, y_col]
     target_marker_size = 3.0
     target_negative_marker_size = 3.0
+    target_rescued_marker_size = 2.5
     target_dropped_marker_size = 2.5
     decoy_marker_size = 6.0
     plot_size = (1800, 1200)
@@ -311,6 +316,20 @@ function _write_protein_probit_fold_label_scatter(
         size = plot_size,
         dpi = plot_dpi
     )
+
+    if any(target_rescued_positive_mask)
+        Plots.scatter!(
+            p_scatter,
+            log_pg_score[target_rescued_positive_mask],
+            y_values[target_rescued_positive_mask];
+            label = "Target (+ rescued)",
+            color = :dodgerblue,
+            alpha = 0.35,
+            markersize = target_rescued_marker_size,
+            markershape = :diamond,
+            markerstrokewidth = 0
+        )
+    end
 
     if any(target_dropped_mask)
         Plots.scatter!(
@@ -362,6 +381,21 @@ function _write_protein_probit_fold_label_scatter(
             alpha = 0.20,
             markersize = decoy_marker_size,
             markerstrokewidth = 0
+        )
+    end
+
+    if any(target_rescued_positive_highlight_mask)
+        Plots.scatter!(
+            p_scatter,
+            log_pg_score[target_rescued_positive_highlight_mask],
+            y_values[target_rescued_positive_highlight_mask];
+            label = "YEAST Target (+ rescued)",
+            color = :dodgerblue,
+            alpha = 0.5,
+            markersize = 2 * target_rescued_marker_size,
+            markershape = :diamond,
+            markerstrokewidth = 0.7,
+            markerstrokecolor = :black
         )
     end
 
@@ -1250,27 +1284,33 @@ function perform_protein_probit_regression(
 end
 
 """
-    build_protein_semisupervised_training_set(scores, targets, prefix_shape; q_value_threshold = 0.01f0, max_positive_pep_threshold = 1.0f0, mined_negative_prefix_shape_threshold = -0.20f0, mined_negative_pep_threshold = 0.90f0)
+    build_protein_semisupervised_training_set(scores, targets, prefix_shape, n_peptides; q_value_threshold = 0.01f0, max_positive_pep_threshold = 1.0f0, mined_negative_prefix_shape_threshold = -0.20f0, mined_negative_pep_threshold = 0.90f0, keep_non_mined_targets_as_positive = true)
 
 Build labels for semi-supervised protein probit training from a score vector.
-Targets passing the q-value and PEP thresholds stay positive, non-passing
-targets with `PEP >= mined_negative_pep_threshold` are mined as negatives,
-and any target with `prefix_shape <= mined_negative_prefix_shape_threshold`
-is always mined as negative regardless of q-value status. All remaining
-targets are dropped from training.
+Targets with `PEP >= mined_negative_pep_threshold` are mined as negatives.
+Targets that fail the q-value threshold and have
+`prefix_shape <= mined_negative_prefix_shape_threshold` are also mined as
+negatives. Singleton targets with `prefix_shape <= mined_negative_prefix_shape_threshold`
+are mined as negatives regardless of q-value. If
+`keep_non_mined_targets_as_positive=true`, remaining targets stay positive for
+training; otherwise only q-value-passing targets stay positive and the rest are
+dropped.
 """
 function build_protein_semisupervised_training_set(
     scores::AbstractVector{<:Real},
     targets::AbstractVector{Bool},
-    prefix_shape::AbstractVector{<:Real};
+    prefix_shape::AbstractVector{<:Real},
+    n_peptides::AbstractVector{<:Integer};
     q_value_threshold::Float32 = 0.01f0,
     max_positive_pep_threshold::Float32 = 1.0f0,
     mined_negative_prefix_shape_threshold::Float32 = -0.20f0,
-    mined_negative_pep_threshold::Float32 = 0.90f0
+    mined_negative_pep_threshold::Float32 = 0.90f0,
+    keep_non_mined_targets_as_positive::Bool = true
 )
     n = length(scores)
     length(targets) == n || throw(ArgumentError("targets must have the same length as scores"))
     length(prefix_shape) == n || throw(ArgumentError("prefix_shape must have the same length as scores"))
+    length(n_peptides) == n || throw(ArgumentError("n_peptides must have the same length as scores"))
     qvals = Vector{Float32}(undef, n)
     peps = Vector{Float32}(undef, n)
     get_qvalues!(scores, targets, qvals)
@@ -1282,17 +1322,25 @@ function build_protein_semisupervised_training_set(
     positive_mask = BitVector(undef, n)
     keep_mask = BitVector(undef, n)
 
-    @inbounds for i in eachindex(scores, targets, prefix_shape, qvals, peps)
-        low_shape_target = targets[i] && (Float32(prefix_shape[i]) <= mined_negative_prefix_shape_threshold)
+    @inbounds for i in eachindex(scores, targets, prefix_shape, n_peptides, qvals, peps)
+        low_shape_failed_target = targets[i] &&
+                                  (qvals[i] > q_value_threshold) &&
+                                  (Float32(prefix_shape[i]) <= mined_negative_prefix_shape_threshold)
+        low_shape_singleton_target = targets[i] &&
+                                     (n_peptides[i] == 1) &&
+                                     (Float32(prefix_shape[i]) <= mined_negative_prefix_shape_threshold)
         confident_positive_mask[i] = targets[i] &&
-                                     !low_shape_target &&
                                      (qvals[i] <= q_value_threshold) &&
                                      (peps[i] <= max_positive_pep_threshold)
         failed_target_mask[i] = targets[i] && !confident_positive_mask[i]
-        mined_negative_mask[i] = low_shape_target ||
-                                 (failed_target_mask[i] && (peps[i] >= mined_negative_pep_threshold))
-        positive_mask[i] = confident_positive_mask[i]
-        keep_mask[i] = !targets[i] || confident_positive_mask[i] || mined_negative_mask[i]
+        mined_negative_mask[i] = targets[i] &&
+                                 ((peps[i] >= mined_negative_pep_threshold) ||
+                                  low_shape_failed_target ||
+                                  low_shape_singleton_target)
+        positive_mask[i] = targets[i] &&
+                           !mined_negative_mask[i] &&
+                           (keep_non_mined_targets_as_positive || confident_positive_mask[i])
+        keep_mask[i] = !targets[i] || positive_mask[i] || mined_negative_mask[i]
     end
 
     second_pass_labels = Vector{Bool}(positive_mask[keep_mask])
@@ -1545,7 +1593,9 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
             X,
             y,
             feature_names,
-            sampled_protein_groups.precursor_consensus_prefix_shape;
+            sampled_protein_groups.pg_score,
+            sampled_protein_groups.precursor_consensus_prefix_shape,
+            sampled_protein_groups.n_peptides;
             q_value_threshold = train_q_value_threshold,
             min_prefix_shape_neg_threshold = min_prefix_shape_neg_threshold_itr,
             min_pep_neg_threshold = min_pep_neg_threshold_itr,
@@ -1623,7 +1673,6 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     )
     train_mask = partition.train_mask
     feature_df = all_protein_groups[train_mask, :]
-
     # Apply feature filtering
     adjust_any_common_peps!(feature_names, feature_df)
     remove_zero_variance_columns!(feature_names, feature_df)
@@ -1651,7 +1700,8 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         y,
         feature_names,
         initial_scores,
-        feature_df.precursor_consensus_prefix_shape;
+        feature_df.precursor_consensus_prefix_shape,
+        feature_df.n_peptides;
         q_value_threshold = train_q_value_threshold,
         min_prefix_shape_neg_threshold = min_prefix_shape_neg_threshold_itr,
         min_pep_neg_threshold = min_pep_neg_threshold_itr,
@@ -1686,7 +1736,7 @@ Fit a probit regression model for protein group classification.
 - `X_mean`: Feature means for standardization
 - `X_std`: Feature standard deviations for standardization
 """
-function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
+function fit_probit_model(X::Matrix{Float64}, y::AbstractVector{Bool})
     # Check for problematic columns in the feature matrix
     X_df_temp = DataFrame(X, Symbol.("feature_", 1:size(X, 2)))
     feature_names = Symbol.("feature_", 1:size(X, 2))
@@ -1727,17 +1777,18 @@ function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
 end
 
 """
-    fit_probit_model_semisupervised(X, y, feature_names, initial_scores, prefix_shape; q_value_threshold = 0.01f0, min_prefix_shape_neg_threshold = -0.20f0, min_pep_neg_threshold = 0.90f0, max_positive_pep_threshold = 1.0f0, n_iterations = 10, context = "protein_probit", iteration_debug_callback = nothing)
+    fit_probit_model_semisupervised(X, y, feature_names, initial_scores, prefix_shape, n_peptides; q_value_threshold = 0.01f0, min_prefix_shape_neg_threshold = -0.20f0, min_pep_neg_threshold = 0.90f0, max_positive_pep_threshold = 1.0f0, n_iterations = 10, context = "protein_probit", iteration_debug_callback = nothing)
 
 Fit the protein probit model by seeding iteration 1 labels from raw initial scores,
 then fitting and refining with the full feature set.
 """
 function fit_probit_model_semisupervised(
     X::Matrix{Float64},
-    y::Vector{Bool},
+    y::AbstractVector{Bool},
     feature_names::Vector{Symbol},
     initial_scores::AbstractVector{<:Real},
-    prefix_shape::AbstractVector{<:Real};
+    prefix_shape::AbstractVector{<:Real},
+    n_peptides::AbstractVector{<:Integer};
     q_value_threshold::Float32 = 0.01f0,
     min_prefix_shape_neg_threshold::Float32 = -0.20f0,
     min_pep_neg_threshold::Float32 = 0.90f0,
@@ -1748,18 +1799,22 @@ function fit_probit_model_semisupervised(
 )
     total_targets = sum(y)
     total_decoys = length(y) - total_targets
+    size(X, 1) == length(y) || throw(ArgumentError("X must have the same number of rows as y"))
     length(initial_scores) == length(y) || throw(ArgumentError("initial_scores must have the same length as y"))
     length(prefix_shape) == length(y) || throw(ArgumentError("prefix_shape must have the same length as y"))
+    length(n_peptides) == length(y) || throw(ArgumentError("n_peptides must have the same length as y"))
     last_plot_iteration = 1
     last_plot_state = nothing
     ss_initial = build_protein_semisupervised_training_set(
         initial_scores,
         y,
-        prefix_shape;
+        prefix_shape,
+        n_peptides;
         q_value_threshold = q_value_threshold,
         max_positive_pep_threshold = max_positive_pep_threshold,
         mined_negative_prefix_shape_threshold = min_prefix_shape_neg_threshold,
-        mined_negative_pep_threshold = min_pep_neg_threshold
+        mined_negative_pep_threshold = min_pep_neg_threshold,
+        keep_non_mined_targets_as_positive = true
     )
 
     initial_row_count = sum(ss_initial.keep_mask)
@@ -1812,11 +1867,13 @@ function fit_probit_model_semisupervised(
         ss = build_protein_semisupervised_training_set(
             iteration_scores,
             y,
-            prefix_shape;
+            prefix_shape,
+            n_peptides;
             q_value_threshold = q_value_threshold,
             max_positive_pep_threshold = max_positive_pep_threshold,
             mined_negative_prefix_shape_threshold = min_prefix_shape_neg_threshold,
-            mined_negative_pep_threshold = min_pep_neg_threshold
+            mined_negative_pep_threshold = min_pep_neg_threshold,
+            keep_non_mined_targets_as_positive = false
         )
 
         iteration_row_count = sum(ss.keep_mask)
@@ -2738,7 +2795,8 @@ function perform_probit_analysis_multifold(
                 y_train,
                 feature_names,
                 initial_scores_train,
-                train_df.precursor_consensus_prefix_shape;
+                train_df.precursor_consensus_prefix_shape,
+                train_df.n_peptides;
                 q_value_threshold = train_q_value_threshold,
                 min_prefix_shape_neg_threshold = min_prefix_shape_neg_threshold_itr,
                 min_pep_neg_threshold = min_pep_neg_threshold_itr,
