@@ -827,7 +827,7 @@ const ConsensusRunVote = @NamedTuple{
 }
 
 @inline function _consensus_runs_to_keep(n_runs::Int)::Int
-    return n_runs <= 0 ? 0 : ceil(Int, sqrt(n_runs))
+    return n_runs <= 0 ? 0 : min(5, ceil(Int, sqrt(n_runs)))
 end
 
 @inline function _consensus_candidate_runs_to_keep(n_runs::Int)::Int
@@ -879,8 +879,8 @@ Build a dataset-level precursor relative-weight consensus within each inferred
 protein group. Consensus weights are derived from quant precursors after
 normalizing each precursor by the max precursor weight in that protein run.
 Each run's vote is weighted by the run's current protein `pg_score`. After all
-runs are collected for a protein, the top `ceil(sqrt(n_runs)) + 1` runs by
-`pg_score` are retained as a cached candidate pool so leave-one-run-out
+runs are collected for a protein, the top `min(5, ceil(sqrt(n_runs))) + 1`
+runs by `pg_score` are retained as a cached candidate pool so leave-one-run-out
 consensus can be computed by subtraction at scoring time.
 """
 function build_precursor_consensus(
