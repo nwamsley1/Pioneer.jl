@@ -246,7 +246,8 @@ using Pioneer
             targets,
             prefix_shape,
             n_peptides;
-            q_value_threshold = 0.01f0
+            q_value_threshold = 0.01f0,
+            mined_negative_pep_threshold = 1.1f0
         )
         ss_loose_shape = Pioneer.build_protein_semisupervised_training_set(
             scores,
@@ -288,7 +289,8 @@ using Pioneer
             targets,
             prefix_shape,
             n_peptides;
-            q_value_threshold = 0.01f0
+            q_value_threshold = 0.01f0,
+            mined_negative_pep_threshold = 1.1f0
         )
 
         @test ss.qvals[1] <= 0.01f0
@@ -296,7 +298,7 @@ using Pioneer
         @test !ss.positive_mask[1]
         @test ss.mined_negative_mask[1]
         @test ss.qvals[2] > 0.01f0
-        @test ss.mined_negative_mask[2]
+        @test !ss.mined_negative_mask[2]
         @test !ss.confident_positive_mask[2]
     end
 
@@ -319,7 +321,7 @@ using Pioneer
         @test ss.positive_mask[1]
         @test !ss.mined_negative_mask[1]
         @test ss.qvals[2] > 0.01f0
-        @test ss.mined_negative_mask[2]
+        @test !ss.mined_negative_mask[2]
     end
 
     @testset "Protein Semi-Supervised Training Set Rescues High-Shape Failing Targets On Initial Labels" begin

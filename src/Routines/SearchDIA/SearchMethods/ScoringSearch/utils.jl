@@ -1290,9 +1290,7 @@ end
 
 Build labels for semi-supervised protein probit training from a score vector.
 Targets with `PEP >= mined_negative_pep_threshold` are mined as negatives.
-Targets that fail the q-value threshold and have
-`prefix_shape <= mined_negative_prefix_shape_threshold` are also mined as
-negatives. Singleton targets with `prefix_shape <= mined_negative_prefix_shape_threshold`
+Singleton targets with `prefix_shape <= mined_negative_prefix_shape_threshold`
 are mined as negatives regardless of q-value. If
 `keep_non_mined_targets_as_positive=true`, remaining targets stay positive for
 training; otherwise only q-value-passing targets stay positive and the rest are
@@ -1325,9 +1323,6 @@ function build_protein_semisupervised_training_set(
     keep_mask = BitVector(undef, n)
 
     @inbounds for i in eachindex(scores, targets, prefix_shape, n_peptides, qvals, peps)
-        low_shape_failed_target = targets[i] &&
-                                  (qvals[i] > q_value_threshold) &&
-                                  (Float32(prefix_shape[i]) <= mined_negative_prefix_shape_threshold)
         low_shape_singleton_target = targets[i] &&
                                      (n_peptides[i] == 1) &&
                                      (Float32(prefix_shape[i]) <= mined_negative_prefix_shape_threshold)
@@ -1336,7 +1331,6 @@ function build_protein_semisupervised_training_set(
                                                (peps[i] <= max_positive_pep_threshold)
         mined_negative_mask[i] = targets[i] &&
                                  ((peps[i] >= mined_negative_pep_threshold) ||
-                                  low_shape_failed_target ||
                                   low_shape_singleton_target)
         confident_positive_mask[i] = candidate_confident_positive_mask[i] &&
                                      !mined_negative_mask[i]
