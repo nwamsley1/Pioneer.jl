@@ -687,6 +687,69 @@ using Pioneer
         @test grouped.precursor_consensus_prefix_shape[1] < 0.316060f0
     end
 
+    @testset "Consensus Prefix Features Use Leave-One-Out Consensus By Run" begin
+        protein_key = ("P", true, UInt8(1))
+        consensus = (
+            relative_weight = Dict(
+                (protein_key[1], protein_key[2], protein_key[3], UInt32(101)) => 0.5f0,
+                (protein_key[1], protein_key[2], protein_key[3], UInt32(102)) => 0.5f0
+            ),
+            mean_relative_weight = Dict(
+                protein_key => 0.5f0
+            ),
+            profiled_precursor_count = Dict(
+                protein_key => Int32(2)
+            ),
+            shape_strength = Dict(
+                protein_key => 1.0f0
+            ),
+            shape_confidence_scale = 1.0f0,
+            selected_run_votes = Dict(
+                protein_key => [
+                    (pg_score = 1.0f0, run_order = Int64(1), normalized_precursors = Pair{UInt32, Float32}[UInt32(101) => 1.0f0]),
+                    (pg_score = 1.0f0, run_order = Int64(2), normalized_precursors = Pair{UInt32, Float32}[UInt32(102) => 1.0f0]),
+                    (pg_score = 1.0f0, run_order = Int64(3), normalized_precursors = Pair{UInt32, Float32}[UInt32(103) => 1.0f0])
+                ]
+            ),
+            consensus_target_run_count = Dict(
+                protein_key => Int32(2)
+            ),
+            cached_consensus_weight_sums = Dict(
+                protein_key => Dict(UInt32(101) => 1.0, UInt32(102) => 1.0, UInt32(103) => 1.0)
+            ),
+            cached_protein_total_vote = Dict(
+                protein_key => 3.0
+            ),
+            precursors_by_protein = Dict(
+                protein_key => Pair{UInt32, Float32}[UInt32(101) => 0.5f0, UInt32(102) => 0.5f0]
+            )
+        )
+
+        psms = DataFrame(
+            inferred_protein_group = ["P"],
+            target = Bool[true],
+            entrap_id = UInt8[1],
+            precursor_idx = UInt32[101],
+            base_pep_id = UInt32[101],
+            sequence = ["PEP1"],
+            structural_mods = [""],
+            isotopic_mods = [""],
+            use_for_protein_quant = Bool[true],
+            MBR_candidate = Bool[false],
+            missed_cleavage = Int64[0],
+            Mox = Int64[0],
+            prec_prob = Float32[0.8],
+            weight = Float32[100.0]
+        )
+
+        grouped_default = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
+        grouped_loo = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus, current_run_order = Int64(1))
+
+        @test grouped_default.precursor_consensus_prefix_shape[1] == 0.0f0
+        @test grouped_loo.precursor_consensus_prefix_shape[1] < 0.0f0
+        @test grouped_loo.precursor_consensus_prefix_shape[1] < grouped_default.precursor_consensus_prefix_shape[1]
+    end
+
     @testset "Decoy Shape Is Scored Against Itself" begin
         protein_name = "P1"
         consensus = (
