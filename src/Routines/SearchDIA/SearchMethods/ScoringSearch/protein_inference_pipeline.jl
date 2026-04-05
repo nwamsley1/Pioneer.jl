@@ -532,7 +532,7 @@ function _protein_group_probability_column(df::AbstractDataFrame)
 end
 
 const PROTEIN_ROLLUP_PROB_EPS = 1.0f-6
-const PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT = 0.0001f0
+const PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT = 0.001f0
 const ProteinRollupPrecursorRow = @NamedTuple{
     precursor_idx::UInt32,
     pair_id::UInt32,
@@ -1263,7 +1263,7 @@ function _precursor_consensus_prefix_features(
         end
     end
 
-    threshold = isempty(observed_consensus_weights) ? 0.0f0 : minimum(observed_consensus_weights)
+    threshold = isempty(observed_consensus_weights) ? 0.0f0 : (minimum(observed_consensus_weights) / 2.0f0)
     prefix_consensus_sum = 0.0f0
     run_prefix_sum = 0.0f0
     included_consensus_weights = Float32[]
@@ -1611,7 +1611,7 @@ function _write_precursor_consensus_debug_file(
                             )
                         end
                     end
-                    println(io, "  Prefix precursors (consensus_weight >= tau)")
+                    println(io, "  Prefix precursors (consensus_weight >= threshold)")
                     if isempty(row.prefix_precursors)
                         println(io, "    (none)")
                     else
@@ -1883,41 +1883,31 @@ function perform_protein_inference_pipeline(
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
     consensus_debug_protein_names::Vector{String} = String[]
 )
-    # Ensure output folder exists
     !isdir(output_folder) && mkpath(output_folder)
-    
-    # Build pre-inference pipeline
+
     pre_inference_pipeline = TransformPipeline() |>
         add_peptide_metadata(precursors) |>
         validate_peptide_data()
-    
-    # Process each file
+
     pg_refs = ProteinGroupFileReference[]
     psm_to_pg_mapping = Dict{String, String}()
     indexed_refs = collect(enumerate(psm_refs))
 
     @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags"
-    
+
     for (idx, psm_ref) in ProgressBar(indexed_refs)
         if !exists(psm_ref)
             continue
         end
-        
-        # Step 1: Apply pre-inference pipeline to add necessary columns
+
         apply_pipeline!(psm_ref, pre_inference_pipeline)
-        
-        # Step 2: Run inference on the prepared PSMs
         prepared_df = load_dataframe(psm_ref)
         inference_result = apply_inference_to_dataframe(prepared_df, precursors)
-        
-        # Step 3: Update PSMs with inference results
+
         psm_update_pipeline = TransformPipeline() |>
-            add_inferred_protein_column(inference_result) |> #Protein group assigned to each peptide
-            add_quantification_flag(inference_result) #Whether or not the peptide should be used for protein quant and inference (non ambiguous)
-        
-        # Apply updates to the same PSM file (which now has necessary columns)
+            add_inferred_protein_column(inference_result) |>
+            add_quantification_flag(inference_result)
         apply_pipeline!(psm_ref, psm_update_pipeline)
-        
     end
 
     precursor_consensus = build_precursor_consensus(psm_refs; q_value_threshold = q_value_threshold)
@@ -1961,7 +1951,6 @@ function perform_protein_inference_pipeline(
         initial_rows = nrow(protein_groups_df)
         for (desc, op) in post_inference_pipeline.operations
             protein_groups_df = op(protein_groups_df)
-            #@debug_l1 "Pipeline operation on protein groups" operation=desc rows_before=initial_rows rows_after=nrow(protein_groups_df)
             initial_rows = nrow(protein_groups_df)
         end
 

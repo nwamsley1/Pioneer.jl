@@ -69,7 +69,8 @@ using Pioneer
 
         @test grouped.n_peptides[1] == 2
         @test grouped.peptide_list[1] == "PEP1;PEP2"
-        expected_pg_score = Float32(-log((0.2 + 0.01) * (0.1 + 0.01) * (0.5 + 0.01) * (0.4 + 0.01)))
+        pc = Pioneer.PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT
+        expected_pg_score = Float32(-log((0.2f0 + pc) * (0.1f0 + pc) * (0.5f0 + pc) * (0.4f0 + pc)))
         @test grouped.pg_score[1] ≈ expected_pg_score atol = 1e-5
     end
 
@@ -94,7 +95,8 @@ using Pioneer
 
         @test grouped.n_peptides[1] == 2
         @test grouped.peptide_list[1] == "PEP1;PEP2"
-        expected_pg_score = Float32(-log((0.2 + 0.01) * (0.5 + 0.01) * (0.4 + 0.01)))
+        pc = Pioneer.PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT
+        expected_pg_score = Float32(-log((0.2f0 + pc) * (0.5f0 + pc) * (0.4f0 + pc)))
         @test grouped.pg_score[1] ≈ expected_pg_score atol = 1e-5
     end
 
@@ -643,6 +645,52 @@ using Pioneer
         @test top.precursor_consensus_prefix_shape[1] ≈ 0.316060f0 atol = 1e-5
         @test low.precursor_consensus_prefix_shape[1] ≈ -0.210707f0 atol = 1e-5
         @test low.precursor_consensus_prefix_shape[1] < 0.0f0
+    end
+
+    @testset "Consensus Prefix Features Use Half-Tau Threshold" begin
+        consensus = (
+            relative_weight = Dict(
+                ("P", true, UInt8(1), UInt32(101)) => 1.0f0,
+                ("P", true, UInt8(1), UInt32(102)) => 0.6f0,
+                ("P", true, UInt8(1), UInt32(103)) => 0.2f0
+            ),
+            mean_relative_weight = Dict(
+                ("P", true, UInt8(1)) => 0.6f0
+            ),
+            profiled_precursor_count = Dict(
+                ("P", true, UInt8(1)) => Int32(3)
+            ),
+            shape_strength = Dict(
+                ("P", true, UInt8(1)) => 1.0f0
+            ),
+            shape_confidence_scale = 1.0f0,
+            precursors_by_protein = Dict(
+                ("P", true, UInt8(1)) => Pair{UInt32, Float32}[UInt32(101) => 1.0f0, UInt32(102) => 0.6f0, UInt32(103) => 0.2f0]
+            )
+        )
+
+        psms = DataFrame(
+            inferred_protein_group = ["P"],
+            target = Bool[true],
+            entrap_id = UInt8[1],
+            precursor_idx = UInt32[101],
+            base_pep_id = UInt32[101],
+            sequence = ["PEP_TOP"],
+            structural_mods = [""],
+            isotopic_mods = [""],
+            use_for_protein_quant = Bool[true],
+            MBR_candidate = Bool[false],
+            missed_cleavage = Int64[0],
+            Mox = Int64[0],
+            prec_prob = Float32[0.8],
+            weight = Float32[100.0]
+        )
+
+        grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
+
+        @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.079015f0 atol = 1e-5
+        @test grouped.precursor_consensus_prefix_shape[1] < 0.316060f0
+        @test grouped.precursor_consensus_prefix_shape[1] > 0.0f0
     end
 
     @testset "Consensus Prefix Features Penalize Off-Consensus Observed Precursors" begin
