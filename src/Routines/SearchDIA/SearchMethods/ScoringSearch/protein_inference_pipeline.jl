@@ -532,7 +532,7 @@ function _protein_group_probability_column(df::AbstractDataFrame)
 end
 
 const PROTEIN_ROLLUP_PROB_EPS = 1.0f-6
-const PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT = 0.01f0
+const PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT = 0.001f0
 const ProteinRollupPrecursorRow = @NamedTuple{
     precursor_idx::UInt32,
     pair_id::UInt32,
