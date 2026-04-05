@@ -647,7 +647,7 @@ using Pioneer
         @test low.precursor_consensus_prefix_shape[1] < 0.0f0
     end
 
-    @testset "Consensus Prefix Features Use Half-Tau Threshold" begin
+    @testset "Consensus Prefix Features Use Tau Threshold" begin
         consensus = (
             relative_weight = Dict(
                 ("P", true, UInt8(1), UInt32(101)) => 1.0f0,
@@ -688,8 +688,7 @@ using Pioneer
 
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
 
-        @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.079015f0 atol = 1e-5
-        @test grouped.precursor_consensus_prefix_shape[1] < 0.316060f0
+        @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.316060f0 atol = 1e-5
         @test grouped.precursor_consensus_prefix_shape[1] > 0.0f0
     end
 
@@ -859,8 +858,7 @@ using Pioneer
             :peptide_coverage_logit,
             :any_common_peps,
             :coverage_log_ratio,
-            :precursor_consensus_prefix_shape,
-            :pg_score_x_precursor_consensus_prefix_shape
+            :precursor_consensus_prefix_shape
         ]
 
         @test Pioneer.protein_probit_feature_names(include_n_possible_peptides = true) == [
@@ -869,8 +867,7 @@ using Pioneer
             :n_possible_peptides,
             :any_common_peps,
             :coverage_log_ratio,
-            :precursor_consensus_prefix_shape,
-            :pg_score_x_precursor_consensus_prefix_shape
+            :precursor_consensus_prefix_shape
         ]
     end
 

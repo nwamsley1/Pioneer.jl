@@ -448,11 +448,6 @@ function estimate_weight_detection_model(df::DataFrame)
     )
 end
 
-"""
-    add_weight_observation_features(calibration)
-
-Add weight-based protein coverage features using an empirical top-rank exceedance model.
-"""
 function add_weight_observation_features(calibration::NamedTuple)
     desc = "add_weight_observation_features"
 
@@ -477,7 +472,6 @@ function add_weight_observation_features(calibration::NamedTuple)
                 continue
             end
 
-            log_top_weight = log(top_weight)
             effective_rank_count = min(max(N_total, 1), profiled_rank_count)
             if effective_rank_count <= 1
                 expected_excess_from_top[i] = 0.0f0
@@ -485,6 +479,7 @@ function add_weight_observation_features(calibration::NamedTuple)
                 continue
             end
 
+            log_top_weight = log(top_weight)
             expected_excess = 0.0
             for rank_idx in 2:effective_rank_count
                 rank_scale = rank_scale_profile[rank_idx]
@@ -533,6 +528,7 @@ end
 
 const PROTEIN_ROLLUP_PROB_EPS = 1.0f-6
 const PROTEIN_ROLLUP_PRECURSOR_NONE_PSEUDOCOUNT = 0.001f0
+
 const ProteinRollupPrecursorRow = @NamedTuple{
     precursor_idx::UInt32,
     pair_id::UInt32,
@@ -1263,7 +1259,7 @@ function _precursor_consensus_prefix_features(
         end
     end
 
-    threshold = isempty(observed_consensus_weights) ? 0.0f0 : (minimum(observed_consensus_weights) / 2.0f0)
+    threshold = isempty(observed_consensus_weights) ? 0.0f0 : minimum(observed_consensus_weights)
     prefix_consensus_sum = 0.0f0
     run_prefix_sum = 0.0f0
     included_consensus_weights = Float32[]
