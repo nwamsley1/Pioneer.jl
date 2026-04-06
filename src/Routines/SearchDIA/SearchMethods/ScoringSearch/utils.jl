@@ -1382,22 +1382,6 @@ end
     return change_count
 end
 
-@inline function _score_delta_stats(
-    current_scores::AbstractVector{<:Real},
-    previous_scores::AbstractVector{<:Real}
-)::Tuple{Float64, Float64}
-    total_abs_delta = 0.0
-    max_abs_delta = 0.0
-    n = length(current_scores)
-    @inbounds for i in eachindex(current_scores, previous_scores)
-        abs_delta = abs(Float64(current_scores[i]) - Float64(previous_scores[i]))
-        total_abs_delta += abs_delta
-        max_abs_delta = max(max_abs_delta, abs_delta)
-    end
-    mean_abs_delta = n == 0 ? 0.0 : total_abs_delta / n
-    return mean_abs_delta, max_abs_delta
-end
-
 """
     update_psms_with_probit_scores_refs(paired_refs::Vector{PairedSearchFiles},
                                        pg_name_to_global_pg_score::Dict{ProteinKey,Float32},
@@ -1820,7 +1804,7 @@ end
 
 Fit the protein probit model by seeding iteration 1 labels from raw initial scores,
 then fitting and refining with the full feature set. Later outer iterations stop
-early when both label churn and score drift stay small for two consecutive rounds.
+early when label churn stays small for two consecutive rounds.
 """
 function fit_probit_model_semisupervised(
     X::Matrix{Float64},
@@ -1844,14 +1828,12 @@ function fit_probit_model_semisupervised(
     length(prefix_shape) == length(y) || throw(ArgumentError("prefix_shape must have the same length as y"))
     length(n_peptides) == length(y) || throw(ArgumentError("n_peptides must have the same length as y"))
     row_change_threshold = max(5, ceil(Int, 0.001 * length(y)))
-    score_delta_threshold = 1e-3
     near_convergence_check_start_iteration = 4
     near_convergence_patience = 2
     near_convergence_streak = 0
     previous_keep_mask = nothing
     previous_positive_mask = nothing
     previous_mined_negative_mask = nothing
-    previous_iteration_scores = nothing
     last_plot_iteration = 1
     last_plot_state = nothing
     ss_initial = build_protein_semisupervised_training_set(
@@ -1953,22 +1935,16 @@ function fit_probit_model_semisupervised(
             )
         changed_mined_negative_rows = isnothing(previous_mined_negative_mask) ? missing :
             _count_mask_changes(ss.mined_negative_mask, previous_mined_negative_mask)
-        mean_abs_score_delta = isnothing(previous_iteration_scores) ? missing : nothing
-        max_abs_score_delta = isnothing(previous_iteration_scores) ? missing : nothing
         near_converged = false
-        if !isnothing(previous_iteration_scores)
-            mean_abs_score_delta, max_abs_score_delta = _score_delta_stats(iteration_scores, previous_iteration_scores)
-            near_converged =
-                (iteration >= near_convergence_check_start_iteration) &&
-                !ismissing(changed_keep_rows) &&
-                !ismissing(changed_label_rows) &&
-                (changed_keep_rows <= row_change_threshold) &&
-                (changed_label_rows <= row_change_threshold) &&
-                (mean_abs_score_delta <= score_delta_threshold)
-        end
+        near_converged =
+            (iteration >= near_convergence_check_start_iteration) &&
+            !ismissing(changed_keep_rows) &&
+            !ismissing(changed_label_rows) &&
+            (changed_keep_rows <= row_change_threshold) &&
+            (changed_label_rows <= row_change_threshold)
         near_convergence_streak = near_converged ? (near_convergence_streak + 1) : 0
 
-        @user_info "Protein probit convergence context=$(context) iteration=$(iteration) row_change_threshold=$(row_change_threshold) score_delta_threshold=$(score_delta_threshold) changed_keep_rows=$(changed_keep_rows) changed_label_rows=$(changed_label_rows) changed_mined_negative_rows=$(changed_mined_negative_rows) mean_abs_score_delta=$(mean_abs_score_delta) max_abs_score_delta=$(max_abs_score_delta) near_converged=$(near_converged) near_convergence_streak=$(near_convergence_streak)"
+        @user_info "Protein probit convergence context=$(context) iteration=$(iteration) row_change_threshold=$(row_change_threshold) changed_keep_rows=$(changed_keep_rows) changed_label_rows=$(changed_label_rows) changed_mined_negative_rows=$(changed_mined_negative_rows) near_converged=$(near_converged) near_convergence_streak=$(near_convergence_streak)"
 
         last_plot_iteration = iteration
         last_plot_state = (
@@ -1978,7 +1954,7 @@ function fit_probit_model_semisupervised(
         )
 
         if near_convergence_streak >= near_convergence_patience
-            @user_info "Protein probit early stopping context=$(context) stop_reason=near_converged iteration=$(iteration) patience=$(near_convergence_patience) row_change_threshold=$(row_change_threshold) score_delta_threshold=$(score_delta_threshold) changed_keep_rows=$(changed_keep_rows) changed_label_rows=$(changed_label_rows) changed_mined_negative_rows=$(changed_mined_negative_rows) mean_abs_score_delta=$(mean_abs_score_delta) max_abs_score_delta=$(max_abs_score_delta)"
+            @user_info "Protein probit early stopping context=$(context) stop_reason=near_converged iteration=$(iteration) patience=$(near_convergence_patience) row_change_threshold=$(row_change_threshold) changed_keep_rows=$(changed_keep_rows) changed_label_rows=$(changed_label_rows) changed_mined_negative_rows=$(changed_mined_negative_rows)"
             if !isnothing(iteration_debug_callback) && !isnothing(last_plot_state) && last_plot_iteration > 1
                 iteration_debug_callback(last_plot_iteration, last_plot_state)
             end
@@ -1992,7 +1968,6 @@ function fit_probit_model_semisupervised(
         previous_keep_mask = copy(ss.keep_mask)
         previous_positive_mask = copy(ss.positive_mask)
         previous_mined_negative_mask = copy(ss.mined_negative_mask)
-        previous_iteration_scores = copy(iteration_scores)
     end
 
     if !isnothing(iteration_debug_callback) && !isnothing(last_plot_state) && last_plot_iteration > 1
