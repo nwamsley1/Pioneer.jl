@@ -204,21 +204,6 @@ using Pioneer
         @test out.coverage_log_ratio[5] == 0.0f0
     end
 
-    @testset "Protein Auto-Pass pg_score Threshold Can Be Disabled" begin
-        df = DataFrame(
-            target = Bool[true, false, false, false],
-            n_peptides = Int64[1, 1, 2, 7],
-            pg_score = Float32[0.9, 1.1, 0.7, 2.3],
-            coverage_log_ratio = Float32[0.9, 0.8, 0.7, 0.1],
-            precursor_consensus_prefix_shape = Float32[0.8, 0.7, 0.6, 0.5],
-            any_common_peps = Bool[true, true, false, true]
-        )
-
-        pg_score_threshold = Pioneer.compute_protein_autopass_pg_score_threshold(df; context = "test")
-
-        @test isinf(pg_score_threshold)
-    end
-
     @testset "Protein Semi-Supervised Training Set Mines Failed Targets By Shape Or PEP Threshold" begin
         scores = Float32[
             0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90,
@@ -396,13 +381,6 @@ using Pioneer
             x_coverage,
             x_shape
         )
-        feature_names = Symbol[
-            :pg_score,
-            :peptide_coverage_logit,
-            :any_common_peps,
-            :coverage_log_ratio,
-            :precursor_consensus_prefix_shape
-        ]
         initial_scores = Float32.(vcat(
             collect(range(0.99f0, 0.80f0, length = n_targets)),
             collect(range(0.20f0, 0.01f0, length = n_decoys))
@@ -414,7 +392,6 @@ using Pioneer
         β = Pioneer.fit_probit_model_semisupervised(
             Matrix{Float64}(X),
             y,
-            feature_names,
             initial_scores,
             prefix_shape,
             n_peptides;
@@ -640,8 +617,7 @@ using Pioneer
 
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = consensus)
         @test grouped.precursor_consensus_prefix_shape[1] ≈ 0.121988f0 atol = 1e-5
-        @test grouped.pg_score_x_precursor_consensus_prefix_shape[1] ≈
-              grouped.pg_score[1] * grouped.precursor_consensus_prefix_shape[1] atol = 1e-5
+        @test !hasproperty(grouped, :pg_score_x_precursor_consensus_prefix_shape)
     end
 
     @testset "Consensus Prefix Features Reward Expected Singleton And Penalize Low-Ranked Singleton" begin
@@ -907,15 +883,6 @@ using Pioneer
         @test Pioneer.protein_probit_feature_names() == [
             :pg_score,
             :peptide_coverage_logit,
-            :any_common_peps,
-            :coverage_log_ratio,
-            :precursor_consensus_prefix_shape
-        ]
-
-        @test Pioneer.protein_probit_feature_names(include_n_possible_peptides = true) == [
-            :pg_score,
-            :peptide_coverage_logit,
-            :n_possible_peptides,
             :any_common_peps,
             :coverage_log_ratio,
             :precursor_consensus_prefix_shape

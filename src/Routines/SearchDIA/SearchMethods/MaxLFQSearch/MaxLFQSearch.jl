@@ -75,7 +75,6 @@ struct MaxLFQSearchParameters <: SearchParameters
         output_params = params.output
         global_params = params.global_settings
         maxLFQ_params = params.maxLFQ
-        protein_inference_params = params.protein_inference
 
         new(
             Int64(norm_params.n_rt_bins),
@@ -83,7 +82,7 @@ struct MaxLFQSearchParameters <: SearchParameters
             Bool(maxLFQ_params.run_to_run_normalization),
             Float32(global_params.scoring.q_value_threshold),
             Int64(100000),  # Default batch size
-            Int64(protein_inference_params.min_peptides),
+            Int64(maxLFQ_params.min_peptides),
             Float64(get(maxLFQ_params, :max_chunk_size_mb, 1024)),
             Bool(output_params.write_csv),
             Bool(output_params.delete_temp),

@@ -324,8 +324,10 @@ function SearchDIA(params_path::String)
             ("First Pass Search", FirstPassSearch()),
             ("Huber Tuning", HuberTuningSearch()),
             ("Second Pass Search", SecondPassSearch()),
-            ("Scoring", ScoringSearch()),
+            ("Precursor Scoring", PrecursorScoringSearch()),
             ("Chromatogram Integration", IntegrateChromatogramSearch()),
+            ("Protein Inference", ProteinInferenceSearch()),
+            ("Protein Scoring", ProteinScoringSearch()),
             ("Quantification & Output", MaxLFQSearch())
         ]
 

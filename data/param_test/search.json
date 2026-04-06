@@ -120,19 +120,22 @@
             "max_diff": 0.01
         },
         "machine_learning": {
-            "max_psms_in_memory": 50000000,
+            "max_in_memory_table_mb": 50000000,
             "min_trace_prob": 0.75,
             "max_q_value_lightgbm_rescore": 0.01,
 			"max_q_value_lightgbm_mbr_rescore": 0.20,
             "spline_points": 500,
-            "interpolation_points": 10
+            "q_value_interpolation_points_per_bin": 10
         }
     },
-    "proteinInference": {
-        "min_peptides": 1
+    "proteinScoring": {
+        "min_peptides": 1,
+        "write_qc_plots": false,
+        "log_feature_importance": false
     },
     "maxLFQ": {
-        "run_to_run_normalization": true
+        "run_to_run_normalization": true,
+        "min_peptides": 1
     },
     "output": {
         "write_csv": true,

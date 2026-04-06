@@ -43,7 +43,7 @@ function checkParams(json_path::String)
     # Check top-level sections
     required_sections = [
         "global", "parameter_tuning", "first_search", "quant_search",
-        "acquisition", "rt_alignment", "optimization", "output", "paths"
+        "acquisition", "rt_alignment", "optimization", "proteinScoring", "maxLFQ", "output", "paths"
     ]
     
     for section in required_sections
@@ -285,12 +285,12 @@ function checkParams(json_path::String)
     check_param(deconv, "max_diff", Real)
 
     ml_params = opt_params["machine_learning"]
-    check_param(ml_params, "max_psm_memory_mb", Real)
+    check_param(ml_params, "max_in_memory_table_mb", Real)
     check_param(ml_params, "min_trace_prob", Real)
     check_param(ml_params, "max_q_value_mbr_itr", Real)
     check_param(ml_params, "min_PEP_neg_threshold_itr", Real)
     check_param(ml_params, "spline_points", Integer)
-    check_param(ml_params, "interpolation_points", Integer)
+    check_param(ml_params, "q_value_interpolation_points_per_bin", Integer)
     check_param(ml_params, "n_quantile_bins", Integer)
 
     # Validate n_quantile_bins bounds (UInt16 limit)
@@ -301,13 +301,16 @@ function checkParams(json_path::String)
         throw(InvalidParametersError("n_quantile_bins must be ≥ 1, got $(ml_params["n_quantile_bins"])", ml_params))
     end
 
-    # Validate Protein Inference parameters
-    output = params["proteinInference"]
-    check_param(output, "min_peptides", Integer)
+    # Validate protein scoring parameters
+    protein_scoring = params["proteinScoring"]
+    check_param(protein_scoring, "min_peptides", Integer)
+    check_param(protein_scoring, "write_qc_plots", Bool)
+    check_param(protein_scoring, "log_feature_importance", Bool)
 
     # Validate MaxLFQ parameters
     output = params["maxLFQ"]
     check_param(output, "run_to_run_normalization", Bool)
+    check_param(output, "min_peptides", Integer)
 
     # Validate output parameters
     output = params["output"]

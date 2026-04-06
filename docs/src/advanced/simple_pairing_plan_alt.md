@@ -62,7 +62,7 @@ Notes:
 - It avoids cloning and only touches the minimal set of rows.
 
 4) Keep `apply_mbr_filter!` simple
-- File: `src/Routines/SearchDIA/SearchMethods/ScoringSearch/scoring_interface.jl`
+- File: `src/Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/scoring_interface.jl`
 - Function: `apply_mbr_filter!`
 - Use the candidate mask and a simple bad‑transfer predicate (original form):
 

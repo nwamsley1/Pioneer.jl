@@ -16,12 +16,14 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    ScoringSearch
+    PrecursorScoringSearch
 
-Search method for post-processing second pass results to get final protein scores.
-This includes LightGBM model training, trace scoring, and protein group analysis.
+Search method for precursor rescoring and precursor-level FDR control after the
+second pass search has completed. This step performs ML-based precursor
+rescoring, MBR-aware precursor aggregation, and final precursor filtering for
+downstream chromatogram integration.
 """
-struct ScoringSearch <: SearchMethod end
+struct PrecursorScoringSearch <: SearchMethod end
 
 # Note: FileReferences, SearchResultReferences, and FileOperations are already
 # included by importScripts.jl - no need to include them here
@@ -31,98 +33,70 @@ Type Definitions
 ==========================================================#
 
 """
-Results container for scoring search.
+Results container for precursor scoring.
 """
-struct ScoringSearchResults <: SearchResults
-    # Paths to results
+struct PrecursorScoringSearchResults <: SearchResults
     best_traces::Dict{Int64, Float32}
-    precursor_global_qval_dict::Base.Ref{Dict{UInt32, Float32}} # Dictionary mapping precursor_idx to global q-values
-    precursor_qval_interp::Base.Ref{Any} # Interpolation for run-specific q-values
-    precursor_pep_interp::Base.Ref{Any}  # Interpolation for experiment-wide PEPs
-    pg_qval_interp::Base.Ref{Any}       # Protein group q-value interpolation
-    merged_quant_path::String # Path to merged quantification results
+    precursor_global_qval_dict::Base.Ref{Dict{UInt32, Float32}}
+    precursor_qval_interp::Base.Ref{Any}
+    precursor_pep_interp::Base.Ref{Any}
+    merged_precursor_scores_path::String
 end
 
 """
-Parameters for scoring search.
+Parameters for precursor scoring.
 """
-struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
-    # LightGBM parameters
-    max_psm_memory_mb::Float64
+struct PrecursorScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
+    max_in_memory_table_mb::Float64
     min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
-    precursor_q_value_interpolation_points_per_bin::Int64
-    pg_prob_spline_points_per_bin::Int64  # Added based on original struct
-    pg_q_value_interpolation_points_per_bin::Int64  # Added based on original struct
+    q_value_interpolation_points_per_bin::Int64
     match_between_runs::Bool
-    min_peptides::Int64
     max_q_value_lightgbm_rescore::Float32
     max_q_value_mbr_itr::Float32
     min_PEP_neg_threshold_itr::Float32
     max_MBR_false_transfer_rate::Float32
     q_value_threshold::Float32
     isotope_tracetype::I
-
-    # Quantile binning parameter
     n_quantile_bins::Int64
-
-    # Model comparison parameters
     enable_model_comparison::Bool
     validation_split_ratio::Float64
     qvalue_threshold_comparison::Float64
     min_psms_for_comparison::Int64
     max_psms_for_comparison::Int64
-
-    # MS1 scoring parameter
     ms1_scoring::Bool
-
-    # OOM scoring parameters
     force_oom::Bool
     max_mbr_training_candidates::Int64
 
-    function ScoringSearchParameters(params::PioneerParameters)
-        # Extract machine learning parameters from optimization section
+    function PrecursorScoringSearchParameters(params::PioneerParameters)
         ml_params = params.optimization.machine_learning
-        global_params = params.global_settings 
-        protein_inference_params = params.protein_inference
+        global_params = params.global_settings
 
-        # Determine isotope trace type
         isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && global_params.isotope_settings.combine_traces
-            CombineTraces(0.0f0)  # Default min_fraction_transmitted
+            CombineTraces(0.0f0)
         else
             SeperateTraces()
         end
-        
+
         new{typeof(isotope_trace_type)}(
-            Float64(ml_params.max_psm_memory_mb),
+            Float64(ml_params.max_in_memory_table_mb),
             Float32(ml_params.min_trace_prob),
             Int64(ml_params.spline_points),
-            Int64(ml_params.interpolation_points),
-            Int64(ml_params.spline_points),        # Using same value for protein groups
-            Int64(ml_params.interpolation_points), # Using same value for protein groups
+            Int64(ml_params.q_value_interpolation_points_per_bin),
             Bool(global_params.match_between_runs),
-            Int64(protein_inference_params.min_peptides),
             Float32(global_params.scoring.q_value_threshold),
             Float32(ml_params.max_q_value_mbr_itr),
             Float32(ml_params.min_PEP_neg_threshold_itr),
             Float32(global_params.scoring.q_value_threshold),
             Float32(global_params.scoring.q_value_threshold),
             isotope_trace_type,
-
-            # Quantile binning parameter
             Int64(ml_params.n_quantile_bins),
-
-            # Model comparison parameters with defaults
             Bool(get(ml_params, :enable_model_comparison, true)),
             Float64(get(ml_params, :validation_split_ratio, 0.2)),
             Float64(get(ml_params, :qvalue_threshold, 0.01)),
             Int64(get(ml_params, :min_psms_for_comparison, 1000)),
             Int64(get(ml_params, :max_psms_for_comparison, 100000)),
-
-            # MS1 scoring parameter
             Bool(global_params.ms1_scoring),
-
-            # OOM scoring parameters
             Bool(get(ml_params, :force_oom, false)),
             Int64(get(ml_params, :max_mbr_training_candidates, 1_000_000))
         )
@@ -133,28 +107,27 @@ end
 Interface Implementation  
 ==========================================================#
 
-get_parameters(::ScoringSearch, params::Any) = ScoringSearchParameters(params)
+get_parameters(::PrecursorScoringSearch, params::Any) = PrecursorScoringSearchParameters(params)
 
-function init_search_results(::ScoringSearchParameters, search_context::SearchContext)
-    return ScoringSearchResults(
-        Dict{Int64, Float32}(),  # best_traces
-        Ref(Dict{UInt32, Float32}()),  # precursor_global_qval_dict
-        Ref(undef),  # precursor_qval_interp
-        Ref(undef),  # precursor_pep_interp
-        Ref(undef),  # pg_qval_interp
-        joinpath(getDataOutDir(search_context), "merged_quant.arrow")
+function init_search_results(::PrecursorScoringSearchParameters, search_context::SearchContext)
+    return PrecursorScoringSearchResults(
+        Dict{Int64, Float32}(),
+        Ref(Dict{UInt32, Float32}()),
+        Ref(undef),
+        Ref(undef),
+        joinpath(getDataOutDir(search_context), "merged_precursor_scores.arrow")
     )
 end
 
 function process_file!(
-    results::ScoringSearchResults,
-    params::ScoringSearchParameters,
+    results::PrecursorScoringSearchResults,
+    params::PrecursorScoringSearchParameters,
     search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
 )
     # Check if file should be skipped due to previous failure
-    if check_and_skip_failed_file(search_context, ms_file_idx, "ScoringSearch")
+    if check_and_skip_failed_file(search_context, ms_file_idx, "PrecursorScoringSearch")
         return results  # Return early with unchanged results
     end
     
@@ -163,8 +136,8 @@ function process_file!(
 end
 
 function process_search_results!(
-    results::ScoringSearchResults,
-    params::ScoringSearchParameters,
+    results::PrecursorScoringSearchResults,
+    params::PrecursorScoringSearchParameters,
     search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
@@ -173,195 +146,33 @@ function process_search_results!(
     return nothing
 end
 
-function reset_results!(results::ScoringSearchResults)
+function reset_results!(results::PrecursorScoringSearchResults)
     return nothing
 end
 
-function run_integrated_protein_scoring!(
-    search_context::SearchContext;
-    passing_refs::Vector{PSMFileReference},
-    max_psm_memory_mb::Float64,
-    q_value_threshold::Float32,
-    min_peptides::Int64,
-    ms1_scoring::Bool,
-    min_pep_neg_threshold_itr::Float32,
-    pg_q_value_interpolation_points_per_bin::Int64,
-    consensus_debug_protein_names::Vector{String} = String[]
-)
-    isempty(passing_refs) && return nothing
-
-    temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
-    passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
-    !isdir(passing_proteins_folder) && mkpath(passing_proteins_folder)
-
-    qc_folder = joinpath(dirname(temp_folder), "qc_plots")
-    !isdir(qc_folder) && mkpath(qc_folder)
-
-    precursors = getPrecursors(getSpecLib(search_context))
-    protein_to_possible_peptides = count_protein_peptides(precursors)
-
-    file_idx_to_name = Dict{Int64, String}()
-    for (file_idx, file_name) in enumerate(getFileIdToName(getMSData(search_context)))
-        file_idx_to_name[Int64(file_idx)] = String(file_name)
-    end
-
-    pg_refs, psm_to_pg_mapping = perform_protein_inference_pipeline(
-        passing_refs,
-        passing_proteins_folder,
-        precursors,
-        protein_to_possible_peptides,
-        min_peptides = min_peptides,
-        q_value_threshold = q_value_threshold,
-        qc_folder = qc_folder,
-        file_idx_to_name = file_idx_to_name,
-        consensus_debug_protein_names = consensus_debug_protein_names
-    )
-
-    valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
-    paired_files = PairedSearchFiles[]
-    for (file_idx, psm_path) in valid_file_data
-        haskey(psm_to_pg_mapping, psm_path) || continue
-        push!(paired_files, PairedSearchFiles(psm_path, psm_to_pg_mapping[psm_path], file_idx))
-    end
-
-    isempty(paired_files) && error("No protein groups created during protein inference")
-
-    psm_paths = [file_path(ref) for ref in passing_refs]
-    protein_to_cv_fold = build_protein_cv_fold_mapping(psm_paths, precursors)
-
-    max_pgs = estimate_max_rows(max_psm_memory_mb, file_path(first(pg_refs)))
-    @user_info "Memory budget $(max_psm_memory_mb) MB → max_protein_groups = $max_pgs"
-    perform_protein_probit_regression(
-        pg_refs,
-        max_pgs,
-        qc_folder,
-        precursors;
-        protein_to_cv_fold = protein_to_cv_fold,
-        file_idx_to_name = file_idx_to_name,
-        ms1_scoring = ms1_scoring,
-        train_q_value_threshold = q_value_threshold,
-        min_pep_neg_threshold_itr = min_pep_neg_threshold_itr
-    )
-
-    sqrt_n_runs = floor(Int, sqrt(length(pg_refs)))
-    n_proteins = length(getProteins(getSpecLib(search_context)))
-
-    global_pg_score_dict, pg_name_to_global_pg_score =
-        build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
-    search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
-
-    global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)
-    search_context.global_pg_score_to_qval_dict[] = global_pg_qval_dict
-
-    sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
-    spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
-        batch_size = 1_000_000, compute_pep = true,
-        min_pep_points_per_bin = pg_q_value_interpolation_points_per_bin,
-        temp_prefix = "pg_sidecar")
-    search_context.pg_score_to_qval[] = spline_result.qval_spline
-    search_context.pg_score_to_pep[] = spline_result.pep_interp
-
-    protein_combined_pipeline = TransformPipeline() |>
-        add_dict_column_composite_key(:global_pg_score, [:protein_name, :target, :entrap_id], global_pg_score_dict) |>
-        add_dict_column_composite_key(:global_pg_qval, [:protein_name, :target, :entrap_id], global_pg_qval_dict) |>
-        add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
-        add_interpolated_column(:pg_pep, :pg_score, search_context.pg_score_to_pep[]) |>
-        filter_by_multiple_thresholds([
-            (:global_pg_qval, q_value_threshold),
-            (:pg_qval, q_value_threshold)
-        ])
-
-    apply_pipeline!(pg_refs, protein_combined_pipeline)
-
-    spline_result = build_qvalue_spline_from_refs(pg_refs, :pg_score, sorted_pg_scores_path;
-        batch_size = 1_000_000,
-        min_pep_points_per_bin = pg_q_value_interpolation_points_per_bin,
-        temp_prefix = "pg_recalc")
-    search_context.pg_score_to_qval[] = spline_result.qval_spline
-
-    recalc_pg_pipeline = TransformPipeline() |>
-        add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[])
-
-    pg_refs = apply_pipeline_batch(pg_refs, recalc_pg_pipeline, passing_proteins_folder)
-
-    update_psms_with_probit_scores_refs(
-        paired_files,
-        search_context.pg_name_to_global_pg_score[],
-        search_context.pg_score_to_qval[],
-        search_context.global_pg_score_to_qval_dict[]
-    )
-
-    return nothing
-end
-
-#==========================================================
-Q-value Spline Wrapper Functions
-==========================================================#
-
-"""
-Create global precursor q-value spline (unique precursors only).
-"""
-function get_precursor_global_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
-    # Use MBR-boosted scores when MBR is enabled
+function get_precursor_global_qval_spline(merged_path::String, params::PrecursorScoringSearchParameters, search_context::SearchContext)
     score_col = params.match_between_runs ? :MBR_boosted_global_prob : :global_prob
     return get_qvalue_spline(
         merged_path, score_col, true;
-        min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
+        min_pep_points_per_bin = params.q_value_interpolation_points_per_bin,
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
     )
 end
 
-"""
-Create experiment-wide precursor q-value spline (all precursors).
-"""
-function get_precursor_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
-    # Use MBR-boosted scores when MBR is enabled
+function get_precursor_qval_spline(merged_path::String, params::PrecursorScoringSearchParameters, search_context::SearchContext)
     score_col = params.match_between_runs ? :MBR_boosted_prec_prob : :prec_prob
     return get_qvalue_spline(
         merged_path, score_col, false;
-        min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
+        min_pep_points_per_bin = params.q_value_interpolation_points_per_bin,
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
     )
 end
 
-"""
-Create experiment-wide precursor PEP interpolation (all precursors).
-"""
-function get_precursor_pep_interpolation(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
-    # Use MBR-boosted scores when MBR is enabled
+function get_precursor_pep_interpolation(merged_path::String, params::PrecursorScoringSearchParameters, search_context::SearchContext)
     score_col = params.match_between_runs ? :MBR_boosted_prec_prob : :prec_prob
     return get_pep_interpolation(
         merged_path, score_col;
         fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
-    )
-end
-
-"""
-Create global protein q-value spline (unique protein groups only).
-"""
-function get_protein_global_qval_spline(merged_path::String, params::ScoringSearchParameters)
-    return get_qvalue_spline(
-        merged_path, :global_pg_score, true;
-        min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
-    )
-end
-
-"""
-Create experiment-wide protein q-value spline (all protein groups).
-"""
-function get_protein_qval_spline(merged_path::String, params::ScoringSearchParameters)
-    return get_qvalue_spline(
-        merged_path, :pg_score, false;
-        min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
-    )
-end
-
-"""
-Create experiment-wide protein group PEP interpolation (all protein groups).
-"""
-function get_protein_pep_interpolation(merged_path::String, params::ScoringSearchParameters)
-    return get_pep_interpolation(
-        merged_path, :pg_score;
     )
 end
 
@@ -391,11 +202,11 @@ function estimate_max_rows(memory_mb::Float64, sample_file::String)
 end
 
 """
-Process all results to get final protein scores.
+Process all results to produce final precursor scores and precursor-level q-values.
 """
 function summarize_results!(
-    results::ScoringSearchResults,
-    params::ScoringSearchParameters,
+    results::PrecursorScoringSearchResults,
+    params::PrecursorScoringSearchParameters,
     search_context::SearchContext
 )
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
@@ -403,9 +214,8 @@ function summarize_results!(
     # Set up output folders
     second_pass_folder = joinpath(temp_folder, "second_pass_psms")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
-    passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
     
-    for folder in [passing_psms_folder, passing_proteins_folder]
+    for folder in [passing_psms_folder]
         !isdir(folder) && mkdir(folder)
     end
 
@@ -418,7 +228,7 @@ function summarize_results!(
 
         # Check if any valid files remain
         if isempty(valid_file_data)
-            @user_warn "No valid files for ScoringSearch - all files failed in previous search methods"
+            @user_warn "No valid files for precursor scoring - all files failed in previous search methods"
             return nothing
         end
 
@@ -427,13 +237,13 @@ function summarize_results!(
         valid_fold_paths = get_valid_fold_file_paths(search_context)
 
         if isempty(valid_fold_paths)
-            @user_warn "No valid fold-split PSM files found for ScoringSearch"
+            @user_warn "No valid fold-split PSM files found for precursor scoring"
             return nothing
         end
 
         step1_time = @elapsed begin
-            max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
-            @user_info "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
+            max_psms = estimate_max_rows(params.max_in_memory_table_mb, first(valid_fold_paths))
+            @user_info "Memory budget $(params.max_in_memory_table_mb) MB → max_psms = $max_psms"
             score_precursor_isotope_traces(
                 second_pass_folder,
                 valid_fold_paths,
@@ -553,8 +363,8 @@ function summarize_results!(
 
             # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
             score_col = has_mbr ? :MBR_boosted_prec_prob : :prec_prob
-            spline_result = build_qvalue_spline_from_refs(filtered_refs, score_col, results.merged_quant_path;
-                compute_pep=true, min_pep_points_per_bin=params.precursor_q_value_interpolation_points_per_bin,
+            spline_result = build_qvalue_spline_from_refs(filtered_refs, score_col, results.merged_precursor_scores_path;
+                compute_pep=true, min_pep_points_per_bin=params.q_value_interpolation_points_per_bin,
                 fdr_scale_factor=fdr_scale, temp_prefix="qval_sidecar")
             qval_spline = spline_result.qval_spline
             results.precursor_qval_interp[] = qval_spline
@@ -595,8 +405,8 @@ function summarize_results!(
             recalc_qval_col = has_mbr_cols ? :MBR_boosted_qval : :qval
 
             # Sidecar lifecycle for new spline (on filtered data)
-            spline_result = build_qvalue_spline_from_refs(passing_refs, recalc_score_col, results.merged_quant_path;
-                min_pep_points_per_bin=params.precursor_q_value_interpolation_points_per_bin,
+            spline_result = build_qvalue_spline_from_refs(passing_refs, recalc_score_col, results.merged_precursor_scores_path;
+                min_pep_points_per_bin=params.q_value_interpolation_points_per_bin,
                 fdr_scale_factor=getLibraryFdrScaleFactor(search_context), temp_prefix="recalc_sidecar")
             if spline_result === nothing
                 @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
@@ -612,16 +422,15 @@ function summarize_results!(
             setPassingPsms!(getMSData(search_context), file_idx, file_path(ref))
         end
 
-        @user_info "Deferring protein inference/scoring until after chromatogram integration"
         # Summary of all step times
         total_time = step1_time + step2_time + step3_time + step4_time +
                     step5_10_time + step11_time
 
-        @user_info "ScoringSearch completed - Total time: $(round(total_time, digits=2)) seconds"
+        @user_info "Precursor scoring completed - Total time: $(round(total_time, digits=2)) seconds"
 
         best_traces = nothing # Free memory
     catch e
-        @error "Failed to summarize scoring results" exception=e
+        @error "Failed to summarize precursor scoring results" exception=e
         rethrow(e)
     end
 

@@ -67,7 +67,7 @@ processChunk!(method::SearchMethod, batch_id::Int, thread_id::Int) -> Nothing
 - **Threading**: Most CPU-intensive stage
 
 ### Stage 3: Scoring & FDR Control
-**ScoringSearch** - ML training and FDR control
+**PrecursorScoringSearch** - ML training and FDR control
 - **Purpose**: LightGBM training, PSM rescoring, protein grouping
 - **Algorithm**: Cross-validation training + FDR filtering + protein inference
 - **Key Output**: High-confidence PSMs + protein groups

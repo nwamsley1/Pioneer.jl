@@ -101,14 +101,18 @@
             "max_q_value_mbr_itr": 0.20,
             "min_PEP_neg_threshold_itr": 0.90,
             "spline_points": 500,
-            "interpolation_points": 10
+            "q_value_interpolation_points_per_bin": 10,
+            "max_in_memory_table_mb": 2000
         }
     },
-    "proteinInference": {
-        "min_peptides": 2
+    "proteinScoring": {
+        "min_peptides": 2,
+        "write_qc_plots": false,
+        "log_feature_importance": false
     },
     "maxLFQ": {
-        "run_to_run_normalization": true
+        "run_to_run_normalization": true,
+        "min_peptides": 2
     },
     "output": {
         "write_csv": true,

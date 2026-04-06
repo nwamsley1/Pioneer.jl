@@ -677,7 +677,7 @@ function probit_regression_scoring_cv!(
     psms[!, :trace_prob] = prob_estimates
 
     # If MBR is enabled, create MBR columns (probit doesn't do separate MBR scoring)
-    # This is needed for compatibility with apply_mbr_filter! in ScoringSearch
+    # This is needed for compatibility with apply_mbr_filter! in PrecursorScoringSearch
     if match_between_runs
         psms[!, :MBR_boosted_trace_prob] = copy(prob_estimates)
         # MBR_is_best_decoy is required by apply_mbr_filter!
