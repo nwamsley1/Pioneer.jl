@@ -3,6 +3,7 @@ using DataFrames
 using Statistics
 using Arrow
 using Distributions
+using Random
 using Pioneer
 
 @testset "Protein Group Weight Coverage Features" begin
@@ -376,6 +377,56 @@ using Pioneer
         @test any(dropped_target_mask)
         @test all(.!ss.positive_mask[dropped_target_mask])
         @test all(.!ss.keep_mask[dropped_target_mask])
+    end
+
+    @testset "Protein Probit Semi-Supervised Fit Stops Early After Stable Labels" begin
+        Random.seed!(1)
+        n_targets = 40
+        n_decoys = 40
+        y = vcat(trues(n_targets), falses(n_decoys))
+        x_pg_score = Float64.(vcat(fill(2.0, n_targets), fill(-2.0, n_decoys))) .+ 0.05 .* randn(n_targets + n_decoys)
+        x_peptide_coverage = Float64.(vcat(fill(1.0, n_targets), fill(-1.0, n_decoys))) .+ 0.05 .* randn(n_targets + n_decoys)
+        x_any_common = Float64.(vcat(fill(1.0, n_targets), fill(0.0, n_decoys)))
+        x_coverage = Float64.(vcat(fill(0.8, n_targets), fill(-0.8, n_decoys))) .+ 0.02 .* randn(n_targets + n_decoys)
+        x_shape = Float64.(vcat(fill(0.3, n_targets), fill(-0.3, n_decoys))) .+ 0.02 .* randn(n_targets + n_decoys)
+        X = hcat(
+            x_pg_score,
+            x_peptide_coverage,
+            x_any_common,
+            x_coverage,
+            x_shape
+        )
+        feature_names = Symbol[
+            :pg_score,
+            :peptide_coverage_logit,
+            :any_common_peps,
+            :coverage_log_ratio,
+            :precursor_consensus_prefix_shape
+        ]
+        initial_scores = Float32.(vcat(
+            collect(range(0.99f0, 0.80f0, length = n_targets)),
+            collect(range(0.20f0, 0.01f0, length = n_decoys))
+        ))
+        prefix_shape = Float32.(x_shape)
+        n_peptides = fill(2, n_targets + n_decoys)
+        callback_iterations = Int[]
+
+        β = Pioneer.fit_probit_model_semisupervised(
+            Matrix{Float64}(X),
+            y,
+            feature_names,
+            initial_scores,
+            prefix_shape,
+            n_peptides;
+            n_iterations = 10,
+            context = "test_early_stopping",
+            iteration_debug_callback = (iteration, plot_state) -> push!(callback_iterations, iteration)
+        )
+
+        @test !isempty(β)
+        @test callback_iterations[1] == 1
+        @test last(callback_iterations) >= 5
+        @test last(callback_iterations) < 10
     end
 
     @testset "Consensus Relative Weight Builder Uses Quant Precursors And Current pg_score Weighting" begin
