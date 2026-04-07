@@ -429,100 +429,6 @@ function detect_unique_cv_folds(precursors::LibraryPrecursors)
 end
 
 """
-    get_corresponding_psm_path(pg_ref::ProteinGroupFileReference) -> String
-
-Map a protein group file reference to its corresponding PSM file path.
-
-# Arguments
-- `pg_ref`: Protein group file reference
-
-# Returns
-- Path to the corresponding PSM file
-"""
-function get_corresponding_psm_path(pg_ref::ProteinGroupFileReference)
-    pg_path = file_path(pg_ref)
-    # Replace "passing_proteins" with "scored_PSMs" in path
-    return replace(pg_path, "passing_proteins" => "scored_PSMs")
-end
-
-"""
-    build_protein_cv_fold_mapping(psm_paths::Vector{String}, precursors::LibraryPrecursors)
-    -> Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}
-
-Build a mapping from protein names to their CV fold assignments based on highest-scoring peptides.
-
-# Arguments
-- `psm_paths`: Vector of paths to PSM files
-- `precursors`: Library precursors containing cv_fold information
-
-# Returns
-- Dictionary mapping protein_name to named tuple with best_score and cv_fold
-
-# Process
-1. Scans PSM files to find peptides for each protein
-2. Determines cv_fold of highest-scoring peptide per protein
-3. Returns the protein_to_cv_fold mapping
-"""
-function build_protein_cv_fold_mapping(
-    psm_paths::Vector{String},
-    precursors::LibraryPrecursors
-)
-    @user_info "Building protein to CV fold mapping from PSM files"
-    # Create mapping: protein_name -> (best_score=score, cv_fold=fold)
-    protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
-
-    # Process each PSM file
-    for psm_path in psm_paths
-        # Skip if PSM file doesn't exist
-        if !isfile(psm_path)
-            @user_warn "PSM file not found: $psm_path"
-            continue
-        end
-
-        # Load PSM data
-        psms = DataFrame(Arrow.Table(psm_path))
-
-        # Verify required columns exist
-        required_columns = [:inferred_protein_group, :prec_prob, :precursor_idx]
-        missing_columns = [col for col in required_columns if !hasproperty(psms, col)]
-        if !isempty(missing_columns)
-            error("PSM file $psm_path is missing required columns: $missing_columns")
-        end
-
-        # Filter for valid PSMs with protein group assignments
-        psms = filter(row -> !ismissing(row.inferred_protein_group), psms)
-
-        # Skip if no valid PSMs
-        if nrow(psms) == 0
-            continue
-        end
-
-        # Group by inferred_protein_group
-        for group in groupby(psms, :inferred_protein_group)
-            protein_name = first(group.inferred_protein_group)
-
-            # Find highest scoring PSM
-            best_idx = argmax(group.prec_prob)
-            best_score = group.prec_prob[best_idx]
-            precursor_idx = group.precursor_idx[best_idx]
-
-            # Get cv_fold from library (more reliable than PSM file)
-            cv_fold = getCvFold(precursors, precursor_idx)
-
-            # Update if this is the best score for this protein
-            value = (best_score = best_score, cv_fold = cv_fold)
-            if !haskey(protein_to_cv_fold, protein_name)
-                insert!(protein_to_cv_fold, protein_name, value)
-            elseif best_score > protein_to_cv_fold[protein_name].best_score
-                protein_to_cv_fold[protein_name] = value
-            end
-        end
-    end
-
-    return protein_to_cv_fold
-end
-
-"""
     assign_protein_group_cv_folds!(all_protein_groups::DataFrame, 
                                   protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
 
@@ -558,6 +464,7 @@ function assign_protein_group_cv_folds!(
     end
 
     all_protein_groups[!, :cv_fold] = cv_folds
+    return protein_to_cv_fold
 end
 
 """
@@ -632,7 +539,7 @@ end
                                      qc_folder::String,
                                      pg_refs::Vector{ProteinGroupFileReference},
                                      precursors::LibraryPrecursors;
-                                     protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
+                                     protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
                                      show_improvement = true,
                                      skip_scoring = false)
 
@@ -643,12 +550,12 @@ Perform probit regression analysis with automatic CV fold detection from library
 - `qc_folder`: Folder for QC plots
 - `pg_refs`: Protein group file references
 - `precursors`: Library precursors containing CV fold information
-- `protein_to_cv_fold`: Optional pre-built mapping of proteins to CV folds
+- `protein_to_cv_fold`: Pre-built mapping of proteins to CV folds
 - `show_improvement`: Whether to report improvement metrics
 
 # Process
 1. Detects unique CV folds from library
-2. Assigns CV folds to protein groups based on mapping (or builds it if not provided)
+2. Assigns CV folds to protein groups based on the pre-built mapping
 3. Trains separate probit model for each fold
 4. Applies models to held-out data
 5. Updates protein group files if provided
@@ -658,7 +565,7 @@ function perform_probit_analysis_multifold(
     qc_folder::String,
     pg_refs::Vector{ProteinGroupFileReference},
     precursors::LibraryPrecursors;
-    protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
+    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
     show_improvement = true,
     skip_scoring = false,
@@ -672,16 +579,8 @@ function perform_probit_analysis_multifold(
     #@user_info "Skipped scoring!!!"
     # 1. Detect unique CV folds from library
     unique_cv_folds = detect_unique_cv_folds(precursors)
-    n_folds = length(unique_cv_folds)
-    
-    # 2. Use provided mapping or build it if not provided
-    if protein_to_cv_fold === nothing
-        # Build the mapping from PSM files
-        psm_paths = [get_corresponding_psm_path(ref) for ref in pg_refs]
-        protein_to_cv_fold = build_protein_cv_fold_mapping(psm_paths, precursors)
-    end
-    
-    # 3. Assign CV folds to protein groups based on the mapping
+
+    # 2. Assign CV folds to protein groups based on the mapping
     assign_protein_group_cv_folds!(all_protein_groups, protein_to_cv_fold)
 
     # 3. Check distribution

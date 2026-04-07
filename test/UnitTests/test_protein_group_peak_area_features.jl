@@ -45,15 +45,13 @@ using Pioneer
 
         return (
             relative_weight = relative_weight,
-            mean_relative_weight = mean_relative_weight,
             profiled_precursor_count = profiled_precursor_count,
             shape_strength = shape_strength,
             shape_confidence_scale = shape_confidence_scale,
             selected_run_votes = selected_run_votes,
             consensus_target_run_count = consensus_target_run_count,
             cached_consensus_weight_sums = cached_consensus_weight_sums,
-            cached_protein_total_vote = cached_protein_total_vote,
-            precursors_by_protein = precursors_by_protein
+            cached_protein_total_vote = cached_protein_total_vote
         )
     end
 

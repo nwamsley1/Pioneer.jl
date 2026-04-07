@@ -53,11 +53,57 @@ function count_protein_peptides(precursors::LibraryPrecursors)
 end
 
 """
+    load_protein_probit_training_rows(pg_refs; include_qc_plot_columns = false)
+
+Load only the columns needed for protein probit fitting from protein-group files.
+This avoids materializing string-heavy output columns like `peptide_list` that
+are not used by the model.
+"""
+function load_protein_probit_training_rows(
+    pg_refs::Vector{ProteinGroupFileReference};
+    include_qc_plot_columns::Bool = false
+)
+    columns_to_load = Symbol[:protein_name, :target, :n_peptides]
+    append!(columns_to_load, protein_probit_feature_names())
+    if include_qc_plot_columns
+        push!(columns_to_load, :species, :file_idx)
+    end
+    unique!(columns_to_load)
+
+    all_protein_groups = DataFrame()
+    for pg_ref in pg_refs
+        pg_path = file_path(pg_ref)
+        isfile(pg_path) || continue
+
+        tbl = Arrow.Table(pg_path)
+        n_rows = length(tbl[:protein_name])
+        n_rows == 0 && continue
+
+        available_columns = Set(propertynames(tbl))
+        missing_columns = [col for col in columns_to_load if !(col in available_columns)]
+        isempty(missing_columns) || error("Protein group file $pg_path is missing required columns: $missing_columns")
+
+        chunk_df = DataFrame()
+        for col in columns_to_load
+            chunk_df[!, col] = collect(tbl[col])
+        end
+
+        if ncol(all_protein_groups) == 0
+            all_protein_groups = chunk_df
+        else
+            append!(all_protein_groups, chunk_df)
+        end
+    end
+
+    return all_protein_groups
+end
+
+"""
     perform_protein_probit_regression(pg_refs::Vector{ProteinGroupFileReference},
                                     max_in_memory_rows::Int64,
                                     qc_folder::String,
                                     precursors::LibraryPrecursors;
-                                    protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing)
+                                    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
 
 Perform probit regression on protein groups.
 
@@ -66,14 +112,14 @@ Perform probit regression on protein groups.
 - `max_in_memory_rows`: Maximum number of protein-group rows allowed in memory
 - `qc_folder`: Folder for QC plots
 - `precursors`: Library precursors
-- `protein_to_cv_fold`: Optional pre-built mapping of proteins to CV folds
+- `protein_to_cv_fold`: Pre-built mapping of proteins to CV folds
 """
 function perform_protein_probit_regression(
     pg_refs::Vector{ProteinGroupFileReference},
     max_in_memory_rows::Int64,
     qc_folder::String,
     precursors::LibraryPrecursors;
-    protein_to_cv_fold::Union{Nothing, Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}} = nothing,
+    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
     write_qc_plots::Bool = true,
     log_feature_importance::Bool = true,
@@ -81,8 +127,6 @@ function perform_protein_probit_regression(
     min_prefix_shape_neg_threshold_itr::Float32 = -0.20f0,
     min_pep_neg_threshold_itr::Float32 = 0.90f0
 )
-    passing_pg_paths = [file_path(ref) for ref in pg_refs]
-
     total_protein_groups = 0
     for ref in pg_refs
         if exists(ref)
@@ -96,12 +140,10 @@ function perform_protein_probit_regression(
         error("Protein probit out-of-memory processing is not supported. total_protein_groups=$(total_protein_groups) exceeds max_protein_groups_in_memory_limit=$(max_protein_groups_in_memory_limit).")
     end
 
-    all_protein_groups = DataFrame()
-    for pg_path in passing_pg_paths
-        if isfile(pg_path) && endswith(pg_path, ".arrow")
-            append!(all_protein_groups, DataFrame(Tables.columntable(Arrow.Table(pg_path))))
-        end
-    end
+    all_protein_groups = load_protein_probit_training_rows(
+        pg_refs;
+        include_qc_plot_columns = write_qc_plots
+    )
 
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
@@ -151,10 +193,11 @@ function run_protein_scoring!(
         file_idx_to_name[Int64(file_idx)] = String(file_name)
     end
 
-    pg_refs, psm_to_pg_mapping = build_protein_group_tables(
+    pg_refs, psm_to_pg_mapping, protein_to_cv_fold = build_protein_group_tables(
         passing_refs,
         passing_proteins_folder,
         protein_to_possible_peptides,
+        precursors = precursors,
         min_peptides = min_peptides,
         q_value_threshold = q_value_threshold
     )
@@ -169,9 +212,6 @@ function run_protein_scoring!(
     end
 
     isempty(paired_files) && error("No protein groups created during protein inference")
-
-    psm_paths = [file_path(ref) for ref in passing_refs]
-    protein_to_cv_fold = build_protein_cv_fold_mapping(psm_paths, precursors)
 
     max_in_memory_rows = estimate_max_rows(max_in_memory_table_mb, file_path(first(pg_refs)))
     @user_info "Memory budget $(max_in_memory_table_mb) MB → max_protein_groups = $max_in_memory_rows"

@@ -51,6 +51,33 @@ function _median_abs_deviation(values::Vector{Float64})::Float64
     return Statistics.median(abs_devs)
 end
 
+@inline function _insert_top_log_peak_area!(
+    top_log_peak_areas::Vector{Float64},
+    log_peak_area::Float64,
+    max_rank::Int
+)::Vector{Float64}
+    max_rank <= 0 && return top_log_peak_areas
+
+    if (length(top_log_peak_areas) == max_rank) && (log_peak_area <= top_log_peak_areas[end])
+        return top_log_peak_areas
+    end
+
+    insert_idx = length(top_log_peak_areas) + 1
+    @inbounds for i in eachindex(top_log_peak_areas)
+        if log_peak_area > top_log_peak_areas[i]
+            insert_idx = i
+            break
+        end
+    end
+
+    insert!(top_log_peak_areas, insert_idx, log_peak_area)
+    if length(top_log_peak_areas) > max_rank
+        pop!(top_log_peak_areas)
+    end
+
+    return top_log_peak_areas
+end
+
 """
     estimate_peak_area_detection_model(df::DataFrame)
 
@@ -106,9 +133,16 @@ function estimate_peak_area_detection_model(df::DataFrame)
     log_threshold = Float64(Statistics.quantile(log_peak_areas, 0.05))
 
     protein_to_log_peak_areas = Dict{Tuple{String, Bool, UInt8}, Vector{Float64}}()
+    protein_to_top_log_peak_areas = Dict{Tuple{String, Bool, UInt8}, Vector{Float64}}()
     for ((protein_name, target_val, entrap_val, _), peak_area) in best_peak_area_by_protein_peptide
         protein_key = (protein_name, target_val, entrap_val)
-        push!(get!(protein_to_log_peak_areas, protein_key, Float64[]), log(peak_area))
+        log_peak_area = log(peak_area)
+        push!(get!(protein_to_log_peak_areas, protein_key, Float64[]), log_peak_area)
+        _insert_top_log_peak_area!(
+            get!(() -> sizehint!(Float64[], max_rank), protein_to_top_log_peak_areas, protein_key),
+            log_peak_area,
+            max_rank
+        )
     end
 
     pooled_residuals = Float64[]
@@ -135,15 +169,14 @@ function estimate_peak_area_detection_model(df::DataFrame)
     profiled_rank_count = 1
     rank_drop_samples = [Float64[] for _ in 1:max_rank]
 
-    for ((_, target_val, _), log_vals) in protein_to_log_peak_areas
+    for ((_, target_val, _), top_log_peak_areas) in protein_to_top_log_peak_areas
         target_val || continue
-        length(log_vals) >= 2 || continue
+        length(top_log_peak_areas) >= 2 || continue
 
-        sort!(log_vals; rev = true)
-        top_log_peak_area = log_vals[1]
-        local_max_rank = min(length(log_vals), max_rank)
+        top_log_peak_area = top_log_peak_areas[1]
+        local_max_rank = length(top_log_peak_areas)
         for rank_idx in 2:local_max_rank
-            push!(rank_drop_samples[rank_idx], log_vals[rank_idx] - top_log_peak_area)
+            push!(rank_drop_samples[rank_idx], top_log_peak_areas[rank_idx] - top_log_peak_area)
         end
     end
 
@@ -498,8 +531,6 @@ function _build_protein_rollup(
             precursor_count = modified_precursor_count[mod_key]
         ))
     end
-    sort!(modified_peptide_rows; by = row -> row.score, rev = true)
-
     peptide_log_none_sum = Dict{String, Float64}()
     peptide_best_peak_area = Dict{String, Float32}()
     peptide_modified_count = Dict{String, Int32}()
@@ -527,10 +558,9 @@ function _build_protein_rollup(
             modified_peptide_count = peptide_modified_count[sequence]
         ))
     end
-    sort!(peptide_rows; by = row -> row.score, rev = true)
-
     pg_score = isempty(peptide_rows) ? 0.0f0 : Float32(sum(row.score for row in peptide_rows))
     top_pep_peak_area = isempty(peptide_rows) ? 0.0f0 : maximum(row.best_peak_area for row in peptide_rows)
+    peptide_list = sort!([row.sequence for row in peptide_rows])
 
     return (
         precursor_rows = precursor_rows,
@@ -538,7 +568,7 @@ function _build_protein_rollup(
         peptide_rows = peptide_rows,
         pg_score = pg_score,
         n_peptides = length(peptide_rows),
-        peptide_list = [row.sequence for row in peptide_rows],
+        peptide_list = peptide_list,
         top_pep_peak_area = top_pep_peak_area
     )
 end
@@ -574,14 +604,23 @@ Return whether a candidate run vote should rank ahead of `right_vote`.
 end
 
 """
-    _insert_top_consensus_vote!(run_votes, vote)
+    _insert_top_consensus_vote!(run_votes, vote, max_votes)
 
-Insert `vote` into the in-place score-sorted run list for one protein.
+Insert `vote` into the in-place score-sorted run list for one protein,
+keeping only the top `max_votes` entries.
 """
 function _insert_top_consensus_vote!(
     run_votes::Vector{ConsensusRunVote},
-    vote::ConsensusRunVote
+    vote::ConsensusRunVote,
+    max_votes::Int
 )
+    max_votes <= 0 && return run_votes
+
+    if (length(run_votes) == max_votes) &&
+       !_consensus_vote_precedes(vote.pg_score, vote.run_order, run_votes[end])
+        return run_votes
+    end
+
     insert_idx = length(run_votes) + 1
 
     @inbounds for i in eachindex(run_votes)
@@ -592,6 +631,9 @@ function _insert_top_consensus_vote!(
     end
 
     insert!(run_votes, insert_idx, vote)
+    if length(run_votes) > max_votes
+        pop!(run_votes)
+    end
 
     return run_votes
 end
@@ -602,8 +644,8 @@ end
 Build a dataset-level precursor relative-weight consensus within each inferred
 protein group. Consensus weights are derived from quant precursors after
 normalizing each precursor by the max precursor peak area in that protein run.
-Each run's vote is weighted by the run's current protein `pg_score`. After all
-runs are collected for a protein, the top
+Each run's vote is weighted by the run's current protein `pg_score`. While
+streaming the runs, only the top
 `min(n_runs - 1, max(5, ceil(log2(n_runs)))) + 1` runs by `pg_score` are
 retained as a cached candidate pool so leave-one-run-out consensus can be
 computed by subtraction at scoring time.
@@ -613,17 +655,8 @@ function build_precursor_consensus(
     q_value_threshold::Float32 = 0.01f0
 )
     protein_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{ConsensusRunVote}}()
-    precursor_metadata = Dict{
-        Tuple{String, Bool, UInt8, UInt32},
-        @NamedTuple{
-            pair_id::UInt32,
-            sequence::String,
-            charge::UInt8,
-            structural_mods::String,
-            isotopic_mods::String
-        }
-    }()
-    precursor_run_counts = Dict{Tuple{String, Bool, UInt8, UInt32}, Int32}()
+    protein_observed_run_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
+    max_candidate_runs = _consensus_candidate_runs_to_keep(length(psm_refs))
 
     for (run_order, psm_ref) in enumerate(psm_refs)
         if !exists(psm_ref)
@@ -650,20 +683,6 @@ function build_precursor_consensus(
             target = Bool(gdf.target[1])
             entrap_id = UInt8(gdf.entrap_id[1])
 
-            for precursor_row in rollup.precursor_rows
-                key = (protein_name, target, entrap_id, precursor_row.precursor_idx)
-                precursor_run_counts[key] = get(precursor_run_counts, key, Int32(0)) + Int32(1)
-                if !haskey(precursor_metadata, key)
-                    precursor_metadata[key] = (
-                        pair_id = precursor_row.pair_id,
-                        sequence = precursor_row.sequence,
-                        charge = precursor_row.charge,
-                        structural_mods = precursor_row.structural_mods,
-                        isotopic_mods = precursor_row.isotopic_mods
-                    )
-                end
-            end
-
             run_max_peak_area = maximum(precursor_row.best_peak_area for precursor_row in rollup.precursor_rows)
             if !isfinite(run_max_peak_area) || run_max_peak_area <= 0.0f0
                 continue
@@ -678,9 +697,10 @@ function build_precursor_consensus(
                 )
             end
             protein_key = (protein_name, target, entrap_id)
+            protein_observed_run_count[protein_key] = get(protein_observed_run_count, protein_key, Int32(0)) + Int32(1)
             _insert_top_consensus_vote!(
                 get!(
-                    () -> sizehint!(ConsensusRunVote[], length(psm_refs)),
+                    () -> sizehint!(ConsensusRunVote[], max_candidate_runs),
                     protein_run_votes,
                     protein_key
                 ),
@@ -688,7 +708,8 @@ function build_precursor_consensus(
                     pg_score = rollup.pg_score,
                     run_order = Int64(run_order),
                     normalized_precursors = normalized_precursors
-                )
+                ),
+                max_candidate_runs
             )
         end
     end
@@ -700,9 +721,10 @@ function build_precursor_consensus(
     cached_consensus_weight_sums = Dict{Tuple{String, Bool, UInt8}, Dict{UInt32, Float64}}()
     cached_protein_total_vote = Dict{Tuple{String, Bool, UInt8}, Float64}()
     for (protein_key, run_votes) in protein_run_votes
-        target_runs = _consensus_runs_to_keep(length(run_votes))
-        candidate_runs = _consensus_candidate_runs_to_keep(length(run_votes))
-        selected_votes = run_votes[1:candidate_runs]
+        observed_runs = Int(get(protein_observed_run_count, protein_key, Int32(length(run_votes))))
+        target_runs = _consensus_runs_to_keep(observed_runs)
+        candidate_runs = _consensus_candidate_runs_to_keep(observed_runs)
+        selected_votes = run_votes[1:min(candidate_runs, length(run_votes))]
         selected_run_votes[protein_key] = selected_votes
         consensus_target_run_count[protein_key] = Int32(target_runs)
 
@@ -741,12 +763,9 @@ function build_precursor_consensus(
         push!(get!(protein_precursor_values, protein_key, Float32[]), precursor_relative_weight)
     end
 
-    mean_relative_weight = Dict{Tuple{String, Bool, UInt8}, Float32}()
     profiled_precursor_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
     shape_strength = Dict{Tuple{String, Bool, UInt8}, Float32}()
-    precursors_by_protein = Dict{Tuple{String, Bool, UInt8}, Vector{Pair{UInt32, Float32}}}()
     for (protein_key, relative_weights) in protein_precursor_values
-        mean_relative_weight[protein_key] = isempty(relative_weights) ? 0.0f0 : Float32(sum(relative_weights) / length(relative_weights))
         profiled_precursor_count[protein_key] = Int32(length(relative_weights))
     end
     for (protein_key, run_votes) in selected_run_votes
@@ -756,29 +775,60 @@ function build_precursor_consensus(
     shape_strength_values = collect(values(shape_strength))
     shape_confidence_scale = isempty(shape_strength_values) ? 1.0f0 :
         Float32(max(Statistics.median(shape_strength_values), eps(Float32)))
-    for ((protein_name, target, entrap_id, precursor_idx), precursor_relative_weight) in relative_weight
-        push!(
-            get!(precursors_by_protein, (protein_name, target, entrap_id), Pair{UInt32, Float32}[]),
-            precursor_idx => precursor_relative_weight
-        )
-    end
-    for precursor_weights in values(precursors_by_protein)
-        sort!(precursor_weights; by = last, rev = true)
-    end
     return (
         relative_weight = relative_weight,
-        mean_relative_weight = mean_relative_weight,
         profiled_precursor_count = profiled_precursor_count,
         shape_strength = shape_strength,
         shape_confidence_scale = shape_confidence_scale,
         selected_run_votes = selected_run_votes,
         consensus_target_run_count = consensus_target_run_count,
         cached_consensus_weight_sums = cached_consensus_weight_sums,
-        cached_protein_total_vote = cached_protein_total_vote,
-        precursors_by_protein = precursors_by_protein,
-        precursor_metadata = precursor_metadata,
-        precursor_run_counts = precursor_run_counts
+        cached_protein_total_vote = cached_protein_total_vote
     )
+end
+
+"""
+    _update_protein_cv_fold_mapping!(protein_to_cv_fold, df, precursors)
+
+Update the protein-to-CV-fold mapping from one annotated passing-PSM table,
+using the highest precursor score observed for each inferred protein group.
+"""
+function _update_protein_cv_fold_mapping!(
+    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
+    df::DataFrame,
+    precursors::LibraryPrecursors
+)
+    nrow(df) == 0 && return protein_to_cv_fold
+
+    filtered_df = df[.!ismissing.(df.inferred_protein_group), :]
+    nrow(filtered_df) == 0 && return protein_to_cv_fold
+
+    prob_col = _protein_group_probability_column(filtered_df)
+
+    for gdf in groupby(filtered_df, :inferred_protein_group)
+        best_score = typemin(Float32)
+        best_precursor_idx = zero(UInt32)
+
+        @inbounds for i in 1:nrow(gdf)
+            score = Float32(gdf[!, prob_col][i])
+            if score > best_score
+                best_score = score
+                best_precursor_idx = UInt32(gdf.precursor_idx[i])
+            end
+        end
+
+        best_precursor_idx == zero(UInt32) && continue
+
+        protein_name = String(gdf.inferred_protein_group[1])
+        value = (best_score = best_score, cv_fold = UInt8(getCvFold(precursors, best_precursor_idx)))
+        if !haskey(protein_to_cv_fold, protein_name)
+            insert!(protein_to_cv_fold, protein_name, value)
+        elseif best_score > protein_to_cv_fold[protein_name].best_score
+            protein_to_cv_fold[protein_name] = value
+        end
+    end
+
+    return protein_to_cv_fold
 end
 
 """
@@ -1242,7 +1292,7 @@ High-Level Interface
 ==========================================================#
 
 """
-    build_protein_group_tables(psm_refs, output_folder, protein_catalog; kwargs...)
+    build_protein_group_tables(psm_refs, output_folder, protein_catalog; precursors, kwargs...)
 
 Build per-run protein-group tables and protein scoring features from PSM tables
 that have already been annotated with protein inference results.
@@ -1251,16 +1301,19 @@ that have already been annotated with protein inference results.
 - `psm_refs`: Vector of PSM file references
 - `output_folder`: Directory for protein group output
 - `protein_catalog`: Pre-computed protein-to-peptide mappings
+- `precursors`: Library precursors used for protein CV fold assignment
 - `min_peptides`: Minimum peptides per protein group (default: 2)
 
 # Returns
 - `pg_refs`: Vector of protein group file references
 - `psm_to_pg_mapping`: Dictionary mapping PSM paths to protein group paths
+- `protein_to_cv_fold`: Protein-to-CV-fold mapping built during protein-group table construction
 """
 function build_protein_group_tables(
     psm_refs::Vector{PSMFileReference},
     output_folder::String,
     protein_catalog::Dict;
+    precursors::LibraryPrecursors,
     min_peptides::Int = 2,
     q_value_threshold::Float32 = 0.01f0
 )
@@ -1268,6 +1321,7 @@ function build_protein_group_tables(
 
     pg_refs = ProteinGroupFileReference[]
     psm_to_pg_mapping = Dict{String, String}()
+    protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
     indexed_refs = collect(enumerate(psm_refs))
 
     precursor_consensus = build_precursor_consensus(psm_refs; q_value_threshold = q_value_threshold)
@@ -1280,6 +1334,7 @@ function build_protein_group_tables(
         end
 
         updated_psms = load_dataframe(psm_ref)
+        _update_protein_cv_fold_mapping!(protein_to_cv_fold, updated_psms, precursors)
         peak_area_calibration = estimate_peak_area_detection_model(updated_psms)
 
         protein_groups_df = group_psms_by_protein(
@@ -1312,5 +1367,5 @@ function build_protein_group_tables(
         end
     end
 
-    return pg_refs, psm_to_pg_mapping
+    return pg_refs, psm_to_pg_mapping, protein_to_cv_fold
 end
