@@ -156,9 +156,7 @@ function run_protein_scoring!(
         passing_proteins_folder,
         protein_to_possible_peptides,
         min_peptides = min_peptides,
-        q_value_threshold = q_value_threshold,
-        qc_folder = qc_folder,
-        file_idx_to_name = file_idx_to_name
+        q_value_threshold = q_value_threshold
     )
 
     valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
