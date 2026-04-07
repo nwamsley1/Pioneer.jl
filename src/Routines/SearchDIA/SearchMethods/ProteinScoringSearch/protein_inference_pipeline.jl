@@ -85,7 +85,7 @@ function estimate_weight_detection_model(df::DataFrame)
             continue
         end
 
-        weight_val = Float64(_protein_rollup_weight_value(df, i))
+        weight_val = Float64(df.peak_area[i])
         if !isfinite(weight_val) || weight_val <= 0.0
             continue
         end
@@ -368,19 +368,6 @@ end
     return Float32(max(-log_none_sum, 0.0))
 end
 
-@inline function _protein_rollup_weight_value(
-    gdf::AbstractDataFrame,
-    row_idx::Int
-)::Float32
-    if hasproperty(gdf, :peak_area) && !ismissing(gdf.peak_area[row_idx])
-        peak_area_val = Float32(gdf.peak_area[row_idx])
-        if isfinite(peak_area_val) && peak_area_val > 0.0f0
-            return peak_area_val
-        end
-    end
-    return Float32(gdf.weight[row_idx])
-end
-
 """
     _build_protein_rollup(gdf, quant_mask, prob_col)
 
@@ -395,6 +382,9 @@ function _build_protein_rollup(
 )
     if !hasproperty(gdf, prob_col)
         error("Missing required $(prob_col) column for protein roll-up")
+    end
+    if !hasproperty(gdf, :peak_area)
+        error("Missing required :peak_area column for protein roll-up")
     end
     if !hasproperty(gdf, :base_pep_id)
         error("Missing required :base_pep_id column for protein roll-up")
@@ -414,7 +404,7 @@ function _build_protein_rollup(
 
         precursor_idx = UInt32(gdf.precursor_idx[i])
         prob_val = _sanitize_rollup_probability(gdf[!, prob_col][i])
-        weight_val = _protein_rollup_weight_value(gdf, i)
+        weight_val = Float32(gdf.peak_area[i])
 
         if haskey(prob_by_precursor, precursor_idx)
             prob_by_precursor[precursor_idx] = max(prob_by_precursor[precursor_idx], prob_val)

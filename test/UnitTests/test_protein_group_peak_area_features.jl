@@ -22,7 +22,7 @@ using Pioneer
         @test :weight in cols_mbr
     end
 
-    @testset "Group PSMs By Protein Uses Max Weight Within Peptide" begin
+    @testset "Group PSMs By Protein Uses Max Peak Area Within Peptide" begin
         psms = DataFrame(
             inferred_protein_group = ["P1", "P1", "P1", "P2"],
             target = Bool[true, true, true, false],
@@ -36,6 +36,7 @@ using Pioneer
             missed_cleavage = Int64[0, 1, 0, 0],
             Mox = Int64[0, 0, 0, 0],
             prec_prob = Float32[0.8, 0.9, 0.6, 0.7],
+            peak_area = Float32[100.0, 80.0, 50.0, 25.0],
             weight = Float32[100.0, 80.0, 50.0, 25.0]
         )
 
@@ -63,6 +64,7 @@ using Pioneer
             missed_cleavage = Int64[0, 0, 0, 0],
             Mox = Int64[0, 0, 1, 0],
             prec_prob = Float32[0.80, 0.90, 0.50, 0.60],
+            peak_area = Float32[100.0, 80.0, 60.0, 50.0],
             weight = Float32[100.0, 80.0, 60.0, 50.0]
         )
 
@@ -89,6 +91,7 @@ using Pioneer
             missed_cleavage = Int64[0, 0, 0],
             Mox = Int64[0, 1, 0],
             prec_prob = Float32[0.80, 0.50, 0.60],
+            peak_area = Float32[100.0, 60.0, 50.0],
             weight = Float32[100.0, 60.0, 50.0]
         )
 
@@ -144,13 +147,14 @@ using Pioneer
         @test out.peptide_coverage[1] ≈ (2f0 / 3f0)
     end
 
-    @testset "Weight Calibration Uses Max Peptide Weights" begin
+    @testset "Weight Calibration Uses Max Peptide Peak Areas" begin
         psms = DataFrame(
             use_for_protein_quant = Bool[true, true, true, true, true, false],
             sequence = ["P1A", "P1A", "P1B", "P2A", "P2B", "P3A"],
             inferred_protein_group = Union{Missing, String}["P1", "P1", "P1", "P2", "P2", missing],
             target = Bool[true, true, true, true, true, true],
             entrap_id = UInt8[1, 1, 1, 1, 1, 1],
+            peak_area = Float32[60.0f0, 40.0f0, 40.0f0, 80.0f0, 10.0f0, 500.0f0],
             weight = Float32[60.0f0, 40.0f0, 40.0f0, 80.0f0, 10.0f0, 500.0f0]
         )
 
@@ -425,6 +429,7 @@ using Pioneer
                 Mox = Int64[0, 0, 0],
                 prec_prob = Float32[0.99, 0.98, 0.10],
                 MBR_boosted_prec_prob = Float32[0.99, 0.98, 0.995],
+                peak_area = Float32[100.0, 50.0, 1000.0],
                 weight = Float32[100.0, 50.0, 1000.0]
             )
 
@@ -443,6 +448,7 @@ using Pioneer
                 Mox = Int64[0, 0],
                 prec_prob = Float32[0.10, 0.20],
                 MBR_boosted_prec_prob = Float32[0.10, 0.20],
+                peak_area = Float32[60.0, 120.0],
                 weight = Float32[60.0, 120.0]
             )
 
@@ -486,6 +492,7 @@ using Pioneer
                         missed_cleavage = Int64[0],
                         Mox = Int64[0],
                         prec_prob = Float32[0.95f0 - 0.01f0 * run_idx],
+                        peak_area = Float32[100.0],
                         weight = Float32[100.0]
                     )
                 else
@@ -503,6 +510,7 @@ using Pioneer
                         missed_cleavage = Int64[0],
                         Mox = Int64[0],
                         prec_prob = Float32[0.05],
+                        peak_area = Float32[100.0],
                         weight = Float32[100.0]
                     )
                 end
@@ -540,6 +548,7 @@ using Pioneer
                 missed_cleavage = Int64[0, 0],
                 Mox = Int64[0, 0],
                 prec_prob = Float32[0.90, 0.90],
+                peak_area = Float32[100.0, 80.0],
                 weight = Float32[100.0, 80.0]
             )
             run2 = DataFrame(
@@ -556,6 +565,7 @@ using Pioneer
                 missed_cleavage = Int64[0, 0],
                 Mox = Int64[0, 0],
                 prec_prob = Float32[0.90, 0.90],
+                peak_area = Float32[100.0, 80.0],
                 weight = Float32[100.0, 80.0]
             )
 
@@ -612,6 +622,7 @@ using Pioneer
             Mox = Int64[0, 0],
             prec_prob = Float32[0.8, 0.7],
             MBR_boosted_prec_prob = Float32[0.8, 0.85],
+            peak_area = Float32[100.0, 90.0],
             weight = Float32[100.0, 90.0]
         )
 
@@ -661,6 +672,7 @@ using Pioneer
             missed_cleavage = Int64[0, 0],
             Mox = Int64[0, 0],
             prec_prob = Float32[0.8, 0.8],
+            peak_area = Float32[100.0, 100.0],
             weight = Float32[100.0, 100.0]
         )
 
@@ -710,6 +722,7 @@ using Pioneer
             missed_cleavage = Int64[0],
             Mox = Int64[0],
             prec_prob = Float32[0.8],
+            peak_area = Float32[100.0],
             weight = Float32[100.0]
         )
 
@@ -754,6 +767,7 @@ using Pioneer
             missed_cleavage = Int64[0, 0],
             Mox = Int64[0, 0],
             prec_prob = Float32[0.8, 0.8],
+            peak_area = Float32[100.0, 100.0],
             weight = Float32[100.0, 100.0]
         )
 
@@ -815,6 +829,7 @@ using Pioneer
             missed_cleavage = Int64[0],
             Mox = Int64[0],
             prec_prob = Float32[0.8],
+            peak_area = Float32[100.0],
             weight = Float32[100.0]
         )
 
@@ -861,6 +876,7 @@ using Pioneer
             missed_cleavage = Int64[0],
             Mox = Int64[0],
             prec_prob = Float32[0.8],
+            peak_area = Float32[100.0],
             weight = Float32[100.0]
         )
 
