@@ -6,7 +6,7 @@ using Distributions
 using Random
 using Pioneer
 
-@testset "Protein Group Weight Coverage Features" begin
+@testset "Protein Group Peak Area Coverage Features" begin
     empty_precursor_consensus = (
         relative_weight = Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}(),
         mean_relative_weight = Dict{Tuple{String, Bool, UInt8}, Float32}(),
@@ -42,12 +42,12 @@ using Pioneer
 
         grouped = Pioneer.group_psms_by_protein(psms; precursor_consensus = empty_precursor_consensus)
 
-        @test hasproperty(grouped, :top_pep_weight)
+        @test hasproperty(grouped, :top_pep_peak_area)
 
         p1 = grouped[(grouped.protein_name .== "P1") .& grouped.target, :]
         @test nrow(p1) == 1
         @test p1.n_peptides[1] == 2
-        @test p1.top_pep_weight[1] == 100.0f0
+        @test p1.top_pep_peak_area[1] == 100.0f0
     end
 
     @testset "Protein Roll-Up Combines Precursors To Modified Peptides To Peptides" begin
@@ -147,7 +147,7 @@ using Pioneer
         @test out.peptide_coverage[1] ≈ (2f0 / 3f0)
     end
 
-    @testset "Weight Calibration Uses Max Peptide Peak Areas" begin
+    @testset "Peak Area Calibration Uses Max Peptide Peak Areas" begin
         psms = DataFrame(
             use_for_protein_quant = Bool[true, true, true, true, true, false],
             sequence = ["P1A", "P1A", "P1B", "P2A", "P2B", "P3A"],
@@ -158,7 +158,7 @@ using Pioneer
             weight = Float32[60.0f0, 40.0f0, 40.0f0, 80.0f0, 10.0f0, 500.0f0]
         )
 
-        model = Pioneer.estimate_weight_detection_model(psms)
+        model = Pioneer.estimate_peak_area_detection_model(psms)
 
         expected_threshold = Float32(quantile(log.([60.0, 40.0, 80.0, 10.0]), 0.05))
         @test model.log_threshold ≈ expected_threshold
@@ -181,30 +181,30 @@ using Pioneer
             n_peptides = Int64[1, 1, 4, 1, 1],
             pg_score = Float32[2.0, 1.5, 0.5, 3.0, 1.0],
             n_possible_peptides = Int64[20, 2, 4, 12, 1],
-            top_pep_weight = Float32[100.0, 100.0, 100.0, 0.0, 100.0]
+            top_pep_peak_area = Float32[100.0, 100.0, 100.0, 0.0, 100.0]
         )
 
-        (_, op) = Pioneer.add_weight_observation_features(calibration)
+        (_, op) = Pioneer.add_peak_area_observation_features(calibration)
         out = op(copy(pg_df))
 
         for col in (
-            :expected_excess_from_top,
+            :expected_excess_from_top_peak_area,
             :coverage_log_ratio
         )
             @test hasproperty(out, col)
         end
 
-        @test out.expected_excess_from_top[1] > out.expected_excess_from_top[2]
+        @test out.expected_excess_from_top_peak_area[1] > out.expected_excess_from_top_peak_area[2]
         @test out.coverage_log_ratio[1] < out.coverage_log_ratio[2]
         @test out.coverage_log_ratio[3] > out.coverage_log_ratio[1]
         @test out.coverage_log_ratio[3] > out.coverage_log_ratio[2]
 
-        # Invalid weight -> neutral values
-        @test out.expected_excess_from_top[4] == 0.0f0
+        # Invalid peak area -> neutral values
+        @test out.expected_excess_from_top_peak_area[4] == 0.0f0
         @test out.coverage_log_ratio[4] == 0.0f0
 
         # N <= 1 -> neutral values
-        @test out.expected_excess_from_top[5] == 0.0f0
+        @test out.expected_excess_from_top_peak_area[5] == 0.0f0
         @test out.coverage_log_ratio[5] == 0.0f0
     end
 

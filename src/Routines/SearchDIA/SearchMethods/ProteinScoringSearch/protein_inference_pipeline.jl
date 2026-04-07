@@ -52,13 +52,12 @@ function _median_abs_deviation(values::Vector{Float64})::Float64
 end
 
 """
-    estimate_weight_detection_model(df::DataFrame)
+    estimate_peak_area_detection_model(df::DataFrame)
 
-Estimate per-file abundance calibration for protein coverage surprise features.
-Uses unique inferred peptides with valid positive integrated abundance values
-when available, falling back to the legacy `weight` column otherwise.
+Estimate per-file peak-area calibration for protein coverage surprise features.
+Uses unique inferred peptides with valid positive integrated peak areas.
 """
-function estimate_weight_detection_model(df::DataFrame)
+function estimate_peak_area_detection_model(df::DataFrame)
     max_rank = 12
     min_rank_support = 8
     default_model = (
@@ -73,7 +72,7 @@ function estimate_weight_detection_model(df::DataFrame)
         return default_model
     end
 
-    best_weight_by_protein_peptide = Dict{Tuple{String, Bool, UInt8, String}, Float64}()
+    best_peak_area_by_protein_peptide = Dict{Tuple{String, Bool, UInt8, String}, Float64}()
 
     for i in 1:n_rows
         if df.use_for_protein_quant[i] != true
@@ -85,38 +84,38 @@ function estimate_weight_detection_model(df::DataFrame)
             continue
         end
 
-        weight_val = Float64(df.peak_area[i])
-        if !isfinite(weight_val) || weight_val <= 0.0
+        peak_area_val = Float64(df.peak_area[i])
+        if !isfinite(peak_area_val) || peak_area_val <= 0.0
             continue
         end
 
         target_val = Bool(df.target[i])
         entrap_val = UInt8(df.entrap_id[i])
         key = (String(protein_name), target_val, entrap_val, String(df.sequence[i]))
-        if haskey(best_weight_by_protein_peptide, key)
-            if weight_val > best_weight_by_protein_peptide[key]
-                best_weight_by_protein_peptide[key] = weight_val
+        if haskey(best_peak_area_by_protein_peptide, key)
+            if peak_area_val > best_peak_area_by_protein_peptide[key]
+                best_peak_area_by_protein_peptide[key] = peak_area_val
             end
         else
-            best_weight_by_protein_peptide[key] = weight_val
+            best_peak_area_by_protein_peptide[key] = peak_area_val
         end
     end
 
-    if isempty(best_weight_by_protein_peptide)
+    if isempty(best_peak_area_by_protein_peptide)
         return default_model
     end
 
-    log_weights = Float64[log(weight) for weight in values(best_weight_by_protein_peptide)]
-    log_threshold = Float64(Statistics.quantile(log_weights, 0.05))
+    log_peak_areas = Float64[log(peak_area) for peak_area in values(best_peak_area_by_protein_peptide)]
+    log_threshold = Float64(Statistics.quantile(log_peak_areas, 0.05))
 
-    protein_to_log_weights = Dict{Tuple{String, Bool, UInt8}, Vector{Float64}}()
-    for ((protein_name, target_val, entrap_val, _), weight) in best_weight_by_protein_peptide
+    protein_to_log_peak_areas = Dict{Tuple{String, Bool, UInt8}, Vector{Float64}}()
+    for ((protein_name, target_val, entrap_val, _), peak_area) in best_peak_area_by_protein_peptide
         protein_key = (protein_name, target_val, entrap_val)
-        push!(get!(protein_to_log_weights, protein_key, Float64[]), log(weight))
+        push!(get!(protein_to_log_peak_areas, protein_key, Float64[]), log(peak_area))
     end
 
     pooled_residuals = Float64[]
-    for log_vals in values(protein_to_log_weights)
+    for log_vals in values(protein_to_log_peak_areas)
         if length(log_vals) < 2
             continue
         end
@@ -139,15 +138,15 @@ function estimate_weight_detection_model(df::DataFrame)
     profiled_rank_count = 1
     rank_drop_samples = [Float64[] for _ in 1:max_rank]
 
-    for ((_, target_val, _), log_vals) in protein_to_log_weights
+    for ((_, target_val, _), log_vals) in protein_to_log_peak_areas
         target_val || continue
         length(log_vals) >= 2 || continue
 
         sort!(log_vals; rev = true)
-        top_log_weight = log_vals[1]
+        top_log_peak_area = log_vals[1]
         local_max_rank = min(length(log_vals), max_rank)
         for rank_idx in 2:local_max_rank
-            push!(rank_drop_samples[rank_idx], log_vals[rank_idx] - top_log_weight)
+            push!(rank_drop_samples[rank_idx], log_vals[rank_idx] - top_log_peak_area)
         end
     end
 
@@ -183,12 +182,18 @@ function estimate_weight_detection_model(df::DataFrame)
     )
 end
 
-function add_weight_observation_features(calibration::NamedTuple)
-    desc = "add_weight_observation_features"
+"""
+    add_peak_area_observation_features(calibration::NamedTuple)
+
+Add peak-area-based coverage surprise features to the protein-group table using
+the per-run calibration from `estimate_peak_area_detection_model(...)`.
+"""
+function add_peak_area_observation_features(calibration::NamedTuple)
+    desc = "add_peak_area_observation_features"
 
     op = function(df)
         n_rows = nrow(df)
-        expected_excess_from_top = Vector{Float32}(undef, n_rows)
+        expected_excess_from_top_peak_area = Vector{Float32}(undef, n_rows)
         coverage_log_ratio = Vector{Float32}(undef, n_rows)
 
         log_threshold = Float64(calibration.log_threshold)
@@ -197,30 +202,30 @@ function add_weight_observation_features(calibration::NamedTuple)
         profiled_rank_count = max(Int(calibration.profiled_rank_count), 1)
 
         for i in 1:n_rows
-            top_weight = Float64(df.top_pep_weight[i])
+            top_peak_area = Float64(df.top_pep_peak_area[i])
             N_total = max(Int(df.n_possible_peptides[i]), 0)
             k_obs = max(Int(df.n_peptides[i]), 0)
 
-            if top_weight <= 0.0
-                expected_excess_from_top[i] = 0.0f0
+            if top_peak_area <= 0.0
+                expected_excess_from_top_peak_area[i] = 0.0f0
                 coverage_log_ratio[i] = 0.0f0
                 continue
             end
 
             effective_rank_count = min(max(N_total, 1), profiled_rank_count)
             if effective_rank_count <= 1
-                expected_excess_from_top[i] = 0.0f0
+                expected_excess_from_top_peak_area[i] = 0.0f0
                 coverage_log_ratio[i] = 0.0f0
                 continue
             end
 
-            log_top_weight = log(top_weight)
+            log_top_peak_area = log(top_peak_area)
             expected_excess = 0.0
             for rank_idx in 2:effective_rank_count
                 rank_scale = rank_scale_profile[rank_idx]
                 rank_scale = (isfinite(rank_scale) && rank_scale > 0.0) ? rank_scale : 1.0
-                expected_log_weight = log_top_weight + rank_drop_profile[rank_idx]
-                rank_z = (expected_log_weight - log_threshold) / rank_scale
+                expected_log_peak_area = log_top_peak_area + rank_drop_profile[rank_idx]
+                rank_z = (expected_log_peak_area - log_threshold) / rank_scale
                 rank_excess = if rank_z > 20.0
                     rank_z
                 elseif rank_z < -20.0
@@ -233,11 +238,11 @@ function add_weight_observation_features(calibration::NamedTuple)
 
             observed_additional = min(max(k_obs - 1, 0), effective_rank_count - 1)
 
-            expected_excess_from_top[i] = Float32(expected_excess)
+            expected_excess_from_top_peak_area[i] = Float32(expected_excess)
             coverage_log_ratio[i] = Float32(log((observed_additional + 0.5) / (expected_excess + 0.5)))
         end
 
-        df.expected_excess_from_top = expected_excess_from_top
+        df.expected_excess_from_top_peak_area = expected_excess_from_top_peak_area
         df.coverage_log_ratio = coverage_log_ratio
         return df
     end
@@ -275,7 +280,7 @@ const ProteinRollupPrecursorRow = @NamedTuple{
     pep::Float32,
     prob::Float32,
     score::Float32,
-    best_weight::Float32
+    best_peak_area::Float32
 }
 const ProteinRollupModifiedPeptideRow = @NamedTuple{
     base_pep_id::UInt32,
@@ -286,7 +291,7 @@ const ProteinRollupModifiedPeptideRow = @NamedTuple{
     pep::Float32,
     prob::Float32,
     score::Float32,
-    best_weight::Float32,
+    best_peak_area::Float32,
     precursor_count::Int32
 }
 const ProteinRollupPeptideRow = @NamedTuple{
@@ -295,7 +300,7 @@ const ProteinRollupPeptideRow = @NamedTuple{
     pep::Float32,
     prob::Float32,
     score::Float32,
-    best_weight::Float32,
+    best_peak_area::Float32,
     modified_peptide_count::Int32
 }
 
@@ -391,7 +396,7 @@ function _build_protein_rollup(
     end
 
     prob_by_precursor = Dict{UInt32, Float32}()
-    best_weight_by_precursor = Dict{UInt32, Float32}()
+    best_peak_area_by_precursor = Dict{UInt32, Float32}()
     base_pep_id_by_precursor = Dict{UInt32, UInt32}()
     pair_id_by_precursor = Dict{UInt32, UInt32}()
     sequence_by_precursor = Dict{UInt32, String}()
@@ -404,16 +409,16 @@ function _build_protein_rollup(
 
         precursor_idx = UInt32(gdf.precursor_idx[i])
         prob_val = _sanitize_rollup_probability(gdf[!, prob_col][i])
-        weight_val = Float32(gdf.peak_area[i])
+        peak_area_val = Float32(gdf.peak_area[i])
 
         if haskey(prob_by_precursor, precursor_idx)
             prob_by_precursor[precursor_idx] = max(prob_by_precursor[precursor_idx], prob_val)
-            if weight_val > best_weight_by_precursor[precursor_idx]
-                best_weight_by_precursor[precursor_idx] = weight_val
+            if peak_area_val > best_peak_area_by_precursor[precursor_idx]
+                best_peak_area_by_precursor[precursor_idx] = peak_area_val
             end
         else
             prob_by_precursor[precursor_idx] = prob_val
-            best_weight_by_precursor[precursor_idx] = weight_val
+            best_peak_area_by_precursor[precursor_idx] = peak_area_val
             base_pep_id_by_precursor[precursor_idx] = UInt32(gdf.base_pep_id[i])
             pair_id_by_precursor[precursor_idx] =
                 hasproperty(gdf, :pair_id) && !ismissing(gdf.pair_id[i]) ? UInt32(gdf.pair_id[i]) : zero(UInt32)
@@ -444,7 +449,7 @@ function _build_protein_rollup(
             pep = none_prob_val,
             prob = prob_val,
             score = score_val,
-            best_weight = best_weight_by_precursor[precursor_idx]
+            best_peak_area = best_peak_area_by_precursor[precursor_idx]
         ))
     end
 
@@ -456,12 +461,12 @@ function _build_protein_rollup(
             pg_score = 0.0f0,
             n_peptides = 0,
             peptide_list = String[],
-            top_pep_weight = 0.0f0
+            top_pep_peak_area = 0.0f0
         )
     end
 
     modified_log_none_sum = Dict{Tuple{UInt32, String, String}, Float64}()
-    modified_best_weight = Dict{Tuple{UInt32, String, String}, Float32}()
+    modified_best_peak_area = Dict{Tuple{UInt32, String, String}, Float32}()
     modified_sequence = Dict{Tuple{UInt32, String, String}, String}()
     modified_precursor_count = Dict{Tuple{UInt32, String, String}, Int32}()
 
@@ -472,9 +477,9 @@ function _build_protein_rollup(
             precursor_row.isotopic_mods
         )
         modified_log_none_sum[mod_key] = get(modified_log_none_sum, mod_key, 0.0) + _precursor_log_none_for_rollup(precursor_row.prob)
-        modified_best_weight[mod_key] = max(
-            get(modified_best_weight, mod_key, 0.0f0),
-            precursor_row.best_weight
+        modified_best_peak_area[mod_key] = max(
+            get(modified_best_peak_area, mod_key, 0.0f0),
+            precursor_row.best_peak_area
         )
         modified_sequence[mod_key] = precursor_row.sequence
         modified_precursor_count[mod_key] = get(modified_precursor_count, mod_key, Int32(0)) + Int32(1)
@@ -492,22 +497,22 @@ function _build_protein_rollup(
             pep = _none_probability_from_log_none_sum(log_none_sum),
             prob = _probability_from_log_none_sum(log_none_sum),
             score = _score_from_log_none_sum(log_none_sum),
-            best_weight = modified_best_weight[mod_key],
+            best_peak_area = modified_best_peak_area[mod_key],
             precursor_count = modified_precursor_count[mod_key]
         ))
     end
     sort!(modified_peptide_rows; by = row -> row.score, rev = true)
 
     peptide_log_none_sum = Dict{String, Float64}()
-    peptide_best_weight = Dict{String, Float32}()
+    peptide_best_peak_area = Dict{String, Float32}()
     peptide_modified_count = Dict{String, Int32}()
 
     for modified_row in modified_peptide_rows
         peptide_key = modified_row.sequence
         peptide_log_none_sum[peptide_key] = get(peptide_log_none_sum, peptide_key, 0.0) + modified_row.log_none_sum
-        peptide_best_weight[peptide_key] = max(
-            get(peptide_best_weight, peptide_key, 0.0f0),
-            modified_row.best_weight
+        peptide_best_peak_area[peptide_key] = max(
+            get(peptide_best_peak_area, peptide_key, 0.0f0),
+            modified_row.best_peak_area
         )
         peptide_modified_count[peptide_key] = get(peptide_modified_count, peptide_key, Int32(0)) + Int32(1)
     end
@@ -521,14 +526,14 @@ function _build_protein_rollup(
             pep = _none_probability_from_log_none_sum(log_none_sum),
             prob = _probability_from_log_none_sum(log_none_sum),
             score = _score_from_log_none_sum(log_none_sum),
-            best_weight = peptide_best_weight[sequence],
+            best_peak_area = peptide_best_peak_area[sequence],
             modified_peptide_count = peptide_modified_count[sequence]
         ))
     end
     sort!(peptide_rows; by = row -> row.score, rev = true)
 
     pg_score = isempty(peptide_rows) ? 0.0f0 : Float32(sum(row.score for row in peptide_rows))
-    top_pep_weight = isempty(peptide_rows) ? 0.0f0 : maximum(row.best_weight for row in peptide_rows)
+    top_pep_peak_area = isempty(peptide_rows) ? 0.0f0 : maximum(row.best_peak_area for row in peptide_rows)
 
     return (
         precursor_rows = precursor_rows,
@@ -537,7 +542,7 @@ function _build_protein_rollup(
         pg_score = pg_score,
         n_peptides = length(peptide_rows),
         peptide_list = [row.sequence for row in peptide_rows],
-        top_pep_weight = top_pep_weight
+        top_pep_peak_area = top_pep_peak_area
     )
 end
 
@@ -599,7 +604,7 @@ end
 
 Build a dataset-level precursor relative-weight consensus within each inferred
 protein group. Consensus weights are derived from quant precursors after
-normalizing each precursor by the max precursor weight in that protein run.
+normalizing each precursor by the max precursor peak area in that protein run.
 Each run's vote is weighted by the run's current protein `pg_score`. After all
 runs are collected for a protein, the top
 `min(n_runs - 1, max(5, ceil(log2(n_runs)))) + 1` runs by `pg_score` are
@@ -662,8 +667,8 @@ function build_precursor_consensus(
                 end
             end
 
-            run_max_weight = maximum(precursor_row.best_weight for precursor_row in rollup.precursor_rows)
-            if !isfinite(run_max_weight) || run_max_weight <= 0.0f0
+            run_max_peak_area = maximum(precursor_row.best_peak_area for precursor_row in rollup.precursor_rows)
+            if !isfinite(run_max_peak_area) || run_max_peak_area <= 0.0f0
                 continue
             end
 
@@ -672,7 +677,7 @@ function build_precursor_consensus(
             for precursor_row in rollup.precursor_rows
                 push!(
                     normalized_precursors,
-                    precursor_row.precursor_idx => Float32(clamp(precursor_row.best_weight / run_max_weight, 0.0f0, 1.0f0))
+                    precursor_row.precursor_idx => Float32(clamp(precursor_row.best_peak_area / run_max_peak_area, 0.0f0, 1.0f0))
                 )
             end
             protein_key = (protein_name, target, entrap_id)
@@ -782,21 +787,21 @@ end
 """
     _shape_consensus_inputs(precursor_rows, protein_key, precursor_consensus)
 
-Prepare the observed precursor weights and protein key used for shape scoring.
+Prepare the observed precursor peak areas and protein key used for shape scoring.
 """
 function _shape_consensus_inputs(
     precursor_rows::AbstractVector,
     protein_key::Tuple{String, Bool, UInt8},
     precursor_consensus::NamedTuple
 )
-    best_weight_by_precursor = Dict{UInt32, Float32}()
+    best_peak_area_by_precursor = Dict{UInt32, Float32}()
     for row in precursor_rows
-        best_weight_by_precursor[row.precursor_idx] = row.best_weight
+        best_peak_area_by_precursor[row.precursor_idx] = row.best_peak_area
     end
 
     return (
         protein_key = protein_key,
-        best_weight_by_precursor = best_weight_by_precursor
+        best_peak_area_by_precursor = best_peak_area_by_precursor
     )
 end
 
@@ -914,7 +919,7 @@ function _precursor_consensus_prefix_features(
 )
     shape_inputs = _shape_consensus_inputs(precursor_rows, protein_key, precursor_consensus)
     shape_protein_key = shape_inputs.protein_key
-    best_weight_by_precursor = shape_inputs.best_weight_by_precursor
+    best_peak_area_by_precursor = shape_inputs.best_peak_area_by_precursor
 
     active_consensus = _active_consensus_profile(
         shape_protein_key,
@@ -927,7 +932,7 @@ function _precursor_consensus_prefix_features(
         precursor_consensus.shape_confidence_scale : 1.0f0
     shape_confidence = _shape_confidence(shape_strength, shape_confidence_scale)
 
-    if isempty(best_weight_by_precursor)
+    if isempty(best_peak_area_by_precursor)
         return (
             prefix_shape_raw = 0.0f0,
             prefix_shape = 0.0f0,
@@ -958,8 +963,8 @@ function _precursor_consensus_prefix_features(
         shape_confidence = shape_confidence
     )
 
-    run_max_weight = maximum(values(best_weight_by_precursor))
-    (!isfinite(run_max_weight) || run_max_weight <= 0.0f0) && return (
+    run_max_peak_area = maximum(values(best_peak_area_by_precursor))
+    (!isfinite(run_max_peak_area) || run_max_peak_area <= 0.0f0) && return (
         prefix_shape_raw = 0.0f0,
         prefix_shape = 0.0f0,
         threshold = 0.0f0,
@@ -974,7 +979,7 @@ function _precursor_consensus_prefix_features(
     observed_consensus_weights = Float32[]
     off_consensus_precursors = UInt32[]
     matched_precursors = 0
-    for precursor_idx in keys(best_weight_by_precursor)
+    for precursor_idx in keys(best_peak_area_by_precursor)
         c = get(consensus_relative_weight, (shape_protein_key[1], shape_protein_key[2], shape_protein_key[3], precursor_idx), 0.0f0)
         if c > 0.0f0
             push!(observed_consensus_weights, c)
@@ -992,7 +997,7 @@ function _precursor_consensus_prefix_features(
 
     for precursor in consensus_precursors
         precursor.second < threshold && continue
-        run_relative_weight = get(best_weight_by_precursor, precursor.first, 0.0f0) / run_max_weight
+        run_relative_weight = get(best_peak_area_by_precursor, precursor.first, 0.0f0) / run_max_peak_area
         prefix_consensus_sum += precursor.second
         run_prefix_sum += run_relative_weight
         push!(included_consensus_weights, precursor.second)
@@ -1000,7 +1005,7 @@ function _precursor_consensus_prefix_features(
     end
 
     for precursor_idx in off_consensus_precursors
-        run_relative_weight = get(best_weight_by_precursor, precursor_idx, 0.0f0) / run_max_weight
+        run_relative_weight = get(best_peak_area_by_precursor, precursor_idx, 0.0f0) / run_max_peak_area
         run_prefix_sum += run_relative_weight
         push!(included_consensus_weights, 0.0f0)
         push!(included_run_weights, run_relative_weight)
@@ -1075,7 +1080,7 @@ function group_psms_by_protein(
             peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
-            top_pep_weight = Float32[],
+            top_pep_peak_area = Float32[],
             precursor_consensus_prefix_shape = Float32[]
         )
     end
@@ -1091,7 +1096,7 @@ function group_psms_by_protein(
             peptide_list = String[],
             pg_score = Float32[],
             any_common_peps = Bool[],
-            top_pep_weight = Float32[],
+            top_pep_peak_area = Float32[],
             precursor_consensus_prefix_shape = Float32[]
         )
     end
@@ -1106,7 +1111,7 @@ function group_psms_by_protein(
         rollup = _build_protein_rollup(gdf, quant_mask, prob_col)
         n_peptides = rollup.n_peptides
         pg_score = rollup.pg_score
-        top_pep_weight = rollup.top_pep_weight
+        top_pep_peak_area = rollup.top_pep_peak_area
         species = if hasproperty(gdf, :species)
             join(sort!(unique!(collect(skipmissing(String.(gdf.species))))), ';')
         else
@@ -1141,7 +1146,7 @@ function group_psms_by_protein(
             peptide_list = join(rollup.peptide_list, ";"),
             pg_score = pg_score,
             any_common_peps = has_common,
-            top_pep_weight = top_pep_weight,
+            top_pep_peak_area = top_pep_peak_area,
             precursor_consensus_prefix_shape = precursor_consensus_prefix_shape
         )
     end
@@ -1312,7 +1317,7 @@ function build_protein_group_tables(
         end
 
         updated_psms = load_dataframe(psm_ref)
-        weight_calibration = estimate_weight_detection_model(updated_psms)
+        peak_area_calibration = estimate_peak_area_detection_model(updated_psms)
 
         protein_groups_df = group_psms_by_protein(
             updated_psms;
@@ -1324,7 +1329,7 @@ function build_protein_group_tables(
         post_inference_pipeline = TransformPipeline() |>
             filter_by_min_peptides(min_peptides) |>
             add_protein_features(protein_catalog) |>
-            add_weight_observation_features(weight_calibration)
+            add_peak_area_observation_features(peak_area_calibration)
 
         initial_rows = nrow(protein_groups_df)
         for (desc, op) in post_inference_pipeline.operations
