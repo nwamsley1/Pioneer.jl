@@ -312,33 +312,6 @@ function write_protein_probit_fold_peptide_coverage_scatter(
     )
 end
 
-function write_protein_probit_training_debug(
-    qc_folder::String,
-    all_protein_groups::AbstractDataFrame,
-    feature_names::Vector{Symbol},
-    partition
-)
-    isdir(qc_folder) || mkpath(qc_folder)
-
-    debug_df = DataFrame(all_protein_groups)
-    debug_df[!, :protein_probit_auto_pass] = partition.auto_pass_mask
-    debug_df[!, :protein_probit_trainable] = partition.train_mask
-    debug_df[!, :protein_probit_active_features] = fill(join(String.(feature_names), ";"), nrow(debug_df))
-
-    sort_cols = Symbol[]
-    for col in (:cv_fold, :file_idx, :species, :protein_name, :target, :entrap_id)
-        hasproperty(debug_df, col) && push!(sort_cols, col)
-    end
-    if !isempty(sort_cols)
-        sort!(debug_df, sort_cols)
-    end
-
-    debug_path = joinpath(qc_folder, "protein_probit_training_table.tsv")
-    CSV.write(debug_path, debug_df, delim = '\t')
-    @user_info "Wrote protein probit training debug table debug_path=$(debug_path) n_rows=$(nrow(debug_df)) n_columns=$(ncol(debug_df))"
-    return debug_path
-end
-
 function make_protein_iteration_plot_callback(
     train_df::AbstractDataFrame,
     fold,

@@ -7,7 +7,57 @@ using Random
 using Pioneer
 
 @testset "Protein Group Peak Area Coverage Features" begin
-    empty_precursor_consensus = (
+    function make_test_precursor_consensus(;
+        relative_weight = Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}(),
+        mean_relative_weight = Dict{Tuple{String, Bool, UInt8}, Float32}(),
+        profiled_precursor_count = Dict{Tuple{String, Bool, UInt8}, Int32}(),
+        shape_strength = Dict{Tuple{String, Bool, UInt8}, Float32}(),
+        shape_confidence_scale = 1.0f0,
+        precursors_by_protein = Dict{Tuple{String, Bool, UInt8}, Vector{Pair{UInt32, Float32}}}(),
+        selected_run_votes = nothing,
+        consensus_target_run_count = nothing,
+        cached_consensus_weight_sums = nothing,
+        cached_protein_total_vote = nothing
+    )
+        if isnothing(selected_run_votes)
+            selected_run_votes = Dict{Tuple{String, Bool, UInt8}, Vector{Pioneer.ConsensusRunVote}}()
+            consensus_target_run_count = Dict{Tuple{String, Bool, UInt8}, Int32}()
+            cached_consensus_weight_sums = Dict{Tuple{String, Bool, UInt8}, Dict{UInt32, Float64}}()
+            cached_protein_total_vote = Dict{Tuple{String, Bool, UInt8}, Float64}()
+
+            for (protein_key, precursor_peak_areas) in precursors_by_protein
+                total_vote = exp(Float64(get(shape_strength, protein_key, 0.0f0))) - 1.0
+                total_vote > 0.0 || continue
+
+                selected_run_votes[protein_key] = Pioneer.ConsensusRunVote[(
+                    pg_score = Float32(total_vote),
+                    run_order = Int64(1),
+                    normalized_precursors = copy(precursor_peak_areas)
+                )]
+                consensus_target_run_count[protein_key] = Int32(1)
+                cached_consensus_weight_sums[protein_key] = Dict(
+                    precursor.first => (total_vote * Float64(precursor.second))
+                    for precursor in precursor_peak_areas
+                )
+                cached_protein_total_vote[protein_key] = total_vote
+            end
+        end
+
+        return (
+            relative_weight = relative_weight,
+            mean_relative_weight = mean_relative_weight,
+            profiled_precursor_count = profiled_precursor_count,
+            shape_strength = shape_strength,
+            shape_confidence_scale = shape_confidence_scale,
+            selected_run_votes = selected_run_votes,
+            consensus_target_run_count = consensus_target_run_count,
+            cached_consensus_weight_sums = cached_consensus_weight_sums,
+            cached_protein_total_vote = cached_protein_total_vote,
+            precursors_by_protein = precursors_by_protein
+        )
+    end
+
+    empty_precursor_consensus = make_test_precursor_consensus(
         relative_weight = Dict{Tuple{String, Bool, UInt8, UInt32}, Float32}(),
         mean_relative_weight = Dict{Tuple{String, Bool, UInt8}, Float32}(),
         profiled_precursor_count = Dict{Tuple{String, Bool, UInt8}, Int32}(),
@@ -587,7 +637,7 @@ using Pioneer
     end
 
     @testset "Consensus Relative Weight Support Uses Observed MBR Precursors" begin
-        consensus = (
+        consensus = make_test_precursor_consensus(
             relative_weight = Dict(
                 ("P", true, UInt8(1), UInt32(11)) => 1.0f0,
                 ("P", true, UInt8(1), UInt32(12)) => 0.2f0
@@ -632,7 +682,7 @@ using Pioneer
     end
 
     @testset "Consensus Prefix Features Reward Expected Singleton And Penalize Low-Ranked Singleton" begin
-        consensus = (
+        consensus = make_test_precursor_consensus(
             relative_weight = Dict(
                 ("P_top", true, UInt8(1), UInt32(101)) => 1.0f0,
                 ("P_top", true, UInt8(1), UInt32(102)) => 0.2f0,
@@ -687,7 +737,7 @@ using Pioneer
     end
 
     @testset "Consensus Prefix Features Use Tau Threshold" begin
-        consensus = (
+        consensus = make_test_precursor_consensus(
             relative_weight = Dict(
                 ("P", true, UInt8(1), UInt32(101)) => 1.0f0,
                 ("P", true, UInt8(1), UInt32(102)) => 0.6f0,
@@ -733,7 +783,7 @@ using Pioneer
     end
 
     @testset "Consensus Prefix Features Penalize Off-Consensus Observed Precursors" begin
-        consensus = (
+        consensus = make_test_precursor_consensus(
             relative_weight = Dict(
                 ("P", true, UInt8(1), UInt32(101)) => 1.0f0,
                 ("P", true, UInt8(1), UInt32(102)) => 0.2f0
@@ -779,7 +829,7 @@ using Pioneer
 
     @testset "Consensus Prefix Features Use Leave-One-Out Consensus By Run" begin
         protein_key = ("P", true, UInt8(1))
-        consensus = (
+        consensus = make_test_precursor_consensus(
             relative_weight = Dict(
                 (protein_key[1], protein_key[2], protein_key[3], UInt32(101)) => 0.5f0,
                 (protein_key[1], protein_key[2], protein_key[3], UInt32(102)) => 0.5f0
@@ -843,7 +893,7 @@ using Pioneer
 
     @testset "Decoy Shape Is Scored Against Itself" begin
         protein_name = "P1"
-        consensus = (
+        consensus = make_test_precursor_consensus(
             relative_weight = Dict(
                 (protein_name, true, UInt8(1), UInt32(101)) => 1.0f0
             ),

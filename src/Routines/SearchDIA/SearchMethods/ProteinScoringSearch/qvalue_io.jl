@@ -124,7 +124,7 @@ function update_psms_with_probit_scores_refs(
                 pg_table[:target][i],
                 pg_table[:entrap_id][i]
             )
-            pep_val = hasproperty(pg_table, :pg_pep) ? pg_table[:pg_pep][i] : 1.0f0
+            pep_val = pg_table[:pg_pep][i]
             pg_score_lookup[key] = (pg_table[:pg_score][i], pep_val)
         end
 
@@ -201,6 +201,5 @@ function add_pep_column(new_col::Symbol, score_col::Symbol, target_col::Symbol;
     end
     return desc => op
 end
-
 
 

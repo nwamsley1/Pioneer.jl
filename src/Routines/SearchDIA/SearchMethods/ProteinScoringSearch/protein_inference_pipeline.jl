@@ -816,31 +816,8 @@ function _active_consensus_profile(
     precursor_consensus::NamedTuple;
     current_run_order::Union{Nothing, Int64} = nothing
 )
-    if !hasproperty(precursor_consensus, :selected_run_votes) ||
-       !hasproperty(precursor_consensus, :consensus_target_run_count) ||
-       !hasproperty(precursor_consensus, :cached_consensus_weight_sums) ||
-       !hasproperty(precursor_consensus, :cached_protein_total_vote)
-        consensus_precursors = get(
-            precursor_consensus.precursors_by_protein,
-            protein_key,
-            Pair{UInt32, Float32}[]
-        )
-        profiled_precursor_count = hasproperty(precursor_consensus, :profiled_precursor_count) ?
-            Int(get(precursor_consensus.profiled_precursor_count, protein_key, Int32(length(consensus_precursors)))) :
-            length(consensus_precursors)
-        shape_strength = hasproperty(precursor_consensus, :shape_strength) ?
-            get(precursor_consensus.shape_strength, protein_key, 0.0f0) : 0.0f0
-        return (
-            consensus_precursors = consensus_precursors,
-            profiled_precursor_count = profiled_precursor_count,
-            shape_strength = shape_strength
-        )
-    end
-
     candidate_votes = get(precursor_consensus.selected_run_votes, protein_key, ConsensusRunVote[])
-    desired_runs = hasproperty(precursor_consensus, :consensus_target_run_count) ?
-        Int(get(precursor_consensus.consensus_target_run_count, protein_key, Int32(length(candidate_votes)))) :
-        length(candidate_votes)
+    desired_runs = Int(get(precursor_consensus.consensus_target_run_count, protein_key, Int32(length(candidate_votes))))
 
     if isempty(candidate_votes) || desired_runs <= 0
         return (
@@ -868,12 +845,8 @@ function _active_consensus_profile(
         resize!(active_votes, desired_runs)
     end
 
-    cached_weight_sums = hasproperty(precursor_consensus, :cached_consensus_weight_sums) ?
-        get(precursor_consensus.cached_consensus_weight_sums, protein_key, Dict{UInt32, Float64}()) :
-        Dict{UInt32, Float64}()
-    cached_total_vote = hasproperty(precursor_consensus, :cached_protein_total_vote) ?
-        get(precursor_consensus.cached_protein_total_vote, protein_key, 0.0) :
-        0.0
+    cached_weight_sums = get(precursor_consensus.cached_consensus_weight_sums, protein_key, Dict{UInt32, Float64}())
+    cached_total_vote = get(precursor_consensus.cached_protein_total_vote, protein_key, 0.0)
 
     excluded_total_vote = 0.0
     excluded_weight_sums = Dict{UInt32, Float64}()
@@ -1163,10 +1136,7 @@ function filter_by_min_peptides(min_peptides::Int)
     desc = "filter_by_min_peptides(min=$min_peptides)"
     
     op = function(df)
-        if hasproperty(df, :n_peptides)
-            # For protein groups
-            filter!(row -> row.n_peptides >= min_peptides, df)
-        end
+        filter!(row -> row.n_peptides >= min_peptides, df)
         return df
     end
     
@@ -1186,10 +1156,6 @@ function add_protein_features(protein_catalog::Dict)
     }()
     
     op = function(df)
-        if !hasproperty(df, :protein_name)
-            return df
-        end
-        
         n_rows = nrow(df)
         n_possible = Vector{Int64}(undef, n_rows)
         peptide_coverage = Vector{Float32}(undef, n_rows)
@@ -1328,10 +1294,8 @@ function build_protein_group_tables(
             add_protein_features(protein_catalog) |>
             add_peak_area_observation_features(peak_area_calibration)
 
-        initial_rows = nrow(protein_groups_df)
         for (desc, op) in post_inference_pipeline.operations
             protein_groups_df = op(protein_groups_df)
-            initial_rows = nrow(protein_groups_df)
         end
 
         pg_filename = "protein_groups_$(lpad(idx, 3, '0')).arrow"

@@ -1,31 +1,36 @@
 # PrecursorScoringSearch Module
 
-PrecursorScoringSearch is the 7th stage in the Pioneer DIA search pipeline, responsible for machine learning-based PSM rescoring, FDR control, and protein group analysis. This module features adaptive model selection and supports both in-memory and out-of-memory processing for datasets of varying sizes.
+PrecursorScoringSearch is the precursor-level rescoring stage in the Pioneer DIA search pipeline. It is responsible for machine learning-based PSM rescoring and precursor-level FDR control. This module features adaptive model selection and supports both in-memory and out-of-memory processing for datasets of varying sizes.
 
 ## Overview
 
-PrecursorScoringSearch performs three main functions:
+PrecursorScoringSearch performs two main functions:
 1. **PSM Scoring**: Machine learning models (LightGBM or Probit Regression) rescore PSMs
 2. **FDR Control**: Calculate q-values and filter PSMs based on false discovery rate thresholds
-3. **Protein Inference**: Group peptides into minimal protein sets and calculate protein-level scores
 
 ## Data Flow Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
-│   SecondPass    │───▶│   PrecursorScoringSearch  │───▶│ IntegrateChromato-  │
-│   PSM Files     │    │                  │    │ gramSearch          │
-└─────────────────┘    └──────────────────┘    └─────────────────────┘
+┌─────────────────┐    ┌──────────────────────────┐    ┌─────────────────────┐
+│   SecondPass    │───▶│ PrecursorScoringSearch   │───▶│ IntegrateChromato-  │
+│   PSM Files     │    │                          │    │ gramSearch          │
+└─────────────────┘    └──────────────────────────┘    └─────────────────────┘
+                                                           │
+                                                           ▼
+                    ┌─────────────────────┐    ┌─────────────────────┐
+                    │ ProteinInference-   │───▶│ ProteinScoringSearch│
+                    │ Search              │    │                     │
+                    └─────────────────────┘    └─────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    PrecursorScoringSearch Pipeline                          │
+│                    PrecursorScoringSearch Pipeline                    │
 │                                                                     │
-│  ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
-│  │  1. PSM Scoring │─▶│ 2. FDR Control   │─▶│ 3. Protein       │   │
-│  │     & Model     │  │    & Filtering   │  │    Inference     │   │
-│  │    Selection    │  │                  │  │                  │   │
-│  └─────────────────┘  └──────────────────┘  └──────────────────┘   │
+│  ┌─────────────────┐  ┌──────────────────┐                         │
+│  │  1. PSM Scoring │─▶│ 2. FDR Control   │                         │
+│  │     & Model     │  │    & Filtering   │                         │
+│  │    Selection    │  │                  │                         │
+│  └─────────────────┘  └──────────────────┘                         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -231,13 +236,13 @@ psms[!, :MBR_is_best_decoy]            # MBR transfer metadata
 psms[!, :MBR_transfer_candidate]       # MBR filtering flags
 ```
 
-### 23-Step PrecursorScoringSearch Pipeline Integration
+### PrecursorScoringSearch Pipeline Integration
 
 The trained models integrate into the broader PrecursorScoringSearch pipeline:
 
-1. **Steps 1-3**: Model training and PSM scoring (this README's focus)
-2. **Steps 4-10**: PSM processing, merging, and FDR control
-3. **Steps 11-23**: Protein inference and scoring
+1. **Model training and PSM scoring**: this README's focus
+2. **PSM processing, merging, and FDR control**: filtering to the passing precursor tables
+3. **Downstream stages**: chromatogram integration, protein inference, and protein scoring happen after this stage
 
 ## Configuration Parameters
 
