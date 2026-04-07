@@ -130,33 +130,18 @@ function update_psms_with_probit_scores_refs(
 
         transform_and_write!(psm_ref) do psms_df
             n_psms = nrow(psms_df)
-            n_missing_pg = 0
-            n_not_for_quant = 0
-
-            probit_pg_scores = Vector{Union{Missing, Float32}}(undef, n_psms)
-            global_pg_scores = Vector{Union{Missing, Float32}}(undef, n_psms)
-            pg_qvals = Vector{Union{Missing, Float32}}(undef, n_psms)
-            global_pg_qvals = Vector{Union{Missing, Float32}}(undef, n_psms)
-            pg_peps = Vector{Union{Missing, Float32}}(undef, n_psms)
+            probit_pg_scores = Vector{Union{Missing, Float32}}(missing, n_psms)
+            global_pg_scores = Vector{Union{Missing, Float32}}(missing, n_psms)
+            pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
+            global_pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
+            pg_peps = Vector{Union{Missing, Float32}}(missing, n_psms)
 
             for i in 1:n_psms
                 if ismissing(psms_df[i, :inferred_protein_group])
-                    n_missing_pg += 1
-                    probit_pg_scores[i] = missing
-                    global_pg_scores[i] = missing
-                    pg_qvals[i] = missing
-                    global_pg_qvals[i] = missing
-                    pg_peps[i] = missing
                     continue
                 end
 
                 if psms_df[i, :use_for_protein_quant] == false
-                    n_not_for_quant += 1
-                    probit_pg_scores[i] = missing
-                    global_pg_scores[i] = missing
-                    pg_qvals[i] = missing
-                    global_pg_qvals[i] = missing
-                    pg_peps[i] = missing
                     continue
                 end
 
@@ -167,12 +152,6 @@ function update_psms_with_probit_scores_refs(
                 )
 
                 if !haskey(pg_score_lookup, key)
-                    n_missing_pg += 1
-                    probit_pg_scores[i] = missing
-                    global_pg_scores[i] = missing
-                    pg_qvals[i] = missing
-                    global_pg_qvals[i] = missing
-                    pg_peps[i] = missing
                     continue
                 end
                 scores_tuple = pg_score_lookup[key]
@@ -222,7 +201,6 @@ function add_pep_column(new_col::Symbol, score_col::Symbol, target_col::Symbol;
     end
     return desc => op
 end
-
 
 
 
