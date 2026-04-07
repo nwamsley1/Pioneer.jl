@@ -721,13 +721,6 @@ function process_final_psms!(
     end
     psms[!, :accession_numbers] = accession_numbers
     
-    if hasproperty(psms, :inferred_protein_group)
-        # Critical once protein inference has been added back onto the precursor rows.
-        sort!(psms, [:inferred_protein_group, :precursor_idx])
-    else
-        sort!(psms, [:precursor_idx])
-    end
-
     parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
     for i in range(1, n)
         pid = psms_precursor_idx[i]

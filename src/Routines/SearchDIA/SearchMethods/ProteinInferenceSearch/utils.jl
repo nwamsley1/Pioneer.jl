@@ -37,108 +37,59 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         precursor_idx = df.precursor_idx::AbstractVector{UInt32}
         n_rows = length(precursor_idx)
 
-        if !hasproperty(df, :sequence)
-            sequences = Vector{String}(undef, n_rows)
-            for i in 1:n_rows
-                sequences[i] = all_sequences[precursor_idx[i]]
-            end
-            df.sequence = sequences
+        sequences = Vector{String}(undef, n_rows)
+        for i in 1:n_rows
+            sequences[i] = all_sequences[precursor_idx[i]]
         end
+        df.sequence = sequences
 
-        if !hasproperty(df, :accession_numbers)
-            accessions = Vector{String}(undef, n_rows)
-            for i in 1:n_rows
-                accessions[i] = all_accessions[precursor_idx[i]]
-            end
-            df.accession_numbers = accessions
+        accessions = Vector{String}(undef, n_rows)
+        for i in 1:n_rows
+            accessions[i] = all_accessions[precursor_idx[i]]
         end
+        df.accession_numbers = accessions
 
-        if !hasproperty(df, :is_decoy)
-            is_decoy_vec = Vector{Bool}(undef, n_rows)
-            for i in 1:n_rows
-                is_decoy_vec[i] = all_is_decoys[precursor_idx[i]]
-            end
-            df.is_decoy = is_decoy_vec
+        is_decoy_vec = Vector{Bool}(undef, n_rows)
+        for i in 1:n_rows
+            is_decoy_vec[i] = all_is_decoys[precursor_idx[i]]
         end
+        df.is_decoy = is_decoy_vec
 
-        if !hasproperty(df, :entrap_id)
-            entrap_vec = Vector{UInt8}(undef, n_rows)
-            for i in 1:n_rows
-                entrap_vec[i] = all_entrap_ids[precursor_idx[i]]
-            end
-            df.entrap_id = entrap_vec
+        entrap_vec = Vector{UInt8}(undef, n_rows)
+        for i in 1:n_rows
+            entrap_vec[i] = all_entrap_ids[precursor_idx[i]]
         end
+        df.entrap_id = entrap_vec
 
-        if !hasproperty(df, :species)
-            species = Vector{String}(undef, n_rows)
-            for i in 1:n_rows
-                species[i] = join(sort(unique(split(coalesce(all_species[precursor_idx[i]], ""), ';'))), ';')
-            end
-            df.species = species
+        species = Vector{String}(undef, n_rows)
+        for i in 1:n_rows
+            species[i] = join(sort(unique(split(coalesce(all_species[precursor_idx[i]], ""), ';'))), ';')
         end
+        df.species = species
 
-        if !hasproperty(df, :base_pep_id)
-            base_pep_ids = Vector{UInt32}(undef, n_rows)
-            for i in 1:n_rows
-                base_pep_ids[i] = all_base_pep_ids[precursor_idx[i]]
-            end
-            df.base_pep_id = base_pep_ids
+        base_pep_ids = Vector{UInt32}(undef, n_rows)
+        for i in 1:n_rows
+            base_pep_ids[i] = all_base_pep_ids[precursor_idx[i]]
         end
+        df.base_pep_id = base_pep_ids
 
-        if !hasproperty(df, :structural_mods)
-            structural_mods = Vector{String}(undef, n_rows)
-            for i in 1:n_rows
-                structural_mods[i] = coalesce(all_structural_mods[precursor_idx[i]], "")
-            end
-            df.structural_mods = structural_mods
+        structural_mods = Vector{String}(undef, n_rows)
+        for i in 1:n_rows
+            structural_mods[i] = coalesce(all_structural_mods[precursor_idx[i]], "")
         end
+        df.structural_mods = structural_mods
 
-        if !hasproperty(df, :isotopic_mods)
-            isotopic_mods = Vector{String}(undef, n_rows)
-            for i in 1:n_rows
-                isotopic_mods[i] = coalesce(all_isotopic_mods[precursor_idx[i]], "")
-            end
-            df.isotopic_mods = isotopic_mods
+        isotopic_mods = Vector{String}(undef, n_rows)
+        for i in 1:n_rows
+            isotopic_mods[i] = coalesce(all_isotopic_mods[precursor_idx[i]], "")
         end
+        df.isotopic_mods = isotopic_mods
 
-        if !hasproperty(df, :pair_id)
-            pair_ids = Vector{UInt32}(undef, n_rows)
-            for i in 1:n_rows
-                pair_ids[i] = extract_pair_idx(all_pair_ids, precursor_idx[i])
-            end
-            df.pair_id = pair_ids
+        pair_ids = Vector{UInt32}(undef, n_rows)
+        for i in 1:n_rows
+            pair_ids[i] = extract_pair_idx(all_pair_ids, precursor_idx[i])
         end
-
-        return df
-    end
-
-    return desc => op
-end
-
-"""
-    validate_peptide_data()
-
-Ensure all required columns exist for protein inference.
-"""
-function validate_peptide_data()
-    desc = "validate_peptide_data"
-
-    op = function(df)
-        required_cols = [
-            :sequence,
-            :accession_numbers,
-            :is_decoy,
-            :entrap_id,
-            :precursor_idx,
-            :base_pep_id,
-            :structural_mods,
-            :isotopic_mods
-        ]
-
-        missing_cols = setdiff(required_cols, Symbol.(names(df)))
-        if !isempty(missing_cols)
-            error("Missing required columns for protein inference: $missing_cols")
-        end
+        df.pair_id = pair_ids
 
         return df
     end
@@ -238,8 +189,7 @@ function run_protein_inference!(
 
     precursors = getPrecursors(getSpecLib(search_context))
     annotation_pipeline = TransformPipeline() |>
-        add_peptide_metadata(precursors) |>
-        validate_peptide_data()
+        add_peptide_metadata(precursors)
 
     indexed_refs = collect(enumerate(passing_refs))
     @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags"

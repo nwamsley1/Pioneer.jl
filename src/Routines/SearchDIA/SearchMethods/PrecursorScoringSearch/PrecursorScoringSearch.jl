@@ -47,23 +47,32 @@ end
 Parameters for precursor scoring.
 """
 struct PrecursorScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
+    # Core memory and trace-selection parameters
     max_in_memory_table_mb::Float64
     min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
     q_value_interpolation_points_per_bin::Int64
+
+    # MBR and iterative rescoring parameters
     match_between_runs::Bool
     max_q_value_lightgbm_rescore::Float32
     max_q_value_mbr_itr::Float32
     min_PEP_neg_threshold_itr::Float32
     max_MBR_false_transfer_rate::Float32
+
+    # Final precursor filtering parameters
     q_value_threshold::Float32
     isotope_tracetype::I
     n_quantile_bins::Int64
+
+    # Model comparison parameters
     enable_model_comparison::Bool
     validation_split_ratio::Float64
     qvalue_threshold_comparison::Float64
     min_psms_for_comparison::Int64
     max_psms_for_comparison::Int64
+
+    # OOM scoring parameters
     ms1_scoring::Bool
     force_oom::Bool
     max_mbr_training_candidates::Int64
@@ -150,6 +159,10 @@ function reset_results!(results::PrecursorScoringSearchResults)
     return nothing
 end
 
+#==========================================================
+Precursor Score Calibration Helpers
+==========================================================#
+
 function get_precursor_global_qval_spline(merged_path::String, params::PrecursorScoringSearchParameters, search_context::SearchContext)
     score_col = params.match_between_runs ? :MBR_boosted_global_prob : :global_prob
     return get_qvalue_spline(
@@ -176,6 +189,10 @@ function get_precursor_pep_interpolation(merged_path::String, params::PrecursorS
     )
 end
 
+#==========================================================
+Memory Estimation Helper
+==========================================================#
+
 """
     estimate_max_rows(memory_mb::Float64, sample_file::String)
 
@@ -200,6 +217,10 @@ function estimate_max_rows(memory_mb::Float64, sample_file::String)
     bytes_per_row = max(bytes_per_row, 1)
     return max(floor(Int64, memory_mb * 1024 * 1024 / bytes_per_row), 1000)
 end
+
+#==========================================================
+Main Precursor Scoring Pipeline
+==========================================================#
 
 """
 Process all results to produce final precursor scores and precursor-level q-values.

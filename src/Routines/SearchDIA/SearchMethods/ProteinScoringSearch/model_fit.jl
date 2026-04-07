@@ -244,11 +244,16 @@ function fit_probit_model_semisupervised(
     length(initial_scores) == length(y) || throw(ArgumentError("initial_scores must have the same length as y"))
     length(prefix_shape) == length(y) || throw(ArgumentError("prefix_shape must have the same length as y"))
     length(n_peptides) == length(y) || throw(ArgumentError("n_peptides must have the same length as y"))
+
     row_change_threshold = max(5, ceil(Int, 0.001 * length(y)))
     near_convergence_check_start_iteration = 4
     near_convergence_patience = 2
     near_convergence_streak = 0
     last_plot_iteration = 1
+
+    # Iteration 1 is seeded from the raw protein-group score. At this stage we
+    # keep non-mined target rows as positives so the model starts from a broad,
+    # conservative training set rather than an aggressively filtered one.
     ss_initial = build_protein_semisupervised_training_set(
         initial_scores,
         y,
@@ -260,7 +265,6 @@ function fit_probit_model_semisupervised(
         mined_negative_pep_threshold = min_pep_neg_threshold,
         keep_non_mined_targets_as_positive = true
     )
-
     initial_keep_mask = ss_initial.keep_mask
     initial_labels = ss_initial.labels
     last_plot_state = (
@@ -268,9 +272,9 @@ function fit_probit_model_semisupervised(
         confident_positive_mask = ss_initial.confident_positive_mask,
         mined_negative_mask = ss_initial.mined_negative_mask
     )
+
     initial_target_count = sum(initial_labels)
     initial_decoy_count = sum(initial_keep_mask) - initial_target_count
-
     if initial_target_count < 10 || initial_decoy_count < 10
         @user_warn "Protein probit semi-supervised iteration has insufficient data; falling back to all rows for initial pg_score fit" context = context iteration = 1 selected_targets = initial_target_count selected_decoys = initial_decoy_count
         initial_keep_mask = trues(length(y))
@@ -282,12 +286,12 @@ function fit_probit_model_semisupervised(
         )
     end
 
+    # Fit the first model on the seeded labels.
     X_initial_iteration = X[initial_keep_mask, :]
     β_current = fit_probit_model(X_initial_iteration, initial_labels)
     if !isnothing(feature_importance_logger)
         feature_importance_logger(β_current, X_initial_iteration, 1)
     end
-
     if !isnothing(iteration_debug_callback)
         iteration_debug_callback(1, last_plot_state)
     end
@@ -300,6 +304,9 @@ function fit_probit_model_semisupervised(
     previous_positive_mask = copy(last_plot_state.positive_mask)
 
     for iteration in 2:n_iterations
+        # Score all rows with the current model, then rebuild the training set
+        # using only q-passing targets as positives. This is the semi-supervised
+        # refinement step.
         iteration_scores = calculate_probit_scores(X, β_current)
         ss = build_protein_semisupervised_training_set(
             iteration_scores,
@@ -315,7 +322,6 @@ function fit_probit_model_semisupervised(
 
         iteration_target_count = sum(ss.labels)
         iteration_decoy_count = sum(ss.keep_mask) - iteration_target_count
-
         if iteration_target_count < 10 || iteration_decoy_count < 10
             @user_warn "Protein probit semi-supervised iteration has insufficient data; using previous iteration model" context = context iteration = iteration selected_targets = iteration_target_count selected_decoys = iteration_decoy_count
             if !isnothing(iteration_debug_callback) && last_plot_iteration > 1
@@ -324,20 +330,21 @@ function fit_probit_model_semisupervised(
             return β_current
         end
 
+        # Early stopping is based on label churn, not score drift. Once the set
+        # of kept rows and their effective positive/negative states stop changing
+        # much, additional outer iterations are usually wasted.
         changed_keep_rows = _count_mask_changes(ss.keep_mask, previous_keep_mask)
-        changed_label_rows =
-            _count_training_label_state_changes(
-                ss.keep_mask,
-                ss.positive_mask,
-                previous_keep_mask,
-                previous_positive_mask
-            )
+        changed_label_rows = _count_training_label_state_changes(
+            ss.keep_mask,
+            ss.positive_mask,
+            previous_keep_mask,
+            previous_positive_mask
+        )
         near_converged =
             (iteration >= near_convergence_check_start_iteration) &&
             (changed_keep_rows <= row_change_threshold) &&
             (changed_label_rows <= row_change_threshold)
         near_convergence_streak = near_converged ? (near_convergence_streak + 1) : 0
-
         last_plot_iteration = iteration
         last_plot_state = (
             positive_mask = ss.positive_mask,
@@ -352,6 +359,7 @@ function fit_probit_model_semisupervised(
             return β_current
         end
 
+        # Refit on the updated semi-supervised labels and continue.
         X_iteration = X[ss.keep_mask, :]
         β_current = fit_probit_model(X_iteration, ss.labels)
         if !isnothing(feature_importance_logger)
