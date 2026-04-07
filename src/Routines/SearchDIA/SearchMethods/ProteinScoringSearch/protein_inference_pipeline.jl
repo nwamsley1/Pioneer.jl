@@ -85,9 +85,6 @@ function estimate_peak_area_detection_model(df::DataFrame)
         end
 
         peak_area_val = Float64(df.peak_area[i])
-        if !isfinite(peak_area_val) || peak_area_val <= 0.0
-            continue
-        end
 
         target_val = Bool(df.target[i])
         entrap_val = UInt8(df.entrap_id[i])
