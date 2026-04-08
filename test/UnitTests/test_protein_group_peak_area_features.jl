@@ -303,7 +303,7 @@ using Pioneer
         @test any(ss.confident_positive_mask)
         @test any(ss.mined_negative_mask)
         @test ss.mined_negative_prefix_shape_threshold == -0.20f0
-        @test ss.mined_negative_pep_threshold == 0.90f0
+        @test ss.mined_negative_pep_threshold == 1.1f0
         @test all(ss.keep_mask[.!targets])
         @test all(ss.keep_mask)
         @test all(ss.confident_positive_mask .<= ss.positive_mask)
@@ -353,7 +353,8 @@ using Pioneer
             targets,
             prefix_shape,
             n_peptides;
-            q_value_threshold = 0.01f0
+            q_value_threshold = 0.01f0,
+            mined_negative_pep_threshold = 1.1f0
         )
 
         @test ss.qvals[1] <= 0.01f0
@@ -385,7 +386,7 @@ using Pioneer
         @test ss.mined_negative_pep_threshold == 0.90f0
         @test all(prefix_shape[rescued_positive_mask] .> ss.mined_negative_prefix_shape_threshold)
         @test all(ss.peps[rescued_positive_mask] .< ss.mined_negative_pep_threshold)
-        @test any(ss.mined_negative_mask)
+        @test !any(ss.mined_negative_mask)
         @test any(rescued_positive_mask)
         @test all(ss.positive_mask[rescued_positive_mask])
         @test all(ss.keep_mask[rescued_positive_mask])
