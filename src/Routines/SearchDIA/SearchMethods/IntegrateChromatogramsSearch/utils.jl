@@ -721,11 +721,6 @@ function process_final_psms!(
     end
     psms[!, :accession_numbers] = accession_numbers
     
-    #Critical to sort correctly for the batch-wise MaxLFQ algorithm. 
-    #Otherwise could have different precursors for the same protein group 
-    #split between two batches. 
-    sort!(psms, [:inferred_protein_group, :precursor_idx])
-
     parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
     for i in range(1, n)
         pid = psms_precursor_idx[i]

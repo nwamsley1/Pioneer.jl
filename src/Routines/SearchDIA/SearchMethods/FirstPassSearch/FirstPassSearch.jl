@@ -570,7 +570,7 @@ function summarize_results!(
         #Each target has a corresponding decoy and vice versa
         #Add the complement targets/decoys to the precursor dict 
         #if the `sibling_peptide_scores` parameter is set to true
-        #In the target/decoy scoring (see SearchMethods/ScoringSearch)
+        #In the target/decoy scoring (see SearchMethods/PrecursorScoringSearch)
         #the maximum score for each target/decoy pair is shared accross runs
         #in an iterative training scheme. 
         precursors = getPrecursors(getSpecLib(search_context))

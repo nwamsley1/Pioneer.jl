@@ -1,7 +1,7 @@
 using Test
 using Pioneer
 
-@testset "ScoringSearch model configurations" begin
+@testset "PrecursorScoringSearch model configurations" begin
     configs = Pioneer.create_model_configurations()
 
     # Expect five models after addition of simplified probit

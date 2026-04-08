@@ -73,6 +73,26 @@ function create_mock_psm_data(n_psms::Int, n_precursors::Int, protein_names::Vec
 end
 
 """
+Create protein-to-CV-fold mapping from mock PSM data
+"""
+function create_mock_protein_to_cv_fold(psms::DataFrame, precursors::MockLibraryPrecursors)
+    protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
+
+    for group in groupby(psms, :inferred_protein_group)
+        best_idx = argmax(group.prob)
+        best_score = Float32(group.prob[best_idx])
+        best_precursor_idx = group.precursor_idx[best_idx]
+        insert!(
+            protein_to_cv_fold,
+            String(group.inferred_protein_group[1]),
+            (best_score = best_score, cv_fold = UInt8(Pioneer.getCvFold(precursors, best_precursor_idx)))
+        )
+    end
+
+    return protein_to_cv_fold
+end
+
+"""
 Create mock protein group data
 """
 function create_mock_protein_groups(protein_names::Vector{String}; seed=44)
@@ -84,10 +104,16 @@ function create_mock_protein_groups(protein_names::Vector{String}; seed=44)
         protein_name = protein_names,
         target = rand(Bool, n_proteins),
         entrap_id = zeros(UInt8, n_proteins),
+        species = fill("HUMAN", n_proteins),
+        file_idx = fill(Int64(1), n_proteins),
         pg_score = rand(Float32, n_proteins),
         n_peptides = rand(UInt16(1):UInt16(10), n_proteins),
         n_possible_peptides = rand(UInt16(5):UInt16(20), n_proteins),
         peptide_coverage = rand(Float32, n_proteins),
+        peptide_coverage_logit = rand(Float32, n_proteins),
+        any_common_peps = rand(Bool, n_proteins),
+        coverage_log_ratio = rand(Float32, n_proteins),
+        precursor_consensus_prefix_shape = rand(Float32, n_proteins),
         total_peptide_length = rand(UInt16(10):UInt16(100), n_proteins),
         log_n_possible_peptides = log.(Float32.(rand(5:20, n_proteins))),
         log_binom_coeff = rand(Float32, n_proteins)
@@ -134,16 +160,6 @@ end
         @test folds == [0, 1, 2]
     end
     
-    @testset "PSM Path Mapping" begin
-        # Create mock reference
-        pg_path = "/path/to/results/passing_proteins_001.arrow"
-        pg_ref = Pioneer.ProteinGroupFileReference(pg_path)
-        
-        # Test path mapping
-        psm_path = Pioneer.get_corresponding_psm_path(pg_ref)
-        @test psm_path == "/path/to/results/scored_PSMs_001.arrow"
-    end
-    
     @testset "Protein Group CV Fold Assignment" begin
         # Create temporary directory
         temp_dir = mktempdir()
@@ -171,14 +187,15 @@ end
             pg_refs = create_mock_file_refs(temp_dir, protein_groups, psms)
             
             # Test CV fold assignment
-            protein_to_cv_fold = Pioneer.assign_protein_group_cv_folds!(protein_groups, pg_refs, precursors)
+            protein_to_cv_fold = create_mock_protein_to_cv_fold(psms, precursors)
+            returned_mapping = Pioneer.assign_protein_group_cv_folds!(protein_groups, protein_to_cv_fold)
             
             # Check that cv_fold column was added
             @test hasproperty(protein_groups, :cv_fold)
             @test length(protein_groups.cv_fold) == length(protein_names)
             
             # Check that dictionary was returned with named tuple values
-            @test isa(protein_to_cv_fold, Dict{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
+            @test returned_mapping === protein_to_cv_fold
             @test length(protein_to_cv_fold) <= length(protein_names)  # May have fewer entries if some proteins have no PSMs
             
             # Check that each protein got the cv_fold of its highest scoring peptide
@@ -223,6 +240,7 @@ end
             
             # Create file references
             pg_refs = create_mock_file_refs(temp_dir, protein_groups, psms)
+            protein_to_cv_fold = create_mock_protein_to_cv_fold(psms, precursors)
             
             # Run multi-fold probit analysis
             Pioneer.perform_probit_analysis_multifold(
@@ -230,6 +248,7 @@ end
                 qc_folder,
                 pg_refs,
                 precursors;
+                protein_to_cv_fold = protein_to_cv_fold,
                 show_improvement = true
             )
             
@@ -276,6 +295,13 @@ end
             protein_name = String[],
             target = Bool[],
             pg_score = Float32[],
+            n_peptides = UInt16[],
+            peptide_coverage_logit = Float32[],
+            any_common_peps = Bool[],
+            coverage_log_ratio = Float32[],
+            precursor_consensus_prefix_shape = Float32[],
+            species = String[],
+            file_idx = Int64[],
             peptide_coverage = Float32[],
             n_possible_peptides = UInt16[]
         )
@@ -283,17 +309,16 @@ end
         # Should handle gracefully without errors
         temp_dir = mktempdir()
         try
-            protein_to_cv_fold = Pioneer.assign_protein_group_cv_folds!(
+            protein_to_cv_fold = Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}()
+            returned_mapping = Pioneer.assign_protein_group_cv_folds!(
                 empty_protein_groups,
-                Pioneer.ProteinGroupFileReference[],
-                precursors_1fold
+                protein_to_cv_fold
             )
             @test nrow(empty_protein_groups) == 0
-            @test isa(protein_to_cv_fold, Dict{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
+            @test returned_mapping === protein_to_cv_fold
             @test isempty(protein_to_cv_fold)  # Should be empty for empty protein groups
         finally
             rm(temp_dir, recursive=true)
         end
     end
 end
-

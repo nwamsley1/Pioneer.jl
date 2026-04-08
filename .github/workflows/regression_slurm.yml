@@ -481,7 +481,9 @@ jobs:
           total_search=${#search_job_ids[@]}
           poll_interval=300
           max_attempts=600
+          max_consecutive_probe_failures=5
           attempt=1
+          consecutive_probe_failures=0
           progress_log=()
 
           echo "Polling for ${total_search} search job(s) and ${total_metrics} metrics job(s)." | tee -a "$GITHUB_STEP_SUMMARY"
@@ -510,14 +512,21 @@ jobs:
               exit 1
             fi
 
-            if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "squeue -h -o '%i' 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
-              echo "Cluster login failed or squeue unavailable." >&2
-              exit 1
+            if ! running_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+              "squeue -h -o '%i' 2>/dev/null | awk '/^[0-9]+$/'" 2>/dev/null); then
+              consecutive_probe_failures=$((consecutive_probe_failures + 1))
+              timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+              warning_entry="[${timestamp}] Cluster login failed or squeue unavailable (consecutive failure ${consecutive_probe_failures}/${max_consecutive_probe_failures}); retrying after ${poll_interval}s"
+              progress_log+=("$warning_entry")
+              echo "$warning_entry" | tee -a "$GITHUB_STEP_SUMMARY" >&2
+              if [ "$consecutive_probe_failures" -ge "$max_consecutive_probe_failures" ]; then
+                echo "Exceeded maximum consecutive cluster probe failures while monitoring regression jobs." >&2
+                exit 1
+              fi
+              sleep "$poll_interval"
+              continue
             fi
-
-            running_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "squeue -h -o '%i' 2>/dev/null | awk '/^[0-9]+$/'" || true)
+            consecutive_probe_failures=0
             declare -A running_map=()
             if [ -n "$running_jobs" ]; then
               while IFS= read -r job_id; do
@@ -680,19 +689,26 @@ jobs:
 
           poll_interval=60
           max_attempts=180
+          max_consecutive_probe_failures=5
           attempt=1
+          consecutive_probe_failures=0
 
           echo "Monitoring report job ID: ${report_job_id}"
 
           while [ "$attempt" -le "$max_attempts" ]; do
-            if ! timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "squeue -h -o '%i' 2>/dev/null | awk '/^[0-9]+$/' >/dev/null" >/dev/null 2>&1; then
-              echo "Cluster login failed or squeue unavailable." >&2
-              exit 1
+            if ! running_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
+              "squeue -h -o '%i' 2>/dev/null | awk '/^[0-9]+$/'" 2>/dev/null); then
+              consecutive_probe_failures=$((consecutive_probe_failures + 1))
+              echo "Cluster login failed or squeue unavailable (consecutive failure ${consecutive_probe_failures}/${max_consecutive_probe_failures}); retrying after ${poll_interval}s." >&2
+              if [ "$consecutive_probe_failures" -ge "$max_consecutive_probe_failures" ]; then
+                echo "Exceeded maximum consecutive cluster probe failures while monitoring the regression report job." >&2
+                exit 1
+              fi
+              attempt=$((attempt + 1))
+              sleep "$poll_interval"
+              continue
             fi
-
-            running_jobs=$(timeout 120 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-              "squeue -h -o '%i' 2>/dev/null | awk '/^[0-9]+$/'" || true)
+            consecutive_probe_failures=0
 
             report_active=$(printf '%s\n' "$running_jobs" | awk -v id="$report_job_id" '$0 == id { found=1 } END { if (found) print id }')
 

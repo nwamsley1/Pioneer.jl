@@ -20,7 +20,7 @@ Most parameters should not be changed, but the following may need adjustment.
 
 * `acquisition.quad_transmission.fit_from_data`: Estimate the quad transmission function from the data. Otherwise defaults to symmetric, smooth function.
 
-* `optimization.machine_learning.max_psm_memory_mb`: Memory budget (in MB) for PSMs held in memory during LightGBM training. Pioneer dynamically estimates how many PSMs fit within this budget based on the column sizes of the Arrow file. Default is 2000 MB.
+* `optimization.machine_learning.max_in_memory_table_mb`: Memory budget (in MB) for Arrow-backed tables held in memory during precursor scoring and protein scoring. Pioneer dynamically estimates how many rows fit within this budget from the table schema. Default is 2000 MB.
 * During LightGBM training, any missing feature values are replaced with the column median. If a column is entirely missing, the values are filled with zero of the appropriate type.
 
 
@@ -172,12 +172,12 @@ The deconvolution parameters are split into `ms1` and `ms2` sub-objects for sepa
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `machine_learning.max_psm_memory_mb` | Real | Memory budget in MB for PSMs held in memory during LightGBM training. Row count is dynamically estimated from Arrow column sizes (default: 2000) |
+| `machine_learning.max_in_memory_table_mb` | Real | Memory budget in MB for Arrow-backed tables held in memory during precursor scoring and protein scoring. Row count is dynamically estimated from Arrow column sizes (default: 2000) |
 | `machine_learning.force_oom` | Boolean | Force out-of-memory processing regardless of dataset size (default: false) |
 | `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
-| `machine_learning.min_PEP_neg_threshold_itr` | Float | Minimum posterior error probability threshold for reclassifying weak target PSMs as negatives during the ITR stage of LightGBM rescoring (default: 0.90) |
+| `machine_learning.min_PEP_neg_threshold_itr` | Float | Shared posterior error probability threshold used when relabeling weak targets as negatives during iterative rescoring (default: 0.90) |
 | `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
-| `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |
+| `machine_learning.q_value_interpolation_points_per_bin` | Int | Minimum points per bin when building q-value/PEP interpolation sidecars for precursor and protein scoring (default: 10) |
 | `machine_learning.n_quantile_bins` | Int | Number of quantile bins for score binning (default: 25) |
 | `machine_learning.enable_model_comparison` | Boolean | Enable comparison of scoring models (default: true) |
 | `machine_learning.validation_split_ratio` | Float | Fraction of data held out for validation (default: 0.2) |
@@ -185,16 +185,19 @@ The deconvolution parameters are split into `ms1` and `ms2` sub-objects for sepa
 | `machine_learning.min_psms_for_comparison` | Int | Minimum PSMs to enable model comparison (default: 1000) |
 | `machine_learning.max_psms_for_comparison` | Int | Maximum PSMs for in-memory model comparison (default: 100000) |
 
-### Protein Inference Parameters
+### Protein Scoring Parameters
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `min_peptides` | Int | Minimum number of peptides required for a protein group (default: 1) |
+| `proteinScoring.min_peptides` | Int | Minimum number of peptides required for a protein group before protein-level output and rescoring (default: 1) |
+| `proteinScoring.write_qc_plots` | Boolean | Write per-fold and per-iteration protein QC plots during protein rescoring (default: false) |
+| `proteinScoring.log_feature_importance` | Boolean | Log protein probit feature importances during protein rescoring (default: false) |
 
 ### MaxLFQ Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `run_to_run_normalization` | Boolean | Whether to use run-to-run normalized abundances for precursor and protein quantification (default: false) |
+| `min_peptides` | Int | Minimum number of peptides required for protein quantification in MaxLFQ outputs (default: 1) |
 | `max_chunk_size_mb` | Int | Maximum chunk size in MB for MaxLFQ chunked merge processing (default: 1024) |
 
 ### Output Parameters

@@ -75,7 +75,6 @@ struct MaxLFQSearchParameters <: SearchParameters
         output_params = params.output
         global_params = params.global_settings
         maxLFQ_params = params.maxLFQ
-        protein_inference_params = params.protein_inference
 
         new(
             Int64(norm_params.n_rt_bins),
@@ -83,7 +82,7 @@ struct MaxLFQSearchParameters <: SearchParameters
             Bool(maxLFQ_params.run_to_run_normalization),
             Float32(global_params.scoring.q_value_threshold),
             Int64(100000),  # Default batch size
-            Int64(protein_inference_params.min_peptides),
+            Int64(maxLFQ_params.min_peptides),
             Float64(get(maxLFQ_params, :max_chunk_size_mb, 1024)),
             Bool(output_params.write_csv),
             Bool(output_params.delete_temp),
@@ -160,14 +159,6 @@ function summarize_results!(
         qc_plot_folder = joinpath(getDataOutDir(search_context), "qc_plots")
         precursors_long_path = joinpath(getDataOutDir(search_context), "precursors_long.arrow")
         protein_long_path = joinpath(getDataOutDir(search_context), "protein_groups_long.arrow")
-        # Normalize quantitative values
-        normalizeQuant(
-            passing_psms_folder,
-            :peak_area,
-            N = params.n_rt_bins,
-            spline_n_knots = params.spline_n_knots
-        )
-
         # Get PSM paths using valid file utilities to maintain proper file mapping
         valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
         existing_passing_psm_paths = [path for (_, path) in valid_file_data]
@@ -181,6 +172,20 @@ function summarize_results!(
         end
         
         psm_refs = [PSMFileReference(path) for path in existing_passing_psm_paths]
+
+        if !params.params.output.write_decoys
+            decoy_filter_pipeline = TransformPipeline() |>
+                filter_rows(row -> row.target; desc = "keep_target_rows")
+            apply_pipeline!(psm_refs, decoy_filter_pipeline)
+        end
+
+        # Normalize the same integrated precursor tables that will feed MaxLFQ.
+        normalizeQuant(
+            [file_path(ref) for ref in psm_refs],
+            :peak_area,
+            N = params.n_rt_bins,
+            spline_n_knots = params.spline_n_knots
+        )
 
         # Ensure all PSM files are sorted correctly for MaxLFQ
         sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
@@ -218,6 +223,8 @@ function summarize_results!(
             write_csv = params.write_csv
         )
 
+        precursors = getPrecursors(getSpecLib(search_context))
+
         @user_info "Performing MaxLFQ..."
         # Chunked MaxLFQ protein quantification (bounded memory per chunk)
         precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
@@ -226,6 +233,9 @@ function summarize_results!(
             protein_long_path,
             precursor_quant_col,
             all_file_names,
+            getSequence(precursors),
+            getStructuralMods(precursors),
+            getIsotopicMods(precursors),
             params.q_value_threshold,
             batch_size = params.batch_size
         )
@@ -237,7 +247,6 @@ function summarize_results!(
 
         @user_info "Writing protein group results..."
         # Create wide format protein table (protein groups table is small, no chunking needed)
-        precursors = getPrecursors(getSpecLib(search_context))
         proteins_wide_path = writeProteinGroupsCSV(
             results.proteins_long_path,
             getSequence(precursors),

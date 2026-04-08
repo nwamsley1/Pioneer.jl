@@ -567,7 +567,16 @@ function writeProteinGroupsCSV(
     function makeWideFormat(
         longdf::DataFrame)
         # First create a DataFrame with the non-abundance columns we want to keep
-        metadata_df = unique(longdf[:, [:species, :gene_names, :protein_names, :protein, :global_pg_score, :global_qval, :target, :entrap_id,]])#, :n_peptides]])
+        metadata_df = unique(longdf[:, [
+            :species,
+            :gene_names,
+            :protein_names,
+            :protein,
+            :target,
+            :entrap_id,
+            :global_pg_score,
+            :global_qval,
+        ]])
         
         # Create the abundance wide format
         abundance_df = unstack(longdf,
@@ -609,24 +618,37 @@ function writeProteinGroupsCSV(
         # If allowmissing! is not needed or columns already typed, proceed
     end
 
-    # Update wide columns to include n_peptides
-    wide_columns = ["species", "gene_names", "protein_names", "protein", "target", "entrap_id", "global_pg_score", "global_qval"]
+    wide_columns = [
+        "species",
+        "gene_names",
+        "protein_names",
+        "protein",
+        "target",
+        "entrap_id",
+        "global_pg_score",
+        "global_qval",
+    ]
 
-    select!(protein_groups_long, [:file_name,
-                             :species,
-                             :gene_names,
-                             :protein_names,
-                             :protein,
-                             :target,
-                             :entrap_id,
-                             :peptides,
-                             :n_peptides,
-                             :global_pg_score,
-                             :pg_score,
-                             :global_qval,
-                             :qval,
-                             :pg_pep,
-                             :abundance])
+    long_columns = Symbol[
+        :file_name,
+        :species,
+        :gene_names,
+        :protein_names,
+        :protein,
+        :target,
+        :entrap_id,
+        :peptides,
+        :n_precursors,
+        :n_modified_peptides,
+        :n_peptides,
+        :global_pg_score,
+        :pg_score,
+        :global_qval,
+        :qval,
+        :pg_pep,
+        :abundance,
+    ]
+    select!(protein_groups_long, long_columns)
 
     sorted_columns = vcat(wide_columns, file_names)
     batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)

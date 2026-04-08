@@ -216,24 +216,40 @@ function importScripts()
         ]
     )
     
-    # Load ScoringSearch files in dependency order
+    # Load PrecursorScoringSearch files in dependency order
     include_files!(
-        joinpath(search_methods_dir, "ScoringSearch"),
+        joinpath(search_methods_dir, "PrecursorScoringSearch"),
         [
             "utils.jl",                        # Contains get_qvalue_spline and other utility functions
             "model_config.jl",                 # Model configuration
             "score_psms.jl",                   # PSM scoring functions
             "scoring_interface.jl",            # Interface functions
-            "protein_inference_pipeline.jl",   # Protein inference pipeline
-            "ScoringSearch.jl"                 # Main implementation - depends on utils.jl
+            "PrecursorScoringSearch.jl"        # Main precursor scoring implementation - depends on utils.jl
+        ]
+    )
+
+    include_files!(
+        joinpath(search_methods_dir, "ProteinInferenceSearch"),
+        [
+            "utils.jl",
+            "ProteinInferenceSearch.jl"
+        ]
+    )
+    
+    include_files!(
+        joinpath(search_methods_dir, "ProteinScoringSearch"),
+        [
+            "utils.jl",
+            "ProteinScoringSearch.jl"
         ]
     )
     
     # Include remaining SearchMethods files (excluding old FileReferences and FileOperations)
-    # Skip ParameterTuningSearch and ScoringSearch since we loaded them above
+    # Skip manually ordered search method directories since we loaded them above
     for (root, dirs, files) in walkdir(search_methods_dir)
-        # Skip ParameterTuningSearch and ScoringSearch directories
-        if occursin("ParameterTuningSearch", root) || occursin("ScoringSearch", root)
+        # Skip manually ordered search method directories
+        root_basename = basename(root)
+        if root_basename == "ParameterTuningSearch" || root_basename == "PrecursorScoringSearch" || root_basename == "ProteinInferenceSearch" || root_basename == "ProteinScoringSearch"
             continue
         end
         for file in files

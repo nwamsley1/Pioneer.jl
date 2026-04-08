@@ -18,9 +18,11 @@ SearchDIA.jl (main entry)
 ├── 4. FirstPassSearch - Initial PSM identification with RT calibration
 ├── 5. HuberTuningSearch - Optimizes Huber loss parameters
 ├── 6. SecondPassSearch - Refined search with calibrated parameters
-├── 7. ScoringSearch - FDR control and protein group scoring
+├── 7. PrecursorScoringSearch - Precursor rescoring and FDR control
 ├── 8. IntegrateChromatogramSearch - Peak integration and quantification
-└── 9. MaxLFQSearch - Label-free quantification
+├── 9. ProteinInferenceSearch - Protein-group assignment on integrated passing precursors
+├── 10. ProteinScoringSearch - Protein-group scoring and q-values
+└── 11. MaxLFQSearch - Label-free quantification
 ```
 
 ### Key Abstractions
@@ -83,15 +85,10 @@ Protein group handling spans multiple modules:
 - Implements greedy set cover algorithm for minimal protein sets
 - Handles complex cases: distinct, differentiable, indistinguishable proteins
 
-**ScoringSearch Integration** (`ScoringSearch/protein_inference_pipeline.jl`):
-- `perform_protein_inference_pipeline()` - Composable pipeline for protein inference
+**Protein Inference and Scoring Integration** (`ProteinInferenceSearch/*`, `ProteinScoringSearch/*`):
+- `run_protein_inference!()` - Annotates passing precursors with inferred protein groups and quant flags
 - `apply_inference_to_dataframe()` - Wrapper around core infer_proteins algorithm
-- `group_psms_by_protein()` - Aggregates PSMs into protein groups
-
-**Legacy Functions** (`ScoringSearch/utils.jl`):
-- `getProteinGroupsDict()` - Creates protein groups from PSMs (legacy approach)
-- `merge_sorted_protein_groups()` - Memory-efficient merging using heap
-- `writeProteinGroups()` - Outputs final protein groups
+- `build_protein_group_tables()` - Aggregates annotated passing precursors into per-run protein-group tables
 
 **Type-Safe Structures**:
 ```julia
@@ -122,26 +119,24 @@ The `merge_sorted_protein_groups` function is critical for handling large datase
 
 ### Working with ML Protein Scoring
 
-ML scoring integration in `utils_protein_ml.jl` (memory-efficient OOM approach):
-1. **Memory-Efficient Architecture**: Uses out-of-memory (OOM) processing to handle large datasets
-2. **Sample-Train-Apply Workflow**: 
-   - Samples protein groups proportionally from files for training
-   - Trains LightGBM models on the sample
-   - Applies models file-by-file to avoid loading all data into memory
-3. **CV Fold Consistency**: Maintains cross-validation fold assignment based on constituent peptides
-4. **Feature Engineering**: Extracts top-N precursor scores plus protein-level statistics
-5. **Scalability**: Designed for experiments with hundreds to thousands of files
-
-**Key Functions**:
-- `apply_ml_protein_scoring_oom!()` - Main OOM workflow orchestrator (in `proteinGroupScoringOOM.jl`)
-- `get_protein_groups_with_ml()` - Integration function that calls OOM approach when enabled
-- Memory usage is constant regardless of dataset size
+Protein handling now runs in dedicated post-integration steps:
+1. **Separate Steps**:
+   - `ProteinInferenceSearch` annotates integrated passing precursors with inferred protein groups
+   - `ProteinScoringSearch` builds protein-group tables, fits protein probit models, and computes protein-level q-values
+2. **Multifold Probit Architecture**:
+   - Builds protein CV folds from constituent precursor folds
+   - Fits fold-specific probit models on protein-level features
+   - Applies held-out models back to each fold
+3. **Optional Diagnostics**:
+   - `proteinScoring.write_qc_plots`
+   - `proteinScoring.log_feature_importance`
+4. **Shared Protein-Group Builder**: `build_protein_group_tables()` lives in `ProteinScoringSearch/protein_inference_pipeline.jl`
+- **Memory Budget**: In-memory row limits are derived from `optimization.machine_learning.max_in_memory_table_mb`
 
 **Performance Benefits**:
-- Constant memory usage regardless of dataset size
-- Handles experiments with thousands of MS files
-- Maintains statistical power through strategic sampling
-- Follows established OOM patterns from PSM scoring in `percolatorSortOf.jl`
+- Keeps protein rescoring bounded by the shared in-memory table budget
+- Handles multifold protein rescoring without mixing training and held-out folds
+- Reuses the same protein inference outputs for both protein-group tables and protein q-values
 
 ### Debugging Search Results
 
@@ -230,7 +225,7 @@ The protein inference system was recently refactored to use type-safe structures
 All planned SearchMethods refactoring has been completed:
 - ✅ FileReference type hierarchy with PSMFileReference and ProteinGroupFileReference
 - ✅ Algorithm wrappers for protein inference and PSM score updates  
-- ✅ ScoringSearch interface using file references
+- ✅ PrecursorScoringSearch interface using file references
 - ✅ Generic heap-based merge supporting N sort keys
 - ✅ MaxLFQSearch simplified to use MSData directly
 
