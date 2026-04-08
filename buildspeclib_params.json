@@ -1,0 +1,71 @@
+{
+    "comment_output": "=== Output library path ===",
+    "library_path": "/Users/dennisgoldfarb/Programming/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_params/output/test_lib",
+    "comment_calibration": "=== Calibration file (optional but recommended) ===",
+    "calibration_raw_file": "",
+    "comment_fasta": "=== FASTA files ===",
+    "fasta_paths": [
+        "/Users/dennisgoldfarb/Programming/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins1.fasta",
+        "/Users/dennisgoldfarb/Programming/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir1/proteins2.fasta.gz",
+        "/Users/dennisgoldfarb/Programming/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/fastas_dir2/proteins3.fasta",
+        "/Users/dennisgoldfarb/Programming/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/single_protein.fasta"
+    ],
+    "fasta_names": [
+        "PROTEINS1",
+        "PROTEINS2",
+        "PROTEINS3",
+        "SINGLE_PROTEIN"
+    ],
+    "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
+    "fasta_header_regex_accessions": [
+        "^\\w+\\|(\\w+(?:-\\d+)?)\\|"
+    ],
+    "fasta_header_regex_genes": [
+        " GN=(\\S+)"
+    ],
+    "fasta_header_regex_proteins": [
+        "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="
+    ],
+    "fasta_header_regex_organisms": [
+        " OS=([^ ]+.*?) [^ ]+="
+    ],
+    "comment_digestion": "=== Protein digestion settings ===",
+    "fasta_digest_params": {
+        "min_length": 7,
+        "max_length": 40,
+        "min_charge": 2,
+        "max_charge": 3,
+        "cleavage_regex": "[KR][^_|$]",
+        "missed_cleavages": 1,
+        "max_var_mods": 1,
+        "add_decoys": true,
+        "entrapment_r": 0
+    },
+    "comment_modifications": "=== Modifications ===",
+    "variable_mods": {
+        "pattern": [
+            "M"
+        ],
+        "mass": [
+            15.99491
+        ],
+        "name": [
+            "Unimod:35"
+        ]
+    },
+    "fixed_mods": {
+        "pattern": [
+            "C"
+        ],
+        "mass": [
+            57.021464
+        ],
+        "name": [
+            "Unimod:4"
+        ]
+    },
+    "isotope_mod_groups": [],
+    "comment_processing": "=== Processing settings ===",
+    "include_contaminants": true,
+    "predict_fragments": true
+}

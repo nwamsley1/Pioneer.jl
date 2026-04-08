@@ -271,7 +271,7 @@ using CodecZlib
         @test isempty(config["fasta_paths"])
         @test isempty(config["fasta_names"])
     end
-    
+
     # Don't cleanup - leave test files for inspection
 end
 

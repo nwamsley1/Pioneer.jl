@@ -169,6 +169,13 @@ function prepare_chronologer_input(
 
     protein_df = build_protein_df(protein_entries)
     Arrow.write(proteins_out_path, protein_df)
+    proteome_index = _params.fasta_digest_params["add_decoys"] ? ProteomeDistanceIndex(
+        protein_entries;
+        min_block_length = max(1, fld(_params.fasta_digest_params["min_length"], 2)),
+        max_block_length = cld(_params.fasta_digest_params["max_length"], 2),
+        show_progress = true,
+        log_progress = true,
+    ) : nothing
 
     # Display decoy generation configuration
     decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
@@ -189,6 +196,8 @@ function prepare_chronologer_input(
 
     # Step 4: Add entrapment sequences (grouped by base sequence so all mods share the same entrapments)
     entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
+    entrapment_ratio = _params.fasta_digest_params["entrapment_r"]
+    @user_info "Generating grouped entrapment sequences (method=$entrapment_method, ratio=$entrapment_ratio)"
     fasta_entries = add_entrapment_sequences_grouped(
         fasta_entries,
         UInt8(_params.fasta_digest_params["entrapment_r"]);
@@ -201,7 +210,13 @@ function prepare_chronologer_input(
     # Step 6: Add decoys (GROUPED by base sequence; all mods share same decoy)
     if _params.fasta_digest_params["add_decoys"]
         decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
-        fasta_entries = add_decoy_sequences_grouped(fasta_entries; decoy_method=decoy_method)
+        @user_info "Generating grouped decoy sequences (method=$decoy_method, min_target_hamming_distance=2)"
+        fasta_entries = add_decoy_sequences_grouped(
+            fasta_entries;
+            decoy_method = decoy_method,
+            fixed_mod_names = fixed_mods,
+            proteome_index = proteome_index,
+        )
     end
         
     # Step 7: Add charges (creates precursor variants)

@@ -80,6 +80,307 @@ function in(seq_charge::Tuple{String, UInt8}, pss::PeptideSequenceSet)
     return (replace(first(seq_charge), 'I' => 'L'), last(seq_charge)) ∈ getSeqSet(pss)
 end
 
+const PROTEOME_INDEX_MIN_BLOCK_LENGTH = 3
+const PROTEOME_INDEX_MAX_BLOCK_LENGTH = 20
+const SHORT_EXACT_MAX_LENGTH = 7
+const PACKED_AA_BITS = 5
+const PACKED_AA_MASK = UInt64(0x1f)
+const INVALID_AA_CODE = typemax(UInt8)
+const CANONICAL_AA_ORDER = ['A', 'C', 'D', 'E', 'F', 'G', 'H', 'K', 'L',
+                            'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
+const MAX_CANONICAL_AA_CODE = UInt8(length(CANONICAL_AA_ORDER) - 1)
+const CANONICAL_AA_CODES = Dict{Char, UInt8}(
+    'A' => UInt8(0),
+    'C' => UInt8(1),
+    'D' => UInt8(2),
+    'E' => UInt8(3),
+    'F' => UInt8(4),
+    'G' => UInt8(5),
+    'H' => UInt8(6),
+    'K' => UInt8(7),
+    'L' => UInt8(8),
+    'M' => UInt8(9),
+    'N' => UInt8(10),
+    'P' => UInt8(11),
+    'Q' => UInt8(12),
+    'R' => UInt8(13),
+    'S' => UInt8(14),
+    'T' => UInt8(15),
+    'V' => UInt8(16),
+    'W' => UInt8(17),
+    'Y' => UInt8(18),
+    'I' => UInt8(8),
+)
+const PRIMARY_MUTATION_MAP = Dict{Char, Char}(
+    'G' => 'L',
+    'A' => 'L',
+    'V' => 'L',
+    'L' => 'V',
+    'I' => 'V',
+    'F' => 'L',
+    'M' => 'L',
+    'P' => 'L',
+    'W' => 'L',
+    'S' => 'T',
+    'C' => 'S',
+    'T' => 'S',
+    'Y' => 'S',
+    'H' => 'S',
+    'K' => 'L',
+    'R' => 'L',
+    'Q' => 'N',
+    'E' => 'D',
+    'N' => 'Q',
+    'D' => 'E',
+)
+
+struct ProteomeDistanceIndex
+    sequence_codes::Vector{UInt8}
+    invalid_prefix::Vector{Int}
+    block_indexes::Vector{Dict{UInt128, Vector{Int}}}
+    short_exact_indexes::Vector{Set{UInt64}}
+    min_block_length::Int
+    max_block_length::Int
+    short_exact_max_length::Int
+end
+
+function encode_sequence_codes(sequence::AbstractString)
+    codes = Vector{UInt8}(undef, length(sequence))
+    for (i, aa) in enumerate(sequence)
+        codes[i] = get(CANONICAL_AA_CODES, aa, INVALID_AA_CODE)
+    end
+    return codes
+end
+
+function encode_block_key(codes::AbstractVector{UInt8}, start::Int, block_length::Int)
+    key = zero(UInt128)
+    @inbounds for idx in start:(start + block_length - 1)
+        key = (key << 5) | UInt128(codes[idx])
+    end
+    return key
+end
+
+function encode_short_key(codes::AbstractVector{UInt8}, start::Int, block_length::Int)
+    key = zero(UInt64)
+    @inbounds for idx in start:(start + block_length - 1)
+        key = (key << PACKED_AA_BITS) | UInt64(codes[idx])
+    end
+    return key
+end
+
+function ProteomeDistanceIndex(
+    fasta_entries::Vector{FastaEntry};
+    min_block_length::Int = PROTEOME_INDEX_MIN_BLOCK_LENGTH,
+    max_block_length::Int = PROTEOME_INDEX_MAX_BLOCK_LENGTH,
+    show_progress::Bool = false,
+    log_progress::Bool = false,
+)
+    sequence_codes = UInt8[]
+    total_length = sum(length(get_sequence(entry)) + 1 for entry in fasta_entries)
+    total_residues = total_length - length(fasta_entries)
+    total_block_lengths = max(0, max_block_length - min_block_length + 1)
+    short_exact_max_length = SHORT_EXACT_MAX_LENGTH
+    pbar = (show_progress && (!isempty(fasta_entries) || total_block_lengths > 0)) ?
+        ProgressBar(total=length(fasta_entries) + total_block_lengths + short_exact_max_length) : nothing
+    if log_progress
+        @user_info "Building proteome distance index from $(length(fasta_entries)) proteins ($total_residues residues) with block lengths $min_block_length:$max_block_length"
+    end
+    if !isnothing(pbar)
+        set_description(pbar, "Encoding proteome index:")
+    end
+    sizehint!(sequence_codes, total_length)
+
+    for entry in fasta_entries
+        append!(sequence_codes, encode_sequence_codes(get_sequence(entry)))
+        push!(sequence_codes, INVALID_AA_CODE)
+        if !isnothing(pbar)
+            update(pbar)
+        end
+    end
+
+    invalid_prefix = Vector{Int}(undef, length(sequence_codes) + 1)
+    invalid_prefix[1] = 0
+    for idx in eachindex(sequence_codes)
+        invalid_prefix[idx + 1] = invalid_prefix[idx] + (sequence_codes[idx] == INVALID_AA_CODE)
+    end
+
+    block_indexes = [Dict{UInt128, Vector{Int}}() for _ in 1:max_block_length]
+    short_exact_indexes = [Set{UInt64}() for _ in 1:short_exact_max_length]
+    max_start = length(sequence_codes)
+    total_windows = 0
+    if !isnothing(pbar) && total_block_lengths > 0
+        set_description(pbar, "Building proteome index blocks:")
+    end
+    for block_length in min_block_length:max_block_length
+        if max_start < block_length
+            if !isnothing(pbar)
+                update(pbar)
+            end
+            continue
+        end
+        index = block_indexes[block_length]
+        for start in 1:(max_start - block_length + 1)
+            if invalid_prefix[start + block_length] != invalid_prefix[start]
+                continue
+            end
+            key = encode_block_key(sequence_codes, start, block_length)
+            push!(get!(index, key, Int[]), start)
+            total_windows += 1
+        end
+        if !isnothing(pbar)
+            update(pbar)
+        end
+    end
+
+    if !isnothing(pbar) && short_exact_max_length > 0
+        set_description(pbar, "Building short exact indices:")
+    end
+    for peptide_length in 1:short_exact_max_length
+        if max_start >= peptide_length
+            exact_index = short_exact_indexes[peptide_length]
+            for start in 1:(max_start - peptide_length + 1)
+                if invalid_prefix[start + peptide_length] != invalid_prefix[start]
+                    continue
+                end
+                push!(exact_index, encode_short_key(sequence_codes, start, peptide_length))
+            end
+        end
+        if !isnothing(pbar)
+            update(pbar)
+        end
+    end
+
+    if log_progress
+        @user_info "Proteome distance index ready: $total_windows valid windows across $total_block_lengths block lengths"
+    end
+
+    return ProteomeDistanceIndex(
+        sequence_codes,
+        invalid_prefix,
+        block_indexes,
+        short_exact_indexes,
+        min_block_length,
+        max_block_length,
+        short_exact_max_length,
+    )
+end
+
+function has_invalid_window(index::ProteomeDistanceIndex, start::Int, window_length::Int)
+    stop = start + window_length - 1
+    if start < 1 || stop > length(index.sequence_codes)
+        return true
+    end
+    return index.invalid_prefix[stop + 1] != index.invalid_prefix[start]
+end
+
+function collect_candidate_starts!(
+    starts::Vector{Int},
+    seen::Set{Int},
+    hits::Union{Nothing, Vector{Int}},
+    offset::Int,
+    candidate_length::Int,
+    index::ProteomeDistanceIndex,
+)
+    isnothing(hits) && return nothing
+    for hit in hits
+        start = hit - offset
+        if start < 1 || (start + candidate_length - 1) > length(index.sequence_codes)
+            continue
+        end
+        if start ∉ seen
+            push!(seen, start)
+            push!(starts, start)
+        end
+    end
+    return nothing
+end
+
+function has_min_target_hamming_distance(candidate::String, index::ProteomeDistanceIndex)
+    candidate_codes = encode_sequence_codes(candidate)
+    if any(==(INVALID_AA_CODE), candidate_codes)
+        return false
+    end
+
+    peptide_length = length(candidate_codes)
+    if peptide_length <= index.short_exact_max_length
+        exact_index = index.short_exact_indexes[peptide_length]
+        isempty(exact_index) && return true
+
+        base_key = encode_short_key(candidate_codes, 1, peptide_length)
+        if base_key ∈ exact_index
+            return false
+        end
+
+        for position in 1:peptide_length
+            bit_shift = PACKED_AA_BITS * (peptide_length - position)
+            cleared_key = base_key & ~(PACKED_AA_MASK << bit_shift)
+            original_code = candidate_codes[position]
+
+            for alt_code in UInt8(0):MAX_CANONICAL_AA_CODE
+                alt_code == original_code && continue
+                if (cleared_key | (UInt64(alt_code) << bit_shift)) ∈ exact_index
+                    return false
+                end
+            end
+        end
+
+        return true
+    end
+
+    left_length = fld(peptide_length, 2)
+    right_length = peptide_length - left_length
+
+    if left_length < index.min_block_length || right_length < index.min_block_length
+        error("ProteomeDistanceIndex was built for block lengths $(index.min_block_length):$(index.max_block_length), cannot query peptide length $peptide_length")
+    end
+
+    left_key = encode_block_key(candidate_codes, 1, left_length)
+    right_key = encode_block_key(candidate_codes, left_length + 1, right_length)
+    left_hits = get(index.block_indexes[left_length], left_key, nothing)
+    right_hits = get(index.block_indexes[right_length], right_key, nothing)
+
+    if isnothing(left_hits) && isnothing(right_hits)
+        return true
+    end
+
+    candidate_starts = Int[]
+    seen = Set{Int}()
+    collect_candidate_starts!(candidate_starts, seen, left_hits, 0, peptide_length, index)
+    collect_candidate_starts!(candidate_starts, seen, right_hits, left_length, peptide_length, index)
+
+    for start in candidate_starts
+        if has_invalid_window(index, start, peptide_length)
+            continue
+        end
+
+        mismatches = 0
+        @inbounds for offset in 1:peptide_length
+            if index.sequence_codes[start + offset - 1] != candidate_codes[offset]
+                mismatches += 1
+                mismatches >= 2 && break
+            end
+        end
+
+        if mismatches <= 1
+            return false
+        end
+    end
+
+    return true
+end
+
+function is_valid_decoy_candidate(
+    candidate::String,
+    charges::Vector{UInt8},
+    sequences_set::PeptideSequenceSet,
+    proteome_index::Union{Nothing, ProteomeDistanceIndex},
+)
+    if any(((candidate, charge) ∈ sequences_set) for charge in charges)
+        return false
+    end
+    return isnothing(proteome_index) || has_min_target_hamming_distance(candidate, proteome_index)
+end
+
 """
     add_entrapment_sequences(
         target_fasta_entries::Vector{FastaEntry}, 
@@ -267,6 +568,8 @@ same base peptide sequence receive the same set of entrapment sequences.
 - `max_shuffle_attempts::Int64`: Max attempts to find a unique shuffled sequence
 - `fixed_chars::Vector{Char}`: Optional characters to keep fixed when shuffling
 - `entrapment_method::String`: "shuffle" or "reverse" (reverse may fall back to shuffle)
+- `show_progress::Bool`: Show a progress bar while iterating grouped base sequences
+- `log_progress::Bool`: Emit start/end summary logs for grouped generation
 
 # Returns
 - `Vector{FastaEntry}`: Combined vector of original entries and grouped entrapment entries
@@ -283,7 +586,9 @@ function add_entrapment_sequences_grouped(
     entrapment_r::UInt8;
     max_shuffle_attempts::Int64 = 20,
     fixed_chars::Vector{Char} = Vector{Char}(),
-    entrapment_method::String = "shuffle"
+    entrapment_method::String = "shuffle",
+    show_progress::Bool = true,
+    log_progress::Bool = true,
 )::Vector{FastaEntry}
 
     # Track existing sequences (I/L equivalence) including charges
@@ -318,6 +623,13 @@ function add_entrapment_sequences_grouped(
     entrapments_out = Vector{FastaEntry}()
     fallback_to_shuffle_count = 0
     total_attempted = length(groups) * Int(entrapment_r)
+    pbar = (show_progress && n_groups > 0) ? ProgressBar(total=n_groups) : nothing
+    if !isnothing(pbar)
+        set_description(pbar, "Generating entrapment groups:")
+    end
+    if log_progress
+        @user_info "Entrapment generation: $n_entries entries across $n_groups base sequence groups (avg variants/group=$(avg_variants), ratio=$(Int(entrapment_r)))"
+    end
 
     exhausted_groups = 0
     sample_logged = 0
@@ -404,6 +716,14 @@ function add_entrapment_sequences_grouped(
                 ))
             end
         end
+
+        if !isnothing(pbar)
+            update(pbar)
+        end
+    end
+
+    if log_progress
+        @user_info "Entrapment generation complete: $(length(entrapments_out)) entrapment entries created, exhausted_groups=$exhausted_groups, reverse_fallbacks=$fallback_to_shuffle_count"
     end
 
     # Report statistics if using reverse method for entrapment
@@ -668,6 +988,223 @@ function adjust_mod_positions(
     return adjusted_mods
 end
 
+function build_fixed_mods_for_sequence(
+    sequence::String,
+    fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
+)::Vector{PeptideMod}
+    fixed_mods = PeptideMod[]
+    for mod in fixed_mod_names
+        getFixedMods!(fixed_mods, eachmatch(mod[:p], sequence), mod[:r])
+    end
+    sort!(fixed_mods)
+    return fixed_mods
+end
+
+function merge_fixed_mods(
+    sequence::String,
+    adjusted_mods::Union{Missing, Vector{PeptideMod}},
+    fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
+)::Union{Missing, Vector{PeptideMod}}
+    isempty(fixed_mod_names) && return adjusted_mods
+
+    fixed_mod_names_set = Set(mod[:r] for mod in fixed_mod_names)
+    merged_mods = PeptideMod[]
+
+    if !ismissing(adjusted_mods) && !isempty(adjusted_mods)
+        for mod in adjusted_mods
+            if mod.mod_name ∉ fixed_mod_names_set
+                push!(merged_mods, mod)
+            end
+        end
+    end
+
+    append!(merged_mods, build_fixed_mods_for_sequence(sequence, fixed_mod_names))
+
+    if isempty(merged_mods)
+        return ismissing(adjusted_mods) ? missing : PeptideMod[]
+    end
+
+    sort!(merged_mods)
+    return merged_mods
+end
+
+function identity_positions(seq_length::Int)
+    positions = Vector{UInt8}(undef, seq_length)
+    for idx in 1:seq_length
+        positions[idx] = UInt8(idx)
+    end
+    return positions
+end
+
+function collect_protected_positions(
+    target_fasta_entries::Vector{FastaEntry},
+    idxs::Vector{Int},
+    base_seq::String,
+    fixed_chars::Vector{Char},
+)
+    seq_length = length(base_seq)
+    protected = falses(seq_length)
+    protected[end] = true
+
+    for idx in 1:(seq_length - 1)
+        if base_seq[idx] ∈ fixed_chars
+            protected[idx] = true
+        end
+    end
+
+    for entry_idx in idxs
+        entry = target_fasta_entries[entry_idx]
+        for mods in (get_structural_mods(entry), get_isotopic_mods(entry))
+            if ismissing(mods) || isempty(mods)
+                continue
+            end
+            for mod in mods
+                if mod.aa == 'n'
+                    protected[1] = true
+                elseif mod.aa == 'c'
+                    protected[end] = true
+                elseif 1 <= mod.position <= seq_length
+                    protected[Int(mod.position)] = true
+                end
+            end
+        end
+    end
+
+    return protected
+end
+
+function inward_mutation_pairs(seq_length::Int)
+    pairs = Tuple{Int, Int}[]
+    left = 2
+    right = seq_length - 1
+    if seq_length <= 3 || left > right
+        return pairs
+    end
+
+    if isodd(seq_length)
+        target_left = fld(seq_length + 1, 2)
+        target_right = target_left
+    else
+        target_left = fld(seq_length, 2)
+        target_right = target_left + 1
+    end
+
+    push!(pairs, (left, right))
+    while left != target_left || right != target_right
+        if left != target_left
+            left += 1
+            push!(pairs, (left, right))
+        end
+        if right != target_right
+            right -= 1
+            push!(pairs, (left, right))
+        end
+    end
+
+    if length(pairs) > 1
+        unique!(pairs)
+    end
+
+    return pairs
+end
+
+function build_mutated_sequence(
+    base_chars::Vector{Char},
+    mutation_positions,
+    mutation_aas,
+)
+    mutated = copy(base_chars)
+    for (position, aa) in zip(mutation_positions, mutation_aas)
+        mutated[position] = aa
+    end
+    return String(mutated)
+end
+
+function try_mutation_fallback(
+    base_seq::String,
+    idxs::Vector{Int},
+    target_fasta_entries::Vector{FastaEntry},
+    charges::Vector{UInt8},
+    sequences_set::PeptideSequenceSet,
+    proteome_index::Union{Nothing, ProteomeDistanceIndex},
+    fixed_chars::Vector{Char},
+)
+    protected = collect_protected_positions(target_fasta_entries, idxs, base_seq, fixed_chars)
+    mutation_pairs = inward_mutation_pairs(length(base_seq))
+    isempty(mutation_pairs) && return nothing, nothing
+
+    base_chars = collect(base_seq)
+    identity_map = identity_positions(length(base_seq))
+
+    for (left, right) in mutation_pairs
+        if protected[left] || protected[right]
+            continue
+        end
+
+        left_mutation = get(PRIMARY_MUTATION_MAP, base_chars[left], base_chars[left])
+        if left == right
+            if left_mutation == base_chars[left]
+                continue
+            end
+            candidate = build_mutated_sequence(base_chars, (left,), (left_mutation,))
+        else
+            right_mutation = get(PRIMARY_MUTATION_MAP, base_chars[right], base_chars[right])
+            if left_mutation == base_chars[left] || right_mutation == base_chars[right]
+                continue
+            end
+            candidate = build_mutated_sequence(base_chars, (left, right), (left_mutation, right_mutation))
+        end
+
+        if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index)
+            return candidate, identity_map
+        end
+    end
+
+    return nothing, nothing
+end
+
+function find_group_decoy_candidate!(
+    shuffle_seq::ShuffleSeq,
+    base_seq::String,
+    idxs::Vector{Int},
+    target_fasta_entries::Vector{FastaEntry},
+    charges::Vector{UInt8},
+    sequences_set::PeptideSequenceSet;
+    max_shuffle_attempts::Int64 = 20,
+    fixed_chars::Vector{Char} = Vector{Char}(),
+    decoy_method::String = "shuffle",
+    proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
+)
+    candidate = shuffle_sequence!(shuffle_seq, base_seq; method = decoy_method)
+    if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index)
+        return candidate, Vector{UInt8}(shuffle_seq.new_positions), false, false
+    end
+
+    shuffle_attempts = decoy_method == "shuffle" ? max(max_shuffle_attempts - 1, 0) : max_shuffle_attempts
+    used_shuffle_fallback = decoy_method == "reverse"
+    for _ in 1:shuffle_attempts
+        candidate = shuffle_sequence!(shuffle_seq, base_seq; method = "shuffle")
+        if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index)
+            return candidate, Vector{UInt8}(shuffle_seq.new_positions), used_shuffle_fallback, false
+        end
+    end
+
+    candidate, positions = try_mutation_fallback(
+        base_seq,
+        idxs,
+        target_fasta_entries,
+        charges,
+        sequences_set,
+        proteome_index,
+        fixed_chars,
+    )
+    if !isnothing(candidate)
+        return candidate, positions, used_shuffle_fallback, true
+    end
+
+    return nothing, nothing, used_shuffle_fallback, false
+end
+
 
 """
     add_decoy_sequences(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
@@ -846,7 +1383,11 @@ base peptide sequence share a single decoy sequence and mod position mapping.
 - `target_fasta_entries::Vector{FastaEntry}`: Peptide entries to generate decoys for (typically includes targets and entrapments)
 - `max_shuffle_attempts::Int64`: Max attempts to find a unique shuffled sequence
 - `fixed_chars::Vector{Char}`: Optional set of characters kept fixed when shuffling
+- `fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Fixed modification patterns to reapply on the final decoy sequence
 - `decoy_method::String`: "shuffle" or "reverse" (reverse may fall back to shuffle)
+- `proteome_index::Union{Nothing, ProteomeDistanceIndex}`: Optional target proteome index used to enforce a minimum Hamming distance of 2 from target substrings
+- `show_progress::Bool`: Show a progress bar while iterating grouped base sequences
+- `log_progress::Bool`: Emit start/end summary logs for grouped generation
 
 # Returns
 - `Vector{FastaEntry}`: Sorted vector with both original entries and their decoys
@@ -855,14 +1396,19 @@ base peptide sequence share a single decoy sequence and mod position mapping.
 Algorithm:
 1. Group by base sequence (ignoring modifications)
 2. For each base sequence, generate one decoy sequence once (respect I/L equivalence and charges)
-3. Apply the same position mapping to all modification variants in the group
-4. Preserve metadata and set `is_decoy = true`
+3. If shuffling cannot satisfy the acceptance rules, fall back to a deterministic mutation strategy
+4. Apply the same position mapping to all modification variants in the group
+5. Preserve metadata and set `is_decoy = true`
 """
 function add_decoy_sequences_grouped(
     target_fasta_entries::Vector{FastaEntry};
     max_shuffle_attempts::Int64 = 20,
     fixed_chars::Vector{Char} = Vector{Char}(),
-    decoy_method::String = "shuffle"
+    fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}(),
+    decoy_method::String = "shuffle",
+    proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
+    show_progress::Bool = true,
+    log_progress::Bool = true,
 )::Vector{FastaEntry}
 
     # Track sequences (I/L equivalence) with charge awareness
@@ -896,36 +1442,49 @@ function add_decoy_sequences_grouped(
     decoy_entries = Vector{FastaEntry}()
     fallback_to_shuffle_count = 0
     total_groups = length(groups)
+    pbar = (show_progress && total_groups > 0) ? ProgressBar(total=total_groups) : nothing
+    if !isnothing(pbar)
+        set_description(pbar, "Generating decoy groups:")
+    end
+    if log_progress
+        @user_info "Decoy generation: $n_entries entries across $n_groups base sequence groups (avg variants/group=$(avg_variants), method=$decoy_method, min_target_hamming_distance=$(isnothing(proteome_index) ? 0 : 2))"
+    end
 
     sample_logged = 0
     exhausted_groups = 0
+    mutation_fallback_count = 0
     for (base_seq, idxs) in groups
         # Unique charges across variants in this group
         charges = unique([get_charge(target_fasta_entries[i]) for i in idxs])
 
-        # Generate a single decoy sequence for this base_seq
-        n_shuffle_attempts = 0
-        decoy_sequence = shuffle_sequence!(shuffle_seq, base_seq; method=decoy_method)
+        decoy_sequence, positions_copy, used_shuffle_fallback, used_mutation_fallback = find_group_decoy_candidate!(
+            shuffle_seq,
+            base_seq,
+            idxs,
+            target_fasta_entries,
+            charges,
+            sequences_set;
+            max_shuffle_attempts = max_shuffle_attempts,
+            fixed_chars = fixed_chars,
+            decoy_method = decoy_method,
+            proteome_index = proteome_index,
+        )
 
-        # Handle duplicates: reverse may fall back to shuffle; shuffle keeps trying
-        needs_retry = any(((decoy_sequence, c) ∈ sequences_set) for c in charges)
-        if needs_retry && decoy_method == "reverse"
-            @user_warn "Reverse duplicate for decoy of $base_seq; fallback to shuffle"
-            fallback_to_shuffle_count += 1
-        end
-        while needs_retry && n_shuffle_attempts < max_shuffle_attempts
-            decoy_sequence = shuffle_sequence!(shuffle_seq, base_seq; method="shuffle")
-            needs_retry = any(((decoy_sequence, c) ∈ sequences_set) for c in charges)
-            n_shuffle_attempts += 1
-        end
-
-        if needs_retry
+        if isnothing(decoy_sequence)
             exhausted_groups += 1
+            if !isnothing(pbar)
+                update(pbar)
+            end
             continue
         end
 
-        # Snapshot positions for consistent mod adjustment across all variants
-        positions_copy = Vector{UInt8}(shuffle_seq.new_positions)
+        if used_shuffle_fallback
+            fallback_to_shuffle_count += 1
+        end
+        if used_mutation_fallback
+            mutation_fallback_count += 1
+        end
+
         seq_length = UInt8(length(base_seq))
 
         # Reserve the decoy sequence across all charges
@@ -941,6 +1500,11 @@ function add_decoy_sequences_grouped(
                 get_structural_mods(target_entry),
                 positions_copy,
                 seq_length
+            )
+            adjusted_structural_mods = merge_fixed_mods(
+                decoy_sequence,
+                adjusted_structural_mods,
+                fixed_mod_names,
             )
             adjusted_isotopic_mods = adjust_mod_positions(
                 get_isotopic_mods(target_entry),
@@ -966,6 +1530,14 @@ function add_decoy_sequences_grouped(
                 true
             ))
         end
+
+        if !isnothing(pbar)
+            update(pbar)
+        end
+    end
+
+    if log_progress
+        @user_info "Decoy generation complete: $(length(decoy_entries)) decoy entries created, exhausted_groups=$exhausted_groups, shuffle_fallbacks=$fallback_to_shuffle_count, mutation_fallbacks=$mutation_fallback_count"
     end
 
     # Report statistics if using reverse method

@@ -40,7 +40,7 @@ using Pioneer: ProteinKey, PeptideKey, InferenceResult  # For test_protein_infer
 using Pioneer: adjustNCE  # For ChronologerPrepTests.jl
 using Pioneer: PeptideMod, matchVarMods, add_pair_indices!  # For FastaDigestTests.jl
 using Pioneer: digest_sequence, getFixedMods!, countVarModCombinations  # For FastaDigestTests.jl
-using Pioneer: FastaEntry, parse_fasta, PeptideSequenceSet  # For FastaDigestTests.jl
+using Pioneer: FastaEntry, parse_fasta, PeptideSequenceSet, ProteomeDistanceIndex  # For FastaDigestTests.jl
 using Pioneer: buildFragmentIndex!, FragBoundModel, cleanUpLibrary  # For BuildPionLibTest.jl
 using Pioneer: RazoQuadParams, simmulateQuad, fitRazoQuadModel, MergeBins  # For RazoQuadModel.jl
 using Pioneer: buildPionLib  # For BuildPionLibTest.jl
@@ -57,7 +57,7 @@ using Pioneer: get_gene, get_protein, get_organism  # For FastaEntryConstructors
 using Pioneer: filter_by_threshold, filter_by_multiple_thresholds  # For file operations tests
 using Pioneer: getDetailedFrags, getSeqSet, getSimpleFrags, getMZ  # For BuildPionLibTest.jl
 using Pioneer: getIRT, getPrecCharge, getPrecID, getPrecMZ, getScore  # For BuildPionLibTest.jl
-using Pioneer: is_decoy, SplineDetailedFrag  # For FastaDigestTests.jl and BuildPionLibTest.jl
+using Pioneer: is_decoy, SplineDetailedFrag, has_min_target_hamming_distance, add_decoy_sequences_grouped  # For FastaDigestTests.jl and BuildPionLibTest.jl
 using Pioneer: PSMFileReference, TransformPipeline, add_column, sort_by, apply_pipeline!  # For file operations tests
 using Pioneer: getFixedMods!
 # Note: iso_splines is loaded dynamically via parseIsoXML in RazoQuadModel.jl
