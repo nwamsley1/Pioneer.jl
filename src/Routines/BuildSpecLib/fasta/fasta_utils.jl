@@ -133,6 +133,7 @@ const PRIMARY_MUTATION_MAP = Dict{Char, Char}(
     'N' => 'Q',
     'D' => 'E',
 )
+const MUTATION_RESHUFFLE_ATTEMPTS = 20
 
 struct ProteomeDistanceIndex
     sequence_codes::Vector{UInt8}
@@ -295,7 +296,15 @@ function collect_candidate_starts!(
     return nothing
 end
 
-function has_min_target_hamming_distance(candidate::String, index::ProteomeDistanceIndex)
+function has_min_target_hamming_distance(
+    candidate::String,
+    index::ProteomeDistanceIndex,
+    min_target_hamming_distance::Int = 2,
+)
+    if min_target_hamming_distance < 1 || min_target_hamming_distance > 2
+        error("min_target_hamming_distance must be 1 or 2, got $min_target_hamming_distance")
+    end
+
     candidate_codes = encode_sequence_codes(candidate)
     if any(==(INVALID_AA_CODE), candidate_codes)
         return false
@@ -309,6 +318,10 @@ function has_min_target_hamming_distance(candidate::String, index::ProteomeDista
         base_key = encode_short_key(candidate_codes, 1, peptide_length)
         if base_key ∈ exact_index
             return false
+        end
+
+        if min_target_hamming_distance == 1
+            return true
         end
 
         for position in 1:peptide_length
@@ -357,11 +370,11 @@ function has_min_target_hamming_distance(candidate::String, index::ProteomeDista
         @inbounds for offset in 1:peptide_length
             if index.sequence_codes[start + offset - 1] != candidate_codes[offset]
                 mismatches += 1
-                mismatches >= 2 && break
+                mismatches >= min_target_hamming_distance && break
             end
         end
 
-        if mismatches <= 1
+        if mismatches < min_target_hamming_distance
             return false
         end
     end
@@ -374,11 +387,12 @@ function is_valid_decoy_candidate(
     charges::Vector{UInt8},
     sequences_set::PeptideSequenceSet,
     proteome_index::Union{Nothing, ProteomeDistanceIndex},
+    min_target_hamming_distance::Int = 2,
 )
     if any(((candidate, charge) ∈ sequences_set) for charge in charges)
         return false
     end
-    return isnothing(proteome_index) || has_min_target_hamming_distance(candidate, proteome_index)
+    return isnothing(proteome_index) || has_min_target_hamming_distance(candidate, proteome_index, min_target_hamming_distance)
 end
 
 """
@@ -590,6 +604,10 @@ function add_entrapment_sequences_grouped(
     show_progress::Bool = true,
     log_progress::Bool = true,
 )::Vector{FastaEntry}
+
+    if iszero(entrapment_r)
+        return target_fasta_entries
+    end
 
     # Track existing sequences (I/L equivalence) including charges
     sequences_set = PeptideSequenceSet(target_fasta_entries)
@@ -1120,6 +1138,55 @@ function build_mutated_sequence(
     return String(mutated)
 end
 
+function build_mutated_shuffled_sequence(
+    base_chars::Vector{Char},
+    mutation_positions,
+    mutation_aas,
+    protected_positions::BitVector,
+    fixed_chars::Vector{Char},
+)
+    seq_length = length(base_chars)
+    candidate_chars = copy(base_chars)
+    positions = identity_positions(seq_length)
+    mutated_positions = Set(Int.(collect(mutation_positions)))
+
+    for (position, aa) in zip(mutation_positions, mutation_aas)
+        candidate_chars[position] = aa
+    end
+
+    shufflable_positions = Int[]
+    for pos in 2:(seq_length - 1)
+        if pos in mutated_positions || protected_positions[pos] || base_chars[pos] ∈ fixed_chars
+            continue
+        end
+        push!(shufflable_positions, pos)
+    end
+
+    if length(shufflable_positions) < 2
+        return nothing, nothing
+    end
+
+    perm = Int[]
+    for _ in 1:5
+        perm = randperm(length(shufflable_positions))
+        if any(perm[idx] != idx for idx in eachindex(perm))
+            break
+        end
+    end
+    if isempty(perm) || all(perm[idx] == idx for idx in eachindex(perm))
+        return nothing, nothing
+    end
+
+    for (dest_idx, source_idx) in enumerate(perm)
+        dest_pos = shufflable_positions[dest_idx]
+        source_pos = shufflable_positions[source_idx]
+        candidate_chars[dest_pos] = base_chars[source_pos]
+        positions[dest_pos] = UInt8(source_pos)
+    end
+
+    return String(candidate_chars), positions
+end
+
 function try_mutation_fallback(
     base_seq::String,
     idxs::Vector{Int},
@@ -1128,6 +1195,7 @@ function try_mutation_fallback(
     sequences_set::PeptideSequenceSet,
     proteome_index::Union{Nothing, ProteomeDistanceIndex},
     fixed_chars::Vector{Char},
+    min_target_hamming_distance::Int = 2,
 )
     protected = collect_protected_positions(target_fasta_entries, idxs, base_seq, fixed_chars)
     mutation_pairs = inward_mutation_pairs(length(base_seq))
@@ -1146,21 +1214,85 @@ function try_mutation_fallback(
             if left_mutation == base_chars[left]
                 continue
             end
-            candidate = build_mutated_sequence(base_chars, (left,), (left_mutation,))
+            mutation_positions = (left,)
+            mutation_aas = (left_mutation,)
         else
             right_mutation = get(PRIMARY_MUTATION_MAP, base_chars[right], base_chars[right])
             if left_mutation == base_chars[left] || right_mutation == base_chars[right]
                 continue
             end
-            candidate = build_mutated_sequence(base_chars, (left, right), (left_mutation, right_mutation))
+            mutation_positions = (left, right)
+            mutation_aas = (left_mutation, right_mutation)
         end
 
-        if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index)
+        candidate = build_mutated_sequence(base_chars, mutation_positions, mutation_aas)
+
+        if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
             return candidate, identity_map
+        end
+
+        for _ in 1:MUTATION_RESHUFFLE_ATTEMPTS
+            shuffled_candidate, shuffled_positions = build_mutated_shuffled_sequence(
+                base_chars,
+                mutation_positions,
+                mutation_aas,
+                protected,
+                fixed_chars,
+            )
+            if isnothing(shuffled_candidate)
+                break
+            end
+            if is_valid_decoy_candidate(shuffled_candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
+                return shuffled_candidate, shuffled_positions
+            end
         end
     end
 
     return nothing, nothing
+end
+
+function find_group_decoy_candidate_for_distance!(
+    shuffle_seq::ShuffleSeq,
+    base_seq::String,
+    idxs::Vector{Int},
+    target_fasta_entries::Vector{FastaEntry},
+    charges::Vector{UInt8},
+    sequences_set::PeptideSequenceSet;
+    max_shuffle_attempts::Int64 = 20,
+    fixed_chars::Vector{Char} = Vector{Char}(),
+    decoy_method::String = "shuffle",
+    proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
+    min_target_hamming_distance::Int = 2,
+)
+    candidate = shuffle_sequence!(shuffle_seq, base_seq; method = decoy_method)
+    if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
+        return candidate, Vector{UInt8}(shuffle_seq.new_positions), false, false
+    end
+
+    shuffle_attempts = decoy_method == "shuffle" ? max(max_shuffle_attempts - 1, 0) : max_shuffle_attempts
+    used_shuffle_fallback = decoy_method == "reverse"
+    for _ in 1:shuffle_attempts
+        candidate = shuffle_sequence!(shuffle_seq, base_seq; method = "shuffle")
+        if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
+            return candidate, Vector{UInt8}(shuffle_seq.new_positions), used_shuffle_fallback, false
+        end
+    end
+
+    candidate, positions = try_mutation_fallback(
+        base_seq,
+        idxs,
+        target_fasta_entries,
+        charges,
+        sequences_set,
+        proteome_index,
+        fixed_chars,
+        min_target_hamming_distance,
+    )
+    if !isnothing(candidate)
+        return candidate, positions, used_shuffle_fallback, true
+    end
+
+    return nothing, nothing, used_shuffle_fallback, false
 end
 
 function find_group_decoy_candidate!(
@@ -1175,34 +1307,20 @@ function find_group_decoy_candidate!(
     decoy_method::String = "shuffle",
     proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
 )
-    candidate = shuffle_sequence!(shuffle_seq, base_seq; method = decoy_method)
-    if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index)
-        return candidate, Vector{UInt8}(shuffle_seq.new_positions), false, false
-    end
-
-    shuffle_attempts = decoy_method == "shuffle" ? max(max_shuffle_attempts - 1, 0) : max_shuffle_attempts
-    used_shuffle_fallback = decoy_method == "reverse"
-    for _ in 1:shuffle_attempts
-        candidate = shuffle_sequence!(shuffle_seq, base_seq; method = "shuffle")
-        if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index)
-            return candidate, Vector{UInt8}(shuffle_seq.new_positions), used_shuffle_fallback, false
-        end
-    end
-
-    candidate, positions = try_mutation_fallback(
+    candidate, positions, used_shuffle_fallback, used_mutation_fallback = find_group_decoy_candidate_for_distance!(
+        shuffle_seq,
         base_seq,
         idxs,
         target_fasta_entries,
         charges,
-        sequences_set,
-        proteome_index,
-        fixed_chars,
+        sequences_set;
+        max_shuffle_attempts = max_shuffle_attempts,
+        fixed_chars = fixed_chars,
+        decoy_method = decoy_method,
+        proteome_index = proteome_index,
+        min_target_hamming_distance = 2,
     )
-    if !isnothing(candidate)
-        return candidate, positions, used_shuffle_fallback, true
-    end
-
-    return nothing, nothing, used_shuffle_fallback, false
+    return candidate, positions, used_shuffle_fallback, used_mutation_fallback, false
 end
 
 
@@ -1457,7 +1575,7 @@ function add_decoy_sequences_grouped(
         # Unique charges across variants in this group
         charges = unique([get_charge(target_fasta_entries[i]) for i in idxs])
 
-        decoy_sequence, positions_copy, used_shuffle_fallback, used_mutation_fallback = find_group_decoy_candidate!(
+        decoy_sequence, positions_copy, used_shuffle_fallback, used_mutation_fallback, _ = find_group_decoy_candidate!(
             shuffle_seq,
             base_seq,
             idxs,

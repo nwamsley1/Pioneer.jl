@@ -300,10 +300,14 @@
         proteome_index = ProteomeDistanceIndex(proteins)
 
         @test !has_min_target_hamming_distance("PEPTIDEK", proteome_index)
+        @test !has_min_target_hamming_distance("PEPTIDEK", proteome_index, 1)
         @test !has_min_target_hamming_distance("AEPTIDEK", proteome_index)
+        @test has_min_target_hamming_distance("AEPTIDEK", proteome_index, 1)
         @test has_min_target_hamming_distance("AEPTIDDK", proteome_index)
         @test !has_min_target_hamming_distance("AAAAAAK", proteome_index)
+        @test !has_min_target_hamming_distance("AAAAAAK", proteome_index, 1)
         @test !has_min_target_hamming_distance("CAAAAAK", proteome_index)
+        @test has_min_target_hamming_distance("CAAAAAK", proteome_index, 1)
         @test has_min_target_hamming_distance("CCAAAAK", proteome_index)
         @test has_min_target_hamming_distance("AAACCCC", proteome_index)
     end
@@ -339,6 +343,25 @@
         # Count by entrapment group
         entrapment_groups = [filter(e -> get_entrapment_pair_id(e) == i, result) for i in 1:3]
         @test all(length.(entrapment_groups) .== 2)
+    end
+
+    @testset "add_entrapment_sequences_grouped skips work when ratio is zero" begin
+        entries = [
+            FastaEntry("P1", "", "", "", "human", "test", "PEPTIDEK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P2", "", "", "", "human", "test", "MAKEPROTEIN", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
+        ]
+
+        result = add_entrapment_sequences_grouped(
+            entries,
+            UInt8(0);
+            show_progress = false,
+            log_progress = false,
+        )
+
+        @test result === entries
+        @test length(result) == length(entries)
+        @test all(get_entrapment_pair_id.(result) .== 0)
+        @test all(.!is_decoy.(result))
     end
     
     @testset "add_decoy_sequences" begin
@@ -399,6 +422,37 @@
         @test has_min_target_hamming_distance(decoy_seq, proteome_index)
     end
 
+    @testset "mutation fallback reshuffles remaining interior residues before moving inward" begin
+        entries = [
+            FastaEntry("P1", "", "", "", "human", "test", "AGCDEFK", UInt32(1), missing, missing, UInt8(2), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+        sequences_set = PeptideSequenceSet(entries)
+        push!(sequences_set, "ALCDELK", UInt8(2))
+
+        Random.seed!(1234)
+        candidate, positions = Pioneer.try_mutation_fallback(
+            "AGCDEFK",
+            [1],
+            entries,
+            UInt8[2],
+            sequences_set,
+            nothing,
+            Char[],
+        )
+
+        @test candidate !== nothing
+        @test candidate != "ALCDELK"
+        @test candidate[1] == 'A'
+        @test candidate[2] == 'L'
+        @test candidate[6] == 'L'
+        @test candidate[7] == 'K'
+        @test sort(collect(candidate[3:5])) == ['C', 'D', 'E']
+        @test positions !== nothing
+        @test positions[2] == UInt8(2)
+        @test positions[6] == UInt8(6)
+        @test positions[7] == UInt8(7)
+    end
+
     @testset "add_decoy_sequences_grouped mutation fallback steps inward when termini are protected" begin
         proteins = [
             FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
@@ -430,6 +484,38 @@
         @test decoy_seq[2] == 'A'
         @test has_min_target_hamming_distance(decoy_seq, proteome_index)
         @test get_structural_mods(decoy) == get_structural_mods(only(modded_entries))
+    end
+
+    @testset "add_decoy_sequences_grouped leaves strict-only exhausted groups unrescued" begin
+        proteins = [
+            FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P2", "", "", "", "human", "test", "AALAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false),
+        ]
+        proteome_index = ProteomeDistanceIndex(proteins)
+        protected_entries = [
+            FastaEntry(
+                "P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1),
+                [
+                    PeptideMod(UInt8(1), 'A', "Keep1"),
+                    PeptideMod(UInt8(2), 'A', "Keep2"),
+                    PeptideMod(UInt8(4), 'A', "Keep4"),
+                    PeptideMod(UInt8(5), 'A', "Keep5"),
+                ],
+                missing,
+                UInt8(2), UInt32(1), UInt32(1), UInt8(0), false
+            )
+        ]
+
+        result = add_decoy_sequences_grouped(
+            protected_entries;
+            max_shuffle_attempts = 1,
+            proteome_index = proteome_index,
+            show_progress = false,
+            log_progress = false,
+        )
+
+        @test length(result) == 1
+        @test isempty(filter(is_decoy, result))
     end
 
     @testset "add_decoy_sequences_grouped reapplies fixed mods after mutation fallback" begin

@@ -197,12 +197,14 @@ function prepare_chronologer_input(
     # Step 4: Add entrapment sequences (grouped by base sequence so all mods share the same entrapments)
     entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
     entrapment_ratio = _params.fasta_digest_params["entrapment_r"]
-    @user_info "Generating grouped entrapment sequences (method=$entrapment_method, ratio=$entrapment_ratio)"
-    fasta_entries = add_entrapment_sequences_grouped(
-        fasta_entries,
-        UInt8(_params.fasta_digest_params["entrapment_r"]);
-        entrapment_method = entrapment_method
-    )
+    if entrapment_ratio > 0
+        @user_info "Generating grouped entrapment sequences (method=$entrapment_method, ratio=$entrapment_ratio)"
+        fasta_entries = add_entrapment_sequences_grouped(
+            fasta_entries,
+            UInt8(_params.fasta_digest_params["entrapment_r"]);
+            entrapment_method = entrapment_method
+        )
+    end
 
     # Step 5: Assign base_target_id values for entrapment grouping
     assign_base_target_ids!(fasta_entries)

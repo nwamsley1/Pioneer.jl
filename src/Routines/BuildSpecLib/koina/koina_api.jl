@@ -53,7 +53,9 @@ end
 
 """
     make_koina_batch_requests(json_vec, model_url;
-                              concurrency = 24)
+                              concurrency = 24,
+                              show_progress = false,
+                              progress_desc = "")
 
 Send every JSON string in `json_vec` to `model_url` while keeping at most
 `concurrency` HTTP requests active at the same time.
@@ -61,11 +63,19 @@ Returns a vector of responses in the **original order**.
 """
 function make_koina_batch_requests(json_vec::Vector{String},
                                    model_url::String;
-                                   concurrency::Int = 24)
+                                   concurrency::Int = 24,
+                                   show_progress::Bool = false,
+                                   progress_desc::String = "")
 
     n          = length(json_vec)
     results    = Vector{Any}(undef, n)          # output buffer
     job_chan   = Channel{Tuple{Int,String}}(n)  # work queue
+    pbar       = (show_progress && n > 0) ? ProgressBar(total=n) : nothing
+    progress_lock = ReentrantLock()
+
+    if !isnothing(pbar) && !isempty(progress_desc)
+        set_description(pbar, progress_desc)
+    end
 
     # ───────────────── fill the channel (producer) ────────────────────
     @async begin
@@ -79,6 +89,11 @@ function make_koina_batch_requests(json_vec::Vector{String},
     function worker()
         for (idx, js) in job_chan               # blocks until work available
             results[idx] = make_koina_request(js, model_url)
+            if !isnothing(pbar)
+                lock(progress_lock) do
+                    update(pbar)
+                end
+            end
         end
         return nothing
     end
