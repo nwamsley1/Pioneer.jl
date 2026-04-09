@@ -822,6 +822,7 @@ jobs:
           CLUSTER_RUN_DIR: ${{ env.CLUSTER_RUN_DIR }}
           REPORT_HTML_PATH: ${{ env.REPORT_HTML_PATH }}
           REPORT_PAGES_SUBDIR: ${{ env.REPORT_PAGES_SUBDIR }}
+          REPORT_PLOT_RETENTION_DAYS: 30
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ env.GITHUB_REF_NAME }}
           GITHUB_SHA: ${{ env.GITHUB_SHA }}
@@ -845,123 +846,32 @@ jobs:
           )
 
           timeout 9000 ssh "${ssh_options[@]}" "${CLUSTER_USERNAME}@${CLUSTER_HOST}" \
-            "RUN_DIR='${remote_run_dir}' REPORT_PATH='${report_path}' REPORT_SUBDIR='${report_subdir}' HISTORY_BRANCH='${history_branch}' GITHUB_REPOSITORY='${GITHUB_REPOSITORY}' GITHUB_TOKEN='${GITHUB_TOKEN}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
+            "RUN_DIR='${remote_run_dir}' REPORT_PATH='${report_path}' REPORT_SUBDIR='${report_subdir}' HISTORY_BRANCH='${history_branch}' GITHUB_REPOSITORY='${GITHUB_REPOSITORY}' GITHUB_TOKEN='${GITHUB_TOKEN}' REPORT_PLOT_RETENTION_DAYS='${REPORT_PLOT_RETENTION_DAYS}' LMOD_QUIET=1 LMOD_SILENT=1 bash --noprofile --norc -s" <<'EOF'
             set -euo pipefail
 
-            repo_dir="${RUN_DIR}/gh-pages-site"
-            repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-            landing_source="${RUN_DIR}/pioneer/pages/index.html"
-            logo_source="${RUN_DIR}/pioneer/figures/PIONEER_LOGO.svg"
-
-            if [ -d "${repo_dir}/.git" ]; then
-              git -C "$repo_dir" fetch origin "$HISTORY_BRANCH" || true
-              git -C "$repo_dir" checkout "$HISTORY_BRANCH" || git -C "$repo_dir" checkout -b "$HISTORY_BRANCH"
-              if git -C "$repo_dir" rev-parse --verify "origin/${HISTORY_BRANCH}" >/dev/null 2>&1; then
-                git -C "$repo_dir" reset --hard "origin/${HISTORY_BRANCH}"
-              fi
-            else
-              rm -rf "$repo_dir"
-              if git clone --branch "$HISTORY_BRANCH" --depth 1 --filter=blob:none "$repo_url" "$repo_dir"; then
-                :
-              else
-                git init "$repo_dir"
-                git -C "$repo_dir" checkout -b "$HISTORY_BRANCH"
-                git -C "$repo_dir" remote add origin "$repo_url"
-              fi
-            fi
-
-            mkdir -p "${repo_dir}/${REPORT_SUBDIR}"
-            cp "$REPORT_PATH" "${repo_dir}/${REPORT_SUBDIR}/index.html"
-            report_timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-            printf '{\n  "timestamp": "%s"\n}\n' "$report_timestamp" > "${repo_dir}/${REPORT_SUBDIR}/meta.json"
-            results_dir="$(dirname "$REPORT_PATH")"
-            if [ -d "${results_dir}/fdr_plots" ]; then
-              mkdir -p "${repo_dir}/${REPORT_SUBDIR}/fdr_plots"
-              rsync -a "${results_dir}/fdr_plots/" "${repo_dir}/${REPORT_SUBDIR}/fdr_plots/"
-            fi
-
-            if [ ! -f "$landing_source" ]; then
-              echo "Missing landing page at $landing_source" >&2
+            helper="${RUN_DIR}/pioneer/scripts/update_gh_pages_site.py"
+            if [ ! -f "$helper" ]; then
+              echo "Missing gh-pages helper at $helper" >&2
               exit 1
             fi
 
-            if [ ! -f "$logo_source" ]; then
-              echo "Missing logo at $logo_source" >&2
+            python_cmd="python3"
+            if ! command -v "$python_cmd" >/dev/null 2>&1; then
+              python_cmd="python"
+            fi
+            if ! command -v "$python_cmd" >/dev/null 2>&1; then
+              echo "Python is required to update gh-pages history." >&2
               exit 1
             fi
 
-            mkdir -p "${repo_dir}/assets"
-            cp "$landing_source" "${repo_dir}/index.html"
-            cp "$logo_source" "${repo_dir}/assets/pioneer-logo.svg"
-
-            mkdir -p "${repo_dir}/reports"
-            {
-              echo "<!DOCTYPE html>"
-              echo "<html lang=\"en\">"
-              echo "<head>"
-              echo "<meta charset=\"UTF-8\">"
-              echo "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
-              echo "<title>Regression Report Index</title>"
-              echo "<style>"
-              echo "body { font-family: Arial, sans-serif; margin: 24px; }"
-              echo "table { border-collapse: collapse; width: 100%; }"
-              echo "th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }"
-              echo "th { background-color: #f4f4f4; }"
-              echo "tr:nth-child(even) { background-color: #fafafa; }"
-              echo "</style>"
-              echo "</head>"
-              echo "<body>"
-              echo "<h1>Regression Reports</h1>"
-              echo "<table>"
-              echo "<thead><tr><th>Date (CST)</th><th>Branch</th><th>Commit</th><th>Regression Set</th><th>Run</th><th>Report</th></tr></thead>"
-              echo "<tbody>"
-              if [ -d "${repo_dir}/reports" ]; then
-                  report_entries=$(
-                    find "${repo_dir}/reports" -type f -name meta.json -print0 | while IFS= read -r -d '' meta_file; do
-                      report_rel="${meta_file#${repo_dir}/}"
-                      report_dir="$(dirname "$report_rel")"
-                      report_dir_rel="${report_dir#reports/}"
-                      report_key="${report_dir#reports/}"
-                      report_branch="${report_key%%/*}"
-                      report_sha="${report_key#*/}"
-                      report_sha="${report_sha%%/*}"
-                      report_regression_set="${report_key#*/}"
-                      report_regression_set="${report_regression_set#*/}"
-                      report_regression_set="${report_regression_set%%/*}"
-                      report_run="${report_key#*/}"
-                      report_run="${report_run#*/}"
-                      report_run="${report_run#*/}"
-                    report_date=$(sed -n 's/.*"timestamp"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$meta_file" | head -n 1)
-                    report_cst=""
-                    if [ -n "$report_date" ]; then
-                      report_cst=$(TZ=America/Chicago date -d "$report_date" +'%Y-%m-%dT%H:%M:%S')
-                    fi
-                    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$report_cst" "$report_branch" "$report_sha" "$report_regression_set" "$report_run" "$report_dir_rel"
-                  done | sort -r
-                )
-                printf '%s\n' "$report_entries" | while IFS=$'\t' read -r entry_date entry_branch entry_sha entry_regression_set entry_run entry_path; do
-                  echo "<tr>"
-                  echo "<td>${entry_date}</td>"
-                  echo "<td>${entry_branch}</td>"
-                  echo "<td>${entry_sha}</td>"
-                  echo "<td>${entry_regression_set}</td>"
-                  echo "<td>${entry_run}</td>"
-                  echo "<td><a href=\"${entry_path}/\">Open report</a></td>"
-                  echo "</tr>"
-                done
-              fi
-              echo "</tbody>"
-              echo "</table>"
-              echo "</body>"
-              echo "</html>"
-            } > "${repo_dir}/reports/index.html"
-
-            git -C "$repo_dir" add -A
-            if git -C "$repo_dir" diff --cached --quiet; then
-              exit 0
-            fi
-            git -C "$repo_dir" -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "Update Pages history from ${RUN_DIR##*/}"
-            git -C "$repo_dir" push origin "$HISTORY_BRANCH"
+            "$python_cmd" "$helper" \
+              --run-dir "$RUN_DIR" \
+              --report-path "$REPORT_PATH" \
+              --report-subdir "$REPORT_SUBDIR" \
+              --history-branch "$HISTORY_BRANCH" \
+              --github-repository "$GITHUB_REPOSITORY" \
+              --github-token "$GITHUB_TOKEN" \
+              --retention-days "${REPORT_PLOT_RETENTION_DAYS:-30}"
           EOF
 
       - name: Sync gh-pages site from shared storage
