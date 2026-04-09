@@ -86,10 +86,12 @@ const SHORT_EXACT_MAX_LENGTH = 7
 const PACKED_AA_BITS = 5
 const PACKED_AA_MASK = UInt64(0x1f)
 const INVALID_AA_CODE = typemax(UInt8)
-const CANONICAL_AA_ORDER = ['A', 'C', 'D', 'E', 'F', 'G', 'H', 'K', 'L',
-                            'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
-const MAX_CANONICAL_AA_CODE = UInt8(length(CANONICAL_AA_ORDER) - 1)
-const CANONICAL_AA_CODES = Dict{Char, UInt8}(
+const RAW_SEQUENCE_AA_RESIDUES = ['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L',
+                                  'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
+const IL_COLLAPSED_AA_ORDER = ['A', 'C', 'D', 'E', 'F', 'G', 'H', 'K', 'L',
+                               'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
+const MAX_IL_COLLAPSED_AA_CODE = UInt8(length(IL_COLLAPSED_AA_ORDER) - 1)
+const IL_COLLAPSED_AA_CODES = Dict{Char, UInt8}(
     'A' => UInt8(0),
     'C' => UInt8(1),
     'D' => UInt8(2),
@@ -111,29 +113,49 @@ const CANONICAL_AA_CODES = Dict{Char, UInt8}(
     'Y' => UInt8(18),
     'I' => UInt8(8),
 )
-const PRIMARY_MUTATION_MAP = Dict{Char, Char}(
-    'G' => 'L',
-    'A' => 'L',
-    'V' => 'L',
-    'L' => 'V',
-    'I' => 'V',
-    'F' => 'L',
-    'M' => 'L',
-    'P' => 'L',
-    'W' => 'L',
-    'S' => 'T',
-    'C' => 'S',
-    'T' => 'S',
-    'Y' => 'S',
-    'H' => 'S',
-    'K' => 'L',
-    'R' => 'L',
-    'Q' => 'N',
-    'E' => 'D',
-    'N' => 'Q',
-    'D' => 'E',
+const MUTATION_ATTEMPTS_PER_PAIR = 20
+const MUTATION_EXCLUSION_MAP = Dict{Char, Set{Char}}(
+    'A' => Set(['V', 'Q', 'P']),
+    'C' => Set(['A', 'S', 'G']),
+    'D' => Set(['G', 'A', 'H', 'E']),
+    'E' => Set(['D', 'A', 'W']),
+    'F' => Set(['I', 'L', 'V', 'S']),
+    'G' => Set(['N', 'A', 'S']),
+    'H' => Set(['D', 'N', 'Q']),
+    'I' => Set(['V', 'T', 'M', 'L']),
+    'K' => Set(['G', 'R', 'Q']),
+    'L' => Set(['V', 'P', 'F', 'I']),
+    'M' => Set(['T', 'I', 'L', 'F']),
+    'N' => Set(['S', 'G', 'E']),
+    'P' => Set(['I', 'L', 'S', 'A']),
+    'Q' => Set(['H', 'D', 'W']),
+    'R' => Set(['H', 'K', 'Q']),
+    'S' => Set(['V', 'N', 'A']),
+    'T' => Set(['A', 'S', 'I', 'L']),
+    'V' => Set(['I', 'L', 'A', 'M']),
+    'W' => Set(['D', 'S', 'G']),
+    'Y' => Set(['F', 'H', 'D']),
 )
-const MUTATION_RESHUFFLE_ATTEMPTS = 20
+const PROTEOME_INDEX_PROGRESS_CHUNK = 100_000
+
+function collect_variable_mod_aas(
+    variable_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
+)
+    variable_mod_aas = Set{Char}()
+    isempty(variable_mod_names) && return variable_mod_aas
+
+    for aa in RAW_SEQUENCE_AA_RESIDUES
+        aa_string = string(aa)
+        for mod in variable_mod_names
+            if occursin(mod[:p], aa_string)
+                push!(variable_mod_aas, aa)
+                break
+            end
+        end
+    end
+
+    return variable_mod_aas
+end
 
 struct ProteomeDistanceIndex
     sequence_codes::Vector{UInt8}
@@ -148,7 +170,7 @@ end
 function encode_sequence_codes(sequence::AbstractString)
     codes = Vector{UInt8}(undef, length(sequence))
     for (i, aa) in enumerate(sequence)
-        codes[i] = get(CANONICAL_AA_CODES, aa, INVALID_AA_CODE)
+        codes[i] = get(IL_COLLAPSED_AA_CODES, aa, INVALID_AA_CODE)
     end
     return codes
 end
@@ -181,21 +203,23 @@ function ProteomeDistanceIndex(
     total_residues = total_length - length(fasta_entries)
     total_block_lengths = max(0, max_block_length - min_block_length + 1)
     short_exact_max_length = SHORT_EXACT_MAX_LENGTH
-    pbar = (show_progress && (!isempty(fasta_entries) || total_block_lengths > 0)) ?
-        ProgressBar(total=length(fasta_entries) + total_block_lengths + short_exact_max_length) : nothing
     if log_progress
         @user_info "Building proteome distance index from $(length(fasta_entries)) proteins ($total_residues residues) with block lengths $min_block_length:$max_block_length"
+        @user_info "Encoding proteome sequence buffer..."
     end
-    if !isnothing(pbar)
-        set_description(pbar, "Encoding proteome index:")
-    end
+    encode_pbar = (show_progress && !isempty(fasta_entries)) ?
+        ProgressBar(
+            total=length(fasta_entries),
+            leave=false,
+            printing_delay=0.25,
+        ) : nothing
     sizehint!(sequence_codes, total_length)
 
     for entry in fasta_entries
         append!(sequence_codes, encode_sequence_codes(get_sequence(entry)))
         push!(sequence_codes, INVALID_AA_CODE)
-        if !isnothing(pbar)
-            update(pbar)
+        if !isnothing(encode_pbar)
+            update(encode_pbar)
         end
     end
 
@@ -209,46 +233,87 @@ function ProteomeDistanceIndex(
     short_exact_indexes = [Set{UInt64}() for _ in 1:short_exact_max_length]
     max_start = length(sequence_codes)
     total_windows = 0
-    if !isnothing(pbar) && total_block_lengths > 0
-        set_description(pbar, "Building proteome index blocks:")
+    total_block_work = sum(max(max_start - block_length + 1, 0) for block_length in min_block_length:max_block_length)
+    if log_progress && total_block_work > 0
+        @user_info "Building proteome block indexes..."
     end
+    block_pbar = (show_progress && total_block_work > 0) ?
+        ProgressBar(
+            total=total_block_work,
+            leave=false,
+            printing_delay=0.25,
+        ) : nothing
+    block_progress_pending = 0
     for block_length in min_block_length:max_block_length
         if max_start < block_length
-            if !isnothing(pbar)
-                update(pbar)
-            end
             continue
         end
         index = block_indexes[block_length]
         for start in 1:(max_start - block_length + 1)
             if invalid_prefix[start + block_length] != invalid_prefix[start]
+                if !isnothing(block_pbar)
+                    block_progress_pending += 1
+                    if block_progress_pending >= PROTEOME_INDEX_PROGRESS_CHUNK
+                        update(block_pbar, block_progress_pending)
+                        block_progress_pending = 0
+                    end
+                end
                 continue
             end
             key = encode_block_key(sequence_codes, start, block_length)
             push!(get!(index, key, Int[]), start)
             total_windows += 1
+            if !isnothing(block_pbar)
+                block_progress_pending += 1
+                if block_progress_pending >= PROTEOME_INDEX_PROGRESS_CHUNK
+                    update(block_pbar, block_progress_pending)
+                    block_progress_pending = 0
+                end
+            end
         end
-        if !isnothing(pbar)
-            update(pbar)
-        end
+    end
+    if !isnothing(block_pbar) && block_progress_pending > 0
+        update(block_pbar, block_progress_pending)
     end
 
-    if !isnothing(pbar) && short_exact_max_length > 0
-        set_description(pbar, "Building short exact indices:")
+    total_short_exact_work = sum(max(max_start - peptide_length + 1, 0) for peptide_length in 1:short_exact_max_length)
+    if log_progress && total_short_exact_work > 0
+        @user_info "Building short exact target indexes..."
     end
+    short_exact_pbar = (show_progress && total_short_exact_work > 0) ?
+        ProgressBar(
+            total=total_short_exact_work,
+            leave=false,
+            printing_delay=0.25,
+        ) : nothing
+    short_exact_progress_pending = 0
     for peptide_length in 1:short_exact_max_length
         if max_start >= peptide_length
             exact_index = short_exact_indexes[peptide_length]
             for start in 1:(max_start - peptide_length + 1)
                 if invalid_prefix[start + peptide_length] != invalid_prefix[start]
+                    if !isnothing(short_exact_pbar)
+                        short_exact_progress_pending += 1
+                        if short_exact_progress_pending >= PROTEOME_INDEX_PROGRESS_CHUNK
+                            update(short_exact_pbar, short_exact_progress_pending)
+                            short_exact_progress_pending = 0
+                        end
+                    end
                     continue
                 end
                 push!(exact_index, encode_short_key(sequence_codes, start, peptide_length))
+                if !isnothing(short_exact_pbar)
+                    short_exact_progress_pending += 1
+                    if short_exact_progress_pending >= PROTEOME_INDEX_PROGRESS_CHUNK
+                        update(short_exact_pbar, short_exact_progress_pending)
+                        short_exact_progress_pending = 0
+                    end
+                end
             end
         end
-        if !isnothing(pbar)
-            update(pbar)
-        end
+    end
+    if !isnothing(short_exact_pbar) && short_exact_progress_pending > 0
+        update(short_exact_pbar, short_exact_progress_pending)
     end
 
     if log_progress
@@ -296,18 +361,91 @@ function collect_candidate_starts!(
     return nothing
 end
 
+function has_exact_target_match(
+    candidate_codes::AbstractVector{UInt8},
+    index::ProteomeDistanceIndex,
+)
+    peptide_length = length(candidate_codes)
+    if peptide_length <= index.short_exact_max_length
+        exact_index = index.short_exact_indexes[peptide_length]
+        isempty(exact_index) && return false
+        return encode_short_key(candidate_codes, 1, peptide_length) ∈ exact_index
+    end
+
+    left_length = fld(peptide_length, 2)
+    right_length = peptide_length - left_length
+
+    if left_length < index.min_block_length || right_length < index.min_block_length
+        error("ProteomeDistanceIndex was built for block lengths $(index.min_block_length):$(index.max_block_length), cannot query peptide length $peptide_length")
+    end
+
+    left_key = encode_block_key(candidate_codes, 1, left_length)
+    right_key = encode_block_key(candidate_codes, left_length + 1, right_length)
+    left_hits = get(index.block_indexes[left_length], left_key, nothing)
+    right_hits = get(index.block_indexes[right_length], right_key, nothing)
+
+    if isnothing(left_hits) || isnothing(right_hits)
+        return false
+    end
+
+    use_left_hits = length(left_hits) <= length(right_hits)
+    hits = use_left_hits ? left_hits : right_hits
+    offset = use_left_hits ? 0 : left_length
+
+    for hit in hits
+        start = hit - offset
+        if has_invalid_window(index, start, peptide_length)
+            continue
+        end
+
+        exact_match = true
+        @inbounds for peptide_idx in 1:peptide_length
+            if index.sequence_codes[start + peptide_idx - 1] != candidate_codes[peptide_idx]
+                exact_match = false
+                break
+            end
+        end
+
+        if exact_match
+            return true
+        end
+    end
+
+    return false
+end
+
+function has_target_adjacent_swap_match(
+    candidate_codes::AbstractVector{UInt8},
+    index::ProteomeDistanceIndex,
+)
+    peptide_length = length(candidate_codes)
+    peptide_length <= 1 && return false
+
+    swap_codes = copy(candidate_codes)
+    for position in 1:(peptide_length - 1)
+        if swap_codes[position] == swap_codes[position + 1]
+            continue
+        end
+
+        swap_codes[position], swap_codes[position + 1] = swap_codes[position + 1], swap_codes[position]
+        has_match = has_exact_target_match(swap_codes, index)
+        swap_codes[position], swap_codes[position + 1] = swap_codes[position + 1], swap_codes[position]
+
+        if has_match
+            return true
+        end
+    end
+
+    return false
+end
+
 function has_min_target_hamming_distance(
-    candidate::String,
+    candidate_codes::AbstractVector{UInt8},
     index::ProteomeDistanceIndex,
     min_target_hamming_distance::Int = 2,
 )
     if min_target_hamming_distance < 1 || min_target_hamming_distance > 2
         error("min_target_hamming_distance must be 1 or 2, got $min_target_hamming_distance")
-    end
-
-    candidate_codes = encode_sequence_codes(candidate)
-    if any(==(INVALID_AA_CODE), candidate_codes)
-        return false
     end
 
     peptide_length = length(candidate_codes)
@@ -329,7 +467,7 @@ function has_min_target_hamming_distance(
             cleared_key = base_key & ~(PACKED_AA_MASK << bit_shift)
             original_code = candidate_codes[position]
 
-            for alt_code in UInt8(0):MAX_CANONICAL_AA_CODE
+            for alt_code in UInt8(0):MAX_IL_COLLAPSED_AA_CODE
                 alt_code == original_code && continue
                 if (cleared_key | (UInt64(alt_code) << bit_shift)) ∈ exact_index
                     return false
@@ -382,6 +520,35 @@ function has_min_target_hamming_distance(
     return true
 end
 
+function has_min_target_hamming_distance(
+    candidate::String,
+    index::ProteomeDistanceIndex,
+    min_target_hamming_distance::Int = 2,
+)
+    candidate_codes = encode_sequence_codes(candidate)
+    if any(==(INVALID_AA_CODE), candidate_codes)
+        return false
+    end
+    return has_min_target_hamming_distance(candidate_codes, index, min_target_hamming_distance)
+end
+
+function passes_target_distance_constraints(
+    candidate::String,
+    index::ProteomeDistanceIndex,
+    min_target_hamming_distance::Int = 2,
+)
+    candidate_codes = encode_sequence_codes(candidate)
+    if any(==(INVALID_AA_CODE), candidate_codes)
+        return false
+    end
+
+    if !has_min_target_hamming_distance(candidate_codes, index, min_target_hamming_distance)
+        return false
+    end
+
+    return !has_target_adjacent_swap_match(candidate_codes, index)
+end
+
 function is_valid_decoy_candidate(
     candidate::String,
     charges::Vector{UInt8},
@@ -392,7 +559,7 @@ function is_valid_decoy_candidate(
     if any(((candidate, charge) ∈ sequences_set) for charge in charges)
         return false
     end
-    return isnothing(proteome_index) || has_min_target_hamming_distance(candidate, proteome_index, min_target_hamming_distance)
+    return isnothing(proteome_index) || passes_target_distance_constraints(candidate, proteome_index, min_target_hamming_distance)
 end
 
 """
@@ -642,9 +809,6 @@ function add_entrapment_sequences_grouped(
     fallback_to_shuffle_count = 0
     total_attempted = length(groups) * Int(entrapment_r)
     pbar = (show_progress && n_groups > 0) ? ProgressBar(total=n_groups) : nothing
-    if !isnothing(pbar)
-        set_description(pbar, "Generating entrapment groups:")
-    end
     if log_progress
         @user_info "Entrapment generation: $n_entries entries across $n_groups base sequence groups (avg variants/group=$(avg_variants), ratio=$(Int(entrapment_r)))"
     end
@@ -1138,53 +1302,26 @@ function build_mutated_sequence(
     return String(mutated)
 end
 
-function build_mutated_shuffled_sequence(
-    base_chars::Vector{Char},
-    mutation_positions,
-    mutation_aas,
-    protected_positions::BitVector,
-    fixed_chars::Vector{Char},
-)
-    seq_length = length(base_chars)
-    candidate_chars = copy(base_chars)
-    positions = identity_positions(seq_length)
-    mutated_positions = Set(Int.(collect(mutation_positions)))
-
-    for (position, aa) in zip(mutation_positions, mutation_aas)
-        candidate_chars[position] = aa
+function get_mutation_choices(
+    source_aa::Char,
+    variable_mod_aas::Set{Char},
+)::Vector{Char}
+    if source_aa ∈ variable_mod_aas
+        return Char[]
     end
 
-    shufflable_positions = Int[]
-    for pos in 2:(seq_length - 1)
-        if pos in mutated_positions || protected_positions[pos] || base_chars[pos] ∈ fixed_chars
-            continue
-        end
-        push!(shufflable_positions, pos)
+    excluded_aas = get(MUTATION_EXCLUSION_MAP, source_aa, Set{Char}())
+    source_code = get(IL_COLLAPSED_AA_CODES, source_aa, INVALID_AA_CODE)
+    choices = Char[]
+    for candidate_aa in RAW_SEQUENCE_AA_RESIDUES
+        candidate_aa == source_aa && continue
+        candidate_aa ∈ variable_mod_aas && continue
+        candidate_aa ∈ excluded_aas && continue
+        get(IL_COLLAPSED_AA_CODES, candidate_aa, INVALID_AA_CODE) == source_code && continue
+        push!(choices, candidate_aa)
     end
 
-    if length(shufflable_positions) < 2
-        return nothing, nothing
-    end
-
-    perm = Int[]
-    for _ in 1:5
-        perm = randperm(length(shufflable_positions))
-        if any(perm[idx] != idx for idx in eachindex(perm))
-            break
-        end
-    end
-    if isempty(perm) || all(perm[idx] == idx for idx in eachindex(perm))
-        return nothing, nothing
-    end
-
-    for (dest_idx, source_idx) in enumerate(perm)
-        dest_pos = shufflable_positions[dest_idx]
-        source_pos = shufflable_positions[source_idx]
-        candidate_chars[dest_pos] = base_chars[source_pos]
-        positions[dest_pos] = UInt8(source_pos)
-    end
-
-    return String(candidate_chars), positions
+    return choices
 end
 
 function try_mutation_fallback(
@@ -1195,6 +1332,7 @@ function try_mutation_fallback(
     sequences_set::PeptideSequenceSet,
     proteome_index::Union{Nothing, ProteomeDistanceIndex},
     fixed_chars::Vector{Char},
+    variable_mod_aas::Set{Char} = Set{Char}(),
     min_target_hamming_distance::Int = 2,
 )
     protected = collect_protected_positions(target_fasta_entries, idxs, base_seq, fixed_chars)
@@ -1209,41 +1347,42 @@ function try_mutation_fallback(
             continue
         end
 
-        left_mutation = get(PRIMARY_MUTATION_MAP, base_chars[left], base_chars[left])
+        left_choices = get_mutation_choices(base_chars[left], variable_mod_aas)
         if left == right
-            if left_mutation == base_chars[left]
+            if isempty(left_choices)
                 continue
             end
             mutation_positions = (left,)
-            mutation_aas = (left_mutation,)
+            seen_mutations = Set{Char}()
+            while length(seen_mutations) < length(left_choices) &&
+                  length(seen_mutations) < MUTATION_ATTEMPTS_PER_PAIR
+                mutation_aa = rand(left_choices)
+                mutation_aa ∈ seen_mutations && continue
+                push!(seen_mutations, mutation_aa)
+
+                candidate = build_mutated_sequence(base_chars, mutation_positions, (mutation_aa,))
+                if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
+                    return candidate, identity_map
+                end
+            end
         else
-            right_mutation = get(PRIMARY_MUTATION_MAP, base_chars[right], base_chars[right])
-            if left_mutation == base_chars[left] || right_mutation == base_chars[right]
+            right_choices = get_mutation_choices(base_chars[right], variable_mod_aas)
+            if isempty(left_choices) || isempty(right_choices)
                 continue
             end
             mutation_positions = (left, right)
-            mutation_aas = (left_mutation, right_mutation)
-        end
+            seen_mutations = Set{Tuple{Char, Char}}()
+            max_unique_mutations = length(left_choices) * length(right_choices)
+            while length(seen_mutations) < max_unique_mutations &&
+                  length(seen_mutations) < MUTATION_ATTEMPTS_PER_PAIR
+                mutation_aas = (rand(left_choices), rand(right_choices))
+                mutation_aas ∈ seen_mutations && continue
+                push!(seen_mutations, mutation_aas)
 
-        candidate = build_mutated_sequence(base_chars, mutation_positions, mutation_aas)
-
-        if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
-            return candidate, identity_map
-        end
-
-        for _ in 1:MUTATION_RESHUFFLE_ATTEMPTS
-            shuffled_candidate, shuffled_positions = build_mutated_shuffled_sequence(
-                base_chars,
-                mutation_positions,
-                mutation_aas,
-                protected,
-                fixed_chars,
-            )
-            if isnothing(shuffled_candidate)
-                break
-            end
-            if is_valid_decoy_candidate(shuffled_candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
-                return shuffled_candidate, shuffled_positions
+                candidate = build_mutated_sequence(base_chars, mutation_positions, mutation_aas)
+                if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
+                    return candidate, identity_map
+                end
             end
         end
     end
@@ -1260,6 +1399,7 @@ function find_group_decoy_candidate_for_distance!(
     sequences_set::PeptideSequenceSet;
     max_shuffle_attempts::Int64 = 20,
     fixed_chars::Vector{Char} = Vector{Char}(),
+    variable_mod_aas::Set{Char} = Set{Char}(),
     decoy_method::String = "shuffle",
     proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
     min_target_hamming_distance::Int = 2,
@@ -1286,6 +1426,7 @@ function find_group_decoy_candidate_for_distance!(
         sequences_set,
         proteome_index,
         fixed_chars,
+        variable_mod_aas,
         min_target_hamming_distance,
     )
     if !isnothing(candidate)
@@ -1304,6 +1445,7 @@ function find_group_decoy_candidate!(
     sequences_set::PeptideSequenceSet;
     max_shuffle_attempts::Int64 = 20,
     fixed_chars::Vector{Char} = Vector{Char}(),
+    variable_mod_aas::Set{Char} = Set{Char}(),
     decoy_method::String = "shuffle",
     proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
 )
@@ -1316,6 +1458,7 @@ function find_group_decoy_candidate!(
         sequences_set;
         max_shuffle_attempts = max_shuffle_attempts,
         fixed_chars = fixed_chars,
+        variable_mod_aas = variable_mod_aas,
         decoy_method = decoy_method,
         proteome_index = proteome_index,
         min_target_hamming_distance = 2,
@@ -1502,6 +1645,7 @@ base peptide sequence share a single decoy sequence and mod position mapping.
 - `max_shuffle_attempts::Int64`: Max attempts to find a unique shuffled sequence
 - `fixed_chars::Vector{Char}`: Optional set of characters kept fixed when shuffling
 - `fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Fixed modification patterns to reapply on the final decoy sequence
+- `variable_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Variable modification patterns whose source and destination residues are excluded from mutation fallback
 - `decoy_method::String`: "shuffle" or "reverse" (reverse may fall back to shuffle)
 - `proteome_index::Union{Nothing, ProteomeDistanceIndex}`: Optional target proteome index used to enforce a minimum Hamming distance of 2 from target substrings
 - `show_progress::Bool`: Show a progress bar while iterating grouped base sequences
@@ -1523,6 +1667,7 @@ function add_decoy_sequences_grouped(
     max_shuffle_attempts::Int64 = 20,
     fixed_chars::Vector{Char} = Vector{Char}(),
     fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}(),
+    variable_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}(),
     decoy_method::String = "shuffle",
     proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
     show_progress::Bool = true,
@@ -1542,6 +1687,7 @@ function add_decoy_sequences_grouped(
         zero(UInt8),
         fixed_chars
     )
+    variable_mod_aas = collect_variable_mod_aas(variable_mod_names)
 
     # Group entries by base sequence (sequence only, ignore mods)
     groups = Dict{String, Vector{Int}}()
@@ -1561,9 +1707,6 @@ function add_decoy_sequences_grouped(
     fallback_to_shuffle_count = 0
     total_groups = length(groups)
     pbar = (show_progress && total_groups > 0) ? ProgressBar(total=total_groups) : nothing
-    if !isnothing(pbar)
-        set_description(pbar, "Generating decoy groups:")
-    end
     if log_progress
         @user_info "Decoy generation: $n_entries entries across $n_groups base sequence groups (avg variants/group=$(avg_variants), method=$decoy_method, min_target_hamming_distance=$(isnothing(proteome_index) ? 0 : 2))"
     end
@@ -1584,6 +1727,7 @@ function add_decoy_sequences_grouped(
             sequences_set;
             max_shuffle_attempts = max_shuffle_attempts,
             fixed_chars = fixed_chars,
+            variable_mod_aas = variable_mod_aas,
             decoy_method = decoy_method,
             proteome_index = proteome_index,
         )

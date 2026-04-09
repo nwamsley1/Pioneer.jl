@@ -69,7 +69,6 @@ function predict_rt_koina(chronologer_table::DataFrame)::Vector{Float32}
         batches,
         KOINA_URLS["chronologer"];
         show_progress = true,
-        progress_desc = "Predicting retention times:",
     )
     
     # Parse results

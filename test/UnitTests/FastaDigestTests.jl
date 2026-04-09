@@ -311,6 +311,21 @@
         @test has_min_target_hamming_distance("CCAAAAK", proteome_index)
         @test has_min_target_hamming_distance("AAACCCC", proteome_index)
     end
+
+    @testset "target adjacent swap exclusion" begin
+        proteins = [
+            FastaEntry("P1", "", "", "", "human", "test", "ACDEFGK", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
+            FastaEntry("P2", "", "", "", "human", "test", "ACDEFGHK", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
+            FastaEntry("P3", "", "", "", "human", "test", "ILAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
+        ]
+        proteome_index = ProteomeDistanceIndex(proteins)
+
+        @test has_min_target_hamming_distance("ADCEFGK", proteome_index)
+        @test has_min_target_hamming_distance("ADCEFGHK", proteome_index)
+        @test !Pioneer.passes_target_distance_constraints("ADCEFGK", proteome_index)
+        @test !Pioneer.passes_target_distance_constraints("ADCEFGHK", proteome_index)
+        @test Pioneer.passes_target_distance_constraints("AECDFGK", proteome_index)
+    end
     
     @testset "add_entrapment_sequences" begin
         # Create test entries
@@ -400,6 +415,7 @@
     end
 
     @testset "add_decoy_sequences_grouped mutation fallback uses second residues first" begin
+        Random.seed!(11)
         proteins = [
             FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
         ]
@@ -418,18 +434,54 @@
 
         decoy = only(filter(is_decoy, result))
         decoy_seq = get_sequence(decoy)
-        @test decoy_seq == "ALAAALK"
+        @test decoy_seq[1] == 'A'
+        @test decoy_seq[2] != 'A'
+        @test decoy_seq[3:5] == "AAA"
+        @test decoy_seq[6] != 'A'
+        @test decoy_seq[7] == 'K'
         @test has_min_target_hamming_distance(decoy_seq, proteome_index)
     end
 
-    @testset "mutation fallback reshuffles remaining interior residues before moving inward" begin
+    @testset "add_decoy_sequences_grouped mutation fallback skips mutating into variable-mod residues" begin
+        variable_mod_aas = Pioneer.collect_variable_mod_aas([(p = r"L", r = "VarL")])
+        choices = Pioneer.get_mutation_choices('A', variable_mod_aas)
+        @test 'L' ∉ choices
+        @test 'A' ∉ choices
+        @test 'V' ∉ choices
+        @test 'Q' ∉ choices
+        @test 'P' ∉ choices
+    end
+
+    @testset "add_decoy_sequences_grouped mutation fallback skips mutating variable-mod source residues" begin
+        proteins = [
+            FastaEntry("P1", "", "", "", "human", "test", "MMMMMMK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+        proteome_index = ProteomeDistanceIndex(proteins)
+        entries = [
+            FastaEntry("P1", "", "", "", "human", "test", "MMMMMMK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+        variable_mod_names = [(p = r"M", r = "VarM")]
+
+        result = add_decoy_sequences_grouped(
+            entries;
+            max_shuffle_attempts = 1,
+            variable_mod_names = variable_mod_names,
+            proteome_index = proteome_index,
+            show_progress = false,
+            log_progress = false,
+        )
+
+        @test length(result) == 1
+        @test isempty(filter(is_decoy, result))
+    end
+
+    @testset "mutation fallback does not shuffle untouched interior residues" begin
+        Random.seed!(1234)
         entries = [
             FastaEntry("P1", "", "", "", "human", "test", "AGCDEFK", UInt32(1), missing, missing, UInt8(2), UInt32(1), UInt32(1), UInt8(0), false),
         ]
         sequences_set = PeptideSequenceSet(entries)
-        push!(sequences_set, "ALCDELK", UInt8(2))
 
-        Random.seed!(1234)
         candidate, positions = Pioneer.try_mutation_fallback(
             "AGCDEFK",
             [1],
@@ -441,12 +493,11 @@
         )
 
         @test candidate !== nothing
-        @test candidate != "ALCDELK"
         @test candidate[1] == 'A'
-        @test candidate[2] == 'L'
-        @test candidate[6] == 'L'
+        @test candidate[2] != 'G'
+        @test candidate[3:5] == "CDE"
+        @test candidate[6] != 'F'
         @test candidate[7] == 'K'
-        @test sort(collect(candidate[3:5])) == ['C', 'D', 'E']
         @test positions !== nothing
         @test positions[2] == UInt8(2)
         @test positions[6] == UInt8(6)
@@ -454,6 +505,7 @@
     end
 
     @testset "add_decoy_sequences_grouped mutation fallback steps inward when termini are protected" begin
+        Random.seed!(22)
         proteins = [
             FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
         ]
@@ -479,14 +531,16 @@
 
         decoy = only(filter(is_decoy, result))
         decoy_seq = get_sequence(decoy)
-        @test decoy_seq == "AALAALK"
         @test decoy_seq[1] == 'A'
         @test decoy_seq[2] == 'A'
+        @test decoy_seq[3] != 'A'
+        @test decoy_seq[6] != 'A'
         @test has_min_target_hamming_distance(decoy_seq, proteome_index)
         @test get_structural_mods(decoy) == get_structural_mods(only(modded_entries))
     end
 
-    @testset "add_decoy_sequences_grouped leaves strict-only exhausted groups unrescued" begin
+    @testset "add_decoy_sequences_grouped broader mutation fallback rescues protected case" begin
+        Random.seed!(22)
         proteins = [
             FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
             FastaEntry("P2", "", "", "", "human", "test", "AALAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false),
@@ -514,16 +568,26 @@
             log_progress = false,
         )
 
-        @test length(result) == 1
-        @test isempty(filter(is_decoy, result))
+        @test length(result) == 2
+        decoy = only(filter(is_decoy, result))
+        decoy_seq = get_sequence(decoy)
+        @test decoy_seq[1] == 'A'
+        @test decoy_seq[2] == 'A'
+        @test decoy_seq[3] != 'A'
+        @test decoy_seq[4] == 'A'
+        @test decoy_seq[5] == 'A'
+        @test decoy_seq[6] != 'A'
+        @test decoy_seq[7] == 'K'
+        @test has_min_target_hamming_distance(decoy_seq, proteome_index)
     end
 
     @testset "add_decoy_sequences_grouped reapplies fixed mods after mutation fallback" begin
+        Random.seed!(7)
         proteins = [
             FastaEntry("P1", "", "", "", "human", "test", "MMMMMMK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
         ]
         proteome_index = ProteomeDistanceIndex(proteins)
-        fixed_mod_names = [(p = r"L", r = "TestFixed")]
+        fixed_mod_names = [(p = r"[^M]", r = "TestFixed")]
         entries = [
             FastaEntry("P1", "", "", "", "human", "test", "MMMMMMK", UInt32(1), PeptideMod[], missing, UInt8(2), UInt32(1), UInt32(1), UInt8(0), false),
         ]
@@ -538,14 +602,13 @@
         )
 
         decoy = only(filter(is_decoy, result))
-        @test get_sequence(decoy) == "MLMMMLK"
-        @test get_structural_mods(decoy) == [
-            PeptideMod(UInt8(2), 'L', "TestFixed"),
-            PeptideMod(UInt8(6), 'L', "TestFixed"),
-        ]
+        decoy_seq = get_sequence(decoy)
+        expected_fixed_positions = UInt8[idx for (idx, aa) in enumerate(decoy_seq) if aa != 'M']
+        @test [mod.position for mod in get_structural_mods(decoy)] == expected_fixed_positions
+        @test all(mod.mod_name == "TestFixed" for mod in get_structural_mods(decoy))
 
         fasta_df = Pioneer.build_fasta_df([decoy])
-        @test fasta_df[1, :koina_sequence] == "ML[TESTFIXED]MMML[TESTFIXED]K"
+        @test length(collect(eachmatch(r"\[TESTFIXED\]", fasta_df[1, :koina_sequence]))) == length(expected_fixed_positions)
     end
     
     @testset "combine_shared_peptides" begin

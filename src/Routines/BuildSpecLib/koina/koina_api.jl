@@ -74,7 +74,7 @@ function make_koina_batch_requests(json_vec::Vector{String},
     progress_lock = ReentrantLock()
 
     if !isnothing(pbar) && !isempty(progress_desc)
-        set_description(pbar, progress_desc)
+        println(progress_desc)
     end
 
     # ───────────────── fill the channel (producer) ────────────────────
