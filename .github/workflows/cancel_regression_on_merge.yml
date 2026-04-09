@@ -24,7 +24,7 @@ jobs:
               return;
             }
 
-            const workflowIds = ['regression.yml', 'regression_slurm.yml'];
+            const workflowIds = ['regression_slurm.yml'];
             const candidates = [];
 
             for (const workflowId of workflowIds) {
