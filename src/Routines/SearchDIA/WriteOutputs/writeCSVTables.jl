@@ -643,6 +643,7 @@ function writeProteinGroupsCSV(
         :global_qval,
         :qval,
         :pg_pep,
+        :total_peak_area,
         :abundance,
     ])
     select!(protein_groups_long, long_columns)
