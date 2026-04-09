@@ -61,7 +61,7 @@
     "fasta_names": ["ECOLI"],
     "fasta_header_regex_accessions": ["^\\w+\\|(\\w+(?:-\\d+)?)\\|"],
     "fasta_header_regex_genes": [" GN=(\\S+)"],
-    "fasta_header_regex_proteins": ["^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="],
+    "fasta_header_regex_proteins": ["^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+="],
     "fasta_header_regex_organisms": [" OS=([^ ]+.*?) [^ ]+="],
     "library_path": "./data/precompile/ecoli_small_altimeter",
     "out_dir": "./data/precompile",

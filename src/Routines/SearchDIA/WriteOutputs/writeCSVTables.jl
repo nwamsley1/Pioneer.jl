@@ -215,7 +215,6 @@ function writePrecursorCSV(
 
     wide_columns = ["species"
     "gene_names"
-    "protein_names"
     "inferred_protein_group"
     "accession_numbers"
     "sequence"
@@ -236,11 +235,8 @@ function writePrecursorCSV(
 
     accs = getAccession(proteins)
     genes = getGeneName(proteins)
-    prots = getProteinName(proteins)
     gene_map = Dict(accs[i] => genes[i] for i in eachindex(accs))
-    prot_map = Dict(accs[i] => prots[i] for i in eachindex(accs))
     precursors_long[!, :gene_names] = _map_accession_vector(precursors_long.accession_numbers, gene_map)
-    precursors_long[!, :protein_names] = _map_accession_vector(precursors_long.accession_numbers, prot_map)
     # Build rename pairs dynamically to avoid conflicts
     rename_pairs = Pair{Symbol,Symbol}[]
     push!(rename_pairs, :new_best_scan => :apex_scan)
@@ -259,7 +255,6 @@ function writePrecursorCSV(
         :file_name,
         :species,
         :gene_names,
-        :protein_names,
         :inferred_protein_group,
         :accession_numbers,
         :sequence,
@@ -395,9 +390,7 @@ function writePrecursorCSV_chunked(
     # Build shared lookup maps once
     accs = getAccession(proteins)
     genes = getGeneName(proteins)
-    prots = getProteinName(proteins)
     gene_map = Dict(accs[i] => genes[i] for i in eachindex(accs))
-    prot_map = Dict(accs[i] => prots[i] for i in eachindex(accs))
 
     # Setup paths
     long_precursors_path = joinpath(out_dir, "precursors_long.tsv")
@@ -411,7 +404,6 @@ function writePrecursorCSV_chunked(
 
     wide_columns = ["species"
     "gene_names"
-    "protein_names"
     "inferred_protein_group"
     "accession_numbers"
     "sequence"
@@ -433,7 +425,6 @@ function writePrecursorCSV_chunked(
         :file_name,
         :species,
         :gene_names,
-        :protein_names,
         :inferred_protein_group,
         :accession_numbers,
         :sequence,
@@ -485,9 +476,8 @@ function writePrecursorCSV_chunked(
                         select!(precursors_long, Not(cols_to_drop))
                     end
 
-                    # Add gene/protein name columns
+                    # Add gene names from the protein table
                     precursors_long[!, :gene_names] = _map_accession_vector(precursors_long.accession_numbers, gene_map)
-                    precursors_long[!, :protein_names] = _map_accession_vector(precursors_long.accession_numbers, prot_map)
 
                     # Build rename pairs dynamically
                     rename_pairs = Pair{Symbol,Symbol}[]

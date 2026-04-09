@@ -199,7 +199,7 @@ function check_params_bsp(json_string::String)
         push!(params["fasta_names"], "CONTAM")
         push!(get!(params, "fasta_header_regex_accessions", String[]), "^\\w+\\|(\\w+(?:-\\d+)?)\\|")
         push!(get!(params, "fasta_header_regex_genes", String[]), " GN=(\\S+)")
-        push!(get!(params, "fasta_header_regex_proteins", String[]), "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+=")
+        push!(get!(params, "fasta_header_regex_proteins", String[]), "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+=")
         push!(get!(params, "fasta_header_regex_organisms", String[]), " OS=([^ ]+.*?) [^ ]+=")
     end
     
