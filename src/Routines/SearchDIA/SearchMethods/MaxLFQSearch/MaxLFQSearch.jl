@@ -199,8 +199,7 @@ function summarize_results!(
         # Chunked merge: split into protein-group-aligned chunks bounded by max_chunk_size_mb
         chunk_dir = joinpath(temp_folder, "merge_chunks")
         max_chunk_bytes = round(Int, params.max_chunk_size_mb * 1_000_000)
-        @user_info "Chunked merge (max_chunk_size=$(params.max_chunk_size_mb) MB)..."
-        @time chunk_refs = stream_sorted_merge_chunked(
+        chunk_refs = stream_sorted_merge_chunked(
             psm_refs, chunk_dir, :inferred_protein_group, sort_keys...;
             batch_size=1_000_000, reverse=true, max_chunk_bytes=max_chunk_bytes
         )

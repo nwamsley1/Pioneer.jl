@@ -28,6 +28,16 @@ using Arrow, DataFrames, Tables
 Arrow File Operations
 ==========================================================#
 
+function _arrow_row_lt_missing_last(sort_cols::Tuple, rev_vec::Vector{Bool}, i::Int, j::Int)
+    @inbounds for col_idx in eachindex(sort_cols)
+        a = sort_cols[col_idx][i]
+        b = sort_cols[col_idx][j]
+        isequal(a, b) && continue
+        return _sort_value_lt_missing_last(a, b, rev_vec[col_idx])
+    end
+    return i < j
+end
+
 """
     sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; 
                       reverse::Union{Bool, Vector{Bool}}=false)
@@ -78,8 +88,16 @@ function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...;
         reverse
     end
     
-    # Sort dataframe
-    sort!(df, collect(sort_keys), rev=rev_vec)
+    sort_cols = tuple((df[!, key] for key in sort_keys)...)
+    if any(col -> Missing <: eltype(col), sort_cols)
+        perm = sortperm(
+            1:nrow(df);
+            lt = (i, j) -> _arrow_row_lt_missing_last(sort_cols, rev_vec, i, j)
+        )
+        df = df[perm, :]
+    else
+        sort!(df, collect(sort_keys), rev=rev_vec)
+    end
     
     # Write back to same file using writeArrow for Windows compatibility
     writeArrow(file_path(ref), df)
@@ -250,4 +268,3 @@ function has_columns(ref::FileReference, cols::Symbol...)
     available = column_names(ref)
     return all(col ∈ available for col in cols)
 end
-
