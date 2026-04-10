@@ -374,6 +374,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             precursor_structural_mods::AbstractVector,
             precursor_isotopic_mods::AbstractVector,
             q_value_threshold::Float32;
+            output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
             batch_size = 100000,
             writer_ref::Base.RefValue{Union{Nothing, Arrow.Writer}} = Ref{Union{Nothing, Arrow.Writer}}(nothing))
     
@@ -495,6 +496,23 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         end
         filter!(x->(!ismissing(x.n_peptides)), out);#&(x.n_peptides>=min_peptides), out);
         out[!,:abundance] = exp2.(out[!,:log2_abundance])
+        output_cols = enabled_output_columns(output_schema_policy, :protein_groups, Symbol[
+            :file_name,
+            :target,
+            :entrap_id,
+            :species,
+            :protein,
+            :peptides,
+            :n_precursors,
+            :n_modified_peptides,
+            :n_peptides,
+            :global_qval,
+            :qval,
+            :pg_pep,
+            :pg_score,
+            :global_pg_score,
+            :abundance,
+        ])
         
         # Write results
         if isnothing(writer_ref[])
@@ -505,10 +523,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             writer_ref[],
             select!(
                 out,
-                [:file_name,
-                :target,
-                :entrap_id,
-                :species,:protein,:peptides,:n_precursors,:n_modified_peptides,:n_peptides,:global_qval,:qval,:pg_pep,:pg_score,:global_pg_score,:abundance])
+                output_cols)
         )
     end
     
@@ -538,6 +553,7 @@ function LFQ_chunked(
     precursor_structural_mods::AbstractVector,
     precursor_isotopic_mods::AbstractVector,
     q_value_threshold::Float32;
+    output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     batch_size::Int = 100000
 )
     n_chunks = length(chunk_refs)
@@ -552,6 +568,7 @@ function LFQ_chunked(
                 precursor_structural_mods,
                 precursor_isotopic_mods,
                 q_value_threshold;
+                output_schema_policy=output_schema_policy,
                 batch_size=batch_size, writer_ref=writer_ref)
             update(pbar)
         end

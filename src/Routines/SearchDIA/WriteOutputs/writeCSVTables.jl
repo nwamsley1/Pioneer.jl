@@ -156,6 +156,7 @@ function writePrecursorCSV(
     normalized::Bool,
     proteins::LibraryProteins,
     match_between_runs::Bool;
+    output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
@@ -213,22 +214,23 @@ function writePrecursorCSV(
     global_qval_col = match_between_runs ? :MBR_boosted_global_qval : :global_qval
     qval_col = match_between_runs ? :MBR_boosted_qval : :qval
 
-    wide_columns = ["species"
-    "gene_names"
-    "inferred_protein_group"
-    "accession_numbers"
-    "sequence"
-    "charge"
-    "structural_mods"
-    "isotopic_mods"
-    "prec_mz"
-    "global_score"
-    String(global_qval_col)  # Conditional: MBR_boosted_global_qval or global_qval
-    "use_for_protein_quant"
-    "precursor_idx"
-    "target"
-    "entrapment_group_id"
-    ]
+    wide_columns = enabled_output_columns(output_schema_policy, :precursors, String[
+        "species",
+        "gene_names",
+        "inferred_protein_group",
+        "accession_numbers",
+        "sequence",
+        "charge",
+        "structural_mods",
+        "isotopic_mods",
+        "prec_mz",
+        "global_score",
+        String(global_qval_col),  # Conditional: MBR_boosted_global_qval or global_qval
+        "use_for_protein_quant",
+        "precursor_idx",
+        "target",
+        "entrapment_group_id",
+    ])
 
     long_columns_exclude = [:isotopes_captured, :scan_idx, :weight, :ms_file_idx]
     select!(precursors_long, Not(long_columns_exclude))
@@ -251,7 +253,7 @@ function writePrecursorCSV(
     end
 
     # order columns (tolerant to optional columns such as MBR outputs)
-    requested_cols = [
+    requested_cols = enabled_output_columns(output_schema_policy, :precursors, Symbol[
         :file_name,
         :species,
         :gene_names,
@@ -282,8 +284,8 @@ function writePrecursorCSV(
         :use_for_protein_quant,
         :precursor_idx,
         :target,
-        :entrapment_group_id
-    ]
+        :entrapment_group_id,
+    ])
     available_cols = intersect(requested_cols, Symbol.(names(precursors_long)))
     select!(precursors_long, available_cols)
 
@@ -347,6 +349,7 @@ function writePrecursorCSV_chunked(
     normalized::Bool,
     proteins::LibraryProteins,
     match_between_runs::Bool;
+    output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
@@ -402,26 +405,27 @@ function writePrecursorCSV_chunked(
     global_qval_col = match_between_runs ? :MBR_boosted_global_qval : :global_qval
     qval_col = match_between_runs ? :MBR_boosted_qval : :qval
 
-    wide_columns = ["species"
-    "gene_names"
-    "inferred_protein_group"
-    "accession_numbers"
-    "sequence"
-    "charge"
-    "structural_mods"
-    "isotopic_mods"
-    "prec_mz"
-    "global_score"
-    String(global_qval_col)
-    "use_for_protein_quant"
-    "precursor_idx"
-    "target"
-    "entrapment_group_id"
-    ]
+    wide_columns = enabled_output_columns(output_schema_policy, :precursors, String[
+        "species",
+        "gene_names",
+        "inferred_protein_group",
+        "accession_numbers",
+        "sequence",
+        "charge",
+        "structural_mods",
+        "isotopic_mods",
+        "prec_mz",
+        "global_score",
+        String(global_qval_col),
+        "use_for_protein_quant",
+        "precursor_idx",
+        "target",
+        "entrapment_group_id",
+    ])
 
     long_columns_exclude = [:isotopes_captured, :scan_idx, :weight, :ms_file_idx]
 
-    requested_cols = [
+    requested_cols = enabled_output_columns(output_schema_policy, :precursors, Symbol[
         :file_name,
         :species,
         :gene_names,
@@ -452,8 +456,8 @@ function writePrecursorCSV_chunked(
         :use_for_protein_quant,
         :precursor_idx,
         :target,
-        :entrapment_group_id
-    ]
+        :entrapment_group_id,
+    ])
 
     sorted_columns = vcat(wide_columns, file_names)
     n_chunks = length(chunk_refs)
@@ -551,13 +555,14 @@ function writeProteinGroupsCSV(
     precursor_charge::AbstractVector{UInt8},
     file_names::Vector{String},
     proteins::LibraryProteins;
+    output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
     function makeWideFormat(
         longdf::DataFrame)
-        # First create a DataFrame with the non-abundance columns we want to keep
-        metadata_df = unique(longdf[:, [
+        key_cols = enabled_output_columns(output_schema_policy, :protein_groups, Symbol[:species, :protein, :target, :entrap_id])
+        metadata_cols = enabled_output_columns(output_schema_policy, :protein_groups, Symbol[
             :species,
             :gene_names,
             :protein_names,
@@ -566,15 +571,17 @@ function writeProteinGroupsCSV(
             :entrap_id,
             :global_pg_score,
             :global_qval,
-        ]])
+        ])
+        # First create a DataFrame with the non-abundance columns we want to keep
+        metadata_df = unique(longdf[:, metadata_cols])
         
         # Create the abundance wide format
         abundance_df = unstack(longdf,
-            [:species, :protein, :target, :entrap_id],
+            key_cols,
             :file_name, :abundance)
             
         # Join the metadata with the abundance data
-        return leftjoin(metadata_df, abundance_df, on=[:species, :protein, :target, :entrap_id])
+        return leftjoin(metadata_df, abundance_df, on=key_cols)
     end
 
     protein_groups_long = DataFrame(Arrow.Table(long_pg_path))
@@ -608,7 +615,7 @@ function writeProteinGroupsCSV(
         # If allowmissing! is not needed or columns already typed, proceed
     end
 
-    wide_columns = [
+    wide_columns = enabled_output_columns(output_schema_policy, :protein_groups, String[
         "species",
         "gene_names",
         "protein_names",
@@ -617,9 +624,9 @@ function writeProteinGroupsCSV(
         "entrap_id",
         "global_pg_score",
         "global_qval",
-    ]
+    ])
 
-    long_columns = Symbol[
+    long_columns = enabled_output_columns(output_schema_policy, :protein_groups, Symbol[
         :file_name,
         :species,
         :gene_names,
@@ -637,7 +644,7 @@ function writeProteinGroupsCSV(
         :qval,
         :pg_pep,
         :abundance,
-    ]
+    ])
     select!(protein_groups_long, long_columns)
 
     sorted_columns = vcat(wide_columns, file_names)
