@@ -301,7 +301,7 @@ function writePrecursorCSV(
                 println(io2,join(sorted_columns,"\t"))
             end
             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
-            open(Arrow.Writer, wide_precursors_arrow_path; file=false) do arrow_writer
+            open(Arrow.Writer, wide_precursors_arrow_path; file=true) do arrow_writer
                 while batch_start_idx <= n_rows
                     #For the wide format, can't split a precursor between two batches.
                     last_pid = precursors_long[batch_end_idx,:precursor_idx]
@@ -469,7 +469,7 @@ function writePrecursorCSV_chunked(
 
     open(long_precursors_path, "w") do io1
         open(wide_precursors_path, "w") do io2
-            open(Arrow.Writer, wide_precursors_arrow_path; file=false) do arrow_writer
+            open(Arrow.Writer, wide_precursors_arrow_path; file=true) do arrow_writer
                 headers_written = false
                 pbar = ProgressBar(total=n_chunks)
                 set_description(pbar, "Writing precursor CSV chunks:")
@@ -658,7 +658,7 @@ function writeProteinGroupsCSV(
             println(io1,join(names(protein_groups_long),"\t"))
             println(io2,join(sorted_columns,"\t"))
         end
-        open(Arrow.Writer, wide_protein_groups_arrow; file=false) do arrow_writer
+        open(Arrow.Writer, wide_protein_groups_arrow; file=true) do arrow_writer
             while batch_start_idx <= n_rows
                 #For the wide format, can't split a precursor between two batches.
                 last_protein_group = protein_groups_long[batch_end_idx,:protein]

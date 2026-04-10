@@ -375,7 +375,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             precursor_isotopic_mods::AbstractVector,
             q_value_threshold::Float32;
             batch_size = 100000,
-            append::Bool = false)
+            writer_ref::Base.RefValue{Union{Nothing, Arrow.Writer}} = Ref{Union{Nothing, Arrow.Writer}}(nothing))
     
     # Use eager DataFrame loading (allows editing for filtering)
     prot = DataFrame(Tables.columntable(Arrow.Table(file_path(prot_ref))))
@@ -394,7 +394,6 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     # Main processing logic (inlined from original LFQ function)
     nfiles = length(unique(prot[!, :ms_file_idx]))
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
-    n_writes = append ? 1 : 0  # When appending, skip the initial file creation/deletion
     @assert issorted(prot[!, :inferred_protein_group], rev=true) "LFQ input must be sorted by :inferred_protein_group (descending)"
 
     while batch_start_idx <= size(prot, 1)
@@ -498,32 +497,19 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         out[!,:abundance] = exp2.(out[!,:log2_abundance])
         
         # Write results
-        if iszero(n_writes)
-            if isfile(protein_quant_path)
-                rm(protein_quant_path)
-            end
-            open(protein_quant_path, "w") do io
-                Arrow.write(io, 
-                select!(
-                    out,
-                    [:file_name,
-                    :target,
-                    :entrap_id,
-                    :species,:protein,:peptides,:n_precursors,:n_modified_peptides,:n_peptides,:global_qval,:qval,:pg_pep,:pg_score,:global_pg_score,:abundance]);
-                file=false)  # file=false creates stream format
-            end
-        else
-            Arrow.append(
-                protein_quant_path,
-                select!(
-                    out,
-                    [:file_name,
-                    :target,
-                    :entrap_id,
-                    :species,:protein,:peptides,:n_precursors,:n_modified_peptides,:n_peptides,:global_qval,:qval,:pg_pep,:pg_score,:global_pg_score,:abundance])
-            )
+        if isnothing(writer_ref[])
+            isfile(protein_quant_path) && rm(protein_quant_path)
+            writer_ref[] = open(Arrow.Writer, protein_quant_path; file=true)
         end
-        n_writes += 1
+        Arrow.write(
+            writer_ref[],
+            select!(
+                out,
+                [:file_name,
+                :target,
+                :entrap_id,
+                :species,:protein,:peptides,:n_precursors,:n_modified_peptides,:n_peptides,:global_qval,:qval,:pg_pep,:pg_score,:global_pg_score,:abundance])
+        )
     end
     
     # Check if we processed all rows
@@ -554,22 +540,25 @@ function LFQ_chunked(
     q_value_threshold::Float32;
     batch_size::Int = 100000
 )
-    # Remove any pre-existing output
-    isfile(protein_quant_path) && rm(protein_quant_path)
-
     n_chunks = length(chunk_refs)
     pbar = ProgressBar(total=n_chunks)
     set_description(pbar, "MaxLFQ chunks:")
-    for (ci, chunk_ref) in enumerate(chunk_refs)
-        # First chunk creates file (append=false), subsequent chunks append
-        LFQ(chunk_ref, protein_quant_path, quant_col,
-            file_id_to_parsed_name,
-            precursor_sequences,
-            precursor_structural_mods,
-            precursor_isotopic_mods,
-            q_value_threshold;
-            batch_size=batch_size, append=(ci > 1))
-        update(pbar)
+    writer_ref = Ref{Union{Nothing, Arrow.Writer}}(nothing)
+    try
+        for chunk_ref in chunk_refs
+            LFQ(chunk_ref, protein_quant_path, quant_col,
+                file_id_to_parsed_name,
+                precursor_sequences,
+                precursor_structural_mods,
+                precursor_isotopic_mods,
+                q_value_threshold;
+                batch_size=batch_size, writer_ref=writer_ref)
+            update(pbar)
+        end
+    finally
+        if !isnothing(writer_ref[])
+            close(writer_ref[])
+        end
     end
     return nothing
 end

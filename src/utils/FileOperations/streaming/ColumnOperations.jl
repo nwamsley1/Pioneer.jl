@@ -142,18 +142,15 @@ function add_column_to_file!(ref::FileReference,
         writeArrow(temp_path, df_batch)
     else
         # Stream through file for larger files
-        partitions = Tables.partitioner(tbl, batch_size)
-        
-        first_write = true
-        for partition in partitions
-            df_batch = DataFrame(Tables.columntable(partition))
-            df_batch[!, col_name] = compute_fn(df_batch)
-            
-            if first_write
-                writeArrow(temp_path, df_batch)
-                first_write = false
-            else
-                Arrow.append(temp_path, df_batch)
+        open(Arrow.Writer, temp_path; file=true) do arrow_writer
+            batch_start = 1
+            total_rows = row_count(ref)
+            while batch_start <= total_rows
+                batch_end = min(batch_start + batch_size - 1, total_rows)
+                df_batch = DataFrame(Tables.columntable(Tables.subset(tbl, batch_start:batch_end)))
+                df_batch[!, col_name] = compute_fn(df_batch)
+                Arrow.write(arrow_writer, df_batch)
+                batch_start = batch_end + 1
             end
         end
     end
@@ -201,18 +198,15 @@ function update_column_in_file!(ref::FileReference,
         writeArrow(temp_path, df_batch)
     else
         # Stream through file for larger files
-        partitions = Tables.partitioner(tbl, batch_size)
-        
-        first_write = true
-        for partition in partitions
-            df_batch = DataFrame(Tables.columntable(partition))
-            df_batch[!, col_name] = update_fn(df_batch[!, col_name])
-            
-            if first_write
-                writeArrow(temp_path, df_batch)
-                first_write = false
-            else
-                Arrow.append(temp_path, df_batch)
+        open(Arrow.Writer, temp_path; file=true) do arrow_writer
+            batch_start = 1
+            total_rows = row_count(ref)
+            while batch_start <= total_rows
+                batch_end = min(batch_start + batch_size - 1, total_rows)
+                df_batch = DataFrame(Tables.columntable(Tables.subset(tbl, batch_start:batch_end)))
+                df_batch[!, col_name] = update_fn(df_batch[!, col_name])
+                Arrow.write(arrow_writer, df_batch)
+                batch_start = batch_end + 1
             end
         end
     end

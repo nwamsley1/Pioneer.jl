@@ -258,16 +258,13 @@ function summarize_results!(
             write_csv = params.write_csv
         )
 
-        # Stream-concatenate chunks into precursors_long.arrow for QC plots
+        # Concatenate chunks into a final Arrow file-format export for QC plots.
         @user_info "Concatenating chunks to precursors_long.arrow..."
-        for (i, chunk_ref) in enumerate(chunk_refs)
-            let tbl = Arrow.Table(file_path(chunk_ref))
-                if i == 1
-                    open(precursors_long_path, "w") do io
-                        Arrow.write(io, tbl; file=false)
-                    end
-                else
-                    Arrow.append(precursors_long_path, tbl)
+        isfile(precursors_long_path) && rm(precursors_long_path)
+        open(Arrow.Writer, precursors_long_path; file=true) do arrow_writer
+            for chunk_ref in chunk_refs
+                let tbl = Arrow.Table(file_path(chunk_ref))
+                    Arrow.write(arrow_writer, tbl)
                 end
             end
         end
