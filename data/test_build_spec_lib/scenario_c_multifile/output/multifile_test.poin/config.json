@@ -2,8 +2,8 @@
   "calibration_raw_file": "",
   "max_koina_batch": 100,
   "fasta_header_regex_proteins": [
-    "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+=",
-    "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="
+    "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+=",
+    "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+="
   ],
   "comment_library": "=== Library generation parameters ===",
   "variable_mods": {

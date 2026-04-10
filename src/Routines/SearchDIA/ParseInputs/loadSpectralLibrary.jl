@@ -61,6 +61,15 @@ end
 
 function loadSpectralLibrary(SPEC_LIB_DIR::String,
                              params::PioneerParameters)
+    function load_output_schema_policy(config_path::String)
+        try
+            config = isfile(config_path) ? JSON.parsefile(config_path) : nothing
+            return OutputSchemaPolicy(config)
+        catch
+            return OutputSchemaPolicy()
+        end
+    end
+
     f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"))
     f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
     f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragment_bins.arrow"))
@@ -123,6 +132,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
 
     precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursors_table.arrow"))
     proteins = Arrow.Table(joinpath(SPEC_LIB_DIR, "proteins_table.arrow"))
+    output_schema_policy = load_output_schema_policy(joinpath(SPEC_LIB_DIR, "config.json"))
 
     f_index = FragmentIndex(
         f_index_frag_bins[:FragIndexBin],
@@ -145,7 +155,8 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
             spec_lib["f_index"], 
             SetPrecursors(spec_lib["precursors"]), 
             SetProteins(spec_lib["proteins"]),
-            spec_lib["f_det"]
+            spec_lib["f_det"],
+            output_schema_policy
         )
     else
         return SplineFragmentIndexLibrary(
@@ -153,7 +164,8 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
             spec_lib["f_index"], 
             SetPrecursors(spec_lib["precursors"]), 
             SetProteins(spec_lib["proteins"]),
-            spec_lib["f_det"]
+            spec_lib["f_det"],
+            output_schema_policy
         )
     end
 end

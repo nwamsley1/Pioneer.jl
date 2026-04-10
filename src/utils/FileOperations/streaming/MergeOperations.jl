@@ -284,23 +284,8 @@ function _mixed_reverse_compare(a, b, reverse_vec::Vector{Bool})
     # Compare each sort key according to its reverse setting
     for i in 1:(length(a)-1)  # -1 to skip table_idx (last element)
         val_a, val_b = a[i], b[i]
-        if reverse_vec[i]
-            # Reverse order: larger values come first
-            if val_a > val_b
-                return true
-            elseif val_a < val_b
-                return false
-            end
-            # Equal values continue to next key
-        else
-            # Normal order: smaller values come first
-            if val_a < val_b
-                return true
-            elseif val_a > val_b
-                return false
-            end
-            # Equal values continue to next key
-        end
+        isequal(val_a, val_b) && continue
+        return _sort_value_lt_missing_last(val_a, val_b, reverse_vec[i])
     end
     # All sort keys are equal, use table_idx as tiebreaker (always ascending)
     return a[end] < b[end]
@@ -311,7 +296,12 @@ Generate heap type dynamically based on sort types and reverse specification.
 Supports mixed reverse directions for different keys.
 """
 function _create_typed_heap(::Type{SortTypes}, reverse_vec::Vector{Bool}) where SortTypes
-    if length(reverse_vec) == 1
+    has_missing_keys = any(T -> Missing <: T, SortTypes.parameters[1:end-1])
+    if has_missing_keys
+        comp_func = (a, b) -> _mixed_reverse_compare(a, b, reverse_vec)
+        ordering = Lt(comp_func)
+        return BinaryHeap(ordering, SortTypes[])
+    elseif length(reverse_vec) == 1
         # Single key - use simple min/max heap
         if reverse_vec[1]
             return BinaryMaxHeap{SortTypes}()
@@ -752,8 +742,10 @@ function _stream_sorted_merge_chunked_impl(
     end
     push!(chunk_paths, chunk_path())
 
-    if rows_with_missing_group > 0
-        @warn "Chunked merge: $rows_with_missing_group / $rows_processed rows had missing $group_key (shared peptides — filtered downstream by LFQ)"
+    if rows_with_missing_group > 0 && group_key == :inferred_protein_group
+        @debug "Chunked merge rows with missing inferred_protein_group" rows_with_missing_group rows_processed
+    elseif rows_with_missing_group > 0
+        @warn "Chunked merge: $rows_with_missing_group / $rows_processed rows had missing $group_key"
     end
 
     # Create output references
@@ -764,6 +756,5 @@ function _stream_sorted_merge_chunked_impl(
         ref
     end
 
-    @user_info "Chunked merge: $(length(chunk_refs)) chunk(s), $rows_processed total rows"
     return chunk_refs
 end

@@ -216,6 +216,42 @@
         # Test invalid file extension
         @test_throws ErrorException parse_fasta(tempname() * ".txt", "human")
     end
+
+    @testset "parse_fasta UniProt regex extraction" begin
+        temp_fasta = tempname() * ".fasta"
+        fasta_content = """
+        >sp|A0A087X1C5|CP2D7_HUMAN Putative cytochrome P450 2D7 OS=Homo sapiens OX=9606 GN=CYP2D7 PE=5 SV=1
+        MPEPTIDE
+        >sp|A1KXE4-2|F168B_HUMAN Isoform 2 of Myelin-associated neurite-outgrowth inhibitor OS=Homo sapiens OX=9606 GN=FAM168B
+        MISOFORM
+        """
+
+        open(temp_fasta, "w") do io
+            write(io, fasta_content)
+        end
+
+        entries = parse_fasta(
+            temp_fasta,
+            "human";
+            accession_regex=r"^\w+\|(\w+(?:-\d+)?)\|",
+            gene_regex=r" GN=(\S+)",
+            protein_regex=r"^\w+\|(?:\w+(?:-\d+)?)\|[^ ]+ (.*?) [^ ]+=",
+            organism_regex=r" OS=([^ ]+.*?) [^ ]+=",
+        )
+
+        @test length(entries) == 2
+        @test get_id(entries[1]) == "A0A087X1C5"
+        @test get_protein(entries[1]) == "Putative cytochrome P450 2D7"
+        @test get_gene(entries[1]) == "CYP2D7"
+        @test get_organism(entries[1]) == "Homo sapiens"
+
+        @test get_id(entries[2]) == "A1KXE4-2"
+        @test get_protein(entries[2]) == "Isoform 2 of Myelin-associated neurite-outgrowth inhibitor"
+        @test get_gene(entries[2]) == "FAM168B"
+        @test get_organism(entries[2]) == "Homo sapiens"
+
+        rm(temp_fasta)
+    end
     
     #==========================================================================
     Tests for fasta_utils.jl

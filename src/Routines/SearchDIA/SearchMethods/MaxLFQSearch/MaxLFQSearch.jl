@@ -159,6 +159,10 @@ function summarize_results!(
         qc_plot_folder = joinpath(getDataOutDir(search_context), "qc_plots")
         precursors_long_path = joinpath(getDataOutDir(search_context), "precursors_long.arrow")
         protein_long_path = joinpath(getDataOutDir(search_context), "protein_groups_long.arrow")
+        spec_lib = getSpecLib(search_context)
+        proteins = getProteins(spec_lib)
+        precursors = getPrecursors(spec_lib)
+        output_schema_policy = getOutputSchemaPolicy(spec_lib)
         # Get PSM paths using valid file utilities to maintain proper file mapping
         valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
         existing_passing_psm_paths = [path for (_, path) in valid_file_data]
@@ -195,8 +199,7 @@ function summarize_results!(
         # Chunked merge: split into protein-group-aligned chunks bounded by max_chunk_size_mb
         chunk_dir = joinpath(temp_folder, "merge_chunks")
         max_chunk_bytes = round(Int, params.max_chunk_size_mb * 1_000_000)
-        @user_info "Chunked merge (max_chunk_size=$(params.max_chunk_size_mb) MB)..."
-        @time chunk_refs = stream_sorted_merge_chunked(
+        chunk_refs = stream_sorted_merge_chunked(
             psm_refs, chunk_dir, :inferred_protein_group, sort_keys...;
             batch_size=1_000_000, reverse=true, max_chunk_bytes=max_chunk_bytes
         )
@@ -218,12 +221,11 @@ function summarize_results!(
             getDataOutDir(search_context),
             all_file_names,
             params.run_to_run_normalization,
-            getProteins(getSpecLib(search_context)),
+            proteins,
             params.params.global_settings.match_between_runs,
+            output_schema_policy = output_schema_policy,
             write_csv = params.write_csv
         )
-
-        precursors = getPrecursors(getSpecLib(search_context))
 
         @user_info "Performing MaxLFQ..."
         # Chunked MaxLFQ protein quantification (bounded memory per chunk)
@@ -237,6 +239,7 @@ function summarize_results!(
             getStructuralMods(precursors),
             getIsotopicMods(precursors),
             params.q_value_threshold,
+            output_schema_policy = output_schema_policy,
             batch_size = params.batch_size
         )
         chunk_paths = [file_path(ref) for ref in chunk_refs]
@@ -254,7 +257,8 @@ function summarize_results!(
             getStructuralMods(precursors),
             getCharge(precursors),
             all_file_names,
-            getProteins(getSpecLib(search_context)),
+            proteins,
+            output_schema_policy = output_schema_policy,
             write_csv = params.write_csv
         )
 
@@ -264,7 +268,7 @@ function summarize_results!(
         open(Arrow.Writer, precursors_long_path; file=true) do arrow_writer
             for chunk_ref in chunk_refs
                 let tbl = Arrow.Table(file_path(chunk_ref))
-                    Arrow.write(arrow_writer, tbl)
+                    Arrow.write(arrow_writer, enabled_output_table(output_schema_policy, :precursors, tbl))
                 end
             end
         end
