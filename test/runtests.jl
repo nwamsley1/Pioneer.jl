@@ -157,6 +157,7 @@ end
     include("./UnitTests/uniformBassisCubicSpline.jl")
     include("./UnitTests/test_protein_inference.jl")
     include("./UnitTests/test_protein_group_peak_area_features.jl")
+    include("./UnitTests/test_maxlfq.jl")
     include("./UnitTests/ChronologerPrepTests.jl")
     include("./UnitTests/FastaDigestTests.jl")
     include("./UnitTests/FastaEntryConstructorsTests.jl")
