@@ -452,6 +452,25 @@
         @test 'P' ∉ choices
     end
 
+    @testset "mutation fallback restricts basic residue substitutions" begin
+        @test Set(Pioneer.get_mutation_choices('K', Set{Char}())) == Set(['R', 'H'])
+        @test Set(Pioneer.get_mutation_choices('R', Set{Char}())) == Set(['K', 'H'])
+        @test Set(Pioneer.get_mutation_choices('H', Set{Char}())) == Set(['R', 'K'])
+        for source_aa in setdiff(Pioneer.RAW_SEQUENCE_AA_RESIDUES, ['K', 'R', 'H'])
+            @test all(aa -> aa ∉ Pioneer.get_mutation_choices(source_aa, Set{Char}()), ['K', 'R', 'H'])
+        end
+
+        variable_mod_aas = Set(['H'])
+        @test Pioneer.get_mutation_choices('K', variable_mod_aas) == ['R']
+    end
+
+    @testset "mutation fallback samples substitutions by proteome frequency" begin
+        counts = zeros(Int, length(Pioneer.RAW_SEQUENCE_AA_RESIDUES))
+        counts[Pioneer.RAW_SEQUENCE_AA_INDEX['H']] = 10
+
+        @test Pioneer.sample_mutation_choice(['R', 'H'], counts) == 'H'
+    end
+
     @testset "add_decoy_sequences_grouped mutation fallback skips mutating variable-mod source residues" begin
         proteins = [
             FastaEntry("P1", "", "", "", "human", "test", "MMMMMMK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
@@ -504,6 +523,40 @@
         @test positions[7] == UInt8(7)
     end
 
+    @testset "mutation fallback keeps outer mutations while moving inward" begin
+        Random.seed!(1234)
+        entries = [
+            FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(2), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+        sequences_set = PeptideSequenceSet(entries)
+        first_choices = Pioneer.get_mutation_choices('A', Set{Char}())
+        for left_aa in first_choices, right_aa in first_choices
+            candidate_chars = collect("AAAAAAK")
+            candidate_chars[2] = left_aa
+            candidate_chars[6] = right_aa
+            push!(sequences_set, String(candidate_chars), UInt8(2))
+        end
+
+        candidate, positions = Pioneer.try_mutation_fallback(
+            "AAAAAAK",
+            [1],
+            entries,
+            UInt8[2],
+            sequences_set,
+            nothing,
+            Char[],
+        )
+
+        @test candidate !== nothing
+        @test candidate[1] == 'A'
+        @test candidate[2] != 'A'
+        @test candidate[3] != 'A'
+        @test candidate[4:5] == "AA"
+        @test candidate[6] != 'A'
+        @test candidate[7] == 'K'
+        @test positions !== nothing
+    end
+
     @testset "add_decoy_sequences_grouped mutation fallback steps inward when termini are protected" begin
         Random.seed!(22)
         proteins = [
@@ -543,7 +596,6 @@
         Random.seed!(22)
         proteins = [
             FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
-            FastaEntry("P2", "", "", "", "human", "test", "AALAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false),
         ]
         proteome_index = ProteomeDistanceIndex(proteins)
         protected_entries = [

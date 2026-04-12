@@ -88,6 +88,7 @@ const PACKED_AA_MASK = UInt64(0x1f)
 const INVALID_AA_CODE = typemax(UInt8)
 const RAW_SEQUENCE_AA_RESIDUES = ['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L',
                                   'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
+const RAW_SEQUENCE_AA_INDEX = Dict(aa => idx for (idx, aa) in enumerate(RAW_SEQUENCE_AA_RESIDUES))
 const IL_COLLAPSED_AA_ORDER = ['A', 'C', 'D', 'E', 'F', 'G', 'H', 'K', 'L',
                                'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
 const MAX_IL_COLLAPSED_AA_CODE = UInt8(length(IL_COLLAPSED_AA_ORDER) - 1)
@@ -113,29 +114,35 @@ const IL_COLLAPSED_AA_CODES = Dict{Char, UInt8}(
     'Y' => UInt8(18),
     'I' => UInt8(8),
 )
-const MUTATION_ATTEMPTS_PER_PAIR = 20
+const MUTATION_FALLBACK_RESTARTS = 100
 const MUTATION_EXCLUSION_MAP = Dict{Char, Set{Char}}(
-    'A' => Set(['V', 'Q', 'P']),
-    'C' => Set(['A', 'S', 'G']),
-    'D' => Set(['G', 'A', 'H', 'E']),
-    'E' => Set(['D', 'A', 'W']),
-    'F' => Set(['I', 'L', 'V', 'S']),
-    'G' => Set(['N', 'A', 'S']),
-    'H' => Set(['D', 'N', 'Q']),
-    'I' => Set(['V', 'T', 'M', 'L']),
-    'K' => Set(['G', 'R', 'Q']),
-    'L' => Set(['V', 'P', 'F', 'I']),
-    'M' => Set(['T', 'I', 'L', 'F']),
-    'N' => Set(['S', 'G', 'E']),
-    'P' => Set(['I', 'L', 'S', 'A']),
-    'Q' => Set(['H', 'D', 'W']),
-    'R' => Set(['H', 'K', 'Q']),
-    'S' => Set(['V', 'N', 'A']),
-    'T' => Set(['A', 'S', 'I', 'L']),
-    'V' => Set(['I', 'L', 'A', 'M']),
-    'W' => Set(['D', 'S', 'G']),
-    'Y' => Set(['F', 'H', 'D']),
+    'A' => Set(['R', 'K', 'H']), #Set(['V', 'Q', 'P']),
+    'C' => Set(['R', 'K', 'H']), #Set(['A', 'S', 'G']),
+    'D' => Set(['R', 'K', 'H']), #Set(['G', 'A', 'H', 'E']),
+    'E' => Set(['R', 'K', 'H']), #Set(['D', 'A', 'W']),
+    'F' => Set(['R', 'K', 'H']), #Set(['I', 'L', 'V', 'S']),
+    'G' => Set(['R', 'K', 'H']), #Set(['N', 'A', 'S']),
+    'H' => Set([]), #Set(['D', 'N', 'Q']),
+    'I' => Set(['R', 'K', 'H', 'L']), #Set(['V', 'T', 'M', 'L']),
+    'K' => Set([]), #Set(['G', 'R', 'Q']),
+    'L' => Set(['R', 'K', 'H', 'I']), #Set(['V', 'P', 'F', 'I']),
+    'M' => Set(['R', 'K', 'H']), #Set(['T', 'I', 'L', 'F']),
+    'N' => Set(['R', 'K', 'H']), #Set(['S', 'G', 'E']),
+    'P' => Set(['R', 'K', 'H']), #Set(['I', 'L', 'S', 'A']),
+    'Q' => Set(['R', 'K', 'H']), #Set(['H', 'D', 'W']),
+    'R' => Set([]), #Set(['H', 'K', 'Q']),
+    'S' => Set(['R', 'K', 'H']), #Set(['V', 'N', 'A']),
+    'T' => Set(['R', 'K', 'H']), #Set(['A', 'S', 'I', 'L']),
+    'V' => Set(['R', 'K', 'H']), #Set(['I', 'L', 'A', 'M']),
+    'W' => Set(['R', 'K', 'H']), #Set(['D', 'S', 'G']),
+    'Y' => Set(['R', 'K', 'H']), #Set(['F', 'H', 'D']),
 )
+const KRH_RESTRICTED_MUTATION_CHOICES = Dict{Char, Vector{Char}}(
+    'K' => ['R', 'H'],
+    'R' => ['K', 'H'],
+    'H' => ['R', 'K'],
+)
+const KRH_MUTATION_DESTINATION_BLOCKLIST = Set(keys(KRH_RESTRICTED_MUTATION_CHOICES))
 const PROTEOME_INDEX_PROGRESS_CHUNK = 100_000
 
 function collect_variable_mod_aas(
@@ -162,6 +169,7 @@ struct ProteomeDistanceIndex
     invalid_prefix::Vector{Int}
     block_indexes::Vector{Dict{UInt128, Vector{Int}}}
     short_exact_indexes::Vector{Set{UInt64}}
+    amino_acid_counts::Vector{Int}
     min_block_length::Int
     max_block_length::Int
     short_exact_max_length::Int
@@ -199,6 +207,7 @@ function ProteomeDistanceIndex(
     log_progress::Bool = false,
 )
     sequence_codes = UInt8[]
+    amino_acid_counts = zeros(Int, length(RAW_SEQUENCE_AA_RESIDUES))
     total_length = sum(length(get_sequence(entry)) + 1 for entry in fasta_entries)
     total_residues = total_length - length(fasta_entries)
     total_block_lengths = max(0, max_block_length - min_block_length + 1)
@@ -216,7 +225,14 @@ function ProteomeDistanceIndex(
     sizehint!(sequence_codes, total_length)
 
     for entry in fasta_entries
-        append!(sequence_codes, encode_sequence_codes(get_sequence(entry)))
+        sequence = get_sequence(entry)
+        append!(sequence_codes, encode_sequence_codes(sequence))
+        for aa in sequence
+            aa_index = get(RAW_SEQUENCE_AA_INDEX, aa, 0)
+            if aa_index > 0
+                amino_acid_counts[aa_index] += 1
+            end
+        end
         push!(sequence_codes, INVALID_AA_CODE)
         if !isnothing(encode_pbar)
             update(encode_pbar)
@@ -325,6 +341,7 @@ function ProteomeDistanceIndex(
         invalid_prefix,
         block_indexes,
         short_exact_indexes,
+        amino_acid_counts,
         min_block_length,
         max_block_length,
         short_exact_max_length,
@@ -1255,12 +1272,12 @@ function collect_protected_positions(
     return protected
 end
 
-function inward_mutation_pairs(seq_length::Int)
-    pairs = Tuple{Int, Int}[]
+function inward_mutation_position_groups(seq_length::Int)
+    position_groups = Vector{Vector{Int}}()
     left = 2
     right = seq_length - 1
-    if seq_length <= 3 || left > right
-        return pairs
+    if seq_length <= 2 || left > right
+        return position_groups
     end
 
     if isodd(seq_length)
@@ -1271,35 +1288,21 @@ function inward_mutation_pairs(seq_length::Int)
         target_right = target_left + 1
     end
 
-    push!(pairs, (left, right))
+    push!(position_groups, left == right ? [left] : [left, right])
     while left != target_left || right != target_right
         if left != target_left
             left += 1
-            push!(pairs, (left, right))
+            push!(position_groups, [left])
         end
         if right != target_right
             right -= 1
-            push!(pairs, (left, right))
+            if right != left
+                push!(position_groups, [right])
+            end
         end
     end
 
-    if length(pairs) > 1
-        unique!(pairs)
-    end
-
-    return pairs
-end
-
-function build_mutated_sequence(
-    base_chars::Vector{Char},
-    mutation_positions,
-    mutation_aas,
-)
-    mutated = copy(base_chars)
-    for (position, aa) in zip(mutation_positions, mutation_aas)
-        mutated[position] = aa
-    end
-    return String(mutated)
+    return position_groups
 end
 
 function get_mutation_choices(
@@ -1310,18 +1313,59 @@ function get_mutation_choices(
         return Char[]
     end
 
-    excluded_aas = get(MUTATION_EXCLUSION_MAP, source_aa, Set{Char}())
     source_code = get(IL_COLLAPSED_AA_CODES, source_aa, INVALID_AA_CODE)
+    if haskey(KRH_RESTRICTED_MUTATION_CHOICES, source_aa)
+        return [
+            candidate_aa for candidate_aa in KRH_RESTRICTED_MUTATION_CHOICES[source_aa]
+            if candidate_aa ∉ variable_mod_aas &&
+               candidate_aa != source_aa &&
+               get(IL_COLLAPSED_AA_CODES, candidate_aa, INVALID_AA_CODE) != source_code
+        ]
+    end
+
+    excluded_aas = get(MUTATION_EXCLUSION_MAP, source_aa, Set{Char}())
     choices = Char[]
     for candidate_aa in RAW_SEQUENCE_AA_RESIDUES
         candidate_aa == source_aa && continue
         candidate_aa ∈ variable_mod_aas && continue
+        candidate_aa ∈ KRH_MUTATION_DESTINATION_BLOCKLIST && continue
         candidate_aa ∈ excluded_aas && continue
         get(IL_COLLAPSED_AA_CODES, candidate_aa, INVALID_AA_CODE) == source_code && continue
         push!(choices, candidate_aa)
     end
 
     return choices
+end
+
+function sample_mutation_choice(
+    choices::Vector{Char},
+    amino_acid_counts::Union{Nothing,Vector{Int}},
+)
+    isempty(choices) && return nothing
+    if isnothing(amino_acid_counts)
+        return rand(choices)
+    end
+
+    total_weight = 0
+    for aa in choices
+        aa_index = get(RAW_SEQUENCE_AA_INDEX, aa, 0)
+        total_weight += aa_index > 0 ? amino_acid_counts[aa_index] : 0
+    end
+    if total_weight <= 0
+        return rand(choices)
+    end
+
+    threshold = rand(1:total_weight)
+    running_weight = 0
+    for aa in choices
+        aa_index = get(RAW_SEQUENCE_AA_INDEX, aa, 0)
+        running_weight += aa_index > 0 ? amino_acid_counts[aa_index] : 0
+        if threshold <= running_weight
+            return aa
+        end
+    end
+
+    return choices[end]
 end
 
 function try_mutation_fallback(
@@ -1336,50 +1380,29 @@ function try_mutation_fallback(
     min_target_hamming_distance::Int = 2,
 )
     protected = collect_protected_positions(target_fasta_entries, idxs, base_seq, fixed_chars)
-    mutation_pairs = inward_mutation_pairs(length(base_seq))
-    isempty(mutation_pairs) && return nothing, nothing
+    mutation_position_groups = inward_mutation_position_groups(length(base_seq))
+    isempty(mutation_position_groups) && return nothing, nothing
 
     base_chars = collect(base_seq)
     identity_map = identity_positions(length(base_seq))
+    amino_acid_counts = isnothing(proteome_index) ? nothing : proteome_index.amino_acid_counts
 
-    for (left, right) in mutation_pairs
-        if protected[left] || protected[right]
-            continue
-        end
+    for _ in 1:MUTATION_FALLBACK_RESTARTS
+        candidate_chars = copy(base_chars)
+        for mutation_positions in mutation_position_groups
+            mutated_in_group = false
+            for position in mutation_positions
+                protected[position] && continue
+                mutation_choices = get_mutation_choices(base_chars[position], variable_mod_aas)
+                mutation_aa = sample_mutation_choice(mutation_choices, amino_acid_counts)
+                isnothing(mutation_aa) && continue
 
-        left_choices = get_mutation_choices(base_chars[left], variable_mod_aas)
-        if left == right
-            if isempty(left_choices)
-                continue
+                candidate_chars[position] = mutation_aa
+                mutated_in_group = true
             end
-            mutation_positions = (left,)
-            seen_mutations = Set{Char}()
-            while length(seen_mutations) < length(left_choices) &&
-                  length(seen_mutations) < MUTATION_ATTEMPTS_PER_PAIR
-                mutation_aa = rand(left_choices)
-                mutation_aa ∈ seen_mutations && continue
-                push!(seen_mutations, mutation_aa)
 
-                candidate = build_mutated_sequence(base_chars, mutation_positions, (mutation_aa,))
-                if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
-                    return candidate, identity_map
-                end
-            end
-        else
-            right_choices = get_mutation_choices(base_chars[right], variable_mod_aas)
-            if isempty(left_choices) || isempty(right_choices)
-                continue
-            end
-            mutation_positions = (left, right)
-            seen_mutations = Set{Tuple{Char, Char}}()
-            max_unique_mutations = length(left_choices) * length(right_choices)
-            while length(seen_mutations) < max_unique_mutations &&
-                  length(seen_mutations) < MUTATION_ATTEMPTS_PER_PAIR
-                mutation_aas = (rand(left_choices), rand(right_choices))
-                mutation_aas ∈ seen_mutations && continue
-                push!(seen_mutations, mutation_aas)
-
-                candidate = build_mutated_sequence(base_chars, mutation_positions, mutation_aas)
+            if mutated_in_group
+                candidate = String(candidate_chars)
                 if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
                     return candidate, identity_map
                 end
@@ -1658,7 +1681,7 @@ base peptide sequence share a single decoy sequence and mod position mapping.
 Algorithm:
 1. Group by base sequence (ignoring modifications)
 2. For each base sequence, generate one decoy sequence once (respect I/L equivalence and charges)
-3. If shuffling cannot satisfy the acceptance rules, fall back to a deterministic mutation strategy
+3. If shuffling cannot satisfy the acceptance rules, fall back to an inward stochastic mutation strategy
 4. Apply the same position mapping to all modification variants in the group
 5. Preserve metadata and set `is_decoy = true`
 """
@@ -1734,6 +1757,17 @@ function add_decoy_sequences_grouped(
 
         if isnothing(decoy_sequence)
             exhausted_groups += 1
+            if log_progress
+                if !isnothing(pbar)
+                    println()
+                    flush(stdout)
+                end
+                @user_warn "Decoy generation exhausted group: original_sequence=$base_seq, variants=$(length(idxs)), charges=$charges"
+                if !isnothing(pbar)
+                    println()
+                    flush(stdout)
+                end
+            end
             if !isnothing(pbar)
                 update(pbar)
             end
