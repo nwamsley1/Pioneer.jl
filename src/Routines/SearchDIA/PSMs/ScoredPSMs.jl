@@ -64,6 +64,8 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     p_count::UInt8
     non_cannonical_count::UInt8
     isotope_count::UInt8
+    complementary_pair_fraction::L
+    cleavage_coverage::L
 
     #Basic Metrics 
     poisson::L
@@ -127,6 +129,59 @@ end
 
 function growScoredPSMs!(scored_psms::Vector{Ms1ScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
     scored_psms = append!(scored_psms, Vector{Ms1ScoredPSM{H,L}}(undef, block_size))
+end
+
+function getComplementaryIonFeatures(
+    matches::Vector{FragmentMatch{T}},
+    IDtoCOL::ArrayDict{UInt32, UInt16},
+    sequence_lengths::AbstractVector,
+    nmatches::Int64,
+    n_vals::Int64
+) where {T<:AbstractFloat}
+    b_cleavages = zeros(UInt128, n_vals)
+    y_cleavages = zeros(UInt128, n_vals)
+    sequence_length_by_col = zeros(UInt16, n_vals)
+
+    @inbounds for i in range(1, nmatches)
+        match = matches[i]
+        isIsotope(match) && continue
+
+        ion_type = getIonType(match)
+        ((ion_type == one(UInt8)) || (ion_type == UInt8(2))) || continue
+
+        prec_id = getPrecID(match)
+        col = IDtoCOL[prec_id]
+        iszero(col) && continue
+
+        sequence_length = Int(sequence_lengths[prec_id])
+        sequence_length <= 1 && continue
+
+        frag_idx = Int(getFragInd(match))
+        cleavage_idx = ion_type == one(UInt8) ? frag_idx : sequence_length - frag_idx
+        (cleavage_idx < 1 || cleavage_idx >= sequence_length || cleavage_idx > 128) && continue
+
+        sequence_length_by_col[col] = UInt16(sequence_length)
+        cleavage_bit = UInt128(1) << (cleavage_idx - 1)
+        if ion_type == one(UInt8)
+            b_cleavages[col] |= cleavage_bit
+        else
+            y_cleavages[col] |= cleavage_bit
+        end
+    end
+
+    pair_fractions = zeros(Float16, n_vals)
+    cleavage_coverages = zeros(Float16, n_vals)
+
+    @inbounds for col in range(1, n_vals)
+        denominator = max(Int(sequence_length_by_col[col]) - 1, 1)
+        pair_count = count_ones(b_cleavages[col] & y_cleavages[col])
+        covered_count = count_ones(b_cleavages[col] | y_cleavages[col])
+
+        pair_fractions[col] = Float16(pair_count / denominator)
+        cleavage_coverages[col] = Float16(covered_count / denominator)
+    end
+
+    return pair_fractions, cleavage_coverages
 end
 
 function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}}, 
@@ -224,7 +279,10 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
                 last_val::Int64,
                 n_vals::Int64,
                 spectrum_intensity::H,
-                scan_idx::Int64;
+                scan_idx::Int64,
+                matches::Vector{FragmentMatch{H}},
+                nmatches::Int64,
+                sequence_lengths::AbstractVector;
                 min_spectral_contrast::H = 0f0,
                 min_log2_matched_ratio::H = -1f0,
                 min_y_count::Int64,
@@ -255,6 +313,14 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
     end
     start_idx = last_val
     skipped = 0
+    complementary_pair_fractions, cleavage_coverages = getComplementaryIonFeatures(
+        matches,
+        IDtoCOL,
+        sequence_lengths,
+        nmatches,
+        n_vals
+    )
+
     for i in range(1, n_vals)
         
         passing_filter = (
@@ -298,6 +364,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             unscored_PSMs[i].p_count,
             unscored_PSMs[i].non_cannonical_count,
             unscored_PSMs[i].isotope_count,
+            complementary_pair_fractions[scores_idx],
+            cleavage_coverages[scores_idx],
             Float16(getPoisson(expected_matches, total_ions)),
             #Float16(HyperScore(unscored_PSMs[i])),
             Float16(log2((unscored_PSMs[i].b_int + unscored_PSMs[i].y_int)/spectrum_intensity)),

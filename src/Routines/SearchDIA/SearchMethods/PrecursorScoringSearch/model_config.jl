@@ -63,6 +63,9 @@ const ADVANCED_FEATURE_SET = [
     :best_rank_iso,
     :topn,
     :topn_iso,
+    :complementary_pair_fraction,
+    :cleavage_coverage,
+    :hypergeom_match_score,
     :gof,
     :max_fitted_manhattan_distance,
     :max_fitted_spectral_contrast,
@@ -113,7 +116,8 @@ const REDUCED_FEATURE_SET = [
     #:ms1_irt_diff,
     # Spectral features
     :max_y_ions, :y_ions_sum, :longest_y, :y_count, :b_count, :isotope_count,
-    :total_ions, :best_rank, :best_rank_iso, :topn, :topn_iso, :gof,
+    :total_ions, :best_rank, :best_rank_iso, :topn, :topn_iso,
+    :complementary_pair_fraction, :cleavage_coverage, :hypergeom_match_score, :gof,
     # Quality metrics
     :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
     :max_matched_residual, :max_unmatched_residual, :max_gof,

@@ -179,6 +179,7 @@ end
     include("./utils/FileOperations/core/test_core_references_basic.jl")
     include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
     # PrecursorScoringSearch interface tests
+    include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_model_config.jl")
 
     #include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_scoring_interface.jl")
     

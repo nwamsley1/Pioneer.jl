@@ -168,6 +168,8 @@ function process_scans!(
 
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
     nce_model = getNceModel(search_context, ms_file_idx)
+    precursor_sequences = getSequence(getPrecursors(getSpecLib(search_context)))
+    sequence_lengths = UInt8[length(replace(seq, r"\(.*?\)" => "")) for seq in precursor_sequences]
 
     for scan_idx in scan_range
         ((scan_idx < 1) || scan_idx > length(spectra)) && continue
@@ -299,7 +301,10 @@ function process_scans!(
             last_val,
             Hs.n,
             Float32(sum(getIntensityArray(spectra, scan_idx))),
-            scan_idx;
+            scan_idx,
+            getIonMatches(search_data),
+            nmatches,
+            sequence_lengths;
             min_spectral_contrast = params.min_spectral_contrast,
             min_log2_matched_ratio = params.min_log2_matched_ratio,
             min_y_count = params.min_y_count,
@@ -815,6 +820,78 @@ function get_isotopes_captured!(chroms::DataFrame,
 end
 
 
+function log_binomial_coefficient(n::Int, k::Int)
+    (k < 0 || k > n) && return -Inf
+    return loggamma(n + 1) - loggamma(k + 1) - loggamma(n - k + 1)
+end
+
+function log_hypergeom_pmf(k::Int, successes::Int, population::Int, draws::Int)
+    failures = population - successes
+    return (
+        log_binomial_coefficient(successes, k) +
+        log_binomial_coefficient(failures, draws - k) -
+        log_binomial_coefficient(population, draws)
+    )
+end
+
+function hypergeom_tail_neglog10(k::Int, successes::Int, population::Int, draws::Int)
+    k <= 0 && return Float16(0)
+    population <= 0 && return Float16(0)
+
+    successes = clamp(successes, 0, population)
+    draws = clamp(draws, 0, population)
+    failures = population - successes
+    k_start = max(k, draws - failures)
+    k_stop = min(successes, draws)
+    k_start > k_stop && return Float16(0)
+
+    max_logp = -Inf
+    sum_exp = 0.0
+    for x in k_start:k_stop
+        logp = log_hypergeom_pmf(x, successes, population, draws)
+        if logp > max_logp
+            sum_exp = isfinite(max_logp) ? sum_exp * exp(max_logp - logp) + 1.0 : 1.0
+            max_logp = logp
+        else
+            sum_exp += exp(logp - max_logp)
+        end
+    end
+
+    log_tail = min(0.0, max_logp + log(sum_exp))
+    score = -log_tail / log(10.0)
+    isfinite(score) || return typemax(Float16)
+    return Float16(min(score, Float64(typemax(Float16))))
+end
+
+function get_hypergeom_match_score(
+    match_count::Integer,
+    sequence_length::Integer,
+    spectrum_peak_count::Integer,
+    mz_min::Real,
+    mz_max::Real,
+    mz_center::Real,
+    mem::MassErrorModel
+)
+    match_count <= 0 && return Float16(0)
+    sequence_length <= 1 && return Float16(0)
+    spectrum_peak_count <= 0 && return Float16(0)
+
+    mz_range = Float64(mz_max) - Float64(mz_min)
+    mz_range <= 0 && return Float16(0)
+
+    left_mz, right_mz = getMzBounds(mem, Float32(mz_center))
+    bin_width = Float64(right_mz - left_mz)
+    bin_width <= 0 && return Float16(0)
+
+    population = max(1, ceil(Int, mz_range / bin_width))
+    theoretical_ions = min(2 * (Int(sequence_length) - 1), population)
+    draws = min(Int(spectrum_peak_count), population)
+    matches = min(Int(match_count), theoretical_ions, draws)
+
+    return hypergeom_tail_neglog10(matches, theoretical_ions, population, draws)
+end
+
+
 """
     add_features!(psms::DataFrame, search_context::SearchContext, ...)
 
@@ -867,9 +944,11 @@ function add_features!(psms::DataFrame,
     sequence_length = zeros(UInt8, N);
     #b_y_overlap = zeros(Bool, N);
     spectrum_peak_count = zeros(Float16, N);
+    hypergeom_match_score = zeros(Float16, N);
     prec_mzs = zeros(Float32, size(psms, 1));
     Mox = zeros(UInt8, N);
     TIC = zeros(Float16, N);
+    mem = getMassErrorModel(search_context, ms_file_idx)
 
     #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
@@ -880,6 +959,8 @@ function add_features!(psms::DataFrame,
     rt::Vector{Float32} = psms[!,:rt]
     ms1_rt::Vector{Float32} = psms[!,:rt_ms1]
     ms1_missing::Vector{Bool} = psms[!,:ms1_features_missing]
+    b_count::Vector{UInt8} = psms[!,:b_count]
+    y_count::Vector{UInt8} = psms[!,:y_count]
     #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     log2_intensity_explained = psms[!,:log2_intensity_explained]::Vector{Float16}
     #precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
@@ -922,7 +1003,25 @@ function add_features!(psms::DataFrame,
                 prec_charges[i] = prec_charge[prec_idx]
                 #b_y_overlap[i] = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
                 pair_idxs[i] = extract_pair_idx(precursor_pair_idxs, prec_idx)
-                spectrum_peak_count[i] = length(masses[scan_idx[i]])
+                mz_values = masses[scan_idx[i]]
+                peak_count = length(mz_values)
+                spectrum_peak_count[i] = peak_count
+                if peak_count > 1
+                    mz_min = mz_values[1]
+                    mz_max = mz_values[peak_count]
+                    mz_center = mz_values[cld(peak_count, 2)]
+                    if !(ismissing(mz_min) || ismissing(mz_max) || ismissing(mz_center))
+                        hypergeom_match_score[i] = get_hypergeom_match_score(
+                            Int(b_count[i]) + Int(y_count[i]),
+                            Int(sequence_length[i]),
+                            peak_count,
+                            mz_min,
+                            mz_max,
+                            mz_center,
+                            mem
+                        )
+                    end
+                end
          
                 prec_mzs[i] = prec_mz[prec_idx];
             end
@@ -946,6 +1045,7 @@ function add_features!(psms::DataFrame,
     
     #psms[!,:b_y_overlap] = b_y_overlap
     psms[!,:spectrum_peak_count] = spectrum_peak_count
+    psms[!,:hypergeom_match_score] = hypergeom_match_score
     psms[!,:pair_id] = pair_idxs
     psms[!,:prec_mz] = prec_mzs
     psms[!,:entrapment_group_id] = entrap_group_id
