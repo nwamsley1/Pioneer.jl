@@ -277,7 +277,13 @@ function process_scans!(
         update_precursor_weights!(search_data, weights, precursor_weights)
 
         # Score PSMs
-        getDistanceMetrics(weights, residuals, Hs, getComplexSpectralScores(search_data))
+        getDistanceMetrics(
+            weights,
+            residuals,
+            Hs,
+            getComplexSpectralScores(search_data);
+            fill_time_ms = getFillTimeMs(spectra, scan_idx)
+        )
         
         ScoreFragmentMatches!(
             getComplexUnscoredPsms(search_data),

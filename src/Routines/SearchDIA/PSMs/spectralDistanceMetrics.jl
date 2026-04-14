@@ -17,6 +17,11 @@
 
 abstract type SpectralScores{T<:AbstractFloat} end
 
+const ASTRAL_MS2_INTENSITY_ALPHA = 1.51f0
+const ASTRAL_MS2_SIGMAO2 = -0.0001f0
+const DIRICHLET_MULTINOMIAL_CONCENTRATION = 50.0f0
+const DIRICHLET_MULTINOMIAL_EPSILON = 0.01f0
+
 struct SpectralScoresComplex{T<:AbstractFloat} <: SpectralScores{T}
     spectral_contrast::T
     fitted_spectral_contrast::T
@@ -27,6 +32,7 @@ struct SpectralScoresComplex{T<:AbstractFloat} <: SpectralScores{T}
     matched_ratio::T
     scribe::T
     percent_theoretical_ignored::T
+    dm_tail_prob::Float32
     #entropy_score::T
 end
 
@@ -217,6 +223,7 @@ function getDistanceMetrics(w::Vector{T},
     r::Vector{T},
     H::SparseArray{Ti,T},
     spectral_scores::Vector{SpectralScoresComplex{U}};
+    fill_time_ms::Real = 0.0f0,
     relative_improvement_threshold::Float32 = 1.25f0,
     min_frags::Int = 3
    ) where {Ti<:Integer,T,U<:AbstractFloat}
@@ -259,6 +266,15 @@ function getDistanceMetrics(w::Vector{T},
         end
 
         tot_pred_signal = max(tot_pred_signal, eps(T))
+
+        dm_tail_prob = dirichlet_multinomial_tail_probability(
+            w,
+            H,
+            r,
+            col,
+            incl,
+            fill_time_ms
+        )
         
        
         # ---- compute metrics, iteratively drop worst peak -------------
@@ -294,9 +310,76 @@ function getDistanceMetrics(w::Vector{T},
             Float16(best.fmd),                        # fitted manhattan (−log)
             Float16(best.mr),                         # matched / unmatched
             Float16(best.scribe),                     # scribe
-            Float16(pct_ignored)                      # percent_theoretical_ignored
+            Float16(pct_ignored),                     # percent_theoretical_ignored
+            dm_tail_prob
         )
     end
+end
+
+function dirichlet_multinomial_tail_probability(
+    w::AbstractVector{T},
+    H::SparseArray{Ti,T},
+    r::AbstractVector{T},
+    col::Integer,
+    included_indices,
+    fill_time_ms::Real;
+    alpha::Float32 = ASTRAL_MS2_INTENSITY_ALPHA,
+    sigma_o2::Float32 = ASTRAL_MS2_SIGMAO2,
+    concentration::Float32 = DIRICHLET_MULTINOMIAL_CONCENTRATION,
+    epsilon::Float32 = DIRICHLET_MULTINOMIAL_EPSILON
+)::Float32 where {Ti<:Integer,T<:AbstractFloat}
+    if fill_time_ms <= 0 || alpha <= 0 || concentration <= 0
+        return 1.0f0
+    end
+
+    intensity_to_molecules = Float64(fill_time_ms) / (1000.0 * Float64(alpha))
+    expected_signal_sum = 0.0
+    total_molecules = 0
+    k = 0
+
+    for i in included_indices
+        fitted_peak = max(Float64(w[col]) * Float64(H.nzval[i]), 0.0)
+        fitted_peak <= 0.0 && continue
+
+        shadow_peak = max(fitted_peak - Float64(r[H.rowval[i]]), 0.0)
+        molecule_count = shadow_peak * intensity_to_molecules
+        if isfinite(molecule_count)
+            total_molecules += Int64(round(molecule_count))
+        end
+
+        expected_signal_sum += fitted_peak
+        k += 1
+    end
+
+    if k <= 1 || total_molecules <= 0 || expected_signal_sum <= 0.0
+        return 1.0f0
+    end
+
+    n = Float64(total_molecules)
+    c = Float64(concentration)
+    eps_mix = clamp(Float64(epsilon), 0.0, 1.0)
+    uniform_prob = 1.0 / Float64(k)
+    overdispersion = (n + c) / (1.0 + c)
+    observation_noise = max(Float64(sigma_o2), 0.0)
+
+    statistic = 0.0
+    for i in included_indices
+        fitted_peak = max(Float64(w[col]) * Float64(H.nzval[i]), 0.0)
+        fitted_peak <= 0.0 && continue
+
+        predicted_prob = (1.0 - eps_mix) * (fitted_peak / expected_signal_sum) +
+                         eps_mix * uniform_prob
+
+        shadow_peak = max(fitted_peak - Float64(r[H.rowval[i]]), 0.0)
+        molecule_count = shadow_peak * intensity_to_molecules
+        observed = isfinite(molecule_count) ? Float64(Int64(round(molecule_count))) : 0.0
+        expected = n * predicted_prob
+        variance = max(expected * overdispersion + observation_noise * expected^2, eps(Float64))
+        statistic += (observed - expected)^2 / variance
+    end
+
+    tail_prob = ccdf(Chisq(k - 1), statistic)
+    return isfinite(tail_prob) ? Float32(clamp(tail_prob, 0.0, 1.0)) : 1.0f0
 end
 
 function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T}, col, included_indices) where {Ti<:Integer,T<:AbstractFloat}

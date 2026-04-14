@@ -81,6 +81,7 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     matched_ratio::L 
     percent_theoretical_ignored::L
     scribe::L
+    dm_tail_prob::H
     #entropy_score::L
     weight::H
 
@@ -312,6 +313,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             spectral_scores[scores_idx].matched_ratio,
             spectral_scores[scores_idx].percent_theoretical_ignored,
             spectral_scores[scores_idx].scribe,
+            spectral_scores[scores_idx].dm_tail_prob,
             #spectral_scores[scores_idx].entropy_score,
             weight[scores_idx],
 

@@ -18,4 +18,8 @@ using Pioneer
     @test :intercept ∉ model_by_name["SimpleLightGBM"].features
     @test :intercept ∉ model_by_name["AdvancedLightGBM"].features
     @test :intercept ∉ model_by_name["SuperSimplified"].features
+
+    @test :dm_tail_prob in model_by_name["SimpleLightGBM"].features
+    @test :dm_tail_prob in model_by_name["AdvancedLightGBM"].features
+    @test :dm_tail_prob ∉ model_by_name["SuperSimplified"].features
 end

@@ -100,6 +100,15 @@ function getIntensityArray(ms_data::BasicNonIonMobilityMassSpecData{T}, scan_idx
     getIntensityArrays(ms_data)[scan_idx]
 end
 
+hasFillTimeMs(ms_data::MassSpecData)::Bool = :fillTimeMs in Tables.columnnames(ms_data.data)
+function getFillTimeMs(ms_data::MassSpecData, scan_idx::Integer)::Float32
+    if !hasFillTimeMs(ms_data)
+        return 0.0f0
+    end
+    fill_time_ms = ms_data.data[:fillTimeMs][scan_idx]
+    return Float32(coalesce(fill_time_ms, 0.0f0))
+end
+
 # String data doesn't need type parameter
 getScanHeaders(ms_data::BasicNonIonMobilityMassSpecData):: Arrow.List{String, Int32, Vector{UInt8}} = ms_data.data[:scanHeader]
 function getScanHeader(ms_data::BasicNonIonMobilityMassSpecData, scan_idx::Integer)::String
