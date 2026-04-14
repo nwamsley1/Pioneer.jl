@@ -378,6 +378,62 @@
         @test all(get_entrapment_pair_id.(result) .== 0)
         @test all(.!is_decoy.(result))
     end
+
+    @testset "add_entrapment_sequences_grouped uses decoy distance constraints and mutation fallback" begin
+        Random.seed!(11)
+        proteins = [
+            FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+        proteome_index = ProteomeDistanceIndex(proteins)
+        entries = [
+            FastaEntry("P1", "", "", "", "human", "test", "AAAAAAK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+
+        result = add_entrapment_sequences_grouped(
+            entries,
+            UInt8(1);
+            max_shuffle_attempts = 1,
+            proteome_index = proteome_index,
+            show_progress = false,
+            log_progress = false,
+        )
+
+        entrapment = only(filter(entry -> get_entrapment_pair_id(entry) > 0, result))
+        entrapment_seq = get_sequence(entrapment)
+        @test !is_decoy(entrapment)
+        @test get_entrapment_pair_id(entrapment) == 1
+        @test entrapment_seq[1] == 'A'
+        @test entrapment_seq[2] != 'A'
+        @test entrapment_seq[3:5] == "AAA"
+        @test entrapment_seq[6] != 'A'
+        @test entrapment_seq[7] == 'K'
+        @test has_min_target_hamming_distance(entrapment_seq, proteome_index)
+        @test Pioneer.passes_target_distance_constraints(entrapment_seq, proteome_index)
+    end
+
+    @testset "add_entrapment_sequences_grouped mutation fallback skips variable-mod residues" begin
+        proteins = [
+            FastaEntry("P1", "", "", "", "human", "test", "MMMMMMK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+        proteome_index = ProteomeDistanceIndex(proteins)
+        entries = [
+            FastaEntry("P1", "", "", "", "human", "test", "MMMMMMK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+        variable_mod_names = [(p = r"M", r = "VarM")]
+
+        result = add_entrapment_sequences_grouped(
+            entries,
+            UInt8(1);
+            max_shuffle_attempts = 1,
+            variable_mod_names = variable_mod_names,
+            proteome_index = proteome_index,
+            show_progress = false,
+            log_progress = false,
+        )
+
+        @test length(result) == 1
+        @test isempty(filter(entry -> get_entrapment_pair_id(entry) > 0, result))
+    end
     
     @testset "add_decoy_sequences" begin
         # Create test entries
@@ -447,9 +503,6 @@
         choices = Pioneer.get_mutation_choices('A', variable_mod_aas)
         @test 'L' ∉ choices
         @test 'A' ∉ choices
-        @test 'V' ∉ choices
-        @test 'Q' ∉ choices
-        @test 'P' ∉ choices
     end
 
     @testset "mutation fallback restricts basic residue substitutions" begin

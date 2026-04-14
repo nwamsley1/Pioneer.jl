@@ -169,7 +169,10 @@ function prepare_chronologer_input(
 
     protein_df = build_protein_df(protein_entries)
     Arrow.write(proteins_out_path, protein_df)
-    proteome_index = _params.fasta_digest_params["add_decoys"] ? ProteomeDistanceIndex(
+
+    entrapment_ratio = _params.fasta_digest_params["entrapment_r"]
+    needs_distance_index = _params.fasta_digest_params["add_decoys"] || entrapment_ratio > 0
+    proteome_index = needs_distance_index ? ProteomeDistanceIndex(
         protein_entries;
         min_block_length = max(1, fld(_params.fasta_digest_params["min_length"], 2)),
         max_block_length = cld(_params.fasta_digest_params["max_length"], 2),
@@ -195,14 +198,15 @@ function prepare_chronologer_input(
     pep_entries_processed = assign_base_pep_ids!(fasta_entries)
 
     # Step 4: Add entrapment sequences (grouped by base sequence so all mods share the same entrapments)
-    entrapment_method = get(_params.fasta_digest_params, "entrapment_method", "shuffle")
-    entrapment_ratio = _params.fasta_digest_params["entrapment_r"]
     if entrapment_ratio > 0
-        @user_info "Generating grouped entrapment sequences (method=$entrapment_method, ratio=$entrapment_ratio)"
+        @user_info "Generating grouped entrapment sequences (method=$entrapment_method, ratio=$entrapment_ratio, min_target_hamming_distance=2)"
         fasta_entries = add_entrapment_sequences_grouped(
             fasta_entries,
             UInt8(_params.fasta_digest_params["entrapment_r"]);
-            entrapment_method = entrapment_method
+            entrapment_method = entrapment_method,
+            fixed_mod_names = fixed_mods,
+            variable_mod_names = var_mods,
+            proteome_index = proteome_index,
         )
     end
 

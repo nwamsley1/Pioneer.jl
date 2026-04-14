@@ -765,7 +765,10 @@ same base peptide sequence receive the same set of entrapment sequences.
 - `entrapment_r::UInt8`: Number of entrapment sequences to generate per base sequence
 - `max_shuffle_attempts::Int64`: Max attempts to find a unique shuffled sequence
 - `fixed_chars::Vector{Char}`: Optional characters to keep fixed when shuffling
+- `fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Fixed modification patterns to reapply on final entrapment sequences
+- `variable_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Variable modification patterns whose source and destination residues are excluded from mutation fallback
 - `entrapment_method::String`: "shuffle" or "reverse" (reverse may fall back to shuffle)
+- `proteome_index::Union{Nothing, ProteomeDistanceIndex}`: Optional target proteome index used to enforce decoy-style distance constraints
 - `show_progress::Bool`: Show a progress bar while iterating grouped base sequences
 - `log_progress::Bool`: Emit start/end summary logs for grouped generation
 
@@ -777,14 +780,18 @@ Algorithm:
 1. Group entries by base sequence (ignoring modifications)
 2. For each base sequence, generate `entrapment_r` unique entrapment sequences once
 3. Reuse those sequences for all modification variants in the group, adjusting mod positions
-4. Maintain I/L equivalence when checking uniqueness (via PeptideSequenceSet)
+4. Apply the same target-distance constraints and mutation fallback strategy used for decoys
+5. Maintain I/L equivalence when checking uniqueness (via PeptideSequenceSet)
 """
 function add_entrapment_sequences_grouped(
     target_fasta_entries::Vector{FastaEntry},
     entrapment_r::UInt8;
     max_shuffle_attempts::Int64 = 20,
     fixed_chars::Vector{Char} = Vector{Char}(),
+    fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}(),
+    variable_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}(),
     entrapment_method::String = "shuffle",
+    proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
     show_progress::Bool = true,
     log_progress::Bool = true,
 )::Vector{FastaEntry}
@@ -806,6 +813,7 @@ function add_entrapment_sequences_grouped(
         zero(UInt8),
         fixed_chars
     )
+    variable_mod_aas = collect_variable_mod_aas(variable_mod_names)
 
     # Group entries by base sequence (ignore mods)
     groups = Dict{String, Vector{Int}}()
@@ -824,10 +832,11 @@ function add_entrapment_sequences_grouped(
 
     entrapments_out = Vector{FastaEntry}()
     fallback_to_shuffle_count = 0
+    mutation_fallback_count = 0
     total_attempted = length(groups) * Int(entrapment_r)
     pbar = (show_progress && n_groups > 0) ? ProgressBar(total=n_groups) : nothing
     if log_progress
-        @user_info "Entrapment generation: $n_entries entries across $n_groups base sequence groups (avg variants/group=$(avg_variants), ratio=$(Int(entrapment_r)))"
+        @user_info "Entrapment generation: $n_entries entries across $n_groups base sequence groups (avg variants/group=$(avg_variants), ratio=$(Int(entrapment_r)), method=$entrapment_method, min_target_hamming_distance=$(isnothing(proteome_index) ? 0 : 2))"
     end
 
     exhausted_groups = 0
@@ -840,31 +849,32 @@ function add_entrapment_sequences_grouped(
         entrap_seqs = Vector{String}()
         entrap_positions = Vector{Vector{UInt8}}()
         for entrapment_group_id in 1:entrapment_r
-            n_shuffle_attempts = 0
+            new_sequence, positions_copy, used_shuffle_fallback, used_mutation_fallback, _ = find_group_decoy_candidate!(
+                shuffle_seq,
+                base_seq,
+                idxs,
+                target_fasta_entries,
+                charges,
+                sequences_set;
+                max_shuffle_attempts = max_shuffle_attempts,
+                fixed_chars = fixed_chars,
+                variable_mod_aas = variable_mod_aas,
+                decoy_method = entrapment_method,
+                proteome_index = proteome_index,
+            )
 
-            # Start with requested method
-            new_sequence = shuffle_sequence!(shuffle_seq, base_seq; method=entrapment_method)
-
-            # If duplicate: reverse may fall back to shuffle; shuffle keeps trying
-            needs_retry = any(((new_sequence, c) ∈ sequences_set) for c in charges)
-            if needs_retry && entrapment_method == "reverse"
-                @user_warn "Reverse duplicate for entrapment of $base_seq; fallback to shuffle"
-                fallback_to_shuffle_count += 1
-            end
-
-            while needs_retry && n_shuffle_attempts < max_shuffle_attempts
-                new_sequence = shuffle_sequence!(shuffle_seq, base_seq; method="shuffle")
-                needs_retry = any(((new_sequence, c) ∈ sequences_set) for c in charges)
-                n_shuffle_attempts += 1
-            end
-
-            if needs_retry
+            if isnothing(new_sequence)
                 exhausted_groups += 1
                 continue
             end
 
-            # Snapshot positions mapping for consistent mod adjustments across variants
-            positions_copy = Vector{UInt8}(shuffle_seq.new_positions)
+            if used_shuffle_fallback
+                fallback_to_shuffle_count += 1
+            end
+            if used_mutation_fallback
+                mutation_fallback_count += 1
+            end
+
             push!(entrap_seqs, new_sequence)
             push!(entrap_positions, positions_copy)
 
@@ -889,6 +899,11 @@ function add_entrapment_sequences_grouped(
                     get_structural_mods(target_entry),
                     entrap_positions[i],
                     seq_length
+                )
+                adjusted_structural_mods = merge_fixed_mods(
+                    entrap_seqs[i],
+                    adjusted_structural_mods,
+                    fixed_mod_names,
                 )
                 adjusted_isotopic_mods = adjust_mod_positions(
                     get_isotopic_mods(target_entry),
@@ -922,7 +937,7 @@ function add_entrapment_sequences_grouped(
     end
 
     if log_progress
-        @user_info "Entrapment generation complete: $(length(entrapments_out)) entrapment entries created, exhausted_groups=$exhausted_groups, reverse_fallbacks=$fallback_to_shuffle_count"
+        @user_info "Entrapment generation complete: $(length(entrapments_out)) entrapment entries created, exhausted_groups=$exhausted_groups, shuffle_fallbacks=$fallback_to_shuffle_count, mutation_fallbacks=$mutation_fallback_count"
     end
 
     # Report statistics if using reverse method for entrapment
