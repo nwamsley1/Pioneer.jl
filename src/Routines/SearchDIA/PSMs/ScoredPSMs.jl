@@ -83,6 +83,9 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     matched_ratio::L 
     percent_theoretical_ignored::L
     scribe::L
+    target_protection_spectral_angle::L
+    target_protection_pair_decoy::Bool
+    target_neighbor_spectral_angle::L
     #entropy_score::L
     weight::H
 
@@ -289,6 +292,9 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
                 min_frag_count::Int64 = 4,
                 max_best_rank::Int64 = 1,
                 min_topn::Int64 = 2,
+                target_protection_spectral_angle::AbstractVector{<:AbstractFloat} = zeros(L, n_vals),
+                target_protection_pair_decoy::AbstractVector{Bool} = falses(n_vals),
+                target_neighbor_spectral_angle::AbstractVector{<:AbstractFloat} = zeros(L, n_vals),
                 block_size::Int64 = 10000
                 ) where {L,H<:AbstractFloat}
 
@@ -380,6 +386,9 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             spectral_scores[scores_idx].matched_ratio,
             spectral_scores[scores_idx].percent_theoretical_ignored,
             spectral_scores[scores_idx].scribe,
+            L(target_protection_spectral_angle[scores_idx]),
+            target_protection_pair_decoy[scores_idx],
+            L(target_neighbor_spectral_angle[scores_idx]),
             #spectral_scores[scores_idx].entropy_score,
             weight[scores_idx],
 

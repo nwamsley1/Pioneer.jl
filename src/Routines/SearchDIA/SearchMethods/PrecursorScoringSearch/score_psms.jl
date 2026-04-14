@@ -287,7 +287,7 @@ Unified in-memory PSM scoring function that executes the specified model.
 - SimpleLightGBM: Full feature set, standard hyperparameters
 - AdvancedLightGBM: Full feature set, advanced hyperparameters
 - ProbitRegression: Linear probit model with CV folds from library
-- SuperSimplified: Minimal 5-feature LightGBM model
+- SuperSimplified: Minimal LightGBM model
 """
 function score_precursor_isotope_traces_in_memory(
     best_psms::DataFrame,

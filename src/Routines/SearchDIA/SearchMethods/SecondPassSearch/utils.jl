@@ -168,7 +168,10 @@ function process_scans!(
 
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
     nce_model = getNceModel(search_context, ms_file_idx)
-    precursor_sequences = getSequence(getPrecursors(getSpecLib(search_context)))
+    precursors = getPrecursors(getSpecLib(search_context))
+    precursor_sequences = getSequence(precursors)
+    prec_is_decoy = getIsDecoy(precursors)
+    prec_pair_ids = getPairIdx(precursors)
     sequence_lengths = UInt8[length(replace(seq, r"\(.*?\)" => "")) for seq in precursor_sequences]
 
     for scan_idx in scan_range
@@ -280,6 +283,12 @@ function process_scans!(
 
         # Score PSMs
         getDistanceMetrics(weights, residuals, Hs, getComplexSpectralScores(search_data))
+        neighbor_spectral_angles = getMaxNeighborSpectralAngles(
+            Hs,
+            prec_is_decoy,
+            prec_pair_ids,
+            getIdToCol(search_data)
+        )
         
         ScoreFragmentMatches!(
             getComplexUnscoredPsms(search_data),
@@ -311,6 +320,9 @@ function process_scans!(
             min_frag_count = params.min_frag_count,
             max_best_rank = params.max_best_rank,
             min_topn = first(params.min_topn_of_m),
+            target_protection_spectral_angle = neighbor_spectral_angles.target_protection_spectral_angle,
+            target_protection_pair_decoy = neighbor_spectral_angles.target_protection_pair_decoy,
+            target_neighbor_spectral_angle = neighbor_spectral_angles.target_neighbor_spectral_angle,
             block_size = 500000
         )
 

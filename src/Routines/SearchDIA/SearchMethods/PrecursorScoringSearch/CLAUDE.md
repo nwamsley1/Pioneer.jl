@@ -57,6 +57,7 @@ Downstream protein handling now runs in later stages:
 - Retention time errors and predictions
 - Mass accuracy metrics
 - MS1 isotope pattern features
+- Target protection distance
 - Match-between-runs features (when enabled)
 
 ### Model Comparison Framework (score_psms.jl and model_config.jl)
@@ -70,7 +71,7 @@ Downstream protein handling now runs in later stages:
    - Suitable for datasets with limited PSMs
 
 2. **AdvancedLightGBM** (Default for >100K PSMs)
-   - Full ADVANCED_FEATURE_SET (50 features including all available metrics)
+   - Full ADVANCED_FEATURE_SET including all available metrics
    - Aggressive hyperparameters for maximum performance
    - Deeper trees (max_depth=10) and lower learning rate (eta=0.05)
 
@@ -80,7 +81,7 @@ Downstream protein handling now runs in later stages:
    - Good baseline, especially for smaller datasets
 
 4. **SuperSimplified**
-   - Minimal feature set (5 core features: spectral contrast, residuals, error norms, intensity explained)
+   - Minimal feature set with spectral contrast, residuals, error norms, intensity explained, and target protection
    - LightGBM with conservative parameters
    - Fastest training, minimal overfitting risk
 
@@ -91,9 +92,9 @@ Downstream protein handling now runs in later stages:
 4. **Final Training**: Selected model retrained with progress bars visible
 
 **Feature Sets** (defined in model_config.jl):
-- **ADVANCED_FEATURE_SET**: 50 features including all spectral, RT, MS1, and quality metrics
+- **ADVANCED_FEATURE_SET**: 50+ features including all spectral, RT, MS1, and quality metrics
 - **REDUCED_FEATURE_SET**: 40+ core features for balanced performance
-- **MINIMAL_FEATURE_SET**: 5 essential spectral matching features
+- **MINIMAL_FEATURE_SET**: Essential spectral matching and target protection features
 - **Cross-run transfer features**: Currently disabled in production runs
 
 **Clean Output Design**:
@@ -287,7 +288,7 @@ ScoringConfig{M,P,T,F,I,B}
 
 ### Automatic Model Selection Feature (January 2025)
 - **Four-Model Comparison**: Added automatic comparison of SimpleLightGBM, AdvancedLightGBM, ProbitRegression, and SuperSimplified models
-- **Advanced Feature Set**: Added ADVANCED_FEATURE_SET with 50 features for maximum performance model
+- **Advanced Feature Set**: Added ADVANCED_FEATURE_SET for maximum performance model
 - **User-Defined Q-value**: Model selection now uses q_value_threshold from parameters instead of hardcoded 0.01
 - **Clean Output Design**: 
   - Implemented stdout redirection to suppress LightGBM progress bars

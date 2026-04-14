@@ -102,6 +102,7 @@ const ADVANCED_FEATURE_SET = [
     :ms1_features_missing,
     
     :percent_theoretical_ignored,
+    :target_protection_spectral_angle,
     :scribe,
     :max_scribe
     # MBR features added automatically if match_between_runs=true
@@ -123,7 +124,8 @@ const REDUCED_FEATURE_SET = [
     :max_matched_residual, :max_unmatched_residual, :max_gof,
     :fitted_spectral_contrast, :spectral_contrast, :max_matched_ratio,
     :err_norm, :poisson, :weight, :log2_intensity_explained, :tic, :num_scans,
-    :smoothness, :percent_theoretical_ignored, :scribe, :max_scribe,
+    :smoothness, :percent_theoretical_ignored, :target_protection_spectral_angle,
+    :scribe, :max_scribe,
     # MS1 features
     :weight_ms1,
     :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
@@ -160,7 +162,8 @@ const MINIMAL_FEATURE_SET = [
     :max_matched_residual,
     :max_unmatched_residual,
     :err_norm,
-    :log2_intensity_explained
+    :log2_intensity_explained,
+    :target_protection_spectral_angle
 ]
 
 """
@@ -240,6 +243,7 @@ function create_model_configurations(ms1_scoring::Bool = true)
                 :spectral_contrast,
                 :entropy_score,
                 :scribe,
+                :target_protection_spectral_angle,
                 :irt_error,
                 :err_norm,
                 :y_count,

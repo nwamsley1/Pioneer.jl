@@ -91,13 +91,13 @@ PSM Count Decision Tree:
 | **SimpleLightGBM** | LightGBM | REDUCED_FEATURE_SET (40+ features) | Default for small datasets | Conservative (depth=4, eta=0.1) |
 | **AdvancedLightGBM** | LightGBM | ADVANCED_FEATURE_SET (50+ features) | Default for large datasets | Aggressive (depth=10, eta=0.05) |
 | **ProbitRegression** | Linear | REDUCED_FEATURE_SET | Fast alternative | Linear model (max_iter=30) |
-| **SuperSimplified** | LightGBM | MINIMAL_FEATURE_SET (5 features) | Minimal overfitting | Conservative (depth=4, eta=0.1) |
+| **SuperSimplified** | LightGBM | MINIMAL_FEATURE_SET | Minimal overfitting | Conservative (depth=4, eta=0.1) |
 
 ### Feature Sets
 
 - **ADVANCED_FEATURE_SET**: 50+ features including all spectral, RT, MS1, and quality metrics
 - **REDUCED_FEATURE_SET**: 40+ core features for balanced performance  
-- **MINIMAL_FEATURE_SET**: 5 essential features (spectral contrast, residuals, error norms, intensity explained)
+- **MINIMAL_FEATURE_SET**: Essential features for spectral contrast, residuals, error norms, intensity explained, and target protection
 - **Cross-run transfer features**: Currently disabled in production runs
 
 ## Function Call Flow

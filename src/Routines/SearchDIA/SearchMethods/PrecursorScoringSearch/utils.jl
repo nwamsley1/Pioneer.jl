@@ -16,6 +16,249 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # ==========================================================
+# QC plotting
+# ==========================================================
+
+function plot_target_protection_spectral_angle_qc(
+    psm_paths::Vector{String},
+    output_path::String;
+    max_rows::Int64 = 1_000_000
+)
+    total_rows = 0
+    for path in psm_paths
+        isfile(path) || continue
+        tbl = Arrow.Table(path)
+        if hasproperty(tbl, :target_protection_spectral_angle) && hasproperty(tbl, :target)
+            total_rows += length(tbl[:target_protection_spectral_angle])
+        end
+    end
+
+    if total_rows == 0
+        @user_warn "Skipping target protection spectral angle QC plots: no target_protection_spectral_angle rows found"
+        return nothing
+    end
+
+    stride = max(1, cld(total_rows, max_rows))
+    spectral_angles = Float32[]
+    target_neighbor_spectral_angles = Float32[]
+    targets = Bool[]
+    nearest_decoy_is_pair = Bool[]
+    sequence_lengths = UInt8[]
+    has_sequence_length = true
+    has_pair_flag = true
+    has_target_neighbor = true
+    rows_seen = 0
+
+    for path in psm_paths
+        isfile(path) || continue
+        tbl = Arrow.Table(path)
+        (hasproperty(tbl, :target_protection_spectral_angle) && hasproperty(tbl, :target)) || continue
+
+        has_lengths = hasproperty(tbl, :sequence_length)
+        has_sequence_length &= has_lengths
+        file_has_pair_flag = hasproperty(tbl, :target_protection_pair_decoy)
+        has_pair_flag &= file_has_pair_flag
+        file_has_target_neighbor = hasproperty(tbl, :target_neighbor_spectral_angle)
+        has_target_neighbor &= file_has_target_neighbor
+        n = length(tbl[:target_protection_spectral_angle])
+        for i in 1:n
+            rows_seen += 1
+            ((rows_seen - 1) % stride == 0) || continue
+
+            spectral_angle = Float32(tbl[:target_protection_spectral_angle][i])
+            isfinite(spectral_angle) || continue
+            target_neighbor_spectral_angle = file_has_target_neighbor ? Float32(tbl[:target_neighbor_spectral_angle][i]) : 0.0f0
+            isfinite(target_neighbor_spectral_angle) || (target_neighbor_spectral_angle = 0.0f0)
+
+            push!(spectral_angles, clamp(spectral_angle, 0.0f0, 1.0f0))
+            push!(target_neighbor_spectral_angles, clamp(target_neighbor_spectral_angle, 0.0f0, 1.0f0))
+            push!(targets, Bool(tbl[:target][i]))
+            push!(nearest_decoy_is_pair, file_has_pair_flag ? Bool(tbl[:target_protection_pair_decoy][i]) : false)
+            if has_lengths
+                push!(sequence_lengths, UInt8(tbl[:sequence_length][i]))
+            end
+        end
+    end
+
+    if isempty(spectral_angles)
+        @user_warn "Skipping target protection spectral angle QC plots: sampled rows were empty"
+        return nothing
+    end
+
+    plots = Plots.Plot[]
+    bins = range(0.0, 1.0, length=51)
+    if !has_pair_flag
+        @user_warn "Target protection paired-decoy QC split unavailable: target_protection_pair_decoy column missing"
+    end
+    if !has_target_neighbor
+        @user_warn "Target-neighbor QC split unavailable: target_neighbor_spectral_angle column missing"
+    end
+    target_pair_mask = targets .& nearest_decoy_is_pair
+    target_other_mask = targets .& .!nearest_decoy_is_pair
+    decoy_mask = .!targets
+    bin_centers = Float32.((collect(bins[1:end-1]) .+ collect(bins[2:end])) ./ 2)
+
+    function log2_bin_counts(values::AbstractVector{Float32})
+        counts = zeros(Int64, length(bin_centers))
+        for value in values
+            bin_idx = searchsortedlast(bins, value)
+            bin_idx = clamp(bin_idx, 1, length(counts))
+            counts[bin_idx] += 1
+        end
+        positive_mask = counts .> 0
+        return bin_centers[positive_mask], log2.(Float32.(counts[positive_mask]))
+    end
+
+    p_hist = Plots.plot(
+        title = "Target protection spectral angle",
+        xlabel = "Max decoy spectral angle",
+        ylabel = "log2(count)",
+        legend = :topright,
+        layout = (1, 1)
+    )
+    if any(target_pair_mask)
+        target_centers, target_log_counts = log2_bin_counts(spectral_angles[target_pair_mask])
+        Plots.plot!(
+            p_hist,
+            target_centers,
+            target_log_counts,
+            marker = :circle,
+            linewidth = 2,
+            label = "target paired decoy"
+        )
+    end
+    if any(target_other_mask)
+        target_centers, target_log_counts = log2_bin_counts(spectral_angles[target_other_mask])
+        Plots.plot!(
+            p_hist,
+            target_centers,
+            target_log_counts,
+            marker = :square,
+            linewidth = 2,
+            label = "target other decoy"
+        )
+    end
+    if any(decoy_mask)
+        decoy_centers, decoy_log_counts = log2_bin_counts(spectral_angles[decoy_mask])
+        Plots.plot!(
+            p_hist,
+            decoy_centers,
+            decoy_log_counts,
+            marker = :diamond,
+            linewidth = 2,
+            label = "decoy"
+        )
+    end
+    if has_target_neighbor && any(targets)
+        target_centers, target_log_counts = log2_bin_counts(target_neighbor_spectral_angles[targets])
+        Plots.plot!(
+            p_hist,
+            target_centers,
+            target_log_counts,
+            marker = :utriangle,
+            linewidth = 2,
+            label = "target nearest target"
+        )
+    end
+    if has_target_neighbor && any(decoy_mask)
+        decoy_centers, decoy_log_counts = log2_bin_counts(target_neighbor_spectral_angles[decoy_mask])
+        Plots.plot!(
+            p_hist,
+            decoy_centers,
+            decoy_log_counts,
+            marker = :dtriangle,
+            linewidth = 2,
+            label = "decoy nearest target"
+        )
+    end
+    push!(plots, p_hist)
+
+    if has_sequence_length && length(sequence_lengths) == length(spectral_angles)
+        function median_by_length(values::AbstractVector{Float32}, mask::AbstractVector{Bool})
+            lengths = sort(unique(sequence_lengths[mask]))
+            used_lengths = Int64[]
+            medians = Float32[]
+            for len in lengths
+                len_mask = mask .& (sequence_lengths .== len)
+                n = count(len_mask)
+                n >= 10 || continue
+                push!(used_lengths, Int64(len))
+                push!(medians, Float32(median(values[len_mask])))
+            end
+            return used_lengths, medians
+        end
+
+        p_len = Plots.plot(
+            title = "Median nearest neighbor spectral angle by length",
+            xlabel = "Peptide length",
+            ylabel = "Median nearest neighbor spectral angle",
+            legend = :topright,
+            layout = (1, 1)
+        )
+        target_pair_lengths, target_pair_medians = median_by_length(spectral_angles, target_pair_mask)
+        target_other_lengths, target_other_medians = median_by_length(spectral_angles, target_other_mask)
+        decoy_lengths, decoy_medians = median_by_length(spectral_angles, decoy_mask)
+        if !isempty(target_pair_lengths)
+            Plots.plot!(
+                p_len,
+                target_pair_lengths,
+                target_pair_medians,
+                marker = :circle,
+                label = "target paired decoy"
+            )
+        end
+        if !isempty(target_other_lengths)
+            Plots.plot!(
+                p_len,
+                target_other_lengths,
+                target_other_medians,
+                marker = :square,
+                label = "target other decoy"
+            )
+        end
+        if !isempty(decoy_lengths)
+            Plots.plot!(
+                p_len,
+                decoy_lengths,
+                decoy_medians,
+                marker = :diamond,
+                label = "decoy"
+            )
+        end
+        if has_target_neighbor
+            target_lengths, target_medians = median_by_length(target_neighbor_spectral_angles, targets)
+            decoy_target_lengths, decoy_target_medians = median_by_length(target_neighbor_spectral_angles, decoy_mask)
+            if !isempty(target_lengths)
+                Plots.plot!(
+                    p_len,
+                    target_lengths,
+                    target_medians,
+                    marker = :utriangle,
+                    label = "target nearest target"
+                )
+            end
+            if !isempty(decoy_target_lengths)
+                Plots.plot!(
+                    p_len,
+                    decoy_target_lengths,
+                    decoy_target_medians,
+                    marker = :dtriangle,
+                    label = "decoy nearest target"
+                )
+            end
+        end
+        push!(plots, p_len)
+    end
+
+    if isfile(output_path)
+        safeRm(output_path, nothing; force=true)
+    end
+    save_multipage_pdf(plots, output_path)
+    @user_info "Wrote target protection spectral angle QC plots to $output_path"
+    return output_path
+end
+
+# ==========================================================
 # Trace Selection
 # ==========================================================
 

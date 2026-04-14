@@ -324,6 +324,18 @@ function summarize_results!(
 
         # Create references for second pass PSMs (now using merged files)
         second_pass_paths = merged_psm_paths
+
+        target_protection_qc_time = @elapsed begin
+            try
+                plot_target_protection_spectral_angle_qc(
+                    second_pass_paths,
+                    joinpath(getDataOutDir(search_context), "qc_plots", "target_protection_spectral_angle_plots.pdf")
+                )
+            catch e
+                @user_warn "Failed to generate target protection spectral angle QC plots: $(sprint(showerror, e))"
+            end
+        end
+
         second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
         # Step 2: Apply MBR filtering and calculate precursor probabilities (per-file OOM)
@@ -445,7 +457,7 @@ function summarize_results!(
 
         # Summary of all step times
         total_time = step1_time + step2_time + step3_time + step4_time +
-                    step5_10_time + step11_time
+                    step5_10_time + step11_time + target_protection_qc_time
 
         @user_info "Precursor scoring completed - Total time: $(round(total_time, digits=2)) seconds"
 

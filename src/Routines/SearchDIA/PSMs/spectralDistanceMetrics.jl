@@ -50,6 +50,140 @@ struct SpectralScoresMs1{T<:AbstractFloat} <: SpectralScores{T}
     #entropy_score::T
 end
 
+"""
+    getMaxNeighborSpectralAngles(H, prec_is_decoy, prec_pair_ids, IDtoCOL)
+
+Compute maximum spectral angles to decoy and target neighbor sets for each
+active precursor column in `H`. Target-neighbor comparisons exclude self.
+"""
+function getMaxNeighborSpectralAngles(
+    H::SparseArray{Ti,T},
+    prec_is_decoy::AbstractVector{Bool},
+    prec_pair_ids,
+    IDtoCOL::ArrayDict{UInt32, UInt16}
+) where {Ti<:Integer,T<:AbstractFloat}
+    max_decoy_spectral_angles = zeros(Float16, H.n)
+    max_target_spectral_angles = zeros(Float16, H.n)
+    best_decoy_is_pair = falses(H.n)
+    H.n <= 1 && return (
+        target_protection_spectral_angle = max_decoy_spectral_angles,
+        target_protection_pair_decoy = best_decoy_is_pair,
+        target_neighbor_spectral_angle = max_target_spectral_angles
+    )
+
+    is_decoy_by_col = falses(H.n)
+    pair_id_by_col = zeros(UInt32, H.n)
+    @inbounds for i in 1:IDtoCOL.size
+        prec_id = IDtoCOL.keys[i]
+        col = Int(IDtoCOL[prec_id])
+        (col < 1 || col > H.n) && continue
+
+        is_decoy = prec_is_decoy[prec_id]
+        is_decoy_by_col[col] = is_decoy
+        pair_id_by_col[col] = extract_pair_idx(prec_pair_ids, prec_id)
+    end
+
+    norms = zeros(Float32, H.n)
+    candidate_rows = Dict{Ti, Vector{Tuple{UInt16, Float32}}}()
+    target_rows = Dict{Ti, Vector{Tuple{UInt16, Float32}}}()
+    decoy_rows = Dict{Ti, Vector{Tuple{UInt16, Float32}}}()
+
+    @inbounds for col in 1:H.n
+        start = Int(H.colptr[col])
+        stop = Int(H.colptr[col + 1]) - 1
+        (start < 1 || stop < start) && continue
+
+        col_id = UInt16(col)
+        for idx in start:stop
+            row = H.rowval[idx]
+            val = Float32(H.nzval[idx])
+            norms[col] += val * val
+
+            candidate_row_values = get!(candidate_rows, row) do
+                Vector{Tuple{UInt16, Float32}}()
+            end
+            push!(candidate_row_values, (col_id, val))
+
+            reference_rows = is_decoy_by_col[col] ? decoy_rows : target_rows
+            reference_row_values = get!(reference_rows, row) do
+                Vector{Tuple{UInt16, Float32}}()
+            end
+            push!(reference_row_values, (col_id, val))
+        end
+    end
+
+    @inbounds for col in eachindex(norms)
+        norms[col] = sqrt(norms[col])
+    end
+
+    decoy_pair_dots = Dict{UInt64, Float32}()
+    target_pair_dots = Dict{UInt64, Float32}()
+    for (row, candidate_values) in candidate_rows
+        decoy_values = get(decoy_rows, row, nothing)
+        if decoy_values !== nothing
+            for (candidate_col, candidate_val) in candidate_values
+                for (decoy_col, decoy_val) in decoy_values
+                    candidate_col == decoy_col && continue
+                    key = (UInt64(candidate_col) << 32) | UInt64(decoy_col)
+                    decoy_pair_dots[key] = get(decoy_pair_dots, key, 0.0f0) + candidate_val * decoy_val
+                end
+            end
+        end
+
+        target_values = get(target_rows, row, nothing)
+        if target_values !== nothing
+            for (candidate_col, candidate_val) in candidate_values
+                for (target_col, target_val) in target_values
+                    candidate_col == target_col && continue
+                    key = (UInt64(candidate_col) << 32) | UInt64(target_col)
+                    target_pair_dots[key] = get(target_pair_dots, key, 0.0f0) + candidate_val * target_val
+                end
+            end
+        end
+    end
+
+    max_decoy_spectral_angle = zeros(Float32, H.n)
+    for (key, dot_product) in decoy_pair_dots
+        candidate_col = Int(key >> 32)
+        decoy_col = Int(key & UInt64(0xffffffff))
+        denom = norms[candidate_col] * norms[decoy_col]
+        denom <= 0 && continue
+
+        cosine_similarity = clamp(dot_product / denom, 0.0f0, 1.0f0)
+        spectral_angle = 1.0f0 - (2.0f0 / Float32(pi)) * acos(cosine_similarity)
+        decoy_is_pair = !iszero(pair_id_by_col[candidate_col]) && pair_id_by_col[candidate_col] == pair_id_by_col[decoy_col]
+        if spectral_angle > max_decoy_spectral_angle[candidate_col]
+            max_decoy_spectral_angle[candidate_col] = spectral_angle
+            best_decoy_is_pair[candidate_col] = decoy_is_pair
+        elseif decoy_is_pair && spectral_angle == max_decoy_spectral_angle[candidate_col]
+            best_decoy_is_pair[candidate_col] = true
+        end
+    end
+
+    max_target_spectral_angle = zeros(Float32, H.n)
+    for (key, dot_product) in target_pair_dots
+        candidate_col = Int(key >> 32)
+        target_col = Int(key & UInt64(0xffffffff))
+        denom = norms[candidate_col] * norms[target_col]
+        denom <= 0 && continue
+
+        cosine_similarity = clamp(dot_product / denom, 0.0f0, 1.0f0)
+        spectral_angle = 1.0f0 - (2.0f0 / Float32(pi)) * acos(cosine_similarity)
+        max_target_spectral_angle[candidate_col] = max(max_target_spectral_angle[candidate_col], spectral_angle)
+    end
+
+    @inbounds for col in eachindex(max_decoy_spectral_angles)
+        max_decoy_spectral_angles[col] = Float16(max_decoy_spectral_angle[col])
+        max_target_spectral_angles[col] = Float16(max_target_spectral_angle[col])
+    end
+
+    return (
+        target_protection_spectral_angle = max_decoy_spectral_angles,
+        target_protection_pair_decoy = best_decoy_is_pair,
+        target_neighbor_spectral_angle = max_target_spectral_angles
+    )
+end
+
 function getDistanceMetrics(H::SparseArray{Ti,T}, 
     spectral_scores::Vector{SpectralScoresSimple{U}};
     relative_improvement_threshold::Float32 = 1.25f0,
