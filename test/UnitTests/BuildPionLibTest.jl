@@ -750,6 +750,7 @@ end
         precursor_mz = Float32[500.0, 600.0]
         precursor_irt = Float32[10.0, 20.0]
         precursor_charge = UInt8[2, 3]
+        precursor_length = UInt8[8, 8]
         
         # Index mapping precursors to fragments
         # First precursor has fragments 1-2, second has fragments 3-4
@@ -789,6 +790,7 @@ end
             precursor_mz,
             precursor_irt,
             precursor_charge,
+            precursor_length,
             prec_to_frag_idx,
             y_start,
             b_start,
@@ -845,6 +847,7 @@ end
             precursor_mz,
             precursor_irt,
             precursor_charge,
+            precursor_length,
             prec_to_frag_idx,
             UInt8(4),  # Only y ions with index > 3
             UInt8(4),
@@ -862,6 +865,39 @@ end
         @test length(restrictive_simple_frags) == 1
         @test getMZ(restrictive_simple_frags[1]) ≈ 400.0
         @test getPrecID(restrictive_simple_frags[1]) == 2
+
+        short_peptide_simple_frags = getSimpleFrags(
+            Float32[100.0, 200.0, 300.0, 400.0],
+            Bool[true, false, true, false],
+            Bool[false, true, false, true],
+            Bool[false, false, false, false],
+            UInt8[3, 2, 3, 2],
+            UInt8[1, 1, 1, 1],
+            UInt8[0, 0, 0, 0],
+            Bool[false, false, false, false],
+            Bool[false, false, false, false],
+            Bool[false, false, false, false],
+            precursor_mz,
+            precursor_irt,
+            precursor_charge,
+            UInt8[7, 8],
+            prec_to_frag_idx,
+            UInt8(4),
+            UInt8(3),
+            include_p,
+            include_isotope,
+            include_immonium,
+            include_internal,
+            include_neutral_diff,
+            max_frag_charge,
+            frag_bounds,
+            rank_to_score,
+        )
+
+        @test length(short_peptide_simple_frags) == 2
+        @test all(frag -> getPrecID(frag) == 1, short_peptide_simple_frags)
+        @test getScore(short_peptide_simple_frags[1]) == 10
+        @test getScore(short_peptide_simple_frags[2]) == 9
         
         # Test with rank limits
         # Create a large number of identical fragments
@@ -897,6 +933,7 @@ end
             Float32[500.0],         # Single precursor
             Float32[10.0],          # Single RT value
             UInt8[2],               # Single charge
+            UInt8[8],               # Single precursor length
             large_prec_to_frag_idx,
             y_start,
             b_start,

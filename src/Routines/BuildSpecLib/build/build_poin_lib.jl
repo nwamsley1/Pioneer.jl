@@ -110,6 +110,7 @@ function buildPionLib(spec_lib_path::String,
         precursors_table[:mz],
         precursors_table[:irt],
         precursors_table[:prec_charge],#precursor_charge],
+        precursors_table[:length],
         prec_to_frag[:start_idx],
         y_start_index,
         b_start_index,
@@ -314,6 +315,7 @@ function buildPionLib(spec_lib_path::String,
         precursors_table[:mz],
         precursors_table[:irt],
         precursors_table[:prec_charge],#precursor_charge],
+        precursors_table[:length],
         prec_to_frag[:start_idx],
         y_start_index,
         b_start_index,
@@ -558,6 +560,13 @@ function fragFilter(
     return true
 end
 
+function fragment_index_start_for_length(start_index::UInt8, precursor_length::UInt8)::UInt8
+    if precursor_length <= UInt8(7) && !iszero(start_index)
+        return start_index - one(UInt8)
+    end
+    return start_index
+end
+
 """
     getSimpleFrags(
         frag_mz::AbstractVector{Float32},
@@ -573,6 +582,7 @@ end
         precursor_mz::AbstractVector{Float32},
         precursor_irt::AbstractVector{Float32},
         precursor_charge::AbstractVector{UInt8},
+        precursor_length::AbstractVector{UInt8},
         prec_to_frag_idx::AbstractVector{UInt64},
         y_start::UInt8,
         b_start::UInt8,
@@ -602,6 +612,7 @@ Extract fragments for the fragment index from raw fragment data.
 - `precursor_mz`: m/z values of precursors
 - `precursor_irt`: Retention time values of precursors
 - `precursor_charge`: Charge states of precursors
+- `precursor_length`: Peptide sequence lengths for per-precursor index thresholds
 - `prec_to_frag_idx`: Index mapping precursors to their fragments
 - `y_start`: Minimum index for y-ions to include
 - `b_start`: Minimum index for b-ions to include
@@ -631,6 +642,7 @@ function getSimpleFrags(
     precursor_mz::AbstractVector{Float32},
     precursor_irt::AbstractVector{Float32},
     precursor_charge::AbstractVector{UInt8},
+    precursor_length::AbstractVector{UInt8},
     prec_to_frag_idx::AbstractVector{UInt64},
     y_start::UInt8,
     b_start::UInt8,
@@ -655,6 +667,8 @@ function getSimpleFrags(
     for pid in range(one(UInt32), n_precursors)
         prec_mz = precursor_mz[pid]
         frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
+        local_y_start = fragment_index_start_for_length(y_start, precursor_length[pid])
+        local_b_start = fragment_index_start_for_length(b_start, precursor_length[pid])
         rank = 1
         for frag_idx in range(frag_start_idx, frag_stop_idx)
             if fragFilter(
@@ -670,8 +684,8 @@ function getSimpleFrags(
                     frag_mz[frag_idx],
                     frag_bounds,
                     prec_mz,
-                    y_start,
-                    b_start,
+                    local_y_start,
+                    local_b_start,
                     include_p,
                     include_isotope,
                     include_immonium,

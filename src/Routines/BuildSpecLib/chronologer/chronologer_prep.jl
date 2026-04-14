@@ -207,6 +207,7 @@ function prepare_chronologer_input(
             fixed_mod_names = fixed_mods,
             variable_mod_names = var_mods,
             proteome_index = proteome_index,
+            cleavage_regex = Regex(_params.fasta_digest_params["cleavage_regex"]),
         )
     end
 
@@ -223,6 +224,7 @@ function prepare_chronologer_input(
             fixed_mod_names = fixed_mods,
             variable_mod_names = var_mods,
             proteome_index = proteome_index,
+            cleavage_regex = Regex(_params.fasta_digest_params["cleavage_regex"]),
         )
     end
         

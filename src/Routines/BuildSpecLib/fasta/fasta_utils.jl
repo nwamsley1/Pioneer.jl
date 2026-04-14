@@ -114,6 +114,28 @@ const IL_COLLAPSED_AA_CODES = Dict{Char, UInt8}(
     'Y' => UInt8(18),
     'I' => UInt8(8),
 )
+const TERMINAL_FRAGMENT_RESIDUE_MASS_KEYS = Dict{Char, Int32}(
+    'A' => 7103711,
+    'R' => 15610111,
+    'N' => 11404293,
+    'D' => 11502694,
+    'C' => 10300919,
+    'E' => 12904259,
+    'Q' => 12805858,
+    'G' => 5702146,
+    'H' => 13705891,
+    'I' => 11308406,
+    'L' => 11308406,
+    'K' => 12809496,
+    'M' => 13104049,
+    'F' => 14706841,
+    'P' => 9705276,
+    'S' => 8703203,
+    'T' => 10104768,
+    'W' => 18607931,
+    'Y' => 16306333,
+    'V' => 9906841,
+)
 const MUTATION_FALLBACK_RESTARTS = 100
 const MUTATION_EXCLUSION_MAP = Dict{Char, Set{Char}}(
     'A' => Set(['R', 'K', 'H']), #Set(['V', 'Q', 'P']),
@@ -566,13 +588,61 @@ function passes_target_distance_constraints(
     return !has_target_adjacent_swap_match(candidate_codes, index)
 end
 
+function terminal_fragment_length(peptide_length::Int)::Int
+    return peptide_length <= 7 ? 3 : 4
+end
+
+function terminal_fragment_mass_key(
+    sequence::String,
+    start_idx::Int,
+    stop_idx::Int,
+)::Union{Nothing, Int64}
+    mass_key = zero(Int64)
+    @inbounds for idx in start_idx:stop_idx
+        aa_mass_key = get(TERMINAL_FRAGMENT_RESIDUE_MASS_KEYS, sequence[idx], Int32(0))
+        iszero(aa_mass_key) && return nothing
+        mass_key += aa_mass_key
+    end
+    return mass_key
+end
+
+function has_distinct_terminal_fragment_masses(
+    base_seq::String,
+    candidate::String,
+)::Bool
+    peptide_length = length(base_seq)
+    peptide_length == length(candidate) || return false
+
+    fragment_length = terminal_fragment_length(peptide_length)
+    peptide_length >= fragment_length || return false
+
+    base_prefix = terminal_fragment_mass_key(base_seq, 1, fragment_length)
+    candidate_prefix = terminal_fragment_mass_key(candidate, 1, fragment_length)
+    if isnothing(base_prefix) || isnothing(candidate_prefix) || base_prefix == candidate_prefix
+        return false
+    end
+
+    suffix_start = peptide_length - fragment_length + 1
+    base_suffix = terminal_fragment_mass_key(base_seq, suffix_start, peptide_length)
+    candidate_suffix = terminal_fragment_mass_key(candidate, suffix_start, peptide_length)
+    if isnothing(base_suffix) || isnothing(candidate_suffix) || base_suffix == candidate_suffix
+        return false
+    end
+
+    return true
+end
+
 function is_valid_decoy_candidate(
     candidate::String,
+    base_seq::String,
     charges::Vector{UInt8},
     sequences_set::PeptideSequenceSet,
     proteome_index::Union{Nothing, ProteomeDistanceIndex},
     min_target_hamming_distance::Int = 2,
 )
+    if !has_distinct_terminal_fragment_masses(base_seq, candidate)
+        return false
+    end
     if any(((candidate, charge) ∈ sequences_set) for charge in charges)
         return false
     end
@@ -769,6 +839,7 @@ same base peptide sequence receive the same set of entrapment sequences.
 - `variable_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Variable modification patterns whose source and destination residues are excluded from mutation fallback
 - `entrapment_method::String`: "shuffle" or "reverse" (reverse may fall back to shuffle)
 - `proteome_index::Union{Nothing, ProteomeDistanceIndex}`: Optional target proteome index used to enforce decoy-style distance constraints
+- `cleavage_regex::Regex`: Digest cleavage-site regex; internal matches are protected from mutation fallback
 - `show_progress::Bool`: Show a progress bar while iterating grouped base sequences
 - `log_progress::Bool`: Emit start/end summary logs for grouped generation
 
@@ -792,6 +863,7 @@ function add_entrapment_sequences_grouped(
     variable_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}(),
     entrapment_method::String = "shuffle",
     proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
+    cleavage_regex::Regex = r"[KR][^P|$]",
     show_progress::Bool = true,
     log_progress::Bool = true,
 )::Vector{FastaEntry}
@@ -861,6 +933,7 @@ function add_entrapment_sequences_grouped(
                 variable_mod_aas = variable_mod_aas,
                 decoy_method = entrapment_method,
                 proteome_index = proteome_index,
+                cleavage_regex = cleavage_regex,
             )
 
             if isnothing(new_sequence)
@@ -1255,10 +1328,13 @@ function collect_protected_positions(
     idxs::Vector{Int},
     base_seq::String,
     fixed_chars::Vector{Char},
+    cleavage_regex::Regex = r"[KR][^P|$]",
 )
     seq_length = length(base_seq)
     protected = falses(seq_length)
     protected[end] = true
+
+    mark_internal_cleavage_positions!(protected, base_seq, cleavage_regex)
 
     for idx in 1:(seq_length - 1)
         if base_seq[idx] ∈ fixed_chars
@@ -1285,6 +1361,63 @@ function collect_protected_positions(
     end
 
     return protected
+end
+
+function mark_internal_cleavage_positions!(
+    positions::AbstractVector{Bool},
+    sequence::String,
+    cleavage_regex::Regex,
+)
+    seq_length = length(sequence)
+    for match in eachmatch(cleavage_regex, sequence, overlap = true)
+        cleavage_position = match.offset
+        if 1 <= cleavage_position < seq_length
+            positions[cleavage_position] = true
+        end
+    end
+    return positions
+end
+
+function internal_cleavage_positions(
+    sequence::String,
+    cleavage_regex::Regex,
+)::BitVector
+    positions = falses(length(sequence))
+    mark_internal_cleavage_positions!(positions, sequence, cleavage_regex)
+    return positions
+end
+
+function has_new_internal_cleavage_site(
+    sequence::String,
+    allowed_cleavage_positions::AbstractVector{Bool},
+    cleavage_regex::Regex,
+)::Bool
+    seq_length = length(sequence)
+    for match in eachmatch(cleavage_regex, sequence, overlap = true)
+        cleavage_position = match.offset
+        if 1 <= cleavage_position < seq_length && !allowed_cleavage_positions[cleavage_position]
+            return true
+        end
+    end
+    return false
+end
+
+function mutation_creates_new_internal_cleavage_site(
+    candidate_chars::Vector{Char},
+    position::Int,
+    mutation_aa::Char,
+    allowed_cleavage_positions::AbstractVector{Bool},
+    cleavage_regex::Regex,
+)::Bool
+    original_aa = candidate_chars[position]
+    candidate_chars[position] = mutation_aa
+    creates_new = has_new_internal_cleavage_site(
+        String(candidate_chars),
+        allowed_cleavage_positions,
+        cleavage_regex,
+    )
+    candidate_chars[position] = original_aa
+    return creates_new
 end
 
 function inward_mutation_position_groups(seq_length::Int)
@@ -1393,22 +1526,45 @@ function try_mutation_fallback(
     fixed_chars::Vector{Char},
     variable_mod_aas::Set{Char} = Set{Char}(),
     min_target_hamming_distance::Int = 2,
+    shuffle_seq::Union{Nothing, ShuffleSeq} = nothing,
+    cleavage_regex::Regex = r"[KR][^P|$]",
 )
-    protected = collect_protected_positions(target_fasta_entries, idxs, base_seq, fixed_chars)
+    protected = collect_protected_positions(target_fasta_entries, idxs, base_seq, fixed_chars, cleavage_regex)
     mutation_position_groups = inward_mutation_position_groups(length(base_seq))
     isempty(mutation_position_groups) && return nothing, nothing
 
-    base_chars = collect(base_seq)
-    identity_map = identity_positions(length(base_seq))
+    fallback_shuffle_seq = isnothing(shuffle_seq) ? ShuffleSeq(
+        "",
+        Vector{Char}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        zero(UInt8),
+        zero(UInt8),
+        fixed_chars
+    ) : shuffle_seq
     amino_acid_counts = isnothing(proteome_index) ? nothing : proteome_index.amino_acid_counts
+    seq_length = length(base_seq)
 
     for _ in 1:MUTATION_FALLBACK_RESTARTS
-        candidate_chars = copy(base_chars)
+        shuffled_candidate = shuffle_sequence!(fallback_shuffle_seq, base_seq; method = "shuffle")
+        candidate_chars = collect(shuffled_candidate)
+        positions = Vector{UInt8}(fallback_shuffle_seq.new_positions[1:seq_length])
+        allowed_cleavage_positions = internal_cleavage_positions(shuffled_candidate, cleavage_regex)
         for mutation_positions in mutation_position_groups
             mutated_in_group = false
             for position in mutation_positions
-                protected[position] && continue
-                mutation_choices = get_mutation_choices(base_chars[position], variable_mod_aas)
+                protected[Int(positions[position])] && continue
+                mutation_choices = get_mutation_choices(candidate_chars[position], variable_mod_aas)
+                filter!(
+                    mutation_aa -> !mutation_creates_new_internal_cleavage_site(
+                        candidate_chars,
+                        position,
+                        mutation_aa,
+                        allowed_cleavage_positions,
+                        cleavage_regex,
+                    ),
+                    mutation_choices,
+                )
                 mutation_aa = sample_mutation_choice(mutation_choices, amino_acid_counts)
                 isnothing(mutation_aa) && continue
 
@@ -1418,8 +1574,8 @@ function try_mutation_fallback(
 
             if mutated_in_group
                 candidate = String(candidate_chars)
-                if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
-                    return candidate, identity_map
+                if is_valid_decoy_candidate(candidate, base_seq, charges, sequences_set, proteome_index, min_target_hamming_distance)
+                    return candidate, positions
                 end
             end
         end
@@ -1441,9 +1597,10 @@ function find_group_decoy_candidate_for_distance!(
     decoy_method::String = "shuffle",
     proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
     min_target_hamming_distance::Int = 2,
+    cleavage_regex::Regex = r"[KR][^P|$]",
 )
     candidate = shuffle_sequence!(shuffle_seq, base_seq; method = decoy_method)
-    if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
+    if is_valid_decoy_candidate(candidate, base_seq, charges, sequences_set, proteome_index, min_target_hamming_distance)
         return candidate, Vector{UInt8}(shuffle_seq.new_positions), false, false
     end
 
@@ -1451,7 +1608,7 @@ function find_group_decoy_candidate_for_distance!(
     used_shuffle_fallback = decoy_method == "reverse"
     for _ in 1:shuffle_attempts
         candidate = shuffle_sequence!(shuffle_seq, base_seq; method = "shuffle")
-        if is_valid_decoy_candidate(candidate, charges, sequences_set, proteome_index, min_target_hamming_distance)
+        if is_valid_decoy_candidate(candidate, base_seq, charges, sequences_set, proteome_index, min_target_hamming_distance)
             return candidate, Vector{UInt8}(shuffle_seq.new_positions), used_shuffle_fallback, false
         end
     end
@@ -1466,6 +1623,8 @@ function find_group_decoy_candidate_for_distance!(
         fixed_chars,
         variable_mod_aas,
         min_target_hamming_distance,
+        shuffle_seq,
+        cleavage_regex,
     )
     if !isnothing(candidate)
         return candidate, positions, used_shuffle_fallback, true
@@ -1486,6 +1645,7 @@ function find_group_decoy_candidate!(
     variable_mod_aas::Set{Char} = Set{Char}(),
     decoy_method::String = "shuffle",
     proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
+    cleavage_regex::Regex = r"[KR][^P|$]",
 )
     candidate, positions, used_shuffle_fallback, used_mutation_fallback = find_group_decoy_candidate_for_distance!(
         shuffle_seq,
@@ -1500,6 +1660,7 @@ function find_group_decoy_candidate!(
         decoy_method = decoy_method,
         proteome_index = proteome_index,
         min_target_hamming_distance = 2,
+        cleavage_regex = cleavage_regex,
     )
     return candidate, positions, used_shuffle_fallback, used_mutation_fallback, false
 end
@@ -1686,6 +1847,7 @@ base peptide sequence share a single decoy sequence and mod position mapping.
 - `variable_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Variable modification patterns whose source and destination residues are excluded from mutation fallback
 - `decoy_method::String`: "shuffle" or "reverse" (reverse may fall back to shuffle)
 - `proteome_index::Union{Nothing, ProteomeDistanceIndex}`: Optional target proteome index used to enforce a minimum Hamming distance of 2 from target substrings
+- `cleavage_regex::Regex`: Digest cleavage-site regex; internal matches are protected from mutation fallback
 - `show_progress::Bool`: Show a progress bar while iterating grouped base sequences
 - `log_progress::Bool`: Emit start/end summary logs for grouped generation
 
@@ -1708,6 +1870,7 @@ function add_decoy_sequences_grouped(
     variable_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}(),
     decoy_method::String = "shuffle",
     proteome_index::Union{Nothing, ProteomeDistanceIndex} = nothing,
+    cleavage_regex::Regex = r"[KR][^P|$]",
     show_progress::Bool = true,
     log_progress::Bool = true,
 )::Vector{FastaEntry}
@@ -1768,6 +1931,7 @@ function add_decoy_sequences_grouped(
             variable_mod_aas = variable_mod_aas,
             decoy_method = decoy_method,
             proteome_index = proteome_index,
+            cleavage_regex = cleavage_regex,
         )
 
         if isnothing(decoy_sequence)

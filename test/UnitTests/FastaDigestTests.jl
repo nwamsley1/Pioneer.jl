@@ -326,6 +326,19 @@
         @test !Pioneer.passes_target_distance_constraints("ADCEFGHK", proteome_index)
         @test Pioneer.passes_target_distance_constraints("AECDFGK", proteome_index)
     end
+
+    @testset "paired terminal fragment mass exclusion" begin
+        @test Pioneer.terminal_fragment_length(7) == 3
+        @test Pioneer.terminal_fragment_length(8) == 4
+
+        @test Pioneer.has_distinct_terminal_fragment_masses("ACDEFGHK", "MCDEFGAK")
+        @test !Pioneer.has_distinct_terminal_fragment_masses("ACDEFGHK", "MCDEFGHK")
+        @test !Pioneer.has_distinct_terminal_fragment_masses("ACDEFGHK", "ACDEFGAK")
+        @test !Pioneer.has_distinct_terminal_fragment_masses("ACDEFGHK", "CADEFGAK")
+        @test !Pioneer.has_distinct_terminal_fragment_masses("ACDIFGHK", "ACDLFGAK")
+
+        @test Pioneer.has_distinct_terminal_fragment_masses("ACDEFGK", "MCDEFAK")
+    end
     
     @testset "add_entrapment_sequences" begin
         # Create test entries
@@ -517,6 +530,49 @@
         @test Pioneer.get_mutation_choices('K', variable_mod_aas) == ['R']
     end
 
+    @testset "mutation fallback protects missed cleavage sites" begin
+        base_seq = "AAKAAAK"
+        entries = [
+            FastaEntry("P1", "", "", "", "human", "test", base_seq, UInt32(1), missing, missing, UInt8(2), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+        protected = Pioneer.collect_protected_positions(entries, [1], base_seq, Char[], r"[KR][^P|$]")
+
+        @test protected[3]
+        @test protected[end]
+        @test !protected[2]
+        @test !protected[4]
+
+        proline_seq = "AAKPAAK"
+        proline_entries = [
+            FastaEntry("P1", "", "", "", "human", "test", proline_seq, UInt32(1), missing, missing, UInt8(2), UInt32(1), UInt32(1), UInt8(0), false),
+        ]
+        proline_protected = Pioneer.collect_protected_positions(proline_entries, [1], proline_seq, Char[], r"[KR][^P|$]")
+
+        @test !proline_protected[3]
+        @test proline_protected[end]
+    end
+
+    @testset "mutation fallback rejects new cleavage sites" begin
+        cleavage_regex = r"[KR][^P|$]"
+
+        h_candidate = collect("AAHAAAK")
+        h_allowed = Pioneer.internal_cleavage_positions(String(h_candidate), cleavage_regex)
+        @test Pioneer.mutation_creates_new_internal_cleavage_site(h_candidate, 3, 'K', h_allowed, cleavage_regex)
+        @test String(h_candidate) == "AAHAAAK"
+
+        h_before_proline_candidate = collect("AAHPAAK")
+        h_before_proline_allowed = Pioneer.internal_cleavage_positions(String(h_before_proline_candidate), cleavage_regex)
+        @test !Pioneer.mutation_creates_new_internal_cleavage_site(h_before_proline_candidate, 3, 'K', h_before_proline_allowed, cleavage_regex)
+
+        proline_candidate = collect("AAKPAAK")
+        proline_allowed = Pioneer.internal_cleavage_positions(String(proline_candidate), cleavage_regex)
+        @test Pioneer.mutation_creates_new_internal_cleavage_site(proline_candidate, 4, 'A', proline_allowed, cleavage_regex)
+
+        existing_cleavage_candidate = collect("AAKAAAK")
+        existing_cleavage_allowed = Pioneer.internal_cleavage_positions(String(existing_cleavage_candidate), cleavage_regex)
+        @test !Pioneer.mutation_creates_new_internal_cleavage_site(existing_cleavage_candidate, 3, 'R', existing_cleavage_allowed, cleavage_regex)
+    end
+
     @testset "mutation fallback samples substitutions by proteome frequency" begin
         counts = zeros(Int, length(Pioneer.RAW_SEQUENCE_AA_RESIDUES))
         counts[Pioneer.RAW_SEQUENCE_AA_INDEX['H']] = 10
@@ -547,15 +603,16 @@
         @test isempty(filter(is_decoy, result))
     end
 
-    @testset "mutation fallback does not shuffle untouched interior residues" begin
+    @testset "mutation fallback starts from a shuffled sequence" begin
         Random.seed!(1234)
+        base_seq = "AGCDEFK"
         entries = [
-            FastaEntry("P1", "", "", "", "human", "test", "AGCDEFK", UInt32(1), missing, missing, UInt8(2), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P1", "", "", "", "human", "test", base_seq, UInt32(1), missing, missing, UInt8(2), UInt32(1), UInt32(1), UInt8(0), false),
         ]
         sequences_set = PeptideSequenceSet(entries)
 
         candidate, positions = Pioneer.try_mutation_fallback(
-            "AGCDEFK",
+            base_seq,
             [1],
             entries,
             UInt8[2],
@@ -565,15 +622,12 @@
         )
 
         @test candidate !== nothing
-        @test candidate[1] == 'A'
-        @test candidate[2] != 'G'
-        @test candidate[3:5] == "CDE"
-        @test candidate[6] != 'F'
         @test candidate[7] == 'K'
         @test positions !== nothing
-        @test positions[2] == UInt8(2)
-        @test positions[6] == UInt8(6)
+        @test sort(positions) == UInt8.(1:length(base_seq))
+        @test positions != UInt8.(1:length(base_seq))
         @test positions[7] == UInt8(7)
+        @test any(candidate[i] != base_seq[Int(positions[i])] for i in 1:(length(base_seq) - 1))
     end
 
     @testset "mutation fallback keeps outer mutations while moving inward" begin
@@ -642,7 +696,10 @@
         @test decoy_seq[3] != 'A'
         @test decoy_seq[6] != 'A'
         @test has_min_target_hamming_distance(decoy_seq, proteome_index)
-        @test get_structural_mods(decoy) == get_structural_mods(only(modded_entries))
+        decoy_mods = get_structural_mods(decoy)
+        @test length(decoy_mods) == 2
+        @test Set(mod.mod_name for mod in decoy_mods) == Set(["TestMod", "TestMod2"])
+        @test all(decoy_seq[Int(mod.position)] == mod.aa for mod in decoy_mods)
     end
 
     @testset "add_decoy_sequences_grouped broader mutation fallback rescues protected case" begin
