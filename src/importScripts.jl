@@ -221,6 +221,7 @@ function importScripts()
         joinpath(search_methods_dir, "PrecursorScoringSearch"),
         [
             "utils.jl",                        # Contains get_qvalue_spline and other utility functions
+            "irt_refinement.jl",               # Fold-wise iRT refinement between rescoring iterations
             "model_config.jl",                 # Model configuration
             "score_psms.jl",                   # PSM scoring functions
             "scoring_interface.jl",            # Interface functions

@@ -127,7 +127,8 @@ function sort_of_percolator!(psms::AbstractPSMContainer,
         QValueNegativeMining(max_q_value_lightgbm_rescore, Float32(min_PEP_neg_threshold_itr)),
         IterativeFeatureSelection(base_features, mbr_features, length(iter_scheme)),
         FixedIterationScheme(iter_scheme),
-        match_between_runs ? PairBasedMBR(max_q_value_lightgbm_rescore) : NoMBR()
+        match_between_runs ? PairBasedMBR(max_q_value_lightgbm_rescore) : NoMBR(),
+        NoIterationPostProcess()
     )
 
     # Delegate to trait-based implementation

@@ -26,6 +26,44 @@ const MIN_PSMS_FOR_OOM = 100_000
 # Backward-compatible alias used in discussions/documentation
 const MAX_FOR_MODEL_SELECTION_PSMS = MAX_FOR_MODEL_SELECTION
 
+function get_irt_refinement_qc_dir(second_pass_folder::String)
+    qc_dir = normpath(joinpath(second_pass_folder, "..", "..", "qc_plots", "precursor_scoring"))
+    isdir(qc_dir) || mkpath(qc_dir)
+    return qc_dir
+end
+
+function build_run_label_map(file_paths::Vector{String})
+    run_labels = Dict{UInt32, String}()
+
+    for file_path in file_paths
+        tbl = Arrow.Table(file_path)
+        if !(:ms_file_idx in propertynames(tbl)) || length(tbl[1]) == 0
+            continue
+        end
+
+        run_id = UInt32(first(tbl.ms_file_idx))
+        label = replace(
+            basename(file_path),
+            r"_fold\d+\.arrow$" => "",
+            r"\.arrow$" => ""
+        )
+        run_labels[run_id] = get(run_labels, run_id, label)
+    end
+
+    return run_labels
+end
+
+function get_first_run_id(file_paths::Vector{String})
+    for file_path in file_paths
+        tbl = Arrow.Table(file_path)
+        if !(:ms_file_idx in propertynames(tbl)) || length(tbl[1]) == 0
+            continue
+        end
+        return UInt32(first(tbl.ms_file_idx))
+    end
+    return nothing
+end
+
 """
     score_precursor_isotope_traces(second_pass_folder::String, 
                                   file_paths::Vector{String},
@@ -76,6 +114,9 @@ function score_precursor_isotope_traces(
 )
     # Step 1: Count PSMs and determine processing approach
     psms_count = get_psms_count(file_paths)
+    irt_refinement_qc_dir = get_irt_refinement_qc_dir(second_pass_folder)
+    run_labels = build_run_label_map(file_paths)
+    qc_run_id = get_first_run_id(file_paths)
 
     if force_oom || (psms_count >= max_psms_in_memory && psms_count >= MIN_PSMS_FOR_OOM)
         # Case 1: Out-of-memory processing with ArrowFilePSMContainer + trait-based percolator_scoring!
@@ -86,6 +127,15 @@ function score_precursor_isotope_traces(
         config = build_scoring_config(model_config, match_between_runs,
                                        max_q_value_lightgbm_rescore,
                                        min_PEP_neg_threshold_itr)
+        config = with_iteration_postprocess(
+            config,
+            IrtLinearRefinement(
+                precursors;
+                qc_plot_dir = irt_refinement_qc_dir,
+                qc_run_id = qc_run_id,
+                run_labels = run_labels
+            )
+        )
 
         container = ArrowFilePSMContainer(file_paths; max_training_psms=max_training)
         models = percolator_scoring!(container, config; show_progress=true, verbose=true)
@@ -118,7 +168,11 @@ function score_precursor_isotope_traces(
         models = score_precursor_isotope_traces_in_memory(
             best_psms, file_paths, precursors, model_config,
             match_between_runs, max_q_value_lightgbm_rescore,
-            max_q_value_mbr_itr, min_PEP_neg_threshold_itr
+            max_q_value_mbr_itr, min_PEP_neg_threshold_itr,
+            true,
+            irt_refinement_qc_dir,
+            qc_run_id,
+            run_labels
         )
         
         # Write scored PSMs to files
@@ -298,7 +352,10 @@ function score_precursor_isotope_traces_in_memory(
     max_q_value_lightgbm_rescore::Float32,
     max_q_value_mbr_itr::Float32,
     min_PEP_neg_threshold_itr::Float32,
-    show_progress::Bool = true
+    show_progress::Bool = true,
+    irt_refinement_qc_dir::Union{Nothing, String} = nothing,
+    qc_run_id::Union{Nothing, UInt32} = nothing,
+    run_labels::Dict{UInt32, String} = Dict{UInt32, String}()
 )
     
     if model_config.model_type == :lightgbm
@@ -306,12 +363,18 @@ function score_precursor_isotope_traces_in_memory(
             best_psms, file_paths, precursors, model_config,
             match_between_runs, max_q_value_lightgbm_rescore,
             max_q_value_mbr_itr, min_PEP_neg_threshold_itr,
-            show_progress
+            show_progress,
+            irt_refinement_qc_dir,
+            qc_run_id,
+            run_labels
         )
     elseif model_config.model_type == :probit
         return train_probit_model(
             best_psms, file_paths, precursors, model_config, match_between_runs,
-            min_PEP_neg_threshold_itr
+            min_PEP_neg_threshold_itr,
+            irt_refinement_qc_dir,
+            qc_run_id,
+            run_labels
         )
     else
         error("Unsupported model type: $(model_config.model_type)")
@@ -350,7 +413,10 @@ function train_lightgbm_model(
     max_q_value_lightgbm_rescore::Float32,
     ::Float32,  # max_q_value_mbr_itr - unused in current implementation
     min_PEP_neg_threshold_itr::Float32,
-    show_progress::Bool = true
+    show_progress::Bool = true,
+    irt_refinement_qc_dir::Union{Nothing, String} = nothing,
+    qc_run_id::Union{Nothing, UInt32} = nothing,
+    run_labels::Dict{UInt32, String} = Dict{UInt32, String}()
 )
     # Add required columns
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
@@ -363,6 +429,15 @@ function train_lightgbm_model(
         match_between_runs,
         max_q_value_lightgbm_rescore,
         min_PEP_neg_threshold_itr
+    )
+    config = with_iteration_postprocess(
+        config,
+        IrtLinearRefinement(
+            precursors;
+            qc_plot_dir = irt_refinement_qc_dir,
+            qc_run_id = qc_run_id,
+            run_labels = run_labels
+        )
     )
 
     # Delegate to trait-based implementation
@@ -383,7 +458,10 @@ function train_probit_model(
     precursors::LibraryPrecursors,
     model_config::ModelConfig,
     match_between_runs::Bool,
-    min_PEP_neg_threshold_itr::Float32
+    min_PEP_neg_threshold_itr::Float32,
+    irt_refinement_qc_dir::Union{Nothing, String} = nothing,
+    qc_run_id::Union{Nothing, UInt32} = nothing,
+    run_labels::Dict{UInt32, String} = Dict{UInt32, String}()
 )
     # Add required columns
     best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
@@ -396,6 +474,15 @@ function train_probit_model(
         match_between_runs,
         0.01f0,  # max_q_value - probit doesn't use this
         min_PEP_neg_threshold_itr
+    )
+    config = with_iteration_postprocess(
+        config,
+        IrtLinearRefinement(
+            precursors;
+            qc_plot_dir = irt_refinement_qc_dir,
+            qc_run_id = qc_run_id,
+            run_labels = run_labels
+        )
     )
 
     # Delegate to trait-based implementation

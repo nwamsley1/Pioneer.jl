@@ -487,6 +487,7 @@ function build_scoring_config(
         QValueNegativeMining(max_q_value, min_pep_threshold),
         IterativeFeatureSelection(base_features, mbr_features, length(iter_scheme)),
         FixedIterationScheme(iter_scheme),
-        match_between_runs ? PairBasedMBR(max_q_value) : NoMBR()
+        match_between_runs ? PairBasedMBR(max_q_value) : NoMBR(),
+        NoIterationPostProcess()
     )
 end

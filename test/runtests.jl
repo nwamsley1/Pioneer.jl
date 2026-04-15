@@ -181,5 +181,6 @@ end
     # PrecursorScoringSearch interface tests
 
     #include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_scoring_interface.jl")
+    include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_irt_refinement.jl")
     
 end

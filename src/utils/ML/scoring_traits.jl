@@ -198,7 +198,24 @@ end
 SinglePassScheme() = SinglePassScheme(30)
 
 #############################################################################
-# 6. MBRUpdateStrategy - Match-Between-Runs
+# 6. IterationPostProcessStrategy - Between-Iteration Updates
+#############################################################################
+
+"""
+Abstract type for post-processing steps that run after a full scoring iteration
+(all folds trained and predicted).
+"""
+abstract type IterationPostProcessStrategy end
+
+"""
+    NoIterationPostProcess <: IterationPostProcessStrategy
+
+Default no-op strategy.
+"""
+struct NoIterationPostProcess <: IterationPostProcessStrategy end
+
+#############################################################################
+# 7. MBRUpdateStrategy - Match-Between-Runs
 #############################################################################
 
 """

@@ -438,7 +438,7 @@ get_all_models(ws::ArrowFileScoringWorkspace) = get_all_models(ws.inner)
 get_psms(ws::ArrowFileScoringWorkspace) = get_psms(ws.inner)
 
 # Phase-dispatched accessors (TrainingPhase delegates to inner sampled workspace;
-# PredictionPhase is handled by the specialized process_fold_iterations! method)
+# PredictionPhase is handled by the specialized process_fold_iteration! method)
 get_phase_view(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8) = get_phase_view(ws.inner, phase, fold)
 get_phase_indices(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8) = get_phase_indices(ws.inner, phase, fold)
 get_phase_output(ws::ArrowFileScoringWorkspace, phase::TrainingPhase) = get_phase_output(ws.inner, phase)
@@ -446,7 +446,7 @@ init_fold_models(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt
 commit_fold!(ws::ArrowFileScoringWorkspace, phase::TrainingPhase, fold::UInt8, models::Vector{Any}) = commit_fold!(ws.inner, phase, fold, models)
 
 # store_final_predictions! — no-op for ArrowFileScoringWorkspace
-# Predictions are already written to sidecar files during process_fold_iterations!
+# Predictions are already written to sidecar files during process_fold_iteration!
 store_final_predictions!(::ArrowFileScoringWorkspace, ::UInt8, ::PairBasedMBR) = nothing
 store_final_predictions!(::ArrowFileScoringWorkspace, ::UInt8, ::NoMBR) = nothing
 
@@ -464,7 +464,7 @@ finalize_scoring!(ws::ArrowFileScoringWorkspace, strategy::NoMBR) =
 #############################################################################
 
 """
-    process_fold_iterations!(::PredictionPhase, workspace::ArrowFileScoringWorkspace, ...)
+    process_fold_iteration!(::PredictionPhase, workspace::ArrowFileScoringWorkspace, ...)
 
 OOM prediction for a single fold: iterate over all Arrow files, filter to this
 fold's PSMs, apply pre-trained models, write predictions to sidecars.
@@ -472,11 +472,13 @@ fold's PSMs, apply pre-trained models, write predictions to sidecars.
 MBR features are computed per-fold across all files between iterations, since
 pairs span multiple MS runs.
 """
-function process_fold_iterations!(
+function process_fold_iteration!(
     ::PredictionPhase,
     workspace::ArrowFileScoringWorkspace,
     fold::UInt8,
-    iteration_rounds::Vector{Int},
+    itr::Int,
+    ::Int,
+    total_iterations::Int,
     config::ScoringConfig,
     mbr_start_iter::Int,
     pbar
@@ -484,41 +486,39 @@ function process_fold_iterations!(
     models = get_all_models(workspace)
     container = workspace.container
 
-    for itr in eachindex(iteration_rounds)
-        # Early exit for non-MBR mode
-        if !has_mbr_support(config.mbr_update) && itr > (mbr_start_iter - 1)
-            break
-        end
-
-        # Per-file prediction for this fold (files are already per-fold)
-        for group in get_file_groups_for_fold(container, fold)
-            data_df = DataFrame(Arrow.Table(group.data_path))
-            scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
-
-            # Build temp container with data + scores columns for prediction
-            for col in names(scores_df)
-                data_df[!, Symbol(col)] = scores_df[!, col]
-            end
-            temp = DataFramePSMContainer(data_df, Val(:unsafe))
-
-            preds = predict_scores(models[fold][itr], temp)
-            scores_df.trace_prob .= preds
-
-            # Store baseline at pre-MBR iteration
-            if itr == mbr_start_iter - 1
-                scores_df.nonMBR_trace_prob .= preds
-            end
-
-            writeArrow(group.scores_path, scores_df)
-        end
-
-        # Cross-file MBR for this fold
-        if itr >= mbr_start_iter - 1 && has_mbr_support(config.mbr_update)
-            _compute_mbr_for_fold!(container, fold, config.mbr_update)
-        end
-
-        !isnothing(pbar) && update(pbar)
+    # Early exit for non-MBR mode
+    if !has_mbr_support(config.mbr_update) && itr > (mbr_start_iter - 1)
+        return nothing
     end
+
+    # Per-file prediction for this fold (files are already per-fold)
+    for group in get_file_groups_for_fold(container, fold)
+        data_df = DataFrame(Arrow.Table(group.data_path))
+        scores_df = DataFrame(Tables.columntable(Arrow.Table(group.scores_path)))
+
+        # Build temp container with data + scores columns for prediction
+        for col in names(scores_df)
+            data_df[!, Symbol(col)] = scores_df[!, col]
+        end
+        temp = DataFramePSMContainer(data_df, Val(:unsafe))
+
+        preds = predict_scores(models[fold][itr], temp)
+        scores_df.trace_prob .= preds
+
+        # Store baseline at pre-MBR iteration
+        if itr == mbr_start_iter - 1
+            scores_df.nonMBR_trace_prob .= preds
+        end
+
+        writeArrow(group.scores_path, scores_df)
+    end
+
+    # Cross-file MBR for this fold
+    if itr >= mbr_start_iter - 1 && has_mbr_support(config.mbr_update)
+        _compute_mbr_for_fold!(container, fold, config.mbr_update)
+    end
+
+    !isnothing(pbar) && update(pbar)
 end
 
 #############################################################################

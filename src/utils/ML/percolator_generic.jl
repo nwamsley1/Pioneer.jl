@@ -132,65 +132,57 @@ function store_baseline!(::PredictionPhase, baseline::Vector{Float32}, indices::
 end
 
 #############################################################################
-# Unified fold iteration processing
+# Unified single-iteration fold processing
 #############################################################################
 
 """
-    process_fold_iterations!(phase, workspace, fold, iteration_rounds,
-                             config, mbr_start_iter, pbar) -> Nothing
+    process_fold_iteration!(phase, workspace, fold, itr, num_round,
+                            total_iterations, config, mbr_start_iter, pbar) -> Nothing
 
-Process one fold through all iterations for either training or prediction phase.
+Process one fold for a single iteration in either training or prediction phase.
 Uses trait dispatch to control phase-specific behavior. Fold-specific data
 (PSM views, indices, models, output arrays) is accessed via phase-dispatched
 workspace accessors.
 """
-function process_fold_iterations!(
+function process_fold_iteration!(
     phase::ScoringPhase,
     workspace::AbstractScoringWorkspace,
     fold::UInt8,
-    iteration_rounds::Vector{Int},
+    itr::Int,
+    num_round::Int,
+    total_iterations::Int,
     config::ScoringConfig,
     mbr_start_iter::Int,
     pbar
 )
     psms_view = get_phase_view(workspace, phase, fold)
     indices = get_phase_indices(workspace, phase, fold)
-    fold_models = init_fold_models(workspace, phase, fold, length(iteration_rounds))
+    fold_models = get_fold_models(workspace, fold)
     prob_output = get_phase_output(workspace, phase)
     baseline_output = get_baseline_output(workspace)
 
-    total_iterations = length(iteration_rounds)
+    # Get training subset (TrainingPhase) or full data (PredictionPhase)
+    psms_itr, features = get_training_subset(phase, psms_view, config, itr, total_iterations)
 
-    for (itr, num_round) in enumerate(iteration_rounds)
-        # Get training subset (TrainingPhase) or full data (PredictionPhase)
-        psms_itr, features = get_training_subset(phase, psms_view, config, itr, total_iterations)
+    # Train or retrieve model
+    model = get_or_train_model(phase, fold_models, itr, config, psms_itr, features, num_round)
 
-        # Train or retrieve model
-        model = get_or_train_model(phase, fold_models, itr, config, psms_itr, features, num_round)
+    # Predict on PSM view
+    prob_output[indices] = predict_scores(model, psms_view)
+    set_column!(psms_view, :trace_prob, prob_output[indices])
 
-        # Predict on PSM view
-        prob_output[indices] = predict_scores(model, psms_view)
-        set_column!(psms_view, :trace_prob, prob_output[indices])
+    # Store baseline before MBR iteration (PredictionPhase only)
+    store_baseline!(phase, baseline_output, indices, prob_output, itr, mbr_start_iter)
 
-        # Store baseline before MBR iteration (PredictionPhase only)
-        store_baseline!(phase, baseline_output, indices, prob_output, itr, mbr_start_iter)
+    # Compute q-values (TrainingPhase only - needed for next iteration's select_training_data)
+    compute_and_set_qvalues!(phase, psms_view)
 
-        # Compute q-values (TrainingPhase only - needed for next iteration's select_training_data)
-        compute_and_set_qvalues!(phase, psms_view)
+    # Update MBR features
+    update_mbr!(phase, psms_view, itr, mbr_start_iter, config.mbr_update)
 
-        # Update MBR features
-        update_mbr!(phase, psms_view, itr, mbr_start_iter, config.mbr_update)
+    # Update progress
+    !isnothing(pbar) && update(pbar)
 
-        # Update progress
-        !isnothing(pbar) && update(pbar)
-
-        # Early exit for non-MBR mode
-        if !has_mbr_support(config.mbr_update) && itr == (mbr_start_iter - 1)
-            break
-        end
-    end
-
-    commit_fold!(workspace, phase, fold, fold_models)
     return nothing
 end
 
@@ -245,17 +237,51 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
 
     Random.seed!(1776)
 
-    # Step 6: PHASE 1 - Train all models (predict on training data only)
-    for fold in get_cv_folds(workspace)
-        process_fold_iterations!(TrainingPhase(), workspace, fold,
-                                 iteration_rounds, config, mbr_start_iter, pbar)
+    cv_folds = get_cv_folds(workspace)
+    for fold in cv_folds
+        store_fold_models!(workspace, fold, Vector{Any}(undef, total_iterations))
     end
 
-    # Step 7: PHASE 2 - Predict on held-out test data (dispatched on phase + workspace type)
-    for fold in get_cv_folds(workspace)
-        process_fold_iterations!(PredictionPhase(), workspace, fold,
-                                 iteration_rounds, config, mbr_start_iter, pbar)
-        store_final_predictions!(workspace, fold, config.mbr_update)
+    # Step 6-7: Train and predict one iteration at a time so iteration-level
+    # post-processing can update held-out features before the next iteration.
+    for (itr, num_round) in enumerate(iteration_rounds[1:iterations_to_run])
+        for fold in cv_folds
+            process_fold_iteration!(
+                TrainingPhase(),
+                workspace,
+                fold,
+                itr,
+                num_round,
+                total_iterations,
+                config,
+                mbr_start_iter,
+                pbar
+            )
+        end
+
+        for fold in cv_folds
+            process_fold_iteration!(
+                PredictionPhase(),
+                workspace,
+                fold,
+                itr,
+                num_round,
+                total_iterations,
+                config,
+                mbr_start_iter,
+                pbar
+            )
+            if itr == iterations_to_run
+                store_final_predictions!(workspace, fold, config.mbr_update)
+            end
+        end
+
+        apply_iteration_postprocess!(
+            config.iteration_postprocess,
+            workspace,
+            itr,
+            total_iterations
+        )
     end
 
     # Step 8: Finalize scoring (dispatched on workspace type)

@@ -21,7 +21,7 @@ Combines all trait types into a single configuration.
 =#
 
 """
-    ScoringConfig{M,P,T,F,I,B}
+    ScoringConfig{M,P,T,F,I,B,R}
 
 Complete configuration for PSM scoring algorithm.
 Combines all trait types into a single parameterized configuration.
@@ -33,15 +33,18 @@ Combines all trait types into a single parameterized configuration.
 - `F <: FeatureSelectionStrategy`: Feature selection method
 - `I <: IterationScheme`: Iteration configuration
 - `B <: MBRUpdateStrategy`: MBR feature computation
+- `R <: IterationPostProcessStrategy`: Between-iteration post-processing
 """
 struct ScoringConfig{M<:PSMScoringModel, P<:PairingStrategy, T<:TrainingDataStrategy,
-                     F<:FeatureSelectionStrategy, I<:IterationScheme, B<:MBRUpdateStrategy}
+                     F<:FeatureSelectionStrategy, I<:IterationScheme, B<:MBRUpdateStrategy,
+                     R<:IterationPostProcessStrategy}
     model::M
     pairing::P
     training_data::T
     feature_selection::F
     iteration_scheme::I
     mbr_update::B
+    iteration_postprocess::R
 end
 
 """
@@ -85,7 +88,8 @@ function default_scoring_config(;
         QValueNegativeMining(max_q_value, min_pep_threshold),
         IterativeFeatureSelection(base_features, mbr_features, length(iter_scheme)),
         FixedIterationScheme(iter_scheme),
-        match_between_runs ? PairBasedMBR(max_q_value) : NoMBR()
+        match_between_runs ? PairBasedMBR(max_q_value) : NoMBR(),
+        NoIterationPostProcess()
     )
 end
 
@@ -101,8 +105,42 @@ function probit_scoring_config(; features::Vector{Symbol} = Symbol[])
         AllDataSelection(),
         StaticFeatureSelection(features),
         SinglePassScheme(),
-        NoMBR()
+        NoMBR(),
+        NoIterationPostProcess()
     )
+end
+
+"""
+    with_iteration_postprocess(config::ScoringConfig, strategy::IterationPostProcessStrategy)
+
+Return a copy of `config` with the supplied between-iteration post-processing
+strategy.
+"""
+function with_iteration_postprocess(config::ScoringConfig, strategy::R) where {R<:IterationPostProcessStrategy}
+    return ScoringConfig(
+        config.model,
+        config.pairing,
+        config.training_data,
+        config.feature_selection,
+        config.iteration_scheme,
+        config.mbr_update,
+        strategy
+    )
+end
+
+"""
+    apply_iteration_postprocess!(strategy, workspace, iteration, total_iterations)
+
+Run any between-iteration update after all folds have completed the current
+iteration. The default strategy is a no-op.
+"""
+function apply_iteration_postprocess!(
+    ::NoIterationPostProcess,
+    workspace,
+    iteration::Int,
+    total_iterations::Int
+)
+    return nothing
 end
 
 # Note: build_scoring_config function is defined in PrecursorScoringSearch/model_config.jl
