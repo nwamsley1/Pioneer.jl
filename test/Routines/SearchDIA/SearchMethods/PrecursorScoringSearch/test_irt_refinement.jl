@@ -5,8 +5,6 @@ using Pioneer
 using Pioneer: IrtLinearRefinement, _precursor_token_counts, apply_iteration_postprocess!
 using Pioneer: DataFramePSMContainer, LibraryPrecursors, default_scoring_config, setup_scoring_workspace
 using Pioneer: fit_irt_refinement_model, predict_irt_refinement, _passing_precursor_targets
-using Pioneer: fit_missed_cleavage_context_model, predict_missed_cleavage_context
-using Pioneer: precursor_missed_cleavage_site_contexts
 
 struct MockPrecursors <: LibraryPrecursors
     sequence::Vector{String}
@@ -176,7 +174,7 @@ end
         @test psms.irt_error[8] ≈ 0.0f0 atol = 1e-4
     end
 
-    @testset "Later Iterations Also Refresh Predictions" begin
+    @testset "Later Iterations Skip Refinement" begin
         precursors = MockPrecursors(
             [
                 "AAAA", "CCCC", "AAAA", "CCCC", "DDDD", "DDDD",
@@ -225,15 +223,16 @@ end
         )
         strategy = IrtLinearRefinement(precursors)
 
+        original_irt_pred = copy(psms.irt_pred)
+        original_irt_error = copy(psms.irt_error)
+
         apply_iteration_postprocess!(strategy, workspace, 2, 4)
 
-        @test psms.irt_pred[1] ≈ 4.0f0 atol = 1e-4
-        @test psms.irt_pred[2] ≈ 8.0f0 atol = 1e-4
-        @test psms.irt_pred[7] ≈ 18.0f0 atol = 1e-4
-        @test psms.irt_pred[8] ≈ 14.0f0 atol = 1e-4
+        @test psms.irt_pred == original_irt_pred
+        @test psms.irt_error == original_irt_error
     end
 
-    @testset "Correction Model Uses Current Predicted iRT Per Run And Writes QC Plots" begin
+    @testset "Correction Model Uses Current Predicted iRT Per Run And Writes QC Plot" begin
         mktempdir() do qc_dir
             precursors = MockPrecursors(
                 fill("AAAA", 12),
@@ -279,88 +278,8 @@ end
 
             apply_iteration_postprocess!(strategy, workspace, 1, 2)
 
-            @test !isfile(joinpath(qc_dir, "irt_error_refinement_run_1.png"))
-
-            apply_iteration_postprocess!(strategy, workspace, 2, 2)
-
             @test isfile(joinpath(qc_dir, "irt_error_refinement_run_1.png"))
-        @test !isfile(joinpath(qc_dir, "irt_error_refinement_run_2.png"))
+            @test !isfile(joinpath(qc_dir, "irt_error_refinement_run_2.png"))
+        end
     end
-
-    @testset "Missed Cleavage Site Contexts Follow Cleavage Regex" begin
-        precursors = MockPrecursors(["AKDKEA"], [missing])
-        strategy = IrtLinearRefinement(precursors; cleavage_regex = r"K")
-
-        @test precursor_missed_cleavage_site_contexts(strategy, 1) == [('K', 'D'), ('K', 'E')]
-    end
-
-    @testset "Additive Missed Cleavage Model Scores Enriched Contexts" begin
-        precursors = MockPrecursors(
-            ["AKDA", "AKEA", "AKAA"],
-            fill(missing, 3)
-        )
-        strategy = IrtLinearRefinement(
-            precursors;
-            cleavage_regex = r"K",
-            min_missed_cleavage_sites = 2
-        )
-
-        model = fit_missed_cleavage_context_model(strategy, UInt32[1, 2])
-
-        @test !isnothing(model)
-        @test predict_missed_cleavage_context(strategy, model, 1) >
-              predict_missed_cleavage_context(strategy, model, 3)
-    end
-
-    @testset "Missed Cleavage Refinement Is Per Run" begin
-        precursors = MockPrecursors(
-            [
-                "AKDA", "AKEA", "AKAA", "AKDA", "AKEA", "AKAA",
-                "AKAA", "AKAA", "AKDA", "AKAA", "AKAA", "AKDA"
-            ],
-            fill(missing, 12)
-        )
-
-        psms = DataFrame(
-            target = Bool[
-                true, true, false, true, true, false,
-                true, true, false, true, true, false
-            ],
-            cv_fold = UInt8[
-                0, 0, 0, 1, 1, 1,
-                0, 0, 0, 1, 1, 1
-            ],
-            precursor_idx = UInt32[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-            ms_file_idx = UInt32[
-                1, 1, 1, 1, 1, 1,
-                2, 2, 2, 2, 2, 2
-            ],
-            irt_pred = fill(10.0f0, 12),
-            isotopes_captured = fill((Int8(0), Int8(0)), 12),
-            trace_prob = Float32[
-                0.99, 0.98, 0.01, 0.99, 0.98, 0.01,
-                0.99, 0.98, 0.01, 0.99, 0.98, 0.01
-            ],
-            irt_obs = fill(10.0f0, 12),
-            irt_error = fill(0.0f0, 12)
-        )
-        psms[!, :irt_error] = abs.(psms.irt_obs .- psms.irt_pred)
-
-        workspace = setup_scoring_workspace(
-            DataFramePSMContainer(psms, Val(:unsafe)),
-            default_scoring_config()
-        )
-        strategy = IrtLinearRefinement(
-            precursors;
-            cleavage_regex = r"K"
-        )
-
-        apply_iteration_postprocess!(strategy, workspace, 1, 2)
-
-        @test psms.mc_context_score_sum[1] > psms.mc_context_score_sum[3]
-        @test psms.mc_context_score_sum[4] > psms.mc_context_score_sum[6]
-        @test psms.mc_context_score_sum[7] > psms.mc_context_score_sum[9]
-        @test psms.mc_context_score_sum[10] > psms.mc_context_score_sum[12]
-    end
-end
 end

@@ -108,7 +108,6 @@ function score_precursor_isotope_traces(
     min_PEP_neg_threshold_itr::Float32,
     max_psms_in_memory::Int64,
     n_quantile_bins::Int64,
-    cleavage_regex::Regex,
     q_value_threshold::Float32 = 0.01f0,
     ms1_scoring::Bool = true,
     force_oom::Bool = false
@@ -132,7 +131,6 @@ function score_precursor_isotope_traces(
             config,
             IrtLinearRefinement(
                 precursors;
-                cleavage_regex = cleavage_regex,
                 qc_plot_dir = irt_refinement_qc_dir,
                 qc_run_id = qc_run_id,
                 run_labels = run_labels
@@ -161,7 +159,7 @@ function score_precursor_isotope_traces(
             model_config = select_psm_scoring_model(
                 best_psms, file_paths, precursors, match_between_runs,
                 max_q_value_lightgbm_rescore, max_q_value_mbr_itr,
-                min_PEP_neg_threshold_itr, cleavage_regex, q_value_threshold, ms1_scoring
+                min_PEP_neg_threshold_itr, q_value_threshold, ms1_scoring
             )
         end
         
@@ -171,7 +169,6 @@ function score_precursor_isotope_traces(
             best_psms, file_paths, precursors, model_config,
             match_between_runs, max_q_value_lightgbm_rescore,
             max_q_value_mbr_itr, min_PEP_neg_threshold_itr,
-            cleavage_regex,
             true,
             irt_refinement_qc_dir,
             qc_run_id,
@@ -208,7 +205,6 @@ function select_psm_scoring_model(
     max_q_value_lightgbm_rescore::Float32,
     max_q_value_mbr_itr::Float32,
     min_PEP_neg_threshold_itr::Float32,
-    cleavage_regex::Regex,
     q_value_threshold::Float32,
     ms1_scoring::Bool = true
 )
@@ -237,7 +233,6 @@ function select_psm_scoring_model(
                     psms_copy, file_paths, precursors, config,
                     match_between_runs, max_q_value_lightgbm_rescore,
                     max_q_value_mbr_itr, min_PEP_neg_threshold_itr,
-                    cleavage_regex,
                     false  # show_progress = false during comparison
                 )
                 
@@ -357,7 +352,6 @@ function score_precursor_isotope_traces_in_memory(
     max_q_value_lightgbm_rescore::Float32,
     max_q_value_mbr_itr::Float32,
     min_PEP_neg_threshold_itr::Float32,
-    cleavage_regex::Regex,
     show_progress::Bool = true,
     irt_refinement_qc_dir::Union{Nothing, String} = nothing,
     qc_run_id::Union{Nothing, UInt32} = nothing,
@@ -369,7 +363,6 @@ function score_precursor_isotope_traces_in_memory(
             best_psms, file_paths, precursors, model_config,
             match_between_runs, max_q_value_lightgbm_rescore,
             max_q_value_mbr_itr, min_PEP_neg_threshold_itr,
-            cleavage_regex,
             show_progress,
             irt_refinement_qc_dir,
             qc_run_id,
@@ -379,7 +372,6 @@ function score_precursor_isotope_traces_in_memory(
         return train_probit_model(
             best_psms, file_paths, precursors, model_config, match_between_runs,
             min_PEP_neg_threshold_itr,
-            cleavage_regex,
             irt_refinement_qc_dir,
             qc_run_id,
             run_labels
@@ -421,7 +413,6 @@ function train_lightgbm_model(
     max_q_value_lightgbm_rescore::Float32,
     ::Float32,  # max_q_value_mbr_itr - unused in current implementation
     min_PEP_neg_threshold_itr::Float32,
-    cleavage_regex::Regex,
     show_progress::Bool = true,
     irt_refinement_qc_dir::Union{Nothing, String} = nothing,
     qc_run_id::Union{Nothing, UInt32} = nothing,
@@ -443,7 +434,6 @@ function train_lightgbm_model(
         config,
         IrtLinearRefinement(
             precursors;
-            cleavage_regex = cleavage_regex,
             qc_plot_dir = irt_refinement_qc_dir,
             qc_run_id = qc_run_id,
             run_labels = run_labels
@@ -469,7 +459,6 @@ function train_probit_model(
     model_config::ModelConfig,
     match_between_runs::Bool,
     min_PEP_neg_threshold_itr::Float32,
-    cleavage_regex::Regex,
     irt_refinement_qc_dir::Union{Nothing, String} = nothing,
     qc_run_id::Union{Nothing, UInt32} = nothing,
     run_labels::Dict{UInt32, String} = Dict{UInt32, String}()
@@ -490,7 +479,6 @@ function train_probit_model(
         config,
         IrtLinearRefinement(
             precursors;
-            cleavage_regex = cleavage_regex,
             qc_plot_dir = irt_refinement_qc_dir,
             qc_run_id = qc_run_id,
             run_labels = run_labels

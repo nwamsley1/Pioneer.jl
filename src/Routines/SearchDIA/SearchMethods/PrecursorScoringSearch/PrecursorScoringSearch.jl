@@ -43,25 +43,6 @@ struct PrecursorScoringSearchResults <: SearchResults
     merged_precursor_scores_path::String
 end
 
-function get_library_cleavage_regex(params::PioneerParameters)
-    config_path = joinpath(params.paths.library, "config.json")
-    default_regex = r"[KR][^P|$]"
-
-    try
-        isfile(config_path) || return default_regex
-        config = JSON.parsefile(config_path)
-        fasta_digest_params = get(config, "fasta_digest_params", nothing)
-        isnothing(fasta_digest_params) && return default_regex
-        regex_str = get(fasta_digest_params, "cleavage_regex", nothing)
-        regex_str isa AbstractString || return default_regex
-        isempty(regex_str) && return default_regex
-        return Regex(regex_str)
-    catch e
-        @user_warn "Falling back to default cleavage regex for precursor scoring" config_path = config_path error_type = string(typeof(e))
-        return default_regex
-    end
-end
-
 """
 Parameters for precursor scoring.
 """
@@ -95,7 +76,6 @@ struct PrecursorScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     ms1_scoring::Bool
     force_oom::Bool
     max_mbr_training_candidates::Int64
-    cleavage_regex::Regex
 
     function PrecursorScoringSearchParameters(params::PioneerParameters)
         ml_params = params.optimization.machine_learning
@@ -127,8 +107,7 @@ struct PrecursorScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Int64(get(ml_params, :max_psms_for_comparison, 100000)),
             Bool(global_params.ms1_scoring),
             Bool(get(ml_params, :force_oom, false)),
-            Int64(get(ml_params, :max_mbr_training_candidates, 1_000_000)),
-            get_library_cleavage_regex(params)
+            Int64(get(ml_params, :max_mbr_training_candidates, 1_000_000))
         )
     end
 end
@@ -296,7 +275,6 @@ function summarize_results!(
                 params.min_PEP_neg_threshold_itr,
                 max_psms,
                 params.n_quantile_bins,
-                params.cleavage_regex,
                 params.q_value_threshold,
                 params.ms1_scoring,
                 params.force_oom
