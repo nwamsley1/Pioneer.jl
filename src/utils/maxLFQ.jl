@@ -628,6 +628,33 @@ function getProtAbundance(protein::String,
 end
 
 # FileReference-based implementation with TransformPipeline preprocessing
+function apply_lfq_preprocessing(
+    prot::DataFrame,
+    q_value_threshold::Float32
+)
+    preprocessing_pipeline = TransformPipeline() |>
+        filter_by_multiple_thresholds([
+            (:pg_qval, q_value_threshold),
+            (:qlobal_pg_qval, q_value_threshold)
+        ]) |>
+        filter_rows(row -> row.use_for_protein_quant; desc = "filter_for_protein_quant")
+
+    if :points_integrated in propertynames(prot)
+        preprocessing_pipeline = preprocessing_pipeline |>
+            filter_rows(
+                row -> ismissing(row.points_integrated) || row.points_integrated > 1,
+                desc = "filter_multi_point_integrations"
+            )
+    end
+
+    processed = prot
+    for (_, op) in preprocessing_pipeline.operations
+        processed = op(processed)
+    end
+
+    return processed
+end
+
 function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issues
              protein_quant_path::String,
             quant_col::Symbol,
@@ -645,14 +672,6 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
 
     # Filter out rows with missing inferred_protein_group values
     filter!(:inferred_protein_group => x -> !ismissing(x), prot)
-
-    # Create pipeline operations for batch-wise application
-    preprocessing_pipeline = TransformPipeline() |>
-        filter_by_multiple_thresholds([
-            (:pg_qval, q_value_threshold),
-            (:qlobal_pg_qval, q_value_threshold)
-        ]) |>
-        filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
     
     # Main processing logic (inlined from original LFQ function)
     nfiles = length(unique(prot[!, :ms_file_idx]))
@@ -671,13 +690,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         batch_start_idx = batch_end_idx + 1
         batch_end_idx = min(batch_start_idx + batch_size, size(prot, 1))
         
-        # Apply pipeline operations to this batch
-        initial_rows = nrow(subdf)
-        for (desc, op) in preprocessing_pipeline.operations
-            subdf = op(subdf)
-            @debug "Pipeline operation" operation=desc rows_before=initial_rows rows_after=nrow(subdf)
-            initial_rows = nrow(subdf)
-        end
+        subdf = apply_lfq_preprocessing(subdf, q_value_threshold)
         
         if nrow(subdf) == 0
             continue  # Skip empty batches

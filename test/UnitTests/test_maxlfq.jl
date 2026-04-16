@@ -160,4 +160,30 @@
             @test isequal(appended.abundance, Union{Missing, Float32}[2.0f0, 4.0f0, 2.0f0, missing])
         end
     end
+
+    @testset "Single-point precursor integrations do not contribute to LFQ" begin
+        input_df = DataFrame(
+            inferred_protein_group = ["P001", "P001", "P001"],
+            target = Bool[true, true, true],
+            entrapment_group_id = UInt8[0, 0, 0],
+            species = ["human", "human", "human"],
+            precursor_idx = UInt32[1, 1, 2],
+            ms_file_idx = UInt16[1, 2, 2],
+            use_for_protein_quant = Bool[true, true, false],
+            peak_area = Union{Missing, Float32}[100.0f0, 200.0f0, 300.0f0],
+            pg_qval = Union{Missing, Float32}[0.001f0, 0.001f0, 0.001f0],
+            qlobal_pg_qval = Union{Missing, Float32}[0.001f0, 0.001f0, 0.001f0],
+            pg_pep = Union{Missing, Float32}[0.001f0, 0.001f0, 0.001f0],
+            pg_score = Union{Missing, Float32}[5.0f0, 5.0f0, 5.0f0],
+            global_pg_score = Union{Missing, Float32}[5.0f0, 5.0f0, 5.0f0],
+            points_integrated = Union{Missing, UInt32}[2, 1, 3]
+        )
+
+        filtered = Pioneer.apply_lfq_preprocessing(input_df, 0.01f0)
+
+        @test nrow(filtered) == 1
+        @test filtered.ms_file_idx == UInt16[1]
+        @test filtered.precursor_idx == UInt32[1]
+        @test filtered.points_integrated == Union{Missing, UInt32}[2]
+    end
 end

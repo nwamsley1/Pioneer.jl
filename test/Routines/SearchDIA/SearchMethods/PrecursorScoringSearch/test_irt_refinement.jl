@@ -232,7 +232,7 @@ end
         @test psms.irt_error == original_irt_error
     end
 
-    @testset "Correction Model Uses Current Predicted iRT Per Run And Writes QC Plot" begin
+    @testset "Correction Model Uses Current Predicted iRT Per Run And Writes QC Plots" begin
         mktempdir() do qc_dir
             precursors = MockPrecursors(
                 fill("AAAA", 12),
@@ -279,7 +279,9 @@ end
             apply_iteration_postprocess!(strategy, workspace, 1, 2)
 
             @test isfile(joinpath(qc_dir, "irt_error_refinement_run_1.png"))
+            @test isfile(joinpath(qc_dir, "irt_pred_vs_obs_refinement_run_1.png"))
             @test !isfile(joinpath(qc_dir, "irt_error_refinement_run_2.png"))
+            @test !isfile(joinpath(qc_dir, "irt_pred_vs_obs_refinement_run_2.png"))
         end
     end
 end

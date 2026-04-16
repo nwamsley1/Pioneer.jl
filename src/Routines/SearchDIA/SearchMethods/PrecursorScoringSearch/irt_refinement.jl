@@ -146,7 +146,76 @@ function _add_error_distribution!(
     )
 end
 
-function maybe_write_irt_refinement_qc_plot(
+function _add_pred_vs_obs_scatter!(
+    p,
+    pred::Vector{Float32},
+    obs::Vector{Float32},
+    targets::AbstractVector{Bool},
+    subplot_idx::Int;
+    title::String
+)
+    valid_mask = isfinite.(pred) .& isfinite.(obs)
+    target_values = valid_mask .& targets
+    decoy_values = valid_mask .& .!targets
+
+    plot!(
+        p,
+        title = title,
+        xlabel = "Predicted iRT",
+        ylabel = "Observed RT",
+        legend = :topleft,
+        subplot = subplot_idx
+    )
+
+    if any(target_values)
+        scatter!(
+            p,
+            pred[target_values],
+            obs[target_values];
+            color = :steelblue,
+            alpha = 0.45,
+            markersize = 3,
+            markerstrokewidth = 0,
+            label = "Targets",
+            subplot = subplot_idx
+        )
+    end
+
+    if any(decoy_values)
+        scatter!(
+            p,
+            pred[decoy_values],
+            obs[decoy_values];
+            color = :firebrick,
+            alpha = 0.45,
+            markersize = 3,
+            markerstrokewidth = 0,
+            label = "Decoys",
+            subplot = subplot_idx
+        )
+    end
+
+    valid_pred = pred[valid_mask]
+    valid_obs = obs[valid_mask]
+    if !isempty(valid_pred) && !isempty(valid_obs)
+        min_axis = min(minimum(valid_pred), minimum(valid_obs))
+        max_axis = max(maximum(valid_pred), maximum(valid_obs))
+        plot!(
+            p,
+            [min_axis, max_axis],
+            [min_axis, max_axis];
+            color = :black,
+            linestyle = :dash,
+            linewidth = 1.5,
+            label = "y = x",
+            subplot = subplot_idx
+        )
+    end
+
+    return nothing
+end
+
+function maybe_write_irt_error_qc_plot(
     strategy::IrtLinearRefinement,
     run_id::UInt32,
     irt_error_before::Vector{Float32},
@@ -192,9 +261,61 @@ function maybe_write_irt_refinement_qc_plot(
     return nothing
 end
 
+function maybe_write_irt_pred_vs_obs_qc_plot(
+    strategy::IrtLinearRefinement,
+    run_id::UInt32,
+    irt_pred_before::Vector{Float32},
+    irt_pred_after::Vector{Float32},
+    irt_obs::Vector{Float32},
+    targets::AbstractVector{Bool}
+)
+    isnothing(strategy.qc_plot_dir) && return nothing
+    isempty(irt_pred_before) && return nothing
+
+    isdir(strategy.qc_plot_dir) || mkpath(strategy.qc_plot_dir)
+    plot_path = joinpath(
+        strategy.qc_plot_dir,
+        "irt_pred_vs_obs_refinement_run_$(run_id).png"
+    )
+    run_label = _get_run_label(strategy, run_id)
+
+    try
+        p = plot(
+            layout = (1, 2),
+            size = (1400, 550),
+            titlefont = 12,
+            margin = 8Plots.mm
+        )
+        _add_pred_vs_obs_scatter!(
+            p,
+            irt_pred_before,
+            irt_obs,
+            targets,
+            1;
+            title = "Before refinement: $(run_label)"
+        )
+        _add_pred_vs_obs_scatter!(
+            p,
+            irt_pred_after,
+            irt_obs,
+            targets,
+            2;
+            title = "After refinement: $(run_label)"
+        )
+        savefig(p, plot_path)
+    catch e
+        @user_warn "Failed to write predicted-vs-observed iRT QC plot" plot_path = plot_path error_type = string(typeof(e))
+    end
+
+    return nothing
+end
+
 function maybe_write_irt_refinement_qc_plots(
     strategy::IrtLinearRefinement,
     run_ids::AbstractVector,
+    irt_pred_before::Vector{Float32},
+    irt_pred_after::Vector{Float32},
+    irt_obs::Vector{Float32},
     irt_error_before::Vector{Float32},
     irt_error_after::Vector{Float32},
     targets::AbstractVector{Bool}
@@ -211,11 +332,19 @@ function maybe_write_irt_refinement_qc_plots(
     run_mask = run_ids_u32 .== run_id
     any(run_mask) || return nothing
 
-    maybe_write_irt_refinement_qc_plot(
+    maybe_write_irt_error_qc_plot(
         strategy,
         run_id,
         irt_error_before[run_mask],
         irt_error_after[run_mask],
+        targets[run_mask]
+    )
+    maybe_write_irt_pred_vs_obs_qc_plot(
+        strategy,
+        run_id,
+        irt_pred_before[run_mask],
+        irt_pred_after[run_mask],
+        irt_obs[run_mask],
         targets[run_mask]
     )
 
@@ -515,6 +644,8 @@ function apply_iteration_postprocess!(
     end
 
     df = to_dataframe(get_psms(workspace))
+    irt_pred_before = Float32.(df.irt_pred)
+    irt_obs = Float32.(df.irt_obs)
     irt_error_before = _get_irt_errors(df)
     targets = Bool.(df.target)
     run_ids = UInt32.(df.ms_file_idx)
@@ -524,6 +655,9 @@ function apply_iteration_postprocess!(
     maybe_write_irt_refinement_qc_plots(
         strategy,
         run_ids,
+        irt_pred_before,
+        Float32.(df.irt_pred),
+        irt_obs,
         irt_error_before,
         _get_irt_errors(df),
         targets
@@ -633,6 +767,9 @@ function _apply_fold_models_to_groups!(
     irt_models::Dict{Tuple{UInt8, UInt32}, Union{Nothing, AminoAcidCountIrtModel}},
     fold::UInt8
 )
+    irt_pred_before = Float32[]
+    irt_pred_after = Float32[]
+    irt_obs = Float32[]
     irt_error_before = Float32[]
     irt_error_after = Float32[]
     targets = Bool[]
@@ -643,6 +780,8 @@ function _apply_fold_models_to_groups!(
         nrow(data_df) == 0 && continue
 
         run_id = UInt32(first(data_df.ms_file_idx))
+        append!(irt_pred_before, Float32.(data_df.irt_pred))
+        append!(irt_obs, Float32.(data_df.irt_obs))
         append!(irt_error_before, _get_irt_errors(data_df))
         append!(targets, Bool.(data_df.target))
         append!(run_ids, fill(run_id, nrow(data_df)))
@@ -658,10 +797,14 @@ function _apply_fold_models_to_groups!(
             writeArrow(group.data_path, data_df)
         end
 
+        append!(irt_pred_after, Float32.(data_df.irt_pred))
         append!(irt_error_after, _get_irt_errors(data_df))
     end
 
     return (
+        irt_pred_before,
+        irt_pred_after,
+        irt_obs,
         irt_error_before,
         irt_error_after,
         targets,
@@ -706,11 +849,17 @@ function apply_iteration_postprocess!(
 
     irt_error_before = Float32[]
     irt_error_after = Float32[]
+    irt_pred_before = Float32[]
+    irt_pred_after = Float32[]
+    irt_obs = Float32[]
     targets = Bool[]
     run_ids_per_row = UInt32[]
     for fold in cv_folds
         test_groups = get_file_groups_for_fold(container, fold)
         (
+            fold_pred_before,
+            fold_pred_after,
+            fold_obs,
             fold_irt_before,
             fold_irt_after,
             fold_targets,
@@ -721,6 +870,9 @@ function apply_iteration_postprocess!(
             irt_models,
             fold
         )
+        append!(irt_pred_before, fold_pred_before)
+        append!(irt_pred_after, fold_pred_after)
+        append!(irt_obs, fold_obs)
         append!(irt_error_before, fold_irt_before)
         append!(irt_error_after, fold_irt_after)
         append!(targets, fold_targets)
@@ -732,6 +884,9 @@ function apply_iteration_postprocess!(
     maybe_write_irt_refinement_qc_plots(
         strategy,
         run_ids_per_row,
+        irt_pred_before,
+        irt_pred_after,
+        irt_obs,
         irt_error_before,
         irt_error_after,
         targets
