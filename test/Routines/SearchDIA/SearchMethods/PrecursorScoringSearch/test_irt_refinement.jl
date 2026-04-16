@@ -5,6 +5,8 @@ using Pioneer
 using Pioneer: IrtLinearRefinement, _precursor_token_counts, apply_iteration_postprocess!
 using Pioneer: DataFramePSMContainer, LibraryPrecursors, default_scoring_config, setup_scoring_workspace
 using Pioneer: fit_irt_refinement_model, predict_irt_refinement, _passing_precursor_targets
+using Pioneer: fit_missed_cleavage_context_model, predict_missed_cleavage_context
+using Pioneer: precursor_missed_cleavage_site_contexts
 
 struct MockPrecursors <: LibraryPrecursors
     sequence::Vector{String}
@@ -14,7 +16,52 @@ end
 Pioneer.getSequence(precursors::MockPrecursors) = precursors.sequence
 Pioneer.getStructuralMods(precursors::MockPrecursors) = precursors.structural_mods
 
+struct DummyScorer <: Pioneer.PSMScoringModel end
+struct DummyModel end
+mutable struct IterationRecorder <: Pioneer.IterationPostProcessStrategy
+    calls::Vector{Tuple{Int, Int}}
+end
+
+Pioneer.train_model(::DummyScorer, ::Pioneer.AbstractPSMContainer, ::Vector{Symbol}, ::Int) = DummyModel()
+Pioneer.predict_scores(::DummyModel, psms::Pioneer.AbstractPSMContainer) = fill(0.9f0, Pioneer.nrows(psms))
+function Pioneer.apply_iteration_postprocess!(
+    strategy::IterationRecorder,
+    workspace,
+    iteration::Int,
+    total_iterations::Int
+)
+    push!(strategy.calls, (iteration, total_iterations))
+    return nothing
+end
+
 @testset "Precursor iRT Refinement" begin
+    @testset "Percolator Postprocess Uses Executed Iteration Count" begin
+        psms = DataFrame(
+            target = Bool[true, false, true, false],
+            cv_fold = UInt8[0, 0, 1, 1],
+            precursor_idx = UInt32[1, 2, 3, 4],
+            ms_file_idx = UInt32[1, 1, 1, 1],
+            irt_pred = Float32[10, 11, 12, 13],
+            isotopes_captured = fill((Int8(0), Int8(0)), 4),
+            intercept = Float32[1, 1, 1, 1]
+        )
+
+        recorder = IterationRecorder(Tuple{Int, Int}[])
+        config = Pioneer.ScoringConfig(
+            DummyScorer(),
+            Pioneer.NoPairing(),
+            Pioneer.AllDataSelection(),
+            Pioneer.StaticFeatureSelection([:intercept]),
+            Pioneer.FixedIterationScheme([1, 1, 1, 1]),
+            Pioneer.NoMBR(),
+            recorder
+        )
+
+        Pioneer.percolator_scoring!(psms, config; show_progress = false, verbose = false)
+
+        @test recorder.calls == [(1, 3), (2, 3), (3, 3)]
+    end
+
     @testset "Modified Residues Get Unique Tokens" begin
         counts = _precursor_token_counts(
             "ACDM",
@@ -237,7 +284,83 @@ Pioneer.getStructuralMods(precursors::MockPrecursors) = precursors.structural_mo
             apply_iteration_postprocess!(strategy, workspace, 2, 2)
 
             @test isfile(joinpath(qc_dir, "irt_error_refinement_run_1.png"))
-            @test !isfile(joinpath(qc_dir, "irt_error_refinement_run_2.png"))
-        end
+        @test !isfile(joinpath(qc_dir, "irt_error_refinement_run_2.png"))
     end
+
+    @testset "Missed Cleavage Site Contexts Follow Cleavage Regex" begin
+        precursors = MockPrecursors(["AKDKEA"], [missing])
+        strategy = IrtLinearRefinement(precursors; cleavage_regex = r"K")
+
+        @test precursor_missed_cleavage_site_contexts(strategy, 1) == [('K', 'D'), ('K', 'E')]
+    end
+
+    @testset "Additive Missed Cleavage Model Scores Enriched Contexts" begin
+        precursors = MockPrecursors(
+            ["AKDA", "AKEA", "AKAA"],
+            fill(missing, 3)
+        )
+        strategy = IrtLinearRefinement(
+            precursors;
+            cleavage_regex = r"K",
+            min_missed_cleavage_sites = 2
+        )
+
+        model = fit_missed_cleavage_context_model(strategy, UInt32[1, 2])
+
+        @test !isnothing(model)
+        @test predict_missed_cleavage_context(strategy, model, 1) >
+              predict_missed_cleavage_context(strategy, model, 3)
+    end
+
+    @testset "Missed Cleavage Refinement Is Per Run" begin
+        precursors = MockPrecursors(
+            [
+                "AKDA", "AKEA", "AKAA", "AKDA", "AKEA", "AKAA",
+                "AKAA", "AKAA", "AKDA", "AKAA", "AKAA", "AKDA"
+            ],
+            fill(missing, 12)
+        )
+
+        psms = DataFrame(
+            target = Bool[
+                true, true, false, true, true, false,
+                true, true, false, true, true, false
+            ],
+            cv_fold = UInt8[
+                0, 0, 0, 1, 1, 1,
+                0, 0, 0, 1, 1, 1
+            ],
+            precursor_idx = UInt32[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            ms_file_idx = UInt32[
+                1, 1, 1, 1, 1, 1,
+                2, 2, 2, 2, 2, 2
+            ],
+            irt_pred = fill(10.0f0, 12),
+            isotopes_captured = fill((Int8(0), Int8(0)), 12),
+            trace_prob = Float32[
+                0.99, 0.98, 0.01, 0.99, 0.98, 0.01,
+                0.99, 0.98, 0.01, 0.99, 0.98, 0.01
+            ],
+            irt_obs = fill(10.0f0, 12),
+            irt_error = fill(0.0f0, 12)
+        )
+        psms[!, :irt_error] = abs.(psms.irt_obs .- psms.irt_pred)
+
+        workspace = setup_scoring_workspace(
+            DataFramePSMContainer(psms, Val(:unsafe)),
+            default_scoring_config()
+        )
+        strategy = IrtLinearRefinement(
+            precursors;
+            cleavage_regex = r"K"
+        )
+
+        apply_iteration_postprocess!(strategy, workspace, 1, 2)
+
+        @test psms.mc_context_score_sum[1] > psms.mc_context_score_sum[3]
+        @test psms.mc_context_score_sum[4] > psms.mc_context_score_sum[6]
+        @test psms.mc_context_score_sum[7] > psms.mc_context_score_sum[9]
+        @test psms.mc_context_score_sum[10] > psms.mc_context_score_sum[12]
+    end
+end
 end

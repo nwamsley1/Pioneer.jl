@@ -280,7 +280,7 @@ function percolator_scoring!(psms::AbstractPSMContainer, config::ScoringConfig;
             config.iteration_postprocess,
             workspace,
             itr,
-            total_iterations
+            iterations_to_run
         )
     end
 

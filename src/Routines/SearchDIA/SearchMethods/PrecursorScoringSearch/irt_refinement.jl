@@ -16,12 +16,14 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-Fold-specific iRT correction based on current predicted iRT and amino-acid composition.
+Fold-specific precursor feature refinement between rescoring iterations.
 
-The refinement model is trained after each precursor rescoring iteration using
-only training-fold target precursors that pass the requested FDR threshold. It
-predicts an iRT correction term for the held-out fold, which is added to the
-current `irt_pred` values before the next rescoring iteration begins.
+After each precursor rescoring iteration, the refinement models are trained on
+training-fold target precursors that pass the requested FDR threshold. The
+currently implemented refinements are:
+
+- iRT correction based on current predicted iRT and amino-acid composition
+- missed-cleavage context scoring based on additive P1 / P1' enrichment
 """
 
 struct AminoAcidCountIrtModel
@@ -31,32 +33,48 @@ struct AminoAcidCountIrtModel
     coefficients::Dict{String, Float32}
 end
 
+struct MissedCleavageContextModel
+    intercept::Float32
+    p1_coefficients::Dict{Char, Float32}
+    p1prime_coefficients::Dict{Char, Float32}
+end
+
 mutable struct IrtLinearRefinement{P<:LibraryPrecursors} <: IterationPostProcessStrategy
     precursors::P
+    cleavage_regex::Regex
     q_value_threshold::Float32
     min_precursors::Int
+    min_missed_cleavage_sites::Int
     qc_plot_dir::Union{Nothing, String}
     qc_run_id::Union{Nothing, UInt32}
     run_labels::Dict{UInt32, String}
     token_cache::Dict{UInt32, Dict{String, Float32}}
+    adjacent_pair_cache::Dict{UInt32, Vector{Tuple{Char, Char}}}
+    missed_cleavage_site_cache::Dict{UInt32, Vector{Tuple{Char, Char}}}
 end
 
 function IrtLinearRefinement(
     precursors::LibraryPrecursors;
+    cleavage_regex::Regex = r"[KR][^P|$]",
     q_value_threshold::Float32 = 0.01f0,
     min_precursors::Int = 2,
+    min_missed_cleavage_sites::Int = 2,
     qc_plot_dir::Union{Nothing, String} = nothing,
     qc_run_id::Union{Nothing, UInt32} = nothing,
     run_labels::Dict{UInt32, String} = Dict{UInt32, String}()
 )
     return IrtLinearRefinement(
         precursors,
+        cleavage_regex,
         q_value_threshold,
         min_precursors,
+        min_missed_cleavage_sites,
         qc_plot_dir,
         qc_run_id,
         run_labels,
-        Dict{UInt32, Dict{String, Float32}}()
+        Dict{UInt32, Dict{String, Float32}}(),
+        Dict{UInt32, Vector{Tuple{Char, Char}}}(),
+        Dict{UInt32, Vector{Tuple{Char, Char}}}()
     )
 end
 
@@ -65,6 +83,13 @@ function _get_irt_errors(df::AbstractDataFrame)
         return Float32.(df.irt_error)
     end
     return abs.(Float32.(df.irt_obs) .- Float32.(df.irt_pred))
+end
+
+function _get_mc_context_scores(df::AbstractDataFrame)
+    if hasproperty(df, :mc_context_score_sum)
+        return Float32.(df.mc_context_score_sum)
+    end
+    return zeros(Float32, nrow(df))
 end
 
 _sorted_run_ids(run_ids::AbstractVector) = sort!(unique(UInt32.(run_ids)))
@@ -78,30 +103,31 @@ function _get_run_label(strategy::IrtLinearRefinement, run_id::UInt32)
     return get(strategy.run_labels, run_id, "Run $(run_id)")
 end
 
-function _add_error_distribution!(
+function _add_distribution!(
     p,
-    errors::Vector{Float32},
+    values::Vector{Float32},
     targets::AbstractVector{Bool},
     subplot_idx::Int;
-    title::String
+    title::String,
+    xlabel::String
 )
-    valid_mask = isfinite.(errors)
-    target_errors = errors[valid_mask .& targets]
-    decoy_errors = errors[valid_mask .& .!targets]
+    valid_mask = isfinite.(values)
+    target_values = values[valid_mask .& targets]
+    decoy_values = values[valid_mask .& .!targets]
 
     plot!(
         p,
         title = title,
-        xlabel = "Absolute iRT error",
+        xlabel = xlabel,
         ylabel = "Density",
         legend = :topright,
         subplot = subplot_idx
     )
 
-    if !isempty(target_errors)
+    if !isempty(target_values)
         histogram!(
             p,
-            target_errors;
+            target_values;
             normalize = :pdf,
             bins = 50,
             alpha = 0.35,
@@ -112,10 +138,10 @@ function _add_error_distribution!(
         )
     end
 
-    if !isempty(decoy_errors)
+    if !isempty(decoy_values)
         histogram!(
             p,
-            decoy_errors;
+            decoy_values;
             normalize = :pdf,
             bins = 50,
             alpha = 0.35,
@@ -127,6 +153,23 @@ function _add_error_distribution!(
     end
 
     return nothing
+end
+
+function _add_error_distribution!(
+    p,
+    errors::Vector{Float32},
+    targets::AbstractVector{Bool},
+    subplot_idx::Int;
+    title::String
+)
+    return _add_distribution!(
+        p,
+        errors,
+        targets,
+        subplot_idx;
+        title = title,
+        xlabel = "Absolute iRT error"
+    )
 end
 
 function maybe_write_irt_refinement_qc_plot(
@@ -262,6 +305,278 @@ function _precursor_token_counts(
     return counts
 end
 
+function precursor_adjacent_pairs(
+    strategy::IrtLinearRefinement,
+    precursor_idx::Integer
+)
+    pid = UInt32(precursor_idx)
+    return get!(strategy.adjacent_pair_cache, pid) do
+        return _adjacent_pairs(String(getSequence(strategy.precursors)[pid]))
+    end
+end
+
+function _adjacent_pairs(sequence::AbstractString)
+    residues = collect(sequence)
+    n_residues = length(residues)
+    n_residues < 2 && return Tuple{Char, Char}[]
+
+    pairs = Vector{Tuple{Char, Char}}(undef, n_residues - 1)
+    @inbounds for i in 1:(n_residues - 1)
+        pairs[i] = (residues[i], residues[i + 1])
+    end
+    return pairs
+end
+
+function precursor_missed_cleavage_site_contexts(
+    strategy::IrtLinearRefinement,
+    precursor_idx::Integer
+)
+    pid = UInt32(precursor_idx)
+    return get!(strategy.missed_cleavage_site_cache, pid) do
+        return _missed_cleavage_site_contexts(
+            String(getSequence(strategy.precursors)[pid]),
+            strategy.cleavage_regex
+        )
+    end
+end
+
+function _missed_cleavage_site_contexts(
+    sequence::AbstractString,
+    cleavage_regex::Regex
+)
+    seq = String(sequence)
+    residues = collect(seq)
+    n_residues = length(residues)
+    n_residues < 2 && return Tuple{Char, Char}[]
+
+    cleavage_positions = internal_cleavage_positions(seq, cleavage_regex)
+    contexts = Tuple{Char, Char}[]
+    sizehint!(contexts, count(cleavage_positions))
+
+    @inbounds for i in 1:min(length(cleavage_positions), n_residues - 1)
+        if cleavage_positions[i]
+            push!(contexts, (residues[i], residues[i + 1]))
+        end
+    end
+
+    return contexts
+end
+
+function _unique_sorted_precursor_ids(precursor_idx::AbstractVector)
+    precursor_ids = unique(UInt32.(precursor_idx))
+    sort!(precursor_ids)
+    return precursor_ids
+end
+
+function _passing_target_precursor_ids(
+    precursor_idx::AbstractVector,
+    targets::AbstractVector{Bool},
+    trace_prob::AbstractVector,
+    q_value_threshold::Float32
+)
+    n = length(trace_prob)
+    n == 0 && return UInt32[]
+
+    q_values = Vector{Float32}(undef, n)
+    get_qvalues!(Float32.(trace_prob), collect(Bool, targets), q_values)
+    pass_mask = collect(Bool, targets) .& (q_values .<= q_value_threshold)
+    return _unique_sorted_precursor_ids(precursor_idx[pass_mask])
+end
+
+function _passing_target_precursor_ids(
+    precursor_idx::AbstractVector,
+    pass_mask::AbstractVector{Bool}
+)
+    return _unique_sorted_precursor_ids(precursor_idx[pass_mask])
+end
+
+function _fit_offset_poisson_irls(
+    X::Matrix{Float64},
+    y::Vector{Float64},
+    offset::Vector{Float64};
+    ridge::Float64 = 1e-4,
+    max_iter::Int = 50,
+    tol::Float64 = 1e-6
+)
+    p = size(X, 2)
+    if length(y) != size(X, 1) || length(offset) != size(X, 1)
+        return nothing
+    end
+
+    β = zeros(Float64, p)
+    if !isempty(y)
+        total_rate = sum(exp.(offset))
+        β[1] = log((sum(y) + 0.5) / (total_rate + 0.5))
+    end
+
+    penalty = zeros(Float64, p, p)
+    @inbounds for j in 2:p
+        penalty[j, j] = ridge
+    end
+
+    for _ in 1:max_iter
+        η = clamp.(offset .+ X * β, -20.0, 20.0)
+        μ = exp.(η)
+        w = max.(μ, 1e-6)
+        z = η + (y .- μ) ./ w
+        sqrt_w = sqrt.(w)
+        WX = X .* reshape(sqrt_w, :, 1)
+        wz = sqrt_w .* (z .- offset)
+        lhs = transpose(WX) * WX + penalty
+        rhs = transpose(WX) * wz
+        β_new = try
+            lhs \ rhs
+        catch
+            return nothing
+        end
+
+        if maximum(abs.(β_new .- β)) <= tol
+            β = β_new
+            break
+        end
+        β = β_new
+    end
+
+    return β
+end
+
+function _center_main_effects!(
+    intercept::Float32,
+    coefficients::Dict{Char, Float32},
+    weights::Dict{Char, Int}
+)
+    total_weight = sum(values(weights))
+    total_weight == 0 && return intercept
+
+    mean_effect = sum(
+        Float64(get(coefficients, residue, 0.0f0)) * weight
+        for (residue, weight) in weights
+    ) / total_weight
+
+    @inbounds for residue in keys(coefficients)
+        coefficients[residue] -= Float32(mean_effect)
+    end
+
+    return intercept + Float32(mean_effect)
+end
+
+function fit_missed_cleavage_context_model(
+    strategy::IrtLinearRefinement,
+    precursor_ids::Vector{UInt32}
+)
+    precursor_ids = _unique_sorted_precursor_ids(precursor_ids)
+    length(precursor_ids) < strategy.min_precursors && return nothing
+
+    background_pair_counts = Dict{Tuple{Char, Char}, Int}()
+    positive_pair_counts = Dict{Tuple{Char, Char}, Int}()
+    background_p1_counts = Dict{Char, Int}()
+    background_p1prime_counts = Dict{Char, Int}()
+    total_positive_sites = 0
+
+    for precursor_id in precursor_ids
+        for pair in precursor_adjacent_pairs(strategy, precursor_id)
+            background_pair_counts[pair] = get(background_pair_counts, pair, 0) + 1
+            background_p1_counts[pair[1]] = get(background_p1_counts, pair[1], 0) + 1
+            background_p1prime_counts[pair[2]] = get(background_p1prime_counts, pair[2], 0) + 1
+        end
+
+        for pair in precursor_missed_cleavage_site_contexts(strategy, precursor_id)
+            positive_pair_counts[pair] = get(positive_pair_counts, pair, 0) + 1
+            total_positive_sites += 1
+        end
+    end
+
+    if total_positive_sites < strategy.min_missed_cleavage_sites || isempty(background_pair_counts)
+        return nothing
+    end
+
+    pair_keys = sort!(collect(keys(background_pair_counts)))
+    p1_levels = sort!(unique(first.(pair_keys)))
+    p1prime_levels = sort!(unique(last.(pair_keys)))
+
+    p1_to_col = Dict{Char, Int}()
+    p1prime_to_col = Dict{Char, Int}()
+    n_features = 1 + max(length(p1_levels) - 1, 0) + max(length(p1prime_levels) - 1, 0)
+
+    next_col = 2
+    if length(p1_levels) > 1
+        for residue in p1_levels[1:(end - 1)]
+            p1_to_col[residue] = next_col
+            next_col += 1
+        end
+    end
+    if length(p1prime_levels) > 1
+        for residue in p1prime_levels[1:(end - 1)]
+            p1prime_to_col[residue] = next_col
+            next_col += 1
+        end
+    end
+
+    n_rows = length(pair_keys)
+    X = zeros(Float64, n_rows, n_features)
+    y = zeros(Float64, n_rows)
+    offset = zeros(Float64, n_rows)
+    X[:, 1] .= 1.0
+
+    @inbounds for (row_idx, pair) in enumerate(pair_keys)
+        y[row_idx] = Float64(get(positive_pair_counts, pair, 0))
+        offset[row_idx] = log(Float64(background_pair_counts[pair]))
+        if haskey(p1_to_col, pair[1])
+            X[row_idx, p1_to_col[pair[1]]] = 1.0
+        end
+        if haskey(p1prime_to_col, pair[2])
+            X[row_idx, p1prime_to_col[pair[2]]] = 1.0
+        end
+    end
+
+    β = _fit_offset_poisson_irls(X, y, offset)
+    isnothing(β) && return nothing
+
+    intercept = Float32(β[1])
+    p1_coefficients = Dict{Char, Float32}(residue => 0.0f0 for residue in p1_levels)
+    p1prime_coefficients = Dict{Char, Float32}(residue => 0.0f0 for residue in p1prime_levels)
+
+    for (residue, col_idx) in p1_to_col
+        p1_coefficients[residue] = Float32(β[col_idx])
+    end
+    for (residue, col_idx) in p1prime_to_col
+        p1prime_coefficients[residue] = Float32(β[col_idx])
+    end
+
+    intercept = _center_main_effects!(intercept, p1_coefficients, background_p1_counts)
+    intercept = _center_main_effects!(intercept, p1prime_coefficients, background_p1prime_counts)
+
+    return MissedCleavageContextModel(
+        intercept,
+        p1_coefficients,
+        p1prime_coefficients
+    )
+end
+
+function predict_missed_cleavage_context(
+    model::MissedCleavageContextModel,
+    site_contexts::AbstractVector{<:Tuple{Char, Char}}
+)
+    total_score = 0.0f0
+    for (p1, p1prime) in site_contexts
+        total_score += model.intercept
+        total_score += get(model.p1_coefficients, p1, 0.0f0)
+        total_score += get(model.p1prime_coefficients, p1prime, 0.0f0)
+    end
+    return total_score
+end
+
+function predict_missed_cleavage_context(
+    strategy::IrtLinearRefinement,
+    model::MissedCleavageContextModel,
+    precursor_idx::Integer
+)
+    return predict_missed_cleavage_context(
+        model,
+        precursor_missed_cleavage_site_contexts(strategy, precursor_idx)
+    )
+end
+
 function fit_irt_refinement_model(
     strategy::IrtLinearRefinement,
     precursor_ids::Vector{UInt32},
@@ -370,6 +685,7 @@ function _passing_precursor_targets(
     get_qvalues!(Float32.(trace_prob), collect(Bool, targets), q_values)
     pass_mask = collect(Bool, targets) .& (q_values .<= q_value_threshold)
 
+    passing_precursor_ids = _passing_target_precursor_ids(precursor_idx, pass_mask)
     sum_pred = Dict{UInt32, Float64}()
     sum_irt = Dict{UInt32, Float64}()
     count_irt = Dict{UInt32, Int}()
@@ -382,17 +698,15 @@ function _passing_precursor_targets(
         end
     end
 
-    precursor_ids = collect(keys(sum_irt))
-    sort!(precursor_ids)
-    irt_pred_inputs = Float32[sum_pred[pid] / count_irt[pid] for pid in precursor_ids]
+    irt_pred_inputs = Float32[sum_pred[pid] / count_irt[pid] for pid in passing_precursor_ids]
     irt_corrections = Float32[
         (sum_irt[pid] / count_irt[pid]) - (sum_pred[pid] / count_irt[pid])
-        for pid in precursor_ids
+        for pid in passing_precursor_ids
     ]
-    return precursor_ids, irt_pred_inputs, irt_corrections
+    return passing_precursor_ids, irt_pred_inputs, irt_corrections
 end
 
-function _fit_fold_models(
+function _fit_fold_irt_models(
     df::AbstractDataFrame,
     strategy::IrtLinearRefinement,
     cv_folds::AbstractVector{UInt8}
@@ -424,7 +738,35 @@ function _fit_fold_models(
     return models
 end
 
-function _apply_fold_models_to_dataframe!(
+function _fit_fold_missed_cleavage_models(
+    df::AbstractDataFrame,
+    strategy::IrtLinearRefinement,
+    cv_folds::AbstractVector{UInt8}
+)
+    models = Dict{Tuple{UInt8, UInt32}, Union{Nothing, MissedCleavageContextModel}}()
+    run_ids = _sorted_run_ids(df.ms_file_idx)
+    run_col = UInt32.(df.ms_file_idx)
+
+    for fold in cv_folds
+        for run_id in run_ids
+            train_mask = (df.cv_fold .!= fold) .& (run_col .== run_id)
+            precursor_ids = _passing_target_precursor_ids(
+                df.precursor_idx[train_mask],
+                df.target[train_mask],
+                df.trace_prob[train_mask],
+                strategy.q_value_threshold
+            )
+            models[(fold, run_id)] = fit_missed_cleavage_context_model(
+                strategy,
+                precursor_ids
+            )
+        end
+    end
+
+    return models
+end
+
+function _apply_fold_irt_models_to_dataframe!(
     df::AbstractDataFrame,
     strategy::IrtLinearRefinement,
     models::Dict{Tuple{UInt8, UInt32}, Union{Nothing, AminoAcidCountIrtModel}}
@@ -460,6 +802,34 @@ function _apply_fold_models_to_dataframe!(
     return nothing
 end
 
+function _apply_missed_cleavage_models_to_dataframe!(
+    df::AbstractDataFrame,
+    strategy::IrtLinearRefinement,
+    models::Dict{Tuple{UInt8, UInt32}, Union{Nothing, MissedCleavageContextModel}}
+)
+    current_scores = _get_mc_context_scores(df)
+    refined_scores = copy(current_scores)
+    run_col = UInt32.(df.ms_file_idx)
+
+    for ((fold, run_id), model) in models
+        isnothing(model) && continue
+
+        fold_mask = (df.cv_fold .== fold) .& (run_col .== run_id)
+        any(fold_mask) || continue
+
+        for row_idx in findall(fold_mask)
+            refined_scores[row_idx] = predict_missed_cleavage_context(
+                strategy,
+                model,
+                df.precursor_idx[row_idx]
+            )
+        end
+    end
+
+    df[!, :mc_context_score_sum] = refined_scores
+    return nothing
+end
+
 function apply_iteration_postprocess!(
     strategy::IrtLinearRefinement,
     workspace::InMemoryScoringWorkspace,
@@ -475,8 +845,10 @@ function apply_iteration_postprocess!(
     targets = Bool.(df.target)
     run_ids = UInt32.(df.ms_file_idx)
     cv_folds = sort!(collect(get_cv_folds(workspace)))
-    models = _fit_fold_models(df, strategy, cv_folds)
-    _apply_fold_models_to_dataframe!(df, strategy, models)
+    irt_models = _fit_fold_irt_models(df, strategy, cv_folds)
+    mc_models = _fit_fold_missed_cleavage_models(df, strategy, cv_folds)
+    _apply_fold_irt_models_to_dataframe!(df, strategy, irt_models)
+    _apply_missed_cleavage_models_to_dataframe!(df, strategy, mc_models)
     if iteration == total_iterations
         maybe_write_irt_refinement_qc_plots(
             strategy,
@@ -585,10 +957,35 @@ function _aggregate_passing_precursors(
     return precursor_ids, irt_pred_inputs, irt_corrections
 end
 
-function _apply_fold_model_to_groups!(
+function _aggregate_passing_target_precursor_ids(
+    fold_groups::Vector{ArrowFileGroup},
+    prob_threshold::Float32
+)
+    prob_threshold == typemax(Float32) && return UInt32[]
+
+    passing_precursor_ids = Set{UInt32}()
+
+    for group in fold_groups
+        data_tbl = Arrow.Table(group.data_path)
+        scores_tbl = Arrow.Table(group.scores_path)
+
+        @inbounds for i in 1:group.n_rows
+            if Bool(data_tbl.target[i]) && Float32(scores_tbl.trace_prob[i]) >= prob_threshold
+                push!(passing_precursor_ids, UInt32(data_tbl.precursor_idx[i]))
+            end
+        end
+    end
+
+    precursor_ids = collect(passing_precursor_ids)
+    sort!(precursor_ids)
+    return precursor_ids
+end
+
+function _apply_fold_models_to_groups!(
     fold_groups::Vector{ArrowFileGroup},
     strategy::IrtLinearRefinement,
-    models::Dict{Tuple{UInt8, UInt32}, Union{Nothing, AminoAcidCountIrtModel}},
+    irt_models::Dict{Tuple{UInt8, UInt32}, Union{Nothing, AminoAcidCountIrtModel}},
+    mc_models::Dict{Tuple{UInt8, UInt32}, Union{Nothing, MissedCleavageContextModel}},
     fold::UInt8
 )
     irt_error_before = Float32[]
@@ -605,21 +1002,36 @@ function _apply_fold_model_to_groups!(
         append!(targets, Bool.(data_df.target))
         append!(run_ids, fill(run_id, nrow(data_df)))
 
-        model = get(models, (fold, run_id), nothing)
+        irt_model = get(irt_models, (fold, run_id), nothing)
+        mc_model = get(mc_models, (fold, run_id), nothing)
 
-        if !isnothing(model)
-            _apply_fold_models_to_dataframe!(
+        if !isnothing(irt_model)
+            _apply_fold_irt_models_to_dataframe!(
                 data_df,
                 strategy,
-                Dict((fold, run_id) => model)
+                Dict((fold, run_id) => irt_model)
             )
+        end
+        if !isnothing(mc_model)
+            _apply_missed_cleavage_models_to_dataframe!(
+                data_df,
+                strategy,
+                Dict((fold, run_id) => mc_model)
+            )
+        end
+        if !isnothing(irt_model) || !isnothing(mc_model)
             writeArrow(group.data_path, data_df)
         end
 
         append!(irt_error_after, _get_irt_errors(data_df))
     end
 
-    return irt_error_before, irt_error_after, targets, run_ids
+    return (
+        irt_error_before,
+        irt_error_after,
+        targets,
+        run_ids
+    )
 end
 
 function apply_iteration_postprocess!(
@@ -635,7 +1047,8 @@ function apply_iteration_postprocess!(
     container = workspace.container
     cv_folds = sort!(collect(get_cv_folds(container)))
     run_ids = _get_group_run_ids(container.file_groups)
-    models = Dict{Tuple{UInt8, UInt32}, Union{Nothing, AminoAcidCountIrtModel}}()
+    irt_models = Dict{Tuple{UInt8, UInt32}, Union{Nothing, AminoAcidCountIrtModel}}()
+    mc_models = Dict{Tuple{UInt8, UInt32}, Union{Nothing, MissedCleavageContextModel}}()
 
     for fold in cv_folds
         train_groups = [group for group in container.file_groups if get_fold_number(group) != fold]
@@ -648,11 +1061,15 @@ function apply_iteration_postprocess!(
                 run_train_groups,
                 prob_threshold
             )
-            models[(fold, run_id)] = fit_irt_refinement_model(
+            irt_models[(fold, run_id)] = fit_irt_refinement_model(
                 strategy,
                 precursor_ids,
                 irt_pred_inputs,
                 irt_corrections
+            )
+            mc_models[(fold, run_id)] = fit_missed_cleavage_context_model(
+                strategy,
+                _aggregate_passing_target_precursor_ids(run_train_groups, prob_threshold)
             )
         end
     end
@@ -663,20 +1080,27 @@ function apply_iteration_postprocess!(
     run_ids_per_row = UInt32[]
     for fold in cv_folds
         test_groups = get_file_groups_for_fold(container, fold)
-        fold_before, fold_after, fold_targets, fold_run_ids = _apply_fold_model_to_groups!(
+        (
+            fold_irt_before,
+            fold_irt_after,
+            fold_targets,
+            fold_run_ids
+        ) = _apply_fold_models_to_groups!(
             test_groups,
             strategy,
-            models,
+            irt_models,
+            mc_models,
             fold
         )
-        append!(irt_error_before, fold_before)
-        append!(irt_error_after, fold_after)
+        append!(irt_error_before, fold_irt_before)
+        append!(irt_error_after, fold_irt_after)
         append!(targets, fold_targets)
         append!(run_ids_per_row, fold_run_ids)
     end
 
     sampled_df = to_dataframe(get_psms(workspace))
-    _apply_fold_models_to_dataframe!(sampled_df, strategy, models)
+    _apply_fold_irt_models_to_dataframe!(sampled_df, strategy, irt_models)
+    _apply_missed_cleavage_models_to_dataframe!(sampled_df, strategy, mc_models)
     if iteration == total_iterations
         maybe_write_irt_refinement_qc_plots(
             strategy,
