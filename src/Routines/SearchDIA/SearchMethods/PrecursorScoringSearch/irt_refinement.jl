@@ -18,8 +18,8 @@
 """
 Fold-specific iRT correction based on current predicted iRT and amino-acid composition.
 
-The refinement model is trained after precursor rescoring iteration 1 using only
-training-fold target precursors that pass the requested FDR threshold. It
+The refinement model is trained after each precursor rescoring iteration using
+only training-fold target precursors that pass the requested FDR threshold. It
 predicts an iRT correction term for the held-out fold, which is added to the
 current `irt_pred` values before the next rescoring iteration begins.
 """
@@ -27,6 +27,7 @@ current `irt_pred` values before the next rescoring iteration begins.
 struct AminoAcidCountIrtModel
     intercept::Float32
     irt_pred_coefficient::Float32
+    irt_pred_squared_coefficient::Float32
     coefficients::Dict{String, Float32}
 end
 
@@ -67,6 +68,11 @@ function _get_irt_errors(df::AbstractDataFrame)
 end
 
 _sorted_run_ids(run_ids::AbstractVector) = sort!(unique(UInt32.(run_ids)))
+
+@inline function _irt_pred_basis(current_irt_pred::Float32)
+    x = Float64(current_irt_pred)
+    return x, x * x
+end
 
 function _get_run_label(strategy::IrtLinearRefinement, run_id::UInt32)
     return get(strategy.run_labels, run_id, "Run $(run_id)")
@@ -217,6 +223,7 @@ function _precursor_token_counts(
 )
     counts = Dict{String, Float32}()
     position_mods = Dict{Int, Vector{String}}()
+    residue_tokens = String[]
 
     if !ismissing(structural_mods) && !isempty(structural_mods)
         mod_regex = r"\((\d+),([A-Z]|[nc]),([^,\)]+)\)"
@@ -241,7 +248,15 @@ function _precursor_token_counts(
         else
             string(aa, "|", join(sort(mods_here), "&"))
         end
+        push!(residue_tokens, token)
         counts[token] = get(counts, token, 0.0f0) + 1.0f0
+    end
+
+    if !isempty(residue_tokens)
+        n_term_token = "NTERM|" * first(residue_tokens)
+        c_term_token = "CTERM|" * last(residue_tokens)
+        counts[n_term_token] = get(counts, n_term_token, 0.0f0) + 1.0f0
+        counts[c_term_token] = get(counts, c_term_token, 0.0f0) + 1.0f0
     end
 
     return counts
@@ -277,12 +292,18 @@ function fit_irt_refinement_model(
         return nothing
     end
 
-    X = zeros(Float64, n, length(token_to_col) + 2)
+    use_quadratic_basis = n >= 3
+    irt_basis_cols = use_quadratic_basis ? 2 : 1
+    X = zeros(Float64, n, length(token_to_col) + 1 + irt_basis_cols)
     X[:, 1] .= 1.0
     for i in eachindex(precursor_counts)
-        X[i, 2] = Float64(irt_pred_inputs[i])
+        linear_term, quadratic_term = _irt_pred_basis(irt_pred_inputs[i])
+        X[i, 2] = linear_term
+        if use_quadratic_basis
+            X[i, 3] = quadratic_term
+        end
         for (token, count) in precursor_counts[i]
-            X[i, token_to_col[token] + 2] = Float64(count)
+            X[i, token_to_col[token] + 1 + irt_basis_cols] = Float64(count)
         end
     end
 
@@ -295,10 +316,15 @@ function fit_irt_refinement_model(
 
     coefficients = Dict{String, Float32}()
     for (token, col_idx) in token_to_col
-        coefficients[token] = Float32(β[col_idx + 2])
+        coefficients[token] = Float32(β[col_idx + 1 + irt_basis_cols])
     end
 
-    return AminoAcidCountIrtModel(Float32(β[1]), Float32(β[2]), coefficients)
+    return AminoAcidCountIrtModel(
+        Float32(β[1]),
+        Float32(β[2]),
+        use_quadratic_basis ? Float32(β[3]) : 0.0f0,
+        coefficients
+    )
 end
 
 function predict_irt_refinement(
@@ -306,7 +332,10 @@ function predict_irt_refinement(
     counts::Dict{String, Float32},
     current_irt_pred::Float32
 )
-    prediction = model.intercept + model.irt_pred_coefficient * current_irt_pred
+    linear_term, quadratic_term = _irt_pred_basis(current_irt_pred)
+    prediction = model.intercept +
+                 model.irt_pred_coefficient * Float32(linear_term) +
+                 model.irt_pred_squared_coefficient * Float32(quadratic_term)
     for (token, count) in counts
         prediction += get(model.coefficients, token, 0.0f0) * count
     end
@@ -437,7 +466,7 @@ function apply_iteration_postprocess!(
     iteration::Int,
     total_iterations::Int
 )
-    if iteration != 1 || total_iterations < 2
+    if total_iterations < 1
         return nothing
     end
 
@@ -448,13 +477,15 @@ function apply_iteration_postprocess!(
     cv_folds = sort!(collect(get_cv_folds(workspace)))
     models = _fit_fold_models(df, strategy, cv_folds)
     _apply_fold_models_to_dataframe!(df, strategy, models)
-    maybe_write_irt_refinement_qc_plots(
-        strategy,
-        run_ids,
-        irt_error_before,
-        _get_irt_errors(df),
-        targets
-    )
+    if iteration == total_iterations
+        maybe_write_irt_refinement_qc_plots(
+            strategy,
+            run_ids,
+            irt_error_before,
+            _get_irt_errors(df),
+            targets
+        )
+    end
 
     return nothing
 end
@@ -597,7 +628,7 @@ function apply_iteration_postprocess!(
     iteration::Int,
     total_iterations::Int
 )
-    if iteration != 1 || total_iterations < 2
+    if total_iterations < 1
         return nothing
     end
 
@@ -646,13 +677,15 @@ function apply_iteration_postprocess!(
 
     sampled_df = to_dataframe(get_psms(workspace))
     _apply_fold_models_to_dataframe!(sampled_df, strategy, models)
-    maybe_write_irt_refinement_qc_plots(
-        strategy,
-        run_ids_per_row,
-        irt_error_before,
-        irt_error_after,
-        targets
-    )
+    if iteration == total_iterations
+        maybe_write_irt_refinement_qc_plots(
+            strategy,
+            run_ids_per_row,
+            irt_error_before,
+            irt_error_after,
+            targets
+        )
+    end
 
     return nothing
 end
