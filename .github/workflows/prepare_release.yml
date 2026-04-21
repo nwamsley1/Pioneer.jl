@@ -117,8 +117,10 @@ jobs:
               "This PR is managed by the `Prepare Release` workflow.",
               "",
               "After merge:",
-              `1. Create tag \`v${version}\` on the merge commit in \`${target}\`.`,
-              "2. The `Release` workflow will publish binaries and installers."
+              `1. \`pre-release.yml\` will run automatically on the merge commit in \`${target}\`.`,
+              `2. Review the pre-release validation results.`,
+              `3. If pre-release validation passes, create tag \`v${version}\` on that same commit.`,
+              "4. The `Release` workflow will publish the supported installer artifacts."
             ].join("\n");
 
             const existing = await github.paginate(github.rest.pulls.list, {
