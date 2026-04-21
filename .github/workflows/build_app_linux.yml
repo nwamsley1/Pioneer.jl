@@ -1,22 +1,50 @@
 name: Build Linux
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
   workflow_dispatch:
     inputs:
-      force_installer:
-        description: "Force .deb packaging/upload for manual runs"
+      checkout_ref:
+        description: "Explicit git ref or SHA to build instead of the workflow ref"
+        required: false
+        type: string
+        default: ""
+      package_installer:
+        description: "Build and upload the native .deb installer"
+        required: false
+        type: boolean
+        default: true
+      artifact_retention_days:
+        description: "Retention for uploaded installer artifacts"
+        required: false
+        type: number
+        default: 3
+      version_override:
+        description: "Explicit version to use instead of deriving from the git ref"
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: "Explicit git ref or SHA to build instead of the workflow ref"
+        required: false
+        type: string
+        default: ""
+      package_installer:
+        description: "Build and upload the native .deb installer"
         required: false
         type: boolean
         default: false
-  workflow_call:
+      artifact_retention_days:
+        description: "Retention for uploaded installer artifacts"
+        required: false
+        type: number
+        default: 3
+      version_override:
+        description: "Explicit version to use instead of deriving from the git ref"
+        required: false
+        type: string
+        default: ""
     outputs:
       version:
         description: 'Build version'
@@ -48,12 +76,14 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Determine VERSION
         id: get_version
         uses: ./.github/actions/determine-version
         with:
           fallback: "dev"
+          override: ${{ inputs.version_override }}
 
       - name: Normalize versions
         id: norm
@@ -157,8 +187,8 @@ jobs:
           "$pioneer_root/pioneer" params-predict "$dummy" "$dummy" --params-path "$dummy/params.json"
           rm -rf "$dummy"
           
-      - name: Package Linux .deb (release tags or forced dispatch)
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
+      - name: Package Linux .deb
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         run: |
           mkdir -p deb/usr/local/Pioneer
           cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
@@ -198,20 +228,10 @@ jobs:
           dpkg-deb --build --root-owner-group deb \
             Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
 
-      - name: Package zipped binaries
-        run: |
-          cd build/Pioneer_${{ matrix.identifier }}/Applications
-          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
-
-      - name: Upload zipped binaries
-        uses: actions/upload-artifact@v7
-        with:
-          name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}
-          path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
-
-      - name: Upload .deb (release tags or forced dispatch)
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_installer)
+      - name: Upload .deb
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.package_installer
         uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}-deb
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
+          retention-days: ${{ inputs.artifact_retention_days }}

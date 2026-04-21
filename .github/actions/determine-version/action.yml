@@ -5,6 +5,10 @@ inputs:
     description: "Fallback version when no tag is found"
     required: false
     default: "dev"
+  override:
+    description: "Explicit version to use instead of deriving from the git ref"
+    required: false
+    default: ""
 outputs:
   version:
     description: "Determined version string"
@@ -16,7 +20,9 @@ runs:
       id: version
       shell: bash
       run: |
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
+        if [[ -n "${{ inputs.override }}" ]]; then
+          echo "version=${{ inputs.override }}" >> "$GITHUB_OUTPUT"
+        elif [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
           echo "version=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
         elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
           echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
