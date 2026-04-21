@@ -92,7 +92,7 @@ jobs:
           git push origin "HEAD:${{ steps.bump.outputs.source_branch }}"
 
       - name: Create or update release PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           RELEASE_VERSION: ${{ steps.bump.outputs.version }}
           SOURCE_BRANCH: ${{ steps.bump.outputs.source_branch }}
