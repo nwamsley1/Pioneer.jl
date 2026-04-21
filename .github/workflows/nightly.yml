@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Decide whether nightly validation should run
         id: decide
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const branch = context.ref.replace('refs/heads/', '');
