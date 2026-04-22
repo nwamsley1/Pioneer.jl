@@ -107,6 +107,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate()'
           julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
 
       - name: Precompile data (cache & download)
@@ -114,11 +115,26 @@ jobs:
         with:
           cache-key: precompile-data-v1
 
-      - name: Compile application
+      - name: Generate precompile statements
         run: |
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
           export PIONEER_APP_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
           export PIONEER_PRECOMPILE_CPU_TARGET="$PIONEER_APP_CPU_TARGET"
+          trace_dir="$RUNNER_TEMP/packagecompiler-trace"
+          raw_trace="$trace_dir/pioneer-app-precompile-raw.jl"
+          uniq_trace="$trace_dir/pioneer-app-precompile-uniq.jl"
+          filtered_trace="$trace_dir/pioneer-app-precompile-filtered.jl"
+          mkdir -p "$trace_dir"
+          julia --threads auto --project=. --trace-compile="$raw_trace" src/build/snoop.jl
+          sort -u "$raw_trace" > "$uniq_trace"
+          rg -v 'VectorizationBase|LoopVectorization|SLEEFPirates|HostCPUFeatures' "$uniq_trace" > "$filtered_trace" || true
+          echo "Retained $(wc -l < "$filtered_trace") of $(wc -l < "$uniq_trace") precompile statements after SIMD filtering."
+          echo "PIONEER_APP_CPU_TARGET=$PIONEER_APP_CPU_TARGET" >> "$GITHUB_ENV"
+          echo "PIONEER_PRECOMPILE_STATEMENTS_FILE=$filtered_trace" >> "$GITHUB_ENV"
+
+      - name: Compile application
+        run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
           export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
           mkdir -p "$RUNNER_TEMP/julia-depot"
           # Julia 1.12 app builds are more reliable on the incremental PackageCompiler path.
@@ -138,7 +154,7 @@ jobs:
                 "SearchDIA"=>"main_SearchDIA",
                 "convertMzML"=>"main_convertMzML"
               ],
-              precompile_execution_file="src/build/snoop.jl"
+              precompile_statements_file=[ENV["PIONEER_PRECOMPILE_STATEMENTS_FILE"]]
             );
           '
 
