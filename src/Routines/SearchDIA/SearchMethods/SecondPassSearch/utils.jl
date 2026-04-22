@@ -166,7 +166,7 @@ function process_scans!(
     ion_idx = 0
     cycle_idx = 0
 
-    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    irt_tol = getIrtError(search_context, ms_file_idx)
     nce_model = getNceModel(search_context, ms_file_idx)
 
     for scan_idx in scan_range
@@ -371,7 +371,7 @@ function process_scans!(
     ion_idx = 0
     last_val = 0
     # Note: prec_ids scratch array not required in MS1 path
-    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    irt_tol = getIrtError(search_context, ms_file_idx)
 
     for scan_idx in scan_range
         empty!(pair_id_dict)

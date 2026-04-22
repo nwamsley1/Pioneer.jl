@@ -27,7 +27,7 @@ function make_koina_request(json_data::String,
 
     while attempt <= max_attempts
         try
-            response = JSON.parse(String(HTTP.post(model_url, body=json_data).body))
+            response = JSON.parse(String(HTTP.post(model_url, body=json_data).body), dicttype=Dict{String,Any})
             if !haskey(response, "error")
                 return response
             end

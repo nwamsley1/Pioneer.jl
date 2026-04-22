@@ -241,7 +241,7 @@ function build_chromatograms(
     rt_idx = 0
     precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
     prec_temp_size = 0
-    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    irt_tol = getIrtError(search_context, ms_file_idx)
     nce_model = getNceModel(search_context, ms_file_idx)
     i = 1
     for scan_idx in scan_range
@@ -475,7 +475,7 @@ function build_chromatograms(
     rt_idx = 0
     precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
     prec_temp_size = 0
-    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    irt_tol = getIrtError(search_context, ms_file_idx)
     i = 1
     for scan_idx in scan_range
         

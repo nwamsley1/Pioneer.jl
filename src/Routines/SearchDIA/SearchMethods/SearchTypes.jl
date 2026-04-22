@@ -442,6 +442,16 @@ getRtIrtMap(s::SearchContext) = s.rt_irt_map
 getPrecursorDict(s::SearchContext) = s.precursor_dict[]
 getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
+"""
+   getIrtError(s::SearchContext, index::Integer)
+
+Get the tuned iRT tolerance for an MS file. Returns an infinite tolerance
+when tuning did not populate a per-file value so downstream searches can
+continue without iRT filtering.
+"""
+function getIrtError(s::SearchContext, index::I) where {I<:Integer}
+    return get!(s.irt_errors, Int64(index), typemax(Float32))
+end
 getPredIrt(s::SearchContext) = s.irt_obs
 getPredIrt(s::SearchContext, prec_idx::Int64) = s.irt_obs[prec_idx]
 getPredIrt(s::SearchContext, prec_idx::UInt32) = s.irt_obs[prec_idx]
