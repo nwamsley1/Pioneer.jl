@@ -7,13 +7,18 @@ cmd = get(ENV, "PIONEER_CMD", nothing)
 
 function maybe_run(f, name)
     if cmd === nothing || cmd == name
+        start_time = time()
+        @user_info "Starting precompile target $name"
         try
             f()
+            elapsed = round(time() - start_time; digits=1)
+            @user_info "Finished precompile target $name in $(elapsed)s"
         catch e
             bt = catch_backtrace()
             target_cmd = cmd === nothing ? "<all>" : cmd
+            elapsed = round(time() - start_time; digits=1)
             @user_warn "Error executing $name during precompile of $target_cmd: $(sprint(showerror, e))"
-            @warn "Precompile exception details for $name" exception=(e, bt)
+            @warn "Precompile exception details for $name after $(elapsed)s" exception=(e, bt)
         end
     end
 end

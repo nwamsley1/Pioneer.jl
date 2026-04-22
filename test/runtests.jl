@@ -173,6 +173,7 @@ end
     include("./UnitTests/convertMzMLTests.jl")
     include("./UnitTests/LoggingTests.jl")
     include("./UnitTests/LogTruncationTests.jl")
+    include("./UnitTests/PdfUtilsTests.jl")
     include("./UnitTests/BuildPreferencesTests.jl")
     # Add focused FileOperations tests (Arrow IO, core, streaming)
     include("./utils/FileOperations/io/test_arrow_operations_basic.jl")

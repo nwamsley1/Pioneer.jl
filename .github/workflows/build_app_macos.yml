@@ -150,6 +150,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate()'
           julia --threads auto --project=dev -e 'using Pkg; Pkg.instantiate()'
 
       - name: Precompile data (cache & download)
@@ -160,6 +161,8 @@ jobs:
       - name: Compile application
         run: |
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          export GKSwstype=100
+          export GKS_WSTYPE=100
           export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
           mkdir -p "$RUNNER_TEMP/julia-depot"
           julia --threads auto --project=dev -e '
