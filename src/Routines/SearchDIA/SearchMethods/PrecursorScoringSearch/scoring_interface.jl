@@ -43,7 +43,7 @@ Main MBR Filtering Interface
 """
     apply_mbr_filter!(merged_df, params, fdr_scale_factor)
 
-Wrapper function for ScoringSearch compatibility.
+Wrapper function for PrecursorScoringSearch compatibility.
 Generates candidate mask and bad transfer labels automatically, then applies MBR filtering.
 Returns column name for filtered probabilities.
 """
@@ -1222,114 +1222,6 @@ function build_qvalue_spline_from_refs(
     return (; qval_spline, pep_interp)
 end
 
-"""
-    build_protein_global_score_dicts(pg_refs, sqrt_n_runs, n_proteins)
-    → (global_pg_score_dict, pg_name_to_global_pg_score)
-
-Stream per-file protein group files reading only (protein_name, target, entrap_id, pg_score).
-Returns composite-key dictionaries for protein global score computation.
-
-`n_proteins` is used for `sizehint!()` pre-allocation,
-obtained via `length(getProteins(getSpecLib(search_context)))`.
-"""
-function build_protein_global_score_dicts(
-    pg_refs::Vector{ProteinGroupFileReference},
-    sqrt_n_runs::Int,
-    n_proteins::Int
-)
-    # Pre-allocate accumulation dictionary with known upper bound
-    score_acc = Dict{Tuple{String,Bool,UInt8}, Vector{Float32}}()
-    sizehint!(score_acc, n_proteins)
-
-    for ref in pg_refs
-        tbl = Arrow.Table(file_path(ref))
-        n = length(tbl.protein_name)
-        n == 0 && continue
-        @inbounds for i in 1:n
-            key = (tbl.protein_name[i], tbl.target[i], tbl.entrap_id[i])
-            if !haskey(score_acc, key)
-                score_acc[key] = Float32[]
-            end
-            push!(score_acc[key], tbl.pg_score[i])
-        end
-    end
-
-    # Compute global scores via logodds
-    n_observed = length(score_acc)
-    global_pg_score_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
-    sizehint!(global_pg_score_dict, n_observed)
-    pg_name_to_global_pg_score = Dict{ProteinKey, Float32}()
-    sizehint!(pg_name_to_global_pg_score, n_observed)
-
-    for (key, scores) in score_acc
-        gs = logodds(scores, sqrt_n_runs)
-        global_pg_score_dict[key] = gs
-        pg_name_to_global_pg_score[ProteinKey(key[1], key[2], key[3])] = gs
-    end
-
-    return global_pg_score_dict, pg_name_to_global_pg_score
-end
-
-"""
-    build_protein_global_qval_dict(global_pg_score_dict)
-    → Dict{Tuple{String,Bool,UInt8}, Float32}
-
-Compute protein global q-values directly from score dictionary.
-Replaces get_protein_global_qval_dict (which loaded a full merged DataFrame).
-"""
-function build_protein_global_qval_dict(
-    global_pg_score_dict::Dict{Tuple{String,Bool,UInt8}, Float32}
-)
-    n = length(global_pg_score_dict)
-    keys_vec = collect(keys(global_pg_score_dict))
-    scores = Float32[global_pg_score_dict[k] for k in keys_vec]
-    targets = Bool[k[2] for k in keys_vec]
-
-    # Sort by (score desc, target desc) for proper FDR
-    perm = sortperm(collect(zip(scores, targets)); by=x->(-x[1], -x[2]))
-    permute!(keys_vec, perm)
-    permute!(scores, perm)
-    permute!(targets, perm)
-
-    qvals = Vector{Float32}(undef, n)
-    get_qvalues!(scores, targets, qvals)
-
-    qval_dict = Dict{Tuple{String,Bool,UInt8}, Float32}()
-    sizehint!(qval_dict, n)
-    for i in 1:n
-        qval_dict[keys_vec[i]] = qvals[i]
-    end
-    return qval_dict
-end
-
-"""
-    apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference},
-                        β_fitted::Vector{Float64}, feature_names::Vector{Symbol})
-
-Apply probit regression scores to protein group files.
-Note: This function is called from utils.jl and needs access to calculate_probit_scores.
-"""
-function apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference},
-                             β_fitted::Vector{Float64},
-                             feature_names::Vector{Symbol})
-    for ref in pg_refs
-        transform_and_write!(ref) do df
-            # Calculate probit scores (function from utils.jl)
-            X_file = Matrix{Float64}(df[:, feature_names])
-            prob_scores = calculate_probit_scores(X_file, β_fitted)
-            
-            # Update scores
-            df[!, :old_pg_score] = copy(df.pg_score)
-            df[!, :pg_score] = Float32.(prob_scores)
-            
-            # Sort by new scores
-            sort!(df, [:pg_score, :target], rev = [true, true])
-            
-            return df
-        end
-    end
-end
-
 function add_trace_qvalues(fdr_scale_factor::Float32)
     op = function(df)
         qvals = Vector{Float32}(undef, nrow(df))
@@ -1348,7 +1240,7 @@ Compute run-specific precursor probabilities from the given probability column.
 function add_prec_prob(prob_col::Symbol)
     op = function(df)
         transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
-                   prob_col => (p -> 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))) => :prec_prob)
+                   prob_col => (p -> clamp(-expm1(sum(log1p.(-p))), eps(Float32), 1.0f0 - eps(Float32))) => :prec_prob)
         return df
     end
     return "add_prec_prob" => op

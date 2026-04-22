@@ -1,22 +1,50 @@
 name: Build macOS
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
   workflow_dispatch:
     inputs:
-      force_pkg:
-        description: "Force pkg signing/notarization/upload for manual runs"
+      checkout_ref:
+        description: "Explicit git ref or SHA to build instead of the workflow ref"
+        required: false
+        type: string
+        default: ""
+      package_installer:
+        description: "Build, notarize, and upload the native .pkg installer"
+        required: false
+        type: boolean
+        default: true
+      artifact_retention_days:
+        description: "Retention for uploaded installer artifacts"
+        required: false
+        type: number
+        default: 3
+      version_override:
+        description: "Explicit version to use instead of deriving from the git ref"
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: "Explicit git ref or SHA to build instead of the workflow ref"
+        required: false
+        type: string
+        default: ""
+      package_installer:
+        description: "Build, notarize, and upload the native .pkg installer"
         required: false
         type: boolean
         default: false
-  workflow_call:
+      artifact_retention_days:
+        description: "Retention for uploaded installer artifacts"
+        required: false
+        type: number
+        default: 3
+      version_override:
+        description: "Explicit version to use instead of deriving from the git ref"
+        required: false
+        type: string
+        default: ""
     outputs:
       version:
         description: 'Build version'
@@ -53,12 +81,14 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Determine VERSION
         id: get_version
         uses: ./.github/actions/determine-version
         with:
           fallback: "dev"
+          override: ${{ inputs.version_override }}
 
       - name: Install Rosetta 2 (arm64)
         if: matrix.arch == 'arm64'
@@ -76,7 +106,7 @@ jobs:
           raw: ${{ steps.get_version.outputs.version }}
 
       - name: Setup Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
           version: '1.11'
           arch: ${{ matrix.arch }}
@@ -159,6 +189,9 @@ jobs:
 
       - name: Compile application
         run: |
+          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
+          mkdir -p "$RUNNER_TEMP/julia-depot"
           julia --threads auto --project=dev -e '
             using PackageCompiler;
             create_app(
@@ -222,8 +255,8 @@ jobs:
           echo "${{ steps.get_version.outputs.version }}" > \
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
 
-      - name: Codesign & package macOS app (release tags or forced dispatch)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
+      - name: Codesign & package macOS app
+        if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         env:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
           PKG_SIGN_IDENTITY: ${{ secrets.PKG_SIGN_IDENTITY }}
@@ -300,8 +333,8 @@ jobs:
           rm PioneerUnsigned.pkg
 
 
-      - name: Notarize macOS package (release tags or forced dispatch)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
+      - name: Notarize macOS package
+        if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         timeout-minutes: 240
         env:
           AC_USERNAME: ${{ secrets.NOTARIZE_APPLE_ID }}
@@ -336,26 +369,21 @@ jobs:
           fi
           echo "Notarization successful at $(date)"
 
-      - name: Staple notarization ticket (release tags or forced dispatch)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
+      - name: Staple notarization ticket
+        if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         run: |
           xcrun stapler staple \
             Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg
 
-      - name: Package zipped binaries
-        run: |
-          cd build/Pioneer_${{ matrix.identifier }}/Applications
-          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
-
-      - name: Validate signed pkg (release tags or forced dispatch)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
+      - name: Validate signed pkg
+        if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         run: |
           PKG="Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg"
           echo "Validating pkg with spctl: $PKG"
           spctl -a -vv -t install "$PKG"
 
       - name: Clean up temporary signing keychain
-        if: always() && github.event_name != 'pull_request' && env.MACOS_CERT_P12 != ''
+        if: always() && env.MACOS_CERT_P12 != ''
         run: |
           if [[ -n "${KEYCHAIN_PATH:-}" ]]; then
             security delete-keychain "$KEYCHAIN_PATH" || true
@@ -363,15 +391,10 @@ jobs:
           security default-keychain -d user -s login.keychain
           security list-keychains -d user -s login.keychain
 
-      - name: Upload zipped binaries
-        uses: actions/upload-artifact@v7
-        with:
-          name: Pioneer-${{ matrix.identifier }}
-          path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
-
-      - name: Upload signed package (release tags or forced dispatch)
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_pkg))
+      - name: Upload signed package
+        if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
         uses: actions/upload-artifact@v7
         with:
           name: Pioneer-${{ matrix.identifier }}-pkg
           path: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg
+          retention-days: ${{ inputs.artifact_retention_days }}

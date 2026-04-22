@@ -1,6 +1,7 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 DocumenterTools = "35a29f4d-8980-5a13-9543-d66fff28ecb8"
+HostCPUFeatures = "3e5b6fbb-0976-4d2c-9146-d79de83f2fb0"
 PProf = "e4faabce-9ead-11e9-39d9-4379958e3056"
 PackageCompiler = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
 Pioneer = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
@@ -11,14 +12,14 @@ Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 Documenter = "1.5"
 DocumenterTools = "0.1"
 PProf = "3.2.0"
-julia = "1.11"
 PackageCompiler = "=2.2.3"
+julia = "1.11"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[targets]
-test = ["Test"]
-
 [preferences.HostCPUFeatures]
 allow_runtime_invalidation = true
+
+[targets]
+test = ["Test"]

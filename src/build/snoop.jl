@@ -58,9 +58,9 @@ end
 ##########################################
 
 # Build a tiny Prosit library and search it with low memory thresholds
-maybe_run("BuildSpecLib") do
-    Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
-end
+#maybe_run("BuildSpecLib") do
+#    Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
+#end
 # Build a tiny Altimeter library
 maybe_run("BuildSpecLib") do
     Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_altimeter.json"))
@@ -72,7 +72,7 @@ end
 ##########################################
 
 maybe_run("SearchDIA") do
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))         # prosit
+#    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))         # prosit
     Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))      # altimeter + MBR
     Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter_OOM.json"))  # altimeter + MBR + OOM
 end

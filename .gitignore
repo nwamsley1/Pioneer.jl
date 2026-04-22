@@ -12,3 +12,6 @@ data/ecoli_test/
 data/convert_test/
 PioneerApp/
 /build/
+/buildspeclib_params.json
+/data/test_fasta_params/*.json
+/data/test_fasta_params/output/

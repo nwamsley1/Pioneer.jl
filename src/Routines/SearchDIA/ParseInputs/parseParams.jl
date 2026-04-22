@@ -25,7 +25,7 @@ struct PioneerParameters
     acquisition::NamedTuple
     rt_alignment::NamedTuple
     optimization::NamedTuple
-    protein_inference::NamedTuple
+    protein_scoring::NamedTuple
     maxLFQ::NamedTuple
     output::NamedTuple
     logging::NamedTuple
@@ -68,7 +68,7 @@ function params_to_dict(params::PioneerParameters)
         "acquisition" => namedtuple_to_dict(params.acquisition),
         "rt_alignment" => namedtuple_to_dict(params.rt_alignment),
         "optimization" => namedtuple_to_dict(params.optimization),
-        "proteinInference" => namedtuple_to_dict(params.protein_inference),
+        "proteinScoring" => namedtuple_to_dict(params.protein_scoring),
         "maxLFQ" => namedtuple_to_dict(params.maxLFQ),
         "output" => namedtuple_to_dict(params.output),
         "logging" => namedtuple_to_dict(params.logging),
@@ -141,7 +141,7 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     acquisition = dict_to_namedtuple(params["acquisition"])
     rt_alignment = dict_to_namedtuple(params["rt_alignment"])
     optimization = dict_to_namedtuple(params["optimization"])
-    protein_inference = dict_to_namedtuple(params["proteinInference"])
+    protein_scoring = dict_to_namedtuple(params["proteinScoring"])
     maxLFQ = dict_to_namedtuple(params["maxLFQ"])
     output = dict_to_namedtuple(params["output"])
     
@@ -158,7 +158,7 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
         acquisition,
         rt_alignment,
         optimization,
-        protein_inference,
+        protein_scoring,
         maxLFQ,
         output,
         logging,

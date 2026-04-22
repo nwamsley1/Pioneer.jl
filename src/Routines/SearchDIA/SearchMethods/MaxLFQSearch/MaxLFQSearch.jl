@@ -75,7 +75,6 @@ struct MaxLFQSearchParameters <: SearchParameters
         output_params = params.output
         global_params = params.global_settings
         maxLFQ_params = params.maxLFQ
-        protein_inference_params = params.protein_inference
 
         new(
             Int64(norm_params.n_rt_bins),
@@ -83,7 +82,7 @@ struct MaxLFQSearchParameters <: SearchParameters
             Bool(maxLFQ_params.run_to_run_normalization),
             Float32(global_params.scoring.q_value_threshold),
             Int64(100000),  # Default batch size
-            Int64(protein_inference_params.min_peptides),
+            Int64(maxLFQ_params.min_peptides),
             Float64(get(maxLFQ_params, :max_chunk_size_mb, 1024)),
             Bool(output_params.write_csv),
             Bool(output_params.delete_temp),
@@ -160,14 +159,10 @@ function summarize_results!(
         qc_plot_folder = joinpath(getDataOutDir(search_context), "qc_plots")
         precursors_long_path = joinpath(getDataOutDir(search_context), "precursors_long.arrow")
         protein_long_path = joinpath(getDataOutDir(search_context), "protein_groups_long.arrow")
-        # Normalize quantitative values
-        normalizeQuant(
-            passing_psms_folder,
-            :peak_area,
-            N = params.n_rt_bins,
-            spline_n_knots = params.spline_n_knots
-        )
-
+        spec_lib = getSpecLib(search_context)
+        proteins = getProteins(spec_lib)
+        precursors = getPrecursors(spec_lib)
+        output_schema_policy = getOutputSchemaPolicy(spec_lib)
         # Get PSM paths using valid file utilities to maintain proper file mapping
         valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
         existing_passing_psm_paths = [path for (_, path) in valid_file_data]
@@ -182,6 +177,20 @@ function summarize_results!(
         
         psm_refs = [PSMFileReference(path) for path in existing_passing_psm_paths]
 
+        if !params.params.output.write_decoys
+            decoy_filter_pipeline = TransformPipeline() |>
+                filter_rows(row -> row.target; desc = "keep_target_rows")
+            apply_pipeline!(psm_refs, decoy_filter_pipeline)
+        end
+
+        # Normalize the same integrated precursor tables that will feed MaxLFQ.
+        normalizeQuant(
+            [file_path(ref) for ref in psm_refs],
+            :peak_area,
+            N = params.n_rt_bins,
+            spline_n_knots = params.spline_n_knots
+        )
+
         # Ensure all PSM files are sorted correctly for MaxLFQ
         sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
         sort_file_by_keys!(psm_refs, :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx;
@@ -190,8 +199,7 @@ function summarize_results!(
         # Chunked merge: split into protein-group-aligned chunks bounded by max_chunk_size_mb
         chunk_dir = joinpath(temp_folder, "merge_chunks")
         max_chunk_bytes = round(Int, params.max_chunk_size_mb * 1_000_000)
-        @user_info "Chunked merge (max_chunk_size=$(params.max_chunk_size_mb) MB)..."
-        @time chunk_refs = stream_sorted_merge_chunked(
+        chunk_refs = stream_sorted_merge_chunked(
             psm_refs, chunk_dir, :inferred_protein_group, sort_keys...;
             batch_size=1_000_000, reverse=true, max_chunk_bytes=max_chunk_bytes
         )
@@ -213,8 +221,9 @@ function summarize_results!(
             getDataOutDir(search_context),
             all_file_names,
             params.run_to_run_normalization,
-            getProteins(getSpecLib(search_context)),
+            proteins,
             params.params.global_settings.match_between_runs,
+            output_schema_policy = output_schema_policy,
             write_csv = params.write_csv
         )
 
@@ -226,9 +235,14 @@ function summarize_results!(
             protein_long_path,
             precursor_quant_col,
             all_file_names,
+            getSequence(precursors),
+            getStructuralMods(precursors),
+            getIsotopicMods(precursors),
             params.q_value_threshold,
+            output_schema_policy = output_schema_policy,
             batch_size = params.batch_size
         )
+        chunk_paths = [file_path(ref) for ref in chunk_refs]
 
         # Create FileReference for output metadata tracking
         protein_ref = ProteinQuantFileReference(protein_long_path)
@@ -236,7 +250,6 @@ function summarize_results!(
 
         @user_info "Writing protein group results..."
         # Create wide format protein table (protein groups table is small, no chunking needed)
-        precursors = getPrecursors(getSpecLib(search_context))
         proteins_wide_path = writeProteinGroupsCSV(
             results.proteins_long_path,
             getSequence(precursors),
@@ -244,22 +257,23 @@ function summarize_results!(
             getStructuralMods(precursors),
             getCharge(precursors),
             all_file_names,
-            getProteins(getSpecLib(search_context)),
+            proteins,
+            output_schema_policy = output_schema_policy,
             write_csv = params.write_csv
         )
 
-        # Stream-concatenate chunks into precursors_long.arrow for QC plots
+        # Concatenate chunks into a final Arrow file-format export for QC plots.
         @user_info "Concatenating chunks to precursors_long.arrow..."
-        for (i, chunk_ref) in enumerate(chunk_refs)
-            tbl = Arrow.Table(file_path(chunk_ref))
-            if i == 1
-                open(precursors_long_path, "w") do io
-                    Arrow.write(io, tbl; file=false)
+        isfile(precursors_long_path) && rm(precursors_long_path)
+        open(Arrow.Writer, precursors_long_path; file=true) do arrow_writer
+            for chunk_ref in chunk_refs
+                let tbl = Arrow.Table(file_path(chunk_ref))
+                    Arrow.write(arrow_writer, enabled_output_table(output_schema_policy, :precursors, tbl))
                 end
-            else
-                Arrow.append(precursors_long_path, tbl)
             end
         end
+        chunk_refs = nothing
+        GC.gc()
 
         @user_info "Creating QC plots..."
         # Create QC plots
@@ -275,16 +289,20 @@ function summarize_results!(
             all_file_names
         )
 
-        # Cleanup chunk files — GC first to release Arrow mmap handles (NFS silly-rename fix)
+        # Cleanup chunk files after dropping Arrow.Table references.
         if isdir(chunk_dir)
-            GC.gc(false)
+            GC.gc()
             try
+                for chunk_path in chunk_paths
+                    isfile(chunk_path) && safeRm(chunk_path, nothing; force=true)
+                end
                 rm(chunk_dir; recursive=true, force=true)
             catch e
-                # On NFS, stale .nfs* handles may linger; temp_data deletion below will retry
+                # On Windows, a chunk file may still be briefly locked by Arrow mmap state.
                 @debug "merge_chunks cleanup deferred" exception=e
             end
         end
+        chunk_paths = nothing
 
         if params.delete_temp
             @user_info "Removing temporary data..."
@@ -293,7 +311,7 @@ function summarize_results!(
             try
                 isdir(temp_path) && rm(temp_path; recursive=true, force=true)
             catch e
-                @warn "Could not fully remove temp_data (NFS stale handles?)" exception=e
+                @warn "Could not fully remove temp_data (likely lingering file handles)" exception=e
             end
         end
 

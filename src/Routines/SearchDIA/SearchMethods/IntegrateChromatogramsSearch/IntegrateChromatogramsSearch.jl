@@ -208,11 +208,6 @@ function process_file!(
         # Convert to DataFrame for processing
         passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))#load_passing_psms(search_context, parsed_fname)
         
-        # Keep only target (non-decoy) PSMs
-        if !params.write_decoys
-            filter!(row -> row.target, passing_psms)
-        end
-
         # Initialize columns to store integration results
         # peak_area: Integrated area of chromatographic peak
         # new_best_scan: Updated apex scan after refinement
@@ -401,8 +396,8 @@ end
 
 function summarize_results!(
     ::IntegrateChromatogramSearchResults,
-    ::P,
-    ::SearchContext
+    params::P,
+    search_context::SearchContext
 ) where {P<:IntegrateChromatogramSearchParameters}
     return nothing
 end

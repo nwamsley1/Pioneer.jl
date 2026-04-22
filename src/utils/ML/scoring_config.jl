@@ -105,5 +105,5 @@ function probit_scoring_config(; features::Vector{Symbol} = Symbol[])
     )
 end
 
-# Note: build_scoring_config function is defined in ScoringSearch/model_config.jl
+# Note: build_scoring_config function is defined in PrecursorScoringSearch/model_config.jl
 # because it depends on ModelConfig which is defined there

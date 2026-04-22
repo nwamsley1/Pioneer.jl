@@ -156,6 +156,8 @@ end
     include("./UnitTests/testIsotopesJun13.jl")
     include("./UnitTests/uniformBassisCubicSpline.jl")
     include("./UnitTests/test_protein_inference.jl")
+    include("./UnitTests/test_protein_group_peak_area_features.jl")
+    include("./UnitTests/test_maxlfq.jl")
     include("./UnitTests/ChronologerPrepTests.jl")
     include("./UnitTests/FastaDigestTests.jl")
     include("./UnitTests/FastaEntryConstructorsTests.jl")
@@ -168,14 +170,16 @@ end
 
     # Active: only run mass-spec data tests for quick iteration
     include("./UnitTests/MassSpecAndFilteredDataTests.jl")
+    include("./UnitTests/convertMzMLTests.jl")
     include("./UnitTests/LoggingTests.jl")
     include("./UnitTests/LogTruncationTests.jl")
+    include("./UnitTests/BuildPreferencesTests.jl")
     # Add focused FileOperations tests (Arrow IO, core, streaming)
     include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
     include("./utils/FileOperations/core/test_core_references_basic.jl")
     include("./utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl")
-    # ScoringSearch interface tests
+    # PrecursorScoringSearch interface tests
 
-    #include("./Routines/SearchDIA/SearchMethods/ScoringSearch/test_scoring_interface.jl")
+    #include("./Routines/SearchDIA/SearchMethods/PrecursorScoringSearch/test_scoring_interface.jl")
     
 end

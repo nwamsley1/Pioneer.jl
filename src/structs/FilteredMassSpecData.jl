@@ -29,8 +29,6 @@ mutable struct FilteredMassSpecData{T<:AbstractFloat} <: MassSpecData
     # Metadata arrays - one entry per sampled scan
     scan_headers::Vector{String}
     scan_numbers::Vector{Int32}
-    base_peak_mzs::Vector{T}
-    base_peak_intensities::Vector{T}
     injection_times::Vector{T}
     retention_times::Vector{T}
     precursor_mzs::Vector{T}
@@ -296,8 +294,6 @@ function FilteredMassSpecData(
     
     scan_headers = Vector{String}(undef, n_sampled)
     scan_numbers = Vector{Int32}(undef, n_sampled)
-    base_peak_mzs = Vector{T}(undef, n_sampled)
-    base_peak_intensities = Vector{T}(undef, n_sampled)
     injection_times = Vector{T}(undef, n_sampled)
     retention_times = Vector{T}(undef, n_sampled)
     precursor_mzs = Vector{T}(undef, n_sampled)
@@ -339,8 +335,6 @@ function FilteredMassSpecData(
         # Copy all metadata
         scan_headers[filtered_idx] = getScanHeader(original, original_idx)
         scan_numbers[filtered_idx] = getScanNumber(original, original_idx)
-        base_peak_mzs[filtered_idx] = T(getBasePeakMz(original, original_idx))
-        base_peak_intensities[filtered_idx] = T(getBasePeakIntensity(original, original_idx))
         injection_times[filtered_idx] = zero(T)  # Default to zero - injection time not available in BasicNonIonMobilityMassSpecData
         retention_times[filtered_idx] = T(getRetentionTime(original, original_idx))
         precursor_mzs[filtered_idx] = T(getPrecursorMz(original, original_idx))
@@ -358,7 +352,6 @@ function FilteredMassSpecData(
     return FilteredMassSpecData{T}(
         mz_arrays, intensity_arrays,
         scan_headers, scan_numbers,
-        base_peak_mzs, base_peak_intensities,
         injection_times, retention_times,
         precursor_mzs, isolation_widths,
         precursor_charges, ms_orders,
@@ -458,8 +451,6 @@ getIntensityArray(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T =
 # Metadata access - implement ALL methods from MassSpecData interface
 getScanHeader(ms_data::FilteredMassSpecData, scan_idx::Integer) = ms_data.scan_headers[scan_idx]
 getScanNumber(ms_data::FilteredMassSpecData, scan_idx::Integer) = ms_data.scan_numbers[scan_idx]
-getBasePeakMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.base_peak_mzs[scan_idx]
-getBasePeakIntensity(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.base_peak_intensities[scan_idx]
 getInjectionTime(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.injection_times[scan_idx]
 getRetentionTime(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.retention_times[scan_idx]
 getPrecursorMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.precursor_mzs[scan_idx]
@@ -477,8 +468,6 @@ getMzArrays(ms_data::FilteredMassSpecData{T}) where T = ms_data.mz_arrays
 getIntensityArrays(ms_data::FilteredMassSpecData{T}) where T = ms_data.intensity_arrays
 getScanHeaders(ms_data::FilteredMassSpecData) = ms_data.scan_headers
 getScanNumbers(ms_data::FilteredMassSpecData) = ms_data.scan_numbers
-getBasePeakMzs(ms_data::FilteredMassSpecData{T}) where T = ms_data.base_peak_mzs
-getBasePeakIntensities(ms_data::FilteredMassSpecData{T}) where T = ms_data.base_peak_intensities
 getInjectionTimes(ms_data::FilteredMassSpecData{T}) where T = ms_data.injection_times
 getRetentionTimes(ms_data::FilteredMassSpecData{T}) where T = ms_data.retention_times
 getPrecursorMzs(ms_data::FilteredMassSpecData{T}) where T = ms_data.precursor_mzs
@@ -564,8 +553,6 @@ function Base.append!(
         # Append all metadata
         push!(filtered.scan_headers, getScanHeader(original, original_idx))
         push!(filtered.scan_numbers, getScanNumber(original, original_idx))
-        push!(filtered.base_peak_mzs, T(getBasePeakMz(original, original_idx)))
-        push!(filtered.base_peak_intensities, T(getBasePeakIntensity(original, original_idx)))
         push!(filtered.injection_times, zero(T))  # Default to zero - injection time not available in BasicNonIonMobilityMassSpecData
         push!(filtered.retention_times, T(getRetentionTime(original, original_idx)))
         push!(filtered.precursor_mzs, T(getPrecursorMz(original, original_idx)))
@@ -697,16 +684,6 @@ function getMsOrder(data::IndexedMassSpecData, virtual_idx::Integer)
     return getMsOrder(data.original_data, actual_idx)
 end
 
-function getBasePeakMz(data::IndexedMassSpecData, virtual_idx::Integer)
-    actual_idx = get_actual_index(data, virtual_idx)
-    return getBasePeakMz(data.original_data, actual_idx)
-end
-
-function getBasePeakIntensity(data::IndexedMassSpecData, virtual_idx::Integer)
-    actual_idx = get_actual_index(data, virtual_idx)
-    return getBasePeakIntensity(data.original_data, actual_idx)
-end
-
 function getTIC(data::IndexedMassSpecData, virtual_idx::Integer)
     actual_idx = get_actual_index(data, virtual_idx)
     return getTIC(data.original_data, actual_idx)
@@ -778,14 +755,6 @@ end
 
 function getMsOrders(data::IndexedMassSpecData)
     return [getMsOrder(data.original_data, actual_idx) for actual_idx in data.scan_indices]
-end
-
-function getBasePeakMzs(data::IndexedMassSpecData)
-    return [getBasePeakMz(data.original_data, actual_idx) for actual_idx in data.scan_indices]
-end
-
-function getBasePeakIntensities(data::IndexedMassSpecData)
-    return [getBasePeakIntensity(data.original_data, actual_idx) for actual_idx in data.scan_indices]
 end
 
 function getTICs(data::IndexedMassSpecData)

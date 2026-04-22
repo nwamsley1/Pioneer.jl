@@ -21,7 +21,7 @@ const GLOBAL_MIN_PRECURSORS   = 50_000   # hard minimum floor
 
 """
 Log-odds average of top-N probabilities, converted back to probability space.
-Mirrors ScoringSearch/scoring_interface.jl:logodds for first pass use.
+Mirrors PrecursorScoringSearch/scoring_interface.jl:logodds for first pass use.
 """
 function _logodds_combine(probs::Vector{Float32}, top_n::Int)::Float32
     isempty(probs) && return 0.0f0

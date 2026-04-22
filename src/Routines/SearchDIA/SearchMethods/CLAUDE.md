@@ -67,14 +67,14 @@ processChunk!(method::SearchMethod, batch_id::Int, thread_id::Int) -> Nothing
 - **Threading**: Most CPU-intensive stage
 
 ### Stage 3: Scoring & FDR Control
-**ScoringSearch** - ML training and FDR control
-- **Purpose**: LightGBM training, PSM rescoring, protein grouping
-- **Algorithm**: Cross-validation training + FDR filtering + protein inference
-- **Key Output**: High-confidence PSMs + protein groups
+**PrecursorScoringSearch** - ML training and FDR control
+- **Purpose**: LightGBM/probit training, precursor rescoring, and precursor-level FDR control
+- **Algorithm**: Cross-validation training + precursor q-value/PEP filtering
+- **Key Output**: High-confidence precursor/PSM tables
 - **Memory**: Stores all features for ML training
 - **Threading**: Parallel model training per CV fold
 
-### Stage 4: Quantification
+### Stage 4: Chromatogram Integration
 **IntegrateChromatogramSearch** - Peak integration
 - **Purpose**: Chromatographic peak integration and quantification
 - **Algorithm**: Gaussian/spline fitting on extracted ion chromatograms
@@ -82,6 +82,23 @@ processChunk!(method::SearchMethod, batch_id::Int, thread_id::Int) -> Nothing
 - **Memory**: Chromatogram storage, moderate usage
 - **Performance**: I/O intensive for chromatogram extraction
 
+### Stage 5: Protein Annotation
+**ProteinInferenceSearch** - Protein-group assignment
+- **Purpose**: Infer protein groups from integrated passing precursor tables
+- **Algorithm**: Parsimony-based protein inference with quantification eligibility flags
+- **Key Output**: Passing precursor tables annotated with `inferred_protein_group` and `use_for_protein_quant`
+- **Memory**: File-by-file table annotation, moderate usage
+- **Performance**: Mostly table transformation and grouping
+
+### Stage 6: Protein Scoring
+**ProteinScoringSearch** - Protein feature calculation and rescoring
+- **Purpose**: Build protein-group tables, score proteins, and compute protein-level FDR
+- **Algorithm**: Protein-group feature extraction + semi-supervised probit rescoring + q-value estimation
+- **Key Output**: Protein-group tables and protein scores written back to precursor tables
+- **Memory**: Protein-group tables and CV fold fits
+- **Performance**: Grouping and per-fold model fitting
+
+### Stage 7: Quantification
 **MaxLFQSearch** - Label-free quantification
 - **Purpose**: Cross-run normalization and final quantification
 - **Algorithm**: MaxLFQ algorithm with missing value handling

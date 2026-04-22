@@ -92,7 +92,7 @@ apply_mbr_filter! adjustments (with 1:1 pair_id)
   - Each `:pair_id` denotes exactly one target and one decoy per run (thanks to cloning during pairing).
 - Remove library-derived `pair_id` code:
   - Delete any attempt to recompute `:pair_id` from the spectral library (e.g., via `getPairId`).
-  - Insert a hard check: if `:pair_id` ∉ propertynames(merged_df) → `error("pair_id missing; regenerate pairs before ScoringSearch")`.
+  - Insert a hard check: if `:pair_id` ∉ propertynames(merged_df) → `error("pair_id missing; regenerate pairs before PrecursorScoringSearch")`.
 - Candidate set and non-candidates:
   - `candidate_mask = merged_df.MBR_transfer_candidate`.
   - Compute trace q-values only on non-candidates with library FDR scaling for diagnostics: `get_qvalues!(merged_df.prob[.!candidate_mask], merged_df.target[.!candidate_mask], trace_qval[.!candidate_mask])`.

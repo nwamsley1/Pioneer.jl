@@ -112,22 +112,6 @@ function getScanNumber(ms_data::BasicNonIonMobilityMassSpecData, scan_idx::Integ
     getScanNumbers(ms_data)[scan_idx]
 end
 
-# Base peak m/z getters
-function getBasePeakMzs(ms_data::BasicNonIonMobilityMassSpecData{T}) where T
-    return ms_data.data[:basePeakMz]::Arrow.Primitive{T, Vector{T}}
-end
-function getBasePeakMz(ms_data::BasicNonIonMobilityMassSpecData{T}, scan_idx::Integer)::T where T
-    getBasePeakMzs(ms_data)[scan_idx]
-end
-
-# Base peak intensity getters
-function getBasePeakIntensities(ms_data::BasicNonIonMobilityMassSpecData{T}) where T
-    return ms_data.data[:basePeakIntensity]::Arrow.Primitive{T, Vector{T}}
-end
-function getBasePeakIntensity(ms_data::BasicNonIonMobilityMassSpecData{T}, scan_idx::Integer)::T where T
-    getBasePeakIntensities(ms_data)[scan_idx]
-end
-
 # Packet type getters remain Int32
 getPacketTypes(ms_data::BasicNonIonMobilityMassSpecData)::Arrow.Primitive{Int32, Vector{Int32}} = ms_data.data[:packetType]
 function getPacketType(ms_data::BasicNonIonMobilityMassSpecData, scan_idx::Integer)::Int32
@@ -252,22 +236,6 @@ end
 getScanNumbers(ms_data::BatchNonIonMobilityMassSpecData)::SentinelArrays.ChainedVector{Int32, Arrow.Primitive{Int32, Vector{Int32}}} = ms_data.data[:scanNumber]
 function getScanNumber(ms_data::BatchNonIonMobilityMassSpecData, scan_idx::Integer)::Int32
     getScanNumbers(ms_data)[scan_idx]
-end
-
-# Base peak m/z getters
-function getBasePeakMzs(ms_data::BatchNonIonMobilityMassSpecData{T}) where T
-    return ms_data.data[:basePeakMz]::SentinelArrays.ChainedVector{T, Arrow.Primitive{T, Vector{T}}}
-end
-function getBasePeakMz(ms_data::BatchNonIonMobilityMassSpecData{T}, scan_idx::Integer)::T where T
-    getBasePeakMzs(ms_data)[scan_idx]
-end
-
-# Base peak intensity getters
-function getBasePeakIntensities(ms_data::BatchNonIonMobilityMassSpecData{T}) where T
-    return ms_data.data[:basePeakIntensity]::SentinelArrays.ChainedVector{T, Arrow.Primitive{T, Vector{T}}}
-end
-function getBasePeakIntensity(ms_data::BatchNonIonMobilityMassSpecData{T}, scan_idx::Integer)::T where T
-    getBasePeakIntensities(ms_data)[scan_idx]
 end
 
 # Packet type getters remain Int32

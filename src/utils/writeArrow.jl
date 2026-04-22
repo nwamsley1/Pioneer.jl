@@ -45,7 +45,7 @@ function writeArrow(fpath::String, df::AbstractDataFrame)
         # Try to delete the existing file with retries
         if isfile(fpath)
             try
-                run(`cmd /c del /f /q "$fpath"`)#rm(fpath, force=true)
+                windows_delete_file(fpath)
             catch e 
                 #@user_info "Initial deletion failed for $fpath, attempting retries. \n"
                 @debug_l1 "Windows specifiec deletion failed for $fpath. \n"

@@ -530,4 +530,3 @@ function infer_proteins(
 
     return InferenceResult(combined_result)
 end
-
