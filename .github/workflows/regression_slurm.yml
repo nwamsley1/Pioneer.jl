@@ -73,7 +73,7 @@ jobs:
     timeout-minutes: 7200
     strategy:
       matrix:
-        version: ['1.11']
+        version: ['1.12']
         regression_set: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.regression_set)) || fromJSON('["all"]') }}
     env:
       GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (startsWith(github.ref, 'refs/tags/') && github.ref_name || github.sha) }}
