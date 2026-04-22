@@ -12,7 +12,7 @@ Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 Documenter = "1.5"
 DocumenterTools = "0.1"
 PProf = "3.2.0"
-PackageCompiler = "=2.2.3"
+PackageCompiler = "2.2.5"
 julia = "1.12"
 
 [extras]
