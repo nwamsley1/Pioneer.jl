@@ -63,7 +63,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
                              params::PioneerParameters)
     function load_output_schema_policy(config_path::String)
         try
-            config = isfile(config_path) ? JSON.parsefile(config_path) : nothing
+            config = isfile(config_path) ? JSON.parsefile(config_path, dicttype=Dict{String,Any}) : nothing
             return OutputSchemaPolicy(config)
         catch
             return OutputSchemaPolicy()

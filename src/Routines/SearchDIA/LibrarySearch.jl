@@ -239,7 +239,7 @@ function library_search(spectra::MassSpecData, search_context::SearchContext, se
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
                     getNceModel(search_context, ms_file_idx),
-                    getIrtErrors(search_context)[ms_file_idx]
+                    getIrtError(search_context, ms_file_idx)
                 )...)
 end
 
@@ -260,7 +260,7 @@ function library_search(
         getRtIrtModel(search_context, ms_file_idx),
         search_parameters,
         search_parameters.nce_grid,
-        getIrtErrors(search_context)[ms_file_idx]
+        getIrtError(search_context, ms_file_idx)
     )
 end
 

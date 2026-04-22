@@ -91,7 +91,7 @@ end
 
 function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true)
     # Read user JSON
-    user_params = JSON.parsefile(json_path)
+    user_params = JSON.parsefile(json_path, dicttype=Dict{String,Any})
     
     # Apply defaults if requested
     if apply_defaults
@@ -110,13 +110,13 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     end
     
     # Convert nested dictionaries to NamedTuples
-    function dict_to_namedtuple(d::Dict)
+    function dict_to_namedtuple(d::AbstractDict)
         # Create pairs for the NamedTuple constructor
         symbol_pairs = []
         
         for (k, v) in pairs(d)
             symbol_key = Symbol(k)
-            if v isa Dict
+            if v isa AbstractDict
                 push!(symbol_pairs, symbol_key => dict_to_namedtuple(v))
             else
                 push!(symbol_pairs, symbol_key => v)

@@ -215,7 +215,7 @@ function process_scans_for_huber!(
         DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx))),
         bin_rt_size = 0.1)
 
-    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    irt_tol = getIrtError(search_context, ms_file_idx)
 
     for scan_idx in scan_range
         scan_idx ∉ keys(scan_to_prec) && continue
@@ -584,4 +584,3 @@ function get_median_huber_delta(
     @user_warn "Could not estimate huber delta"
     return first(δ)
 end
-

@@ -26,7 +26,7 @@ using JSON
 
 function checkParams(json_path::String)
     # Read user params
-    user_params = JSON.parsefile(json_path)
+    user_params = JSON.parsefile(json_path, dicttype=Dict{String,Any})
     
     # Apply defaults before validation
     defaults = get_default_parameters()
