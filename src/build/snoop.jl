@@ -1,5 +1,4 @@
-using Pioneer
-using HostCPUFeatures
+import HostCPUFeatures
 
 root = joinpath(@__DIR__)
 data_dir = joinpath(root, "..", "..", "data")
@@ -8,13 +7,24 @@ cmd = get(ENV, "PIONEER_CMD", nothing)
 
 function maybe_mask_precompile_cpu_features()
     target = get(ENV, "PIONEER_PRECOMPILE_CPU_TARGET", nothing)
-    if !isnothing(target)
-        @user_info "Masking HostCPUFeatures during precompile to $target"
-        HostCPUFeatures.make_generic(target)
+    if !isnothing(target) && ((Sys.ARCH === :x86_64) || (Sys.ARCH === :i686))
+        @info "Overriding HostCPUFeatures during precompile for target $target"
+        # PackageCompiler records precompile signatures while tracing on the host CPU.
+        # On AVX-512 runners that can capture VectorizationBase methods which LLVM
+        # cannot legalize for the portable app CPU target later in the build.
+        @eval HostCPUFeatures begin
+            has_feature(::Val{:x86_64_avx512vl}) = False()
+            has_feature(::Val{:x86_64_avx512f}) = False()
+            has_feature(::Val{:x86_64_avx2}) = False()
+            has_feature(::Val{:x86_64_3}) = False()
+            has_feature(::Val{:x86_64_avx}) = False()
+        end
     end
 end
 
 maybe_mask_precompile_cpu_features()
+
+using Pioneer
 
 function maybe_run(f, name)
     if cmd === nothing || cmd == name
