@@ -1,9 +1,20 @@
 using Pioneer
+using HostCPUFeatures
 
 root = joinpath(@__DIR__)
 data_dir = joinpath(root, "..", "..", "data")
 
 cmd = get(ENV, "PIONEER_CMD", nothing)
+
+function maybe_mask_precompile_cpu_features()
+    target = get(ENV, "PIONEER_PRECOMPILE_CPU_TARGET", nothing)
+    if !isnothing(target)
+        @user_info "Masking HostCPUFeatures during precompile to $target"
+        HostCPUFeatures.make_generic(target)
+    end
+end
+
+maybe_mask_precompile_cpu_features()
 
 function maybe_run(f, name)
     if cmd === nothing || cmd == name

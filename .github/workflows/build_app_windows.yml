@@ -120,6 +120,8 @@ jobs:
         shell: bash
         run: |
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          export PIONEER_APP_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+          export PIONEER_PRECOMPILE_CPU_TARGET="$PIONEER_APP_CPU_TARGET"
           fresh_depot="$(mktemp -d)"
           export JULIA_DEPOT_PATH="$(cygpath -w "$fresh_depot");$(cygpath -w "$HOME/.julia")"
           # Julia 1.12 app builds are more reliable on the incremental PackageCompiler path.
@@ -130,6 +132,7 @@ jobs:
               "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
               incremental=true,
               force=true,
+              cpu_target=ENV["PIONEER_APP_CPU_TARGET"],
               executables=[
                 "GetSearchParams"=>"main_GetSearchParams",
                 "GetBuildLibParams"=>"main_GetBuildLibParams",
