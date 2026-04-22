@@ -119,12 +119,13 @@ jobs:
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
           export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
           mkdir -p "$RUNNER_TEMP/julia-depot"
+          # Julia 1.12 app builds are more reliable on the incremental PackageCompiler path.
           julia --threads auto --project=dev -e '
             using PackageCompiler;
             create_app(
               ".",
               "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
-              incremental=false, force=true,
+              incremental=true, force=true,
               executables=[
                 "GetSearchParams"=>"main_GetSearchParams",
                 "GetBuildLibParams"=>"main_GetBuildLibParams",
