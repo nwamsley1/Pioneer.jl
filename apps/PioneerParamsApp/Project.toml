@@ -1,0 +1,15 @@
+name = "PioneerParamsApp"
+uuid = "b801e2bc-f004-44fc-b633-43da3a1a8185"
+version = "0.7.4"
+authors = ["Nathan Wamsley", "Dennis Goldfarb"]
+
+[deps]
+PioneerPredict = "4cddfed8-3fb1-4302-8bc9-cb29ad99671b"
+PioneerSearch = "151a6990-cb6c-4706-a64b-c15e62217f67"
+
+[sources]
+PioneerPredict = { path = "../../packages/PioneerPredict" }
+PioneerSearch = { path = "../../packages/PioneerSearch" }
+
+[compat]
+julia = "1.12"

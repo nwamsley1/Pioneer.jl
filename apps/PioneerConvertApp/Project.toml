@@ -1,0 +1,13 @@
+name = "PioneerConvertApp"
+uuid = "96aa91b3-26a5-40e3-a91e-0e847f0cb890"
+version = "0.7.4"
+authors = ["Nathan Wamsley", "Dennis Goldfarb"]
+
+[deps]
+PioneerConvert = "d0bd7c82-dff2-47fc-80b8-8504b1185c05"
+
+[sources]
+PioneerConvert = { path = "../../packages/PioneerConvert" }
+
+[compat]
+julia = "1.12"

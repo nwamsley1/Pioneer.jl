@@ -115,46 +115,52 @@ jobs:
         with:
           cache-key: precompile-data-v1
 
-      - name: Generate precompile statements
-        run: |
-          export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
-          export PIONEER_APP_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
-          export PIONEER_PRECOMPILE_CPU_TARGET="$PIONEER_APP_CPU_TARGET"
-          trace_dir="$RUNNER_TEMP/packagecompiler-trace"
-          raw_trace="$trace_dir/pioneer-app-precompile-raw.jl"
-          uniq_trace="$trace_dir/pioneer-app-precompile-uniq.jl"
-          filtered_trace="$trace_dir/pioneer-app-precompile-filtered.jl"
-          mkdir -p "$trace_dir"
-          julia --threads auto --project=. --trace-compile="$raw_trace" src/build/snoop.jl
-          sort -u "$raw_trace" > "$uniq_trace"
-          rg -v 'VectorizationBase|LoopVectorization|SLEEFPirates|HostCPUFeatures' "$uniq_trace" > "$filtered_trace" || true
-          echo "Retained $(wc -l < "$filtered_trace") of $(wc -l < "$uniq_trace") precompile statements after SIMD filtering."
-          echo "PIONEER_APP_CPU_TARGET=$PIONEER_APP_CPU_TARGET" >> "$GITHUB_ENV"
-          echo "PIONEER_PRECOMPILE_STATEMENTS_FILE=$filtered_trace" >> "$GITHUB_ENV"
-
       - name: Compile application
         run: |
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          export PIONEER_APP_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
           export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
           mkdir -p "$RUNNER_TEMP/julia-depot"
-          # Julia 1.12 app builds are more reliable on the incremental PackageCompiler path.
           julia --threads auto --project=dev -e '
             using PackageCompiler;
+            root = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer";
+            apps_root = joinpath(root, "apps");
+            mkpath(apps_root);
+
             create_app(
-              ".",
-              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
+              "apps/PioneerParamsApp",
+              joinpath(apps_root, "params"),
               incremental=true, force=true,
               cpu_target=ENV["PIONEER_APP_CPU_TARGET"],
               executables=[
                 "GetSearchParams"=>"main_GetSearchParams",
                 "GetBuildLibParams"=>"main_GetBuildLibParams",
-                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
-                "ParseSpecLib"=>"main_ParseSpecLib",
-                "BuildSpecLib"=>"main_BuildSpecLib",
-                "SearchDIA"=>"main_SearchDIA",
-                "convertMzML"=>"main_convertMzML"
-              ],
-              precompile_statements_file=[ENV["PIONEER_PRECOMPILE_STATEMENTS_FILE"]]
+                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams"
+              ]
+            );
+
+            create_app(
+              "apps/PioneerPredictApp",
+              joinpath(apps_root, "predict"),
+              incremental=true, force=true,
+              cpu_target=ENV["PIONEER_APP_CPU_TARGET"],
+              executables=["BuildSpecLib"=>"main_BuildSpecLib"]
+            );
+
+            create_app(
+              "apps/PioneerSearchApp",
+              joinpath(apps_root, "search"),
+              incremental=true, force=true,
+              cpu_target=ENV["PIONEER_APP_CPU_TARGET"],
+              executables=["SearchDIA"=>"main_SearchDIA"]
+            );
+
+            create_app(
+              "apps/PioneerConvertApp",
+              joinpath(apps_root, "convert"),
+              incremental=true, force=true,
+              cpu_target=ENV["PIONEER_APP_CPU_TARGET"],
+              executables=["convertMzML"=>"main_convertMzML"]
             );
           '
 
@@ -179,6 +185,7 @@ jobs:
           curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" \
             -o converter.zip
           unzip -q converter.zip -d converter
+          mkdir -p "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin"
           cp -r "converter/PioneerConverter-${PATTERN}/bin/"* \
             "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/"
           mkdir -p "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib"
@@ -192,11 +199,25 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
+      - name: Populate bundled app data
+        shell: bash
+        run: |
+          pioneer_root="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
+          mkdir -p "$pioneer_root/data"
+          cp -r assets/* "$pioneer_root/data/"
+          for subapp in params predict search; do
+            mkdir -p "$pioneer_root/apps/$subapp/data"
+            cp -r assets/* "$pioneer_root/apps/$subapp/data/"
+          done
+
       - name: Write bundled version
         shell: bash
         run: |
-          echo "${{ steps.get_version.outputs.version }}" > \
-            build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
+          pioneer_root="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
+          echo "${{ steps.get_version.outputs.version }}" > "$pioneer_root/VERSION"
+          for subapp in params predict search convert; do
+            echo "${{ steps.get_version.outputs.version }}" > "$pioneer_root/apps/$subapp/VERSION"
+          done
 
       - name: Pre-download artifacts
         shell: bash
@@ -212,11 +233,9 @@ jobs:
         run: |
           mkdir -p deb/usr/local/Pioneer
           cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
-          mkdir -p deb/usr/local/Pioneer/data
-          cp -r assets/* deb/usr/local/Pioneer/data/
           mkdir -p deb/usr/local/bin
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
-          chmod -R a+rwx deb/usr/local/Pioneer/share/julia
+          find deb/usr/local/Pioneer -path '*/share/julia' -exec chmod -R a+rwx {} + || true
           info=src/build/package_info.json
           RAW_VERSION='${{ steps.get_version.outputs.version }}'
           BASE_PACKAGE=$(jq -r '.package' $info)

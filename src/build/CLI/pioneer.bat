@@ -194,8 +194,14 @@ if /I "%SUBCOMMAND%"=="convert-raw" set SUBCOMMAND=PioneerConverter
 
 
 :run_pioneer
-rem The executables are in the bin\ subdirectory
 set "EXEC=%SCRIPT_DIR%bin\%SUBCOMMAND%.exe"
+if /I "%SUBCOMMAND%"=="GetSearchParams" if exist "%SCRIPT_DIR%apps\params\bin\%SUBCOMMAND%.exe" set "EXEC=%SCRIPT_DIR%apps\params\bin\%SUBCOMMAND%.exe"
+if /I "%SUBCOMMAND%"=="GetBuildLibParams" if exist "%SCRIPT_DIR%apps\params\bin\%SUBCOMMAND%.exe" set "EXEC=%SCRIPT_DIR%apps\params\bin\%SUBCOMMAND%.exe"
+if /I "%SUBCOMMAND%"=="GetParseSpecLibParams" if exist "%SCRIPT_DIR%apps\params\bin\%SUBCOMMAND%.exe" set "EXEC=%SCRIPT_DIR%apps\params\bin\%SUBCOMMAND%.exe"
+if /I "%SUBCOMMAND%"=="BuildSpecLib" if exist "%SCRIPT_DIR%apps\predict\bin\%SUBCOMMAND%.exe" set "EXEC=%SCRIPT_DIR%apps\predict\bin\%SUBCOMMAND%.exe"
+if /I "%SUBCOMMAND%"=="SearchDIA" if exist "%SCRIPT_DIR%apps\search\bin\%SUBCOMMAND%.exe" set "EXEC=%SCRIPT_DIR%apps\search\bin\%SUBCOMMAND%.exe"
+if /I "%SUBCOMMAND%"=="convertMzML" if exist "%SCRIPT_DIR%apps\convert\bin\%SUBCOMMAND%.exe" set "EXEC=%SCRIPT_DIR%apps\convert\bin\%SUBCOMMAND%.exe"
+
 if "%SUBCOMMAND_ARGS%"=="" (
     "%EXEC%"
 ) else (

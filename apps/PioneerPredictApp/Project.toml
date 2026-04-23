@@ -1,0 +1,13 @@
+name = "PioneerPredictApp"
+uuid = "ac1af92f-1a57-4ec0-9cde-698112ab2382"
+version = "0.7.4"
+authors = ["Nathan Wamsley", "Dennis Goldfarb"]
+
+[deps]
+PioneerPredict = "4cddfed8-3fb1-4302-8bc9-cb29ad99671b"
+
+[sources]
+PioneerPredict = { path = "../../packages/PioneerPredict" }
+
+[compat]
+julia = "1.12"

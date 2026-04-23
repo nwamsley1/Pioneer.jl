@@ -195,24 +195,46 @@ jobs:
           export GKS_WSTYPE=100
           export JULIA_DEPOT_PATH="$RUNNER_TEMP/julia-depot:$HOME/.julia"
           mkdir -p "$RUNNER_TEMP/julia-depot"
-          # Julia 1.12 app builds are more reliable on the incremental PackageCompiler path.
           julia --threads auto --project=dev -e '
             using PackageCompiler;
+            root = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer";
+            apps_root = joinpath(root, "apps");
+            mkpath(apps_root);
+
             create_app(
-              ".",
-              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
+              "apps/PioneerParamsApp",
+              joinpath(apps_root, "params"),
               incremental=true,
               force=true,
               executables=[
                 "GetSearchParams"=>"main_GetSearchParams",
                 "GetBuildLibParams"=>"main_GetBuildLibParams",
-                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
-                "ParseSpecLib"=>"main_ParseSpecLib",
-                "BuildSpecLib"=>"main_BuildSpecLib",
-                "SearchDIA"=>"main_SearchDIA",
-                "convertMzML"=>"main_convertMzML"
-              ],
-              precompile_execution_file="src/build/snoop.jl"
+                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams"
+              ]
+            );
+
+            create_app(
+              "apps/PioneerPredictApp",
+              joinpath(apps_root, "predict"),
+              incremental=true,
+              force=true,
+              executables=["BuildSpecLib"=>"main_BuildSpecLib"]
+            );
+
+            create_app(
+              "apps/PioneerSearchApp",
+              joinpath(apps_root, "search"),
+              incremental=true,
+              force=true,
+              executables=["SearchDIA"=>"main_SearchDIA"]
+            );
+
+            create_app(
+              "apps/PioneerConvertApp",
+              joinpath(apps_root, "convert"),
+              incremental=true,
+              force=true,
+              executables=["convertMzML"=>"main_convertMzML"]
             );
           '
 
@@ -241,6 +263,7 @@ jobs:
           curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" \
             -o converter.zip
           unzip -q converter.zip -d converter
+          mkdir -p "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin"
           cp -r "converter/PioneerConverter-${PATTERN}/bin/"* \
             "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/"
           mkdir -p "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib"
@@ -253,11 +276,25 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
+      - name: Populate bundled app data
+        shell: bash
+        run: |
+          pioneer_root="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
+          mkdir -p "$pioneer_root/data"
+          cp -R assets/* "$pioneer_root/data/" || true
+          for subapp in params predict search; do
+            mkdir -p "$pioneer_root/apps/$subapp/data"
+            cp -R assets/* "$pioneer_root/apps/$subapp/data/" || true
+          done
+
       - name: Write bundled version
         shell: bash
         run: |
-          echo "${{ steps.get_version.outputs.version }}" > \
-            build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
+          pioneer_root="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
+          echo "${{ steps.get_version.outputs.version }}" > "$pioneer_root/VERSION"
+          for subapp in params predict search convert; do
+            echo "${{ steps.get_version.outputs.version }}" > "$pioneer_root/apps/$subapp/VERSION"
+          done
 
       - name: Codesign & package macOS app
         if: env.MACOS_CERT_P12 != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.package_installer)
@@ -305,9 +342,7 @@ jobs:
           rm -rf "$PKGROOT"
           mkdir -p "$PKGROOT/usr/local/$APP"
           cp -R "$DIST"/* "$PKGROOT/usr/local/$APP/"
-          mkdir -p "$PKGROOT/usr/local/$APP/data"
-          cp -R assets/* "$PKGROOT/usr/local/$APP/data/" || true
-          chmod -R a+w "$PKGROOT/usr/local/$APP/share/julia" || true
+          find "$PKGROOT/usr/local/$APP" -path '*/share/julia' -exec chmod -R a+w {} + || true
 
           # Sign every file with retry
           while IFS= read -r -d '' f; do

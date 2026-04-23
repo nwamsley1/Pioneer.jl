@@ -1,0 +1,13 @@
+name = "PioneerCommon"
+uuid = "722b9d6e-a0ae-433b-9347-6cd24630ba23"
+version = "0.7.4"
+authors = ["Nathan Wamsley", "Dennis Goldfarb"]
+
+[deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+
+[compat]
+Interpolations = "0.15, 0.16"
+julia = "1.12"

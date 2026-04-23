@@ -220,6 +220,37 @@ esac
     #    SUBCOMMAND="GetParseSpecLibParams"
     #    ;;
 
-# Call the actual Pioneer executable with subcommand and its arguments
-# The executables are in the bin/ subdirectory relative to the script location
-exec "$SCRIPT_DIR/bin/$SUBCOMMAND" "${SUBCOMMAND_ARGS[@]}"
+resolve_executable_path() {
+    local executable_name="$1"
+
+    case "$executable_name" in
+        GetSearchParams|GetBuildLibParams|GetParseSpecLibParams)
+            if [ -x "$SCRIPT_DIR/apps/params/bin/$executable_name" ]; then
+                echo "$SCRIPT_DIR/apps/params/bin/$executable_name"
+                return
+            fi
+            ;;
+        BuildSpecLib)
+            if [ -x "$SCRIPT_DIR/apps/predict/bin/$executable_name" ]; then
+                echo "$SCRIPT_DIR/apps/predict/bin/$executable_name"
+                return
+            fi
+            ;;
+        SearchDIA)
+            if [ -x "$SCRIPT_DIR/apps/search/bin/$executable_name" ]; then
+                echo "$SCRIPT_DIR/apps/search/bin/$executable_name"
+                return
+            fi
+            ;;
+        convertMzML)
+            if [ -x "$SCRIPT_DIR/apps/convert/bin/$executable_name" ]; then
+                echo "$SCRIPT_DIR/apps/convert/bin/$executable_name"
+                return
+            fi
+            ;;
+    esac
+
+    echo "$SCRIPT_DIR/bin/$executable_name"
+}
+
+exec "$(resolve_executable_path "$SUBCOMMAND")" "${SUBCOMMAND_ARGS[@]}"

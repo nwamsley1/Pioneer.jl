@@ -1,0 +1,18 @@
+name = "PioneerConvert"
+uuid = "d0bd7c82-dff2-47fc-80b8-8504b1185c05"
+version = "0.7.4"
+authors = ["Nathan Wamsley", "Dennis Goldfarb"]
+
+[deps]
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+EzXML = "8f5d6c58-4d21-5cfd-889c-e3ad7ee6a615"
+
+[compat]
+Arrow = "2.8"
+CodecZlib = "0.7"
+DataFrames = "1.6"
+EzXML = "1"
+julia = "1.12"
