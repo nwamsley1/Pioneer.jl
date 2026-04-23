@@ -1,0 +1,3 @@
+[HostCPUFeatures]
+cpu_target = "generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+freeze_cpu_target = true
