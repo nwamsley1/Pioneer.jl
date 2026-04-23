@@ -24,7 +24,7 @@ end
 
 function check_params_bsp(json_string::String)
     # Parse user parameters
-    user_params = JSON.parse(json_string)
+    user_params = JSON.parse(json_string, dicttype=Dict{String,Any})
     
     # Always use full defaults - user values will be merged over them
     defaults = get_build_default_parameters()
@@ -220,7 +220,7 @@ Returns:
 - Parsed and validated parameters dictionary
 """
 function checkParseSpecLibParams(json_path::String)
-    params = JSON.parsefile(json_path)
+    params = JSON.parsefile(json_path, dicttype=Dict{String,Any})
     
     # Helper function to check if a key exists and has the correct type
     function check_param(dict, key, expected_type)

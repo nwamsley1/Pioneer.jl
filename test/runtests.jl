@@ -176,6 +176,7 @@ end
     include("./UnitTests/PdfUtilsTests.jl")
     include("./UnitTests/BuildPreferencesTests.jl")
     include("./UnitTests/test_pioneer_predict_bootstrap_order.jl")
+    include("./UnitTests/test_pioneer_predict_build_defaults_boundary.jl")
     include("./UnitTests/test_pioneer_simd_runtime_boundary.jl")
     include("./UnitTests/test_search_json_object_defaults.jl")
     # Add focused FileOperations tests (Arrow IO, core, streaming)
