@@ -179,6 +179,7 @@ end
     include("./UnitTests/test_pioneer_predict_build_defaults_boundary.jl")
     include("./UnitTests/test_pioneer_predict_koina_response_boundary.jl")
     include("./UnitTests/test_pioneer_simd_runtime_boundary.jl")
+    include("./UnitTests/test_package_compat_alignment.jl")
     include("./UnitTests/test_search_json_object_defaults.jl")
     # Add focused FileOperations tests (Arrow IO, core, streaming)
     include("./utils/FileOperations/io/test_arrow_operations_basic.jl")

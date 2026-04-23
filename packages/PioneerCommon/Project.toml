@@ -10,4 +10,5 @@ Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
 [compat]
 Interpolations = "0.15, 0.16"
+Logging = "1.11.0"
 julia = "1.12"
