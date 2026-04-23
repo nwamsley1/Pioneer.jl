@@ -11,7 +11,7 @@ using EzXML
 using FASTX
 using Interpolations
 using JSON, JLD2
-using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, Logging
+using LinearAlgebra, LinearSolve, LightXML, Logging
 using NumericalIntegration
 using Optim
 using Polynomials, ProgressBars, Printf
@@ -40,6 +40,11 @@ const PIONEER_PLOTS_MODULE = Ref{Union{Nothing, Module}}(nothing)
 
 global_logger(ConsoleLogger())
 Random.seed!(1776)
+
+function __init__()
+    load_pioneer_simd!()
+    return nothing
+end
 
 function get_pioneer_plots_module()::Module
     plots_module = PIONEER_PLOTS_MODULE[]

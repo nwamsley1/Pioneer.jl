@@ -9,8 +9,5 @@ PioneerPredict = "4cddfed8-3fb1-4302-8bc9-cb29ad99671b"
 [sources]
 PioneerPredict = { path = "../../packages/PioneerPredict" }
 
-[extras]
-HostCPUFeatures = "3e5b6fbb-0976-4d2c-9146-d79de83f2fb0"
-
 [compat]
 julia = "1.12"

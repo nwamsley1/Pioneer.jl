@@ -228,9 +228,7 @@ function getDistanceMetrics(w::Vector{T},
     ########
     #Get residuals
     #########
-    @turbo for i in range(1, H.m)
-        r[i] = zero(T)
-    end
+    fill_zero_chunk_kernel!(r, 1:H.m)
 
     for n in range(1, H.n_vals)
         if iszero(r[H.rowval[n]])
@@ -241,9 +239,7 @@ function getDistanceMetrics(w::Vector{T},
     for col in range(1, H.n)
         start = H.colptr[col]
         stop = H.colptr[col+1] - 1
-        for n in start:stop
-            r[H.rowval[n]] += w[col]*H.nzval[n]
-        end
+        sparse_axpy_rows_kernel!(r, H.rowval, H.nzval, w[col], start:stop)
     end
 
     # ------------------------------------------------------------------  
@@ -439,9 +435,7 @@ function getDistanceMetrics(w::Vector{T},
     ########
     #Get residuals
     #########
-    @turbo for i in range(1, H.m)
-        r[i] = zero(T)
-    end
+    fill_zero_chunk_kernel!(r, 1:H.m)
 
     for n in range(1, H.n_vals)
         if iszero(r[H.rowval[n]])
@@ -452,9 +446,7 @@ function getDistanceMetrics(w::Vector{T},
     for col in range(1, H.n)
         start = H.colptr[col]
         stop = H.colptr[col+1] - 1
-        for n in start:stop
-            r[H.rowval[n]] += w[col]*H.nzval[n]
-        end
+        sparse_axpy_rows_kernel!(r, H.rowval, H.nzval, w[col], start:stop)
     end
 
     for col in range(1, H.n)

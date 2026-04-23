@@ -23,6 +23,10 @@ const EXPECTED_PACKAGE_FILES = Dict(
         joinpath(REPO_ROOT, "packages", "PioneerSearch", "Project.toml"),
         joinpath(REPO_ROOT, "packages", "PioneerSearch", "src", "PioneerSearch.jl")
     ),
+    "PioneerSIMD" => (
+        joinpath(REPO_ROOT, "packages", "PioneerSIMD", "Project.toml"),
+        joinpath(REPO_ROOT, "packages", "PioneerSIMD", "src", "PioneerSIMD.jl")
+    ),
     "PioneerParamsApp" => (
         joinpath(REPO_ROOT, "apps", "PioneerParamsApp", "Project.toml"),
         joinpath(REPO_ROOT, "apps", "PioneerParamsApp", "src", "PioneerParamsApp.jl")

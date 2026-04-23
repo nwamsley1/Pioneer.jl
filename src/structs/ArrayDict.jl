@@ -31,10 +31,7 @@ function update!(c::ArrayDict{I,C}, key::I, val::C) where {I,C<:Unsigned}
 end
 
 function reset!(c::ArrayDict{I,C}) where {I,C<:Unsigned}
-    @turbo for i in range(1, c.size)
-        c.vals[c.keys[i]] = zero(I)
-        c.keys[i] = zero(C)
-    end
+    arraydict_reset_kernel!(c.keys, c.vals, c.size)
     c.size = 0
 end
 

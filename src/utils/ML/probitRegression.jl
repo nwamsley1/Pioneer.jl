@@ -43,15 +43,7 @@ end
 
 function fillXWX!(XWX::Matrix{T}, X::DataFrame, W::Vector{T}) where {T<:AbstractFloat}
     @noinline function fillCell(XWX::T, Xi::Vector{R}, Xj::Vector{V}, W::Vector{T}) where {T<:AbstractFloat, R,V<:Real}
-        #N = 8
-        #lane = VecRange{N}(0)
-        #@inbounds for i in 1:N:length(W)
-        #    XWX += Xi[lane + i]*W[lane + i]*Xj[lane + i]
-        #end
-        @turbo for i in 1:length(W)
-            XWX += Xi[i]*W[i]*Xj[i]
-        end
-        return XWX
+        return XWX + weighted_triple_sum_kernel(Xi, W, Xj)
     end
     for i in range(1, size(XWX, 1))
         tasks = map(range(1, size(X, 2))) do j
@@ -66,10 +58,7 @@ end
 function fillY!(Y::Vector{T}, X::DataFrame, W::Vector{T}, Z::Vector{T}) where {T<:AbstractFloat}
 
         @noinline function fillCell(Y::T, X::Vector{R}, W::Vector{T}, Z::Vector{T}) where {T<:AbstractFloat,R<:Real}
-            @turbo for i in range(1, length(W))
-                Y += X[i]*W[i]*Z[i]
-            end
-            return Y
+            return Y + weighted_triple_sum_kernel(X, W, Z)
         end
 
         tasks = map(range(1, size(X, 2))) do col
@@ -88,9 +77,7 @@ function fillη!(η::Vector{T}, X::DataFrame, β::Vector{T}, bounds::Tuple{T, T}
     function fillColumn!(η::Vector{T}, X::Vector{R}, β::T, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat,R<:Real}
         tasks = map(data_chunks) do row_chunk
             Threads.@spawn begin
-                @turbo for row in row_chunk
-                    η[row] += X[row]*β
-                end
+                scaled_add_chunk_kernel!(η, X, β, row_chunk)
             end
         end
         fetch.(tasks)
@@ -99,9 +86,7 @@ function fillη!(η::Vector{T}, X::DataFrame, β::Vector{T}, bounds::Tuple{T, T}
     #Initialize Z-scores to zero
     tasks = map(data_chunks) do row_chunk
         Threads.@spawn begin
-            @turbo for row in row_chunk
-                η[row] = zero(T)
-            end
+            fill_zero_chunk_kernel!(η, row_chunk)
         end
     end
     fetch.(tasks)
@@ -126,11 +111,7 @@ end
 function vecSum!(v::Vector{T}, data_chunks) where {T<:AbstractFloat}
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin
-            vsum = zero(T)
-            @turbo for i in chunk
-                vsum += v[i]
-            end
-            return vsum
+            return sum_chunk_kernel(v, chunk)
         end
     end
     return sum(fetch.(tasks))
@@ -311,4 +292,3 @@ function ModelPredictCVFold!(scores::Vector{U},
     fetch.(tasks)
 
 end
-

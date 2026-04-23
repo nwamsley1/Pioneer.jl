@@ -30,7 +30,7 @@ using EzXML
 using FASTX
 using Interpolations
 using JSON, JLD2
-using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, Logging
+using LinearAlgebra, LinearSolve, LightXML, Logging
 using Measures
 using NumericalIntegration
 using Optim
@@ -60,6 +60,7 @@ include(joinpath(@__DIR__, "shared", "asset_utils.jl"))
 include(joinpath(@__DIR__, "shared", "plot_specs.jl"))
 include(joinpath(@__DIR__, "shared", "runtime_core.jl"))
 include(joinpath(@__DIR__, "shared", "logging_utils.jl"))
+include(joinpath(@__DIR__, "shared", "simd_kernels.jl"))
 
 #Set Seed 
 Random.seed!(1776);
@@ -78,6 +79,7 @@ include(joinpath(@__DIR__, "shared", "koina_model_constants.jl"))
 function __init__()
     # Don't initialize gr() immediately - let it be initialized when first used
     ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
+    load_pioneer_simd!()
 end
 
 export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams, convertMzML, # ParseSpecLib, GetParseSpecLibParams, # COMMENTED OUT: ParseSpecLib has loading issues

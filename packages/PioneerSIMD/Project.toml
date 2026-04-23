@@ -1,0 +1,15 @@
+name = "PioneerSIMD"
+uuid = "05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"
+version = "0.7.4"
+authors = ["Nathan Wamsley", "Dennis Goldfarb"]
+
+[deps]
+LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
+PioneerCommon = "722b9d6e-a0ae-433b-9347-6cd24630ba23"
+
+[sources]
+PioneerCommon = { path = "../PioneerCommon" }
+
+[compat]
+LoopVectorization = "0.12"
+julia = "1.12"

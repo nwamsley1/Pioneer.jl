@@ -169,18 +169,7 @@ end
 
 
 function reset!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
-    @turbo for i in range(1, sa.n_vals)
-    #for i in range(1, sa.n_vals)
-        sa.colval[i] = zero(UInt16)
-        sa.rowval[i] = zero(Ti)
-        sa.x[i] = zero(T)
-        sa.nzval[i] = zero(T)
-        sa.matched[i] = true
-        sa.colptr[i] = zero(Ti)
-    end
-    @turbo for i in range(1, sa.n_vals)
-        sa.isotope[i] = zero(eltype(sa.isotope))
-    end
+    sparsearray_reset_kernel!(sa.colval, sa.rowval, sa.x, sa.nzval, sa.matched, sa.colptr, sa.isotope, sa.n_vals)
     sa.n_vals = 0
     sa.m = 0
     sa.n = 0
@@ -224,9 +213,7 @@ function initResiduals!( r::Vector{T}, sa::SparseArray{Ti,T}, w::Vector{T}) wher
         append!(r, zeros(T, sa.m - length(r)))
     end
 
-    @turbo for i in range(1, sa.m)
-        r[i] = zero(T)
-    end
+    fill_zero_chunk_kernel!(r, 1:sa.m)
 
     for n in range(1, sa.n_vals)
         if iszero(r[sa.rowval[n]])
@@ -237,10 +224,7 @@ function initResiduals!( r::Vector{T}, sa::SparseArray{Ti,T}, w::Vector{T}) wher
     for col in range(1, sa.n)
         start = sa.colptr[col]
         stop = sa.colptr[col+1] - 1
-        #@turbo for n in start:stop
-        for n in start:stop
-            r[sa.rowval[n]] += w[col]*sa.nzval[n]
-        end
+        sparse_axpy_rows_kernel!(r, sa.rowval, sa.nzval, w[col], start:stop)
     end
 end
 
@@ -253,8 +237,6 @@ function multiply!(sa::SparseArray{Ti,T}, w::Vector{T}, r::Vector{T}) where {Ti<
     for col in range(1, sa.n)
         start = sa.colptr[col]
         stop = sa.colptr[col+1] - 1
-        @turbo for n in start:stop
-            r[sa.rowval[n]] += w[col]*sa.nzval[n]
-        end
+        sparse_axpy_rows_kernel!(r, sa.rowval, sa.nzval, w[col], start:stop)
     end
 end

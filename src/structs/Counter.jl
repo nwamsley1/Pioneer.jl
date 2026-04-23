@@ -73,11 +73,7 @@ function sortCounter!(counter::Counter{I,C}) where {I,C<:Unsigned}
 end
 
 function reset!(c::Counter{I,C}) where {I,C<:Unsigned}
-    #for i in 1:(getSize(c) - 1)
-    @turbo for i in 1:(getSize(c) - 1)
-        c.counts[c.ids[i]] = zero(T);
-        c.ids[i] = zero(I)
-    end
+    counter_reset_kernel!(c.ids, c.counts, getSize(c) - 1)
     c.size, c.matches = 1, 0
     return nothing
 end

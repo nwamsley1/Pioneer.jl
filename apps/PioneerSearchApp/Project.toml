@@ -9,8 +9,5 @@ PioneerSearch = "151a6990-cb6c-4706-a64b-c15e62217f67"
 [sources]
 PioneerSearch = { path = "../../packages/PioneerSearch" }
 
-[extras]
-HostCPUFeatures = "3e5b6fbb-0976-4d2c-9146-d79de83f2fb0"
-
 [compat]
 julia = "1.12"

@@ -11,7 +11,7 @@ using EzXML
 using FASTX
 using Interpolations
 using JSON, JLD2
-using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, Logging
+using LinearAlgebra, LinearSolve, LightXML, Logging
 using NumericalIntegration
 using Optim
 using Polynomials, ProgressBars, Printf
@@ -37,6 +37,11 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))
 
 global_logger(ConsoleLogger())
 Random.seed!(1776)
+
+function __init__()
+    load_pioneer_simd!()
+    return nothing
+end
 
 GetBuildLibParams(args...; kwargs...) = PioneerParams.GetBuildLibParams(args...; kwargs...)
 main_GetBuildLibParams(argv=ARGS)::Cint = PioneerParams.main_GetBuildLibParams(argv)

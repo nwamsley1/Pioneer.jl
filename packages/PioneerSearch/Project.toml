@@ -30,13 +30,13 @@ LightXML = "9c8b4983-aa76-5018-a973-4c85ecc9e179"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
-LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
 MLJModelInterface = "e80e1ace-859a-464e-9ed9-23947d8ae3ea"
 NumericalIntegration = "e7bfaba1-d571-5449-8927-abc22e82249b"
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 PioneerCommon = "722b9d6e-a0ae-433b-9347-6cd24630ba23"
 PioneerParams = "fc87d0e0-10c0-40c1-9f6d-0d6a27f22e8d"
 PioneerPlots = "9adec8df-eb60-4bac-9b0a-4137287d3bbd"
+PioneerSIMD = "05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"
 Polynomials = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 ProgressBars = "49802e3a-d2f1-5c88-81d8-b72133a6f568"
@@ -56,6 +56,7 @@ Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 PioneerCommon = { path = "../PioneerCommon" }
 PioneerParams = { path = "../PioneerParams" }
 PioneerPlots = { path = "../PioneerPlots" }
+PioneerSIMD = { path = "../PioneerSIMD" }
 
 [compat]
 julia = "1.12"
