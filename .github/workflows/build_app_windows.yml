@@ -94,7 +94,7 @@ jobs:
       - name: Setup Julia
         uses: julia-actions/setup-julia@v3
         with:
-          version: '1.11'
+          version: '1.12'
           arch: ${{ matrix.arch }}
 
       - name: Cache Julia packages
@@ -120,15 +120,19 @@ jobs:
         shell: bash
         run: |
           export LIGHTGBM_LOG_LIBRARY_DISCOVERY=false
+          export PIONEER_APP_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+          export PIONEER_PRECOMPILE_CPU_TARGET="$PIONEER_APP_CPU_TARGET"
           fresh_depot="$(mktemp -d)"
           export JULIA_DEPOT_PATH="$(cygpath -w "$fresh_depot");$(cygpath -w "$HOME/.julia")"
+          # Julia 1.12 app builds are more reliable on the incremental PackageCompiler path.
           julia --threads auto --project=dev -e '
             using PackageCompiler;
             create_app(
               ".",
               "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
-              incremental=false,
+              incremental=true,
               force=true,
+              cpu_target=ENV["PIONEER_APP_CPU_TARGET"],
               executables=[
                 "GetSearchParams"=>"main_GetSearchParams",
                 "GetBuildLibParams"=>"main_GetBuildLibParams",

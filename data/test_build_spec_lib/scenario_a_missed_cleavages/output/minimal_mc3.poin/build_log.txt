@@ -65,7 +65,7 @@ Total Available System Memory: 48.0 GB
 Process Information:
 ------------------------------------------------------------------------------------------
 Number of Threads: 10
-Julia Version: 1.11.3
+Julia Version: 1.12.3
 System: arm64-apple-darwin24.0.0
 
 ==========================================================================================

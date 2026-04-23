@@ -45,7 +45,7 @@ Run Pioneer in a container without installing dependencies.
 ### Development Setup
 To work on Pioneer itself, set up a local development environment.
 
-1. Install **Julia 1.10** or higher from [julialang.org](https://julialang.org/downloads/) (only required for development; compiled releases bundle their own runtime).
+1. Install **Julia 1.12** or higher from [julialang.org](https://julialang.org/downloads/) (only required for development; compiled releases bundle their own runtime).
 2. Clone the repository:
    ```bash
    git clone https://github.com/nwamsley1/Pioneer.jl.git
