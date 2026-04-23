@@ -180,7 +180,7 @@ function buildPionLib(spec_lib_path::String,
     model_type
     );
     
-    serialize_to_jls(
+    serialize_library_detailed_frags(
         joinpath(spec_lib_path, "detailed_fragments.jls"),
         detailed_frags
     )
@@ -385,7 +385,7 @@ function buildPionLib(spec_lib_path::String,
     model_type
     );
     
-    serialize_to_jls(
+    serialize_library_detailed_frags(
         joinpath(spec_lib_path, "detailed_fragments.jls"),
         detailed_frags
     )

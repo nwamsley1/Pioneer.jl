@@ -302,7 +302,15 @@ function load_detailed_frags(filename::String)
 
     # Try new .jls format first
     if isfile(jls_path)
-        return deserialize_from_jls(jls_path)
+        try
+            return deserialize_library_detailed_frags(jls_path)
+        catch err
+            err_msg = sprint(showerror, err)
+            if err isa KeyError || occursin("Base.PkgId", err_msg)
+                throw(ArgumentError("Could not load legacy detailed fragment serialization from $(jls_path). Rebuild the library with the current Pioneer predict application. Original error: $(err_msg)"))
+            end
+            rethrow()
+        end
     end
 
     # Fall back to legacy .jld2 format with warning
@@ -753,5 +761,4 @@ function extract_pair_idx(pair_idx_column, idx)
 end
 getPairIdx(lp::LibraryPrecursors) = lp.data[:pair_id]
 #getPlex(lp::PlexedLibraryPrecursors)::Arrow.Primitive{I, Vector{I}} where {I<:Integer} = lp.data[:plex]
-
 
