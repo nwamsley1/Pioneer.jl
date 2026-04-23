@@ -218,6 +218,7 @@ jobs:
               joinpath(apps_root, "predict"),
               incremental=true,
               force=true,
+              include_transitive_dependencies=false,
               executables=["BuildSpecLib"=>"main_BuildSpecLib"]
             );
 
@@ -226,6 +227,7 @@ jobs:
               joinpath(apps_root, "search"),
               incremental=true,
               force=true,
+              include_transitive_dependencies=false,
               executables=["SearchDIA"=>"main_SearchDIA"]
             );
 

@@ -144,6 +144,7 @@ jobs:
               joinpath(apps_root, "predict"),
               incremental=true, force=true,
               cpu_target=ENV["PIONEER_APP_CPU_TARGET"],
+              include_transitive_dependencies=false,
               executables=["BuildSpecLib"=>"main_BuildSpecLib"]
             );
 
@@ -152,6 +153,7 @@ jobs:
               joinpath(apps_root, "search"),
               incremental=true, force=true,
               cpu_target=ENV["PIONEER_APP_CPU_TARGET"],
+              include_transitive_dependencies=false,
               executables=["SearchDIA"=>"main_SearchDIA"]
             );
 
