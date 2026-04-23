@@ -30,12 +30,14 @@ const PACKAGE_FILES = Dict(
     common_module = read(PACKAGE_FILES["PioneerCommon"][2], String)
     params_project = read(PACKAGE_FILES["PioneerParams"][1], String)
     params_module = read(PACKAGE_FILES["PioneerParams"][2], String)
+    params_generate = read(joinpath(REPO_ROOT, "packages", "PioneerParams", "src", "owned", "GenerateParams.jl"), String)
     plots_project = read(PACKAGE_FILES["PioneerPlots"][1], String)
     plots_module = read(PACKAGE_FILES["PioneerPlots"][2], String)
     predict_project = read(PACKAGE_FILES["PioneerPredict"][1], String)
     predict_module = read(PACKAGE_FILES["PioneerPredict"][2], String)
     search_project = read(PACKAGE_FILES["PioneerSearch"][1], String)
     search_module = read(PACKAGE_FILES["PioneerSearch"][2], String)
+    search_load_spectral_library = read(joinpath(REPO_ROOT, "src", "Routines", "SearchDIA", "ParseInputs", "loadSpectralLibrary.jl"), String)
 
     @test occursin("Dates", common_project)
     @test occursin("Interpolations", common_project)
@@ -48,6 +50,7 @@ const PACKAGE_FILES = Dict(
     @test occursin("PioneerCommon", params_project)
     @test occursin("using PioneerCommon", params_module)
     @test occursin("include(joinpath(@__DIR__, \"owned\", \"GenerateParams.jl\"))", params_module)
+    @test occursin("isa(regex_codes, AbstractDict)", params_generate)
 
     @test occursin("Plots", plots_project)
     @test occursin("module PioneerPlots", plots_module)
@@ -83,4 +86,5 @@ const PACKAGE_FILES = Dict(
     @test occursin("GetSearchParams(args...; kwargs...) = PioneerParams.GetSearchParams(args...; kwargs...)", search_module)
     @test occursin("GetParseSpecLibParams(args...; kwargs...) = PioneerParams.GetParseSpecLibParams(args...; kwargs...)", search_module)
     @test occursin("include(joinpath(@__DIR__, \"owned\", \"SearchDIA.jl\"))", search_module)
+    @test occursin("JSON.parsefile(config_path, dicttype=Dict{String,Any})", search_load_spectral_library)
 end

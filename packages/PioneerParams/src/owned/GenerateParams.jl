@@ -369,7 +369,7 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_inputs;
         default_organisms = config["fasta_header_regex_organisms"][1]
         
         # Process regex_codes based on type
-        if isa(regex_codes, Dict)
+        if isa(regex_codes, AbstractDict)
             # Single regex set - apply to all FASTA files
             accessions = get(regex_codes, "accessions", default_accessions)
             genes = get(regex_codes, "genes", default_genes)

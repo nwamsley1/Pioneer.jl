@@ -19,7 +19,7 @@
 Parse results for standard intensity prediction models.
 """
 function parse_koina_batch(model::InstrumentSpecificModel,
-                          response::Dict{String,Any})::KoinaBatchResult{Nothing}
+                          response::AbstractDict{String,<:Any})::KoinaBatchResult{Nothing}
     df = DataFrame()
     n_precs, n_frags = first(response["outputs"])["shape"]
     
@@ -39,7 +39,7 @@ end
 Parse results for instrument-agnostic models.
 """
 function parse_koina_batch(model::InstrumentAgnosticModel,
-                          response::Dict{String,Any})::KoinaBatchResult{Nothing}
+                          response::AbstractDict{String,<:Any})::KoinaBatchResult{Nothing}
     # Currently same as InstrumentSpecificModel
     parse_koina_batch(InstrumentSpecificModel(model.name), response)
 end
@@ -48,7 +48,7 @@ end
 Parse results for spline coefficient models.
 """
 function parse_koina_batch(model::SplineCoefficientModel,
-                          response::Dict{String,Any})::KoinaBatchResult{Vector{Float32}}
+                          response::AbstractDict{String,<:Any})::KoinaBatchResult{Vector{Float32}}
     df = DataFrame()
     n_precs, n_coef_per_frag, n_frags = response["outputs"][4]["shape"]
     knot_vector = Float32[]
@@ -86,7 +86,7 @@ end
 Parse results for retention time prediction models.
 """
 function parse_koina_batch(model::RetentionTimeModel,
-                          response::Dict{String,Any})::KoinaBatchResult{Nothing}
+                          response::AbstractDict{String,<:Any})::KoinaBatchResult{Nothing}
     df = DataFrame()
     
     for col in response["outputs"]
