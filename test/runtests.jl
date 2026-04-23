@@ -175,6 +175,7 @@ end
     include("./UnitTests/LogTruncationTests.jl")
     include("./UnitTests/PdfUtilsTests.jl")
     include("./UnitTests/BuildPreferencesTests.jl")
+    include("./UnitTests/test_pioneer_predict_bootstrap_order.jl")
     # Add focused FileOperations tests (Arrow IO, core, streaming)
     include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
     include("./utils/FileOperations/core/test_core_references_basic.jl")

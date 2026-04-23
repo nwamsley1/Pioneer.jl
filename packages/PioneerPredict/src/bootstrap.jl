@@ -81,12 +81,11 @@ function load_predict_sources()
         ],
     )
 
-    safe_include!(joinpath(REPO_ROOT, "src", "utils", "FileOperations", "FileOperations.jl"))
-    safe_include_directory!(joinpath(REPO_ROOT, "src", "structs", "KoinaStructs"))
-
     root_path = joinpath(REPO_ROOT, "src", "Routines", "BuildSpecLib")
 
     safe_include!(joinpath(root_path, "structs", "mods.jl"))
+    safe_include!(joinpath(REPO_ROOT, "src", "utils", "FileOperations", "FileOperations.jl"))
+    safe_include_directory!(joinpath(REPO_ROOT, "src", "structs", "KoinaStructs"))
     safe_include!(joinpath(root_path, "fasta", "fasta_parser.jl"))
     safe_include!(joinpath(root_path, "fasta", "fasta_digest.jl"))
     safe_include!(joinpath(root_path, "fasta", "fasta_utils.jl"))
