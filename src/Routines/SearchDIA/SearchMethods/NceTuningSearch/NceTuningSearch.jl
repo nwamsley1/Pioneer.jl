@@ -59,7 +59,7 @@ Holds NCE models and associated PSM data for each file.
 struct NceTuningSearchResults <: SearchResults
     nce_models::Dict{Int64, NceModel}
     nce_psms::DataFrame
-    nce_plots::Vector{Plots.Plot}
+    nce_plot_specs::Vector{MultiSeriesPlotSpec}
     nce_plot_dir::String
 end
 
@@ -177,7 +177,7 @@ function init_search_results(
     return NceTuningSearchResults(
         Dict{Int64, NceModel}(),
         DataFrame(),
-        Plots.Plot[],
+        MultiSeriesPlotSpec[],
         nce_model_plots_path
     )
 end
@@ -257,39 +257,56 @@ function process_file!(
             )
 
             fname = getFileIdToName(getMSData(search_context), ms_file_idx)
-            # Create the main plot
-            p = plot(
-                title = "NCE calibration for $fname",
-                right_margin = 50Plots.px
-            )
-
-            # Calculate bin range
-            pbins = LinRange(minimum(processed_psms[!,:prec_mz]), maximum(processed_psms[!,:prec_mz]), 100)
-
-            # Extend x-axis range to accommodate annotations
+            pbins = Float32.(LinRange(minimum(processed_psms[!,:prec_mz]), maximum(processed_psms[!,:prec_mz]), 100))
             x_range = maximum(pbins) - minimum(pbins)
+            plot_series = PlotSeriesSpec[]
+            annotations = PlotAnnotationSpec[]
 
-            # Plot each charge state with annotations
             for charge in sort(unique(processed_psms[!,:charge]))
-                # Calculate the curve
-                curve_values = nce_model.(pbins, charge)
-
-                # Plot the line
-                plot!(p, pbins, curve_values,
-                    label = "+"*string(charge))
-
-                # Add annotation at the rightmost point
-                last_x = pbins[end]
-                last_y = curve_values[end]
-
-                # Add text annotation
-                annotate!(p, [(last_x + x_range*0.02,  # Slight offset from end
-                            last_y,
-                            text("$(round(last_y, digits=1))",
-                                    :left,
-                                    8))])
+                curve_values = Float32.(nce_model.(pbins, charge))
+                push!(
+                    plot_series,
+                    PlotSeriesSpec(
+                        copy(pbins),
+                        curve_values,
+                        "+" * string(charge),
+                        :path,
+                        nothing,
+                        1.0f0,
+                        1.5f0,
+                        :solid,
+                        0.0f0,
+                    ),
+                )
+                push!(
+                    annotations,
+                    PlotAnnotationSpec(
+                        pbins[end] + x_range * 0.02f0,
+                        curve_values[end],
+                        string(round(curve_values[end], digits = 1)),
+                        :left,
+                        8,
+                    ),
+                )
             end
-            push!(results.nce_plots, p)
+
+            push!(
+                results.nce_plot_specs,
+                MultiSeriesPlotSpec(
+                    "NCE calibration for $fname",
+                    "Precursor m/z",
+                    "Optimal NCE",
+                    plot_series,
+                    :topright,
+                    true,
+                    nothing,
+                    maximum(pbins) + x_range * 0.08f0,
+                    nothing,
+                    nothing,
+                    50,
+                    annotations,
+                ),
+            )
             results.nce_models[ms_file_idx] = nce_model
             append!(results.nce_psms, processed_psms)
 
@@ -340,9 +357,9 @@ function summarize_results!(
         catch e
             @user_warn "Could not clear existing file: $e"
         end
-        if !isempty(results.nce_plots)
-            save_multipage_pdf(results.nce_plots, output_path)
-            empty!(results.nce_plots)
+        if !isempty(results.nce_plot_specs)
+            save_multipage_pdf(results.nce_plot_specs, output_path)
+            empty!(results.nce_plot_specs)
         end
     catch
         nothing

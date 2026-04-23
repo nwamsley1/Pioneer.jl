@@ -76,7 +76,7 @@ struct FirstPassSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
     ms1_mass_err_model::Base.Ref{<:MassErrorModel}
     ms1_ppm_errs::Vector{Float32}
-    ms1_mass_plots::Vector{Plots.Plot}
+    ms1_mass_plot_specs::Vector{MassErrorPlotSpec}
     qc_plots_folder_path::String
 end
 
@@ -200,7 +200,7 @@ function init_search_results(
         Base.Ref{DataFrame}(),
         Base.Ref{MassErrorModel}(),
         Vector{Float32}(),
-        Plots.Plot[],
+        MassErrorPlotSpec[],
         qc_dir
     )
 end
@@ -500,7 +500,7 @@ function process_search_results!(
     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     # Generate mass error plot
-    push!(results.ms1_mass_plots, generate_ms1_mass_error_plot(results, parsed_fname))
+    push!(results.ms1_mass_plot_specs, generate_ms1_mass_error_plot(results, parsed_fname))
     # Update models in search context
     setMs1MassErrorModel!(search_context, ms_file_idx, getMs1MassErrorModel(results))
 end
@@ -614,9 +614,8 @@ function summarize_results!(
         @user_warn "Could not clear existing file: $e"
     end
 
-    if !isempty(results.ms1_mass_plots)
-        save_multipage_pdf(results.ms1_mass_plots, output_path)
-        empty!(results.ms1_mass_plots)
+    if !isempty(results.ms1_mass_plot_specs)
+        save_multipage_pdf(results.ms1_mass_plot_specs, output_path)
+        empty!(results.ms1_mass_plot_specs)
     end
 end
-

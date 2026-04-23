@@ -1058,21 +1058,38 @@ Saves plot to quad_plot_dir/quad_data directory.
 """
 
 function plot_charge_distributions(psms::DataFrame, results::QuadTuningSearchResults, fname::String)
-    p = plot(title = "Quad Model Data for $fname")
+    plot_series = PlotSeriesSpec[]
     for charge in 2:3
         mask = psms[!, :prec_charge] .== charge
-        plot!(p, 
-            psms[mask, :x0],
-            psms[mask, :yt],
-            seriestype=:scatter,
-            alpha=0.1,
-            label="Charge $charge",
-            xlabel = "m/z offset of M0",
-            ylabel = L"log(\delta_i\frac{x_0}{x_1})",
-            ylim = (-10.5, 10.5)
+        push!(
+            plot_series,
+            PlotSeriesSpec(
+                Float32.(collect(skipmissing(psms[mask, :x0]))),
+                Float32.(collect(skipmissing(psms[mask, :yt]))),
+                "Charge $charge",
+                :scatter,
+                nothing,
+                0.1f0,
+                1.0f0,
+                :solid,
+                2.0f0,
+            ),
         )
     end
-   return p
+    return MultiSeriesPlotSpec(
+        "Quad Model Data for $fname",
+        "m/z offset of M0",
+        "log(delta_i * x0 / x1)",
+        plot_series,
+        :topright,
+        true,
+        nothing,
+        nothing,
+        -10.5f0,
+        10.5f0,
+        0,
+        PlotAnnotationSpec[],
+    )
 end
 
 
@@ -1094,11 +1111,35 @@ Saves plot to quad_plot_dir/quad_models directory.
 function plot_quad_model(quad_model::QuadTransmissionModel, window_width::Float64, results::QuadTuningSearchResults, fname::String)
     padding = 2
     half_width = padding + window_width/2
-    plot_bins = LinRange(-half_width, half_width, 100)
+    plot_bins = Float32.(LinRange(-half_width, half_width, 100))
 
     quad_func = getQuadTransmissionFunction(quad_model, 0.0f0, 2.0f0)
-    p = plot(plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5, title = "$fname")
-    return p
+    return MultiSeriesPlotSpec(
+        fname,
+        "m/z offset",
+        "Transmission",
+        [
+            PlotSeriesSpec(
+                plot_bins,
+                Float32.(quad_func.(plot_bins)),
+                nothing,
+                :path,
+                nothing,
+                0.5f0,
+                2.0f0,
+                :solid,
+                0.0f0,
+            ),
+        ],
+        nothing,
+        true,
+        nothing,
+        nothing,
+        nothing,
+        nothing,
+        0,
+        PlotAnnotationSpec[],
+    )
 end
 
 
@@ -1247,6 +1288,5 @@ function fit_quad_model(psms::DataFrame, window_width::Float64)
         ϵ3=1e-5
     )
 end
-
 
 

@@ -71,8 +71,8 @@ struct QuadTuningSearchResults <: SearchResults
     }}}
     quad_model::Base.Ref{QuadTransmissionModel}
     quad_plot_dir::String
-    quad_model_plots::Vector{Plots.Plot}
-    quad_data_plots::Vector{Plots.Plot}
+    quad_model_plot_specs::Vector{MultiSeriesPlotSpec}
+    quad_data_plot_specs::Vector{MultiSeriesPlotSpec}
 end
 
 """
@@ -232,8 +232,8 @@ function init_search_results(::QuadTuningSearchParameters, search_context::Searc
         temp_data,
         Ref{QuadTransmissionModel}(),
         qpp,
-        Plots.Plot[],
-        Plots.Plot[]
+        MultiSeriesPlotSpec[],
+        MultiSeriesPlotSpec[]
     )
 end
 
@@ -348,14 +348,14 @@ function process_file!(
         end
 
         # Plot charge states
-        push!(results.quad_data_plots, plot_charge_distributions(total_psms, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
+        push!(results.quad_data_plot_specs, plot_charge_distributions(total_psms, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
         
         # Fit quad model
         window_width = parse(Float64, first(window_widths))
         fitted_model = RazoQuadModel(fit_quad_model(total_psms, window_width))
         setQuadModel(results, fitted_model)
         # Plot quad model
-        push!(results.quad_model_plots, plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
+        push!(results.quad_model_plot_specs, plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
 
 
     catch e
@@ -405,14 +405,14 @@ function summarize_results!(
         @user_warn "\nCould not clear existing file: $e"
     end
 
-    if !isempty(results.quad_model_plots)
-        save_multipage_pdf(results.quad_model_plots, models_path)
-        empty!(results.quad_model_plots)
+    if !isempty(results.quad_model_plot_specs)
+        save_multipage_pdf(results.quad_model_plot_specs, models_path)
+        empty!(results.quad_model_plot_specs)
     end
 
-    if !isempty(results.quad_data_plots)
-        save_multipage_pdf(results.quad_data_plots, data_path)
-        empty!(results.quad_data_plots)
+    if !isempty(results.quad_data_plot_specs)
+        save_multipage_pdf(results.quad_data_plot_specs, data_path)
+        empty!(results.quad_data_plot_specs)
     end
 
     reset_precursor_arrays!(search_context)

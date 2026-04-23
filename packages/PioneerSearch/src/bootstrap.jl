@@ -127,7 +127,6 @@ function load_search_sources()
             "safeFileOps.jl",
             "proteinInference.jl",
             "profile.jl",
-            "pdfUtils.jl",
         ],
     )
 
@@ -183,7 +182,7 @@ function load_search_sources()
         end
     end
 
-    safe_include_directory!(joinpath(REPO_ROOT, "src", "Routines", "SearchDIA", "WriteOutputs"))
+    include_files!(joinpath(REPO_ROOT, "src", "Routines", "SearchDIA", "WriteOutputs"), ["writeCSVTables.jl"])
     safe_include!(joinpath(REPO_ROOT, "src", "Routines", "SearchDIA", "LibrarySearch.jl"))
 
     return nothing

@@ -1,2 +1,2 @@
-# Owned by `packages/PioneerSearch/src/owned/GenerateParams.jl`.
-include(joinpath(@__DIR__, "..", "..", "packages", "PioneerSearch", "src", "owned", "GenerateParams.jl"))
+# Owned by `packages/PioneerParams/src/owned/GenerateParams.jl`.
+include(joinpath(@__DIR__, "..", "..", "packages", "PioneerParams", "src", "owned", "GenerateParams.jl"))

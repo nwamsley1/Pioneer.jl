@@ -168,7 +168,7 @@ function SearchDIA(params_path::String)
         end
     end
     max_bytes_val = clamp(max_bytes_val, 1024, 1048576)
-    Pioneer.MAX_LOG_MSG_BYTES[] = max_bytes_val
+    Runtime.MAX_LOG_MSG_BYTES[] = max_bytes_val
     
     # Open FOUR log files
     essential_path = joinpath(params.paths[:results], "pioneer_search_report.txt")
@@ -176,12 +176,12 @@ function SearchDIA(params_path::String)
     debug_path = joinpath(params.paths[:results], "pioneer_search_debug.log")
     warnings_path = joinpath(params.paths[:results], "pioneer_warnings.log")
     
-    Pioneer.ESSENTIAL_FILE[] = open(essential_path, "w")
-    Pioneer.CONSOLE_FILE[] = open(console_path, "w")
-    Pioneer.DEBUG_FILE[] = open(debug_path, "w")
-    Pioneer.WARNINGS_FILE[] = open(warnings_path, "w")
+    Runtime.ESSENTIAL_FILE[] = open(essential_path, "w")
+    Runtime.CONSOLE_FILE[] = open(console_path, "w")
+    Runtime.DEBUG_FILE[] = open(debug_path, "w")
+    Runtime.WARNINGS_FILE[] = open(warnings_path, "w")
     
-    pioneer_version = Pioneer.get_pioneer_version()
+    pioneer_version = Runtime.get_pioneer_version()
     
     # Essential file - clean header (like dual_println)
     essential_header = [
@@ -194,12 +194,12 @@ function SearchDIA(params_path::String)
         ""
     ]
     for line in essential_header
-        println(Pioneer.ESSENTIAL_FILE[], line)
+        println(Runtime.ESSENTIAL_FILE[], line)
     end
     
     # Console file - same header
     for line in essential_header
-        println(Pioneer.CONSOLE_FILE[], line)
+        println(Runtime.CONSOLE_FILE[], line)
     end
     
     # Debug file - detailed header
@@ -215,7 +215,7 @@ function SearchDIA(params_path::String)
         ""
     ]
     for line in debug_header
-        println(Pioneer.DEBUG_FILE[], line)
+        println(Runtime.DEBUG_FILE[], line)
     end
     
     # Warnings file - simple header
@@ -228,7 +228,7 @@ function SearchDIA(params_path::String)
         ""
     ]
     for line in warnings_header
-        println(Pioneer.WARNINGS_FILE[], line)
+        println(Runtime.WARNINGS_FILE[], line)
     end
     
     # Log initialization message
@@ -364,18 +364,18 @@ function SearchDIA(params_path::String)
         # Count warnings if any exist
         warning_count = 0
         warnings_full_path = ""  # Store full path for display
-        if Pioneer.WARNINGS_FILE[] !== nothing
+        if Runtime.WARNINGS_FILE[] !== nothing
             # Close and get full path
-            close(Pioneer.WARNINGS_FILE[])
+            close(Runtime.WARNINGS_FILE[])
             warnings_full_path = abspath(warnings_path)  # Get absolute path
             if isfile(warnings_path)
                 warning_count = max(0, countlines(warnings_path) - 5)  # Subtract header lines
             end
-            Pioneer.WARNINGS_FILE[] = nothing
+            Runtime.WARNINGS_FILE[] = nothing
         end
         
         # Close all four files with appropriate footers
-        if Pioneer.ESSENTIAL_FILE[] !== nothing
+        if Runtime.ESSENTIAL_FILE[] !== nothing
             footer = ["", "=" ^ 90]
             if warning_count > 0
                 push!(footer, "⚠️  $warning_count warnings were generated during search")
@@ -383,13 +383,13 @@ function SearchDIA(params_path::String)
             push!(footer, "Search completed at: $(Dates.now())")
             push!(footer, "=" ^ 90)
             for line in footer
-                println(Pioneer.ESSENTIAL_FILE[], line)
+                println(Runtime.ESSENTIAL_FILE[], line)
             end
-            close(Pioneer.ESSENTIAL_FILE[])
-            Pioneer.ESSENTIAL_FILE[] = nothing
+            close(Runtime.ESSENTIAL_FILE[])
+            Runtime.ESSENTIAL_FILE[] = nothing
         end
         
-        if Pioneer.CONSOLE_FILE[] !== nothing
+        if Runtime.CONSOLE_FILE[] !== nothing
             footer = ["", "=" ^ 90]
             if warning_count > 0
                 push!(footer, "⚠️  $warning_count warnings were generated during search")
@@ -397,19 +397,19 @@ function SearchDIA(params_path::String)
             push!(footer, "Search completed at: $(Dates.now())")
             push!(footer, "=" ^ 90)
             for line in footer
-                println(Pioneer.CONSOLE_FILE[], line)
+                println(Runtime.CONSOLE_FILE[], line)
             end
-            close(Pioneer.CONSOLE_FILE[])
-            Pioneer.CONSOLE_FILE[] = nothing
+            close(Runtime.CONSOLE_FILE[])
+            Runtime.CONSOLE_FILE[] = nothing
         end
         
-        if Pioneer.DEBUG_FILE[] !== nothing
+        if Runtime.DEBUG_FILE[] !== nothing
             footer = ["", "=" ^ 90, "Search completed at: $(Dates.now())", "=" ^ 90]
             for line in footer
-                println(Pioneer.DEBUG_FILE[], line)
+                println(Runtime.DEBUG_FILE[], line)
             end
-            close(Pioneer.DEBUG_FILE[])
-            Pioneer.DEBUG_FILE[] = nothing
+            close(Runtime.DEBUG_FILE[])
+            Runtime.DEBUG_FILE[] = nothing
         end
         
         # Print warning count to console if there were any

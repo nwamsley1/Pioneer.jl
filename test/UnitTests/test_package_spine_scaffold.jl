@@ -7,6 +7,14 @@ const EXPECTED_PACKAGE_FILES = Dict(
         joinpath(REPO_ROOT, "packages", "PioneerCommon", "Project.toml"),
         joinpath(REPO_ROOT, "packages", "PioneerCommon", "src", "PioneerCommon.jl")
     ),
+    "PioneerParams" => (
+        joinpath(REPO_ROOT, "packages", "PioneerParams", "Project.toml"),
+        joinpath(REPO_ROOT, "packages", "PioneerParams", "src", "PioneerParams.jl")
+    ),
+    "PioneerPlots" => (
+        joinpath(REPO_ROOT, "packages", "PioneerPlots", "Project.toml"),
+        joinpath(REPO_ROOT, "packages", "PioneerPlots", "src", "PioneerPlots.jl")
+    ),
     "PioneerPredict" => (
         joinpath(REPO_ROOT, "packages", "PioneerPredict", "Project.toml"),
         joinpath(REPO_ROOT, "packages", "PioneerPredict", "src", "PioneerPredict.jl")

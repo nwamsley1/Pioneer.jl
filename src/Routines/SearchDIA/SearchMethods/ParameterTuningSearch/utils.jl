@@ -850,26 +850,35 @@ Generates retention time alignment visualization plot.
 
 Creates scatter plot of RT vs iRT with fitted spline curve.
 """
+to_float32_vector(values) = Float32[Float32(value) for value in values]
+
+function build_rt_curve(rt_model, rt_min::Float32, rt_max::Float32)
+    curve_rt = Float32.(LinRange(rt_min, rt_max, 100))
+    curve_irt = Float32.(rt_model.(curve_rt))
+    return curve_rt, curve_irt
+end
+
 function generate_rt_plot(
     results::ParameterTuningSearchResults,
     title::String
 )
-    n = length(results.rt)
-    p = plot(
-        results.rt,
-        results.irt,
-        seriestype=:scatter,
-        title = title*"\n n = $n",
-        xlabel = "Retention Time RT (min)",
-        ylabel = "Indexed Retention Time iRT (min)",
-        label = nothing,
-        alpha = 0.1,
-        size = 100*[13.3, 7.5]
+    rt_data = to_float32_vector(results.rt)
+    irt_data = to_float32_vector(results.irt)
+    curve_rt, curve_irt = build_rt_curve(getRtToIrtModel(results), minimum(rt_data), maximum(rt_data))
+    return RtAlignmentPlotSpec(
+        title * "\n n = $(length(rt_data))",
+        rt_data,
+        irt_data,
+        curve_rt,
+        curve_irt,
+        nothing,
+        :red,
+        :solid,
+        3.0f0,
+        nothing,
+        nothing,
+        nothing,
     )
-    
-    pbins = LinRange(minimum(results.rt), maximum(results.rt), 100)
-    plot!(pbins, getRtToIrtModel(results).(pbins), lw=3, label=nothing)
-    return p
 end
 
 
@@ -889,42 +898,22 @@ function generate_mass_error_plot(
     results::ParameterTuningSearchResults,
     fname::String
 )
-    #p = histogram(results.ppm_errs)
-    #savefig(p, plot_path)
     mem = results.mass_err_model[]
-    errs = results.ppm_errs .+ getMassOffset(mem)
-    n = length(errs)
-    plot_title = fname
-    mass_err = getMassOffset(mem)
-    bins = LinRange(mass_err - 2*getLeftTol(mem), mass_err + 2*getRightTol(mem), 50)
-    p = Plots.histogram(errs,
-    orientation = :h, 
-    yflip = true,
-    #seriestype=:scatter,
-    title = plot_title*"\n n = $n",
-    xlabel = "Count",
-    ylabel = "Mass Error (ppm)",
-    label = nothing,
-    bins = bins,
-    ylim = (mass_err - 2*getLeftTol(mem), mass_err + 2*getRightTol(mem)),
-    topmargin =15mm,
-    #bottommargin = 10mm,
+    return MassErrorPlotSpec(
+        fname * "\n n = $(length(results.ppm_errs))",
+        to_float32_vector(results.ppm_errs .+ getMassOffset(mem)),
+        getMassOffset(mem),
+        getLeftTol(mem),
+        getRightTol(mem),
+        "Count",
+        "Mass Error (ppm)",
+        :horizontal,
+        nothing,
+        nothing,
+        nothing,
+        nothing,
+        nothing,
     )
-
-    mass_err = getMassOffset(mem)
-    Plots.hline!([mass_err], label = nothing, color = :black, lw = 2)
-    Plots.annotate!(last(xlims(p)), mass_err, text("$mass_err", :black, :right, :bottom, 12))
-
-
-    l_err = mass_err - getLeftTol(mem)
-    Plots.hline!([l_err], label = nothing, color = :black, lw = 2)
-    Plots.annotate!(last(xlims(p)), l_err, text("$l_err", :black, :right, :bottom, 12))
-    r_err = mass_err + getRightTol(mem)
-    Plots.hline!([r_err], label = nothing, color = :black, lw = 2)
-    Plots.annotate!(last(xlims(p)), r_err, text("$r_err", :black, :right, :bottom, 12))
-
-    return p
-
 end
 
 """
@@ -955,45 +944,38 @@ function generate_best_iteration_rt_plot_in_memory(
     end
     
     if rt_data !== nothing && irt_data !== nothing && length(rt_data) > 0
-        # We have data, generate normal plot with annotation
-        n = length(rt_data)
-        p = plot(
-            rt_data,
-            irt_data,
-            seriestype=:scatter,
-            title = fname * "\n(Best Iteration: Phase $(iteration_state.best_phase), Score $(iteration_state.best_score))\nn = $n",
-            xlabel = "Retention Time RT (min)",
-            ylabel = "Indexed Retention Time iRT (min)",
-            label = nothing,
-            alpha = 0.1,
-            size = 100*[13.3, 7.5]
-        )
-        
-        # Add fitted model if available
         rt_model = getRtToIrtModel(results)
+        curve_rt = Float32[]
+        curve_irt = Float32[]
+        curve_label = nothing
         if !isa(rt_model, IdentityModel)
-            rt_sorted = sort(rt_data)
-            irt_predicted = rt_model.(rt_sorted)
-            Plots.plot!(rt_sorted, irt_predicted, lw=2, color=:red, 
-                       label="Fitted Spline ($(iteration_state.best_psm_count) PSMs)")
+            sorted_rt = sort(Float32.(rt_data))
+            curve_rt = Float32.(sorted_rt)
+            curve_irt = Float32.(rt_model.(sorted_rt))
+            curve_label = "Fitted Spline ($(iteration_state.best_psm_count) PSMs)"
         end
-        
-        # Add annotation with best iteration details
         annotation_text = "Best Iteration: Phase $(iteration_state.best_phase), " *
                          "Score $(iteration_state.best_score), " *
                          "Iteration $(iteration_state.best_iteration)\n" *
                          "$(iteration_state.best_psm_count) PSMs found"
-        
-        Plots.annotate!(mean(results.rt), minimum(results.irt) + 5, 
-                       text(annotation_text, :center, 8))
-    else
-        # No RT data, generate informative fallback plot
-        p = generate_fallback_rt_plot_with_iteration_info(
-            results, fname, iteration_state
+
+        return RtAlignmentPlotSpec(
+            fname * "\n(Best Iteration: Phase $(iteration_state.best_phase), Score $(iteration_state.best_score))\n n = $(length(rt_data))",
+            to_float32_vector(rt_data),
+            to_float32_vector(irt_data),
+            curve_rt,
+            curve_irt,
+            curve_label,
+            :red,
+            :solid,
+            2.0f0,
+            annotation_text,
+            Float32(mean(rt_data)),
+            Float32(minimum(irt_data) + 5),
         )
+    else
+        return generate_fallback_rt_plot_with_iteration_info(results, fname, iteration_state)
     end
-    
-    return p
 end
 
 
@@ -1007,39 +989,42 @@ function generate_fallback_rt_plot_with_iteration_info(
     fname::String,
     iteration_state::IterationState
 )
-    p = Plots.plot(
-        title = fname * "\n⚠️ Using Best Iteration Parameters (No RT Data)",
-        xlabel = "Retention Time RT (min)",
-        ylabel = "Indexed Retention Time iRT (min)",
-        size = 100*[13.3, 7.5],
-        grid = true
-    )
-    
-    # Add identity line or model curve
     rt_model = getRtToIrtModel(results)
+    curve_rt = Float32.(LinRange(0.0f0, 120.0f0, 100))
+    curve_irt = Float32[]
+    curve_label = nothing
+    curve_color = :blue
+    curve_style = :solid
     if isa(rt_model, IdentityModel)
-        rt_range = [0, 120]
-        Plots.plot!(rt_range, rt_range, 
-                   lw=2, ls=:dash, color=:red,
-                   label="Identity Model (Insufficient Data)")
+        curve_rt = Float32[0.0f0, 120.0f0]
+        curve_irt = Float32[0.0f0, 120.0f0]
+        curve_label = "Identity Model (Insufficient Data)"
+        curve_color = :red
+        curve_style = :dash
     else
-        rt_range = LinRange(0, 120, 100)
-        Plots.plot!(rt_range, rt_model.(rt_range),
-                   lw=2, color=:blue,
-                   label="RT Model from Best Iteration")
+        curve_irt = Float32.(rt_model.(curve_rt))
+        curve_label = "RT Model from Best Iteration"
     end
-    
-    # Add annotation with best iteration details
-    annotation_text = "Best Iteration Results:\n" *
-                     "Phase $(iteration_state.best_phase), " *
-                     "Score $(iteration_state.best_score), " *
-                     "Iteration $(iteration_state.best_iteration)\n" *
-                     "$(iteration_state.best_psm_count) PSMs found\n" *
-                     "(Insufficient data for RT calibration)"
-    
-    Plots.annotate!(60, 40, text(annotation_text, :center, 10))
-    
-    return p
+
+    return RtAlignmentPlotSpec(
+        fname * "\n⚠️ Using Best Iteration Parameters (No RT Data)",
+        Float32[],
+        Float32[],
+        curve_rt,
+        curve_irt,
+        curve_label,
+        curve_color,
+        curve_style,
+        2.0f0,
+        "Best Iteration Results:\n" *
+        "Phase $(iteration_state.best_phase), " *
+        "Score $(iteration_state.best_score), " *
+        "Iteration $(iteration_state.best_iteration)\n" *
+        "$(iteration_state.best_psm_count) PSMs found\n" *
+        "(Insufficient data for RT calibration)",
+        60.0f0,
+        40.0f0,
+    )
 end
 
 """
@@ -1056,35 +1041,25 @@ function generate_fallback_mass_plot_with_iteration_info(
     mass_offset = getMassOffset(mem)
     left_tol = getLeftTol(mem)
     right_tol = getRightTol(mem)
-    
-    p = Plots.plot(
-        title = fname * "\n⚠️ Using Best Iteration Parameters",
-        xlabel = "Count",
-        ylabel = "Mass Error (ppm)",
-        size = 100*[13.3, 7.5],
-        ylim = (-max(left_tol, right_tol) - 10, max(left_tol, right_tol) + 10),
-        grid = true,
-        yflip = true,
-        orientation = :h
+
+    return MassErrorPlotSpec(
+        fname * "\n⚠️ Using Best Iteration Parameters",
+        Float32[],
+        mass_offset,
+        left_tol,
+        right_tol,
+        "Count",
+        "Mass Error (ppm)",
+        :horizontal,
+        "Mass Offset: $(round(mass_offset, digits=2)) ppm",
+        "Tolerance Bounds",
+        "Best Iteration: Phase $(iteration_state.best_phase), " *
+        "Score $(iteration_state.best_score)\n" *
+        "$(iteration_state.best_psm_count) PSMs\n" *
+        "Tolerance: ±$(round((left_tol + right_tol) / 2, digits=1)) ppm",
+        0.0f0,
+        mass_offset,
     )
-    
-    # Draw tolerance boundaries
-    Plots.hline!([mass_offset], color=:black, lw=2, 
-               label="Mass Offset: $(round(mass_offset, digits=2)) ppm")
-    Plots.hline!([mass_offset - left_tol], color=:red, lw=1, ls=:dash, 
-               label="Lower Bound: -$(round(left_tol, digits=1)) ppm")
-    Plots.hline!([mass_offset + right_tol], color=:red, lw=1, ls=:dash, 
-               label="Upper Bound: +$(round(right_tol, digits=1)) ppm")
-    
-    # Add annotation with best iteration details
-    annotation_text = "Best Iteration: Phase $(iteration_state.best_phase), " *
-                     "Score $(iteration_state.best_score)\n" *
-                     "$(iteration_state.best_psm_count) PSMs\n" *
-                     "Tolerance: ±$(round((left_tol+right_tol)/2, digits=1)) ppm"
-    
-    Plots.annotate!(0, 0, text(annotation_text, :center, 10))
-    
-    return p
 end
 
 """
@@ -1099,37 +1074,37 @@ function generate_fallback_rt_plot_in_memory(
     search_context::SearchContext,
     ms_file_idx::Int64
 )
-    # Create an informative plot showing the fallback/borrowed status
-    p = Plots.plot(
-        title = fname * "\n⚠️ Using Fallback/Borrowed Parameters",
-        xlabel = "Retention Time RT (min)",
-        ylabel = "Indexed Retention Time iRT (min)",
-        size = 100*[13.3, 7.5],
-        grid = true
-    )
-    
-    # Add identity line if using identity model
     rt_model = getRtToIrtModel(results)
+    curve_rt = Float32.(LinRange(0.0f0, 120.0f0, 100))
+    curve_irt = Float32[]
+    curve_label = nothing
+    curve_color = :blue
+    curve_style = :solid
     if isa(rt_model, IdentityModel)
-        rt_range = [0, 120]  # Default RT range for visualization
-        Plots.plot!(rt_range, rt_range, 
-                   lw=2, ls=:dash, color=:red,
-                   label="Identity Model (Fallback)")
+        curve_rt = Float32[0.0f0, 120.0f0]
+        curve_irt = Float32[0.0f0, 120.0f0]
+        curve_label = "Identity Model (Fallback)"
+        curve_color = :red
+        curve_style = :dash
     else
-        # If borrowed, show the borrowed model
-        rt_range = LinRange(0, 120, 100)
-        Plots.plot!(rt_range, rt_model.(rt_range),
-                   lw=2, color=:blue,
-                   label="Borrowed RT Model")
+        curve_irt = Float32.(rt_model.(curve_rt))
+        curve_label = "Borrowed RT Model"
     end
-    
-    # Add text annotation explaining the situation
-    Plots.annotate!(60, 20, 
-                   text("Insufficient PSMs for RT calibration\n" *
-                        "Using conservative parameters", 
-                        :center, 10))
-    
-    return p  # Return plot for collection
+
+    return RtAlignmentPlotSpec(
+        fname * "\n⚠️ Using Fallback/Borrowed Parameters",
+        Float32[],
+        Float32[],
+        curve_rt,
+        curve_irt,
+        curve_label,
+        curve_color,
+        curve_style,
+        2.0f0,
+        "Insufficient PSMs for RT calibration\nUsing conservative parameters",
+        60.0f0,
+        20.0f0,
+    )
 end
 
 """
@@ -1148,31 +1123,22 @@ function generate_fallback_mass_error_plot_in_memory(
     mass_offset = getMassOffset(mem)
     left_tol = getLeftTol(mem)
     right_tol = getRightTol(mem)
-    
-    # Create an informative plot showing the tolerances being used
-    p = Plots.plot(
-        title = fname * "\n⚠️ Using Fallback/Borrowed Parameters",
-        xlabel = "Count",
-        ylabel = "Mass Error (ppm)",
-        size = 100*[13.3, 7.5],
-        ylim = (-max(left_tol, right_tol) - 10, max(left_tol, right_tol) + 10),
-        grid = true,
-        yflip = true,
-        orientation = :h
+
+    return MassErrorPlotSpec(
+        fname * "\n⚠️ Using Fallback/Borrowed Parameters",
+        Float32[],
+        mass_offset,
+        left_tol,
+        right_tol,
+        "Count",
+        "Mass Error (ppm)",
+        :horizontal,
+        "Mass Offset: $(round(mass_offset, digits=2)) ppm",
+        "Tolerance Bounds",
+        "Insufficient fragment matches\nTolerance: ±$(round((left_tol + right_tol) / 2, digits=1)) ppm",
+        0.0f0,
+        mass_offset,
     )
-    
-    # Draw tolerance boundaries
-    Plots.hline!([mass_offset], color=:black, lw=2, label="Mass Offset: $(round(mass_offset, digits=2)) ppm")
-    Plots.hline!([mass_offset - left_tol], color=:red, lw=1, ls=:dash, label="Lower Bound: -$(round(left_tol, digits=1)) ppm")
-    Plots.hline!([mass_offset + right_tol], color=:red, lw=1, ls=:dash, label="Upper Bound: +$(round(right_tol, digits=1)) ppm")
-    
-    # Add text annotation
-    Plots.annotate!(0, 0,
-                   text("Insufficient fragment matches\n" *
-                        "Tolerance: ±$(round((left_tol+right_tol)/2, digits=1)) ppm",
-                        :center, 10))
-    
-    return p  # Return plot for collection
 end
 
 # Legacy functions that save to disk (kept for backward compatibility)
@@ -1183,9 +1149,9 @@ function generate_fallback_rt_plot(
     search_context::SearchContext,
     ms_file_idx::Int64
 )
-    p = generate_fallback_rt_plot_in_memory(results, fname, search_context, ms_file_idx)
-    savefig(p, plot_path)
-    return p
+    plot_spec = generate_fallback_rt_plot_in_memory(results, fname, search_context, ms_file_idx)
+    save_multipage_pdf([plot_spec], plot_path)
+    return plot_spec
 end
 
 function generate_fallback_mass_error_plot(
@@ -1195,51 +1161,31 @@ function generate_fallback_mass_error_plot(
     search_context::SearchContext,
     ms_file_idx::Int64
 )
-    p = generate_fallback_mass_error_plot_in_memory(results, fname, search_context, ms_file_idx)
-    savefig(p, plot_path)
-    return p
+    plot_spec = generate_fallback_mass_error_plot_in_memory(results, fname, search_context, ms_file_idx)
+    save_multipage_pdf([plot_spec], plot_path)
+    return plot_spec
 end
 
 function generate_ms1_mass_error_plot(
     results::R,
     fname::String
 ) where {R<:SearchResults}
-    #p = histogram(results.ppm_errs)
-    #savefig(p, plot_path)
     mem = results.ms1_mass_err_model[]
-    errs = results.ms1_ppm_errs .+ getMassOffset(mem)
-    n = length(errs)
-    plot_title = fname
-    mass_err = getMassOffset(mem)
-    bins = LinRange(mass_err - 2*getLeftTol(mem), mass_err + 2*getRightTol(mem), 50)
-    p = Plots.histogram(errs,
-    orientation = :h, 
-    yflip = true,
-    #seriestype=:scatter,
-    title = plot_title*"\n n = $n",
-    xlabel = "Count",
-    ylabel = "Mass Error (ppm)",
-    label = nothing,
-    bins = bins,
-    ylim = (mass_err - 2*getLeftTol(mem), mass_err + 2*getRightTol(mem)),
-    topmargin =15mm,
-    #bottommargin = 10mm,
+    return MassErrorPlotSpec(
+        fname * "\n n = $(length(results.ms1_ppm_errs))",
+        to_float32_vector(results.ms1_ppm_errs .+ getMassOffset(mem)),
+        getMassOffset(mem),
+        getLeftTol(mem),
+        getRightTol(mem),
+        "Count",
+        "Mass Error (ppm)",
+        :horizontal,
+        nothing,
+        nothing,
+        nothing,
+        nothing,
+        nothing,
     )
-
-    mass_err = getMassOffset(mem)
-    Plots.hline!([mass_err], label = nothing, color = :black, lw = 2)
-    Plots.annotate!(last(xlims(p)), mass_err, text("$mass_err", :black, :right, :bottom, 12))
-
-
-    l_err = mass_err - getLeftTol(mem)
-    Plots.hline!([l_err], label = nothing, color = :black, lw = 2)
-    Plots.annotate!(last(xlims(p)), l_err, text("$l_err", :black, :right, :bottom, 12))
-    r_err = mass_err + getRightTol(mem)
-    Plots.hline!([r_err], label = nothing, color = :black, lw = 2)
-    Plots.annotate!(last(xlims(p)), r_err, text("$r_err", :black, :right, :bottom, 12))
-
-    return p
-
 end
 #==========================================================
 Utility Functions
@@ -1530,47 +1476,25 @@ function generate_best_iteration_mass_error_plot_in_memory(
             results, fname, iteration_state
         )
     end
-    
-    # Calculate statistics for the plot
-    median_error = median(ppm_errs)
-    mad_error = mad(ppm_errs, normalize=true)
-    
-    # Create histogram of mass errors
-    p = Plots.histogram(
-        ppm_errs,
-        bins=50,
-        xlabel="Mass Error (ppm)",
-        ylabel="Count",
-        title="$fname - Mass Error Distribution (Best Iteration)",
-        label="PPM Errors",
-        alpha=0.7,
-        color=:blue
+
+    median_error = Float32(median(ppm_errs))
+    mad_error = Float32(mad(ppm_errs, normalize=true))
+
+    return MassErrorPlotSpec(
+        "$fname - Mass Error Distribution (Best Iteration)\nPhase $(iteration_state.best_phase), Score $(iteration_state.best_score), Iteration $(iteration_state.best_iteration)\n$(iteration_state.best_psm_count) PSMs",
+        to_float32_vector(ppm_errs),
+        median_error,
+        mad_error,
+        mad_error,
+        "Mass Error (ppm)",
+        "Count",
+        :vertical,
+        "Median: $(round(median_error, digits=2)) ppm",
+        "±MAD: $(round(mad_error, digits=2)) ppm",
+        nothing,
+        nothing,
+        nothing,
     )
-    
-    # Add vertical lines for median and bounds
-    vline!([median_error], label="Median: $(round(median_error, digits=2)) ppm", 
-           color=:red, linewidth=2)
-    vline!([median_error - mad_error, median_error + mad_error], 
-           label="±MAD: $(round(mad_error, digits=2)) ppm", 
-           color=:green, linestyle=:dash, linewidth=1.5)
-    
-    # Add annotation with iteration info
-    annotation_text = """
-    Best Iteration Info:
-    Phase $(iteration_state.best_phase), Score $(iteration_state.best_score)
-    Iteration $(iteration_state.best_iteration)
-    $(iteration_state.best_psm_count) PSMs
-    """
-    
-    # Position annotation in top right
-    xlims = Plots.xlims(p)
-    ylims = Plots.ylims(p)
-    x_pos = xlims[1] + 0.7 * (xlims[2] - xlims[1])
-    y_pos = ylims[1] + 0.85 * (ylims[2] - ylims[1])
-    
-    Plots.annotate!(x_pos, y_pos, text(annotation_text, :left, 8))
-    
-    return p
 end
 
 """
@@ -1583,18 +1507,6 @@ function generate_fallback_mass_error_plot_with_iteration_info(
     fname::String,
     iteration_state::IterationState
 )
-    # Create empty plot with diagnostic information
-    p = Plots.plot(
-        [],
-        [],
-        xlabel="Mass Error (ppm)",
-        ylabel="Count",
-        title="$fname - Mass Error (Best Iteration Fallback)",
-        legend=:topright,
-        grid=true
-    )
-    
-    # Add diagnostic text
     info_text = if iteration_state.best_mass_error_model !== nothing
         model = iteration_state.best_mass_error_model
         """
@@ -1615,15 +1527,23 @@ function generate_fallback_mass_error_plot_with_iteration_info(
         Using fallback parameters
         """
     end
-    
-    # Add text in center of plot
-    Plots.annotate!(0, 0, text(info_text, :center, 10))
-    
-    # Set axis limits for better text visibility
-    xlims!(-10, 10)
-    ylims!(-1, 1)
-    
-    return p
+
+    model = something(iteration_state.best_mass_error_model, getMassErrorModel(results))
+    return MassErrorPlotSpec(
+        "$fname - Mass Error (Best Iteration Fallback)",
+        Float32[],
+        getMassOffset(model),
+        getLeftTol(model),
+        getRightTol(model),
+        "Count",
+        "Mass Error (ppm)",
+        :horizontal,
+        nothing,
+        nothing,
+        info_text,
+        0.0f0,
+        getMassOffset(model),
+    )
 end
 
 """

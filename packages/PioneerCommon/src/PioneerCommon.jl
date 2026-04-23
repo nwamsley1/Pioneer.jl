@@ -6,17 +6,24 @@ using Logging
 
 include(joinpath(@__DIR__, "..", "..", "..", "src", "shared", "version_utils.jl"))
 include(joinpath(@__DIR__, "..", "..", "..", "src", "shared", "asset_utils.jl"))
+include(joinpath(@__DIR__, "..", "..", "..", "src", "shared", "plot_specs.jl"))
 include(joinpath(@__DIR__, "..", "..", "..", "src", "shared", "runtime_core.jl"))
 include(joinpath(@__DIR__, "..", "..", "..", "src", "shared", "logging_utils.jl"))
 
+export AbstractPioneerPlotSpec
 export CHARGE_ADJUSTMENT_FACTORS
 export CONSOLE_FILE
 export DEBUG_CONSOLE_LEVEL
 export DEBUG_FILE
 export ESSENTIAL_FILE
 export InterpolationTypeAlias
+export MassErrorPlotSpec
 export MAX_LOG_MSG_BYTES
 export NCE_MODEL_BREAKPOINT
+export MultiSeriesPlotSpec
+export PlotAnnotationSpec
+export PlotSeriesSpec
+export RtAlignmentPlotSpec
 export WARNINGS_FILE
 export asset_path
 export debug_l1

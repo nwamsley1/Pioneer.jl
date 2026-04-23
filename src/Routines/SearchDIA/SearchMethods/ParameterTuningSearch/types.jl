@@ -176,8 +176,8 @@ struct ParameterTuningSearchResults <: SearchResults
     irt::Vector{Float32}
     rt::Vector{Float32}
     ppm_errs::Vector{Float32}
-    rt_plots::Vector{Plots.Plot}  # For combined PDF generation
-    mass_plots::Vector{Plots.Plot}  # For combined PDF generation
+    rt_plot_specs::Vector{RtAlignmentPlotSpec}
+    mass_plot_specs::Vector{MassErrorPlotSpec}
     qc_plots_folder_path::String
     diagnostics::ParameterTuningDiagnostics
     parameter_history::ParameterHistory
@@ -380,7 +380,6 @@ getRtAlignmentMinPsms(params::ParameterTuningSearchParameters) = params.min_psms
 
 # Override getMaxBestRank for ParameterTuningSearchParameters since it doesn't have max_best_rank field
 # This is for PSM filtering in LibrarySearch, not mass error estimation
-import Pioneer: getMaxBestRank
 getMaxBestRank(params::ParameterTuningSearchParameters) = UInt8(1)  # Default value for PSM filtering
 
 # New getters and setters for multi-score support

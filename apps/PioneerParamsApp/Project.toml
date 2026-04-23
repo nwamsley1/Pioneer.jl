@@ -4,12 +4,10 @@ version = "0.7.4"
 authors = ["Nathan Wamsley", "Dennis Goldfarb"]
 
 [deps]
-PioneerPredict = "4cddfed8-3fb1-4302-8bc9-cb29ad99671b"
-PioneerSearch = "151a6990-cb6c-4706-a64b-c15e62217f67"
+PioneerParams = "fc87d0e0-10c0-40c1-9f6d-0d6a27f22e8d"
 
 [sources]
-PioneerPredict = { path = "../../packages/PioneerPredict" }
-PioneerSearch = { path = "../../packages/PioneerSearch" }
+PioneerParams = { path = "../../packages/PioneerParams" }
 
 [compat]
 julia = "1.12"

@@ -57,6 +57,7 @@ global_logger(ConsoleLogger())
 
 include(joinpath(@__DIR__, "shared", "version_utils.jl"))
 include(joinpath(@__DIR__, "shared", "asset_utils.jl"))
+include(joinpath(@__DIR__, "shared", "plot_specs.jl"))
 include(joinpath(@__DIR__, "shared", "runtime_core.jl"))
 include(joinpath(@__DIR__, "shared", "logging_utils.jl"))
 

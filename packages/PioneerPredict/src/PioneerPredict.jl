@@ -12,12 +12,11 @@ using FASTX
 using Interpolations
 using JSON, JLD2
 using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, Logging
-using Measures
 using NumericalIntegration
 using Optim
-using Plots, Polynomials, ProgressBars, Printf
+using Polynomials, ProgressBars, Printf
 using Tables
-using StatsPlots, SentinelArrays
+using SentinelArrays
 using Random
 import RobustModels: rlm, TauEstimator, TukeyLoss
 import StatsModels: @formula
@@ -27,10 +26,10 @@ using LightGBM
 import MLJModelInterface: fit, predict
 using KernelDensity
 using FastGaussQuadrature
-using LaTeXStrings
 using InlineStrings
 using HTTP
 using PioneerCommon
+using PioneerParams
 
 const Pioneer = PioneerCommon
 const PREDICT_APP_NAME = "BuildSpecLib"
@@ -39,9 +38,11 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))
 global_logger(ConsoleLogger())
 Random.seed!(1776)
 
+GetBuildLibParams(args...; kwargs...) = PioneerParams.GetBuildLibParams(args...; kwargs...)
+main_GetBuildLibParams(argv=ARGS)::Cint = PioneerParams.main_GetBuildLibParams(argv)
+
 include(joinpath(@__DIR__, "bootstrap.jl"))
 include(joinpath(REPO_ROOT, "src", "shared", "koina_model_constants.jl"))
-include(joinpath(REPO_ROOT, "packages", "PioneerSearch", "src", "owned", "GenerateParams.jl"))
 include(joinpath(@__DIR__, "owned", "BuildSpecLib.jl"))
 
 export PREDICT_APP_NAME

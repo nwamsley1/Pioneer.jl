@@ -189,8 +189,8 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
         Vector{Float32}(),
         Vector{Float32}(),
         Vector{Float32}(),
-        Plots.Plot[],  # rt_plots
-        Plots.Plot[],  # mass_plots
+        RtAlignmentPlotSpec[],
+        MassErrorPlotSpec[],
         qc_dir,
         ParameterTuningDiagnostics(),
         ParameterHistory(),
@@ -1047,16 +1047,16 @@ function process_search_results!(
         if length(results.rt) > 0
             # If we have RT data, generate regular plot
             rt_plot = generate_rt_plot(results, parsed_fname)
-            push!(results.rt_plots, rt_plot)  # Store for combined PDF
+            push!(results.rt_plot_specs, rt_plot)
         elseif iteration_state !== nothing && iteration_state.best_psms !== nothing
             # Use best iteration data if available
             rt_plot = generate_best_iteration_rt_plot_in_memory(results, parsed_fname, iteration_state)
-            push!(results.rt_plots, rt_plot)
+            push!(results.rt_plot_specs, rt_plot)
         else
             # Create a diagnostic plot showing fallback/borrowed status
             fallback_plot = generate_fallback_rt_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
             if fallback_plot !== nothing
-                push!(results.rt_plots, rt_plot)  # Store for combined PDF
+                push!(results.rt_plot_specs, fallback_plot)
             end
         end
         
@@ -1077,16 +1077,16 @@ function process_search_results!(
         if length(results.ppm_errs) > 0
             # If we have mass error data, generate regular plot
             mass_plot = generate_mass_error_plot(results, parsed_fname)
-            push!(results.mass_plots, mass_plot)  # Store for combined PDF
+            push!(results.mass_plot_specs, mass_plot)
         elseif iteration_state !== nothing && iteration_state.best_ppm_errs !== nothing
             # Use best iteration data if available
             mass_plot = generate_best_iteration_mass_error_plot_in_memory(results, parsed_fname, iteration_state)
-            push!(results.mass_plots, mass_plot)
+            push!(results.mass_plot_specs, mass_plot)
         else
             # Create a diagnostic plot showing fallback/borrowed status
             fallback_plot = generate_fallback_mass_error_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
             if fallback_plot !== nothing
-                push!(results.mass_plots, fallback_plot)  # Store for combined PDF
+                push!(results.mass_plot_specs, fallback_plot)
             end
         end
         
@@ -1132,7 +1132,7 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
         mass_error_plots_folder = getMassErrPlotFolder(search_context)
         
         # Create combined RT alignment PDF from collected plots
-        if !isempty(results.rt_plots)
+        if !isempty(results.rt_plot_specs)
             rt_combined_path = joinpath(rt_plots_folder, "rt_alignment_plots.pdf")
             try
                 if isfile(rt_combined_path)
@@ -1141,12 +1141,12 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
             catch e
                 @user_warn "Could not clear existing RT plots file: $e"
             end
-            save_multipage_pdf(results.rt_plots, rt_combined_path)
-            empty!(results.rt_plots)  # Clear to free memory
+            save_multipage_pdf(results.rt_plot_specs, rt_combined_path)
+            empty!(results.rt_plot_specs)
         end
         
         # Create combined mass error PDF from collected plots
-        if !isempty(results.mass_plots)
+        if !isempty(results.mass_plot_specs)
             mass_combined_path = joinpath(mass_error_plots_folder, "mass_error_plots.pdf")
             try
                 if isfile(mass_combined_path)
@@ -1155,8 +1155,8 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
             catch e
                 @user_warn "Could not clear existing mass error plots file: $e"
             end
-            save_multipage_pdf(results.mass_plots, mass_combined_path)
-            empty!(results.mass_plots)  # Clear to free memory
+            save_multipage_pdf(results.mass_plot_specs, mass_combined_path)
+            empty!(results.mass_plot_specs)
         end
         
         # Generate summary report

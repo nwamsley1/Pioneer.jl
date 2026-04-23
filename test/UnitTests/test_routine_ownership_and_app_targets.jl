@@ -4,7 +4,7 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
 const OWNED_ROUTINES = Dict(
     joinpath(REPO_ROOT, "src", "Routines", "GenerateParams.jl") =>
-        "packages\", \"PioneerSearch\", \"src\", \"owned\", \"GenerateParams.jl",
+        "packages\", \"PioneerParams\", \"src\", \"owned\", \"GenerateParams.jl",
     joinpath(REPO_ROOT, "src", "Routines", "BuildSpecLib.jl") =>
         "packages\", \"PioneerPredict\", \"src\", \"owned\", \"BuildSpecLib.jl",
     joinpath(REPO_ROOT, "src", "Routines", "SearchDIA.jl") =>
@@ -12,7 +12,7 @@ const OWNED_ROUTINES = Dict(
 )
 
 const OWNED_IMPLEMENTATIONS = [
-    joinpath(REPO_ROOT, "packages", "PioneerSearch", "src", "owned", "GenerateParams.jl"),
+    joinpath(REPO_ROOT, "packages", "PioneerParams", "src", "owned", "GenerateParams.jl"),
     joinpath(REPO_ROOT, "packages", "PioneerPredict", "src", "owned", "BuildSpecLib.jl"),
     joinpath(REPO_ROOT, "packages", "PioneerSearch", "src", "owned", "SearchDIA.jl")
 ]

@@ -78,7 +78,6 @@ function load_predict_sources()
             "writeArrow.jl",
             "safeFileOps.jl",
             "profile.jl",
-            "pdfUtils.jl",
         ],
     )
 

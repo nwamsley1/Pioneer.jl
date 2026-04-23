@@ -48,7 +48,7 @@ function create_qc_plots(
         precursors_long_path,
         proteins_path,
         params.params,
-        precursors,
+        getMissedCleavages(precursors),
         filtered_file_names,  # Only successful files
         joinpath(getDataOutDir(search_context), "qc_plots"),
         filtered_file_paths,  # Only successful files
@@ -64,4 +64,3 @@ Get protein group q-value interpolation function.
 function getPGQValueInterp(search_context::SearchContext)
     # Implementation to get protein group q-value interpolation
 end
-
