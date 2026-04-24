@@ -62,6 +62,7 @@ function load_search_sources()
 
     safe_include!(joinpath(REPO_ROOT, "src", "Routines", "SearchDIA", "ParseInputs", "paramDefaults.jl"))
     safe_include!(joinpath(REPO_ROOT, "src", "Routines", "BuildSpecLib", "utils", "buildParamDefaults.jl"))
+    safe_include!(joinpath(REPO_ROOT, "src", "Routines", "BuildSpecLib", "utils", "get_mz.jl"))
     safe_include!(joinpath(REPO_ROOT, "src", "Routines", "SearchDIA", "ParseInputs", "parseParams.jl"))
     safe_include!(joinpath(REPO_ROOT, "src", "Routines", "BuildSpecLib", "structs", "mods.jl"))
 
