@@ -4,10 +4,14 @@ version = "0.7.4"
 authors = ["Nathan Wamsley", "Dennis Goldfarb"]
 
 [deps]
+PioneerPlots = "9adec8df-eb60-4bac-9b0a-4137287d3bbd"
 PioneerSearch = "151a6990-cb6c-4706-a64b-c15e62217f67"
+PioneerSIMD = "05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"
 
 [sources]
+PioneerPlots = { path = "../../packages/PioneerPlots" }
 PioneerSearch = { path = "../../packages/PioneerSearch" }
+PioneerSIMD = { path = "../../packages/PioneerSIMD" }
 
 [compat]
 julia = "1.12"

@@ -179,6 +179,7 @@ end
     include("./UnitTests/test_pioneer_predict_build_defaults_boundary.jl")
     include("./UnitTests/test_pioneer_predict_koina_response_boundary.jl")
     include("./UnitTests/test_pioneer_search_isotope_constants_boundary.jl")
+    include("./UnitTests/test_app_runtime_package_availability.jl")
     include("./UnitTests/test_pioneer_simd_runtime_boundary.jl")
     include("./UnitTests/test_split_package_library_interop.jl")
     include("./UnitTests/test_package_compat_alignment.jl")
