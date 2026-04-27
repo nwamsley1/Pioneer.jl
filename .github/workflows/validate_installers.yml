@@ -96,7 +96,7 @@ jobs:
           ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Download Linux installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Pioneer-${{ needs.build_linux.outputs.version }}-linux-x64-deb
           path: installer
@@ -202,7 +202,7 @@ jobs:
           ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Download Windows installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Pioneer-windows-x64-msi
           path: installer
@@ -335,7 +335,7 @@ jobs:
           ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Download macOS Intel installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Pioneer-macos-x64-pkg
           path: installer
@@ -441,7 +441,7 @@ jobs:
           ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Download macOS Apple Silicon installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Pioneer-macos-arm64-pkg
           path: installer
