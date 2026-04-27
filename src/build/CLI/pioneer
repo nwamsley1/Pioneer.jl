@@ -42,6 +42,10 @@ get_pioneer_version() {
 
 SCRIPT_DIR="$(resolve_script_dir "$0")"
 PIONEER_VERSION="$(get_pioneer_version)"
+PIONEER_SUBAPP_ROOT=""
+PIONEER_BUNDLE_SHARE=""
+PIONEER_BUNDLE_DEV=""
+PIONEER_RUNTIME_DEPOT=""
 
 # Set default threads to auto if not specified
 if [ -z "$JULIA_NUM_THREADS" ]; then
@@ -295,6 +299,10 @@ configure_subapp_runtime_env() {
         esac
         runtime_depot="$cache_root/$(basename "$subapp_root")"
         mkdir -p "$runtime_depot"
+        PIONEER_SUBAPP_ROOT="$subapp_root"
+        PIONEER_BUNDLE_SHARE="$bundle_share"
+        PIONEER_BUNDLE_DEV="$bundle_dev"
+        PIONEER_RUNTIME_DEPOT="$runtime_depot"
 
         if [ -n "$JULIA_LOAD_PATH" ]; then
             export JULIA_LOAD_PATH="$bundle_share:$bundle_dev:@stdlib:$JULIA_LOAD_PATH"
@@ -331,8 +339,36 @@ configure_runtime_precompile_policy() {
     esac
 }
 
+precompile_search_plot_runtime() {
+    if [ "$SUBCOMMAND" != "SearchDIA" ] || [ -z "$PIONEER_BUNDLE_SHARE" ]; then
+        return
+    fi
+
+    local marker="$PIONEER_RUNTIME_DEPOT/pioneer-plots-runtime-smoke-${PIONEER_VERSION}-v1"
+    if [ -f "$marker" ]; then
+        return
+    fi
+
+    local julia_bin="$PIONEER_SUBAPP_ROOT/bin/julia"
+    if [ ! -x "$julia_bin" ]; then
+        echo "Error: bundled Julia runtime not found at $julia_bin" >&2
+        exit 1
+    fi
+
+    local smoke_code='pkgid=Base.PkgId(Base.UUID(0x9adec8dfeb604bac9b0a4137287d3bbd), String(:PioneerPlots)); Base.require(pkgid); m=Base.root_module(pkgid); p=m.Plots.plot([1.0,2.0], [1.0,2.0]; label=nothing, title=String(:PioneerPlots_runtime_smoke)); m.save_multipage_pdf([p], joinpath(mktempdir(), string(:pioneer_plots_runtime_smoke, :., :pdf)))'
+    env \
+        GKSwstype=100 \
+        GKS_WSTYPE=100 \
+        JULIA_LOAD_PATH="$PIONEER_BUNDLE_SHARE:$PIONEER_BUNDLE_DEV:@stdlib" \
+        JULIA_DEPOT_PATH="$PIONEER_RUNTIME_DEPOT:$PIONEER_BUNDLE_SHARE" \
+        JULIA_PKG_PRECOMPILE_AUTO=0 \
+        "$julia_bin" --startup-file=no --pkgimages=no -C generic --project="$PIONEER_BUNDLE_SHARE" -e "$smoke_code"
+    touch "$marker"
+}
+
 configure_subapp_runtime_env "$SUBCOMMAND"
 configure_runtime_precompile_policy "$SUBCOMMAND"
+precompile_search_plot_runtime
 JULIA_ARGS_EXTRA="$(default_julia_args "$SUBCOMMAND")"
 if [ -n "$JULIA_ARGS_EXTRA" ]; then
     exec "$(resolve_executable_path "$SUBCOMMAND")" "${SUBCOMMAND_ARGS[@]}" --julia-args $JULIA_ARGS_EXTRA

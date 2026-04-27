@@ -134,3 +134,20 @@ end
     @test occursin("pioneer.bat\" search --help", windows_workflow)
     @test occursin("pioneer.bat\" predict --help", windows_workflow)
 end
+
+@testset "Search launcher precompiles plotting runtime portably" begin
+    unix_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer"), String)
+    windows_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer.bat"), String)
+
+    @test occursin("precompile_search_plot_runtime", unix_launcher)
+    @test occursin("-C generic", unix_launcher)
+    @test occursin("--pkgimages=no", unix_launcher)
+    @test occursin("PioneerPlots", unix_launcher)
+    @test occursin("save_multipage_pdf", unix_launcher)
+
+    @test occursin("precompile_search_plot_runtime", windows_launcher)
+    @test occursin("-C generic", windows_launcher)
+    @test occursin("--pkgimages=no", windows_launcher)
+    @test occursin("PioneerPlots", windows_launcher)
+    @test occursin("save_multipage_pdf", windows_launcher)
+end
