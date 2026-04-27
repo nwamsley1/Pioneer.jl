@@ -214,15 +214,19 @@ if defined SUBAPP_ROOT (
     if exist "%SUBAPP_ROOT%\share\julia" (
         set "BUNDLE_SHARE=%SUBAPP_ROOT%\share\julia"
         set "BUNDLE_DEV=%BUNDLE_SHARE%\dev"
+        set "RUNTIME_DEPOT=%LOCALAPPDATA%\Pioneer\julia\%SUBCOMMAND%"
+        if not defined LOCALAPPDATA set "RUNTIME_DEPOT=%USERPROFILE%\AppData\Local\Pioneer\julia\%SUBCOMMAND%"
+        if not defined USERPROFILE set "RUNTIME_DEPOT=%TEMP%\Pioneer\julia\%SUBCOMMAND%"
+        if not exist "%RUNTIME_DEPOT%" mkdir "%RUNTIME_DEPOT%" >nul 2>&1
         if defined JULIA_LOAD_PATH (
             set "JULIA_LOAD_PATH=%BUNDLE_SHARE%;%BUNDLE_DEV%;@stdlib;%JULIA_LOAD_PATH%"
         ) else (
             set "JULIA_LOAD_PATH=%BUNDLE_SHARE%;%BUNDLE_DEV%;@stdlib"
         )
         if defined JULIA_DEPOT_PATH (
-            set "JULIA_DEPOT_PATH=%BUNDLE_SHARE%;%JULIA_DEPOT_PATH%"
+            set "JULIA_DEPOT_PATH=%RUNTIME_DEPOT%;%BUNDLE_SHARE%;%JULIA_DEPOT_PATH%"
         ) else (
-            set "JULIA_DEPOT_PATH=%BUNDLE_SHARE%"
+            set "JULIA_DEPOT_PATH=%RUNTIME_DEPOT%;%BUNDLE_SHARE%"
         )
     )
 )

@@ -278,6 +278,23 @@ configure_subapp_runtime_env() {
     if [ -d "$subapp_root/share/julia" ]; then
         local bundle_share="$subapp_root/share/julia"
         local bundle_dev="$bundle_share/dev"
+        local cache_root=""
+        local runtime_depot=""
+
+        case "$(uname -s)" in
+            Darwin)
+                cache_root="$HOME/Library/Caches/Pioneer/julia"
+                ;;
+            *)
+                if [ -n "$XDG_CACHE_HOME" ]; then
+                    cache_root="$XDG_CACHE_HOME/Pioneer/julia"
+                else
+                    cache_root="$HOME/.cache/Pioneer/julia"
+                fi
+                ;;
+        esac
+        runtime_depot="$cache_root/$(basename "$subapp_root")"
+        mkdir -p "$runtime_depot"
 
         if [ -n "$JULIA_LOAD_PATH" ]; then
             export JULIA_LOAD_PATH="$bundle_share:$bundle_dev:@stdlib:$JULIA_LOAD_PATH"
@@ -286,9 +303,9 @@ configure_subapp_runtime_env() {
         fi
 
         if [ -n "$JULIA_DEPOT_PATH" ]; then
-            export JULIA_DEPOT_PATH="$bundle_share:$JULIA_DEPOT_PATH"
+            export JULIA_DEPOT_PATH="$runtime_depot:$bundle_share:$JULIA_DEPOT_PATH"
         else
-            export JULIA_DEPOT_PATH="$bundle_share"
+            export JULIA_DEPOT_PATH="$runtime_depot:$bundle_share"
         fi
     fi
 }

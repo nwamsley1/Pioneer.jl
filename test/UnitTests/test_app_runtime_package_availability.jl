@@ -81,3 +81,31 @@ end
     @test occursin("JULIA_PKG_PRECOMPILE_AUTO=0", macos_workflow)
     @test occursin("JULIA_PKG_PRECOMPILE_AUTO=0", windows_workflow)
 end
+
+@testset "Runtime-heavy apps use a writable runtime depot ahead of bundled sources" begin
+    unix_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer"), String)
+    windows_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer.bat"), String)
+    linux_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_linux.yml"), String)
+    macos_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_macos.yml"), String)
+    windows_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_windows.yml"), String)
+
+    @test occursin("runtime_depot", unix_launcher)
+    @test occursin("mkdir -p \"\$runtime_depot\"", unix_launcher)
+    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_depot:\$bundle_share", unix_launcher)
+
+    @test occursin("RUNTIME_DEPOT", windows_launcher)
+    @test occursin("LOCALAPPDATA", windows_launcher)
+    @test occursin("JULIA_DEPOT_PATH=%RUNTIME_DEPOT%;%BUNDLE_SHARE%", windows_launcher)
+
+    @test occursin("runtime_cache", linux_workflow)
+    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$search_share", linux_workflow)
+    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$predict_share", linux_workflow)
+
+    @test occursin("runtime_cache", macos_workflow)
+    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$search_share", macos_workflow)
+    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$predict_share", macos_workflow)
+
+    @test occursin("runtime_cache", windows_workflow)
+    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache;\$search_share", windows_workflow)
+    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache;\$predict_share", windows_workflow)
+end
