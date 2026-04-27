@@ -227,8 +227,20 @@ if defined SUBAPP_ROOT (
     )
 )
 
+set "JULIA_ARGS_EXTRA="
+if /I "%SUBCOMMAND%"=="BuildSpecLib" set "JULIA_ARGS_EXTRA=--pkgimages=no"
+if /I "%SUBCOMMAND%"=="SearchDIA" set "JULIA_ARGS_EXTRA=--pkgimages=no"
+
 if "%SUBCOMMAND_ARGS%"=="" (
-    "%EXEC%"
+    if defined JULIA_ARGS_EXTRA (
+        "%EXEC%" --julia-args %JULIA_ARGS_EXTRA%
+    ) else (
+        "%EXEC%"
+    )
 ) else (
-    "%EXEC%" %SUBCOMMAND_ARGS%
+    if defined JULIA_ARGS_EXTRA (
+        "%EXEC%" %SUBCOMMAND_ARGS% --julia-args %JULIA_ARGS_EXTRA%
+    ) else (
+        "%EXEC%" %SUBCOMMAND_ARGS%
+    )
 )
