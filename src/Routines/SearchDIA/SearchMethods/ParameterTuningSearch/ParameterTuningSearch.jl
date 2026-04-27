@@ -1031,79 +1031,71 @@ function process_search_results!(
     ms_file_idx::Int64,
     ::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
-    try
-        rt_alignment_folder = getRtAlignPlotFolder(search_context)
-        mass_error_folder = getMassErrPlotFolder(search_context)
-        parsed_fname = getParsedFileName(search_context, ms_file_idx)
-        
-        # Get iteration_state from results
-        iteration_state = results.current_iteration_state[]
-        # Note: No mass-error buffer is applied. Plots reflect the fitted model.
-        
-        # Always generate plots, even with limited or no data
-        # This ensures we have diagnostic output for all files
-        
-        # Generate RT alignment plot (only store in memory, no individual files)
-        if length(results.rt) > 0
-            # If we have RT data, generate regular plot
-            rt_plot = generate_rt_plot(results, parsed_fname)
-            push!(results.rt_plot_specs, rt_plot)
-        elseif iteration_state !== nothing && iteration_state.best_psms !== nothing
-            # Use best iteration data if available
-            rt_plot = generate_best_iteration_rt_plot_in_memory(results, parsed_fname, iteration_state)
-            push!(results.rt_plot_specs, rt_plot)
-        else
-            # Create a diagnostic plot showing fallback/borrowed status
-            fallback_plot = generate_fallback_rt_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
-            if fallback_plot !== nothing
-                push!(results.rt_plot_specs, fallback_plot)
-            end
-        end
-        
-        # Generate mass error plot (only store in memory, no individual files)
-        m = getMassErrorModel(search_context, ms_file_idx)
-        #buffered_model = MassErrorModel(
-        #    getMassOffset(m),
-        #    (getLeftTol(m) + 1.0f0, getRightTol(m) + 1.0f0)
-        #)
-        buffered_model = m  # No additional buffer applied
-        setMassErrorModel!(
-            search_context,
-            ms_file_idx,
-            buffered_model)
+    parsed_fname = getParsedFileName(search_context, ms_file_idx)
 
-        results.mass_err_model[] = buffered_model  # Update results with buffered model
+    # Get iteration_state from results
+    iteration_state = results.current_iteration_state[]
+    # Note: No mass-error buffer is applied. Plots reflect the fitted model.
 
-        if length(results.ppm_errs) > 0
-            # If we have mass error data, generate regular plot
-            mass_plot = generate_mass_error_plot(results, parsed_fname)
-            push!(results.mass_plot_specs, mass_plot)
-        elseif iteration_state !== nothing && iteration_state.best_ppm_errs !== nothing
-            # Use best iteration data if available
-            mass_plot = generate_best_iteration_mass_error_plot_in_memory(results, parsed_fname, iteration_state)
-            push!(results.mass_plot_specs, mass_plot)
-        else
-            # Create a diagnostic plot showing fallback/borrowed status
-            fallback_plot = generate_fallback_mass_error_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
-            if fallback_plot !== nothing
-                push!(results.mass_plot_specs, fallback_plot)
-            end
+    # Always generate plots, even with limited or no data.
+    # This ensures we have diagnostic output for all files.
+
+    # Generate RT alignment plot (only store in memory, no individual files)
+    if length(results.rt) > 0
+        # If we have RT data, generate regular plot
+        rt_plot = generate_rt_plot(results, parsed_fname)
+        push!(results.rt_plot_specs, rt_plot)
+    elseif iteration_state !== nothing && iteration_state.best_psms !== nothing
+        # Use best iteration data if available
+        rt_plot = generate_best_iteration_rt_plot_in_memory(results, parsed_fname, iteration_state)
+        push!(results.rt_plot_specs, rt_plot)
+    else
+        # Create a diagnostic plot showing fallback/borrowed status
+        fallback_plot = generate_fallback_rt_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
+        if fallback_plot !== nothing
+            push!(results.rt_plot_specs, fallback_plot)
         end
-        
-        # Update models in search context
-        setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
-        setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
-        
-        # Clear plotting data to save memory
-        resize!(results.rt, 0)
-        resize!(results.irt, 0)
-        resize!(results.ppm_errs, 0)
-        results.current_iteration_state[] = nothing  # Clear iteration state after use
-    catch e
-        # Plot-generation failures are non-fatal and should not mark the file as failed.
-        # Keep downstream processing intact; log and continue.
-        @user_warn "Failed to generate plots for file $ms_file_idx" exception=(e, catch_backtrace())
     end
+
+    # Generate mass error plot (only store in memory, no individual files)
+    m = getMassErrorModel(search_context, ms_file_idx)
+    #buffered_model = MassErrorModel(
+    #    getMassOffset(m),
+    #    (getLeftTol(m) + 1.0f0, getRightTol(m) + 1.0f0)
+    #)
+    buffered_model = m  # No additional buffer applied
+    setMassErrorModel!(
+        search_context,
+        ms_file_idx,
+        buffered_model)
+
+    results.mass_err_model[] = buffered_model  # Update results with buffered model
+
+    if length(results.ppm_errs) > 0
+        # If we have mass error data, generate regular plot
+        mass_plot = generate_mass_error_plot(results, parsed_fname)
+        push!(results.mass_plot_specs, mass_plot)
+    elseif iteration_state !== nothing && iteration_state.best_ppm_errs !== nothing
+        # Use best iteration data if available
+        mass_plot = generate_best_iteration_mass_error_plot_in_memory(results, parsed_fname, iteration_state)
+        push!(results.mass_plot_specs, mass_plot)
+    else
+        # Create a diagnostic plot showing fallback/borrowed status
+        fallback_plot = generate_fallback_mass_error_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
+        if fallback_plot !== nothing
+            push!(results.mass_plot_specs, fallback_plot)
+        end
+    end
+
+    # Update models in search context
+    setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
+    setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
+
+    # Clear plotting data to save memory
+    resize!(results.rt, 0)
+    resize!(results.irt, 0)
+    resize!(results.ppm_errs, 0)
+    results.current_iteration_state[] = nothing  # Clear iteration state after use
 end
 
 """
@@ -1126,46 +1118,33 @@ Summarize results across all MS files.
 """
 function summarize_results!(results::ParameterTuningSearchResults, params::P, search_context::SearchContext) where {P<:ParameterTuningSearchParameters}
     # Combine individual plots into merged PDFs using save_multipage_pdf
-    
-    try
-        rt_plots_folder = getRtAlignPlotFolder(search_context)
-        mass_error_plots_folder = getMassErrPlotFolder(search_context)
-        
-        # Create combined RT alignment PDF from collected plots
-        if !isempty(results.rt_plot_specs)
-            rt_combined_path = joinpath(rt_plots_folder, "rt_alignment_plots.pdf")
-            try
-                if isfile(rt_combined_path)
-                    safeRm(rt_combined_path, nothing)
-                end
-            catch e
-                @user_warn "Could not clear existing RT plots file: $e"
-            end
-            save_multipage_pdf(results.rt_plot_specs, rt_combined_path)
-            empty!(results.rt_plot_specs)
+
+    rt_plots_folder = getRtAlignPlotFolder(search_context)
+    mass_error_plots_folder = getMassErrPlotFolder(search_context)
+
+    # Create combined RT alignment PDF from collected plots
+    if !isempty(results.rt_plot_specs)
+        rt_combined_path = joinpath(rt_plots_folder, "rt_alignment_plots.pdf")
+        if isfile(rt_combined_path)
+            safeRm(rt_combined_path, nothing)
         end
-        
-        # Create combined mass error PDF from collected plots
-        if !isempty(results.mass_plot_specs)
-            mass_combined_path = joinpath(mass_error_plots_folder, "mass_error_plots.pdf")
-            try
-                if isfile(mass_combined_path)
-                    safeRm(mass_combined_path, nothing)
-                end
-            catch e
-                @user_warn "Could not clear existing mass error plots file: $e"
-            end
-            save_multipage_pdf(results.mass_plot_specs, mass_combined_path)
-            empty!(results.mass_plot_specs)
-        end
-        
-        # Generate summary report
-        # TODO: Implement generate_summary_report if detailed report needed
-        # For now, the diagnostic summary below provides the key information
-        
-    catch e
-        @user_warn "Failed to merge QC plots" exception=(e, catch_backtrace())
+        save_multipage_pdf(results.rt_plot_specs, rt_combined_path)
+        empty!(results.rt_plot_specs)
     end
+
+    # Create combined mass error PDF from collected plots
+    if !isempty(results.mass_plot_specs)
+        mass_combined_path = joinpath(mass_error_plots_folder, "mass_error_plots.pdf")
+        if isfile(mass_combined_path)
+            safeRm(mass_combined_path, nothing)
+        end
+        save_multipage_pdf(results.mass_plot_specs, mass_combined_path)
+        empty!(results.mass_plot_specs)
+    end
+
+    # Generate summary report
+    # TODO: Implement generate_summary_report if detailed report needed
+    # For now, the diagnostic summary below provides the key information
     
     # Apply buffer to all mass error models AFTER plots are generated
     # This ensures plots show the actual fitted values, not buffered ones

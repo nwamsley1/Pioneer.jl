@@ -348,21 +348,13 @@ function summarize_results!(
     params::P,
     search_context::SearchContext
 ) where {P<:NceTuningSearchParameters}
-    try
-        output_path = joinpath(results.nce_plot_dir, "nce_alignment_plots.pdf")
-        try
-            if isfile(output_path)
-                rm(output_path)
-            end
-        catch e
-            @user_warn "Could not clear existing file: $e"
-        end
-        if !isempty(results.nce_plot_specs)
-            save_multipage_pdf(results.nce_plot_specs, output_path)
-            empty!(results.nce_plot_specs)
-        end
-    catch
-        nothing
+    output_path = joinpath(results.nce_plot_dir, "nce_alignment_plots.pdf")
+    if isfile(output_path)
+        rm(output_path)
+    end
+    if !isempty(results.nce_plot_specs)
+        save_multipage_pdf(results.nce_plot_specs, output_path)
+        empty!(results.nce_plot_specs)
     end
     # Could add NCE model statistics or plots here
     return nothing

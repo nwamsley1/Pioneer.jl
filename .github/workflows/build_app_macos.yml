@@ -309,6 +309,13 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
+      - name: Smoke test packaged wrapper runtime
+        shell: bash
+        run: |
+          pioneer_root="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
+          "$pioneer_root/pioneer" search --help >/dev/null
+          "$pioneer_root/pioneer" predict --help >/dev/null
+
       - name: Populate bundled app data
         shell: bash
         run: |
@@ -375,7 +382,6 @@ jobs:
           rm -rf "$PKGROOT"
           mkdir -p "$PKGROOT/usr/local/$APP"
           cp -R "$DIST"/* "$PKGROOT/usr/local/$APP/"
-          find "$PKGROOT/usr/local/$APP" -path '*/share/julia' -exec chmod -R a+w {} + || true
 
           # Sign every file with retry
           while IFS= read -r -d '' f; do

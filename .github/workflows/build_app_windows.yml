@@ -230,6 +230,15 @@ jobs:
         run: |
           Copy-Item src\build\CLI\pioneer.bat build\Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
 
+      - name: Smoke test packaged wrapper runtime
+        shell: pwsh
+        run: |
+          $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
+          & "$pioneerRoot\pioneer.bat" search --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$pioneerRoot\pioneer.bat" predict --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Populate bundled app data
         shell: pwsh
         run: |

@@ -19,18 +19,12 @@ function load_predict_sources()
         end
 
         if !isfile(file_path)
-            @user_warn "File not found: $file_path"
-            return false
+            throw(ArgumentError("Required source file not found: $file_path"))
         end
 
-        try
-            include(file_path)
-            push!(files_loaded, file_path)
-            return true
-        catch e
-            @user_warn "Failed to include $file_path: $e"
-            return false
-        end
+        include(file_path)
+        push!(files_loaded, file_path)
+        return true
     end
 
     function include_files!(file_dir::String, file_names::Vector{String})

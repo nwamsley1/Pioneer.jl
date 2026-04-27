@@ -232,6 +232,13 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
+      - name: Smoke test packaged wrapper runtime
+        shell: bash
+        run: |
+          pioneer_root="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
+          "$pioneer_root/pioneer" search --help >/dev/null
+          "$pioneer_root/pioneer" predict --help >/dev/null
+
       - name: Populate bundled app data
         shell: bash
         run: |
@@ -268,7 +275,6 @@ jobs:
           cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
           mkdir -p deb/usr/local/bin
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
-          find deb/usr/local/Pioneer -path '*/share/julia' -exec chmod -R a+rwx {} + || true
           info=src/build/package_info.json
           RAW_VERSION='${{ steps.get_version.outputs.version }}'
           BASE_PACKAGE=$(jq -r '.package' $info)

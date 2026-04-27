@@ -109,3 +109,28 @@ end
     @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache;\$search_share", windows_workflow)
     @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache;\$predict_share", windows_workflow)
 end
+
+@testset "Installers do not make bundled Julia depots globally writable" begin
+    linux_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_linux.yml"), String)
+    macos_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_macos.yml"), String)
+
+    @test !occursin("chmod -R a+rwx", linux_workflow)
+    @test !occursin("chmod -R a+w", macos_workflow)
+end
+
+@testset "Packaging smoke tests the packaged launcher runtime" begin
+    linux_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_linux.yml"), String)
+    macos_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_macos.yml"), String)
+    windows_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_windows.yml"), String)
+
+    for workflow in (linux_workflow, macos_workflow, windows_workflow)
+        @test occursin("Smoke test packaged wrapper runtime", workflow)
+    end
+
+    @test occursin("\"\$pioneer_root/pioneer\" search --help", linux_workflow)
+    @test occursin("\"\$pioneer_root/pioneer\" predict --help", linux_workflow)
+    @test occursin("\"\$pioneer_root/pioneer\" search --help", macos_workflow)
+    @test occursin("\"\$pioneer_root/pioneer\" predict --help", macos_workflow)
+    @test occursin("pioneer.bat\" search --help", windows_workflow)
+    @test occursin("pioneer.bat\" predict --help", windows_workflow)
+end
