@@ -123,6 +123,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/julia-depot"
           julia --threads auto --project=dev -e '
             using PackageCompiler;
+            include(joinpath(pwd(), "src", "build", "runtime_bundle_utils.jl"));
             root = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer";
             apps_root = joinpath(root, "apps");
             mkpath(apps_root);
@@ -147,6 +148,10 @@ jobs:
               include_transitive_dependencies=false,
               executables=["BuildSpecLib"=>"main_BuildSpecLib"]
             );
+            bundle_and_instantiate_runtime_project!(
+              "apps/PioneerPredictApp",
+              joinpath(apps_root, "predict")
+            );
 
             create_app(
               "apps/PioneerSearchApp",
@@ -156,6 +161,10 @@ jobs:
               include_transitive_dependencies=false,
               executables=["SearchDIA"=>"main_SearchDIA"]
             );
+            bundle_and_instantiate_runtime_project!(
+              "apps/PioneerSearchApp",
+              joinpath(apps_root, "search")
+            );
 
             create_app(
               "apps/PioneerConvertApp",
@@ -164,6 +173,24 @@ jobs:
               cpu_target=ENV["PIONEER_APP_CPU_TARGET"],
               executables=["convertMzML"=>"main_convertMzML"]
             );
+          '
+
+      - name: Smoke test bundled runtime packages
+        shell: bash
+        run: |
+          search_julia="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/apps/search/bin/julia"
+          predict_julia="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/apps/predict/bin/julia"
+
+          "$search_julia" --startup-file=no -e '
+            Base.require(Base.PkgId(Base.UUID("9adec8df-eb60-4bac-9b0a-4137287d3bbd"), "PioneerPlots"));
+            Base.require(Base.PkgId(Base.UUID("05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"), "PioneerSIMD"));
+            @assert Base.identify_package("PioneerPlots") !== nothing;
+            @assert Base.identify_package("PioneerSIMD") !== nothing;
+          '
+
+          "$predict_julia" --startup-file=no -e '
+            Base.require(Base.PkgId(Base.UUID("05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"), "PioneerSIMD"));
+            @assert Base.identify_package("PioneerSIMD") !== nothing;
           '
 
       - name: Download PioneerConverter
