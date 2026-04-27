@@ -202,6 +202,31 @@ if /I "%SUBCOMMAND%"=="BuildSpecLib" if exist "%SCRIPT_DIR%apps\predict\bin\%SUB
 if /I "%SUBCOMMAND%"=="SearchDIA" if exist "%SCRIPT_DIR%apps\search\bin\%SUBCOMMAND%.exe" set "EXEC=%SCRIPT_DIR%apps\search\bin\%SUBCOMMAND%.exe"
 if /I "%SUBCOMMAND%"=="convertMzML" if exist "%SCRIPT_DIR%apps\convert\bin\%SUBCOMMAND%.exe" set "EXEC=%SCRIPT_DIR%apps\convert\bin\%SUBCOMMAND%.exe"
 
+set "SUBAPP_ROOT="
+if /I "%SUBCOMMAND%"=="GetSearchParams" set "SUBAPP_ROOT=%SCRIPT_DIR%apps\params"
+if /I "%SUBCOMMAND%"=="GetBuildLibParams" set "SUBAPP_ROOT=%SCRIPT_DIR%apps\params"
+if /I "%SUBCOMMAND%"=="GetParseSpecLibParams" set "SUBAPP_ROOT=%SCRIPT_DIR%apps\params"
+if /I "%SUBCOMMAND%"=="BuildSpecLib" set "SUBAPP_ROOT=%SCRIPT_DIR%apps\predict"
+if /I "%SUBCOMMAND%"=="SearchDIA" set "SUBAPP_ROOT=%SCRIPT_DIR%apps\search"
+if /I "%SUBCOMMAND%"=="convertMzML" set "SUBAPP_ROOT=%SCRIPT_DIR%apps\convert"
+
+if defined SUBAPP_ROOT (
+    if exist "%SUBAPP_ROOT%\share\julia" (
+        set "BUNDLE_SHARE=%SUBAPP_ROOT%\share\julia"
+        set "BUNDLE_DEV=%BUNDLE_SHARE%\dev"
+        if defined JULIA_LOAD_PATH (
+            set "JULIA_LOAD_PATH=%BUNDLE_SHARE%;%BUNDLE_DEV%;@stdlib;%JULIA_LOAD_PATH%"
+        ) else (
+            set "JULIA_LOAD_PATH=%BUNDLE_SHARE%;%BUNDLE_DEV%;@stdlib"
+        )
+        if defined JULIA_DEPOT_PATH (
+            set "JULIA_DEPOT_PATH=%BUNDLE_SHARE%;%JULIA_DEPOT_PATH%"
+        ) else (
+            set "JULIA_DEPOT_PATH=%BUNDLE_SHARE%"
+        )
+    )
+)
+
 if "%SUBCOMMAND_ARGS%"=="" (
     "%EXEC%"
 ) else (
