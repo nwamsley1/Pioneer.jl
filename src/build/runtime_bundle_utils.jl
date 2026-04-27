@@ -64,7 +64,6 @@ end
 function instantiate_runtime_bundle!(bundle_share_dir::String)
     path_sep = Sys.iswindows() ? ";" : ":"
     julia_bin = joinpath(Sys.BINDIR, Base.julia_exename())
-    depot_path = join(unique(vcat([bundle_share_dir], DEPOT_PATH)), path_sep)
     load_path = string(bundle_share_dir, path_sep, "@stdlib")
     cmd = addenv(
         Cmd([
@@ -75,7 +74,7 @@ function instantiate_runtime_bundle!(bundle_share_dir::String)
             "using Pkg; Pkg.instantiate(); Pkg.precompile()",
         ]),
         "JULIA_LOAD_PATH" => load_path,
-        "JULIA_DEPOT_PATH" => depot_path,
+        "JULIA_DEPOT_PATH" => bundle_share_dir,
     )
     run(cmd)
     return bundle_share_dir
