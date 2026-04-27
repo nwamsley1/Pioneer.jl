@@ -255,7 +255,7 @@ jobs:
           search_share="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/apps/search/share/julia"
           predict_share="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/apps/predict/share/julia"
 
-          JULIA_LOAD_PATH="$search_share:$search_share/dev:@stdlib" JULIA_DEPOT_PATH="$search_share" \
+          JULIA_LOAD_PATH="$search_share:$search_share/dev:@stdlib" JULIA_DEPOT_PATH="$search_share" JULIA_PKG_PRECOMPILE_AUTO=0 \
           julia --startup-file=no --pkgimages=no --project="$search_share" -e '
             Base.require(Base.PkgId(Base.UUID("9adec8df-eb60-4bac-9b0a-4137287d3bbd"), "PioneerPlots"));
             Base.require(Base.PkgId(Base.UUID("05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"), "PioneerSIMD"));
@@ -263,7 +263,7 @@ jobs:
             @assert Base.identify_package("PioneerSIMD") !== nothing;
           '
 
-          JULIA_LOAD_PATH="$predict_share:$predict_share/dev:@stdlib" JULIA_DEPOT_PATH="$predict_share" \
+          JULIA_LOAD_PATH="$predict_share:$predict_share/dev:@stdlib" JULIA_DEPOT_PATH="$predict_share" JULIA_PKG_PRECOMPILE_AUTO=0 \
           julia --startup-file=no --pkgimages=no --project="$predict_share" -e '
             Base.require(Base.PkgId(Base.UUID("05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"), "PioneerSIMD"));
             @assert Base.identify_package("PioneerSIMD") !== nothing;

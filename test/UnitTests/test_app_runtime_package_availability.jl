@@ -67,3 +67,17 @@ end
 
     @test true
 end
+
+@testset "Runtime-heavy apps disable automatic package precompile" begin
+    unix_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer"), String)
+    windows_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer.bat"), String)
+    linux_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_linux.yml"), String)
+    macos_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_macos.yml"), String)
+    windows_workflow = read(joinpath(REPO_ROOT, ".github", "workflows", "build_app_windows.yml"), String)
+
+    @test occursin("export JULIA_PKG_PRECOMPILE_AUTO=0", unix_launcher)
+    @test occursin("set JULIA_PKG_PRECOMPILE_AUTO=0", windows_launcher)
+    @test occursin("JULIA_PKG_PRECOMPILE_AUTO=0", linux_workflow)
+    @test occursin("JULIA_PKG_PRECOMPILE_AUTO=0", macos_workflow)
+    @test occursin("JULIA_PKG_PRECOMPILE_AUTO=0", windows_workflow)
+end
