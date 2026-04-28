@@ -35,6 +35,6 @@ function plotRTAlign(
         alpha = 0.1,
         dpi = 300,
     )
-    savefig(plot_obj, joinpath(out_fdir, out_fname) * ".pdf")
+    Plots.savefig(plot_obj, joinpath(out_fdir, out_fname) * ".pdf")
     return nothing
 end

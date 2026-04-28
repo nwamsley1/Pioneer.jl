@@ -6,6 +6,7 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
     plots_project = joinpath(REPO_ROOT, "packages", "PioneerPlots", "Project.toml")
     plots_module = joinpath(REPO_ROOT, "packages", "PioneerPlots", "src", "PioneerPlots.jl")
     plots_qc = joinpath(REPO_ROOT, "packages", "PioneerPlots", "src", "owned", "qc_plots.jl")
+    plots_rt_alignment = joinpath(REPO_ROOT, "packages", "PioneerPlots", "src", "owned", "plot_rt_alignment.jl")
     root_qc = joinpath(REPO_ROOT, "src", "Routines", "SearchDIA", "WriteOutputs", "qcPlots.jl")
     plot_specs = joinpath(REPO_ROOT, "src", "shared", "plot_specs.jl")
     common_module = joinpath(REPO_ROOT, "packages", "PioneerCommon", "src", "PioneerCommon.jl")
@@ -57,12 +58,19 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
     @test isfile(plot_specs)
 
     @test occursin("module PioneerPlots", read(plots_module, String))
-    for qc_file in (plots_qc, root_qc)
-        ambiguous_text_lines = [
-            line for line in split(read(qc_file, String), '\n')
-            if !startswith(strip(line), "#") && occursin(r"(^|[^\w.])text\s*\(", line)
+    for plot_file in (plots_qc, root_qc, plots_rt_alignment)
+        plot_lines = split(read(plot_file, String), '\n')
+        active_lines = [line for line in plot_lines if !startswith(strip(line), "#")]
+        ambiguous_text_lines = [line for line in active_lines if occursin(r"(^|[^\w.])text\s*\(", line)]
+        unqualified_plot_lines = [
+            line for line in active_lines
+            if occursin(r"(^|[^\w.])(plot|plot!|bar!|boxplot!|savefig|histogram|scatter!)\s*\(", line)
         ]
+        stale_precursor_lines = [line for line in active_lines if occursin(r"^\s*precursors,?\s*$", line)]
         @test isempty(ambiguous_text_lines)
+        @test isempty(unqualified_plot_lines)
+        @test isempty(stale_precursor_lines)
+        @test !occursin("getMissedCleavages(precursors)", join(active_lines, '\n'))
     end
     @test occursin("struct RtAlignmentPlotSpec", read(plot_specs, String))
     @test occursin("struct MassErrorPlotSpec", read(plot_specs, String))

@@ -46,7 +46,7 @@ function qcPlots(
     precursors_long_path,
     protein_groups_wide_path,
     params_,
-    precursors,
+    missed_cleavages,
     parsed_fnames,
     qc_plot_folder,
     MS_TABLE_PATHS,
@@ -160,7 +160,7 @@ function qcPlots(
             for (parsed_fname, short_fname) in zip(chunk_fnames, chunk_short_names)
                 try
                     sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
-                    plot!(p,
+                    Plots.plot!(p,
                         collect(sampled_range),
                         sorted_precursor_abundances,
                         subplot = 1,
@@ -383,7 +383,6 @@ function qcPlots(
     function create_missed_cleavage_plots(
         precursors_wide::Arrow.Table,
         precursors_long::DataFrame,
-        precursors,
         parsed_fnames::Vector{String};
         n_files_per_plot::Int = 20,
         file_column::Symbol = :file_name,
@@ -424,7 +423,7 @@ function qcPlots(
                 fname_to_cleavage_rate[fname] = 100 * getMissedCleavageRate(
                     precursors_wide[Symbol(fname)],
                     precursors_wide[:precursor_idx],
-                    getMissedCleavages(precursors)
+                    missed_cleavages
                 )
             catch
                 fname_to_cleavage_rate[fname] = 0.0f0  # Use 0 for files that don't have data
@@ -464,7 +463,6 @@ function qcPlots(
     missed_cleavage_plots = create_missed_cleavage_plots(
         precursors_wide,
         precursors_long_df,
-        precursors,
         parsed_fnames,
         n_files_per_plot = n_files_per_plot,
         file_column = :file_name,
@@ -492,7 +490,7 @@ function qcPlots(
             ms1_scans = getMsOrders(ms_table).==1
 
 
-            plot!(p,
+            Plots.plot!(p,
             [getRetentionTime(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
             [getTIC(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
                     subplot = 1,
@@ -532,7 +530,7 @@ function qcPlots(
 
             irt_range = LinRange(0, 35, 250)
             irt_rt = iRT_RT[key]
-            plot!(p, 
+            Plots.plot!(p,
                     irt_range,
                     irt_rt.(irt_range),
                     xlabel = "iRT",
@@ -570,7 +568,7 @@ function qcPlots(
                         legend=:none, layout = (1, 1))
 
         for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
-            boxplot!(p, 
+            StatsPlots.boxplot!(p,
             [short_fname],
             gpsms[(file_name = parsed_fname,)][!,:error_norm],
             subplot = 1,
@@ -689,13 +687,13 @@ function qcPlots(
         f_out::String = "./test.pdf"
         )
 
-        p = plot(title = title,
+        p = Plots.plot(title = title,
                         legend=:none, layout = (1, 1))
 
 
         for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
             psms =  gpsms[(file_name = parsed_fname,)]
-            boxplot!(p, 
+            StatsPlots.boxplot!(p,
             [short_fname],
             psms[psms[!,:points_above_FWHM_01].>1,:FWHM],
             subplot = 1,
