@@ -46,6 +46,11 @@ function __init__()
     return nothing
 end
 
+function set_pioneer_plots_module!(plots_module::Module)
+    PIONEER_PLOTS_MODULE[] = plots_module
+    return nothing
+end
+
 function get_pioneer_plots_module()::Module
     plots_module = PIONEER_PLOTS_MODULE[]
     if plots_module === nothing

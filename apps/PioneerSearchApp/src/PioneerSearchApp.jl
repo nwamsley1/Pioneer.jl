@@ -1,8 +1,14 @@
 module PioneerSearchApp
 
 using PioneerSearch
+using PioneerPlots
 
 const SEARCH_APP_NAME = PioneerSearch.SEARCH_APP_NAME
+
+function __init__()
+    PioneerSearch.set_pioneer_plots_module!(PioneerPlots)
+    return nothing
+end
 
 GetSearchParams(args...; kwargs...) = PioneerSearch.GetSearchParams(args...; kwargs...)
 SearchDIA(args...; kwargs...) = PioneerSearch.SearchDIA(args...; kwargs...)

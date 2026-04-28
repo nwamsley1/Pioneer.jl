@@ -12,7 +12,7 @@ function run_app_package_check(project_name::String, script::String)
     return nothing
 end
 
-@testset "App projects expose runtime-only packages for lazy loading" begin
+@testset "App projects expose compiled and runtime package dependencies" begin
     search_script = """
     using PioneerSearchApp
     Base.require(Base.PkgId(Base.UUID("9adec8df-eb60-4bac-9b0a-4137287d3bbd"), "PioneerPlots"))
@@ -31,7 +31,7 @@ end
     @test true
 end
 
-@testset "Bundled app environments vendor runtime-only packages" begin
+@testset "Bundled app environments vendor app package dependencies" begin
     mktempdir() do tmp_dir
         search_bundle_dir = joinpath(tmp_dir, "search")
         predict_bundle_dir = joinpath(tmp_dir, "predict")
@@ -133,21 +133,35 @@ end
     @test occursin("\"\$pioneer_root/pioneer\" predict --help", macos_workflow)
     @test occursin("pioneer.bat\" search --help", windows_workflow)
     @test occursin("pioneer.bat\" predict --help", windows_workflow)
+
+    @test occursin("search_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/search/bin/julia\"", linux_workflow)
+    @test occursin("predict_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/predict/bin/julia\"", linux_workflow)
+    @test occursin("\"\$search_julia\" --startup-file=no --pkgimages=no --project=\"\$search_share\"", linux_workflow)
+    @test occursin("\"\$predict_julia\" --startup-file=no --pkgimages=no --project=\"\$predict_share\"", linux_workflow)
+
+    @test occursin("search_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/search/bin/julia\"", macos_workflow)
+    @test occursin("predict_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/predict/bin/julia\"", macos_workflow)
+    @test occursin("\"\$search_julia\" --startup-file=no --pkgimages=no --project=\"\$search_share\"", macos_workflow)
+    @test occursin("\"\$predict_julia\" --startup-file=no --pkgimages=no --project=\"\$predict_share\"", macos_workflow)
+
+    @test occursin("search_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/search/bin/julia.exe\"", windows_workflow)
+    @test occursin("predict_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/predict/bin/julia.exe\"", windows_workflow)
+    @test occursin("\"\$search_julia\" --startup-file=no --pkgimages=no --project=\"\$search_share\"", windows_workflow)
+    @test occursin("\"\$predict_julia\" --startup-file=no --pkgimages=no --project=\"\$predict_share\"", windows_workflow)
 end
 
-@testset "Search launcher precompiles plotting runtime portably" begin
+@testset "Search app compiles mandatory plotting into the app boundary" begin
+    search_app_module = read(joinpath(REPO_ROOT, "apps", "PioneerSearchApp", "src", "PioneerSearchApp.jl"), String)
+    search_module = read(joinpath(REPO_ROOT, "packages", "PioneerSearch", "src", "PioneerSearch.jl"), String)
     unix_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer"), String)
     windows_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer.bat"), String)
 
-    @test occursin("precompile_search_plot_runtime", unix_launcher)
-    @test occursin("-C generic", unix_launcher)
-    @test occursin("--pkgimages=no", unix_launcher)
-    @test occursin("PioneerPlots", unix_launcher)
-    @test occursin("save_multipage_pdf", unix_launcher)
+    @test occursin("\nusing PioneerPlots\n", search_app_module)
+    @test occursin("PioneerSearch.set_pioneer_plots_module!(PioneerPlots)", search_app_module)
+    @test occursin("set_pioneer_plots_module!(plots_module::Module)", search_module)
 
-    @test occursin("precompile_search_plot_runtime", windows_launcher)
-    @test occursin("-C generic", windows_launcher)
-    @test occursin("--pkgimages=no", windows_launcher)
-    @test occursin("PioneerPlots", windows_launcher)
-    @test occursin("save_multipage_pdf", windows_launcher)
+    @test !occursin("precompile_search_plot_runtime", unix_launcher)
+    @test !occursin("pioneer-plots-runtime-smoke", unix_launcher)
+    @test !occursin("precompile_search_plot_runtime", windows_launcher)
+    @test !occursin("pioneer-plots-runtime-smoke", windows_launcher)
 end

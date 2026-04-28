@@ -231,9 +231,6 @@ if defined SUBAPP_ROOT (
     )
 )
 
-if /I "%SUBCOMMAND%"=="SearchDIA" call :precompile_search_plot_runtime
-if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
-
 set "JULIA_ARGS_EXTRA="
 if /I "%SUBCOMMAND%"=="BuildSpecLib" set "JULIA_ARGS_EXTRA=--pkgimages=no"
 if /I "%SUBCOMMAND%"=="SearchDIA" set "JULIA_ARGS_EXTRA=--pkgimages=no"
@@ -254,20 +251,3 @@ if "%SUBCOMMAND_ARGS%"=="" (
     )
 )
 exit /b %ERRORLEVEL%
-
-:precompile_search_plot_runtime
-if not defined BUNDLE_SHARE exit /b 0
-set "PLOTS_MARKER=%RUNTIME_DEPOT%\pioneer-plots-runtime-smoke-%PIONEER_VERSION%-v1"
-if exist "%PLOTS_MARKER%" exit /b 0
-set "JULIA_BIN=%SUBAPP_ROOT%\bin\julia.exe"
-if not exist "%JULIA_BIN%" (
-    echo Error: bundled Julia runtime not found at %JULIA_BIN%
-    exit /b 1
-)
-set "GKSwstype=100"
-set "GKS_WSTYPE=100"
-set "JULIA_PKG_PRECOMPILE_AUTO=0"
-"%JULIA_BIN%" --startup-file=no --pkgimages=no -C generic --project="%BUNDLE_SHARE%" -e "pkgid=Base.PkgId(Base.UUID(0x9adec8dfeb604bac9b0a4137287d3bbd), String(:PioneerPlots)); Base.require(pkgid); m=Base.root_module(pkgid); p=m.Plots.plot([1.0,2.0], [1.0,2.0]; label=nothing, title=String(:PioneerPlots_runtime_smoke)); m.save_multipage_pdf([p], joinpath(mktempdir(), string(:pioneer_plots_runtime_smoke, :., :pdf)))"
-if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
-type nul > "%PLOTS_MARKER%"
-exit /b 0
