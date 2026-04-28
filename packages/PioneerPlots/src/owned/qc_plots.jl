@@ -517,8 +517,8 @@ function qcPlots(
     ###############
     #Plot RT_align
     function plotRTAlign(
-        iRT_RT::Dictionary{String, Any},
-        keys::Vector{String};
+        iRT_RT::AbstractDict,
+        rt_keys::AbstractVector;
         title::String = "rt_align_plot",
         f_out::String = "./test.pdf"
         )
@@ -526,7 +526,7 @@ function qcPlots(
         p = Plots.plot(title = title,
         legend=:outertopright)
 
-        for key in keys
+        for key in rt_keys
 
             irt_range = LinRange(0, 35, 250)
             irt_rt = iRT_RT[key]
@@ -601,10 +601,12 @@ function qcPlots(
 
     ###############
     #Plot precursor IDs
+    mass_error_correction(model) = getproperty(model, :mass_offset)
+
     function plotMS2MassErrorCorrection(
         parsed_fnames::Any,
         short_fnames::Any,
-        frag_err_dist_dict::Dict{Int64, MassErrorModel},
+        frag_err_dist_dict::AbstractDict{Int64},
         file_ids::Vector{Int64};
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
@@ -615,7 +617,7 @@ function qcPlots(
 
         parsed_fnames = [parsed_fnames[file_id] for file_id in file_ids]
         short_fnames = [short_fnames[file_id] for file_id in file_ids]
-        mass_corrections = [getMassCorrection(frag_err_dist_dict[file_id]) for file_id in file_ids]
+        mass_corrections = [mass_error_correction(frag_err_dist_dict[file_id]) for file_id in file_ids]
 
         Plots.bar!(p,
         short_fnames,
@@ -632,7 +634,7 @@ function qcPlots(
     function plotMS2MassErrorCorrectionFixed(
         parsed_fnames::Vector{String},
         short_fnames::Vector{String},
-        frag_err_dist_dict::Dict{Int64, MassErrorModel},
+        frag_err_dist_dict::AbstractDict{Int64},
         actual_file_indices::Vector{Int64};
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
@@ -642,7 +644,7 @@ function qcPlots(
                         legend=:none, layout = (1, 1))
 
         # Use pre-sliced file names and actual file indices for mass error lookup
-        mass_corrections = [getMassCorrection(frag_err_dist_dict[file_id]) for file_id in actual_file_indices]
+        mass_corrections = [mass_error_correction(frag_err_dist_dict[file_id]) for file_id in actual_file_indices]
 
         Plots.bar!(p,
         short_fnames,
