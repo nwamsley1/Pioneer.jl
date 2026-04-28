@@ -34,22 +34,22 @@ const WRAPPER_EXPECTATIONS = Dict(
 
 const WORKFLOW_EXPECTATIONS = Dict(
     joinpath(REPO_ROOT, ".github", "workflows", "build_app_linux.yml") => [
-        "\"apps/PioneerParamsApp\"",
-        "\"apps/PioneerPredictApp\"",
+        "\"packages/PioneerParams\"",
+        "\"packages/PioneerPredict\"",
         "\"apps/PioneerSearchApp\"",
-        "\"apps/PioneerConvertApp\""
+        "\"packages/PioneerConvert\""
     ],
     joinpath(REPO_ROOT, ".github", "workflows", "build_app_windows.yml") => [
-        "\"apps/PioneerParamsApp\"",
-        "\"apps/PioneerPredictApp\"",
+        "\"packages/PioneerParams\"",
+        "\"packages/PioneerPredict\"",
         "\"apps/PioneerSearchApp\"",
-        "\"apps/PioneerConvertApp\""
+        "\"packages/PioneerConvert\""
     ],
     joinpath(REPO_ROOT, ".github", "workflows", "build_app_macos.yml") => [
-        "\"apps/PioneerParamsApp\"",
-        "\"apps/PioneerPredictApp\"",
+        "\"packages/PioneerParams\"",
+        "\"packages/PioneerPredict\"",
         "\"apps/PioneerSearchApp\"",
-        "\"apps/PioneerConvertApp\""
+        "\"packages/PioneerConvert\""
     ]
 )
 

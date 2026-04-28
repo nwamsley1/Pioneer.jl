@@ -12,6 +12,10 @@ function asset_path(parts...)
     end
 
     exe = PROGRAM_FILE
+    if isempty(exe)
+        return normpath(compile_dir)
+    end
+
     if !isabspath(exe)
         exe_full = Sys.which(exe)
         exe = exe_full !== nothing ? exe_full : exe

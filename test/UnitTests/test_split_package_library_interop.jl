@@ -12,8 +12,8 @@ end
 @testset "Split package library serialization stays interoperable" begin
     mktempdir() do tmpdir
         payload_path = joinpath(tmpdir, "detailed_fragments.jls")
-        predict_project = joinpath(REPO_ROOT, "apps", "PioneerPredictApp")
-        search_project = joinpath(REPO_ROOT, "apps", "PioneerSearchApp")
+        predict_project = joinpath(REPO_ROOT, "packages", "PioneerPredict")
+        search_project = joinpath(REPO_ROOT, "packages", "PioneerSearch")
 
         write_script = """
         using PioneerPredict

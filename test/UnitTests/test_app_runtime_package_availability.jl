@@ -5,8 +5,7 @@ const JULIA_BIN = joinpath(Sys.BINDIR, Base.julia_exename())
 
 include(joinpath(REPO_ROOT, "src", "build", "runtime_bundle_utils.jl"))
 
-function run_app_package_check(project_name::String, script::String)
-    project_path = joinpath(REPO_ROOT, "apps", project_name)
+function run_project_check(project_path::String, script::String)
     cmd = Cmd([JULIA_BIN, "--startup-file=no", "--project=$project_path", "-e", script])
     run(cmd)
     return nothing
@@ -21,13 +20,12 @@ end
     @assert Base.identify_package("PioneerSIMD") !== nothing
     """
     predict_script = """
-    using PioneerPredictApp
-    Base.require(Base.PkgId(Base.UUID("05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"), "PioneerSIMD"))
+    using PioneerPredict
     @assert Base.identify_package("PioneerSIMD") !== nothing
     """
 
-    run_app_package_check("PioneerSearchApp", search_script)
-    run_app_package_check("PioneerPredictApp", predict_script)
+    run_project_check(joinpath(REPO_ROOT, "apps", "PioneerSearchApp"), search_script)
+    run_project_check(joinpath(REPO_ROOT, "packages", "PioneerPredict"), predict_script)
     @test true
 end
 
@@ -41,7 +39,7 @@ end
             search_bundle_dir,
         )
         predict_share_dir = bundle_runtime_project!(
-            joinpath(REPO_ROOT, "apps", "PioneerPredictApp"),
+            joinpath(REPO_ROOT, "packages", "PioneerPredict"),
             predict_bundle_dir,
         )
 
@@ -58,8 +56,9 @@ end
 
         @test !haskey(predict_project, "name")
         @test !haskey(predict_project, "uuid")
-        @test predict_project["sources"]["PioneerPredict"]["path"] == joinpath("dev", "PioneerPredict")
         @test predict_project["sources"]["PioneerSIMD"]["path"] == joinpath("dev", "PioneerSIMD")
+        @test predict_project["sources"]["PioneerCommon"]["path"] == joinpath("dev", "PioneerCommon")
+        @test predict_project["sources"]["PioneerParams"]["path"] == joinpath("dev", "PioneerParams")
         @test isfile(joinpath(predict_share_dir, "src", "shared", "version_utils.jl"))
         @test isfile(joinpath(predict_share_dir, "dev", "PioneerPredict", "Project.toml"))
         @test isfile(joinpath(predict_share_dir, "dev", "PioneerSIMD", "Project.toml"))
@@ -108,6 +107,28 @@ end
     @test occursin("runtime_cache", windows_workflow)
     @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache;\$search_share", windows_workflow)
     @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache;\$predict_share", windows_workflow)
+end
+
+@testset "Bundled asset lookup is safe in REPL-style sessions" begin
+    script = """
+    using Pioneer
+    @assert isempty(PROGRAM_FILE)
+    missing_asset = Pioneer.asset_path("__definitely_missing_pioneer_asset__")
+    @assert endswith(missing_asset, joinpath("assets", "__definitely_missing_pioneer_asset__"))
+    println(missing_asset)
+    """
+    cmd = Cmd([JULIA_BIN, "--startup-file=no", "--project=$REPO_ROOT", "-e", script])
+    @test success(cmd)
+end
+
+@testset "Windows launcher preserves subcommand arguments with spaces" begin
+    windows_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer.bat"), String)
+
+    @test occursin(":collect_subcommand_args", windows_launcher)
+    @test occursin("set SUBCOMMAND_ARGS=\"%~1\"", windows_launcher)
+    @test occursin("set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% \"%~1\"", windows_launcher)
+    @test !occursin("set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% %~1", windows_launcher)
+    @test !occursin("set SUBCOMMAND_ARGS=%~1", windows_launcher)
 end
 
 @testset "Installers do not make bundled Julia depots globally writable" begin

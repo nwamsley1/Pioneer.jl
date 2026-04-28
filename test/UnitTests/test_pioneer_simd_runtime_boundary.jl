@@ -33,13 +33,13 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
     @test occursin("load_pioneer_simd!()", search_module)
     @test !occursin("function asset_path(", search_entrypoint)
 
-    @test occursin(r"(?s)create_app\(\s*\"apps/PioneerPredictApp\".*?include_transitive_dependencies=false", linux_workflow)
+    @test occursin(r"(?s)create_app\(\s*\"packages/PioneerPredict\".*?include_transitive_dependencies=false", linux_workflow)
     @test occursin(r"(?s)create_app\(\s*\"apps/PioneerSearchApp\".*?include_transitive_dependencies=false", linux_workflow)
-    @test occursin(r"(?s)create_app\(\s*\"apps/PioneerPredictApp\".*?include_transitive_dependencies=false", windows_workflow)
+    @test occursin(r"(?s)create_app\(\s*\"packages/PioneerPredict\".*?include_transitive_dependencies=false", windows_workflow)
     @test occursin(r"(?s)create_app\(\s*\"apps/PioneerSearchApp\".*?include_transitive_dependencies=false", windows_workflow)
-    @test occursin(r"(?s)create_app\(\s*\"apps/PioneerPredictApp\".*?include_transitive_dependencies=false", macos_workflow)
+    @test occursin(r"(?s)create_app\(\s*\"packages/PioneerPredict\".*?include_transitive_dependencies=false", macos_workflow)
     @test occursin(r"(?s)create_app\(\s*\"apps/PioneerSearchApp\".*?include_transitive_dependencies=false", macos_workflow)
 
-    @test !isfile(joinpath(REPO_ROOT, "apps", "PioneerPredictApp", "LocalPreferences.toml"))
+    @test !isfile(joinpath(REPO_ROOT, "packages", "PioneerPredict", "LocalPreferences.toml"))
     @test !isfile(joinpath(REPO_ROOT, "apps", "PioneerSearchApp", "LocalPreferences.toml"))
 end

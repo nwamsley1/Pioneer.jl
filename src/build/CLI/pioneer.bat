@@ -57,14 +57,6 @@ if !errorlevel! equ 0 (
         echo Error: Unknown option %~1
         echo Use --help for usage information
         exit /b 1
-    ) else (
-        if "%SUBCOMMAND_ARGS%"=="" (
-            set SUBCOMMAND_ARGS=%~1
-        ) else (
-            set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% %~1
-        )
-        shift
-        goto parse_args
     )
 )
 
@@ -74,35 +66,30 @@ if "%SUBCOMMAND%"=="" (
     echo %VALID_COMMANDS% | findstr /C:"%~1" >nul
     if !errorlevel! equ 0 (
         set SUBCOMMAND=%~1
+        shift
+        goto collect_subcommand_args
     ) else (
         echo Error: Unknown subcommand '%~1'
         echo Valid subcommands: %VALID_COMMANDS%
         echo Use --help for usage information
         exit /b 1
     )
-) else (
-    rem All remaining arguments go to the subcommand
-    if "%SUBCOMMAND_ARGS%"=="" (
-        set SUBCOMMAND_ARGS=%~1
-    ) else (
-        set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% %~1
-    )
 )
 shift
 goto parse_args
 
-:handle_help
-if "%SUBCOMMAND%"=="" (
-    goto show_help
+:collect_subcommand_args
+if "%~1"=="" goto check_subcommand
+if "%SUBCOMMAND_ARGS%"=="" (
+    set SUBCOMMAND_ARGS="%~1"
 ) else (
-    if "%SUBCOMMAND_ARGS%"=="" (
-        set SUBCOMMAND_ARGS=%~1
-    ) else (
-        set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% %~1
-    )
-    shift
-    goto parse_args
+    set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% "%~1"
 )
+shift
+goto collect_subcommand_args
+
+:handle_help
+goto show_help
 
 
 :show_help
@@ -148,17 +135,7 @@ echo   pioneer ^<subcommand^> --help
 exit /b 0
 
 :handle_version
-if "%SUBCOMMAND%"=="" (
-    goto show_version
-) else (
-    if "%SUBCOMMAND_ARGS%"=="" (
-        set SUBCOMMAND_ARGS=%~1
-    ) else (
-        set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% %~1
-    )
-    shift
-    goto parse_args
-)
+goto show_version
 
 :show_version
 echo Pioneer version: %PIONEER_VERSION%
@@ -214,9 +191,13 @@ if defined SUBAPP_ROOT (
     if exist "%SUBAPP_ROOT%\share\julia" (
         set "BUNDLE_SHARE=%SUBAPP_ROOT%\share\julia"
         set "BUNDLE_DEV=%BUNDLE_SHARE%\dev"
-        set "RUNTIME_DEPOT=%LOCALAPPDATA%\Pioneer\julia\%SUBCOMMAND%"
-        if not defined LOCALAPPDATA set "RUNTIME_DEPOT=%USERPROFILE%\AppData\Local\Pioneer\julia\%SUBCOMMAND%"
-        if not defined USERPROFILE set "RUNTIME_DEPOT=%TEMP%\Pioneer\julia\%SUBCOMMAND%"
+        if defined LOCALAPPDATA (
+            set "RUNTIME_DEPOT=%LOCALAPPDATA%\Pioneer\julia\%SUBCOMMAND%"
+        ) else if defined USERPROFILE (
+            set "RUNTIME_DEPOT=%USERPROFILE%\AppData\Local\Pioneer\julia\%SUBCOMMAND%"
+        ) else (
+            set "RUNTIME_DEPOT=%TEMP%\Pioneer\julia\%SUBCOMMAND%"
+        )
         if not exist "%RUNTIME_DEPOT%" mkdir "%RUNTIME_DEPOT%" >nul 2>&1
         if defined JULIA_LOAD_PATH (
             set "JULIA_LOAD_PATH=%BUNDLE_SHARE%;%BUNDLE_DEV%;@stdlib;%JULIA_LOAD_PATH%"

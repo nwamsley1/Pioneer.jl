@@ -203,7 +203,7 @@ jobs:
             mkpath(apps_root);
 
             create_app(
-              "apps/PioneerParamsApp",
+              "packages/PioneerParams",
               joinpath(apps_root, "params"),
               incremental=true,
               force=true,
@@ -215,7 +215,7 @@ jobs:
             );
 
             create_app(
-              "apps/PioneerPredictApp",
+              "packages/PioneerPredict",
               joinpath(apps_root, "predict"),
               incremental=true,
               force=true,
@@ -223,7 +223,7 @@ jobs:
               executables=["BuildSpecLib"=>"main_BuildSpecLib"]
             );
             bundle_and_instantiate_runtime_project!(
-              "apps/PioneerPredictApp",
+              "packages/PioneerPredict",
               joinpath(apps_root, "predict")
             );
 
@@ -241,7 +241,7 @@ jobs:
             );
 
             create_app(
-              "apps/PioneerConvertApp",
+              "packages/PioneerConvert",
               joinpath(apps_root, "convert"),
               incremental=true,
               force=true,
