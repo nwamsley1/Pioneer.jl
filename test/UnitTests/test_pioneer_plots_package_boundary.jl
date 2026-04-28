@@ -5,6 +5,8 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 @testset "PioneerPlots package boundary" begin
     plots_project = joinpath(REPO_ROOT, "packages", "PioneerPlots", "Project.toml")
     plots_module = joinpath(REPO_ROOT, "packages", "PioneerPlots", "src", "PioneerPlots.jl")
+    plots_qc = joinpath(REPO_ROOT, "packages", "PioneerPlots", "src", "owned", "qc_plots.jl")
+    root_qc = joinpath(REPO_ROOT, "src", "Routines", "SearchDIA", "WriteOutputs", "qcPlots.jl")
     plot_specs = joinpath(REPO_ROOT, "src", "shared", "plot_specs.jl")
     common_module = joinpath(REPO_ROOT, "packages", "PioneerCommon", "src", "PioneerCommon.jl")
     search_project = joinpath(REPO_ROOT, "packages", "PioneerSearch", "Project.toml")
@@ -55,6 +57,13 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
     @test isfile(plot_specs)
 
     @test occursin("module PioneerPlots", read(plots_module, String))
+    for qc_file in (plots_qc, root_qc)
+        ambiguous_text_lines = [
+            line for line in split(read(qc_file, String), '\n')
+            if !startswith(strip(line), "#") && occursin(r"(^|[^\w.])text\s*\(", line)
+        ]
+        @test isempty(ambiguous_text_lines)
+    end
     @test occursin("struct RtAlignmentPlotSpec", read(plot_specs, String))
     @test occursin("struct MassErrorPlotSpec", read(plot_specs, String))
     @test occursin("export RtAlignmentPlotSpec", read(common_module, String))

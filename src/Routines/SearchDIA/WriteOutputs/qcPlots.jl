@@ -218,7 +218,7 @@ function qcPlots(
                 title = title,
                 legend = :none,
                 layout = (1, 1),
-                annotations = [(0.5, 0.5, text("No successful files", :center))]
+                annotations = [(0.5, 0.5, Plots.text("No successful files", :center))]
             )
             return p
         end
@@ -234,7 +234,7 @@ function qcPlots(
             successful_files,
             successful_ids,
             subplot = 1,
-            texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in successful_ids],
+            texts = [Plots.text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in successful_ids],
             xrotation = 45,
         )
 
@@ -353,7 +353,7 @@ function qcPlots(
                 chunk_short_names,
                 chunk_ids,
                 subplot = 1,
-                texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in chunk_ids],
+                texts = [Plots.text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in chunk_ids],
                 xrotation = 45,
             )
 
@@ -450,7 +450,7 @@ function qcPlots(
                 chunk_short_names,
                 chunk_rates,
                 subplot = 1,
-                texts = [text(string(x)[1:min(6,length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in chunk_rates],
+                texts = [Plots.text(string(x)[1:min(6,length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in chunk_rates],
                 xrotation = 45,
             )
 
@@ -624,7 +624,7 @@ function qcPlots(
         mass_corrections,
         subplot = 1,
         yflip = true,
-        texts = [text(string(x)[1:min(5, length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in mass_corrections],
+        texts = [Plots.text(string(x)[1:min(5, length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in mass_corrections],
         xrotation = 45,
         )
 
@@ -651,7 +651,7 @@ function qcPlots(
         mass_corrections,
         subplot = 1,
         yflip = true,
-        texts = [text(string(x)[1:min(5, length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in mass_corrections],
+        texts = [Plots.text(string(x)[1:min(5, length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in mass_corrections],
         xrotation = 45,
         )
 
