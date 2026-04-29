@@ -13,10 +13,13 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
     module_text = isfile(cli_module) ? read(cli_module, String) : ""
     @test occursin("module PioneerCLI", module_text)
-    @test occursin("PioneerSearch.main_SearchDIA", module_text)
-    @test occursin("PioneerPredict.main_BuildSpecLib", module_text)
-    @test occursin("PioneerParams.main_GetSearchParams", module_text)
-    @test occursin("PioneerConvert.main_convertMzML", module_text)
+    @test !occursin("__precompile__(false)", module_text)
+    @test !occursin("import PioneerSearch", module_text)
+    @test !occursin("import PioneerPredict", module_text)
+    @test occursin("_pioneer_search()", module_text)
+    @test occursin("_pioneer_predict()", module_text)
+    @test occursin("_pioneer_params()", module_text)
+    @test occursin("_pioneer_convert()", module_text)
 
     @test occursin("\"packages/PioneerCLI\"", macos_workflow)
     @test occursin("joinpath(apps_root, \"runtime\")", macos_workflow)

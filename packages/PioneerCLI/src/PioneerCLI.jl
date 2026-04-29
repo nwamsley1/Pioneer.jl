@@ -1,18 +1,28 @@
-__precompile__(false)
-
 module PioneerCLI
 
-import PioneerConvert
-import PioneerParams
-import PioneerPredict
-import PioneerSearch
+const PIONEER_CONVERT_PKGID = Base.PkgId(Base.UUID("d0bd7c82-dff2-47fc-80b8-8504b1185c05"), "PioneerConvert")
+const PIONEER_PARAMS_PKGID = Base.PkgId(Base.UUID("fc87d0e0-10c0-40c1-9f6d-0d6a27f22e8d"), "PioneerParams")
+const PIONEER_PREDICT_PKGID = Base.PkgId(Base.UUID("4cddfed8-3fb1-4302-8bc9-cb29ad99671b"), "PioneerPredict")
+const PIONEER_SEARCH_PKGID = Base.PkgId(Base.UUID("151a6990-cb6c-4706-a64b-c15e62217f67"), "PioneerSearch")
 
-main_GetSearchParams(argv=ARGS)::Cint = PioneerParams.main_GetSearchParams(argv)
-main_GetBuildLibParams(argv=ARGS)::Cint = PioneerParams.main_GetBuildLibParams(argv)
-main_GetParseSpecLibParams(argv=ARGS)::Cint = PioneerParams.main_GetParseSpecLibParams(argv)
-main_BuildSpecLib(argv=ARGS)::Cint = PioneerPredict.main_BuildSpecLib(argv)
-main_SearchDIA(argv=ARGS)::Cint = PioneerSearch.main_SearchDIA(argv)
-main_convertMzML(argv=ARGS)::Cint = PioneerConvert.main_convertMzML(argv)
+function _require_module(pkgid::Base.PkgId)
+    Base.require(pkgid)
+    mod = get(Base.loaded_modules, pkgid, nothing)
+    mod === nothing && error("Failed to load $(pkgid.name)")
+    return mod
+end
+
+_pioneer_convert() = _require_module(PIONEER_CONVERT_PKGID)
+_pioneer_params() = _require_module(PIONEER_PARAMS_PKGID)
+_pioneer_predict() = _require_module(PIONEER_PREDICT_PKGID)
+_pioneer_search() = _require_module(PIONEER_SEARCH_PKGID)
+
+main_GetSearchParams(argv=ARGS)::Cint = getfield(_pioneer_params(), :main_GetSearchParams)(argv)
+main_GetBuildLibParams(argv=ARGS)::Cint = getfield(_pioneer_params(), :main_GetBuildLibParams)(argv)
+main_GetParseSpecLibParams(argv=ARGS)::Cint = getfield(_pioneer_params(), :main_GetParseSpecLibParams)(argv)
+main_BuildSpecLib(argv=ARGS)::Cint = getfield(_pioneer_predict(), :main_BuildSpecLib)(argv)
+main_SearchDIA(argv=ARGS)::Cint = getfield(_pioneer_search(), :main_SearchDIA)(argv)
+main_convertMzML(argv=ARGS)::Cint = getfield(_pioneer_convert(), :main_convertMzML)(argv)
 
 export main_GetSearchParams
 export main_GetBuildLibParams
