@@ -17,12 +17,16 @@ _pioneer_params() = _require_module(PIONEER_PARAMS_PKGID)
 _pioneer_predict() = _require_module(PIONEER_PREDICT_PKGID)
 _pioneer_search() = _require_module(PIONEER_SEARCH_PKGID)
 
-main_GetSearchParams(argv=ARGS)::Cint = getfield(_pioneer_params(), :main_GetSearchParams)(argv)
-main_GetBuildLibParams(argv=ARGS)::Cint = getfield(_pioneer_params(), :main_GetBuildLibParams)(argv)
-main_GetParseSpecLibParams(argv=ARGS)::Cint = getfield(_pioneer_params(), :main_GetParseSpecLibParams)(argv)
-main_BuildSpecLib(argv=ARGS)::Cint = getfield(_pioneer_predict(), :main_BuildSpecLib)(argv)
-main_SearchDIA(argv=ARGS)::Cint = getfield(_pioneer_search(), :main_SearchDIA)(argv)
-main_convertMzML(argv=ARGS)::Cint = getfield(_pioneer_convert(), :main_convertMzML)(argv)
+function _call_entrypoint(mod::Module, name::Symbol, argv)::Cint
+    return Base.invokelatest(getfield(mod, name), argv)::Cint
+end
+
+main_GetSearchParams(argv=ARGS)::Cint = _call_entrypoint(_pioneer_params(), :main_GetSearchParams, argv)
+main_GetBuildLibParams(argv=ARGS)::Cint = _call_entrypoint(_pioneer_params(), :main_GetBuildLibParams, argv)
+main_GetParseSpecLibParams(argv=ARGS)::Cint = _call_entrypoint(_pioneer_params(), :main_GetParseSpecLibParams, argv)
+main_BuildSpecLib(argv=ARGS)::Cint = _call_entrypoint(_pioneer_predict(), :main_BuildSpecLib, argv)
+main_SearchDIA(argv=ARGS)::Cint = _call_entrypoint(_pioneer_search(), :main_SearchDIA, argv)
+main_convertMzML(argv=ARGS)::Cint = _call_entrypoint(_pioneer_convert(), :main_convertMzML, argv)
 
 export main_GetSearchParams
 export main_GetBuildLibParams

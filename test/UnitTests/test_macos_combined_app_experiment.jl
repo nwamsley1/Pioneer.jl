@@ -20,6 +20,7 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
     @test occursin("_pioneer_predict()", module_text)
     @test occursin("_pioneer_params()", module_text)
     @test occursin("_pioneer_convert()", module_text)
+    @test occursin("Base.invokelatest", module_text)
 
     @test occursin("\"packages/PioneerCLI\"", macos_workflow)
     @test occursin("joinpath(apps_root, \"runtime\")", macos_workflow)
