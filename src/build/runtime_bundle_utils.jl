@@ -60,6 +60,15 @@ function vendor_repo_source_tree!(bundle_share_dir::String; repo_root::String=RU
     return vendored_source_tree
 end
 
+function vendor_stdlib_source_tree!(bundle_share_dir::String)
+    stdlib_version = "v$(VERSION.major).$(VERSION.minor)"
+    vendored_stdlib = joinpath(bundle_share_dir, "stdlib", stdlib_version)
+    isdir(vendored_stdlib) && rm(vendored_stdlib; force=true, recursive=true)
+    mkpath(dirname(vendored_stdlib))
+    cp(Sys.STDLIB, vendored_stdlib; force=true)
+    return vendored_stdlib
+end
+
 function write_runtime_bundle_project!(app_project_dir::String, bundle_share_dir::String)
     project_path = joinpath(app_project_dir, "Project.toml")
     project_data = TOML.parsefile(project_path)
@@ -99,6 +108,7 @@ function bundle_runtime_project!(app_project_dir::String, bundled_app_dir::Strin
     bundle_share_dir = joinpath(bundled_app_dir, "share", "julia")
     vendor_local_packages!(bundle_share_dir; repo_root)
     vendor_repo_source_tree!(bundle_share_dir; repo_root)
+    vendor_stdlib_source_tree!(bundle_share_dir)
     write_runtime_bundle_project!(app_project_dir, bundle_share_dir)
     return bundle_share_dir
 end
