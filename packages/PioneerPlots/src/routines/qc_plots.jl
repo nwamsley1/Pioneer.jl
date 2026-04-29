@@ -48,7 +48,11 @@ function _read_tic_series(ms_table_path::String)
 
     rt_values = Float64[]
     tic_values = Float64[]
-    for scan_idx in eachindex(ms_orders)
+    n_scans = length(ms_orders)
+    @assert length(retention_times) == n_scans
+    @assert length(tics) == n_scans
+
+    for scan_idx in 1:n_scans
         ms_order = ms_orders[scan_idx]
         if ms_order == 0x01 || ms_order == 1
             retention_time = retention_times[scan_idx]
