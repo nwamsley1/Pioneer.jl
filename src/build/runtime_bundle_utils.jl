@@ -69,6 +69,17 @@ function vendor_stdlib_source_tree!(bundle_share_dir::String)
     return vendored_stdlib
 end
 
+function vendor_julia_testhelpers!(bundle_share_dir::String)
+    source_testhelpers = joinpath(dirname(dirname(Sys.STDLIB)), "test", "testhelpers")
+    isdir(source_testhelpers) || error("Julia test helpers not found at $source_testhelpers")
+
+    vendored_testhelpers = joinpath(bundle_share_dir, "test", "testhelpers")
+    isdir(vendored_testhelpers) && rm(vendored_testhelpers; force=true, recursive=true)
+    mkpath(dirname(vendored_testhelpers))
+    cp(source_testhelpers, vendored_testhelpers; force=true)
+    return vendored_testhelpers
+end
+
 function write_runtime_bundle_project!(app_project_dir::String, bundle_share_dir::String)
     project_path = joinpath(app_project_dir, "Project.toml")
     project_data = TOML.parsefile(project_path)
@@ -109,6 +120,7 @@ function bundle_runtime_project!(app_project_dir::String, bundled_app_dir::Strin
     vendor_local_packages!(bundle_share_dir; repo_root)
     vendor_repo_source_tree!(bundle_share_dir; repo_root)
     vendor_stdlib_source_tree!(bundle_share_dir)
+    vendor_julia_testhelpers!(bundle_share_dir)
     write_runtime_bundle_project!(app_project_dir, bundle_share_dir)
     return bundle_share_dir
 end

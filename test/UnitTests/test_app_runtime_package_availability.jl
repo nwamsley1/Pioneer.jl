@@ -61,6 +61,7 @@ end
         @test search_project["sources"]["PioneerSIMD"]["path"] == joinpath("dev", "PioneerSIMD")
         @test isfile(joinpath(search_share_dir, "src", "shared", "version_utils.jl"))
         @test isfile(joinpath(search_share_dir, "stdlib", "v$(VERSION.major).$(VERSION.minor)", "Pkg", "src", "Pkg.jl"))
+        @test isfile(joinpath(search_share_dir, "test", "testhelpers", "FakePTYs.jl"))
         @test isfile(joinpath(search_share_dir, "dev", "PioneerPlots", "Project.toml"))
         @test isfile(joinpath(search_share_dir, "dev", "PioneerSIMD", "Project.toml"))
 
@@ -72,6 +73,7 @@ end
         @test predict_project["sources"]["PioneerParams"]["path"] == joinpath("dev", "PioneerParams")
         @test isfile(joinpath(predict_share_dir, "src", "shared", "version_utils.jl"))
         @test isfile(joinpath(predict_share_dir, "stdlib", "v$(VERSION.major).$(VERSION.minor)", "Pkg", "src", "Pkg.jl"))
+        @test isfile(joinpath(predict_share_dir, "test", "testhelpers", "FakePTYs.jl"))
         @test isfile(joinpath(predict_share_dir, "dev", "PioneerPredict", "Project.toml"))
         @test isfile(joinpath(predict_share_dir, "dev", "PioneerSIMD", "Project.toml"))
 
@@ -82,6 +84,7 @@ end
         @test cli_project["sources"]["PioneerPredict"]["path"] == joinpath("dev", "PioneerPredict")
         @test cli_project["sources"]["PioneerSIMD"]["path"] == joinpath("dev", "PioneerSIMD")
         @test isfile(joinpath(cli_share_dir, "stdlib", "v$(VERSION.major).$(VERSION.minor)", "Pkg", "src", "Pkg.jl"))
+        @test isfile(joinpath(cli_share_dir, "test", "testhelpers", "FakePTYs.jl"))
         @test isfile(joinpath(cli_share_dir, "dev", "PioneerCLI", "Project.toml"))
     end
 
