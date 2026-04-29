@@ -1,0 +1,25 @@
+name = "PioneerCLI"
+uuid = "6f57f0a0-2d0f-4503-b85e-23aebd40eb41"
+version = "0.7.4"
+authors = ["Nathan Wamsley", "Dennis Goldfarb"]
+
+[deps]
+PioneerCommon = "722b9d6e-a0ae-433b-9347-6cd24630ba23"
+PioneerConvert = "d0bd7c82-dff2-47fc-80b8-8504b1185c05"
+PioneerParams = "fc87d0e0-10c0-40c1-9f6d-0d6a27f22e8d"
+PioneerPlots = "9adec8df-eb60-4bac-9b0a-4137287d3bbd"
+PioneerPredict = "4cddfed8-3fb1-4302-8bc9-cb29ad99671b"
+PioneerSearch = "151a6990-cb6c-4706-a64b-c15e62217f67"
+PioneerSIMD = "05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"
+
+[sources]
+PioneerCommon = { path = "../PioneerCommon" }
+PioneerConvert = { path = "../PioneerConvert" }
+PioneerParams = { path = "../PioneerParams" }
+PioneerPlots = { path = "../PioneerPlots" }
+PioneerPredict = { path = "../PioneerPredict" }
+PioneerSearch = { path = "../PioneerSearch" }
+PioneerSIMD = { path = "../PioneerSIMD" }
+
+[compat]
+julia = "1.12"

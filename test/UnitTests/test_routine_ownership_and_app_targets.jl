@@ -46,10 +46,10 @@ const WORKFLOW_EXPECTATIONS = Dict(
         "\"packages/PioneerConvert\""
     ],
     joinpath(REPO_ROOT, ".github", "workflows", "build_app_macos.yml") => [
-        "\"packages/PioneerParams\"",
-        "\"packages/PioneerPredict\"",
-        "\"packages/PioneerSearch\"",
-        "\"packages/PioneerConvert\""
+        "\"packages/PioneerCLI\"",
+        "joinpath(apps_root, \"runtime\")",
+        "\"SearchDIA\"=>\"main_SearchDIA\"",
+        "\"BuildSpecLib\"=>\"main_BuildSpecLib\""
     ]
 )
 
@@ -77,7 +77,7 @@ end
     end
 end
 
-@testset "PackageCompiler workflows target split app packages" begin
+@testset "PackageCompiler workflows target expected app packages" begin
     for (workflow_path, fragments) in WORKFLOW_EXPECTATIONS
         content = read(workflow_path, String)
         for fragment in fragments

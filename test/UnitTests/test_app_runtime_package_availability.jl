@@ -35,6 +35,7 @@ end
     mktempdir() do tmp_dir
         search_bundle_dir = joinpath(tmp_dir, "search")
         predict_bundle_dir = joinpath(tmp_dir, "predict")
+        cli_bundle_dir = joinpath(tmp_dir, "runtime")
 
         search_share_dir = bundle_runtime_project!(
             joinpath(REPO_ROOT, "packages", "PioneerSearch"),
@@ -44,12 +45,18 @@ end
             joinpath(REPO_ROOT, "packages", "PioneerPredict"),
             predict_bundle_dir,
         )
+        cli_share_dir = bundle_runtime_project!(
+            joinpath(REPO_ROOT, "packages", "PioneerCLI"),
+            cli_bundle_dir,
+        )
 
         search_project = TOML.parsefile(joinpath(search_share_dir, "Project.toml"))
         predict_project = TOML.parsefile(joinpath(predict_share_dir, "Project.toml"))
+        cli_project = TOML.parsefile(joinpath(cli_share_dir, "Project.toml"))
 
         @test !haskey(search_project, "name")
         @test !haskey(search_project, "uuid")
+        @test search_project["sources"]["PioneerSearch"]["path"] == joinpath("dev", "PioneerSearch")
         @test search_project["sources"]["PioneerPlots"]["path"] == joinpath("dev", "PioneerPlots")
         @test search_project["sources"]["PioneerSIMD"]["path"] == joinpath("dev", "PioneerSIMD")
         @test isfile(joinpath(search_share_dir, "src", "shared", "version_utils.jl"))
@@ -58,12 +65,21 @@ end
 
         @test !haskey(predict_project, "name")
         @test !haskey(predict_project, "uuid")
+        @test predict_project["sources"]["PioneerPredict"]["path"] == joinpath("dev", "PioneerPredict")
         @test predict_project["sources"]["PioneerSIMD"]["path"] == joinpath("dev", "PioneerSIMD")
         @test predict_project["sources"]["PioneerCommon"]["path"] == joinpath("dev", "PioneerCommon")
         @test predict_project["sources"]["PioneerParams"]["path"] == joinpath("dev", "PioneerParams")
         @test isfile(joinpath(predict_share_dir, "src", "shared", "version_utils.jl"))
         @test isfile(joinpath(predict_share_dir, "dev", "PioneerPredict", "Project.toml"))
         @test isfile(joinpath(predict_share_dir, "dev", "PioneerSIMD", "Project.toml"))
+
+        @test !haskey(cli_project, "name")
+        @test !haskey(cli_project, "uuid")
+        @test cli_project["sources"]["PioneerCLI"]["path"] == joinpath("dev", "PioneerCLI")
+        @test cli_project["sources"]["PioneerSearch"]["path"] == joinpath("dev", "PioneerSearch")
+        @test cli_project["sources"]["PioneerPredict"]["path"] == joinpath("dev", "PioneerPredict")
+        @test cli_project["sources"]["PioneerSIMD"]["path"] == joinpath("dev", "PioneerSIMD")
+        @test isfile(joinpath(cli_share_dir, "dev", "PioneerCLI", "Project.toml"))
     end
 
     @test true
@@ -103,8 +119,8 @@ end
     @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$predict_share", linux_workflow)
 
     @test occursin("runtime_cache", macos_workflow)
-    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$search_share", macos_workflow)
-    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$predict_share", macos_workflow)
+    @test occursin("runtime_share=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/runtime/share/julia\"", macos_workflow)
+    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$runtime_share", macos_workflow)
 
     @test occursin("runtime_cache", windows_workflow)
     @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache;\$search_share", windows_workflow)
@@ -164,10 +180,8 @@ end
     @test occursin("\"\$search_julia\" --startup-file=no --pkgimages=no --project=\"\$search_share\"", linux_workflow)
     @test occursin("\"\$predict_julia\" --startup-file=no --pkgimages=no --project=\"\$predict_share\"", linux_workflow)
 
-    @test occursin("search_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/search/bin/julia\"", macos_workflow)
-    @test occursin("predict_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/predict/bin/julia\"", macos_workflow)
-    @test occursin("\"\$search_julia\" --startup-file=no --pkgimages=no --project=\"\$search_share\"", macos_workflow)
-    @test occursin("\"\$predict_julia\" --startup-file=no --pkgimages=no --project=\"\$predict_share\"", macos_workflow)
+    @test occursin("runtime_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/runtime/bin/julia\"", macos_workflow)
+    @test occursin("\"\$runtime_julia\" --startup-file=no --pkgimages=no --project=\"\$runtime_share\"", macos_workflow)
 
     @test occursin("search_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/search/bin/julia.exe\"", windows_workflow)
     @test occursin("predict_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/predict/bin/julia.exe\"", windows_workflow)

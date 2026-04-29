@@ -203,73 +203,43 @@ jobs:
             mkpath(apps_root);
 
             create_app(
-              "packages/PioneerParams",
-              joinpath(apps_root, "params"),
+              "packages/PioneerCLI",
+              joinpath(apps_root, "runtime"),
               incremental=true,
               force=true,
+              include_transitive_dependencies=false,
               executables=[
                 "GetSearchParams"=>"main_GetSearchParams",
                 "GetBuildLibParams"=>"main_GetBuildLibParams",
-                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams"
+                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
+                "BuildSpecLib"=>"main_BuildSpecLib",
+                "SearchDIA"=>"main_SearchDIA",
+                "convertMzML"=>"main_convertMzML"
               ]
             );
-
-            create_app(
-              "packages/PioneerPredict",
-              joinpath(apps_root, "predict"),
-              incremental=true,
-              force=true,
-              include_transitive_dependencies=false,
-              executables=["BuildSpecLib"=>"main_BuildSpecLib"]
-            );
             bundle_and_instantiate_runtime_project!(
-              "packages/PioneerPredict",
-              joinpath(apps_root, "predict")
-            );
-
-            create_app(
-              "packages/PioneerSearch",
-              joinpath(apps_root, "search"),
-              incremental=true,
-              force=true,
-              include_transitive_dependencies=false,
-              executables=["SearchDIA"=>"main_SearchDIA"]
-            );
-            bundle_and_instantiate_runtime_project!(
-              "packages/PioneerSearch",
-              joinpath(apps_root, "search")
-            );
-
-            create_app(
-              "packages/PioneerConvert",
-              joinpath(apps_root, "convert"),
-              incremental=true,
-              force=true,
-              executables=["convertMzML"=>"main_convertMzML"]
+              "packages/PioneerCLI",
+              joinpath(apps_root, "runtime")
             );
           '
 
       - name: Smoke test bundled runtime packages
         shell: bash
         run: |
-          search_share="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/apps/search/share/julia"
-          predict_share="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/apps/predict/share/julia"
-          search_julia="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/apps/search/bin/julia"
-          predict_julia="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/apps/predict/bin/julia"
+          runtime_share="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/apps/runtime/share/julia"
+          runtime_julia="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/apps/runtime/bin/julia"
           runtime_cache="$(mktemp -d)"
 
-          JULIA_LOAD_PATH="$search_share:$search_share/dev:@stdlib" JULIA_DEPOT_PATH="$runtime_cache:$search_share" JULIA_PKG_PRECOMPILE_AUTO=0 \
-          "$search_julia" --startup-file=no --pkgimages=no --project="$search_share" -e '
+          JULIA_LOAD_PATH="$runtime_share:$runtime_share/dev:@stdlib" JULIA_DEPOT_PATH="$runtime_cache:$runtime_share" JULIA_PKG_PRECOMPILE_AUTO=0 \
+          "$runtime_julia" --startup-file=no --pkgimages=no --project="$runtime_share" -e '
+            using PioneerCLI;
             Base.require(Base.PkgId(Base.UUID("9adec8df-eb60-4bac-9b0a-4137287d3bbd"), "PioneerPlots"));
             Base.require(Base.PkgId(Base.UUID("05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"), "PioneerSIMD"));
+            @assert isdefined(PioneerCLI, :main_SearchDIA);
+            @assert isdefined(PioneerCLI, :main_BuildSpecLib);
+            @assert isdefined(PioneerCLI, :main_GetSearchParams);
+            @assert isdefined(PioneerCLI, :main_convertMzML);
             @assert Base.identify_package("PioneerPlots") !== nothing;
-            @assert Base.identify_package("PioneerSIMD") !== nothing;
-          '
-
-          runtime_cache="$(mktemp -d)"
-          JULIA_LOAD_PATH="$predict_share:$predict_share/dev:@stdlib" JULIA_DEPOT_PATH="$runtime_cache:$predict_share" JULIA_PKG_PRECOMPILE_AUTO=0 \
-          "$predict_julia" --startup-file=no --pkgimages=no --project="$predict_share" -e '
-            Base.require(Base.PkgId(Base.UUID("05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"), "PioneerSIMD"));
             @assert Base.identify_package("PioneerSIMD") !== nothing;
           '
 
@@ -324,7 +294,7 @@ jobs:
           pioneer_root="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
           mkdir -p "$pioneer_root/data"
           cp -R assets/* "$pioneer_root/data/" || true
-          for subapp in params predict search; do
+          for subapp in runtime; do
             mkdir -p "$pioneer_root/apps/$subapp/data"
             cp -R assets/* "$pioneer_root/apps/$subapp/data/" || true
           done
@@ -334,7 +304,7 @@ jobs:
         run: |
           pioneer_root="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
           echo "${{ steps.get_version.outputs.version }}" > "$pioneer_root/VERSION"
-          for subapp in params predict search convert; do
+          for subapp in runtime; do
             echo "${{ steps.get_version.outputs.version }}" > "$pioneer_root/apps/$subapp/VERSION"
           done
 

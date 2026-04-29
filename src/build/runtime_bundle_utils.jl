@@ -22,6 +22,20 @@ function rewrite_local_sources(project_data::Dict{String, Any})
     return project_data
 end
 
+function add_app_package_source!(project_data::Dict{String, Any})
+    package_name = get(project_data, "name", nothing)
+    package_uuid = get(project_data, "uuid", nothing)
+    if !(package_name isa String && package_uuid isa String)
+        return project_data
+    end
+
+    deps = get!(project_data, "deps", Dict{String, Any}())
+    sources = get!(project_data, "sources", Dict{String, Any}())
+    deps[package_name] = package_uuid
+    sources[package_name] = Dict("path" => joinpath("dev", package_name))
+    return project_data
+end
+
 function vendor_local_packages!(bundle_share_dir::String; repo_root::String=RUNTIME_BUNDLE_REPO_ROOT)
     source_root = joinpath(repo_root, "packages")
     vendored_root = joinpath(bundle_share_dir, "dev")
@@ -50,6 +64,7 @@ function write_runtime_bundle_project!(app_project_dir::String, bundle_share_dir
     project_path = joinpath(app_project_dir, "Project.toml")
     project_data = TOML.parsefile(project_path)
     rewrite_local_sources(project_data)
+    add_app_package_source!(project_data)
     delete!(project_data, "name")
     delete!(project_data, "uuid")
     delete!(project_data, "version")
