@@ -158,7 +158,7 @@ jobs:
             );
 
             create_app(
-              "apps/PioneerSearchApp",
+              "packages/PioneerSearch",
               joinpath(apps_root, "search"),
               incremental=true,
               force=true,
@@ -167,7 +167,7 @@ jobs:
               executables=["SearchDIA"=>"main_SearchDIA"]
             );
             bundle_and_instantiate_runtime_project!(
-              "apps/PioneerSearchApp",
+              "packages/PioneerSearch",
               joinpath(apps_root, "search")
             );
 

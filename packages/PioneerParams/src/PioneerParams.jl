@@ -5,7 +5,7 @@ using DataStructures
 using JSON
 using PioneerCommon
 
-include(joinpath(@__DIR__, "owned", "GenerateParams.jl"))
+include(joinpath(@__DIR__, "routines", "GenerateParams.jl"))
 
 export GetBuildLibParams
 export GetParseSpecLibParams

@@ -48,7 +48,7 @@ main_GetBuildLibParams(argv=ARGS)::Cint = PioneerParams.main_GetBuildLibParams(a
 
 include(joinpath(@__DIR__, "bootstrap.jl"))
 include(joinpath(REPO_ROOT, "src", "shared", "koina_model_constants.jl"))
-include(joinpath(@__DIR__, "owned", "BuildSpecLib.jl"))
+include(joinpath(@__DIR__, "routines", "BuildSpecLib.jl"))
 
 export PREDICT_APP_NAME
 export BuildSpecLib

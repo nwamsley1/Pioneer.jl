@@ -186,6 +186,7 @@ end
     include("./UnitTests/test_split_package_library_interop.jl")
     include("./UnitTests/test_package_compat_alignment.jl")
     include("./UnitTests/test_search_json_object_defaults.jl")
+    include("./UnitTests/test_macos_codesign_workflow.jl")
     # Add focused FileOperations tests (Arrow IO, core, streaming)
     include("./utils/FileOperations/io/test_arrow_operations_basic.jl")
     include("./utils/FileOperations/core/test_core_references_basic.jl")

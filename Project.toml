@@ -42,7 +42,6 @@ Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 Polynomials = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 ProgressBars = "49802e3a-d2f1-5c88-81d8-b72133a6f568"
-PioneerSIMD = "05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 RobustModels = "d6ea1423-9682-4bbd-952f-b1577cbf8c98"
 SentinelArrays = "91c51154-3ec4-41a3-a24f-3f23e20d615c"
@@ -104,9 +103,6 @@ julia = "1.12"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-
-[sources]
-PioneerSIMD = { path = "packages/PioneerSIMD" }
 
 [targets]
 test = ["Test"]

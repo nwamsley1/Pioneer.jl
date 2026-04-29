@@ -13,18 +13,20 @@ end
 
 @testset "App projects expose compiled and runtime package dependencies" begin
     search_script = """
-    using PioneerSearchApp
-    Base.require(Base.PkgId(Base.UUID("9adec8df-eb60-4bac-9b0a-4137287d3bbd"), "PioneerPlots"))
-    Base.require(Base.PkgId(Base.UUID("05f169b2-1f58-4f3e-a5d2-7bfdd2b4f8e3"), "PioneerSIMD"))
+    using PioneerSearch, PioneerPlots
+    @assert isdefined(PioneerSearch, :PioneerPlots)
+    @assert isdefined(PioneerSearch, :Plots)
+    @assert PioneerSearch.qcPlots === PioneerPlots.qcPlots
+    @assert PioneerSearch.save_multipage_pdf === PioneerPlots.save_multipage_pdf
+    @assert PioneerSearch.Plots === PioneerPlots.Plots
     @assert Base.identify_package("PioneerPlots") !== nothing
-    @assert Base.identify_package("PioneerSIMD") !== nothing
     """
     predict_script = """
     using PioneerPredict
     @assert Base.identify_package("PioneerSIMD") !== nothing
     """
 
-    run_project_check(joinpath(REPO_ROOT, "apps", "PioneerSearchApp"), search_script)
+    run_project_check(joinpath(REPO_ROOT, "packages", "PioneerSearch"), search_script)
     run_project_check(joinpath(REPO_ROOT, "packages", "PioneerPredict"), predict_script)
     @test true
 end
@@ -35,7 +37,7 @@ end
         predict_bundle_dir = joinpath(tmp_dir, "predict")
 
         search_share_dir = bundle_runtime_project!(
-            joinpath(REPO_ROOT, "apps", "PioneerSearchApp"),
+            joinpath(REPO_ROOT, "packages", "PioneerSearch"),
             search_bundle_dir,
         )
         predict_share_dir = bundle_runtime_project!(
@@ -113,6 +115,8 @@ end
     script = """
     using Pioneer
     @assert isempty(PROGRAM_FILE)
+    @assert isdefined(Pioneer, :Runtime)
+    @assert Pioneer.Runtime === Pioneer
     missing_asset = Pioneer.asset_path("__definitely_missing_pioneer_asset__")
     @assert endswith(missing_asset, joinpath("assets", "__definitely_missing_pioneer_asset__"))
     println(missing_asset)
@@ -171,15 +175,16 @@ end
     @test occursin("\"\$predict_julia\" --startup-file=no --pkgimages=no --project=\"\$predict_share\"", windows_workflow)
 end
 
-@testset "Search app compiles mandatory plotting into the app boundary" begin
-    search_app_module = read(joinpath(REPO_ROOT, "apps", "PioneerSearchApp", "src", "PioneerSearchApp.jl"), String)
+@testset "Search package compiles mandatory plotting into the package boundary" begin
     search_module = read(joinpath(REPO_ROOT, "packages", "PioneerSearch", "src", "PioneerSearch.jl"), String)
     unix_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer"), String)
     windows_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer.bat"), String)
 
-    @test occursin("\nusing PioneerPlots\n", search_app_module)
-    @test occursin("PioneerSearch.set_pioneer_plots_module!(PioneerPlots)", search_app_module)
-    @test occursin("set_pioneer_plots_module!(plots_module::Module)", search_module)
+    @test occursin("\nusing PioneerPlots\n", search_module)
+    @test occursin("const Plots = PioneerPlots.Plots", search_module)
+    @test !occursin("qcPlots(args...; kwargs...)", search_module)
+    @test !isfile(joinpath(REPO_ROOT, "apps", "PioneerSearchApp", "Project.toml"))
+    @test !isfile(joinpath(REPO_ROOT, "apps", "PioneerSearchApp", "src", "PioneerSearchApp.jl"))
 
     @test !occursin("precompile_search_plot_runtime", unix_launcher)
     @test !occursin("pioneer-plots-runtime-smoke", unix_launcher)

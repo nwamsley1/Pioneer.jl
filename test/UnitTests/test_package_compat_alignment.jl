@@ -12,6 +12,7 @@ using TOML
         sort(readdir(joinpath(repo_root, "packages"); join=true)) .|> x -> joinpath(x, "Project.toml"),
         sort(readdir(joinpath(repo_root, "apps"); join=true)) .|> x -> joinpath(x, "Project.toml"),
     )
+    filter!(isfile, project_paths)
 
     for project_path in project_paths
         project = TOML.parsefile(project_path)
@@ -28,4 +29,19 @@ using TOML
             end
         end
     end
+end
+
+@testset "Public Pioneer registration surface has no internal package dependencies" begin
+    repo_root = normpath(joinpath(@__DIR__, "../.."))
+    root_project = TOML.parsefile(joinpath(repo_root, "Project.toml"))
+    root_deps = get(root_project, "deps", Dict{String, Any}())
+    root_sources = get(root_project, "sources", Dict{String, Any}())
+
+    internal_package_names = Set(
+        basename(pkg_dir) for pkg_dir in readdir(joinpath(repo_root, "packages"); join=true)
+        if isfile(joinpath(pkg_dir, "Project.toml"))
+    )
+
+    @test isempty(intersect(keys(root_deps), internal_package_names))
+    @test isempty(intersect(keys(root_sources), internal_package_names))
 end

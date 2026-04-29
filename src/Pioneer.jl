@@ -62,6 +62,8 @@ include(joinpath(@__DIR__, "shared", "runtime_core.jl"))
 include(joinpath(@__DIR__, "shared", "logging_utils.jl"))
 include(joinpath(@__DIR__, "shared", "simd_kernels.jl"))
 
+const Runtime = @__MODULE__
+
 #Set Seed 
 Random.seed!(1776);
 

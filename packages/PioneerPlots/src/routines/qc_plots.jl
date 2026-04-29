@@ -40,6 +40,28 @@ function shortenFileNames(parsed_fnames,
     return result
 end
 
+function _read_tic_series(ms_table_path::String)
+    table = Arrow.Table(ms_table_path)
+    ms_orders = table[:msOrder]
+    retention_times = table[:retentionTime]
+    tics = table[:TIC]
+
+    rt_values = Float64[]
+    tic_values = Float64[]
+    for scan_idx in eachindex(ms_orders)
+        ms_order = ms_orders[scan_idx]
+        if ms_order == 0x01 || ms_order == 1
+            retention_time = retention_times[scan_idx]
+            tic = tics[scan_idx]
+            if !ismissing(retention_time) && !ismissing(tic)
+                push!(rt_values, Float64(retention_time))
+                push!(tic_values, Float64(tic))
+            end
+        end
+    end
+    return rt_values, tic_values
+end
+
 #Group psms by file of origin
 function qcPlots(
     precursors_wide_path,
@@ -486,13 +508,11 @@ function qcPlots(
 
         for (id, ms_table_path) in enumerate(ms_table_paths)
             short_fname = short_fnames[id]  # Now correctly indexed
-            ms_table = BasicMassSpecData(ms_table_path)
-            ms1_scans = getMsOrders(ms_table).==1
-
+            retention_times, tics = _read_tic_series(ms_table_path)
 
             Plots.plot!(p,
-            [getRetentionTime(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
-            [getTIC(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
+            retention_times,
+            tics,
                     subplot = 1,
                     xlabel = "retention time (min)",
                     label = short_fname,

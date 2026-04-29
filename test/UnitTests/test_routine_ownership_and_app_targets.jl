@@ -2,19 +2,19 @@ using Test
 
 const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
-const OWNED_ROUTINES = Dict(
+const ROUTINE_SHIMS = Dict(
     joinpath(REPO_ROOT, "src", "Routines", "GenerateParams.jl") =>
-        "packages\", \"PioneerParams\", \"src\", \"owned\", \"GenerateParams.jl",
+        "packages\", \"PioneerParams\", \"src\", \"routines\", \"GenerateParams.jl",
     joinpath(REPO_ROOT, "src", "Routines", "BuildSpecLib.jl") =>
-        "packages\", \"PioneerPredict\", \"src\", \"owned\", \"BuildSpecLib.jl",
+        "packages\", \"PioneerPredict\", \"src\", \"routines\", \"BuildSpecLib.jl",
     joinpath(REPO_ROOT, "src", "Routines", "SearchDIA.jl") =>
-        "packages\", \"PioneerSearch\", \"src\", \"owned\", \"SearchDIA.jl"
+        "packages\", \"PioneerSearch\", \"src\", \"routines\", \"SearchDIA.jl"
 )
 
-const OWNED_IMPLEMENTATIONS = [
-    joinpath(REPO_ROOT, "packages", "PioneerParams", "src", "owned", "GenerateParams.jl"),
-    joinpath(REPO_ROOT, "packages", "PioneerPredict", "src", "owned", "BuildSpecLib.jl"),
-    joinpath(REPO_ROOT, "packages", "PioneerSearch", "src", "owned", "SearchDIA.jl")
+const ROUTINE_IMPLEMENTATIONS = [
+    joinpath(REPO_ROOT, "packages", "PioneerParams", "src", "routines", "GenerateParams.jl"),
+    joinpath(REPO_ROOT, "packages", "PioneerPredict", "src", "routines", "BuildSpecLib.jl"),
+    joinpath(REPO_ROOT, "packages", "PioneerSearch", "src", "routines", "SearchDIA.jl")
 ]
 
 const WRAPPER_EXPECTATIONS = Dict(
@@ -36,31 +36,35 @@ const WORKFLOW_EXPECTATIONS = Dict(
     joinpath(REPO_ROOT, ".github", "workflows", "build_app_linux.yml") => [
         "\"packages/PioneerParams\"",
         "\"packages/PioneerPredict\"",
-        "\"apps/PioneerSearchApp\"",
+        "\"packages/PioneerSearch\"",
         "\"packages/PioneerConvert\""
     ],
     joinpath(REPO_ROOT, ".github", "workflows", "build_app_windows.yml") => [
         "\"packages/PioneerParams\"",
         "\"packages/PioneerPredict\"",
-        "\"apps/PioneerSearchApp\"",
+        "\"packages/PioneerSearch\"",
         "\"packages/PioneerConvert\""
     ],
     joinpath(REPO_ROOT, ".github", "workflows", "build_app_macos.yml") => [
         "\"packages/PioneerParams\"",
         "\"packages/PioneerPredict\"",
-        "\"apps/PioneerSearchApp\"",
+        "\"packages/PioneerSearch\"",
         "\"packages/PioneerConvert\""
     ]
 )
 
-@testset "Routine ownership moved out of root" begin
-    for owned_path in OWNED_IMPLEMENTATIONS
-        @test isfile(owned_path)
+@testset "Routine implementations live in package routine folders" begin
+    for routine_path in ROUTINE_IMPLEMENTATIONS
+        @test isfile(routine_path)
     end
 
-    for (shim_path, owned_fragment) in OWNED_ROUTINES
+    for package_name in ("PioneerParams", "PioneerPredict", "PioneerSearch", "PioneerPlots")
+        @test !isdir(joinpath(REPO_ROOT, "packages", package_name, "src", "owned"))
+    end
+
+    for (shim_path, routine_fragment) in ROUTINE_SHIMS
         @test isfile(shim_path)
-        @test occursin(owned_fragment, read(shim_path, String))
+        @test occursin(routine_fragment, read(shim_path, String))
     end
 end
 

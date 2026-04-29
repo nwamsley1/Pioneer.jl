@@ -30,10 +30,6 @@ const EXPECTED_PACKAGE_FILES = Dict(
     "PioneerConvert" => (
         joinpath(REPO_ROOT, "packages", "PioneerConvert", "Project.toml"),
         joinpath(REPO_ROOT, "packages", "PioneerConvert", "src", "PioneerConvert.jl")
-    ),
-    "PioneerSearchApp" => (
-        joinpath(REPO_ROOT, "apps", "PioneerSearchApp", "Project.toml"),
-        joinpath(REPO_ROOT, "apps", "PioneerSearchApp", "src", "PioneerSearchApp.jl")
     )
 )
 
@@ -42,5 +38,10 @@ const EXPECTED_PACKAGE_FILES = Dict(
         @test isfile(project_file)
         @test isfile(module_file)
         @test occursin("module $module_name", read(module_file, String))
+    end
+
+    for app_name in ("PioneerParamsApp", "PioneerPredictApp", "PioneerSearchApp", "PioneerConvertApp")
+        @test !isfile(joinpath(REPO_ROOT, "apps", app_name, "Project.toml"))
+        @test !isfile(joinpath(REPO_ROOT, "apps", app_name, "src", "$app_name.jl"))
     end
 end

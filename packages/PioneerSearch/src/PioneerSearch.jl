@@ -30,13 +30,13 @@ using InlineStrings
 using HTTP
 using PioneerCommon
 using PioneerParams
+using PioneerPlots
 
 const Runtime = PioneerCommon
 const Pioneer = @__MODULE__
 const SEARCH_APP_NAME = "SearchDIA"
 const REPO_ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))
-const PIONEER_PLOTS_PKGID = Base.PkgId(Base.UUID("9adec8df-eb60-4bac-9b0a-4137287d3bbd"), "PioneerPlots")
-const PIONEER_PLOTS_MODULE = Ref{Union{Nothing, Module}}(nothing)
+const Plots = PioneerPlots.Plots
 
 global_logger(ConsoleLogger())
 Random.seed!(1776)
@@ -45,65 +45,6 @@ function __init__()
     load_pioneer_simd!()
     return nothing
 end
-
-function set_pioneer_plots_module!(plots_module::Module)
-    PIONEER_PLOTS_MODULE[] = plots_module
-    return nothing
-end
-
-function get_pioneer_plots_module()::Module
-    plots_module = PIONEER_PLOTS_MODULE[]
-    if plots_module === nothing
-        Base.require(PIONEER_PLOTS_PKGID)
-        plots_module = Base.root_module(PIONEER_PLOTS_PKGID)
-        PIONEER_PLOTS_MODULE[] = plots_module
-    end
-    return plots_module
-end
-
-module LazyPlotsProxy
-function plot(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.plot(args...; kwargs...)
-end
-function plot!(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.plot!(args...; kwargs...)
-end
-function scatter!(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.scatter!(args...; kwargs...)
-end
-function histogram(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.histogram(args...; kwargs...)
-end
-function savefig(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.savefig(args...; kwargs...)
-end
-function annotate!(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.annotate!(args...; kwargs...)
-end
-function vline!(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.vline!(args...; kwargs...)
-end
-function hline!(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.hline!(args...; kwargs...)
-end
-function xlims(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.xlims(args...; kwargs...)
-end
-function ylims(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.ylims(args...; kwargs...)
-end
-function xlims!(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.xlims!(args...; kwargs...)
-end
-function ylims!(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.ylims!(args...; kwargs...)
-end
-function text(args...; kwargs...)
-    return parentmodule(@__MODULE__).get_pioneer_plots_module().Plots.text(args...; kwargs...)
-end
-end
-
-const Plots = LazyPlotsProxy
 
 plot(args...; kwargs...) = Plots.plot(args...; kwargs...)
 plot!(args...; kwargs...) = Plots.plot!(args...; kwargs...)
@@ -123,12 +64,9 @@ GetParseSpecLibParams(args...; kwargs...) = PioneerParams.GetParseSpecLibParams(
 GetSearchParams(args...; kwargs...) = PioneerParams.GetSearchParams(args...; kwargs...)
 main_GetParseSpecLibParams(argv=ARGS)::Cint = PioneerParams.main_GetParseSpecLibParams(argv)
 main_GetSearchParams(argv=ARGS)::Cint = PioneerParams.main_GetSearchParams(argv)
-plotRTAlign(args...; kwargs...) = get_pioneer_plots_module().plotRTAlign(args...; kwargs...)
-qcPlots(args...; kwargs...) = get_pioneer_plots_module().qcPlots(args...; kwargs...)
-save_multipage_pdf(args...; kwargs...) = get_pioneer_plots_module().save_multipage_pdf(args...; kwargs...)
 
 include(joinpath(@__DIR__, "bootstrap.jl"))
-include(joinpath(@__DIR__, "owned", "SearchDIA.jl"))
+include(joinpath(@__DIR__, "routines", "SearchDIA.jl"))
 
 export SEARCH_APP_NAME
 export GetParseSpecLibParams

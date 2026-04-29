@@ -228,7 +228,7 @@ jobs:
             );
 
             create_app(
-              "apps/PioneerSearchApp",
+              "packages/PioneerSearch",
               joinpath(apps_root, "search"),
               incremental=true,
               force=true,
@@ -236,7 +236,7 @@ jobs:
               executables=["SearchDIA"=>"main_SearchDIA"]
             );
             bundle_and_instantiate_runtime_project!(
-              "apps/PioneerSearchApp",
+              "packages/PioneerSearch",
               joinpath(apps_root, "search")
             );
 
@@ -373,6 +373,20 @@ jobs:
             done
           }
 
+          is_macho_file() {
+            local target="$1"
+            local file_type
+            file_type="$(file -b "$target" || true)"
+            [[ "$file_type" == *"Mach-O"* ]]
+          }
+
+          maybe_log_non_macho_codesign_skip() {
+            local target="$1"
+            if [ -x "$target" ] || [[ "$target" == *.sh ]]; then
+              echo "Skipping non-Mach-O file during codesign: $target"
+            fi
+          }
+
           APP="Pioneer"
           DIST="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
           PKGROOT="pkgroot"
@@ -385,9 +399,14 @@ jobs:
           mkdir -p "$PKGROOT/usr/local/$APP"
           cp -R "$DIST"/* "$PKGROOT/usr/local/$APP/"
 
-          # Sign every file with retry
+          # Codesign only Mach-O payloads. Julia artifacts also include shell scripts
+          # and metadata files that are not valid codesign targets.
           while IFS= read -r -d '' f; do
-            codesign_with_retry "$f" || exit 1
+            if is_macho_file "$f"; then
+              codesign_with_retry "$f" || exit 1
+            else
+              maybe_log_non_macho_codesign_skip "$f"
+            fi
           done < <(find "$PKGROOT/usr/local/$APP" -type f -print0)
 
           mkdir -p "$PKGROOT/usr/local/bin"
