@@ -126,7 +126,11 @@ end
 
     @test occursin("runtime_cache", macos_workflow)
     @test occursin("runtime_share=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/runtime/share/julia\"", macos_workflow)
+    @test occursin("search_share=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/search/share/julia\"", macos_workflow)
+    @test occursin("predict_share=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/predict/share/julia\"", macos_workflow)
     @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$runtime_share", macos_workflow)
+    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$search_share", macos_workflow)
+    @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache:\$predict_share", macos_workflow)
 
     @test occursin("runtime_cache", windows_workflow)
     @test occursin("JULIA_DEPOT_PATH=\"\$runtime_cache;\$search_share", windows_workflow)
@@ -187,7 +191,11 @@ end
     @test occursin("\"\$predict_julia\" --startup-file=no --pkgimages=no --project=\"\$predict_share\"", linux_workflow)
 
     @test occursin("runtime_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/runtime/bin/julia\"", macos_workflow)
+    @test occursin("search_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/search/bin/julia\"", macos_workflow)
+    @test occursin("predict_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/predict/bin/julia\"", macos_workflow)
     @test occursin("\"\$runtime_julia\" --startup-file=no --pkgimages=no --project=\"\$runtime_share\"", macos_workflow)
+    @test occursin("\"\$search_julia\" --startup-file=no --pkgimages=no --project=\"\$search_share\"", macos_workflow)
+    @test occursin("\"\$predict_julia\" --startup-file=no --pkgimages=no --project=\"\$predict_share\"", macos_workflow)
 
     @test occursin("search_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/search/bin/julia.exe\"", windows_workflow)
     @test occursin("predict_julia=\"build/Pioneer_\${{ matrix.identifier }}/Applications/Pioneer/apps/predict/bin/julia.exe\"", windows_workflow)
