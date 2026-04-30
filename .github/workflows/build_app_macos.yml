@@ -443,14 +443,13 @@ jobs:
           TEAM_ID:    ${{ secrets.NOTARIZE_TEAM_ID }}
         run: |
           echo "Starting notarization at $(date)"
-          xcrun notarytool store-credentials notary-profile \
-            --apple-id "$AC_USERNAME" --team-id "$TEAM_ID" \
-            --password "$AC_PASSWORD"
 
           echo "Submitting package for notarization at $(date)"
           result=$(xcrun notarytool submit \
                      Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg \
-                     --keychain-profile notary-profile \
+                     --apple-id "$AC_USERNAME" \
+                     --team-id "$TEAM_ID" \
+                     --password "$AC_PASSWORD" \
                      --wait --output-format json 2>&1) || {
             echo "Notarization command failed or timed out at $(date)"
             echo "Result: $result"
@@ -465,7 +464,10 @@ jobs:
 
           if [[ "$status" != "Accepted" ]]; then
             echo "Notarization failed: $status"
-            xcrun notarytool log "$subid" --keychain-profile notary-profile
+            xcrun notarytool log "$subid" \
+              --apple-id "$AC_USERNAME" \
+              --team-id "$TEAM_ID" \
+              --password "$AC_PASSWORD"
             exit 1
           fi
           echo "Notarization successful at $(date)"
