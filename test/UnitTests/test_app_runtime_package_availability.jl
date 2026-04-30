@@ -105,6 +105,14 @@ end
     @test occursin("JULIA_PKG_PRECOMPILE_AUTO=0", windows_workflow)
 end
 
+@testset "Packaged launchers allow target-local package images" begin
+    unix_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer"), String)
+    windows_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer.bat"), String)
+
+    @test !occursin("--pkgimages=no", unix_launcher)
+    @test !occursin("--pkgimages=no", windows_launcher)
+end
+
 @testset "Runtime-heavy apps use a writable runtime depot ahead of bundled sources" begin
     unix_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer"), String)
     windows_launcher = read(joinpath(REPO_ROOT, "src", "build", "CLI", "pioneer.bat"), String)

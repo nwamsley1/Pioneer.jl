@@ -324,18 +324,6 @@ configure_subapp_runtime_env() {
     fi
 }
 
-default_julia_args() {
-    local executable_name="$1"
-    case "$executable_name" in
-        BuildSpecLib|SearchDIA)
-            echo "--pkgimages=no"
-            ;;
-        *)
-            echo ""
-            ;;
-    esac
-}
-
 configure_runtime_precompile_policy() {
     local executable_name="$1"
     case "$executable_name" in
@@ -347,9 +335,4 @@ configure_runtime_precompile_policy() {
 
 configure_subapp_runtime_env "$SUBCOMMAND"
 configure_runtime_precompile_policy "$SUBCOMMAND"
-JULIA_ARGS_EXTRA="$(default_julia_args "$SUBCOMMAND")"
-if [ -n "$JULIA_ARGS_EXTRA" ]; then
-    exec "$(resolve_executable_path "$SUBCOMMAND")" "${SUBCOMMAND_ARGS[@]}" --julia-args $JULIA_ARGS_EXTRA
-else
-    exec "$(resolve_executable_path "$SUBCOMMAND")" "${SUBCOMMAND_ARGS[@]}"
-fi
+exec "$(resolve_executable_path "$SUBCOMMAND")" "${SUBCOMMAND_ARGS[@]}"
