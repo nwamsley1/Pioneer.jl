@@ -326,7 +326,7 @@ jobs:
     name: validate osx intel
     needs:
       - build_macos
-    runs-on: macos-15-intel
+    runs-on: [self-hosted, macOS, X64]
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6

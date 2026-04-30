@@ -59,7 +59,7 @@ jobs:
             format('call-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.identifier) ||
             format('{0}-{1}-{2}', github.workflow, github.ref_name, matrix.identifier) }}
       cancel-in-progress: true
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON(matrix.runner) }}
     env:
       JULIA_NUM_THREADS: auto
       MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
@@ -70,10 +70,10 @@ jobs:
       matrix:
         include:
           - arch: x64
-            runner: macos-15-intel
+            runner: '["self-hosted", "macOS", "X64"]'
             identifier: macos-x64
           - arch: arm64
-            runner: macos-latest
+            runner: '["macos-latest"]'
             identifier: macos-arm64
 
     steps:
