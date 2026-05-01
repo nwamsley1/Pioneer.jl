@@ -57,6 +57,12 @@ function binned_laplace_scale(order::Vector{Int}, vals::Vector{Float64},
     return centers, b_vals
 end
 
+function _stable_projected_gradient_lr(H::AbstractMatrix{Float64}, lr::Float64)
+    L = opnorm(H)
+    # Projected gradient on 0.5*c'H*c - Xty'c is stable for steps < 2/L.
+    return (isfinite(L) && L > 0.0) ? min(lr, 1.8 / L) : lr
+end
+
 
 #==========================================================
 Convexity-constrained smoothing spline for bias
@@ -125,11 +131,12 @@ function fit_convex_bias_spline(x::Vector{Float64}, y::Vector{Float64};
         Xty = WX' * y
         c = H \ Xty
         project!(c)
+        stable_lr = _stable_projected_gradient_lr(H, lr)
 
         prev_obj = Inf
         for iter in 1:max_iter
             grad = H * c - Xty
-            c .-= lr .* grad
+            c .-= stable_lr .* grad
             project!(c)
             if iter % 200 == 0
                 obj = 0.5 * (c' * H * c) - (Xty' * c)
@@ -235,11 +242,12 @@ function fit_monotone_bias_spline(x::Vector{Float64}, y::Vector{Float64};
         Xty = WX' * y
         c = H \ Xty
         project!(c)
+        stable_lr = _stable_projected_gradient_lr(H, lr)
 
         prev_obj = Inf
         for iter in 1:max_iter
             grad = H * c - Xty
-            c .-= lr .* grad
+            c .-= stable_lr .* grad
             project!(c)
             if iter % 200 == 0
                 obj = 0.5 * (c' * H * c) - (Xty' * c)
@@ -348,6 +356,7 @@ function fit_monotone_convex_spread_spline(
     H = X' * X + λ * P
     Xty = X' * y
     c = H \ Xty
+    stable_lr = _stable_projected_gradient_lr(H, lr)
 
     function project!(c::Vector{Float64})
         for _ in 1:30
@@ -369,7 +378,7 @@ function fit_monotone_convex_spread_spline(
     prev_obj = Inf
     for iter in 1:max_iter
         grad = H * c - Xty
-        c .-= lr .* grad
+        c .-= stable_lr .* grad
         project!(c)
         if iter % 100 == 0
             obj = 0.5 * (c' * H * c) - (Xty' * c)

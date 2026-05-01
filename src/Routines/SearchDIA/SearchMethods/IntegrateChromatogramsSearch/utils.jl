@@ -824,7 +824,7 @@ function process_final_psms!(
     precursors = getPrecursors(getSpecLib(search_context))
     n = size(psms, 1)
     accession_numbers = Vector{String}(undef, n)
-    ms_file_idxs = Vector{UInt16}(undef, n)
+    ms_file_idxs = Vector{UInt32}(undef, n)
     species = Vector{String}(undef, n)
     peak_area = Vector{Union{Missing, Float32}}(undef, n)
     peak_area_normalized = Vector{Union{Missing, Float32}}(undef, n)
@@ -873,4 +873,3 @@ function process_final_psms!(
     
     return nothing
 end
-

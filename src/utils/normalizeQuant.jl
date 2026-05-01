@@ -108,10 +108,13 @@ function applyNormalization!(
         norm_quant_col = Symbol(string(quant_col) * "_normalized")
         correction_spline = corrections[fpath]
         n = size(psms, 1)
-        norm_vals = Vector{Float64}(undef, n)
+        norm_vals = Vector{Union{Missing, Float32}}(missing, n)
         for i in range(1, n)
-            hc = correction_spline(psms[i, :irt_obs])
-            norm_vals[i] = 2^(log2(max(psms[i, quant_col], 0.0)) - hc)
+            quant = psms[i, quant_col]
+            if !ismissing(quant)
+                hc = correction_spline(psms[i, :irt_obs])
+                norm_vals[i] = Float32(2^(log2(max(Float64(quant), 0.0)) - Float64(hc)))
+            end
         end
         psms[!, norm_quant_col] = norm_vals
         writeArrow(fpath, psms)

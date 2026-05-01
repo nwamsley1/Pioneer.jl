@@ -36,8 +36,16 @@ was not seen in the i'th experiment, then S[i, j] == missing.
 ### Examples 
 
 """
-function getS(peptides::AbstractVector{UInt32}, peptides_dict::Dict{UInt32, Int64}, experiments::AbstractVector{UInt16}, experiments_dict::Dict{UInt16, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
-    S = Matrix{Union{Missing, T}}(missing, M, N)
+function getS(
+    peptides::AbstractVector{UInt32},
+    peptides_dict::Dict{UInt32, Int64},
+    experiments::AbstractVector{UInt32},
+    experiments_dict::Dict{UInt32, Int64},
+    abundance::AbstractVector{Union{Missing, Float32}},
+    M::Int,
+    N::Int
+)
+    S = Matrix{Union{Missing, Float32}}(missing, M, N)
     for i in eachindex(peptides)
         if !ismissing(abundance[i])
             if abundance[i] > 0.0
@@ -48,6 +56,37 @@ function getS(peptides::AbstractVector{UInt32}, peptides_dict::Dict{UInt32, Int6
         end
     end
     return S
+end
+
+const MAXLFQ_FLOAT32_INPUT_COLUMNS = (
+    :peak_area,
+    :peak_area_normalized,
+    :qlobal_pg_qval,
+    :pg_qval,
+    :pg_pep,
+    :pg_score,
+    :global_pg_score,
+)
+
+function validate_maxlfq_column_eltype(psms::AbstractDataFrame, col::Symbol, expected)
+    hasproperty(psms, col) || throw(ArgumentError("MaxLFQ input is missing required column :$col"))
+    actual = eltype(psms[!, col])
+    actual == expected || throw(ArgumentError(
+        "MaxLFQ input column :$col must have eltype $expected, got $actual. " *
+        "Regenerate upstream PSM files with the current schema."
+    ))
+    return true
+end
+
+function validate_maxlfq_input_schema(psms::AbstractDataFrame, quant_col::Symbol)
+    validate_maxlfq_column_eltype(psms, :ms_file_idx, UInt32)
+    validate_maxlfq_column_eltype(psms, quant_col, Union{Missing, Float32})
+    for col in MAXLFQ_FLOAT32_INPUT_COLUMNS
+        if hasproperty(psms, col)
+            validate_maxlfq_column_eltype(psms, col, Union{Missing, Float32})
+        end
+    end
+    return true
 end
 
 """
@@ -453,27 +492,27 @@ function getProtAbundance(protein::String,
                             entrap_id::UInt8,
                             species::String,
                             peptides::AbstractVector{UInt32}, 
-                            experiments::AbstractVector{UInt16}, 
+                            experiments::AbstractVector{UInt32},
                             use_for_quant::AbstractVector{Bool},
-                            abundance::AbstractVector{Union{T, Missing}},
-                            global_qvals::AbstractVector{Union{F,Missing}},
-                            qvals::AbstractVector{Union{F,Missing}},
-                            peps::AbstractVector{Union{F,Missing}},
-                            pg_scores::AbstractVector{Union{F,Missing}},
-                            global_pg_scores::AbstractVector{Union{F,Missing}},
+                            abundance::AbstractVector{Union{Missing, Float32}},
+                            global_qvals::AbstractVector{Union{Missing, Float32}},
+                            qvals::AbstractVector{Union{Missing, Float32}},
+                            peps::AbstractVector{Union{Missing, Float32}},
+                            pg_scores::AbstractVector{Union{Missing, Float32}},
+                            global_pg_scores::AbstractVector{Union{Missing, Float32}},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}},
                             protein_out::Vector{Union{Missing, String}}, 
                             peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}},
-                            experiments_out::Vector{Union{Missing, UInt32}}, 
+                            experiments_out::Vector{Union{Missing, UInt32}},
                             log2_abundance_out::Vector{Union{Missing, Float32}},
                             global_qval_out::Vector{Union{Missing, Float32}},
                             qval_out::Vector{Union{Missing, Float32}},
                             pep_out::Vector{Union{Missing, Float32}},
                             pg_score_out::Vector{Union{Missing, Float32}},
                             global_pg_score_out::Vector{Union{Missing, Float32}},
-                            total_peak_area_out::Vector{Union{Missing, Float32}}) where {T <: Real, F <: Real}
+                            total_peak_area_out::Vector{Union{Missing, Float32}})
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -510,32 +549,32 @@ function getProtAbundance(protein::String,
                             species::String,
                             protein::String,
                             unique_peptides::Vector{UInt32}, 
-                            log2_abundances::AbstractVector{Union{Missing, T}},
-                            global_qvals::AbstractVector{Union{Float32,Missing}},
-                            qvals::AbstractVector{Union{Float32,Missing}},
-                            peps::AbstractVector{Union{Float32,Missing}},
-                            pg_scores::AbstractVector{Union{Float32,Missing}},
-                            global_pg_scores::AbstractVector{Union{Float32,Missing}},
+                            log2_abundances::AbstractVector{Union{Missing, Float32}},
+                            global_qvals::AbstractVector{Union{Missing, Float32}},
+                            qvals::AbstractVector{Union{Missing, Float32}},
+                            peps::AbstractVector{Union{Missing, Float32}},
+                            pg_scores::AbstractVector{Union{Missing, Float32}},
+                            global_pg_scores::AbstractVector{Union{Missing, Float32}},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}}, 
                             protein_out::Vector{Union{Missing, String}}, 
-                            peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
-                            log2_abundance_out::Vector{Union{Missing, Float32}}, 
-                            global_qval_out::Vector{Union{Missing, Float32}}, 
-                            qval_out::Vector{Union{Missing, Float32}}, 
+                            peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}},
+                            log2_abundance_out::Vector{Union{Missing, Float32}},
+                            global_qval_out::Vector{Union{Missing, Float32}},
+                            qval_out::Vector{Union{Missing, Float32}},
                             pep_out::Vector{Union{Missing, Float32}},
                             pg_score_out::Vector{Union{Missing, Float32}},
                             global_pg_score_out::Vector{Union{Missing, Float32}},
                             total_peak_area_out::Vector{Union{Missing, Float32}},
-                            experiments_out::Vector{Union{Missing, I}}, 
-                            S::Matrix{Union{Missing, T}},
-                            total_peak_area::AbstractVector{Union{Missing, Float32}}) where {T<:Real,I<:Integer}
-        
-        function appendPeptides!(peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
+                            experiments_out::Vector{Union{Missing, UInt32}},
+                            S::AbstractMatrix{Union{Missing, Float32}},
+                            total_peak_area::AbstractVector{Union{Missing, Float32}})
+
+        function appendPeptides!(peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}},
                                 row_idx::Int64,
-                                unique_peptides::Vector{UInt32}, 
-                                S::Matrix{Union{Missing,T}})
+                                unique_peptides::Vector{UInt32},
+                                S::AbstractMatrix{Union{Missing, Float32}})
             #Each column of S corresponds to and experiment and each row corresponds to a peptide
             #Need to get each non-missing peptide for each experiment. Concatenate the non-missing peptides
             #For and experiment with a semi-colon. See example in the getProtAbundance docstring 
@@ -642,6 +681,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     
     # Use eager DataFrame loading (allows editing for filtering)
     prot = DataFrame(Tables.columntable(Arrow.Table(file_path(prot_ref))))
+    validate_maxlfq_input_schema(prot, quant_col)
 
     # Filter out rows with missing inferred_protein_group values
     filter!(:inferred_protein_group => x -> !ismissing(x), prot)

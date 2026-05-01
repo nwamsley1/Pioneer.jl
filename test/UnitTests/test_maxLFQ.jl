@@ -22,8 +22,8 @@ end
     # 2 peptides, 3 experiments, 4 observations (one peptide missing from one experiment)
     peptides  = UInt32[1, 1, 2, 2]
     pep_dict  = Dict(UInt32(1) => 1, UInt32(2) => 2)
-    exps      = UInt16[1, 2, 1, 3]
-    exp_dict  = Dict(UInt16(1) => 1, UInt16(2) => 2, UInt16(3) => 3)
+    exps      = UInt32[1, 2, 1, 3]
+    exp_dict  = Dict(UInt32(1) => 1, UInt32(2) => 2, UInt32(3) => 3)
     abundance = Union{Float32, Missing}[10.0f0, 20.0f0, 5.0f0, 15.0f0]
 
     S = Pioneer.getS(peptides, pep_dict, exps, exp_dict, abundance, 2, 3)
@@ -149,7 +149,7 @@ end
 @testset "getProtAbundance" begin
     # Setup: 2 peptides seen in 3 experiments with 2× fold changes
     peptides  = UInt32[1, 1, 1, 2, 2, 2]
-    exps      = UInt16[1, 2, 3, 1, 2, 3]
+    exps      = UInt32[1, 2, 3, 1, 2, 3]
     use_quant = Bool[true, true, true, true, true, true]
     abundance = Union{Float32, Missing}[10.0f0, 20.0f0, 40.0f0, 5.0f0, 10.0f0, 20.0f0]
     qvals     = Union{Float32, Missing}[0.01f0, 0.01f0, 0.01f0, 0.02f0, 0.02f0, 0.02f0]
@@ -230,7 +230,7 @@ end
 @testset "getProtAbundance missing data" begin
     # Peptide 2 is missing from experiment 2
     peptides  = UInt32[1, 1, 2, 2]
-    exps      = UInt16[1, 2, 1, 3]
+    exps      = UInt32[1, 2, 1, 3]
     use_quant = Bool[true, true, true, true]
     abundance = Union{Float32, Missing}[10.0f0, 20.0f0, 5.0f0, 10.0f0]
     qvals     = Union{Float32, Missing}[0.01f0, 0.01f0, 0.02f0, 0.02f0]
