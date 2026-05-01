@@ -1,0 +1,54 @@
+# Regression test for the Lipschitz step cap in
+# fit_intensity_mass_error.jl. The projected gradient descent loops
+# inside fit_convex_bias_spline / fit_monotone_bias_spline /
+# fit_monotone_convex_spread_spline used a fixed lr=1e-4. opnorm(H)
+# scales with the row count of the design matrix, so once n_pts pushes
+# L = opnorm(H) past 1/lr the optimizer diverges, IRLS reweights to
+# non-finite values, and the next H \ Xty throws
+# `ArgumentError: matrix contains Infs or NaNs` from LAPACK.
+#
+# These tests build large-N synthetic inputs (300k points) that would
+# trip the original divergence and assert the fit returns a finite
+# UniformSpline.
+
+using Pioneer: fit_convex_bias_spline, fit_monotone_bias_spline,
+               fit_monotone_convex_spread_spline
+
+@testset "Intensity spline Lipschitz step cap" begin
+    rng = MersenneTwister(0x5eedfa11)
+    n = 300_000
+
+    @testset "fit_convex_bias_spline (n=$n)" begin
+        x = collect(range(100.0, 1500.0; length=n))
+        y = 1e-3 .* (x ./ 1000.0 .- 0.7).^2 .+ 5e-4 .* randn(rng, n)
+        spline = fit_convex_bias_spline(x, y; convex_up=true,
+                                         n_knots=10, λ=1.0,
+                                         max_iter=1000, lr=1e-4)
+        @test spline !== nothing
+        @test all(isfinite, spline.coeffs)
+    end
+
+    @testset "fit_monotone_bias_spline (n=$n)" begin
+        x = collect(range(0.0, 30.0; length=n))
+        y = 1e-3 .* (x .- 15.0) .+ 5e-4 .* randn(rng, n)
+        spline = fit_monotone_bias_spline(x, y; increasing=true,
+                                           n_knots=10, λ=1.0,
+                                           max_iter=1000, lr=1e-4)
+        @test spline !== nothing
+        @test all(isfinite, spline.coeffs)
+    end
+
+    @testset "fit_monotone_convex_spread_spline" begin
+        # The spread fit consumes pre-binned (centers, scales) so its
+        # design matrix is small; the Lipschitz cap still has to be
+        # finite. This guards against regression of the same code path.
+        centers = collect(range(10.0, 30.0; length=200))
+        scales = max.(0.5 .+ 5.0 .* exp.(-(centers .- 10.0) ./ 5.0)
+                       .+ 0.05 .* randn(rng, length(centers)), 0.05)
+        spline = fit_monotone_convex_spread_spline(centers, scales;
+                                                    n_knots=10, λ=0.01,
+                                                    max_iter=1000, lr=1e-3)
+        @test spline !== nothing
+        @test all(isfinite, spline.coeffs)
+    end
+end
