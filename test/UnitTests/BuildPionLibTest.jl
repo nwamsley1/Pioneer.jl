@@ -220,7 +220,6 @@ end
         max_frag_rank = UInt8(10)
         length_to_frag_count_multiple = Float32(10)
         min_frag_intensity = Float32(0.1)
-        rank_to_score = UInt8[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
 
         # Create a simple fragment bounds model for testing
         frag_bounds = FragBoundModel(
@@ -290,7 +289,6 @@ end
             max_frag_rank,
             length_to_frag_count_multiple,
             min_frag_intensity,
-            rank_to_score,
             frag_bounds,
             frag_bin_tol_ppm,
             rt_bin_tol_ppm,
@@ -705,9 +703,6 @@ end
             ImmutablePolynomial([1000.0f0, 0.0f0])  # max_frag_mz = 1000
         )
         
-        # Rank to score mapping
-        rank_to_score = UInt8[10, 9, 8, 7, 6]
-        
         # Call function with parameters that should allow all fragments to pass
         simple_frags = getSimpleFrags(
             frag_mz,
@@ -733,7 +728,6 @@ end
             include_neutral_diff,
             max_frag_charge,
             frag_bounds,
-            rank_to_score
         )
         
         # All fragments should pass our filters
@@ -745,8 +739,7 @@ end
         @test getPrecMZ(simple_frags[1]) ≈ 500.0
         @test getIRT(simple_frags[1]) ≈ 10.0
         @test getPrecCharge(simple_frags[1]) == 2
-        # Score is a bitmask of 1 << (rank-1) (since commit f472cd06 replaced
-        # the additive rank_to_score lookup with bitmask scoring). Rank 1 → 1.
+        # Score is a per-rank bitmask: rank N → UInt8(1) << (N-1), capped at 8.
         @test getScore(simple_frags[1]) == UInt8(1)  # rank 1 → bit 0
         
         # Check properties of second fragment
@@ -791,7 +784,6 @@ end
             include_neutral_diff,
             max_frag_charge,
             frag_bounds,
-            rank_to_score
         )
         
         # Only fragment #3 should pass (y-ion with index 3)
@@ -799,8 +791,9 @@ end
         @test getMZ(restrictive_simple_frags[1]) ≈ 400.0
         @test getPrecID(restrictive_simple_frags[1]) == 2
         
-        # Test with rank limits
-        # Create a large number of identical fragments
+        # Rank cap: getSimpleFrags hardcodes max_rank=8 (UInt8 bitmask).
+        # Feed 10 candidate fragments and confirm only the first 8 are emitted
+        # with bitmask scores 1<<0 .. 1<<7.
         n_test_frags = 10
         large_frag_mz = repeat(Float32[100.0], n_test_frags)
         large_frag_is_y = repeat([true], n_test_frags)
@@ -812,13 +805,10 @@ end
         large_frag_internal = repeat([false], n_test_frags)
         large_frag_immonium = repeat([false], n_test_frags)
         large_frag_neutral_diff = repeat([false], n_test_frags)
-        
+
         # All fragments belong to same precursor
         large_prec_to_frag_idx = UInt64[1, n_test_frags+1]
-        
-        # Small rank_to_score array to test rank limiting
-        small_rank_to_score = UInt8[10, 9, 8]
-        
+
         rank_limited_frags = getSimpleFrags(
             large_frag_mz,
             large_frag_is_y,
@@ -843,16 +833,13 @@ end
             include_neutral_diff,
             max_frag_charge,
             frag_bounds,
-            small_rank_to_score     # Only allow 3 ranks
         )
-        
-        # Should only return 3 fragments due to rank limit
-        @test length(rank_limited_frags) == 3
-        
-        # Bitmask scores: rank N → 1 << (N-1)
-        @test getScore(rank_limited_frags[1]) == UInt8(1)  # 1 << 0
-        @test getScore(rank_limited_frags[2]) == UInt8(2)  # 1 << 1
-        @test getScore(rank_limited_frags[3]) == UInt8(4)  # 1 << 2
+
+        # 8-rank cap (one bit per rank in the UInt8 score)
+        @test length(rank_limited_frags) == 8
+        for r in 1:8
+            @test getScore(rank_limited_frags[r]) == UInt8(1) << UInt8(r - 1)
+        end
     end
     
     #==========================================================================

@@ -64,7 +64,6 @@ end
                 max_frag_charge::UInt8,
                 max_frag_rank::UInt8,
                 min_frag_intensity::Float32,
-                rank_to_score::Vector{UInt8},
                 frag_bounds::FragBoundModel,
                 frag_bin_tol_ppm::Float32,
                 rt_bin_tol_ppm::Float32,
@@ -80,14 +79,13 @@ Build a Pioneer spectral library from preprocessed fragment and precursor data.
 - `b_start`: Minimum index for b-ions to include in detailed fragments
 - `include_p_index`: Whether to include precursor ions in the fragment index
 - `include_p`: Whether to include precursor ions in detailed fragments
-- `include_isotope`: Whether to include isotope peaks 
+- `include_isotope`: Whether to include isotope peaks
 - `include_immonium`: Whether to include immonium ions
 - `include_internal`: Whether to include internal fragment ions
 - `include_neutral_diff`: Whether to include fragments with neutral losses
 - `max_frag_charge`: Maximum fragment charge state to include
 - `max_frag_rank`: Maximum number of fragments per precursor (ranked by intensity)
 - `min_frag_intensity`: Minimum relative intensity threshold for fragments
-- `rank_to_score`: Vector mapping intensity rank to scoring value
 - `frag_bounds`: Model defining minimum and maximum fragment m/z bounds
 - `frag_bin_tol_ppm`: Fragment binning tolerance in parts per million
 - `rt_bin_tol_ppm`: Retention time binning tolerance in parts per million
@@ -128,7 +126,6 @@ function buildPionLib(spec_lib_path::String,
                       max_frag_rank::UInt8,
                       length_to_frag_count_multiple::AbstractFloat,
                       min_frag_intensity::Float32,
-                      rank_to_score::Vector{UInt8},
                       frag_bounds::FragBoundModel,
                       frag_bin_tol_ppm::Float32,
                       rt_bin_tol_ppm::Float32,
@@ -205,13 +202,13 @@ function buildPionLib(spec_lib_path::String,
 
     partitioned_index = build_partitioned_index_from_lib(temp_lib;
         partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
-        rt_bin_tol=rt_bin_tol_ppm, rank_to_score=rank_to_score,
+        rt_bin_tol=rt_bin_tol_ppm,
         y_start_index=y_start_index, b_start_index=b_start_index,
         include_p_index=include_p_index)
 
     presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
         partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
-        rt_bin_tol=typemax(Float32), rank_to_score=rank_to_score,
+        rt_bin_tol=typemax(Float32),
         y_start_index=y_start_index, b_start_index=b_start_index,
         include_p_index=include_p_index)
 
@@ -419,7 +416,6 @@ end
         include_neutral_diff::Bool,
         max_frag_charge::UInt8,
         frag_bounds::FragBoundModel,
-        rank_to_score::Vector{UInt8}
     )::Vector{SimpleFrag{Float32}}
 
 Extract fragments for the fragment index from raw fragment data.
@@ -448,7 +444,6 @@ Extract fragments for the fragment index from raw fragment data.
 - `include_neutral_diff`: Whether to include fragments with neutral losses
 - `max_frag_charge`: Maximum fragment charge state to include
 - `frag_bounds`: Model defining valid m/z range based on precursor m/z
-- `rank_to_score`: Vector mapping intensity rank to scoring value
 
 # Returns
 - Vector of SimpleFrag objects, containing filtered fragments for the index
@@ -477,14 +472,13 @@ function getSimpleFrags(
     include_neutral_diff::Bool,
     max_frag_charge::UInt8,
     frag_bounds::FragBoundModel,
-    rank_to_score::Vector{UInt8},
     )
     if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
         #println("mistake")
     end
-    #Maximum ranked fragment that can be included in the fragment index
-    max_rank_index = length(rank_to_score)
-    #Number of precursors 
+    # Score is a per-rank bitmask packed into a UInt8 — 8 ranks max.
+    max_rank_index = 8
+    #Number of precursors
     n_precursors = UInt32(length(precursor_mz))
     simple_frags = Vector{SimpleFrag{Float32}}(undef, n_precursors*max_rank_index)
     simple_frag_idx = 0
@@ -526,7 +520,7 @@ function getSimpleFrags(
                 UInt8(1) << UInt8(rank - 1)  # bitmask: rank 1→bit0, rank 2→bit1, ...
             )
             rank += 1
-            if rank > min(max_rank_index, 8)  # cap at 8 bits
+            if rank > max_rank_index  # cap at 8 bits
                 break
             end
         end

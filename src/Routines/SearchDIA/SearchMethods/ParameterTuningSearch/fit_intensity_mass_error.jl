@@ -126,10 +126,17 @@ function fit_convex_bias_spline(x::Vector{Float64}, y::Vector{Float64};
         c = H \ Xty
         project!(c)
 
+        # Lipschitz-safe step cap: opnorm(H) is the gradient Lipschitz
+        # constant of this convex quadratic, so any lr ≤ 2/L is stable.
+        # Without this cap, fixed lr diverges once n_pts is large enough
+        # that L grows past 1/lr (LU factorization at the next IRLS
+        # iteration then throws on the resulting Inf/NaN coefficients).
+        lr_eff = min(lr, 1.8 / opnorm(H))
+
         prev_obj = Inf
         for iter in 1:max_iter
             grad = H * c - Xty
-            c .-= lr .* grad
+            c .-= lr_eff .* grad
             project!(c)
             if iter % 200 == 0
                 obj = 0.5 * (c' * H * c) - (Xty' * c)
@@ -236,10 +243,13 @@ function fit_monotone_bias_spline(x::Vector{Float64}, y::Vector{Float64};
         c = H \ Xty
         project!(c)
 
+        # See fit_convex_bias_spline for rationale.
+        lr_eff = min(lr, 1.8 / opnorm(H))
+
         prev_obj = Inf
         for iter in 1:max_iter
             grad = H * c - Xty
-            c .-= lr .* grad
+            c .-= lr_eff .* grad
             project!(c)
             if iter % 200 == 0
                 obj = 0.5 * (c' * H * c) - (Xty' * c)
@@ -366,10 +376,12 @@ function fit_monotone_convex_spread_spline(
     end
 
     project!(c)
+    # See fit_convex_bias_spline for rationale.
+    lr_eff = min(lr, 1.8 / opnorm(H))
     prev_obj = Inf
     for iter in 1:max_iter
         grad = H * c - Xty
-        c .-= lr .* grad
+        c .-= lr_eff .* grad
         project!(c)
         if iter % 100 == 0
             obj = 0.5 * (c' * H * c) - (Xty' * c)

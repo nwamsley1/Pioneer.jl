@@ -363,7 +363,6 @@ function BuildSpecLib(params_path::String)
                 const_max_frag_rank,
                 const_length_to_frag_count_multiple,
                 const_min_frag_intensity,
-                haskey(params, "rank_to_score") ? UInt8.(params["rank_to_score"]) : UInt8[8, 4, 4, 2, 2, 1, 1],  # rank_to_score
                 frag_bounds,
                 Float32(get(_params.library_params, "frag_bin_tol_ppm", 0.0)),  # frag_bin_tol_ppm (0 = use mDa mode)
                 3.0f0,          # rt_bin_tol
