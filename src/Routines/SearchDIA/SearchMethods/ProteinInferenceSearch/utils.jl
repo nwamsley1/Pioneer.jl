@@ -176,14 +176,23 @@ function add_quantification_flag(inference_result::InferenceResult)
 end
 
 """
-    run_protein_inference!(search_context; passing_refs)
+    run_protein_inference!(search_context; passing_refs, global_inference=true)
 
 Annotate passing precursor tables in place with inferred protein groups and
 protein-quant eligibility flags.
+
+`global_inference=true` (default) runs `infer_proteins` once over the union of
+unique `(sequence, accession_numbers, is_decoy, entrap_id)` tuples from every
+file, then applies the single result to every file. This produces a stable
+peptide → group mapping across the experiment and pools decoys for the
+downstream protein-level PEP fit.
+
+`global_inference=false` runs inference per file (legacy behavior).
 """
 function run_protein_inference!(
     search_context::SearchContext;
-    passing_refs::Vector{PSMFileReference}
+    passing_refs::Vector{PSMFileReference},
+    global_inference::Bool = true,
 )
     isempty(passing_refs) && return nothing
 
@@ -191,20 +200,81 @@ function run_protein_inference!(
     annotation_pipeline = TransformPipeline() |>
         add_peptide_metadata(precursors)
 
-    indexed_refs = collect(enumerate(passing_refs))
-    @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags"
+    if !global_inference
+        indexed_refs = collect(enumerate(passing_refs))
+        @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags (per-file)"
 
-    for (_, psm_ref) in ProgressBar(indexed_refs)
+        for (_, psm_ref) in ProgressBar(indexed_refs)
+            exists(psm_ref) || continue
+
+            apply_pipeline!(psm_ref, annotation_pipeline)
+            prepared_df = load_dataframe(psm_ref)
+            inference_result = apply_inference_to_dataframe(prepared_df, precursors)
+
+            update_pipeline = TransformPipeline() |>
+                add_inferred_protein_column(inference_result) |>
+                add_quantification_flag(inference_result)
+            apply_pipeline!(psm_ref, update_pipeline)
+        end
+
+        return nothing
+    end
+
+    @user_info "Annotating passing PSM files with inferred protein groups and protein-quant flags (global)"
+
+    # Pass 1: stream :precursor_idx from each passing PSM Arrow file and look
+    # up the (sequence, accession_numbers, is_decoy, entrap_id) tuple directly
+    # from the spec-lib precursor arrays. No DataFrame is materialized and no
+    # file is rewritten — peak per-file memory is one mmap'd UInt32 column.
+    all_seqs    = getSequence(precursors)::AbstractVector{String}
+    all_accs    = getAccessionNumbers(precursors)::AbstractVector{String}
+    all_decoys  = getIsDecoy(precursors)::AbstractVector{Bool}
+    all_entraps = getEntrapmentGroupId(precursors)::AbstractVector{UInt8}
+
+    UniqueKey = Tuple{String, String, Bool, UInt8}
+    unique_set = Set{UniqueKey}()
+    for psm_ref in ProgressBar(passing_refs)
         exists(psm_ref) || continue
+        table = Arrow.Table(file_path(psm_ref))
+        :precursor_idx in Tables.columnnames(table) || continue
+        pidx = Tables.getcolumn(table, :precursor_idx)
+        @inbounds for i in eachindex(pidx)
+            p = pidx[i]
+            push!(unique_set, (
+                String(all_seqs[p]),
+                String(all_accs[p]),
+                Bool(all_decoys[p]),
+                UInt8(all_entraps[p]),
+            ))
+        end
+    end
 
-        apply_pipeline!(psm_ref, annotation_pipeline)
-        prepared_df = load_dataframe(psm_ref)
-        inference_result = apply_inference_to_dataframe(prepared_df, precursors)
+    # Pass 2: build a single InferenceResult from the global tuple set.
+    n_unique = length(unique_set)
+    proteins_vec = Vector{ProteinKey}(undef, n_unique)
+    peptides_vec = Vector{PeptideKey}(undef, n_unique)
+    let i = 0
+        for t in unique_set
+            i += 1
+            sequence, accession_numbers, is_decoy_val, entrap_val = t
+            proteins_vec[i] = ProteinKey(accession_numbers, !is_decoy_val, entrap_val)
+            peptides_vec[i] = PeptideKey(sequence, !is_decoy_val, entrap_val)
+        end
+    end
+    inference_result = if n_unique == 0
+        InferenceResult(Dictionary{PeptideKey, ProteinKey}())
+    else
+        infer_proteins(proteins_vec, peptides_vec)
+    end
 
-        update_pipeline = TransformPipeline() |>
-            add_inferred_protein_column(inference_result) |>
-            add_quantification_flag(inference_result)
-        apply_pipeline!(psm_ref, update_pipeline)
+    # Pass 3: annotate each file with peptide metadata and apply the single
+    # global inference result. Combined into one file rewrite per file.
+    final_pipeline = annotation_pipeline |>
+        add_inferred_protein_column(inference_result) |>
+        add_quantification_flag(inference_result)
+    for psm_ref in ProgressBar(passing_refs)
+        exists(psm_ref) || continue
+        apply_pipeline!(psm_ref, final_pipeline)
     end
 
     return nothing

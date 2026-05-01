@@ -91,6 +91,7 @@ function checkParams(json_path::String)
     # Validate protein scoring parameters
     protein_scoring = params["proteinScoring"]
     check_param(protein_scoring, "min_peptides", Integer)
+    check_param(protein_scoring, "global_protein_inference", Bool)
     check_param(protein_scoring, "write_qc_plots", Bool)
     check_param(protein_scoring, "log_feature_importance", Bool)
 

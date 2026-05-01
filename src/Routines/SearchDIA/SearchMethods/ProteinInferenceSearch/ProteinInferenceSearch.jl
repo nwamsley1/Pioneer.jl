@@ -26,8 +26,9 @@ struct ProteinInferenceSearch <: SearchMethod end
 struct ProteinInferenceSearchResults <: SearchResults end
 
 struct ProteinInferenceSearchParameters <: SearchParameters
-    function ProteinInferenceSearchParameters(::PioneerParameters)
-        new()
+    global_inference::Bool
+    function ProteinInferenceSearchParameters(params::PioneerParameters)
+        new(Bool(params.protein_scoring.global_protein_inference))
     end
 end
 
@@ -70,7 +71,9 @@ function summarize_results!(
     isempty(indexed_paths) && return nothing
 
     passing_refs = [PSMFileReference(path) for (_, path) in indexed_paths]
-    run_protein_inference!(search_context; passing_refs = passing_refs)
+    run_protein_inference!(search_context;
+        passing_refs = passing_refs,
+        global_inference = params.global_inference)
 
     return nothing
 end
