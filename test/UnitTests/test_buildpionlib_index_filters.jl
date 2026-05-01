@@ -83,7 +83,6 @@ using Pioneer: FragBoundModel, SplineCoefficientModel, buildPionLib, serialize_t
             UInt8(10),
             Float32(1000),
             0.0f0,
-            UInt8[8, 4, 2, 1, 1],
             frag_bounds,
             0.0f0,
             3.0f0,
