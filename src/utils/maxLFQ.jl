@@ -686,9 +686,16 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         # Continue with original LFQ logic
         #Exclude precursors with mods that impact quantitation
         #filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
+        # Group by protein-group identity. :species is intentionally NOT a key
+        # — peptides shared across FASTAs (e.g. a peptide matching both the
+        # contaminant and human copies of an accession) carry a multi-species
+        # string, while sibling peptides matching only one source carry the
+        # single-species string. Keying on :species would split a single
+        # inferred protein group into per-species rows. Aggregate the species
+        # union below instead.
         gpsms = groupby(
             subdf,
-            [:target, :entrapment_group_id, :species, :inferred_protein_group]
+            [:target, :entrapment_group_id, :inferred_protein_group]
         )
         ngroups = length(gpsms)
         nrows = nfiles*ngroups
@@ -711,11 +718,22 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         )
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
-            getProtAbundance(protein[:inferred_protein_group], 
+            # Union of species tokens across all PSMs in the group.
+            species_set = Set{String}()
+            for s in data[!, :species]
+                ismissing(s) && continue
+                for tok in split(String(s), ';')
+                    isempty(tok) && continue
+                    push!(species_set, tok)
+                end
+            end
+            species_agg = join(sort!(collect(species_set)), ';')
+
+            getProtAbundance(protein[:inferred_protein_group],
                                 (group_idx*nfiles) - nfiles + 1,
                                 protein[:target],
                                 protein[:entrapment_group_id],
-                                protein[:species],
+                                species_agg,
                                 data[!,:precursor_idx], 
                                 data[!,:ms_file_idx], 
                                 data[!,:use_for_protein_quant],
