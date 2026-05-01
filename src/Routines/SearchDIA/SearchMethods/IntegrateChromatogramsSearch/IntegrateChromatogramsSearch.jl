@@ -52,7 +52,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
     # Chromatogram parameters
     wh_smoothing_strength::Float32
-    write_decoys::Bool
 
     # Deconvolution parameters (MS2)
     lambda::Float32
@@ -68,7 +67,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         search_params = params.search
-        output_params = params.output
 
         # Hardcoded — formerly read from global.isotope_settings (removed from
         # the public schema; values shipped at defaults in every config).
@@ -92,7 +90,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             Set{Int64}([2]),
 
             Float32(1e-6),    # wh_smoothing_strength
-            Bool(output_params.write_decoys),
 
             Float32(0.0),     # lambda (no regularization)
             NoNorm(),         # reg_type
@@ -145,13 +142,11 @@ function process_file!(
         DataFrame(Arrow.Table(rt_index_path)),
         bin_rt_size = 0.1)
 
-    # Load PSMs that passed previous filtering steps
+    # Load PSMs that passed previous filtering steps. Decoys are intentionally
+    # kept here — ProteinInferenceSearch and ProteinScoringSearch need them
+    # for protein-level FDR / PEP calibration. Final decoy suppression for
+    # output happens later in MaxLFQSearch when output.write_decoys=false.
     passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))
-
-    # Keep only target (non-decoy) PSMs
-    if !params.write_decoys
-        filter!(row -> row.target, passing_psms)
-    end
 
     # If there are no PSMs to integrate (e.g. sparse / empty file), skip
     # chromatogram extraction entirely. Downstream steps treat an empty
