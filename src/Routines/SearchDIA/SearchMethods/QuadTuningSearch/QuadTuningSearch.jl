@@ -120,8 +120,7 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             typemax(Float32),                                              # irt_tol
             Set{Int64}([2]),                                               # spec_order
             TUNING_RELATIVE_IMPROVEMENT_THRESHOLD,                         # relative_improvement_threshold
-            (haskey(params.search, :deconvolution_solver) &&
-             params.search.deconvolution_solver == "pmm") ? PoissonMMSolver() : OLSSolver(), # deconvolution_solver
+            PoissonMMSolver(),                                             # deconvolution_solver — hardcoded
             DECONV_MAX_ITER,                                               # max_iter_outer
             DECONV_CONVERGENCE_TOL,                                        # max_diff
             QUAD_TUNING_MIN_FRAGMENTS,                                     # min_quad_tuning_fragments

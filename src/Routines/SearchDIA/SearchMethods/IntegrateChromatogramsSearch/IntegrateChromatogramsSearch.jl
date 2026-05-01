@@ -93,8 +93,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
             Float32(0.0),     # lambda (no regularization)
             NoNorm(),         # reg_type
-            (haskey(search_params, :deconvolution_solver) &&
-             search_params.deconvolution_solver == "pmm") ? PoissonMMSolver() : OLSSolver(),
+            PoissonMMSolver(),  # hardcoded: PMM is the production solver
             DECONV_MAX_ITER,          # max_iter_outer
             DECONV_CONVERGENCE_TOL,   # max_diff
 
