@@ -202,9 +202,9 @@ function run_protein_scoring!(
         q_value_threshold = q_value_threshold
     )
 
-    valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
+    indexed_paths = get_all_indexed_paths(getPassingPsms, search_context)
     paired_files = PairedSearchFiles[]
-    for (file_idx, psm_path) in valid_file_data
+    for (file_idx, psm_path) in indexed_paths
         haskey(psm_to_pg_mapping, psm_path) || continue
         pg_path = psm_to_pg_mapping[psm_path]
         push!(paired_files, PairedSearchFiles(psm_path, pg_path, file_idx))
@@ -214,7 +214,7 @@ function run_protein_scoring!(
     isempty(paired_files) && error("No protein groups created during protein inference")
 
     max_in_memory_rows = estimate_max_rows(max_in_memory_table_mb, file_path(first(pg_refs)))
-    @user_info "Memory budget $(max_in_memory_table_mb) MB → max_protein_groups = $max_in_memory_rows"
+    @debug_l1 "Memory budget $(max_in_memory_table_mb) MB → max_protein_groups = $max_in_memory_rows"
     perform_protein_probit_regression(
         pg_refs,
         max_in_memory_rows,

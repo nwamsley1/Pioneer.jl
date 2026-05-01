@@ -58,10 +58,9 @@ function parse_chronologer_output(
         end
 
         for mod in parseMods(mods)
-            if haskey(mods_to_sulfur_diff, getModName(mod.match))
-                n_sulfur = mods_to_sulfur_diff[mod_string]
-                seq_idx_to_sulfur[getModIndex(mod.match)] += n_sulfur
-                sulfur_count += n_sulfur
+            mod_name = getModName(mod.match)
+            if haskey(mods_to_sulfur_diff, mod_name)
+                sulfur_count += mods_to_sulfur_diff[mod_name]
             end
         end
         return sulfur_count

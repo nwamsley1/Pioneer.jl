@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['1.11']
+        version: ['1.12.6']  # pin exact patch — 1.12.5 had inference segfaults
         os:      [ubuntu-latest]
         arch:    [x64]
 

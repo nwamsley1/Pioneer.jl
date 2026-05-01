@@ -16,7 +16,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-Data types for protein inference and protein scoring.
+Data types for protein inference and scoring in the ScoringSearch module.
 
 These types provide clear, type-safe structures for protein group analysis,
 replacing complex NamedTuple-based dictionaries.

@@ -19,11 +19,8 @@
 
 struct PioneerParameters
     global_settings::NamedTuple
-    parameter_tuning::NamedTuple
-    first_search::NamedTuple
-    quant_search::NamedTuple
+    search::NamedTuple
     acquisition::NamedTuple
-    rt_alignment::NamedTuple
     optimization::NamedTuple
     protein_scoring::NamedTuple
     maxLFQ::NamedTuple
@@ -46,10 +43,6 @@ function params_to_dict(params::PioneerParameters)
     function namedtuple_to_dict(nt::NamedTuple)
         result = Dict{String, Any}()
         for (k, v) in pairs(nt)
-            if k == :match_between_runs
-                # Keep runtime behavior deterministic while omitting deprecated config keys.
-                continue
-            end
             key_str = string(k)
             result[key_str] = if v isa NamedTuple
                 namedtuple_to_dict(v)
@@ -62,11 +55,8 @@ function params_to_dict(params::PioneerParameters)
 
     return Dict{String, Any}(
         "global" => namedtuple_to_dict(params.global_settings),
-        "parameter_tuning" => namedtuple_to_dict(params.parameter_tuning),
-        "first_search" => namedtuple_to_dict(params.first_search),
-        "quant_search" => namedtuple_to_dict(params.quant_search),
+        "search" => namedtuple_to_dict(params.search),
         "acquisition" => namedtuple_to_dict(params.acquisition),
-        "rt_alignment" => namedtuple_to_dict(params.rt_alignment),
         "optimization" => namedtuple_to_dict(params.optimization),
         "proteinScoring" => namedtuple_to_dict(params.protein_scoring),
         "maxLFQ" => namedtuple_to_dict(params.maxLFQ),
@@ -96,9 +86,7 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     # Apply defaults if requested
     if apply_defaults
         # Determine if we should use simplified defaults based on parameter presence
-        is_simplified = !haskey(user_params, "parameter_tuning") && 
-                       !haskey(user_params, "first_search") &&
-                       !haskey(user_params, "quant_search")
+        is_simplified = !haskey(user_params, "search")
         
         # Get appropriate defaults
         defaults = get_default_parameters(is_simplified)
@@ -113,7 +101,7 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     function dict_to_namedtuple(d::AbstractDict)
         # Create pairs for the NamedTuple constructor
         symbol_pairs = []
-        
+
         for (k, v) in pairs(d)
             symbol_key = Symbol(k)
             if v isa AbstractDict
@@ -134,29 +122,23 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     end
 
     # Parse each section
-    global_settings = (; dict_to_namedtuple(params["global"])..., match_between_runs=false)
-    parameter_tuning = dict_to_namedtuple(params["parameter_tuning"])
-    first_search = dict_to_namedtuple(params["first_search"])
-    quant_search = dict_to_namedtuple(params["quant_search"])
+    global_settings = dict_to_namedtuple(params["global"])
+    search = dict_to_namedtuple(params["search"])
     acquisition = dict_to_namedtuple(params["acquisition"])
-    rt_alignment = dict_to_namedtuple(params["rt_alignment"])
     optimization = dict_to_namedtuple(params["optimization"])
     protein_scoring = dict_to_namedtuple(params["proteinScoring"])
     maxLFQ = dict_to_namedtuple(params["maxLFQ"])
     output = dict_to_namedtuple(params["output"])
-    
+
     # Parse logging section (defaults already applied if apply_defaults=true)
     logging = dict_to_namedtuple(params["logging"])
-    
+
     paths = expand_user_paths(dict_to_namedtuple(params["paths"]))
 
     return PioneerParameters(
         global_settings,
-        parameter_tuning,
-        first_search,
-        quant_search,
+        search,
         acquisition,
-        rt_alignment,
         optimization,
         protein_scoring,
         maxLFQ,

@@ -26,6 +26,11 @@ struct ProteinScoringSearch <: SearchMethod end
 
 struct ProteinScoringSearchResults <: SearchResults end
 
+# PEP threshold for mining negatives during semi-supervised iterations.
+# Hardcoded — develop surfaced this as `min_PEP_neg_threshold_itr` but every
+# shipping config used 0.90.
+const PROTEIN_SCORING_MIN_PEP_NEG_THRESHOLD_ITR = 0.90f0
+
 struct ProteinScoringSearchParameters <: SearchParameters
     max_in_memory_table_mb::Float64
     min_peptides::Int64
@@ -41,11 +46,11 @@ struct ProteinScoringSearchParameters <: SearchParameters
         protein_scoring_params = params.protein_scoring
 
         new(
-            Float64(ml_params.max_in_memory_table_mb),
+            Float64(ml_params.max_psm_memory_mb),
             Int64(protein_scoring_params.min_peptides),
-            Float32(global_params.scoring.q_value_threshold),
-            Float32(ml_params.min_PEP_neg_threshold_itr),
-            Int64(ml_params.q_value_interpolation_points_per_bin),
+            _resolve_q_value_threshold(global_params),
+            PROTEIN_SCORING_MIN_PEP_NEG_THRESHOLD_ITR,
+            Int64(ml_params.pep_bin_size),
             Bool(protein_scoring_params.write_qc_plots),
             Bool(protein_scoring_params.log_feature_importance)
         )
@@ -88,10 +93,18 @@ function summarize_results!(
     params::ProteinScoringSearchParameters,
     search_context::SearchContext
 )
-    valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
-    isempty(valid_file_data) && return nothing
+    indexed_paths = get_all_indexed_paths(getPassingPsms, search_context)
+    isempty(indexed_paths) && return nothing
 
-    passing_refs = [PSMFileReference(path) for (_, path) in valid_file_data]
+    # Files with zero rows weren't annotated by ProteinInferenceSearch (the
+    # pipeline short-circuits on empty inputs), so they lack the
+    # `inferred_protein_group` column. Drop them here.
+    passing_refs = PSMFileReference[]
+    for (_, path) in indexed_paths
+        ref = PSMFileReference(path)
+        row_count(ref) > 0 && push!(passing_refs, ref)
+    end
+    isempty(passing_refs) && return nothing
 
     run_protein_scoring!(
         search_context;

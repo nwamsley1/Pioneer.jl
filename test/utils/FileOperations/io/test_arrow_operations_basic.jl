@@ -2,7 +2,6 @@ using Test
 using DataFrames, Arrow, Tables
 
 using Pioneer: PSMFileReference,
-               add_column_to_file!, update_column_in_file!,
                sort_file_by_keys!, write_arrow_file, transform_and_write!,
                load_dataframe, column_names, has_columns, create_reference,
                _ensure_typed_missing_file_columns!
@@ -117,19 +116,3 @@ end
     @test ismissing(c[4])
 end
 
-@testset "Column operations support multi-batch file-format rewrites" begin
-    temp_dir = mktempdir()
-    path = joinpath(temp_dir, "batched_columns.arrow")
-    Arrow.write(path, DataFrame(id=1:5, score=Float32[1, 2, 3, 4, 5]))
-
-    ref = PSMFileReference(path)
-    add_column_to_file!(ref, :double_score, df -> df.score .* 2f0; batch_size=2)
-
-    df = load_dataframe(ref)
-    @test df.double_score == Float32[2, 4, 6, 8, 10]
-
-    update_column_in_file!(ref, :double_score, col -> col .+ 1f0; batch_size=2)
-
-    updated = load_dataframe(ref)
-    @test updated.double_score == Float32[3, 5, 7, 9, 11]
-end

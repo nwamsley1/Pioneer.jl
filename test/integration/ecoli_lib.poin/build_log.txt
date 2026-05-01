@@ -1,0 +1,74 @@
+
+==========================================================================================
+Spectral Library Building Process
+==========================================================================================
+
+Starting library build at: 2026-04-29T18:15:03.962
+Output directory: ./test/integration/ecoli_lib.poin
+
+Detecting fragment bounds...
+Fragment m/z range: Pioneer.FragBoundModel(ImmutablePolynomial(0.95235664f0 + 0.20439422f0*x), ImmutablePolynomial(38.812687f0 + 3.0659132f0*x))
+Precursor m/z range: (495.47736f0, 601.521f0)
+
+Starting fragment prediction workflow...
+Using prediction model: altimeter
+
+Preparing chronologer workflow...
+Predicting retention times...
+
+Predicting fragment ion intensities...
+
+Building final library indices...
+
+==========================================================================================
+Library Building Performance Report
+==========================================================================================
+
+Detailed Step Analysis:
+------------------------------------------------------------------------------------------
+# Precursors # Fragments  # Targets    # Decoys     
+------------------------------------------------------------------------------------------
+    54410.00    544100.00     27205.00     27205.00 
+
+Detailed Step Analysis:
+------------------------------------------------------------------------------------------
+Step                                     Time (s)     Memory (GB)  GC Time (s)  GC %        
+------------------------------------------------------------------------------------------
+Model Validation                         0.00         0.00         0.00         0.0         
+File Verification                        0.03         0.01         0.00         0.0         
+Directory Setup                          0.04         0.00         0.00         0.0         
+Parameter Loading                        0.18         0.03         0.00         0.0         
+Chronologer Output Processing            1.44         0.22         0.08         5.6         
+Fragment Bound Detection                 1.52         0.41         0.02         1.4         
+Index Building                           3.30         0.89         0.15         4.4         
+Retention Time Prediction                3.46         0.36         0.04         1.0         
+Prediction Processing                    4.87         1.65         0.33         6.9         
+Chronologer Preparation                  4.90         2.31         0.31         6.2         
+Fragment Prediction                      86.77        12.21        3.50         4.0         
+------------------------------------------------------------------------------------------
+TOTAL                                    106.53       18.10        4.42         4.2         
+
+Performance Summary:
+------------------------------------------------------------------------------------------
+Total Runtime: 1.78 minutes
+Total Garbage Collection Time: 4.42 seconds
+Number of Steps: 11
+Average Step Runtime: 9.68 seconds
+
+Memory Usage Summary:
+------------------------------------------------------------------------------------------
+Total Memory Allocated: 18.1 GB
+Peak  Memory Usage: 3.95 GB
+Total Available System Memory: 48.0 GB
+
+Process Information:
+------------------------------------------------------------------------------------------
+Number of Threads: 10
+Julia Version: 1.12.5
+System: arm64-apple-darwin24.0.0
+
+==========================================================================================
+
+Library building completed at: 2026-04-29T18:16:50.421
+
+Library location: ./test/integration/ecoli_lib.poin

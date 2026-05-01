@@ -1,351 +1,223 @@
 # Parameter Configuration
 
-Pioneer uses JSON configuration files to control analysis. This guide explains the parameters for both SearchDIA and BuildSpecLib.
+Pioneer uses JSON configuration files to control analysis. This guide documents the parameters for both `SearchDIA` and `BuildSpecLib`.
+
+The schema below mirrors [`assets/example_config/defaultSearchParams.json`](https://github.com/nwamsley1/Pioneer.jl/blob/main/assets/example_config/defaultSearchParams.json) and [`defaultBuildLibParams.json`](https://github.com/nwamsley1/Pioneer.jl/blob/main/assets/example_config/defaultBuildLibParams.json). Any field not listed here has been hardcoded in source.
+
+A simplified config (`defaultSearchParamsSimplified.json`) is also available for users who only need to specify paths plus a few high-level toggles; everything else falls back to the defaults documented below.
 
 ## SearchDIA Configuration
 
 ### Frequently Modified Parameters
 
-Most parameters should not be changed, but the following may need adjustment.
+Most parameters can stay at their defaults. The few worth tuning per-experiment:
 
-* `first_search.fragment_settings.min_score`: The minimum score determines which fragments must match in the fragment-index search in order for the precursor to pass. Each precursor is awarded a score based on which fragments match the spectrum. The score assigned to each fragment depends on its intensity rank. The default scheme is 8,4,4,2,2,1,1. That is, if the 1st, 3rd, and 7th ranking fragments matched the spectrum, the precursor would be awarded a score of 8+4+1=13. If all 7 of the fragments matched, the precursor would be awarded a score of 22. For normal instrument settings on an Orbitrap or Astral mass analyzer, the mass tolerance is about +/- 5-15 ppm and 15 is a reasonable default score threshold. However, for instruments with less mass accuracy (Sciex ZenoTOF 7600 or different Orbitrap scan settings), the score threshold may need to be set higher, perhaps to 20. It may be worthwhile to test different values when searching data from a new instrument or sample type. In order to pass the first search, a precursor need only pass the threshold and score sufficiently well in at least one of the MS data files.
+* **`global.q_value_threshold`** — final FDR cutoff for output (default `0.01`). Loosen to `0.05` for exploratory work; tighten only with a strong rationale.
 
-* `first_search.fragment_settings.max_rank`: Search against only the n'th most abundant fragment for each precursor. Including more fragments can improve performance but increase memory consumption, and the search could take longer. From experience, there are diminishing returns after 25-50 fragments.
+* **`search.n_isotopes`** — number of fragment isotopes to consider (default `2`, includes M and M+1). If using a non-Altimeter library (Prosit, UniSpec) where M+1 intensities are not modeled, set to `1`.
 
-* `quant_search.fragment_settings.max_rank`: See above
+* **`search.global_prescore_qvalue_threshold`** — intermediate FDR cutoff between MainSearch's first LightGBM (15 features) and ScoringSearch's second LightGBM (20 features). Default `0.02`. Looser values (e.g. `0.05`) carry more borderline candidates into the second model — better recall at the cost of more compute. Tighter values speed up ScoringSearch.
 
-* `quant_search.fragment_settings.n_isotopes`: If searching with non-Altimeter libraries (not recommended), such as Prosit or UniSpec, this should be set to 1 as the second fragment isotopes will not be calculated accurately.
+* **`acquisition.nce`** — initial collision-energy guess for the pre-search before NCE tuning runs (default `26`, suitable for Thermo Orbitrap/Astral instruments). Inspect the QC plots after a run; if the auto-fitted NCE is far from this guess, re-running with a closer initial guess can improve results.
 
-* `acquisition.nce`: This is the initial guess for the normalized collision energy that will best align the Altimeter Library with the empirical data. Altimeter values should agree with those from Thermo Instruments manufactured in Bremen Germany. If upon inspection of the quality control plots the initial guess is far from the estimated value, it might be possible to improve search results slightly by re-searching with a better initial guess.
+* **`optimization.machine_learning.max_psm_memory_mb`** — memory budget for in-memory LightGBM training (default `2000` = 2 GB). Workstations with more RAM benefit from raising this; lower it on memory-constrained machines to force the out-of-memory path earlier.
 
-* `acquisition.quad_transmission.fit_from_data`: Estimate the quad transmission function from the data. Otherwise defaults to symmetric, smooth function.
+* **`maxLFQ.run_to_run_normalization`** — apply the run-to-run median-spline normalization to peak areas (default `false`). Turn on for multi-run experiments where systemic between-run intensity bias is expected.
 
-* `optimization.machine_learning.max_in_memory_table_mb`: Memory budget (in MB) for Arrow-backed tables held in memory during precursor scoring and protein scoring. Pioneer dynamically estimates how many rows fit within this budget from the table schema. Default is 2000 MB.
-* During LightGBM training, any missing feature values are replaced with the column median. If a column is entirely missing, the values are filled with zero of the appropriate type.
-
-
-
-### Global Parameters
+### Global
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `isotope_settings.err_bounds_first_pass` | [Int, Int] | Precursor monoisotope may lie NEUTRON/charge Thompsons (left, right) outside the quadrupole isolation window (default: [1, 0]) |
-| `isotope_settings.err_bounds_quant_search` | [Int, Int] | Precursor monoisotope may lie NEUTRON/charge Thompsons (left, right) outside the quadrupole isolation window (default: [3, 0]) |
-| `isotope_settings.combine_traces` | Boolean | Whether to combine precursor isotope traces in quantification (default: true) |
-| `isotope_settings.partial_capture` | Boolean | Whether to estimate the conditional fragment isotope distribution (true) or assume complete transmission of the entire precursor isotopic envelope (default: true) |
-| `isotope_settings.min_fraction_transmitted` | Float | Minimum fraction of the precursor isotope distribution that must be isolated for scoring and quantitation (default: 0.25) |
-| `scoring.q_value_threshold` | Float | Global q-value threshold for filtering results (default: 0.01) |
-| `normalization.n_rt_bins` | Int | Number of retention time bins for quant normalization (default: 100) |
-| `normalization.spline_n_knots` | Int | Number of knots in quant normalization spline (default: 7) |
-| `huber_override.override_huber_delta_fit` | Boolean | Whether to override the automatic Huber delta fitting with a manual value (default: false) |
-| `huber_override.huber_delta` | Float | Huber delta value when override is enabled (default: 1055) |
-| `ms1_scoring` | Boolean | Enable MS1-level scoring features (default: true) |
-| `ms1_quant` | Boolean | Enable MS1-level quantification (default: false) |
+| `global.q_value_threshold` | Float | Final FDR threshold applied to ScoringSearch output (default: `0.01`). |
 
-### Parameter Tuning Settings
+### Search
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `fragment_settings.min_count` | Int | Minimum number of matching fragment ions (default: 7) |
-| `fragment_settings.max_rank` | Int | Maximum rank of fragments to consider (default: 25, means 26th-last most abundant fragments per precursor are filtered out) |
-| `fragment_settings.min_score` | [Int, Int] | Minimum fragment-index score thresholds (default: [22, 17]) |
-| `fragment_settings.min_spectral_contrast` | Float | Minimum cosine similarity score (default: 0.5) |
-| `fragment_settings.relative_improvement_threshold` | Float | Minimum relative Scribe score improvement needed to ignore an interfering peak (default: 1.25) |
-| `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of matched library fragment intensities to unmatched library fragment intensities (default: 1.5) |
-| `fragment_settings.min_top_n` | [Int, Int] | Minimum number of top N matches - [requirement, denominator]. Default: `[3, 3]` |
-| `fragment_settings.n_isotopes` | Int | Number of fragment isotopes to consider in matching (default: 1, mono only) |
-| `fragment_settings.intensity_filter_quantile` | Float | Quantile for intensity-based fragment filtering (default: 0.50) |
-| `search_settings.min_samples` | Int | Minimum number of PSMs required for tuning (default: 1200) |
-| `search_settings.max_presearch_iters` | Int | Maximum number of parameter tuning iterations (default: 10) |
-| `search_settings.frag_err_quantile` | Float | Quantile for fragment error estimation (default: 0.005) |
-| `search_settings.max_q_value` | Float | Maximum q-value for parameter tuning PSMs (default: 0.01) |
-| `search_settings.topn_peaks` | Int | Top N peaks per spectrum to consider (default: 200) |
-| `search_settings.max_frags_for_mass_err_estimation` | Int | Maximum fragments used for mass error model (default: 12) |
-| `nce_tuning.min_psms` | Int | Minimum PSMs for NCE tuning (default: 2000) |
-| `nce_tuning.initial_percent` | Float | Initial sampling percentage for NCE tuning (default: 2.5) |
-| `nce_tuning.min_initial_scans` | Int | Minimum initial scans for NCE tuning (default: 5000) |
-| `quad_tuning.min_psms_per_thompson` | Int | Minimum PSMs per Thompson width for quad transmission tuning (default: 250) |
-| `quad_tuning.min_fragments` | Int | Minimum fragments per PSM for quad tuning (default: 3) |
-| `quad_tuning.initial_percent` | Float | Initial sampling percentage for quad tuning (default: 2.5) |
-| `iteration_settings.init_mass_tol_ppm` | [Float, Float] | Initial fragment mass tolerance guesses in ppm (default: [20.0, 30.0]) |
-| `iteration_settings.ms1_tol_ppm` | Float | Initial MS1 mass tolerance in ppm (default: 20.0) |
-| `iteration_settings.scan_counts` | [Int] | Scan counts to sample during parameter tuning (default: [10000]) |
+| `search.n_isotopes` | Int | Number of fragment isotopes to consider in matching (default: `2`). Set `1` for non-Altimeter libraries. |
+| `search.global_prescore_qvalue_threshold` | Float | FDR cutoff between the first and second LightGBM models (default: `0.02`). |
 
-### First Search Parameters
+### Acquisition
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `fragment_settings.min_count` | Int | Minimum number of matching fragments (default: 4) |
-| `fragment_settings.max_rank` | Int | Maximum fragment rank to consider (default: 25) |
-| `fragment_settings.min_score` | Int | Minimum score for fragment matches (default: 15) |
-| `fragment_settings.min_spectral_contrast` | Float | Minimum cosine similarity required (default: 0.5) |
-| `fragment_settings.relative_improvement_threshold` | Float | Minimum relative Scribe score improvement needed to ignore an interfering peak (default: 1.25) |
-| `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of matched library fragment intensities to unmatched library fragment intensities (default: 0.0, means sum of matched library fragment intensities is equal to the sum of unmatched library fragment intensities for the precursor) |
-| `fragment_settings.min_top_n` | [Int, Int] | Minimum top N matches - [requirement, denominator]. Default: `[2, 3]` |
-| `fragment_settings.n_isotopes` | Int | Number of isotopes to consider (default: 1) |
-| `scoring_settings.n_train_rounds` | Int | Number of training rounds for scoring model (default: 2) |
-| `scoring_settings.max_iterations` | Int | Maximum iterations for scoring optimization (default: 20) |
-| `scoring_settings.max_q_value_probit_rescore` | Float | Maximum q-value threshold for semi-supervised learning during probit regression (default: 0.05) |
-| `scoring_settings.max_PEP` | Float | Maximum local FDR threshold for passing the first search (default: 0.9) |
-| `scoring_settings.global_pep_threshold` | Float | Maximum global PEP for precursor selection in cross-run aggregation (default: 0.5) |
-| `irt_mapping.max_prob_to_impute_irt` | Float | If probability of the PSM is less than x in the first-pass search, then impute iRT for the precursor with globally determined value from the other runs (default: 0.75) |
-| `irt_mapping.fwhm_nstd` | Float | Number of standard deviations of the FWHM to add to the retention time tolerance (default: 4) |
-| `irt_mapping.irt_nstd` | Int | Number of standard deviations of run-to-run iRT tolerance to add to the retention time tolerance (default: 4) |
-| `irt_mapping.plot_rt_alignment` | Boolean | Whether to generate RT alignment diagnostic plots (default: false) |
+| `acquisition.nce` | Int | Initial NCE guess used during the pre-search before NCE tuning (default: `26`). |
 
-#### First Search Filter Constants
-
-The first search uses a hybrid filter to decide how many precursors to carry forward from each stage. These are hardcoded constants (not JSON-configurable) because they should rarely need adjustment.
-
-**Per-file pre-filter** (applied per MS file before cross-run aggregation): keeps the largest of three counts:
-- PSMs with PEP ≤ 0.95
-- PSMs where cumulative decoy/target ratio ≤ `PERFILE_QVALUE_THRESHOLD` (0.50)
-- `PERFILE_MIN_PSMS` (10,000, or all PSMs if fewer exist)
-
-**Global post-filter** (applied after cross-run global PEP computation): keeps the largest of three counts:
-- Precursors with global PEP ≤ `global_pep_threshold` (default 0.5, JSON-configurable)
-- Precursors where cumulative decoy/target ratio ≤ `GLOBAL_QVALUE_THRESHOLD` (0.15)
-- `GLOBAL_MIN_PRECURSORS` (50,000, or all precursors if fewer exist)
-
-The hard minimum floors ensure sparse datasets (e.g. single-cell proteomics) always retain enough precursors for second-pass scoring, while the q-value floors prevent decoy contamination in large experiments.
-
-### Quantification Search Parameters
+### Optimization (Machine Learning)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `fragment_settings.min_count` | Int | Minimum fragment count for quantification (default: 3) |
-| `fragment_settings.min_y_count` | Int | Minimum number of y-ions required (default: 2) |
-| `fragment_settings.max_rank` | Int | Maximum fragment rank (default: 255) |
-| `fragment_settings.min_spectral_contrast` | Float | Minimum spectral contrast score (default: 0.0) |
-| `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of intensities (default: -1.7) |
-| `fragment_settings.min_top_n` | [Int, Int] | Minimum top N matches - [requirement, denominator]. Default: `[2, 3]` |
-| `fragment_settings.n_isotopes` | Int | Number of isotopes for quantification (default: 2, include the M1 and M2 isotopes) |
-| `chromatogram.smoothing_strength` | Float | Strength of chromatogram smoothing (default: 1e-6) |
-| `chromatogram.padding` | Int | Number of zeros to pad chromatograms on either side (default: 0) |
-| `chromatogram.max_apex_offset` | Int | Maximum allowed apex offset in #scans where the precursor could have been detected between the second-pass search and re-integration with 1 percent FDR precursors (default: 2) |
+| `optimization.machine_learning.max_psm_memory_mb` | Real | Memory budget (MB) for in-memory PSM scoring (default: `2000`). When PSM rows × bytes-per-row exceeds this, ScoringSearch switches to the out-of-memory path. |
+| `optimization.machine_learning.pep_bin_size` | Int | Number of PSMs per bin in the empirical q-value/PEP histogram (default: `10`). Smaller = finer-grained but noisier per-bin FDR estimate; larger = smoother but coarser. |
 
-### Acquisition Parameters
+### Protein Inference
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `nce` | Int | Normalized collision energy initial guess (used in pre-search before NCE tuning) (default: 26) |
-| `quad_transmission.fit_from_data` | Boolean | Whether to fit quadrupole transmission from data (default: true) |
-| `quad_transmission.overhang` | Float | Deprecated (default: 0.25) |
-| `quad_transmission.smoothness` | Float | Smoothness parameter for transmission curve. Higher value means more "box-like" shape. (default: 5.0) |
+| `proteinInference.min_peptides` | Int | Minimum unique peptides required for a protein group to be reported (default: `1`). |
 
-### RT Alignment Parameters
+### MaxLFQ
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `n_bins` | Int | Number of retention time bins for alignment (default: 200) |
-| `bandwidth` | Float | Bandwidth for kernel density estimation (default: 0.25) |
-| `sigma_tolerance` | Int | Number of standard deviations for iRT tolerance after pre-search (default: 4) |
-| `min_probability` | Float | Minimum probability for alignment PSMs in pre-search (default: 0.95) |
-| `lambda_penalty` | Float | Lambda penalty for spline fitting (default: 0.1) |
-| `ransac_threshold_psms` | Int | RANSAC threshold in number of PSMs (default: 500) |
-| `min_psms_for_spline` | Int | Minimum PSMs required for spline fitting (default: 10) |
+| `maxLFQ.run_to_run_normalization` | Bool | Apply between-run median-spline normalization to peak areas (default: `false`). |
+| `maxLFQ.max_chunk_size_mb` | Int | Maximum chunk size (MB) for the chunked merge during MaxLFQ (default: `1024`). |
 
-### Optimization Parameters
-
-#### Deconvolution
-
-The deconvolution parameters are split into `ms1` and `ms2` sub-objects for separate control over MS1 and MS2 deconvolution, plus shared iteration settings.
+### Output
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `deconvolution.ms1.lambda` | Float | L2 regularization parameter for MS1 deconvolution (default: 0.0001) |
-| `deconvolution.ms1.reg_type` | String | Regularization type for MS1: "none", "l1", or "l2" (default: "l2") |
-| `deconvolution.ms1.huber_delta` | Float | Huber delta for MS1 loss function (default: 1e9) |
-| `deconvolution.ms2.lambda` | Float | L2 regularization parameter for MS2 deconvolution (default: 0.0) |
-| `deconvolution.ms2.reg_type` | String | Regularization type for MS2: "none", "l1", or "l2" (default: "none") |
-| `deconvolution.ms2.huber_delta` | Float | Huber delta for MS2 loss function (default: 300) |
-| `deconvolution.huber_exp` | Float | Exponent for Huber delta progression (default: 1.5) |
-| `deconvolution.huber_iters` | Int | Number of Huber outer iterations (default: 15) |
-| `deconvolution.newton_iters` | Int | Maximum Newton iterations per outer iteration (default: 50) |
-| `deconvolution.bisection_iters` | Int | Maximum bisection iterations when Newton fails (default: 100) |
-| `deconvolution.outer_iters` | Int | Maximum outer iterations for convergence (default: 1000) |
-| `deconvolution.newton_accuracy` | Float | Absolute convergence threshold for Newton method (default: 10) |
-| `deconvolution.bisection_accuracy` | Float | Absolute convergence threshold for bisection method (default: 10) |
-| `deconvolution.max_diff` | Float | Relative convergence threshold - maximum relative change in weights between iterations. Also used as relative tolerance for Newton's method (default: 0.01) |
+| `output.write_csv` | Bool | Write CSV copies of the precursor/protein output tables alongside the Arrow files (default: `true`). |
+| `output.write_decoys` | Bool | Include decoy precursors in the output tables (default: `false`). |
+| `output.delete_temp` | Bool | Delete the `temp_data/` scratch directory at the end of the run (default: `true`). |
 
-#### Machine Learning
+### Logging
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `machine_learning.max_in_memory_table_mb` | Real | Memory budget in MB for Arrow-backed tables held in memory during precursor scoring and protein scoring. Row count is dynamically estimated from Arrow column sizes (default: 2000) |
-| `machine_learning.force_oom` | Boolean | Force out-of-memory processing regardless of dataset size (default: false) |
-| `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
-| `machine_learning.min_PEP_neg_threshold_itr` | Float | Shared posterior error probability threshold used when relabeling weak targets as negatives during iterative rescoring (default: 0.90) |
-| `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
-| `machine_learning.q_value_interpolation_points_per_bin` | Int | Minimum points per bin when building q-value/PEP interpolation sidecars for precursor and protein scoring (default: 10) |
-| `machine_learning.n_quantile_bins` | Int | Number of quantile bins for score binning (default: 25) |
-| `machine_learning.enable_model_comparison` | Boolean | Enable comparison of scoring models (default: true) |
-| `machine_learning.validation_split_ratio` | Float | Fraction of data held out for validation (default: 0.2) |
-| `machine_learning.qvalue_threshold` | Float | q-value threshold for model comparison (default: 0.01) |
-| `machine_learning.min_psms_for_comparison` | Int | Minimum PSMs to enable model comparison (default: 1000) |
-| `machine_learning.max_psms_for_comparison` | Int | Maximum PSMs for in-memory model comparison (default: 100000) |
+| `logging.debug_console_level` | Int | Console verbosity. `0` (default) = user-facing only; higher values progressively expose internal `@debug_lN` messages. |
+| `logging.max_message_bytes` | Int | Maximum bytes per log line before truncation (default: `4096`). Truncation preserves valid UTF-8 and appends a `… [truncated N bytes]` suffix. Override at runtime with the `PIONEER_MAX_LOG_MSG_BYTES` env var (clamped to `[1024, 1048576]`). |
 
-### Protein Scoring Parameters
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `proteinScoring.min_peptides` | Int | Minimum number of peptides required for a protein group before protein-level output and rescoring (default: 1) |
-| `proteinScoring.write_qc_plots` | Boolean | Write per-fold and per-iteration protein QC plots during protein rescoring (default: false) |
-| `proteinScoring.log_feature_importance` | Boolean | Log protein probit feature importances during protein rescoring (default: false) |
-
-### MaxLFQ Parameters
+### Paths
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `run_to_run_normalization` | Boolean | Whether to use run-to-run normalized abundances for precursor and protein quantification (default: false) |
-| `min_peptides` | Int | Minimum number of peptides required for protein quantification in MaxLFQ outputs (default: 1) |
-| `max_chunk_size_mb` | Int | Maximum chunk size in MB for MaxLFQ chunked merge processing (default: 1024) |
+| `paths.library` | String | Path to the `.poin` spectral library directory (built by `BuildSpecLib`). |
+| `paths.ms_data` | String | Directory of converted MS Arrow files. |
+| `paths.results` | String | Output directory. |
 
-### Output Parameters
+### Constants (formerly user-tunable, now hardcoded)
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `write_csv` | Boolean | Whether to write results to CSV (default: true) |
-| `write_decoys` | Boolean | Whether to quantify and include decoys in the output files (default: false) |
-| `delete_temp` | Boolean | Whether to delete temporary files (default: true) |
-| `plots_per_page` | Int | Number of plots per page in reports (default: 12) |
+A number of knobs were previously surfaced in the JSON schema but are now constants in source. They are listed here for reference; users do not need to touch them.
 
-### Logging Parameters
+| Constant | Value | Where |
+|----------|-------|-------|
+| `min_fraction_transmitted` | `0.25` | `MainSearch/types.jl`, `IntegrateChromatogramsSearch.jl`, `ParameterTuningSearch/types.jl` |
+| `prec_estimation` | `PartialPrecCapture()` | same |
+| `isotope_trace_type` | `SeperateTraces()` | same |
+| `isotope_err_bounds` | `(1, 0)` | same |
+| `max_frag_rank` (search-time) | `255` (= `typemax(UInt8)`) | `MainSearch/types.jl`, `IntegrateChromatogramsSearch.jl` |
+| `MAXLFQ_NORM_N_RT_BINS` | `100` | `MaxLFQSearch.jl` |
+| `MAXLFQ_NORM_SPLINE_N_KNOTS` | `7` | `MaxLFQSearch.jl` |
+| `n_files_per_plot` | `12` | `WriteOutputs/qcPlots.jl` |
+| `WIDE_SCOUT_TOL_PPM` | `100.0` | `ParameterTuningSearch/constants.jl` |
+| `BITVEC_MIN_EXCESS_RATE_FILTER` | `0.05` | `BitVecCalibration/BitVecCalibration.jl` |
+| `DEFAULT_INDEX_SEARCH_MIN_SCORE` | `15` | `MainSearch/types.jl` (CountFilter fallback when BitVec hasn't trained a LUT) |
+| `FORCE_OOM` | `false` | `ScoringSearch/ScoringSearch.jl` (developer toggle) |
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `debug_console_level` | Int | Verbosity of console debug output (0 disables; higher values include more details). |
-| `max_message_bytes` | Int | Maximum bytes of a single log message before truncation (default: 4096). Truncation preserves valid UTF-8 and appends a suffix like `… [truncated N bytes]`. Can be overridden at runtime with `PIONEER_MAX_LOG_MSG_BYTES` (values clamped to [1024, 1048576]). |
-
-### Path Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `library` | String | Path to spectral library file |
-| `ms_data` | String | Path to mass spectrometry data directory |
-| `results` | String | Path to output results directory |
+To change any of these, edit the constant in source. The historical JSON paths (`global.isotope_settings.*`, `chromatogram.*`, `parameter_tuning.*`, `acquisition.quad_transmission.*`, `rt_alignment.*`, `output.plots_per_page`, `fragment_index_search.*`, etc.) are no longer accepted — old configs containing them still parse (extra keys are ignored), but the values are not consumed.
 
 ## BuildSpecLib Configuration
 
 ### FASTA Input and Regex Mapping
 
-Pioneer supports flexible FASTA input through `GetBuildLibParams`:
+`BuildSpecLib` accepts FASTA inputs in three forms via `GetBuildLibParams`:
 
-#### Input Options
-1. **Single directory**: Scans for all `.fasta` and `.fasta.gz` files
-2. **Single file**: Directly uses the specified FASTA file
-3. **Mixed array**: Any combination of directories and files
+1. **Single directory** — scans for all `.fasta` and `.fasta.gz` files
+2. **Single file** — uses the specified file directly
+3. **Mixed array** — any combination of directories and files
 
-#### Regex Code Mapping
 The regex patterns for parsing FASTA headers can be configured in three ways:
 
-1. **Single regex set for all files** (default):
+1. **Default regex set for all files**:
    ```julia
    GetBuildLibParams(out_dir, lib_name, [dir1, dir2, file1])
-   # All FASTA files use the same default regex patterns
    ```
 
-2. **Custom single regex set**:
+2. **Custom single regex set** applied to every file:
    ```julia
    GetBuildLibParams(out_dir, lib_name, [dir1, file1],
        regex_codes = Dict(
            "accessions" => "^>(\\S+)",
-           "genes" => "GN=(\\S+)",
-           "proteins" => "\\s+(.+?)\\s+OS=",
-           "organisms" => "OS=(.+?)\\s+GN="
+           "genes"      => "GN=(\\S+)",
+           "proteins"   => "\\s+(.+?)\\s+OS=",
+           "organisms"  => "OS=(.+?)\\s+GN="
        ))
-   # All files use these custom patterns
    ```
 
-3. **Positional mapping** (one regex set per input):
+3. **Positional mapping** (one regex set per FASTA input):
    ```julia
    GetBuildLibParams(out_dir, lib_name, [uniprot_dir, custom_file],
        regex_codes = [
-           Dict("accessions" => "^\\w+\\|(\\w+)\\|", ...),  # For uniprot_dir files
-           Dict("accessions" => "^>(\\S+)", ...)             # For custom_file
+           Dict("accessions" => "^\\w+\\|(\\w+)\\|", ...),  # uniprot_dir
+           Dict("accessions" => "^>(\\S+)",          ...),  # custom_file
        ])
    ```
 
-### FASTA Digest Parameters
+### FASTA Digest
+
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `min_length` | Int | Minimum peptide length (default: 7) |
-| `max_length` | Int | Maximum peptide length (default: 30) |
-| `min_charge` | Int | Minimum charge state (default: 2) |
-| `max_charge` | Int | Maximum charge state (default: 4) |
-| `cleavage_regex` | String | Regular expression for cleavage sites (default: "[KR][^_\|$]", to exclude cleavage after proline: "[KR][^P\|$]") |
-| `missed_cleavages` | Int | Maximum allowed missed cleavages (default: 1) |
-| `max_var_mods` | Int | Maximum variable modifications per peptide (default: 1) |
-| `add_decoys` | Boolean | Generate decoy sequences (default: true) |
-| `entrapment_r` | Float | Ratio of entrapment sequences (default: 0) |
-| `decoy_method` | String | Method for generating decoy sequences: "shuffle" or "reverse" (default: "shuffle") |
-| `entrapment_method` | String | Method for generating entrapment sequences: "shuffle" or "reverse" (default: "shuffle") |
-| `fasta_header_regex_accessions` | [String] | Regex with a capture group for the accession, one per FASTA file |
-| `fasta_header_regex_genes` | [String] | Regex with a capture group for the gene name, one per FASTA file |
-| `fasta_header_regex_proteins` | [String] | Regex with a capture group for the protein name, one per FASTA file |
-| `fasta_header_regex_organisms` | [String] | Regex with a capture group for the organism, one per FASTA file |
+| `fasta_digest_params.min_length` | Int | Minimum peptide length (default: `7`). |
+| `fasta_digest_params.max_length` | Int | Maximum peptide length (default: `30`). |
+| `fasta_digest_params.min_charge` | Int | Minimum charge state (default: `2`). |
+| `fasta_digest_params.max_charge` | Int | Maximum charge state (default: `4`). |
+| `fasta_digest_params.cleavage_regex` | String | Cleavage rule (default: `[KR][^_\|$]`). To exclude cleavage before proline: `[KR][^P\|$]`. |
+| `fasta_digest_params.missed_cleavages` | Int | Maximum missed cleavages (default: `1`). |
+| `fasta_digest_params.max_var_mods` | Int | Maximum variable modifications per peptide (default: `1`). |
+| `fasta_digest_params.add_decoys` | Bool | Generate decoy sequences (default: `true`). |
+| `fasta_digest_params.entrapment_r` | Float | Entrapment-sequence ratio (default: `0`). |
+| `fasta_digest_params.decoy_method` | String | `"shuffle"`, `"reverse"`, or `"diann_mutation"` (default: `"shuffle"`). |
+| `fasta_digest_params.entrapment_method` | String | `"shuffle"` or `"reverse"` (default: `"shuffle"`). |
 
-### NCE Parameters
+### Modifications
+
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `nce` | Float | Base normalized collision energy (default: 26.0) |
-| `default_charge` | Int | Default charge state for NCE calculations (default: 2) |
-| `dynamic_nce` | Boolean | Use charge-dependent NCE adjustments (default: true) |
+| `variable_mods.{pattern, mass, name}` | [String], [Float], [String] | Variable modifications. Default: oxidation on M (`Unimod:35`, +15.99491 Da). |
+| `fixed_mods.{pattern, mass, name}` | [String], [Float], [String] | Fixed modifications. Default: carbamidomethyl on C (`Unimod:4`, +57.021464 Da). |
+| `isotope_mod_groups` | [Object] | Multiplexed labelling channels (default: `[]`). |
 
-### Library Parameters
+### NCE
+
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `rt_bin_tol` | Float | Retention time binning tolerance in minutes (default: 1.0) |
-| `frag_bin_tol_ppm` | Float | Fragment mass tolerance in PPM (default: 10.0) |
-| `rank_to_score` | [Int] | Intensity multipliers for ranked peaks (default: [8,4,4,2,2,1,1]) |
-| `y_start_index` | Int | Starting index for y-ion annotation (default: 4) |
-| `b_start_index` | Int | Starting index for b-ion annotation (default: 3) |
-| `y_start` | Int | Minimum y-ion to consider (default: 3) |
-| `b_start` | Int | Minimum b-ion to consider (default: 2) |
-| `include_p_index` | Boolean | Include proline-containing index fragments (default: false) |
-| `include_p` | Boolean | Include proline-containing fragments (default: false) |
-| `auto_detect_frag_bounds` | Boolean | Auto-detect fragment mass bounds from calibration file (default: true) |
-| `frag_mz_min` | Float | Minimum fragment m/z (default: 150.0) |
-| `frag_mz_max` | Float | Maximum fragment m/z (default: 2020.0) |
-| `prec_mz_min` | Float | Minimum precursor m/z (default: 390.0) |
-| `prec_mz_max` | Float | Maximum precursor m/z (default: 1010.0) |
-| `max_frag_charge` | Int | Maximum fragment ion charge (default: 3) |
-| `max_frag_rank` | Int | Maximum fragment rank (default: 255) |
-| `length_to_frag_count_multiple` | Float | Multiplier for peptide length to determine fragment count (default: 2) |
-| `min_frag_intensity` | Float | Minimum relative fragment intensity (default: 0.00) |
-| `include_isotope` | Boolean | Include isotope peak annotations (default: false) |
-| `include_internal` | Boolean | Include internal fragment annotations (default: false) |
-| `include_immonium` | Boolean | Include immonium ion annotations (default: false) |
-| `include_neutral_diff` | Boolean | Include neutral loss annotations (default: true) |
-| `instrument_type` | String | Instrument type for predictions (default: "NONE") |
-| `prediction_model` | String | Model for fragment predictions (default: "altimeter") |
+| `nce_params.nce` | Float | Base NCE for fragment prediction (default: `26.0`). |
+| `nce_params.default_charge` | Int | Charge state for NCE calculations (default: `2`). |
+| `nce_params.dynamic_nce` | Bool | Charge-dependent NCE adjustment (default: `true`). |
 
-### Modification Parameters
+### Library
+
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `variable_mods.pattern` | [String] | Amino acids to modify (default: ["M"]) |
-| `variable_mods.mass` | [Float] | Modification masses (default: [15.99491]) |
-| `variable_mods.name` | [String] | Modification identifiers (default: ["Unimod:35"]) |
-| `fixed_mods.pattern` | [String] | Amino acids to modify (default: ["C"]) |
-| `fixed_mods.mass` | [Float] | Modification masses (default: [57.021464]) |
-| `fixed_mods.name` | [String] | Modification identifiers (default: ["Unimod:4"]) |
-| `isotope_mod_groups` | [Object] | Isotope labeling groups for multiplexed experiments (default: []) |
+| `library_params.auto_detect_frag_bounds` | Bool | Auto-detect fragment m/z bounds from the calibration RAW (default: `true`). When `false`, manual `frag_mz_min/max` are used. |
+| `library_params.frag_mz_min` / `frag_mz_max` | Float | Manual fragment m/z bounds (default: `150.0` / `2020.0`). |
+| `library_params.prec_mz_min` / `prec_mz_max` | Float | Precursor m/z bounds (default: `390.0` / `1010.0`). |
+| `library_params.instrument_type` | String | Instrument hint (default: `"NONE"`). |
+| `library_params.prediction_model` | String | Fragment-prediction model (default: `"altimeter"`). |
 
-### Processing Parameters
+### Top-level
+
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `max_koina_requests` | Int | Maximum concurrent Koina API requests (default: 24) |
-| `max_koina_batch` | Int | Maximum batch size for API requests (default: 1000) |
-| `match_lib_build_batch` | Int | Batch size for library building (default: 100000) |
+| `library_path` | String | Output directory for the `.poin` library. |
+| `fasta_paths` | [String] | FASTA files or directories. |
+| `fasta_names` | [String] | Per-FASTA proteome label (e.g. `"HUMAN"`). |
+| `fasta_header_regex_accessions` | [String] | Per-FASTA accession regex (capture group). |
+| `fasta_header_regex_genes` | [String] | Per-FASTA gene regex. |
+| `fasta_header_regex_proteins` | [String] | Per-FASTA protein-name regex. |
+| `fasta_header_regex_organisms` | [String] | Per-FASTA organism regex. |
+| `calibration_raw_file` | String | Path to a representative Arrow MS file for `auto_detect_frag_bounds`. Optional. |
+| `include_contaminants` | Bool | Append the bundled contaminants FASTA (default: `true`). |
+| `predict_fragments` | Bool | Run Koina prediction (default: `true`). Set `false` to use library-fed intensities only. |
+| `match_lib_build_batch` | Int | Batch size for Koina prediction calls (default: `100000`). |
+| `rank_to_score` | [Int] | Intensity-rank weights for fragment-index scoring (default: `[8,4,4,2,2,1,1]`). |
 
-!!! note "Koina API Retry Behavior"
-    As of version 0.1.13, Koina API retry warnings are now logged at debug level 2 instead of being shown to users by default. To see retry attempts during debugging, set `debug_console_level: 2` in your SearchDIA parameters. The library build will only fail if all retry attempts are exhausted.
+!!! note "Koina API retry behavior"
+    Koina retry warnings log at debug level 2 (set `logging.debug_console_level: 2` in the search config to see them). The build only fails if all retry attempts are exhausted.
 
-### Path Parameters
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `library_path` | String | Output path for the spectral library |
-| `fasta_paths` | [String] | List of FASTA file or directory paths |
-| `fasta_names` | [String] | Names for each FASTA file |
-| `calibration_raw_file` | String | Path to calibration Arrow file for automatic m/z range detection (optional) |
-| `include_contaminants` | Boolean | Append a contaminants FASTA to the build (default: true) |
-| `predict_fragments` | Boolean | Predict fragment intensities (default: true) |
+### Output structure
+
+A successful `BuildSpecLib` run produces a `.poin` directory containing:
+
+| File | Purpose |
+|------|---------|
+| `precursors.arrow` | Precursor table (sequence, charge, m/z, iRT, decoy flag, …) |
+| `proteins_table.arrow` | Protein metadata |
+| `detailed_fragments.jls` | Per-precursor fragment ions, m/z-sorted within each precursor |
+| `precursor_to_fragment_indices.jls` | Per-precursor fragment range pointers |
+| `partitioned_fragment_index.jls` | MainSearch partitioned fragment index (bitmask-encoded) |
+| `presearch_partitioned_fragment_index.jls` | Pre-search partitioned fragment index |
+| `spline_knots.jls` | Spline knots for `SplineCompactFrag` libraries (Altimeter) |
+| `config.json` | Snapshot of the validated build parameters |
+| `build_log.txt` | Build log |

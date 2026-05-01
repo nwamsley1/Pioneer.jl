@@ -1,47 +1,47 @@
-# Copyright (C) 2024 Nathan Wamsley
+# Construction of retentionTimeIndex from precursor RT/mz data.
 #
-# This file is part of Pioneer.jl
-#
-# Pioneer.jl is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# buildRtIndex groups precursors into RT bins of configurable width, with
+# precursors sorted by m/z within each bin for efficient isolation window
+# matching during chromatogram extraction.
 
+"""
+    buildRtIndex(rts, prec_mzs, prec_ids, bin_rt_size) -> retentionTimeIndex
+
+Build an RT index from sorted RT values, precursor m/z values, and precursor IDs.
+
+Precursors are grouped into bins where consecutive precursors span at most
+`bin_rt_size` in RT. Within each bin, precursors are sorted by m/z.
+
+# Arguments
+- `rts`: Sorted retention time values (one per precursor)
+- `prec_mzs`: Precursor m/z values
+- `prec_ids`: Precursor IDs (UInt32)
+- `bin_rt_size`: Maximum RT span per bin
+"""
 function buildRtIndex(rts::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{I}, bin_rt_size::AbstractFloat) where {T,U<:AbstractFloat,I<:Integer}
-
-    # Handle empty input gracefully
     if isempty(rts)
-        return retentionTimeIndex(T, U)  # Return empty index
+        return retentionTimeIndex(T, U)
     end
 
     start_idx = 1
-    start_rt =  rts[start_idx]
-    rt_index = retentionTimeIndex(T, U) #Initialize retention time index
+    start_rt = rts[start_idx]
+    rt_index = retentionTimeIndex(T, U)
     i = 1
     while i < length(rts) + 1
         if ((rts[min(i + 1, length(rts))] - start_rt) > bin_rt_size) | (i == length(rts))
-            push!(rt_index.rt_bins, 
-                    rtIndexBin(rts[start_idx], #Retention time for first precursor in the bin
-                          rts[i],     #Retention time for last precursor in the bin
-                        [(zero(UInt32), zero(Float32)) for _ in 1:(i - start_idx + 1)] #Pre-allocate precursors 
-                        )
+            push!(rt_index.rt_bins,
+                rtIndexBin(rts[start_idx], rts[i],
+                    [(zero(UInt32), zero(Float32)) for _ in 1:(i - start_idx + 1)]
                 )
+            )
 
-            n = 1 #n'th precursor 
-            for idx in start_idx:(min(i, length(rts))) 
-                rt_index.rt_bins[end].prec[n] = (prec_ids[idx], prec_mzs[idx]) #Add n'th precursor
+            n = 1
+            for idx in start_idx:(min(i, length(rts)))
+                rt_index.rt_bins[end].prec[n] = (prec_ids[idx], prec_mzs[idx])
                 n += 1
             end
 
-            sort!(rt_index.rt_bins[end].prec, by = x->last(x)) #Sort precursors by m/z
+            sort!(rt_index.rt_bins[end].prec, by = x -> last(x))
             i += 1
             start_idx = i
             start_rt = rts[min(start_idx, length(rts))]
@@ -51,69 +51,17 @@ function buildRtIndex(rts::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{I}, 
         end
     end
 
-
-    function sortrtBins!(rt_index::retentionTimeIndex{T, U})
-        for i in 1:length(rt_index.rt_bins)
-            sort!(rt_index.rt_bins[i].prec, by = x->last(x));
-        end
-        return nothing
+    # Final sort pass (redundant with in-loop sort but ensures correctness)
+    for bin in rt_index.rt_bins
+        sort!(bin.prec, by = x -> last(x))
     end
-    sortrtBins!(rt_index)
+
     return rt_index
 end
 
-buildRtIndex(PSMs::DataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRtIndex(PSMs[:,:irt], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
+"""DataFrame convenience: expects columns :irt, :prec_mz, :precursor_idx."""
+buildRtIndex(PSMs::DataFrame; bin_rt_size::AbstractFloat = 0.1) =
+    buildRtIndex(PSMs[:,:irt], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
 
-buildRtIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRtIndex(PSMs[:,:irt], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
-
-
-function makeRTIndices(temp_folder::String,
-                       psms_paths::Vector{String}, 
-                       prec_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}},
-                       rt_to_irt_splines::Any;
-                       min_prob::AbstractFloat = 0.5)
-
-    #Maps filepath to a retentionTimeIndex (see buildrtIndex.jl)
-    rt_index_paths = Vector{String}(undef, length(psms_paths))
-    #Fill retention time index for each file.
-    for (key, psms_path) in enumerate(psms_paths)
-        psms = Arrow.Table(psms_path)
-        rt_to_irt = rt_to_irt_splines[key]
-        #Impute empirical irt value for psms with probability lower than the threshold
-        irts = zeros(Float32, length(prec_to_irt))
-        mzs = zeros(Float32, length(prec_to_irt))
-        prec_ids = zeros(UInt32, length(prec_to_irt))
-        #map observec precursors to irt and probability score
-        prec_set = Dict(zip(
-            psms[:precursor_idx],
-            map(x->(irt=first(x),prob=last(x)), zip(rt_to_irt.(psms[:rt]), psms[:prob]))
-        ))
-
-        Threads.@threads for (i, (prec_id, irt_mz)) in collect(enumerate(pairs(prec_to_irt)))
-            prec_ids[i] = prec_id
-            irt, mz = irt_mz::@NamedTuple{irt::Float32, mz::Float32}
-            #Don't impute irt, use empirical
-            if haskey(prec_set, prec_id)
-                _irt_, prob = prec_set[prec_id]
-                if (prob >= min_prob)
-                    irts[i], mzs[i]  = _irt_, mz
-                    continue
-                end
-            end
-            #Impute irt from the best observed psm for the precursor accross the experiment 
-            irts[i], mzs[i] = irt,mz
-        end
-        #Build rt index 
-        rt_df = DataFrame(Dict(:irt => irts,
-                                :prec_mz => mzs,
-                                :precursor_idx => prec_ids))
-        sort!(rt_df, :irt)
-        temp_path =joinpath(temp_folder, string(key)*"_rt_indices.arrow")
-        Arrow.write(
-            temp_path,
-            rt_df,
-            )
-        rt_index_paths[key] = temp_path
-    end
-    return rt_index_paths
-end
+buildRtIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) =
+    buildRtIndex(PSMs[:,:irt], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)

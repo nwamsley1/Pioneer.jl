@@ -11,9 +11,7 @@
         "entrapment_r": 0.0
     },
     "nce_params": {
-        "nce": 26.0,
-        "default_charge": 2,
-        "dynamic_nce": true
+        "nce": 26.0
     },
     "library_params": {
         "rt_bin_tol": 1.0,

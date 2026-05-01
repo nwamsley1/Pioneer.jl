@@ -23,8 +23,6 @@ For mzML-formatted data, use:
 pioneer convert-mzml /path/to/mzml/or/folder
 ```
 
-Only centroided mzML is supported. Files containing profile-mode spectra are skipped during conversion.
-
 ## Starting Pioneer
 After installation, Pioneer is accessed from the command line. Running `pioneer --help` displays available subcommands:
 

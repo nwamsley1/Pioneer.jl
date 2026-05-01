@@ -821,8 +821,10 @@ function LFQ_chunked(
     batch_size::Int = 100000
 )
     n_chunks = length(chunk_refs)
-    pbar = ProgressBar(total=n_chunks)
-    set_description(pbar, "MaxLFQ chunks:")
+    # Skip progress bar when there's only one chunk — ProgressBars shows
+    # "Inf:Inf, InfGs/it" on n=1 (rate divide-by-zero).
+    pbar = n_chunks > 1 ? ProgressBar(total=n_chunks) : nothing
+    pbar !== nothing && set_description(pbar, "MaxLFQ chunks:")
     writer_ref = Ref{Union{Nothing, Arrow.Writer}}(nothing)
     try
         for chunk_ref in chunk_refs
@@ -834,7 +836,7 @@ function LFQ_chunked(
                 q_value_threshold;
                 output_schema_policy=output_schema_policy,
                 batch_size=batch_size, writer_ref=writer_ref)
-            update(pbar)
+            pbar !== nothing && update(pbar)
         end
     finally
         if !isnothing(writer_ref[])

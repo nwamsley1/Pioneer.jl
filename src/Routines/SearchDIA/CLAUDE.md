@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 ## SearchDIA Overview
 
-SearchDIA is the core search engine of Pioneer.jl that performs data-independent acquisition (DIA) proteomics analysis. It implements a multi-pass search strategy with 9 sequential search methods, each building upon previous results to progressively refine peptide identification and quantification.
+SearchDIA is the core search engine of Pioneer.jl that performs data-independent acquisition (DIA) proteomics analysis. It implements a multi-stage search strategy with 7 active search methods, each building upon previous results to progressively refine peptide identification and quantification.
 
 ## Architecture
 
@@ -12,18 +12,20 @@ SearchDIA is the core search engine of Pioneer.jl that performs data-independent
 
 ```
 SearchDIA.jl (main entry)
-├── 1. ParameterTuningSearch - Establishes fragment mass tolerance
-├── 2. NceTuningSearch - Calibrates collision energy models
-├── 3. QuadTuningSearch - Models quadrupole transmission
-├── 4. FirstPassSearch - Initial PSM identification with RT calibration
-├── 5. HuberTuningSearch - Optimizes Huber loss parameters
-├── 6. SecondPassSearch - Refined search with calibrated parameters
-├── 7. PrecursorScoringSearch - Precursor rescoring and FDR control
-├── 8. IntegrateChromatogramSearch - Peak integration and quantification
-├── 9. ProteinInferenceSearch - Protein-group assignment on integrated passing precursors
-├── 10. ProteinScoringSearch - Protein-group scoring and q-values
-└── 11. MaxLFQSearch - Label-free quantification
+├── 1. ParameterTuningSearch    - Establishes fragment mass tolerance
+├── 2. NceTuningSearch          - Calibrates collision energy models
+├── 3. QuadTuningSearch         - Models quadrupole transmission
+├── 4. FragmentIndexSearch      - Builds fragment index for candidate selection
+├── 5. MainSearch               - PSM identification, LightGBM scoring, global FDR, fold-split output
+├── 6. ScoringSearch            - Rescoring with additional features, FDR control, protein grouping
+├── 7. IntegrateChromatogramSearch - Peak integration and quantification
+└── 8. MaxLFQSearch             - Label-free quantification
 ```
+
+**Note**: The old SecondPassSearch is fully replaced by MainSearch as of 2025-03. MainSearch
+performs global prescore aggregation, filters to passing precursors, and writes CV fold-split
+Arrow files directly to `temp_data/main_search_psms/`. ScoringSearch reads these files and
+trains a second LightGBM with additional features (20 features vs MainSearch's 15).
 
 ### Key Abstractions
 
@@ -85,10 +87,15 @@ Protein group handling spans multiple modules:
 - Implements greedy set cover algorithm for minimal protein sets
 - Handles complex cases: distinct, differentiable, indistinguishable proteins
 
-**Protein Inference and Scoring Integration** (`ProteinInferenceSearch/*`, `ProteinScoringSearch/*`):
-- `run_protein_inference!()` - Annotates passing precursors with inferred protein groups and quant flags
+**ScoringSearch Integration** (`ScoringSearch/protein_inference_pipeline.jl`):
+- `perform_protein_inference_pipeline()` - Composable pipeline for protein inference
 - `apply_inference_to_dataframe()` - Wrapper around core infer_proteins algorithm
-- `build_protein_group_tables()` - Aggregates annotated passing precursors into per-run protein-group tables
+- `group_psms_by_protein()` - Aggregates PSMs into protein groups
+
+**Legacy Functions** (`ScoringSearch/utils.jl`):
+- `getProteinGroupsDict()` - Creates protein groups from PSMs (legacy approach)
+- `merge_sorted_protein_groups()` - Memory-efficient merging using heap
+- `writeProteinGroups()` - Outputs final protein groups
 
 **Type-Safe Structures**:
 ```julia
@@ -119,24 +126,26 @@ The `merge_sorted_protein_groups` function is critical for handling large datase
 
 ### Working with ML Protein Scoring
 
-Protein handling now runs in dedicated post-integration steps:
-1. **Separate Steps**:
-   - `ProteinInferenceSearch` annotates integrated passing precursors with inferred protein groups
-   - `ProteinScoringSearch` builds protein-group tables, fits protein probit models, and computes protein-level q-values
-2. **Multifold Probit Architecture**:
-   - Builds protein CV folds from constituent precursor folds
-   - Fits fold-specific probit models on protein-level features
-   - Applies held-out models back to each fold
-3. **Optional Diagnostics**:
-   - `proteinScoring.write_qc_plots`
-   - `proteinScoring.log_feature_importance`
-4. **Shared Protein-Group Builder**: `build_protein_group_tables()` lives in `ProteinScoringSearch/protein_inference_pipeline.jl`
-- **Memory Budget**: In-memory row limits are derived from `optimization.machine_learning.max_in_memory_table_mb`
+ML scoring integration in `utils_protein_ml.jl` (memory-efficient OOM approach):
+1. **Memory-Efficient Architecture**: Uses out-of-memory (OOM) processing to handle large datasets
+2. **Sample-Train-Apply Workflow**:
+   - Samples protein groups proportionally from files for training
+   - Trains LightGBM models on the sample
+   - Applies models file-by-file to avoid loading all data into memory
+3. **CV Fold Consistency**: Maintains cross-validation fold assignment based on constituent peptides
+4. **Feature Engineering**: Extracts top-N precursor scores plus protein-level statistics
+5. **Scalability**: Designed for experiments with hundreds to thousands of files
+
+**Key Functions**:
+- `apply_ml_protein_scoring_oom!()` - Main OOM workflow orchestrator (in `proteinGroupScoringOOM.jl`)
+- `get_protein_groups_with_ml()` - Integration function that calls OOM approach when enabled
+- Memory usage is constant regardless of dataset size
 
 **Performance Benefits**:
-- Keeps protein rescoring bounded by the shared in-memory table budget
-- Handles multifold protein rescoring without mixing training and held-out folds
-- Reuses the same protein inference outputs for both protein-group tables and protein q-values
+- Constant memory usage regardless of dataset size
+- Handles experiments with thousands of MS files
+- Maintains statistical power through strategic sampling
+- Follows established OOM patterns from PSM scoring in `percolatorSortOf.jl`
 
 ### Debugging Search Results
 
@@ -169,8 +178,8 @@ Key output files to examine:
 
 ### Integration Test
 ```julia
-# Full pipeline test
-SearchDIA("./data/ecoli_test/ecoli_test_params.json")
+# Full pipeline test (search-only, runs against the committed ecoli library)
+SearchDIA("./test/integration/search_ecoli.json")
 ```
 
 ### Unit Testing Individual Methods
@@ -194,44 +203,46 @@ include("test/UnitTests/SearchMethods/test_scoring_search.jl")
 
 ## Key Files Reference
 
-- `searchRAW.jl` - Main orchestration logic
+- `SearchDIA.jl` - Main orchestration logic (top-level pipeline driver)
+- `LibrarySearch.jl` - Fragment-index search wrapper around `searchFragmentIndexPartitionMajorHinted`
+- `process_scans_fused.jl` - Fused per-precursor scan loop dispatch
 - `PSMs/` - PSM data structures and scoring metrics
-- `CommonSearchUtils/matchPeaks.jl` - Core spectral matching
-- `CommonSearchUtils/selectTransitions/` - Transition selection strategies
+- `CommonSearchUtils/fusedMatch.jl` - Fused match+score+build (`run_fused!`); replaces classic
+  `selectTransitions! + matchPeaks! + buildDesignMatrix! + sortSparse! + ScoreFragmentMatches!`
+- `CommonSearchUtils/fusedScan.jl` - `FusedScratch`, `SparseArrayFused`, `finalize_column!`
 - `WriteOutputs/` - Result formatting and plotting
 
-## Recent Development Updates (2025-01)
+## Recent Development Updates
 
-### Protein Inference Refactoring
-The protein inference system was recently refactored to use type-safe structures:
+### MainSearch Consolidation (2025-03)
+The old FirstPassSearch and SecondPassSearch have been consolidated into MainSearch.
+The pipeline no longer performs a second fragment-index search. MainSearch handles the
+complete flow:
 
-**Completed Changes**:
+1. **Fragment matching + spectral deconvolution** (`deconvolve_spectra` / `deconvolve_scans!`) → all (scan, precursor) PSMs
+2. **Per-file LightGBM scoring** (15 features) → `temp_data/prescore_scores/{file}.arrow`
+3. **Global prescore aggregation** — PEP-calibrate each file's scores, log-odds combine
+   top-sqrt(n) across files, compute global q-values
+4. **Filter to passing precursors** at `search.global_prescore_qvalue_threshold` (default 2%)
+5. **Write fold-split Arrow files** to `temp_data/main_search_psms/` with additional
+   columns (irt_diff, prec_mz, pair_id, etc.) via `add_search_columns!`
+6. **Filter fragment index** to passing precursors for downstream chromatogram integration
+
+ScoringSearch then reads the fold-split files and trains a second LightGBM with 20 features
+(adds log2_intensity_explained, prec_mz, irt_pred, irt_diff, longest_y, b_count, charge).
+
+**Key functions**:
+- `aggregate_prescore_globally!()` — `MainSearch/utils.jl`
+- `calibrate_file_scores()` / `combine_scores()` — `MainSearch/prescore_aggregation.jl`
+- `_logodds_combine()` — log-odds averaging with floor clamping
+
+### Protein Inference Refactoring (2025-01)
 - Replaced complex NamedTuples with `ProteinKey` and `PeptideKey` types
 - Unified API with single `infer_proteins()` function
-- Added comprehensive test suite (89 passing tests)
-- Removed legacy functions and conversion utilities
 - ~350 lines of code reduction
-
-**Migration Guide**:
-- Old: `infer_proteins_typed()` → New: `infer_proteins()`
-- Old: Complex NamedTuple keys → New: `ProteinKey` and `PeptideKey` structs
-- Old: Multiple function variants → New: Single type-safe function
-
-**Testing**:
-- Integration: `SearchDIA("./data/ecoli_test/ecoli_test_params.json")`
-- Unit tests: `include("test/UnitTests/test_protein_inference.jl")`
-
-### SearchMethods Refactoring Status
-All planned SearchMethods refactoring has been completed:
-- ✅ FileReference type hierarchy with PSMFileReference and ProteinGroupFileReference
-- ✅ Algorithm wrappers for protein inference and PSM score updates  
-- ✅ PrecursorScoringSearch interface using file references
-- ✅ Generic heap-based merge supporting N sort keys
-- ✅ MaxLFQSearch simplified to use MSData directly
 
 ## Module-Specific Documentation
 
 - SearchMethods: See `SearchMethods/CLAUDE.md` for detailed guidance on implementing and modifying search methods
 - Data Structures: See `DataStructures_CLAUDE.md` for PSM types, scoring systems, and SearchContext
 - Common Utilities: See `CommonSearchUtils/CLAUDE.md` for core algorithms and shared functionality
-- Transition Selection: See `CommonSearchUtils/selectTransitions/CLAUDE.md` for transition selection framework
