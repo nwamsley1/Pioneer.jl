@@ -44,6 +44,15 @@ include("./UnitTests/LogTruncationTests.jl")
 
 include("./UnitTests/test_counter.jl")
 
+# Coverage: small modules with previously-poor unit coverage.
+include("./UnitTests/test_mass_error_model.jl")
+include("./UnitTests/test_parse_mods.jl")
+include("./UnitTests/test_quad_models_basic.jl")
+include("./UnitTests/test_solve_poisson_mm.jl")
+include("./UnitTests/test_scoring_workspace_coverage.jl")
+include("./UnitTests/test_rt_alignment_utils.jl")
+include("./UnitTests/test_protein_model_fit.jl")
+
 # ParameterTuningSearch — Lipschitz step cap regression
 include("./Routines/SearchDIA/SearchMethods/ParameterTuningSearch/test_intensity_spline_lipschitz.jl")
 
