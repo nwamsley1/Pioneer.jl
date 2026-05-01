@@ -241,6 +241,7 @@ function summarize_results!(
         getStructuralMods(precursors),
         getIsotopicMods(precursors),
         params.q_value_threshold,
+        build_accession_to_species(precursors),
         output_schema_policy = output_schema_policy,
         batch_size = params.batch_size
     )

@@ -627,6 +627,35 @@ function getProtAbundance(protein::String,
 
 end
 
+"""
+    build_accession_to_species(precursors)
+
+Build a `Dict{String, String}` mapping each individual UniProt accession (single
+token, never `;`-joined) to the species/proteome label of the FASTA it was read
+from. Both `accession_numbers` and `proteome_identifiers` on a precursor are
+`;`-joined parallel arrays — same order, same length — so splitting on `;` and
+zipping recovers per-accession species.
+"""
+function build_accession_to_species(precursors)
+    accs = getAccessionNumbers(precursors)
+    proteomes = getProteomeIdentifiers(precursors)
+    accession_to_species = Dict{String, String}()
+    @inbounds for i in eachindex(accs, proteomes)
+        a_str = String(accs[i])
+        p_str = String(proteomes[i])
+        a_toks = split(a_str, ';')
+        p_toks = split(p_str, ';')
+        length(a_toks) == length(p_toks) || continue
+        for k in eachindex(a_toks)
+            ak = String(a_toks[k])
+            pk = String(p_toks[k])
+            isempty(ak) && continue
+            get!(accession_to_species, ak, pk)
+        end
+    end
+    return accession_to_species
+end
+
 # FileReference-based implementation with TransformPipeline preprocessing
 function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issues
              protein_quant_path::String,
@@ -635,7 +664,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             precursor_sequences::AbstractVector{<:AbstractString},
             precursor_structural_mods::AbstractVector,
             precursor_isotopic_mods::AbstractVector,
-            q_value_threshold::Float32;
+            q_value_threshold::Float32,
+            accession_to_species::Dict{String, String};
             output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
             batch_size = 100000,
             writer_ref::Base.RefValue{Union{Nothing, Arrow.Writer}} = Ref{Union{Nothing, Arrow.Writer}}(nothing))
@@ -718,14 +748,19 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         )
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
-            # Union of species tokens across all PSMs in the group.
+            # Species is derived from the accessions inside the inferred protein
+            # group, not from the per-PSM :species column. Per-PSM species can
+            # include FASTA sources of *other* proteins that share peptides with
+            # this group (e.g. a yeast protein whose peptide is also found in a
+            # human homolog), which would mislabel the group's organism. The
+            # inferred_protein_group is the parsimonious accession set; its
+            # species union is the species union of those accessions only.
             species_set = Set{String}()
-            for s in data[!, :species]
-                ismissing(s) && continue
-                for tok in split(String(s), ';')
-                    isempty(tok) && continue
-                    push!(species_set, tok)
-                end
+            for acc in split(String(protein[:inferred_protein_group]), ';')
+                isempty(acc) && continue
+                sp = get(accession_to_species, String(acc), "")
+                isempty(sp) && continue
+                push!(species_set, sp)
             end
             species_agg = join(sort!(collect(species_set)), ';')
 
@@ -834,7 +869,8 @@ function LFQ_chunked(
     precursor_sequences::AbstractVector{<:AbstractString},
     precursor_structural_mods::AbstractVector,
     precursor_isotopic_mods::AbstractVector,
-    q_value_threshold::Float32;
+    q_value_threshold::Float32,
+    accession_to_species::Dict{String, String};
     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     batch_size::Int = 100000
 )
@@ -851,7 +887,8 @@ function LFQ_chunked(
                 precursor_sequences,
                 precursor_structural_mods,
                 precursor_isotopic_mods,
-                q_value_threshold;
+                q_value_threshold,
+                accession_to_species;
                 output_schema_policy=output_schema_policy,
                 batch_size=batch_size, writer_ref=writer_ref)
             pbar !== nothing && update(pbar)
