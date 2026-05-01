@@ -18,13 +18,14 @@
 """
     build_partitioned_index_from_lib(spec_lib; partition_width=5.0f0,
         frag_bin_tol_ppm=2.5f0, rt_bin_tol=3.0f0,
-        rank_to_score=UInt8[8,4,4,2,2,1,1],
         y_start_index=UInt8(4), b_start_index=UInt8(3),
         include_p_index=false)
 
 Build a LocalPartitionedFragmentIndex from scratch using the spectral library's
 DetailedFrag data. Each partition gets its own independently-constructed index
 with LocalFragment entries (UInt16 local_id + UInt8 score = 4 bytes).
+
+Per-fragment score is a bitmask `1 << (rank-1)`, capped at 8 ranks (UInt8).
 
 Precursor IDs are remapped to partition-local UInt16 values (1..N, N ≤ 65535).
 Partitions that would exceed 65535 unique precursors are automatically split.
@@ -35,7 +36,6 @@ function build_partitioned_index_from_lib(
     frag_bin_tol_ppm::Float32 = 0.0f0,
     frag_bin_tol_mda::Float32 = 2.0f0,
     rt_bin_tol::Float32 = 3.0f0,
-    rank_to_score::Vector{UInt8} = UInt8[8, 4, 4, 2, 2, 1, 1],
     y_start_index::UInt8 = UInt8(4),
     b_start_index::UInt8 = UInt8(3),
     include_p_index::Bool = false,
@@ -46,7 +46,7 @@ function build_partitioned_index_from_lib(
     prec_mzs = getMz(precursors)
     prec_irts = getIrt(precursors)
     n_precursors = length(prec_mzs)
-    max_rank = length(rank_to_score)
+    max_rank = 8
 
     # ── Step 1: Assign precursors to initial partitions by prec_mz ───────────
     min_prec_mz = Float32(Inf)
