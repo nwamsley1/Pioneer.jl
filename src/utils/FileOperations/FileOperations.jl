@@ -27,18 +27,16 @@ streaming operations, type-safe file references, and composable pipelines.
 - **Memory-efficient streaming** operations for large datasets  
 - **Composable pipeline API** for chaining transformations
 - **High-performance merging** with heap-based algorithms
-- **Algorithm integration** for protein inference and MaxLFQ
 - **Cross-platform compatibility** with Windows file handling
 
 ## Architecture
 
 ```
 FileOperations/
-├── core/              # File references, schema, sort state
-├── streaming/         # Memory-efficient operations
+├── core/              # File references, schema, sort state, validation
+├── streaming/         # Memory-efficient merge operations
 ├── pipeline/          # Composable transformation framework
-├── algorithms/        # Algorithm wrappers and validation
-└── io/               # Arrow operations and file utilities
+└── io/               # Arrow operations, file utilities, safe file ops
 ```
 
 ## Example Usage
@@ -88,10 +86,9 @@ All operations are designed to handle large datasets efficiently:
 include("core/FileSchema.jl")
 include("core/FileReferences.jl")
 include("core/SortStateManagement.jl")
+include("core/ValidationUtils.jl")
 
 # Load streaming operations
-include("streaming/StreamOperations.jl")
-include("streaming/ColumnOperations.jl")
 include("streaming/MergeOperations.jl")
 
 # Load pipeline framework
@@ -99,11 +96,8 @@ include("pipeline/PipelineAPI.jl")
 include("pipeline/PipelineOperations.jl")
 include("pipeline/PipelineExecution.jl")
 
-# Load algorithm integrations
-include("algorithms/ProteinInference.jl")
-include("algorithms/MaxLFQOperations.jl")
-include("algorithms/ValidationUtils.jl")
-
 # Load I/O operations
+include("io/writeArrow.jl")
 include("io/ArrowOperations.jl")
 include("io/FileUtilities.jl")
+include("io/safeFileOps.jl")

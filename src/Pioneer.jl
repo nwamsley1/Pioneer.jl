@@ -18,8 +18,8 @@
 module Pioneer
 
 using Arrow, ArrowTypes, ArgParse, Dates
-#using Profile
-#using PProf
+using Profile
+using PProf
 using Base64
 using Base.Order
 using Base.Iterators: partition
@@ -242,7 +242,10 @@ end
 
 function user_warn(msg::String, file::String="", line::String="", mod::String="")
     msg_trunc = truncate_for_log(msg)
-    # Console output
+    # Console output. Leading "\n" drops past any in-flight ProgressBars line
+    # so the warning isn't clobbered by the next bar refresh; trailing newline
+    # leaves the cursor on a fresh line for the bar to redraw on.
+    print("\n")
     printstyled("┌ ", bold=true, color=:yellow)
     printstyled("Warning:", bold=true, color=:yellow)
     println(" ", msg_trunc)
@@ -292,7 +295,9 @@ end
 
 function user_error(msg::String, file::String="", line::String="", mod::String="")
     msg_trunc = truncate_for_log(msg)
-    # Console output
+    # Leading "\n" drops past any in-flight ProgressBars line so the error
+    # text isn't clobbered by the next bar refresh.
+    print("\n")
     printstyled("┌ ", color=:red)
     printstyled("Error:", bold=true, color=:red)
     println(" ", msg_trunc)
@@ -543,6 +548,148 @@ end
 # Export the macros for use throughout the codebase
 export @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
 
+"""
+    init_pioneer_logging(out_dir, banner_title;
+                         debug_console_level=0,
+                         max_message_bytes=4096,
+                         essential_filename="pioneer_search_report.txt",
+                         console_filename="pioneer_search_log.log",
+                         debug_filename="pioneer_search_debug.log",
+                         warnings_filename="pioneer_warnings.log")
+
+Open the four Pioneer log files inside `out_dir`, write a uniform header
+to each, and configure `DEBUG_CONSOLE_LEVEL[]` / `MAX_LOG_MSG_BYTES[]`.
+
+Returns the absolute path of the warnings file (used by
+`finalize_pioneer_logging` to count and report warnings).
+
+Used by `SearchDIA` and `BuildSpecLib` so both routines emit the same
+log artefacts: a clean essential log, a console mirror, a full debug
+trace, and a warnings sidecar.
+"""
+function init_pioneer_logging(out_dir::AbstractString,
+                              banner_title::AbstractString;
+                              debug_console_level::Integer = 0,
+                              max_message_bytes::Integer = 4096,
+                              essential_filename::AbstractString = "pioneer_search_report.txt",
+                              console_filename::AbstractString = "pioneer_search_log.log",
+                              debug_filename::AbstractString = "pioneer_search_debug.log",
+                              warnings_filename::AbstractString = "pioneer_warnings.log")
+    mkpath(out_dir)
+
+    # Honor an env-var override for the message-byte cap.
+    max_bytes = Int(max_message_bytes)
+    if haskey(ENV, "PIONEER_MAX_LOG_MSG_BYTES")
+        env_val = tryparse(Int, ENV["PIONEER_MAX_LOG_MSG_BYTES"])
+        if env_val !== nothing
+            max_bytes = env_val
+        end
+    end
+    DEBUG_CONSOLE_LEVEL[] = Int(debug_console_level)
+    MAX_LOG_MSG_BYTES[]   = clamp(max_bytes, 1024, 1048576)
+
+    essential_path = joinpath(out_dir, essential_filename)
+    console_path   = joinpath(out_dir, console_filename)
+    debug_path     = joinpath(out_dir, debug_filename)
+    warnings_path  = joinpath(out_dir, warnings_filename)
+
+    ESSENTIAL_FILE[] = open(essential_path, "w")
+    CONSOLE_FILE[]   = open(console_path,   "w")
+    DEBUG_FILE[]     = open(debug_path,     "w")
+    WARNINGS_FILE[]  = open(warnings_path,  "w")
+
+    pioneer_version = get_pioneer_version()
+    banner = repeat("=", 90)
+    essential_header = [
+        banner,
+        banner_title,
+        "Version: $pioneer_version",
+        "Started: $(Dates.now())",
+        "Output Directory: $out_dir",
+        banner,
+        ""
+    ]
+    debug_header = [
+        banner,
+        "$banner_title (Full Trace)",
+        "Version: $pioneer_version",
+        "Started: $(Dates.now())",
+        "Output Directory: $out_dir",
+        "Julia Version: $(VERSION)",
+        "Threads: $(Threads.nthreads())",
+        banner,
+        ""
+    ]
+    warnings_header = [
+        banner,
+        "$banner_title — Warnings",
+        "Started: $(Dates.now())",
+        banner,
+        ""
+    ]
+    for line in essential_header
+        println(ESSENTIAL_FILE[], line)
+        println(CONSOLE_FILE[],   line)
+    end
+    for line in debug_header
+        println(DEBUG_FILE[], line)
+    end
+    for line in warnings_header
+        println(WARNINGS_FILE[], line)
+    end
+
+    @user_info "Pioneer logging system initialized"
+    return abspath(warnings_path)
+end
+
+"""
+    finalize_pioneer_logging(warnings_full_path; banner_title="Run completed")
+
+Close the four log files opened by `init_pioneer_logging`, write a
+uniform footer (with warning count) to each, and emit a single console
+summary line if warnings were generated. Safe to call from a `finally`
+block — handles partial init.
+"""
+function finalize_pioneer_logging(warnings_full_path::AbstractString = "";
+                                  banner_title::AbstractString = "Run completed")
+    warning_count = 0
+    if WARNINGS_FILE[] !== nothing
+        close(WARNINGS_FILE[])
+        if !isempty(warnings_full_path) && isfile(warnings_full_path)
+            # 5-line header (see init_pioneer_logging) is subtracted.
+            warning_count = max(0, countlines(warnings_full_path) - 5)
+        end
+        WARNINGS_FILE[] = nothing
+    end
+
+    banner = repeat("=", 90)
+    function _close_with_footer!(handle_ref::Ref{Union{Nothing, IOStream}}, include_warning_line::Bool)
+        if handle_ref[] !== nothing
+            footer = ["", banner]
+            if include_warning_line && warning_count > 0
+                push!(footer, "⚠️  $warning_count warnings were generated during the run")
+            end
+            push!(footer, "$banner_title at: $(Dates.now())")
+            push!(footer, banner)
+            for line in footer
+                println(handle_ref[], line)
+            end
+            close(handle_ref[])
+            handle_ref[] = nothing
+        end
+    end
+    _close_with_footer!(ESSENTIAL_FILE, true)
+    _close_with_footer!(CONSOLE_FILE,   true)
+    _close_with_footer!(DEBUG_FILE,     false)
+
+    if warning_count > 0 && !isempty(warnings_full_path)
+        printstyled("┌ ", color=:yellow)
+        printstyled("Warning:", bold=true, color=:yellow)
+        println(" $warning_count warnings were generated - see $warnings_full_path")
+    end
+    return warning_count
+end
+
 #Set Seed 
 Random.seed!(1776);
 
@@ -553,43 +700,27 @@ files_loaded = importScripts()
 #importScriptsSpecLib(files_loaded)
 #include(joinpath(@__DIR__, "Routines","LibrarySearch","method"s,"loadSpectralLibrary.jl"))
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")
-const CHARGE_ADJUSTMENT_FACTORS = Float64[1, 0.9, 0.85, 0.8, 0.75]
 
 # H2O, PROTON, NEUTRON constants are defined in get_mz.jl and available via importScripts()
-const NCE_MODEL_BREAKPOINT::Float32 = Float32(500.0f0)
+
+# Spectral deconvolution solver defaults (OLS / Poisson MM coordinate descent)
+const DECONV_MAX_ITER::Int64 = Int64(1000)
+const DECONV_CONVERGENCE_TOL::Float32 = Float32(0.01)
 
 # AA_to_mass is defined in get_mz.jl and available via importScripts()
 
 
 
 const MODEL_CONFIGS = Dict(
-    "unispec" => (
-        annotation_type = UniSpecFragAnnotation("y1^1"),
-        model_type = InstrumentSpecificModel("unispec"),
-        instruments = Set(["QE","QEHFX","LUMOS","ELITE","VELOS","NONE"])
-    ),
     "altimeter" => (
         annotation_type = UniSpecFragAnnotation("y1^1"),
         model_type = SplineCoefficientModel("altimeter"),
         instruments = Set([])
     ),
-    "prosit_2020_hcd" => (
-        annotation_type = GenericFragAnnotation("y1+1"), 
-        model_type = InstrumentAgnosticModel("prosit_2020_hcd"),
-        instruments = Set([])
-    ),
-    "AlphaPeptDeep" => (
-        annotation_type = GenericFragAnnotation("y1+1"),
-        model_type = InstrumentSpecificModel("AlphaPeptDeep"),
-        instruments = Set(["QE", "LUMOS", "TIMSTOF", "SCIEXTOF"])
-    )
 )
 
 
 const KOINA_URLS = Dict(
-    "unispec" => "https://koina.wilhelmlab.org:443/v2/models/UniSpec/infer",
-    "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
-    "AlphaPeptDeep" => "https://koina.wilhelmlab.org:443/v2/models/AlphaPeptDeep_ms2_generic/infer",
     "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer",
     "altimeter" => "https://koina.wilhelmlab.org:443/v2/models/Altimeter_2024_splines_index/infer",#"http://127.0.0.1:8000/v2/models/Altimeter_2024_splines_index/infer"
 )
@@ -599,7 +730,7 @@ function __init__()
     ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
 end
 
-export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams, convertMzML, # ParseSpecLib, GetParseSpecLibParams, # COMMENTED OUT: ParseSpecLib has loading issues
-       @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace,
-       get_pioneer_version
+export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams, convertMzML,
+       get_pioneer_version,
+       @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
 end

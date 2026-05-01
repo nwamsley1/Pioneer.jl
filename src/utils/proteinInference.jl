@@ -385,23 +385,6 @@ function _infer_proteins_single_group(
             # This implicitly marks them as not usable for quantification
         end
 
-        #= Alternative approach: Assign based on protein_to_peptides from greedy set cover
-        for protein in necessary_proteins
-            if haskey(protein_to_peptides, protein)
-                for peptide_key in protein_to_peptides[protein]
-                    # Assign peptide to this protein
-                    insert!(peptide_to_protein, peptide_key, protein)
-
-                    # Set use_for_quant based on whether it's in peptide_to_necessary_protein
-                    if haskey(peptide_to_necessary_protein, peptide_key)
-                        insert!(use_for_quant, peptide_key, true)
-                    else
-                        insert!(use_for_quant, peptide_key, false)
-                    end
-                end
-            end
-        end
-        =#
     end
 
     return InferenceResult(peptide_to_protein)
@@ -530,3 +513,4 @@ function infer_proteins(
 
     return InferenceResult(combined_result)
 end
+

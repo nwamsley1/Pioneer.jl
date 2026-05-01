@@ -16,132 +16,162 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    integrate_precursors(chromatograms::DataFrame, isotope_trace_type::IsotopeTraceType,
-                        precursor_idx::AbstractVector{UInt32}, isotopes_captured::AbstractVector{Tuple{Int8, Int8}},
-                        apex_scan_idx::AbstractVector{UInt32}, peak_area::AbstractVector{Float32},
-                        new_best_scan::AbstractVector{UInt32}, ms_file_idx::Int64;
-                        λ::Float32=1.0f0, n_pad::Int64=20, max_apex_offset::Int64=2)
+    build_chrom_index(prec_col::AbstractVector{UInt32}, n_rows::Int)
+
+Build a lookup from precursor ID → row range in a sorted chromatogram table.
+
+The chromatogram DataFrame is sorted by `(precursor_idx, rt)`, so all rows for
+a given precursor are contiguous. This function does a single pass to record
+each precursor's `start:stop` row range and tracks the longest chromatogram
+(used to size scratch buffers).
+
+Returns `(chrom_index, max_chrom_len)`.
+"""
+function build_chrom_index(prec_col::AbstractVector{UInt32}, n_rows::Int)
+    if n_rows == 0
+        return Dict{UInt32, UnitRange{Int}}(), 0
+    end
+    max_len = 0
+    chrom_index = Dict{UInt32, UnitRange{Int}}()
+    start_idx = 1
+    current_key = prec_col[1]
+    for row_idx in 2:n_rows
+        next_key = prec_col[row_idx]
+        if next_key != current_key
+            chrom_index[current_key] = start_idx:(row_idx - 1)
+            max_len = max(max_len, row_idx - start_idx)
+            start_idx = row_idx
+            current_key = next_key
+        end
+    end
+    chrom_index[current_key] = start_idx:n_rows
+    max_len = max(max_len, n_rows - start_idx + 1)
+    return chrom_index, max_len
+end
+
+"""
+    find_nearest_scan(scan_indices::AbstractVector{UInt32}, target_scan::UInt32)
+
+Return the 1-based position within `scan_indices` whose value is closest to
+`target_scan`. Used to map the PSM's apex scan index (global scan number) into
+the local chromatogram coordinate after trimming zero-intensity edges.
+"""
+function find_nearest_scan(scan_indices::AbstractVector{UInt32}, target_scan::UInt32)
+    nearest_idx = 1
+    min_diff = typemax(Int64)
+    for j in eachindex(scan_indices)
+        d = abs(Int64(scan_indices[j]) - Int64(target_scan))
+        if d < min_diff
+            min_diff = d
+            nearest_idx = j
+        end
+    end
+    return nearest_idx
+end
+
+"""
+    integrate_precursors(chromatograms, min_fraction_transmitted, precursor_idx,
+                         apex_scan_idx, peak_area, new_best_scan, points_integrated;
+                         λ=1.0f0)
 
 Integrate chromatographic peaks for multiple precursors in parallel.
 
-# Arguments
-- `chromatograms`: DataFrame containing chromatogram data
-- `min_fraction_transmitted`: Min precursor isotope distribution transmitted
-- `isotope_trace_type`: Strategy for handling isotope traces
-- `precursor_idx`: Vector of precursor indices
-- `isotopes_captured`: Isotopes captured for each precursor
-- `apex_scan_idx`: Initial apex scan indices
-- `peak_area`: Vector to store integrated areas
-- `new_best_scan`: Vector to store updated apex scans
-- `ms_file_idx`: MS file index
-- `λ`: Smoothing parameter
-- `n_pad`: Number of padding points
-- `max_apex_offset`: Maximum allowed apex shift
-
-Smooths and integrates chromatograms in parallel batches
+For each precursor, looks up its chromatogram rows via `build_chrom_index`,
+trims leading/trailing zero-intensity scans, maps the PSM apex into the trimmed
+coordinate, then calls `integrate_chrom` (Whittaker-Henderson smooth → boundary
+detection → trapezoidal integration). Results are written into the output vectors
+`peak_area`, `new_best_scan`, and `points_integrated`.
 """
 function integrate_precursors(chromatograms::DataFrame,
-                             isotope_trace_type::IsotopeTraceType,
                              min_fraction_transmitted::Float32,
                              precursor_idx::AbstractVector{UInt32},
-                             isotopes_captured::AbstractVector{Tuple{Int8, Int8}},
                              apex_scan_idx::AbstractVector{UInt32},
                              peak_area::AbstractVector{Float32},
                              new_best_scan::AbstractVector{UInt32},
-                             points_integrated::AbstractVector{UInt32},
-                             precursor_fraction_transmitted_traces::AbstractVector{String},
-                             isotopes_captured_traces::AbstractVector{String},
-                             ms_file_idx::Int64; 
-                             λ::Float32 = 1.0f0,
-                             n_pad::Int64 = 20,
-                             max_apex_offset::Int64 = 2,
-                             test_print::Bool = false
+                             points_integrated::AbstractVector{UInt32};
+                             λ::Float32 = 1.0f0
                              )
-    chromatogram_keys = [:precursor_idx]
-    if seperateTraces(isotope_trace_type)
-        chromatogram_keys = [:precursor_idx,:isotopes_captured]
+    n_pad = Int64(0)
+    prec_col = chromatograms[!, :precursor_idx]::AbstractVector{UInt32}
+    rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
+    scan_idx_all = chromatograms[!, :scan_idx]::AbstractVector{UInt32}
+    intensity_all = chromatograms[!, :intensity]::AbstractVector{Float32}
+    fraction_all = chromatograms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
+
+    chrom_index, max_chrom_len = build_chrom_index(prec_col, nrow(chromatograms))
+    N = max_chrom_len + (2*n_pad)
+
+    # Partition work into chunks, then distribute chunks to exactly nthreads() tasks
+    # (one task per thread — prevents workspace corruption from task switching at yield points)
+    _n_threads = Threads.nthreads()
+    all_chunks = collect(partitionThreadTasks(length(precursor_idx), 10, _n_threads))
+    n_tasks = min(_n_threads, length(all_chunks))
+
+    task_ranges = [Int[] for _ in 1:n_tasks]
+    for (chunk_idx, _) in enumerate(all_chunks)
+        push!(task_ranges[((chunk_idx - 1) % n_tasks) + 1], chunk_idx)
     end
-    grouped_chroms = groupby(chromatograms, chromatogram_keys)
-    dtype = Float32
-    thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
-    #Maximal size of a chromatogram
-    N = maximum(size(c,1) for c in grouped_chroms) + (2*n_pad)
 
-    group_keys = keys(grouped_chroms)
-    tasks = map(thread_tasks) do chunk
-        Threads.@spawn begin
-            #chromdf = DataFrame()
-            b = zeros(Float32, N);
-            u2 = zeros(Float32, length(b));
+    n_thread_slots = Threads.maxthreadid()
+    ws_by_thread = [WHWorkspace(N) for _ in 1:n_thread_slots]
+    state_by_thread = [Chromatogram(zeros(Float32, N), zeros(Float32, N), 0) for _ in 1:n_thread_slots]
 
-            state = Chromatogram(
-                zeros(dtype, N), #t
-                zeros(dtype, N), #data
-                N #max index
-                )
+    function run_integration_batch!(batch_id::Int, ws::WHWorkspace, state::Chromatogram)
+        for chunk_idx in task_ranges[batch_id]
+            chunk = all_chunks[chunk_idx]
             for i in chunk
                 prec_id = precursor_idx[i]
-                iso_set = isotopes_captured[i]
                 apex_scan = apex_scan_idx[i]
-                # Note: grouped_chroms groups are already sorted by rt (pre-sorted before grouping)
-                if seperateTraces(isotope_trace_type)
-                    (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys ? continue : nothing
-                    chrom = grouped_chroms[(precursor_idx = prec_id, isotopes_captured = iso_set)]
-                else
-                    (precursor_idx = prec_id,) ∉ group_keys ? continue : nothing
-                    chrom = grouped_chroms[(precursor_idx = prec_id,)]
+
+                if !haskey(chrom_index, prec_id)
+                    continue
+                end
+                chrom_range = chrom_index[prec_id]
+
+                avg_cycle_time = (rt_all[last(chrom_range)] - rt_all[first(chrom_range)]) / length(chrom_range)
+
+                # Skip entirely zero-valued chromatograms
+                if isnothing(findfirst(x -> x > 0.0f0, @view intensity_all[chrom_range]))
+                    continue
                 end
 
-                # Note: No sorting needed - chromatograms are pre-sorted by [:precursor_idx, :rt]
-                # Groups from groupby() inherit this ordering
-                avg_cycle_time = (chrom.rt[end] - chrom.rt[1]) /  length(chrom.rt)
-                first_pos = findfirst(x->x>0.0, chrom[!,:intensity]) # start from first positive weight
-                last_pos = findlast(x->x>0.0, chrom[!,:intensity]) # end at last positive weight
-                isnothing(first_pos) ? continue : nothing
-                chrom = view(chrom, first_pos:last_pos, :)
-                if test_print == false
-                    apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) # scan first/last
-                    isnothing(apex_scan) ? continue : nothing
-                else
-                    min_diff = typemax(Int64)
-                    nearest_idx = i
-                    for i in range(1, size(chrom, 1))
-                        if abs(chrom[i,:scan_idx] - apex_scan) < min_diff
-                            min_diff = abs(chrom[i,:scan_idx] - apex_scan)
-                            nearest_idx = i
-                        end
-                    end
-                    for i in range(max(1, nearest_idx - 5), min(size(chrom, 1), nearest_idx + 5))
-                        if chrom[i,:intensity] > chrom[nearest_idx,:intensity]
-                            nearest_idx = i
-                        end
-                    end
-                    apex_scan = nearest_idx#argmax(chrom[!,:intensity])
-                end
-
-                if !ismissing(precursor_fraction_transmitted_traces)
-                    precursor_fraction_transmitted_traces[i], isotopes_captured_traces[i] = get_isolated_isotopes_strings(chrom[!, :precursor_fraction_transmitted],                                                                                                          chrom[!, :isotopes_captured])
-                end
+                # Map global apex scan index to local position in chromatogram
+                apex_scan = find_nearest_scan(
+                    @view(scan_idx_all[chrom_range]), apex_scan
+                )
 
                 peak_area[i], new_best_scan[i], points_integrated[i] = integrate_chrom(
-                                chrom,
-                                apex_scan,
-                                b,
-                                u2,
-                                state,
-                                avg_cycle_time,
-                                λ,
-                                n_pad = n_pad,
-                                max_apex_offset = max_apex_offset,
-                                isplot = false
-                                );
-
+                    @view(rt_all[chrom_range]),
+                    @view(scan_idx_all[chrom_range]),
+                    @view(intensity_all[chrom_range]),
+                    @view(fraction_all[chrom_range]),
+                    apex_scan,
+                    ws,
+                    state,
+                    avg_cycle_time,
+                    λ,
+                    min_fraction_transmitted = min_fraction_transmitted,
+                    n_pad = n_pad
+                )
                 reset!(state)
             end
-            return #chromdf
+        end
+        return nothing
+    end
+
+    Threads.@threads :static for batch_id in 1:n_tasks
+        tid = Threads.threadid()
+        run_integration_batch!(batch_id, ws_by_thread[tid], state_by_thread[tid])
+    end
+
+    # Clamp NaN and negative values to zero for downstream processing
+    for i in eachindex(precursor_idx)
+        if isnan(peak_area[i]) || peak_area[i] < 0f0
+            peak_area[i] = 0f0
         end
     end
-    return fetch.(tasks)
+
+    return nothing
 end
 
 #==========================================================
@@ -157,6 +187,113 @@ Extract chromatograms for all passing PSMs.
 
 Uses parallel processing to build chromatograms across scan ranges.
 """
+
+# Quad-window helpers (originally in selectTransitions/rtIndexTransitionSelection.jl;
+# kept here as the sole remaining caller after the fused migration).
+
+function getQuadrupoleBounds(quad_func::QuadTransmissionFunction)
+    return getPrecMinBound(quad_func), getPrecMaxBound(quad_func)
+end
+
+function getPrecursorWindowRange(
+    precs, min_prec_mz::Float32, max_prec_mz::Float32,
+    isotope_err_bounds::Tuple{I, I}
+) where {I<:Integer}
+    start = searchsortedfirst(precs, by = x->last(x),
+        min_prec_mz - first(isotope_err_bounds)*NEUTRON/2)
+    stop = searchsortedlast(precs, by = x->last(x),
+        max_prec_mz + last(isotope_err_bounds)*NEUTRON/2)
+    return start, stop
+end
+
+function withinQuadrupoleBounds(
+    prec_mz::Float32, prec_charge::UInt8,
+    min_prec_mz::Float32, max_prec_mz::Float32,
+    isotope_err_bounds::Tuple{I, I}
+) where {I<:Integer}
+    mz_low = min_prec_mz - first(isotope_err_bounds)*NEUTRON/prec_charge
+    mz_high = max_prec_mz + last(isotope_err_bounds)*NEUTRON/prec_charge
+    return mz_low ≤ prec_mz ≤ mz_high
+end
+
+"""
+    collect_rt_window_precursors!(precs_temp, rt_index, rt_start_idx, rt_stop_idx,
+                                   precursors_passing, prec_mzs, prec_charges,
+                                   prec_sulfur_counts, iso_splines, quad_func,
+                                   precursor_transmission, isotope_err_bounds,
+                                   min_fraction_transmitted, precursor_rt_map,
+                                   scan_rt, rt_binned_tol, rt_tol_fallback) -> Int
+
+Walk the RT-bin range, applying quad-window, precursors_passing allowlist,
+per-precursor RT, isotope_err_bounds, and min_fraction_transmitted filters.
+Writes the surviving precursor ids into `precs_temp[1:n]` and returns `n`.
+
+Extracted from the classic `RTIndexedTransitionSelection` path so
+`run_fused!(FusedRTIndexed(), ...)` can consume a pre-filtered precursor
+list without repeating the filtering (skipped via `check_prec_filters`).
+"""
+function collect_rt_window_precursors!(
+    precs_temp::Vector{UInt32},
+    rt_index::retentionTimeIndex,
+    rt_start_idx::Int64, rt_stop_idx::Int64,
+    precursors_passing::Union{Set{UInt32}, Nothing},
+    prec_mzs::AbstractArray{Float32},
+    prec_charges::AbstractArray{UInt8},
+    prec_sulfur_counts::AbstractArray{UInt8},
+    iso_splines::IsotopeSplineModel,
+    quad_transmission_func::QuadTransmissionFunction,
+    precursor_transmission::Vector{Float32},
+    isotope_err_bounds::Tuple{I, I},
+    min_fraction_transmitted::Float32,
+    precursor_rt_map::Union{Dict{UInt32, Float32}, Nothing},
+    scan_rt::Float32,
+    rt_binned_tol::Union{RTBinnedTolerance, Nothing},
+    rt_tol_fallback::Float32) where {I<:Integer}
+
+    min_prec_mz, max_prec_mz = getQuadrupoleBounds(quad_transmission_func)
+    size = 0
+    has_rt_filter = precursor_rt_map !== nothing
+
+    for rt_bin_idx in rt_start_idx:rt_stop_idx
+        precs = rt_index.rt_bins[rt_bin_idx].prec
+        start, stop = getPrecursorWindowRange(precs, min_prec_mz, max_prec_mz, isotope_err_bounds)
+
+        for i in start:stop
+            prec_idx = first(precs[i])
+            (!isnothing(precursors_passing) && prec_idx ∉ precursors_passing) && continue
+
+            if has_rt_filter
+                prec_rt_val = get(precursor_rt_map, prec_idx, NaN32)
+                if !isnan(prec_rt_val)
+                    prec_tol = rt_binned_tol !== nothing ? get_rt_tol(rt_binned_tol, prec_rt_val) : rt_tol_fallback
+                    abs(scan_rt - prec_rt_val) > prec_tol && continue
+                end
+            end
+
+            prec_charge = prec_charges[prec_idx]
+            prec_mz = prec_mzs[prec_idx]
+            prec_sulfur_count = prec_sulfur_counts[prec_idx]
+
+            !withinQuadrupoleBounds(prec_mz, prec_charge, min_prec_mz, max_prec_mz, isotope_err_bounds) && continue
+
+            fraction_transmitted = getPrecursorFractionTransmitted!(
+                precursor_transmission, iso_splines, (1, 5),
+                quad_transmission_func, prec_mz, prec_charge, prec_sulfur_count)
+            fraction_transmitted < min_fraction_transmitted && continue
+
+            prec_isotope_set = getPrecursorIsotopeSet(prec_mz, prec_charge, quad_transmission_func)
+            last(prec_isotope_set) < 0 && continue
+
+            size += 1
+            if size > length(precs_temp)
+                append!(precs_temp, Vector{UInt32}(undef, length(precs_temp)))
+            end
+            precs_temp[size] = prec_idx
+        end
+    end
+    return size
+end
+
 function extract_chromatograms(
     spectra::MassSpecData,
     passing_psms::DataFrame,
@@ -178,6 +315,15 @@ function extract_chromatograms(
     # This eliminates race conditions when multiple threads call passing_psms[!, :precursor_idx]
     precursor_sets = [Set(passing_psms[!, :precursor_idx]) for _ in 1:Threads.nthreads()]
 
+    # Build precursor RT map for per-precursor symmetric window filtering
+    _pids = passing_psms[!, :precursor_idx]::Vector{UInt32}
+    _rts = passing_psms[!, :rt]::Vector{Float32}
+    precursor_rt_map = Dict{UInt32, Float32}()
+    sizehint!(precursor_rt_map, length(_pids))
+    for i in eachindex(_pids)
+        precursor_rt_map[_pids[i]] = _rts[i]
+    end
+
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
             thread_id = first(thread_task)
@@ -187,6 +333,7 @@ function extract_chromatograms(
                 spectra,
                 last(thread_task),
                 precursor_sets[thread_id],
+                precursor_rt_map,
                 rt_index,
                 search_context,
                 search_data,
@@ -196,7 +343,8 @@ function extract_chromatograms(
             )
         end
     end
-    return vcat(fetch.(tasks)...)
+    thread_dfs = fetch.(tasks)
+    return vcat(thread_dfs...)
 end
 
 """
@@ -218,6 +366,7 @@ function build_chromatograms(
     spectra::MassSpecData,
     scan_range::Vector{Int64},
     precursors_passing::Set{UInt32},
+    precursor_rt_map::Dict{UInt32, Float32},
     rt_index::retentionTimeIndex,
     search_context::SearchContext,
     search_data::SearchDataStructures,
@@ -225,204 +374,175 @@ function build_chromatograms(
     ms_file_idx::Int64,
     ::MS2CHROM
 )
-    # Initialize working arrays
-    Hs = getHs(search_data)
+    # Fused-kernel working arrays.
+    Hs = getHsFused(search_data)
     weights = getTempWeights(search_data)
+    colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
+    fused_scratch = getFusedScratch(search_data)
+    corr_mz = getScanCorrectedMz(search_data)
+    obs_low = getScanObsLow(search_data)
+    obs_high = getScanObsHigh(search_data)
+    isotopes_buf = getIsotopes(search_data)
+    prec_trans_buf = getPrecursorTransmission(search_data)
+    id_to_col = getIdToCol(search_data)
+    unscored_psms = getComplexUnscoredPsms(search_data)
+
     # Pre-allocate chromatograms with better size estimate (~100 points per scan average)
     estimated_points = length(scan_range) * 100
     chromatograms = Vector{MS2ChromObject}(undef, max(estimated_points, 10000))
 
-    # RT bin tracking state
-    irt_start, irt_stop = 1, 1
-    prec_mz_string = ""
-    ion_idx = 0
+    # RT bin tracking state — RT index is in empirical RT space
+    rt_bin_start, rt_bin_stop = 1, 1
+    prec_mz = zero(Float32)
     rt_idx = 0
-    precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
+    precs_temp = getPrecIds(search_data)
     prec_temp_size = 0
-    irt_tol = getIrtError(search_context, ms_file_idx)
+    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    has_rt_tol = haskey(getRtTolerances(search_context), ms_file_idx)
+    rt_binned_tol = has_rt_tol ? getRtTolerance(search_context, ms_file_idx) : nothing
+    rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
     nce_model = getNceModel(search_context, ms_file_idx)
-    i = 1
+    mass_error_model = getMassErrorModel(search_context, ms_file_idx)
+    quad_model = getQuadTransmissionModel(search_context, ms_file_idx)
+    spec_lib = getSpecLib(search_context)
+    precursors = getPrecursors(spec_lib)
+    prec_mz_arr = getMz(precursors)
+    prec_charge_arr = getCharge(precursors)
+    prec_sulfur_arr = getSulfurCount(precursors)
+    prec_irt_arr = getIrt(precursors)
+    frag_lookup = getFragmentLookupTable(spec_lib)
+
+    kind = FusedRTIndexed(params.prec_estimation, UInt8(params.max_frag_rank))
+
     for scan_idx in scan_range
         ((scan_idx<1) | (scan_idx > length(spectra))) && continue
-        # Process MS2 scans
         msn = getMsOrder(spectra, scan_idx)
         msn ∉ params.spec_order && continue
 
-        # Calculate RT window
-        irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-        irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-        irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+        rt = getRetentionTime(spectra, scan_idx)
 
-        # Check for m/z change
-        prec_mz_string_new = string(getCenterMz(spectra, scan_idx))
-        prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
-
-        # Update transitions if window changed
-        if (irt_start_new != irt_start) || (irt_stop_new != irt_stop) || (prec_mz_string_new != prec_mz_string)
-            irt_start = irt_start_new
-            irt_stop = irt_stop_new
-            prec_mz_string = prec_mz_string_new
-            prec_temp_size = 0
-            quad_func = getQuadTransmissionFunction(
-                getQuadTransmissionModel(search_context, ms_file_idx),
-                getCenterMz(spectra, scan_idx),
-                getIsolationWidthMz(spectra, scan_idx)
-            )
-
-            ion_idx, prec_temp_size = selectTransitions!(
-                getIonTemplates(search_data),
-                RTIndexedTransitionSelection(),
-                params.prec_estimation,
-                getFragmentLookupTable(getSpecLib(search_context)),
-                nce_model,
-                precs_temp,
-                getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-                getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
-                getSulfurCount(getPrecursors(getSpecLib(search_context))),#[:sulfur_count],
-                getIsoSplines(search_data),
-                quad_func,
-                getPrecursorTransmission(search_data),
-                getIsotopes(search_data),
-                params.n_frag_isotopes,
-                params.max_frag_rank,
-                rt_index,
-                irt_start,
-                irt_stop,
-                (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
-                precursors_passing = precursors_passing,
-                isotope_err_bounds = params.isotope_err_bounds,
-                block_size = 10000,
-                min_fraction_transmitted = params.min_fraction_transmitted
-            )
+        if rt_binned_tol !== nothing
+            rt_tol_local = get_rt_tol(rt_binned_tol, Float32(rt))
+        else
+            h = 0.1f0
+            local_slope = abs((rt_irt_model(rt + h) - rt_irt_model(rt - h)) / (2f0 * h))
+            rt_tol_local = irt_tol / max(local_slope, 0.01f0)
         end
 
-        # Match peaks
-        nmatches, nmisses = matchPeaks!(
-            getIonMatches(search_data),
-            getIonMisses(search_data),
-            getIonTemplates(search_data),
-            ion_idx,
-            getMzArray(spectra, scan_idx),
-            getIntensityArray(spectra, scan_idx),
-            getMassErrorModel(search_context, ms_file_idx),
-            getHighMz(spectra, scan_idx),
-            UInt32(scan_idx),
-            UInt32(ms_file_idx)
+        rt_bin_start_new = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol_local, lt=(r,x)->r.lb<x) - 1, 1)
+        rt_bin_stop_new = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol_local, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+
+        prec_mz_new = getCenterMz(spectra, scan_idx)
+        if (rt_bin_start_new != rt_bin_start) || (rt_bin_stop_new != rt_bin_stop) || (prec_mz_new != prec_mz)
+            rt_bin_start = rt_bin_start_new
+            rt_bin_stop = rt_bin_stop_new
+            prec_mz = prec_mz_new
+        end
+
+        quad_func = getQuadTransmissionFunction(
+            quad_model,
+            getCenterMz(spectra, scan_idx),
+            getIsolationWidthMz(spectra, scan_idx)
         )
 
-        sort!(@view(getIonMatches(search_data)[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
+        # 1. Enumerate precursors in the RT window (+ quad + per-prec RT +
+        #    min_fraction_transmitted + allowlist filters). Writes to
+        #    precs_temp[1:prec_temp_size].
+        prec_temp_size = collect_rt_window_precursors!(
+            precs_temp, rt_index, rt_bin_start, rt_bin_stop,
+            precursors_passing, prec_mz_arr, prec_charge_arr, prec_sulfur_arr,
+            getIsoSplines(search_data), quad_func, prec_trans_buf,
+            params.isotope_err_bounds, params.min_fraction_transmitted,
+            precursor_rt_map, Float32(rt), rt_binned_tol, rt_tol_local)
 
-        # Process matches
+        if prec_temp_size == 0
+            reset!(id_to_col); reset!(Hs)
+            continue
+        end
+
+        # 2. Pre-correct peak m/z for the scan.
+        scan_mz  = getMzArray(spectra, scan_idx)
+        scan_int = getIntensityArray(spectra, scan_idx)
+        peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
+                                          mass_error_model, scan_mz, scan_int)
+
+        # 3. Fused match+build. iRT + iso_err_bounds filters already done
+        #    upstream — skipped by FusedRTIndexed's check_prec_filters = false.
+        nmatches, nmisses = run_fused!(
+            kind,
+            Hs, unscored_psms, id_to_col, fused_scratch,
+            corr_mz, obs_low, obs_high, peak_mz_len,
+            isotopes_buf, prec_trans_buf,
+            frag_lookup, nce_model,
+            precs_temp, 1:prec_temp_size,
+            prec_mz_arr, prec_charge_arr, prec_sulfur_arr, prec_irt_arr,
+            getIsoSplines(search_data), quad_func, mass_error_model,
+            scan_int, 0f0, Float32(Inf),
+            (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
+            params.n_frag_isotopes,
+            params.isotope_err_bounds)
+
         if nmatches > 2
-            i += 1
-            # Build design matrix
-            buildDesignMatrix!(
-                Hs,
-                getIonMatches(search_data),
-                getIonMisses(search_data),
-                nmatches,
-                nmisses,
-                getIdToCol(search_data)
-            )
-
-            # Handle array resizing
-            if getIdToCol(search_data).size > length(weights)
-                new_entries = getIdToCol(search_data).size - length(weights) + 1000
+            # Resize weight buffers for new columns.
+            n_active_cols = n_active(id_to_col)
+            if n_active_cols > length(weights)
+                new_entries = n_active_cols - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
-                resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
-                # Avoid list comprehension allocation - use direct resize and loop
-                psms = getUnscoredPsms(search_data)
-                old_length = length(psms)
-                resize!(psms, old_length + new_entries)
-                for i in (old_length + 1):length(psms)
-                    psms[i] = eltype(psms)()
-                end
+                resize!(colnorm2, length(colnorm2) + new_entries)
             end
 
-            # Initialize weights
-            for i in 1:getIdToCol(search_data).size
-                weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
-                    precursor_weights[getIdToCol(search_data).keys[i]]
-            end
+            initialize_weights!(id_to_col, weights, precursor_weights)
 
-            # Solve deconvolution
-            initResiduals!(residuals, Hs, weights)
+            solve_deconvolution!(
+                params.deconvolution_solver,
+                Hs, residuals, weights, colnorm2,
+                getMu(search_data), getObserved(search_data),
+                params.max_iter_outer, params.max_diff)
 
-            solveHuber!(
-                Hs,
-                residuals,
-                weights,
-                getHuberDelta(search_context),
-                params.lambda,
-                params.max_iter_newton,
-                params.max_iter_bisection,
-                params.max_iter_outer,
-                search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
-                search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                params.max_diff,
-                params.reg_type
-            )
-
-            # Record chromatogram points with weights
+            # Record chromatogram points (weighted for matches, zero otherwise).
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    resize!(chromatograms, length(chromatograms) * 2)  # Exponential growth
+                    resize!(chromatograms, length(chromatograms) * 2)
                 end
-
-                if !iszero(getIdToCol(search_data)[precs_temp[j]])
-                    chromatograms[rt_idx] = MS2ChromObject(
-                        Float32(getRetentionTime(spectra, scan_idx)),
-                        weights[getIdToCol(search_data)[precs_temp[j]]],
-                        scan_idx,
-                        precs_temp[j]
-                    )
-                else
-                    chromatograms[rt_idx] = MS2ChromObject(
-                        Float32(getRetentionTime(spectra, scan_idx)),
-                        zero(Float32),
-                        scan_idx,
-                        precs_temp[j]
-                    )
-                end
-            end
-
-            # Update precursor weights
-            for i in 1:getIdToCol(search_data).size
-                precursor_weights[getIdToCol(search_data).keys[i]] = 
-                    weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]]
-            end
-
-        else
-            # Record zero intensity points for non-matching precursors
-            for j in 1:prec_temp_size
-                rt_idx += 1
-                if rt_idx + 1 > length(chromatograms)
-                    resize!(chromatograms, length(chromatograms) * 2)  # Exponential growth
-                end
-
+                col = id_to_col[precs_temp[j]]
                 chromatograms[rt_idx] = MS2ChromObject(
                     Float32(getRetentionTime(spectra, scan_idx)),
-                    zero(Float32),
+                    iszero(col) ? zero(Float32) : weights[col],
                     scan_idx,
-                    precs_temp[j]
-                )
+                    precs_temp[j])
+            end
+
+            update_precursor_weights!(id_to_col, weights, precursor_weights)
+        else
+            # Too few matches → zero-weight points for every enumerated precursor.
+            for j in 1:prec_temp_size
+                rt_idx += 1
+                if rt_idx + 1 > length(chromatograms)
+                    resize!(chromatograms, length(chromatograms) * 2)
+                end
+                chromatograms[rt_idx] = MS2ChromObject(
+                    Float32(getRetentionTime(spectra, scan_idx)),
+                    zero(Float32), scan_idx, precs_temp[j])
             end
         end
 
-        # Reset arrays
-        for i in 1:Hs.n
-            getUnscoredPsms(search_data)[i] = eltype(getUnscoredPsms(search_data))()
-        end
-        reset!(getIdToCol(search_data))
-        reset!(Hs)
+        reset_scan_arrays!(id_to_col, Hs, unscored_psms)
     end
 
     return DataFrame(@view(chromatograms[1:rt_idx]))
 end
 
+# MS1 chromatogram extraction is currently unwired (the ms1_quant knob
+# was deleted from the public schema). The body is preserved in a block-
+# comment so it can be revived — but it uses classic ion_matches /
+# buildDesignMatrix! / PrecursorMatch machinery that the fused cleanup
+# PR will delete. If MS1 quant is re-enabled in the future, this needs
+# a fused port (a FusedMs1 kind + an MS1-specific collector, or a
+# parallel lightweight kernel that doesn't touch SparseArrayFused).
+#=
 """
     build_chromatograms(spectra::MassSpecData, scan_range::Vector{Int64},
                        precursors_passing::Set{UInt32}, rt_index::retentionTimeIndex,
@@ -453,12 +573,13 @@ function build_chromatograms(
     mem = getMs1MassErrorModel(search_context, ms_file_idx)
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
+    colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     chromatograms = Vector{MS1ChromObject}(undef, 500000)  # Initial size
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
-    ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
+    ion_misses = [UnmatchedIon() for _ in range(1, 10000)]
     precursors = getPrecursors(getSpecLib(search_context))
     seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
     pids = [pid for pid in precursors_passing]
@@ -469,16 +590,23 @@ function build_chromatograms(
     # NEW: Create m/z grouping map for MS1
     mz_grouping = MzGroupingMap(UInt32(100000))  # 5 decimal place precision
 
-    # RT bin tracking state
-    irt_start, irt_stop = 1, 1
+    # RT bin tracking state — RT index is in empirical RT space
+    rt_bin_start, rt_bin_stop = 1, 1
     ion_idx = 0
     rt_idx = 0
     precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
     prec_temp_size = 0
-    irt_tol = getIrtError(search_context, ms_file_idx)
+    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    # RT-adaptive tolerance for MS1
+    has_rt_tol_ms1 = haskey(getRtTolerances(search_context), ms_file_idx)
+    rt_binned_tol_ms1 = has_rt_tol_ms1 ? getRtTolerance(search_context, ms_file_idx) : nothing
+    rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
+    id_to_col = getIdToCol(search_data)
+    spectral_scores = getSpectralScores(search_data)
+    unscored_psms = getUnscoredPsms(search_data)
     i = 1
     for scan_idx in scan_range
-        
+
         ((scan_idx<1) | (scan_idx > length(spectra))) && continue
         # Process MS1 scans
         #msn = getMsOrder(spectra, scan_idx)
@@ -487,15 +615,26 @@ function build_chromatograms(
             continue
         end
         iso_count = Dictionary{UInt32, @NamedTuple{matched_mono::Bool, iso_count::UInt8}}()
-        # Calculate RT window
-        irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-        irt_start = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-        irt_stop = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+        # Calculate RT window — RT index is in empirical RT space
+        rt = getRetentionTime(spectra, scan_idx)
+
+        if rt_binned_tol_ms1 !== nothing
+            # RT-adaptive: look up RT tolerance directly in RT space
+            rt_tol_local = get_rt_tol(rt_binned_tol_ms1, Float32(rt))
+        else
+            # Fallback: convert global iRT tolerance to RT space via local slope
+            h = 0.1f0
+            local_slope = abs((rt_irt_model(rt + h) - rt_irt_model(rt - h)) / (2f0 * h))
+            rt_tol_local = irt_tol / max(local_slope, 0.01f0)
+        end
+
+        rt_bin_start = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol_local, lt=(r,x)->r.lb<x) - 1, 1)
+        rt_bin_stop = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol_local, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         # Update transitions if window changed
         prec_temp_size = 0
         ion_idx = 0
-        for rt_bin_idx in irt_start:irt_stop
+        for rt_bin_idx in rt_bin_start:rt_bin_stop
             precs = rt_index.rt_bins[rt_bin_idx].prec
             for i in 1:length(precs)
                 prec_idx = first(precs[i])
@@ -542,13 +681,11 @@ function build_chromatograms(
             getMzArray(spectra, scan_idx),
             getIntensityArray(spectra, scan_idx),
             mem,
-            getHighMz(spectra, scan_idx),
-            UInt32(scan_idx),
-            UInt32(ms_file_idx)
+            getHighMz(spectra, scan_idx)
         )
 
         #nmisses -= 1
-        sort!(@view(ion_matches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
+        sort!(@view(ion_matches[1:nmatches]), alg=QuickSort, lt=ion_match_lt)
         #println("nmatches $nmatches nmisses $nmisses")
         # Process matches
         if nmatches > 2
@@ -569,40 +706,27 @@ function build_chromatograms(
             )
 
             # Handle array resizing
-            if getIdToCol(search_data).size > length(weights)
-                new_entries = getIdToCol(search_data).size - length(weights) + 1000
+            if id_to_col.size > length(weights)
+                new_entries = id_to_col.size - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
-                resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
+                resize!(colnorm2, length(colnorm2) + new_entries)
+                resize!(spectral_scores, length(spectral_scores) + new_entries)
                 # Avoid list comprehension allocation - use direct resize and loop
-                psms = getUnscoredPsms(search_data)
-                old_length = length(psms)
-                resize!(psms, old_length + new_entries)
-                for i in (old_length + 1):length(psms)
-                    psms[i] = eltype(psms)()
+                old_length = length(unscored_psms)
+                resize!(unscored_psms, old_length + new_entries)
+                for i in (old_length + 1):length(unscored_psms)
+                    unscored_psms[i] = eltype(unscored_psms)()
                 end
             end
 
-            # Initialize weights
-            for i in 1:getIdToCol(search_data).size
-                weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
-                    precursor_weights[getIdToCol(search_data).keys[i]]
-            end
+            initialize_weights!(id_to_col, weights, precursor_weights)
 
             # Solve deconvolution
-            initResiduals!(residuals, Hs, weights)
-            solveHuber!(
-                Hs,
-                residuals,
-                weights,
-                params.ms1_huber_delta,
-                params.ms1_lambda,
-                params.max_iter_newton,
-                params.max_iter_bisection,
-                params.max_iter_outer,
-                search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
-                search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                params.max_diff,
-                params.ms1_reg_type
+            solve_deconvolution!(
+                params.deconvolution_solver,
+                Hs, residuals, weights, colnorm2,
+                getMu(search_data), getObserved(search_data),
+                params.max_iter_outer, params.max_diff
             )
 
             # NEW: Distribute grouped coefficients back to individual precursors
@@ -664,16 +788,12 @@ function build_chromatograms(
             end
         end
 
-        # Reset arrays
-        for i in 1:Hs.n
-            getUnscoredPsms(search_data)[i] = eltype(getUnscoredPsms(search_data))()
-        end
-        reset!(getIdToCol(search_data))
-        reset!(Hs)
+        reset_scan_arrays!(id_to_col, Hs, unscored_psms)
     end
 
     return DataFrame(@view(chromatograms[1:rt_idx]))
 end
+=#
 
 #==========================================================
 Chromatogram Building Functions
@@ -720,7 +840,13 @@ function process_final_psms!(
         accession_numbers[i] = getAccessionNumbers(precursors)[pid]
     end
     psms[!, :accession_numbers] = accession_numbers
-    
+
+    # No sort here. MaxLFQSearch sorts the merged PSMs by :inferred_protein_group
+    # before its chunked-merge so chunk boundaries align with protein-group
+    # boundaries. ProteinInferenceSearch (which runs between this method and
+    # MaxLFQ) is what populates :inferred_protein_group, so a sort by that
+    # column at this stage isn't possible anyway.
+
     parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
     for i in range(1, n)
         pid = psms_precursor_idx[i]
@@ -748,38 +874,3 @@ function process_final_psms!(
     return nothing
 end
 
-
-
-
-"""
-    unique_pair_strings(pt::AbstractVector,
-                        iso::AbstractVector) -> (String, String)
-
-`pt`  - precursor_fraction_transmitted  (e.g. Vector{Float32})  
-`iso` - isotopes_captured                (e.g. Vector{Tuple{Int8,Int8}})
-
-Returns a pair of semicolon-separated strings that list **unique** `(pt,iso)`
-pairs in the *order of their first appearance*.
-"""
-function get_isolated_isotopes_strings(pt::AbstractVector, iso::AbstractVector)
-    @assert length(pt) == length(iso)
-
-    seen   = Dict{Tuple{Any,Any},Bool}()   # tracks already‑emitted pairs
-    uniq_pt  = String[]                    # keeps order
-    uniq_iso = String[]
-
-    sig2 = x -> @sprintf("%.2g", x)
-
-    for (p, t) in zip(pt, iso)
-        key = (p,t)
-        haskey(seen, key) && continue      # skip duplicates
-
-        push!(uniq_pt,  sig2.(p))         # or @sprintf("%.3f", p) for fixed format
-        push!(uniq_iso, string(t))         # Tuple prints as "(0,1)" etc.
-        seen[key] = true
-    end
-
-    order = reverse(sortperm(uniq_pt))
-
-    return join(uniq_pt[order], ';'), join(uniq_iso[order], ';')
-end

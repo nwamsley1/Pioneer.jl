@@ -51,9 +51,9 @@ Parameters for MaxLFQ search.
 """
 
 struct MaxLFQSearchParameters <: SearchParameters
-    # Normalization parameters
-    n_rt_bins::Int64
-    spline_n_knots::Int64
+    # Run-to-run normalization on/off (the median-spline normalizer's tuning
+    # constants — n_rt_bins, spline_n_knots — are hardcoded below since they
+    # have no shipping override).
     run_to_run_normalization::Bool
 
     # LFQ parameters
@@ -70,19 +70,16 @@ struct MaxLFQSearchParameters <: SearchParameters
     params::Any  # Store full parameters for reference
 
     function MaxLFQSearchParameters(params::PioneerParameters)
-        # Extract relevant parameter groups
-        norm_params = params.global_settings.normalization
         output_params = params.output
         global_params = params.global_settings
         maxLFQ_params = params.maxLFQ
+        protein_scoring_params = params.protein_scoring
 
         new(
-            Int64(norm_params.n_rt_bins),
-            Int64(norm_params.spline_n_knots),
             Bool(maxLFQ_params.run_to_run_normalization),
-            Float32(global_params.scoring.q_value_threshold),
+            _resolve_q_value_threshold(global_params),
             Int64(100000),  # Default batch size
-            Int64(maxLFQ_params.min_peptides),
+            Int64(protein_scoring_params.min_peptides),
             Float64(get(maxLFQ_params, :max_chunk_size_mb, 1024)),
             Bool(output_params.write_csv),
             Bool(output_params.delete_temp),
@@ -90,6 +87,12 @@ struct MaxLFQSearchParameters <: SearchParameters
         )
     end
 end
+
+# Hardcoded run-to-run normalization tuning constants (formerly
+# global.normalization.n_rt_bins / spline_n_knots). Values match what every
+# shipping config used.
+const MAXLFQ_NORM_N_RT_BINS = 100
+const MAXLFQ_NORM_SPLINE_N_KNOTS = 7
 
 
 #==========================================================
@@ -117,12 +120,7 @@ function process_file!(
     search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
-) 
-    # Check if file should be skipped due to previous failure
-    if check_and_skip_failed_file(search_context, ms_file_idx, "MaxLFQSearch")
-        return results  # Return early with unchanged results
-    end
-    
+)
     # No per-file processing needed
     return results
 end
@@ -152,172 +150,171 @@ function summarize_results!(
     params::MaxLFQSearchParameters,
     search_context::SearchContext
 )
-    try
-        # Get paths
-        temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
-        passing_psms_folder = joinpath(temp_folder, "passing_psms")
-        qc_plot_folder = joinpath(getDataOutDir(search_context), "qc_plots")
-        precursors_long_path = joinpath(getDataOutDir(search_context), "precursors_long.arrow")
-        protein_long_path = joinpath(getDataOutDir(search_context), "protein_groups_long.arrow")
-        spec_lib = getSpecLib(search_context)
-        proteins = getProteins(spec_lib)
-        precursors = getPrecursors(spec_lib)
-        output_schema_policy = getOutputSchemaPolicy(spec_lib)
-        # Get PSM paths using valid file utilities to maintain proper file mapping
-        valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
-        existing_passing_psm_paths = [path for (_, path) in valid_file_data]
+    # Get paths
+    temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
+    passing_psms_folder = joinpath(temp_folder, "passing_psms")
+    qc_plot_folder = joinpath(getDataOutDir(search_context), "qc_plots")
+    precursors_long_path = joinpath(getDataOutDir(search_context), "precursors_long.arrow")
+    protein_long_path = joinpath(getDataOutDir(search_context), "protein_groups_long.arrow")
+    spec_lib = getSpecLib(search_context)
+    proteins = getProteins(spec_lib)
+    precursors = getPrecursors(spec_lib)
+    output_schema_policy = getOutputSchemaPolicy(spec_lib)
+    # Collect every populated passing PSM path. Skip 0-row files (e.g. files
+    # that yielded no PSMs after upstream filtering — they lack the columns
+    # MaxLFQ expects).
+    indexed_paths = get_all_indexed_paths(getPassingPsms, search_context)
+    existing_passing_psm_paths = String[]
+    for (_, path) in indexed_paths
+        ref = PSMFileReference(path)
+        row_count(ref) > 0 && push!(existing_passing_psm_paths, path)
+    end
 
-        # Get all file names (needed for LFQ indexing by experiment ID)
-        all_file_names = collect(getMSData(search_context).file_id_to_name)
+    # Get all file names (needed for LFQ indexing by experiment ID)
+    all_file_names = collect(getMSData(search_context).file_id_to_name)
 
-        if isempty(existing_passing_psm_paths)
-            @user_warn "No valid PSM files found for MaxLFQ analysis - all files may have failed in previous searches"
-            return nothing
-        end
-        
-        psm_refs = [PSMFileReference(path) for path in existing_passing_psm_paths]
+    if isempty(existing_passing_psm_paths)
+        @user_warn "No PSM files found for MaxLFQ analysis"
+        return nothing
+    end
 
-        if !params.params.output.write_decoys
-            decoy_filter_pipeline = TransformPipeline() |>
-                filter_rows(row -> row.target; desc = "keep_target_rows")
-            apply_pipeline!(psm_refs, decoy_filter_pipeline)
-        end
+    psm_refs = [PSMFileReference(path) for path in existing_passing_psm_paths]
 
-        # Normalize the same integrated precursor tables that will feed MaxLFQ.
-        normalizeQuant(
-            [file_path(ref) for ref in psm_refs],
-            :peak_area,
-            N = params.n_rt_bins,
-            spline_n_knots = params.spline_n_knots
-        )
+    if !params.params.output.write_decoys
+        decoy_filter_pipeline = TransformPipeline() |>
+            filter_rows(row -> row.target; desc = "keep_target_rows")
+        apply_pipeline!(psm_refs, decoy_filter_pipeline)
+    end
 
-        # Ensure all PSM files are sorted correctly for MaxLFQ
-        sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
-        sort_file_by_keys!(psm_refs, :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx;
-                           reverse=[true, true, true, true], parallel=true )
+    # Normalize the same integrated precursor tables that will feed MaxLFQ.
+    normalizeQuant(
+        [file_path(ref) for ref in psm_refs],
+        :peak_area,
+        N = MAXLFQ_NORM_N_RT_BINS,
+        spline_n_knots = MAXLFQ_NORM_SPLINE_N_KNOTS
+    )
 
-        # Chunked merge: split into protein-group-aligned chunks bounded by max_chunk_size_mb
-        chunk_dir = joinpath(temp_folder, "merge_chunks")
-        max_chunk_bytes = round(Int, params.max_chunk_size_mb * 1_000_000)
-        chunk_refs = stream_sorted_merge_chunked(
-            psm_refs, chunk_dir, :inferred_protein_group, sort_keys...;
-            batch_size=1_000_000, reverse=true, max_chunk_bytes=max_chunk_bytes
-        )
+    # Ensure all PSM files are sorted correctly for MaxLFQ
+    sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
+    sort_file_by_keys!(psm_refs, :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx;
+                       reverse=[true, true, true, true], parallel=true )
 
-        # Validate first chunk has required columns for MaxLFQ
-        validate_maxlfq_input(first(chunk_refs))
+    # Chunked merge: split into protein-group-aligned chunks bounded by max_chunk_size_mb
+    chunk_dir = joinpath(temp_folder, "merge_chunks")
+    max_chunk_bytes = round(Int, params.max_chunk_size_mb * 1_000_000)
+    chunk_refs = stream_sorted_merge_chunked(
+        psm_refs, chunk_dir, :inferred_protein_group, sort_keys...;
+        batch_size=1_000_000, reverse=true, max_chunk_bytes=max_chunk_bytes
+    )
 
-        # Validate MaxLFQ parameters
-        validate_maxlfq_parameters(Dict(
-            :q_value_threshold => params.q_value_threshold,
-            :batch_size => params.batch_size,
-            :min_peptides => params.min_peptides
-        ))
+    # Validate first chunk has required columns for MaxLFQ
+    validate_maxlfq_input(first(chunk_refs))
 
-        # Chunked precursor CSV writing (bounded memory per chunk)
-        @user_info "Writing precursor tables..."
-        precursors_wide_path = writePrecursorCSV_chunked(
-            chunk_refs,
-            getDataOutDir(search_context),
-            all_file_names,
-            params.run_to_run_normalization,
-            proteins,
-            params.params.global_settings.match_between_runs,
-            output_schema_policy = output_schema_policy,
-            write_csv = params.write_csv
-        )
+    # Validate MaxLFQ parameters
+    validate_maxlfq_parameters(Dict(
+        :q_value_threshold => params.q_value_threshold,
+        :batch_size => params.batch_size,
+        :min_peptides => params.min_peptides
+    ))
 
-        @user_info "Performing MaxLFQ..."
-        # Chunked MaxLFQ protein quantification (bounded memory per chunk)
-        precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
-        LFQ_chunked(
-            chunk_refs,
-            protein_long_path,
-            precursor_quant_col,
-            all_file_names,
-            getSequence(precursors),
-            getStructuralMods(precursors),
-            getIsotopicMods(precursors),
-            params.q_value_threshold,
-            output_schema_policy = output_schema_policy,
-            batch_size = params.batch_size
-        )
-        chunk_paths = [file_path(ref) for ref in chunk_refs]
+    # Chunked precursor CSV writing (bounded memory per chunk)
+    @user_info "Writing precursor tables..."
+    precursors_wide_path = writePrecursorCSV_chunked(
+        chunk_refs,
+        getDataOutDir(search_context),
+        all_file_names,
+        params.run_to_run_normalization,
+        proteins,
+        output_schema_policy = output_schema_policy,
+        write_csv = params.write_csv
+    )
 
-        # Create FileReference for output metadata tracking
-        protein_ref = ProteinQuantFileReference(protein_long_path)
-        @user_info "MaxLFQ completed - output_file: $protein_long_path, n_protein_groups: $(n_protein_groups(protein_ref)), n_experiments: $(n_experiments(protein_ref))"
+    @user_info "Performing MaxLFQ..."
+    # Chunked MaxLFQ protein quantification (bounded memory per chunk)
+    precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
+    LFQ_chunked(
+        chunk_refs,
+        protein_long_path,
+        precursor_quant_col,
+        all_file_names,
+        getSequence(precursors),
+        getStructuralMods(precursors),
+        getIsotopicMods(precursors),
+        params.q_value_threshold,
+        output_schema_policy = output_schema_policy,
+        batch_size = params.batch_size
+    )
+    chunk_paths = [file_path(ref) for ref in chunk_refs]
 
-        @user_info "Writing protein group results..."
-        # Create wide format protein table (protein groups table is small, no chunking needed)
-        proteins_wide_path = writeProteinGroupsCSV(
-            results.proteins_long_path,
-            getSequence(precursors),
-            getIsotopicMods(precursors),
-            getStructuralMods(precursors),
-            getCharge(precursors),
-            all_file_names,
-            proteins,
-            output_schema_policy = output_schema_policy,
-            write_csv = params.write_csv
-        )
+    # Create FileReference for output metadata tracking
+    protein_ref = ProteinQuantFileReference(protein_long_path)
+    @user_info "MaxLFQ: $(n_protein_groups(protein_ref)) protein groups across $(n_experiments(protein_ref)) experiments"
 
-        # Concatenate chunks into a final Arrow file-format export for QC plots.
-        @user_info "Concatenating chunks to precursors_long.arrow..."
-        isfile(precursors_long_path) && rm(precursors_long_path)
-        open(Arrow.Writer, precursors_long_path; file=true) do arrow_writer
-            for chunk_ref in chunk_refs
-                let tbl = Arrow.Table(file_path(chunk_ref))
-                    Arrow.write(arrow_writer, enabled_output_table(output_schema_policy, :precursors, tbl))
-                end
+    @user_info "Writing protein group results..."
+    # Create wide format protein table (protein groups table is small, no chunking needed)
+    proteins_wide_path = writeProteinGroupsCSV(
+        results.proteins_long_path,
+        getSequence(precursors),
+        getIsotopicMods(precursors),
+        getStructuralMods(precursors),
+        getCharge(precursors),
+        all_file_names,
+        proteins,
+        output_schema_policy = output_schema_policy,
+        write_csv = params.write_csv
+    )
+
+    # Concatenate chunks into a final Arrow file-format export for QC plots.
+    @user_info "Concatenating chunks to precursors_long.arrow..."
+    isfile(precursors_long_path) && rm(precursors_long_path)
+    open(Arrow.Writer, precursors_long_path; file=true) do arrow_writer
+        for chunk_ref in chunk_refs
+            let tbl = Arrow.Table(file_path(chunk_ref))
+                Arrow.write(arrow_writer, enabled_output_table(output_schema_policy, :precursors, tbl))
             end
         end
-        chunk_refs = nothing
+    end
+    chunk_refs = nothing
+    GC.gc()
+
+    @user_info "Creating QC plots..."
+    # Create QC plots
+    qc_plot_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
+    isfile(qc_plot_path) && rm(qc_plot_path)
+    create_qc_plots(
+        precursors_wide_path,
+        precursors_long_path,
+        proteins_wide_path,
+        search_context,
+        precursors,
+        params,
+        all_file_names
+    )
+
+    # Cleanup chunk files after dropping Arrow.Table references.
+    if isdir(chunk_dir)
         GC.gc()
-
-        @user_info "Creating QC plots..."
-        # Create QC plots
-        qc_plot_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
-        isfile(qc_plot_path) && rm(qc_plot_path)
-        create_qc_plots(
-            precursors_wide_path,
-            precursors_long_path,
-            proteins_wide_path,
-            search_context,
-            precursors,
-            params,
-            all_file_names
-        )
-
-        # Cleanup chunk files after dropping Arrow.Table references.
-        if isdir(chunk_dir)
-            GC.gc()
-            try
-                for chunk_path in chunk_paths
-                    isfile(chunk_path) && safeRm(chunk_path, nothing; force=true)
-                end
-                rm(chunk_dir; recursive=true, force=true)
-            catch e
-                # On Windows, a chunk file may still be briefly locked by Arrow mmap state.
-                @debug "merge_chunks cleanup deferred" exception=e
+        try
+            for chunk_path in chunk_paths
+                isfile(chunk_path) && safeRm(chunk_path, nothing; force=true)
             end
+            rm(chunk_dir; recursive=true, force=true)
+        catch e
+            # On Windows, a chunk file may still be briefly locked by Arrow mmap state.
+            @debug "merge_chunks cleanup deferred" exception=e
         end
-        chunk_paths = nothing
+    end
+    chunk_paths = nothing
 
-        if params.delete_temp
-            @user_info "Removing temporary data..."
-            temp_path = joinpath(getDataOutDir(search_context), "temp_data")
-            GC.gc()
-            try
-                isdir(temp_path) && rm(temp_path; recursive=true, force=true)
-            catch e
-                @warn "Could not fully remove temp_data (likely lingering file handles)" exception=e
-            end
+    if params.delete_temp
+        @user_info "Removing temporary data..."
+        temp_path = joinpath(getDataOutDir(search_context), "temp_data")
+        GC.gc()
+        try
+            isdir(temp_path) && rm(temp_path; recursive=true, force=true)
+        catch e
+            @warn "Could not fully remove temp_data (likely lingering file handles)" exception=e
         end
-
-    catch e
-        @error "MaxLFQ analysis failed" exception=e
-        rethrow(e)
     end
 
     return nothing

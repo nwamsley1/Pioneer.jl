@@ -16,28 +16,6 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    adjustNCE(NCE::T, default_charge::Integer, peptide_charge::Integer, charge_facs::Vector{T}) where {T<:AbstractFloat}
-
-Adjust the normalized collision energy (NCE) based on precursor charge state. This is useful for thermo instruments when 
-predicting a spectral library using Prosit. 
-
-# Parameters
-- `NCE::T`: Base normalized collision energy value
-- `default_charge::Integer`: Default charge state for which the base NCE is calibrated
-- `peptide_charge::Integer`: Actual charge state of the peptide
-- `charge_facs::Vector{T}`: Vector of charge-specific adjustment factors
-
-# Returns
-- Adjusted NCE value scaled according to the charge state
-
-# Notes
-This function applies charge-specific adjustment factors to the base NCE value.
-"""
-function adjustNCE(NCE::T, default_charge::Integer, peptide_charge::Integer, charge_facs::Vector{T}) where {T<:AbstractFloat}
-    return NCE*(charge_facs[default_charge]/charge_facs[peptide_charge])
-end
-
-"""
     prepare_chronologer_input(
         params::Dict{String, Any},
         mz_to_ev_interp::Union{Missing, InterpolationTypeAlias},
@@ -199,8 +177,10 @@ function prepare_chronologer_input(
     assign_base_target_ids!(fasta_entries)
 
     # Step 6: Add decoys (GROUPED by base sequence; all mods share same decoy)
-    if _params.fasta_digest_params["add_decoys"]
-        decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
+    # For diann_mutation, skip decoy generation here — decoys are created post-build
+    # by apply_diann_decoy_style!() which shifts target fragment m/z values
+    decoy_method = get(_params.fasta_digest_params, "decoy_method", "shuffle")
+    if _params.fasta_digest_params["add_decoys"] && decoy_method != "diann_mutation"
         fasta_entries = add_decoy_sequences_grouped(fasta_entries; decoy_method=decoy_method)
     end
         
@@ -211,13 +191,11 @@ function prepare_chronologer_input(
         _params.fasta_digest_params["max_charge"]
     )
 
-    # Build UniSpec input dataframe
+    # Build chronologer input dataframe (one row per peptide × charge state)
     fasta_df = build_fasta_df(
         fasta_entries,
         mod_to_mass_dict = mod_to_mass_dict,
-        nce = _params.nce_params["nce"],
-        default_charge = _params.nce_params["default_charge"],
-        dynamic_nce = _params.nce_params["dynamic_nce"]
+        nce = _params.nce_params["nce"]
     )
     # Calculate precursor m/z values
     fasta_df[!, :mz] = getMZs(
@@ -247,19 +225,9 @@ function prepare_chronologer_input(
     # Creates entrapment_pair_id and entrapment_target_idx columns
     fasta_df = add_entrapment_partner_columns!(fasta_df)
     
-    # Handle collision energy
+    # Handle collision energy (Altimeter does not consume CE, but the schema retains it)
     if !ismissing(mz_to_ev_interp)
         fasta_df[!, :collision_energy] = mz_to_ev_interp.(fasta_df[!, :mz])
-    elseif occursin("prosit", params["library_params"]["prediction_model"])
-        # For Prosit models, apply charge-based NCE adjustment
-        for (i, precursor_charge) in enumerate(fasta_df[!, :precursor_charge])
-            fasta_df[i, :collision_energy] = adjustNCE(
-                params["nce_params"]["nce"],
-                params["nce_params"]["default_charge"],
-                precursor_charge,
-                CHARGE_ADJUSTMENT_FACTORS
-            )
-        end
     else
         fasta_df[!, :collision_energy] .= Float32(params["nce_params"]["nce"])
     end
@@ -472,18 +440,15 @@ end
     build_fasta_df(
         fasta_peptides::Vector{FastaEntry};
         mod_to_mass_dict::Dict{String, String} = Dict("Unimod:4" => "16.000"),
-        nce::Float64 = 30.0,
-        default_charge::Int = 3,
-        dynamic_nce::Bool = true)
+        nce::Float64 = 30.0)
 
 Create a DataFrame containing peptide information from FASTA entries.
 
 # Parameters
 - `fasta_peptides::Vector{FastaEntry}`: Processed FASTA entries with modifications and charge states
 - `mod_to_mass_dict::Dict{String, String}`: Mapping from modification names to mass shifts (as strings)
-- `nce::Float64`: Base normalized collision energy value
-- `default_charge::Int`: Default charge state for NCE calculation
-- `dynamic_nce::Bool`: Whether to adjust NCE based on charge state
+- `nce::Float64`: Base normalized collision energy value (stored on each precursor row;
+  Altimeter's spline coefficients are NCE-independent so this is informational only)
 
 # Returns
 - `DataFrame`: DataFrame containing peptide information including:
@@ -501,8 +466,6 @@ information.
 function build_fasta_df(fasta_peptides::Vector{FastaEntry};
                            mod_to_mass_dict::Dict{String, String} = Dict("Unimod:4" => "16.000"),
                            nce::Float64 = 30.0,
-                           default_charge::Int = 3,
-                           dynamic_nce::Bool = true
                            )
 
   
@@ -537,8 +500,6 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         end
         return mod_sequences
     end
-    charge_facs = Float64[1, 0.9, 0.85, 0.8, 0.75]
-
     #Number of precursors to pre-allocate memory for
     prec_alloc_size = length(fasta_peptides)
 
@@ -560,12 +521,14 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         sequence = get_sequence(peptide)
         #Get unique combinations of variable mods from 0-max_var_mods
         accession_id = get_id(peptide)
-        decoy = is_decoy(peptide) 
+        decoy = is_decoy(peptide)
         entrapment_group_id = get_entrapment_pair_id(peptide)
+        # Altimeter is a spline model — its coefficients are NCE-independent;
+        # the actual NCE used at search time evaluates the spline. The
+        # `:collision_energy` column on precursors_table.arrow is now purely
+        # informational (no live SearchDIA path reads it), so we just store
+        # the base NCE as-is. Per-charge adjustment is gone (was Prosit-only).
         NCE = nce
-        if dynamic_nce
-            NCE = adjustNCE(NCE, default_charge, get_charge(peptide), charge_facs)
-        end
         _upid[n] = get_proteome(peptide)
         _accession_number[n] = accession_id
         _sequence[n] = sequence

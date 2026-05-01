@@ -1,0 +1,21 @@
+{
+    "global": {
+        "q_value_threshold": 0.01
+    },
+    "search": {
+        "n_isotopes": 2
+    },
+    "acquisition": {
+        "nce": 26
+    },
+    "output": {
+        "write_csv": true,
+        "write_decoys": false,
+        "delete_temp": true
+    },
+    "paths": {
+        "library": "./test/integration/ecoli_lib.poin",
+        "ms_data":  "./data/ecoli_test/raw",
+        "results":  "./test/integration/ecoli_results"
+    }
+}

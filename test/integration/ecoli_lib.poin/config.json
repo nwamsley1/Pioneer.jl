@@ -1,0 +1,121 @@
+{
+  "lib_name": "ecoli_lib",
+  "calibration_raw_file": "./data/ecoli_test/raw/ecoli_filtered_01.arrow",
+  "max_koina_batch": 1000,
+  "fasta_header_regex_proteins": [
+    "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+=",
+    "^\\w+\\|(?:\\w+(?:-\\d+)?)\\|[^ ]+ (.*?) [^ ]+="
+  ],
+  "comment_library": "=== If auto_detect_frag_bounds=true, bounds are determined from the calibration_raw_file; otherwise manual values are used ===",
+  "variable_mods": {
+    "name": [
+      "Unimod:35"
+    ],
+    "pattern": [
+      "M"
+    ],
+    "mass": [
+      15.99491
+    ]
+  },
+  "predict_fragments": true,
+  "comment_fasta": "=== FASTA files ===",
+  "fasta_header_regex_genes": [
+    " GN=(\\S+)",
+    " GN=(\\S+)"
+  ],
+  "library_params": {
+    "auto_detect_frag_bounds": true,
+    "y_start_index": 4,
+    "include_immonium": false,
+    "max_frag_rank": 50,
+    "frag_mz_min": 150.0,
+    "include_internal": false,
+    "prec_mz_min": 500.0,
+    "rank_to_score": [
+      8,
+      4,
+      4,
+      2,
+      2,
+      1,
+      1
+    ],
+    "frag_bin_tol_ppm": 10.0,
+    "length_to_frag_count_multiple": 10,
+    "min_frag_intensity": 0.0,
+    "y_start": 3,
+    "include_isotope": false,
+    "b_start_index": 3,
+    "frag_mz_max": 2020.0,
+    "include_neutral_diff": true,
+    "max_frag_charge": 3,
+    "rt_bin_tol": 1.0,
+    "b_start": 2,
+    "include_p": false,
+    "include_p_index": false,
+    "prec_mz_max": 600.0
+  },
+  "_lib_dir": "./test/integration/ecoli_lib.poin",
+  "fasta_names": [
+    "ECOLI",
+    "CONTAM"
+  ],
+  "out_dir": "./test/integration",
+  "match_lib_build_batch": 100000,
+  "comment_processing": "=== Processing settings ===",
+  "comment_output": "=== Output library path ===",
+  "library_path": "./test/integration/ecoli_lib",
+  "new_lib_name": "ecoli_lib",
+  "_lib_name": "ecoli_lib",
+  "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
+  "nce_params": {
+    "nce": 26.0,
+    "dynamic_nce": true,
+    "default_charge": 2
+  },
+  "comment_calibration": "=== Convert a representative RAW file to Arrow format and provide its path here ===",
+  "fasta_header_regex_organisms": [
+    " OS=([^ ]+.*?) [^ ]+=",
+    " OS=([^ ]+.*?) [^ ]+="
+  ],
+  "comment_modifications": "=== Modifications (variable and fixed, including PTMs and peptide-terminal labels) ===",
+  "comment_digestion": "=== Protein digestion parameters ===",
+  "max_koina_requests": 24,
+  "fasta_paths": [
+    "./data/precompile/ecoli.fasta",
+    "/Users/nathanwamsley/Projects/Pioneer.jl/src/Routines/../../assets/contaminants.fasta.gz"
+  ],
+  "fasta_header_regex_accessions": [
+    "^\\w+\\|(\\w+(?:-\\d+)?)\\|",
+    "^\\w+\\|(\\w+(?:-\\d+)?)\\|"
+  ],
+  "fasta_digest_params": {
+    "cleavage_regex": "[KR][^_|$]",
+    "add_decoys": true,
+    "decoy_method": "shuffle",
+    "missed_cleavages": 0,
+    "min_charge": 2,
+    "max_length": 30,
+    "min_length": 7,
+    "entrapment_r": 0,
+    "max_var_mods": 0,
+    "max_charge": 4,
+    "entrapment_method": "shuffle"
+  },
+  "comment_collision_energy": "=== Collision energy settings ===",
+  "isotope_mod_groups": [],
+  "include_contaminants": true,
+  "fixed_mods": {
+    "name": [
+      "Unimod:4"
+    ],
+    "pattern": [
+      "C"
+    ],
+    "mass": [
+      57.021464
+    ]
+  },
+  "out_name": "ecoli_lib.tsv"
+}

@@ -66,7 +66,6 @@ pioneer search search_params.json
 - **Variable modifications:** Only oxidation of methionine (Unimod:35) is currently supported as a variable PTM
 - **Digestion:** Fully enzymatic digestion only (no semi-enzymatic or non-specific searches)
 - **Ion mobility:** We currently don't support ion mobility data. A single FAIMS CV throughout the dataset is fine though.
-- **mzML input:** Only centroided mzML is supported. Files containing profile-mode spectra are skipped during conversion.
 - **Interface:** Command-line only; no graphical user interface yet
 
 ## Regression Tests

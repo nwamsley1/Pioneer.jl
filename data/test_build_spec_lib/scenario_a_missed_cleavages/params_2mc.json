@@ -55,9 +55,7 @@
     "isotope_mod_groups": [],
     "comment_collision_energy": "=== Collision energy settings ===",
     "nce_params": {
-        "nce": 26.0,
-        "default_charge": 2,
-        "dynamic_nce": true
+        "nce": 26.0
     },
     "comment_library": "=== Library generation parameters ===",
     "library_params": {
