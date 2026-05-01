@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-function fillZandW!(Z::Vector{T}, W::Vector{T}, η::Vector{T}, y::Vector{Bool},data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat}
+function fillZandW!(Z::Vector{T}, W::Vector{T}, η::Vector{T}, y::AbstractVector{Bool}, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat}
     tasks = map(data_chunks) do chunk
     #@inbounds @fastmath begin
     Threads.@spawn begin
@@ -139,7 +139,7 @@ end
 function loglikelihood!(tmpη::Vector{T},
                         X::DataFrame,
                         β::Vector{T},
-                        y::Vector{Bool},
+                        y::AbstractVector{Bool},
                         bounds::Tuple{T,T},
                         data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat}
     fillη!(tmpη, X, β, bounds, data_chunks)
@@ -156,8 +156,8 @@ function loglikelihood!(tmpη::Vector{T},
     return sum(fetch.(tasks))
 end
 
-function ProbitRegression(β::Vector{T}, X::DataFrame, y::Vector{Bool},
-                            data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}; 
+function ProbitRegression(β::Vector{T}, X::DataFrame, y::AbstractVector{Bool},
+                            data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}};
                             max_iter::Int = 30, z_score_bounds::Tuple{Float64, Float64} = (-8.0, 8.0),
                             tol::T = T(1e-2),
                             step_size::T = one(T)
