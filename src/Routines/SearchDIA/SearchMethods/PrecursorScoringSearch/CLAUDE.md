@@ -1,27 +1,30 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with the PrecursorScoringSearch module.
+This file provides guidance to Claude Code (claude.ai/code) when working with the ScoringSearch module.
 
-## PrecursorScoringSearch Overview
+## ScoringSearch Overview
 
-PrecursorScoringSearch is the precursor-level rescoring stage in the Pioneer DIA search pipeline. It performs machine learning-based PSM rescoring and precursor-level FDR control. The module features adaptive model selection for datasets with 1,000-100,000 PSMs, automatically choosing between LightGBM, probit regression, and simplified models based on validation performance.
+ScoringSearch is the 7th stage in the Pioneer DIA search pipeline. It performs machine learning-based PSM rescoring, FDR control, and protein group analysis with optional ML-enhanced protein scoring. The module features adaptive model selection for datasets with 1,000-100,000 PSMs, automatically choosing between LightGBM, probit regression, and simplified models based on validation performance.
 
 ## Module Structure
 
 ```
-PrecursorScoringSearch/
-├── PrecursorScoringSearch.jl      # Main search method implementation
+ScoringSearch/
+├── ScoringSearch.jl              # Main search method implementation with 23-step pipeline
 ├── score_psms.jl                 # PSM scoring entry point with automatic in-memory/OOM selection and model comparison
 ├── model_config.jl               # Model configurations for comparison (SimpleLightGBM, AdvancedLightGBM, ProbitRegression, SuperSimplified)
-├── utils.jl                      # Shared q-value / spline helpers
+├── model_comparison.jl           # DEPRECATED - Model comparison framework (functionality moved to score_psms.jl)
+├── utils.jl                      # Protein group analysis and helper functions (legacy)
+├── utils_protein_ml.jl           # ML-enhanced protein scoring (when enabled)
+├── protein_inference_pipeline.jl # Modern composable protein inference pipeline
 └── scoring_interface.jl          # Type-safe file reference operations
 ```
 
 ## Key Components
 
-### Main Workflow (PrecursorScoringSearch.jl)
+### Main Workflow (ScoringSearch.jl)
 
-PrecursorScoringSearch implements the precursor rescoring and precursor-level filtering workflow:
+ScoringSearch implements a comprehensive 23-step pipeline:
 
 **Phase 1: Model Training & PSM Scoring (Steps 1-3)**
 1. **Model Training**: Adaptive model selection with comparison framework (when enabled)
@@ -37,14 +40,19 @@ PrecursorScoringSearch implements the precursor rescoring and precursor-level fi
 9. **PSM Filtering**: Apply q-value thresholds to retain high-confidence PSMs
 10. **Q-value Recalculation**: Re-compute experiment-wide q-values after filtering
 
-Downstream protein handling now runs in later stages:
-- `ProteinInferenceSearch` annotates integrated passing precursor tables with inferred protein groups
-- `ProteinScoringSearch` builds protein-group tables, fits the protein probit model, and writes protein scores back
+**Phase 3: Protein Inference & Scoring (Steps 11-23)**
+11. **Protein Peptide Counting**: Count possible peptides per protein for feature calculation
+12. **Protein Inference**: Group peptides into minimal protein sets using parsimony
+13. **CV Fold Mapping**: Build protein-to-CV-fold mapping for consistent scoring
+14. **Probit Regression**: Refine protein scores with additional features
+15. **Global Protein Scores**: Calculate max scores across all runs per protein
+16-22. **Protein Q-value Processing**: Sort, merge, and calculate protein-level FDR
+23. **PSM Score Updates**: Backpropagate final protein scores to PSMs
 
 ### PSM Scoring (score_psms.jl)
 
 **Unified Entry Point**: `score_precursor_isotope_traces` automatically chooses processing strategy:
-- **In-Memory**: Datasets within the derived in-memory row budget
+- **In-Memory**: Datasets ≤ `max_psms_in_memory` (typically 100,000 PSMs)
 - **Out-of-Memory**: Large datasets use sampling and streaming approaches
 
 **Model Selection Strategy**:
@@ -61,7 +69,7 @@ Downstream protein handling now runs in later stages:
 
 ### Model Comparison Framework (score_psms.jl and model_config.jl)
 
-**Adaptive Model Selection**: For datasets with 1,000-100,000 PSMs, PrecursorScoringSearch automatically selects the best-performing model through comparison testing with suppressed output for clean results.
+**Adaptive Model Selection**: For datasets with 1,000-100,000 PSMs, ScoringSearch automatically selects the best-performing model through comparison testing with suppressed output for clean results.
 
 **Available Models** (defined in model_config.jl):
 1. **SimpleLightGBM** (Default for small datasets)
@@ -94,7 +102,7 @@ Downstream protein handling now runs in later stages:
 - **ADVANCED_FEATURE_SET**: 50 features including all spectral, RT, MS1, and quality metrics
 - **REDUCED_FEATURE_SET**: 40+ core features for balanced performance
 - **MINIMAL_FEATURE_SET**: 5 essential spectral matching features
-- **Cross-run transfer features**: Currently disabled in production runs
+- **MBR Features**: Automatically appended when match_between_runs=true
 
 **Clean Output Design**:
 - Progress bars suppressed during comparison using `show_progress=false` parameter
@@ -113,11 +121,33 @@ Downstream protein handling now runs in later stages:
 - **Clean Reporting**: Shows results in format "ModelName: X IDs at q ≤ threshold"
 - **Selection Display**: Clear indication of selected model with checkmark
 
-### Downstream Protein Stages
+### Protein Group Analysis
 
-- `ProteinInferenceSearch` handles type-safe protein inference and quantification eligibility flags
-- `ProteinScoringSearch` handles protein-group feature extraction, semi-supervised probit fitting, and protein-level q-values
-- `scoring_interface.jl` provides file reference operations used by precursor rescoring only
+**Modern Pipeline (protein_inference_pipeline.jl)**:
+- **`perform_protein_inference_pipeline`**: Composable pipeline approach
+- **`apply_inference_to_dataframe`**: Wrapper around type-safe `infer_proteins()`
+- **`group_psms_by_protein`**: Aggregates PSMs into protein groups
+- **`add_inferred_protein_column`**: Updates PSMs with protein assignments
+- **`add_quantification_flag`**: Marks peptides for quantification use
+
+**Legacy Functions (utils.jl)**:
+- **`get_protein_groups`**: Main entry point for protein analysis (legacy)
+- **`perform_protein_inference`**: File-by-file protein inference (legacy)
+- **`getProteinGroupsDict`**: Creates protein groups from PSMs (legacy)
+- **`writeProteinGroups`**: Outputs protein groups with features
+- **`update_psms_with_probit_scores`**: Updates PSMs with refined scores
+- **`merge_sorted_protein_groups`**: Memory-efficient merging
+
+**Type-Safe Operations (scoring_interface.jl)**:
+- File reference-based operations for safer data handling
+- Abstracts file operations from core algorithms
+
+### Protein Scoring Flow
+
+1. **Initial Scoring**: Log-sum of peptide probabilities
+2. **Probit Regression**: Uses features like peptide coverage, n_peptides
+3. **Global Scoring**: Max score across all runs
+4. **PSM Update**: Backpropagates refined scores to PSMs
 
 ## Data Structures
 
@@ -135,9 +165,9 @@ Downstream protein handling now runs in later stages:
 
 ## Memory Management
 
-- In-memory vs out-of-memory precursor scoring is selected from the derived row budget
-- File reference abstractions avoid unnecessary table copies
-- ML training dominates memory usage in this stage
+- File-by-file protein inference reduces memory usage
+- Heap-based merging for large datasets
+- Bidirectional PSM-PG file mappings maintained
 
 ## Configuration Parameters
 
@@ -145,24 +175,25 @@ Downstream protein handling now runs in later stages:
 ```json
 "optimization": {
     "machine_learning": {
-        "max_in_memory_table_mb": 2000,
-        "min_trace_prob": 0.01,
-        "spline_points": 100,
-        "q_value_interpolation_points_per_bin": 100,
-        "min_PEP_neg_threshold_itr": 0.90
+        "max_psm_memory_mb": 2000,   // PSM in-memory budget; OOM path triggers above
+        "pep_bin_size": 10           // PSMs per bin for empirical q-value/PEP histogram
     }
 },
-"proteinScoring": {
-    "min_peptides": 2,
-    "write_qc_plots": false,
-    "log_feature_importance": false
+"proteinInference": {
+    "min_peptides": 1
 },
 "global": {
-    "scoring": {
-        "q_value_threshold": 0.01  // Used for model comparison target counting
-    }
+    "q_value_threshold": 0.01        // Final FDR threshold; also used for model comparison
 }
 ```
+
+`spline_points` was a previously-surfaced knob whose corresponding
+`precursor_prob_spline_points_per_bin` / `pg_prob_spline_points_per_bin`
+fields on `ScoringSearchParameters` were never read downstream — both knob
+and fields have been deleted. `interpolation_points` was renamed to
+`pep_bin_size` (clearer name for "PSMs per histogram bin"); old configs
+fall back via `_resolve_q_value_threshold`-style helper. `force_oom` is
+now a developer toggle: `const FORCE_OOM = false` in `ScoringSearch.jl`.
 
 ### Model Comparison Behavior
 - **Automatic Selection**: Enabled by default for datasets with 1,000-100,000 PSMs
@@ -170,23 +201,20 @@ Downstream protein handling now runs in later stages:
   - < 1,000 PSMs: Uses SimpleLightGBM directly (no comparison)
   - 1,000-100,000 PSMs: Automatic model comparison and selection
   - > 100,000 PSMs (in-memory): Uses AdvancedLightGBM directly
-  - Above the derived in-memory row budget from `optimization.machine_learning.max_in_memory_table_mb`: Out-of-memory processing with default LightGBM
-- **Q-value Threshold**: Uses the user-defined `q_value_threshold` from `global.scoring`
+  - > max_psms_in_memory: Out-of-memory processing with default LightGBM
+- **Q-value Threshold**: Uses the user-defined `q_value_threshold` from global_settings.scoring
 - **Clean Output**: Progress bars and verbose output suppressed during comparison
 
-### Downstream Protein Handling
-Protein handling now runs in separate post-integration steps:
+### ML Protein Scoring (Optional)
+When enabled via parameters:
 ```json
-"proteinScoring": {
-    "min_peptides": 2,
-    "write_qc_plots": true,
-    "log_feature_importance": true
+"machine_learning": {
+    "use_ml_protein_scoring": true,
+    "n_top_precursors": 5
 }
 ```
 
-- `ProteinInferenceSearch` annotates integrated passing precursors with inferred protein groups
-- `ProteinScoringSearch/protein_inference_pipeline.jl` builds protein-group tables from those annotated precursors
-- The model fitting, QC plotting, and protein-level q-value logic live under `ProteinScoringSearch/`.
+Uses LightGBM with top N precursor scores as features, implemented in `utils_protein_ml.jl`.
 
 ## Common Issues and Solutions
 
@@ -207,7 +235,22 @@ Protein handling now runs in separate post-integration steps:
 **Symptoms**: Very low number of targets passing q-value threshold
 **Solution**: Inspect validation split quality and feature distributions. Ensure balanced target/decoy ratios.
 
+### Legacy Issues
+
+#### Issue: BoundsError in perform_protein_inference
+**Solution**: Function must return 3 values: `(pg_count, psm_to_pg_path, pg_to_psm_path)`
+
+#### Issue: Missing probit scores in PSMs
+**Solution**: Use `update_psms_with_probit_scores` after probit regression
+
+#### Issue: Memory overflow with many files
+**Solution**: Out-of-memory probit regression automatically triggered
+
 ### Pipeline Issues
+
+#### Issue: Empty protein groups after inference
+**Symptoms**: "No protein groups created during protein inference"
+**Solution**: Check min_peptides parameter and PSM quality. Lower threshold or investigate upstream filtering.
 
 #### Issue: Q-value calculation errors
 **Symptoms**: NaN or infinite q-values
@@ -217,7 +260,7 @@ Protein handling now runs in separate post-integration steps:
 
 ### Integration Testing
 ```julia
-SearchDIA("./data/ecoli_test/ecoli_test_params.json")
+SearchDIA("./test/integration/search_ecoli.json")
 ```
 
 ### Model Comparison Testing
@@ -231,15 +274,25 @@ SearchDIA(params)
 ### Unit Testing Individual Components
 ```julia
 # Test model comparison framework
-include("test/UnitTests/PrecursorScoringSearch/test_model_comparison.jl")
+include("test/UnitTests/ScoringSearch/test_model_comparison.jl")
+
+# Test protein inference pipeline
+include("test/UnitTests/ScoringSearch/test_protein_inference.jl")
 ```
 
 ### Key Outputs to Verify
 
-**Precursor/PSM Files**:
+**PSM Files**:
 - `trace_prob`, `prec_prob`, `global_prob` - Model predictions and aggregated probabilities
 - `qval`, `global_qval`, `pep` - FDR estimates at different levels
-- `passing_psms` output tables are the input to later integration and protein stages
+- `pg_score`, `global_pg_score` - Protein group scores propagated back
+- `inferred_protein_group` - Protein inference assignments
+
+**Protein Group Files**:
+- `pg_score`, `global_pg_score` - Initial and refined protein scores
+- `pg_qval`, `global_pg_qval`, `pg_pep` - Protein-level FDR estimates
+- `n_peptides`, `peptide_coverage` - Protein inference features
+- `n_possible_peptides` - Library-based peptide counts
 
 **Model Comparison Outputs** (when enabled):
 - `model_comparison_report.csv` - Detailed performance metrics
@@ -248,16 +301,16 @@ include("test/UnitTests/PrecursorScoringSearch/test_model_comparison.jl")
 
 ## Performance Considerations
 
-- File I/O dominates for large precursor rescoring runs
-- In-memory training scales with precursor-table size and feature count
-- Out-of-memory processing trades memory for additional sampling and streaming overhead
-- Thread-safe operations in `score_psms.jl`
+- Protein inference is O(n_peptides * n_proteins)
+- Probit regression scales with n_protein_groups
+- File I/O dominates for large experiments
+- Thread-safe operations in score_psms.jl
 
 ## Recent Changes
 
 ### Trait-Based ML Scoring System (February 2025)
 
-The PSM scoring system was refactored to use a trait-based architecture for better composability and extensibility. The core implementation lives in `src/utils/ML/` with PrecursorScoringSearch using it via `sort_of_percolator!()`.
+The PSM scoring system was refactored to use a trait-based architecture for better composability and extensibility. The core implementation lives in `src/utils/ML/` with ScoringSearch using it via `sort_of_percolator!()`.
 
 **New Architecture**:
 ```julia
@@ -278,7 +331,7 @@ ScoringConfig{M,P,T,F,I,B}
 - `src/utils/ML/psm_container.jl` - AbstractPSMContainer data abstraction
 - `src/utils/ML/pairing.jl` - Pairing strategy implementations
 
-**Integration with PrecursorScoringSearch**:
+**Integration with ScoringSearch**:
 - `sort_of_percolator!()` in `percolatorSortOf.jl` builds a `ScoringConfig` from parameters
 - Delegates to `percolator_scoring!(psms, config)` for actual scoring
 - Model comparison in `score_psms.jl` uses `build_scoring_config()` from `model_config.jl`
@@ -301,9 +354,9 @@ ScoringConfig{M,P,T,F,I,B}
 - **Model Configuration**: Created `model_config.jl` with ModelConfig struct and feature set definitions
 - **Deprecated Code**: Marked `model_comparison.jl` as deprecated (functionality moved to score_psms.jl)
 
-### Pipeline Refinement
-- **Comprehensive Documentation**: Detailed breakdown of precursor rescoring and FDR-control flow
-- **Phase-Based Organization**: Organized steps into logical phases for scoring and precursor filtering
+### 23-Step Pipeline Refinement
+- **Comprehensive Documentation**: Detailed step-by-step breakdown of entire ScoringSearch pipeline
+- **Phase-Based Organization**: Organized steps into logical phases (Model Training, PSM Processing, Protein Inference)
 - **Memory-Efficient Processing**: Enhanced file reference system with pipeline operations
 - **Q-value Recalculation**: Added step 10 for post-filtering q-value updates
 
@@ -314,6 +367,7 @@ ScoringConfig{M,P,T,F,I,B}
 - **Column Management**: Automatic addition/removal of temporary columns during processing
 
 ### Protein Inference Modernization
-- **Type-Safe Inference**: Protein inference now lives in `ProteinInferenceSearch`
-- **Composable Pipeline**: Protein-group table building now lives under `ProteinScoringSearch/protein_inference_pipeline.jl`
-- **Stage Separation**: Protein inference and protein scoring now run after chromatogram integration
+- **Type-Safe Inference**: Migrated to `infer_proteins()` using `ProteinKey` and `PeptideKey` types
+- **Composable Pipeline**: Added `protein_inference_pipeline.jl` with modular operations
+- **CV Fold Mapping**: Protein-to-CV-fold mapping for consistent cross-validation
+- **Legacy Preservation**: Maintained backward compatibility with existing `utils.jl` functions

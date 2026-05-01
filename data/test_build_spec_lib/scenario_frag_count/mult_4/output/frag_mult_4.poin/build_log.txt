@@ -3,8 +3,8 @@
 Spectral Library Building Process
 ==========================================================================================
 
-Starting library build at: 2025-11-05T11:17:39.990
-Output directory: /Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_4/output/frag_mult_4.poin
+Starting library build at: 2026-03-26T10:39:18.738
+Output directory: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_4/output/frag_mult_4.poin
 
 Detecting fragment bounds...
 Fragment m/z range: FragBoundModel(ImmutablePolynomial(150.0f0), ImmutablePolynomial(2000.0f0))
@@ -19,3 +19,57 @@ Predicting retention times...
 Predicting fragment ion intensities...
 
 Building final library indices...
+
+==========================================================================================
+Library Building Performance Report
+==========================================================================================
+
+Detailed Step Analysis:
+------------------------------------------------------------------------------------------
+# Precursors # Fragments  # Targets    # Decoys     
+------------------------------------------------------------------------------------------
+        6.00       248.00         6.00         0.00 
+
+Detailed Step Analysis:
+------------------------------------------------------------------------------------------
+Step                                     Time (s)     Memory (GB)  GC Time (s)  GC %        
+------------------------------------------------------------------------------------------
+Collision Energy Setup                   0.00         0.00         0.00         0.0         
+Model Validation                         0.00         0.00         0.00         0.0         
+Directory Setup                          0.00         0.00         0.00         0.0         
+File Verification                        0.00         0.00         0.00         0.0         
+Fragment Bound Detection                 0.00         0.00         0.00         0.0         
+Parameter Loading                        0.00         0.00         0.00         0.0         
+Chronologer Preparation                  0.00         0.00         0.00         0.0         
+Index Building                           0.00         0.00         0.00         0.0         
+Retention Time Prediction                0.30         0.00         0.00         0.0         
+Chronologer Output Processing            0.40         0.00         0.40         99.2        
+Prediction Processing                    0.41         0.00         0.40         97.7        
+Fragment Prediction                      0.50         0.00         0.00         0.0         
+------------------------------------------------------------------------------------------
+TOTAL                                    1.62         0.01         0.80         49.3        
+
+Performance Summary:
+------------------------------------------------------------------------------------------
+Total Runtime: 0.03 minutes
+Total Garbage Collection Time: 0.8 seconds
+Number of Steps: 12
+Average Step Runtime: 0.14 seconds
+
+Memory Usage Summary:
+------------------------------------------------------------------------------------------
+Total Memory Allocated: 0.01 GB
+Peak  Memory Usage: 3.34 GB
+Total Available System Memory: 48.0 GB
+
+Process Information:
+------------------------------------------------------------------------------------------
+Number of Threads: 1
+Julia Version: 1.12.5
+System: arm64-apple-darwin24.0.0
+
+==========================================================================================
+
+Library building completed at: 2026-03-26T10:39:20.360
+
+Library location: /Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_frag_count/mult_4/output/frag_mult_4.poin

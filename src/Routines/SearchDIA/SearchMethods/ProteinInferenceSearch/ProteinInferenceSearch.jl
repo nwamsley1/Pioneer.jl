@@ -66,10 +66,10 @@ function summarize_results!(
     params::ProteinInferenceSearchParameters,
     search_context::SearchContext
 )
-    valid_file_data = get_valid_file_paths(search_context, getPassingPsms)
-    isempty(valid_file_data) && return nothing
+    indexed_paths = get_all_indexed_paths(getPassingPsms, search_context)
+    isempty(indexed_paths) && return nothing
 
-    passing_refs = [PSMFileReference(path) for (_, path) in valid_file_data]
+    passing_refs = [PSMFileReference(path) for (_, path) in indexed_paths]
     run_protein_inference!(search_context; passing_refs = passing_refs)
 
     return nothing

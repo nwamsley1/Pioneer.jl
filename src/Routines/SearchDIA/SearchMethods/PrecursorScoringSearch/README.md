@@ -1,42 +1,37 @@
-# PrecursorScoringSearch Module
+# ScoringSearch Module
 
-PrecursorScoringSearch is the precursor-level rescoring stage in the Pioneer DIA search pipeline. It is responsible for machine learning-based PSM rescoring and precursor-level FDR control. This module features adaptive model selection and supports both in-memory and out-of-memory processing for datasets of varying sizes.
+ScoringSearch is the 7th stage in the Pioneer DIA search pipeline, responsible for machine learning-based PSM rescoring, FDR control, and protein group analysis. This module features adaptive model selection and supports both in-memory and out-of-memory processing for datasets of varying sizes.
 
 ## Overview
 
-PrecursorScoringSearch performs two main functions:
+ScoringSearch performs three main functions:
 1. **PSM Scoring**: Machine learning models (LightGBM or Probit Regression) rescore PSMs
 2. **FDR Control**: Calculate q-values and filter PSMs based on false discovery rate thresholds
+3. **Protein Inference**: Group peptides into minimal protein sets and calculate protein-level scores
 
 ## Data Flow Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────────────┐    ┌─────────────────────┐
-│   SecondPass    │───▶│ PrecursorScoringSearch   │───▶│ IntegrateChromato-  │
-│   PSM Files     │    │                          │    │ gramSearch          │
-└─────────────────┘    └──────────────────────────┘    └─────────────────────┘
-                                                           │
-                                                           ▼
-                    ┌─────────────────────┐    ┌─────────────────────┐
-                    │ ProteinInference-   │───▶│ ProteinScoringSearch│
-                    │ Search              │    │                     │
-                    └─────────────────────┘    └─────────────────────┘
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
+│   SecondPass    │───▶│   ScoringSearch  │───▶│ IntegrateChromato-  │
+│   PSM Files     │    │                  │    │ gramSearch          │
+└─────────────────┘    └──────────────────┘    └─────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    PrecursorScoringSearch Pipeline                    │
+│                    ScoringSearch Pipeline                          │
 │                                                                     │
-│  ┌─────────────────┐  ┌──────────────────┐                         │
-│  │  1. PSM Scoring │─▶│ 2. FDR Control   │                         │
-│  │     & Model     │  │    & Filtering   │                         │
-│  │    Selection    │  │                  │                         │
-│  └─────────────────┘  └──────────────────┘                         │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
+│  │  1. PSM Scoring │─▶│ 2. FDR Control   │─▶│ 3. Protein       │   │
+│  │     & Model     │  │    & Filtering   │  │    Inference     │   │
+│  │    Selection    │  │                  │  │                  │   │
+│  └─────────────────┘  └──────────────────┘  └──────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Model Selection Strategy
 
-PrecursorScoringSearch uses different strategies based on dataset size:
+ScoringSearch uses different strategies based on dataset size:
 
 ```
 PSM Count Decision Tree:
@@ -67,12 +62,12 @@ PSM Count Decision Tree:
 ### Memory Strategy
 
 ```
-                    PSM Count vs Derived Row Budget
+                    PSM Count vs Memory Limit
                               │
                  ┌────────────┼────────────┐
                  │            │            │
-   < in-memory row budget     │    ≥ in-memory row budget
-  (from max_in_memory_table_mb)│   (from max_in_memory_table_mb)
+        < max_psms_in_memory  │     ≥ max_psms_in_memory
+              (100K)          │           (100K)
                  │            │            │
                  ▼            │            ▼
           In-Memory Processing│    Out-of-Memory Processing
@@ -98,7 +93,7 @@ PSM Count Decision Tree:
 - **ADVANCED_FEATURE_SET**: 50+ features including all spectral, RT, MS1, and quality metrics
 - **REDUCED_FEATURE_SET**: 40+ core features for balanced performance  
 - **MINIMAL_FEATURE_SET**: 5 essential features (spectral contrast, residuals, error norms, intensity explained)
-- **Cross-run transfer features**: Currently disabled in production runs
+- **MBR Features**: Automatically appended when match_between_runs=true
 
 ## Function Call Flow
 
@@ -109,10 +104,11 @@ score_precursor_isotope_traces(
     second_pass_folder,
     file_paths,
     precursors,
+    match_between_runs,
     max_q_value_lightgbm_rescore,
     max_q_value_mbr_itr,
     min_PEP_neg_threshold_itr,
-    derived_max_in_memory_rows,
+    max_psms_in_memory,
     q_value_threshold
 )
 ```
@@ -122,7 +118,7 @@ score_precursor_isotope_traces(
 ```
 score_precursor_isotope_traces()
 ├── get_psms_count(file_paths)
-├── if psms_count >= derived_max_in_memory_rows:
+├── if psms_count >= max_psms_in_memory:
 │   ├── sample_psms_for_lightgbm()
 │   ├── create_default_advanced_lightgbm_config()
 │   └── score_precursor_isotope_traces_out_of_memory!()
@@ -162,7 +158,7 @@ sort_of_percolator_in_memory!()
 ├── Initialize probability arrays and CV fold mappings
 ├── For each CV fold:
 │   ├── Split train/test data
-│   ├── For each iteration in iter_scheme [100, 200, 200, 200]:
+│   ├── For each iteration in iter_scheme [100, 200, 200]:
 │   │   ├── get_training_data_for_iteration!()
 │   │   │   ├── First iteration: Use all training PSMs
 │   │   │   └── Later iterations: 
@@ -172,18 +168,18 @@ sort_of_percolator_in_memory!()
 │   │   │   └── LightGBMModel(hyperparams...)
 │   │   ├── Predict on train/test sets
 │   │   ├── Calculate q-values
-│   │   └── update_mbr_features!() [transfer path only]
+│   │   └── update_mbr_features!() [if match_between_runs]
 │   └── Store fold predictions
-├── Handle MBR transfer candidates [transfer path only]
+├── Handle MBR transfer candidates [if match_between_runs]
 └── Return trained models (Dict{UInt8, LightGBMModelVector})
 ```
 
 ### Key Training Features
 
 1. **Cross-Validation**: Uses CV folds from spectral library (typically 2 folds with values 0,1)
-2. **Iterative Training**: 4-stage scheme [100, 200, 200, 200] rounds with progressive filtering
+2. **Iterative Training**: 3-stage scheme [100, 200, 200] rounds with progressive filtering
 3. **Negative Mining**: Converts low-scoring targets to negatives in later iterations
-4. **Transfer Integration**: Cross-run transfer features exist in code but are disabled in production runs
+4. **MBR Integration**: Optional match-between-runs features added in final iteration
 5. **Dynamic Training Data**: Training set filtered by q-value thresholds between iterations
 
 ## Probit Regression Pipeline
@@ -204,7 +200,7 @@ probit_regression_scoring_cv!()
 │   │   └── Predict probabilities on test set
 │   └── Store fold predictions
 ├── Assign final probabilities to DataFrame
-├── Create MBR columns for compatibility [transfer path only]
+├── Create MBR columns for compatibility [if match_between_runs]
 ├── Validate and clamp probability values
 └── Clean up temporary columns
 ```
@@ -222,7 +218,7 @@ probit_regression_scoring_cv!()
 | **MBR Handling** | Separate MBR iterations | Creates compatibility columns |
 | **Hyperparameters** | Many (depth, eta, etc.) | Few (max_iter) |
 
-## Integration with PrecursorScoringSearch Pipeline
+## Integration with ScoringSearch Pipeline
 
 ### PSM Processing Output
 
@@ -236,13 +232,13 @@ psms[!, :MBR_is_best_decoy]            # MBR transfer metadata
 psms[!, :MBR_transfer_candidate]       # MBR filtering flags
 ```
 
-### PrecursorScoringSearch Pipeline Integration
+### 23-Step ScoringSearch Pipeline Integration
 
-The trained models integrate into the broader PrecursorScoringSearch pipeline:
+The trained models integrate into the broader ScoringSearch pipeline:
 
-1. **Model training and PSM scoring**: this README's focus
-2. **PSM processing, merging, and FDR control**: filtering to the passing precursor tables
-3. **Downstream stages**: chromatogram integration, protein inference, and protein scoring happen after this stage
+1. **Steps 1-3**: Model training and PSM scoring (this README's focus)
+2. **Steps 4-10**: PSM processing, merging, and FDR control
+3. **Steps 11-23**: Protein inference and scoring
 
 ## Configuration Parameters
 
@@ -252,29 +248,30 @@ The trained models integrate into the broader PrecursorScoringSearch pipeline:
 {
     "optimization": {
         "machine_learning": {
-            "max_in_memory_table_mb": 2000,
+            "max_psms_in_memory": 100000,
             "enable_model_comparison": true,
             "max_q_value_lightgbm_rescore": 0.01,
             "max_q_value_mbr_itr": 0.20,
-            "min_PEP_neg_threshold_itr": 0.90,
-            "q_value_interpolation_points_per_bin": 10
+            "min_PEP_neg_threshold_itr": 0.90
         }
     },
-    "global": {
+    "global_settings": {
         "scoring": {
             "q_value_threshold": 0.01
-        }
+        },
+        "match_between_runs": true
     }
 }
 ```
 
 ### Parameter Effects
 
-- **max_in_memory_table_mb**: Determines the derived in-memory row budget used to choose between in-memory and out-of-memory processing
+- **max_psms_in_memory**: Determines in-memory vs out-of-memory processing
 - **enable_model_comparison**: Controls automatic model selection for medium datasets
 - **max_q_value_mbr_itr**: Caps MBR transfers admitted to the iterative training (ITR) stage
 - **min_PEP_neg_threshold_itr**: Sets the PEP cutoff for relabeling weak targets as negatives during ITR
 - **q_value_threshold**: Used for model performance evaluation during comparison
+- **match_between_runs**: Enables MBR features and processing
 
 ## Performance Characteristics
 
@@ -296,12 +293,14 @@ The trained models integrate into the broader PrecursorScoringSearch pipeline:
 ## Files and Structure
 
 ```
-PrecursorScoringSearch/
+ScoringSearch/
 ├── README.md                      # This documentation
-├── PrecursorScoringSearch.jl      # Main precursor scoring pipeline orchestrator
+├── ScoringSearch.jl              # Main 23-step pipeline orchestrator
 ├── score_psms.jl                 # PSM scoring entry point and model selection
 ├── model_config.jl               # Model configurations and feature sets
-├── utils.jl                      # Shared q-value / spline helpers
+├── utils.jl                      # Legacy protein group analysis functions
+├── utils_protein_ml.jl           # ML-enhanced protein scoring
+├── protein_inference_pipeline.jl # Modern protein inference pipeline
 └── scoring_interface.jl          # Type-safe file reference operations
 ```
 
@@ -324,7 +323,7 @@ src/utils/ML/
 ### Common Issues
 
 1. **Model Comparison Failures**: Check feature availability in PSM data
-2. **Memory Issues**: Reduce `optimization.machine_learning.max_in_memory_table_mb` or use out-of-memory processing
+2. **Memory Issues**: Reduce max_psms_in_memory or use out-of-memory processing
 3. **Poor Performance**: Inspect CV fold balance and feature distributions
 4. **Probit Convergence**: Check for sufficient training data per fold
 

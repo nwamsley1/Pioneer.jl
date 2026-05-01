@@ -11,9 +11,7 @@
         "entrapment_r": 0
     },
     "nce_params": {
-        "nce": 26.0,
-        "default_charge": 2,
-        "dynamic_nce": true
+        "nce": 26.0
     },
     "library_params": {
         "rt_bin_tol": 1.0,
@@ -38,9 +36,7 @@
         "include_isotope": false,
         "include_internal": false,
         "include_immonium": false,
-        "include_neutral_diff": true,
-        "instrument_type": "NONE",
-        "prediction_model": "altimeter"
+        "include_neutral_diff": true
     },
     "variable_mods": {
         "pattern": ["M"],

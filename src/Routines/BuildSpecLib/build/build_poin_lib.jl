@@ -1,204 +1,50 @@
 """
-    buildPionLib(spec_lib_path::String,
-                y_start_index::UInt8,
-                y_start::UInt8,
-                b_start_index::UInt8,
-                b_start::UInt8,
-                include_p_index::Bool,
-                include_p::Bool,
-                include_isotope::Bool,
-                include_immonium::Bool,
-                include_internal::Bool,
-                include_neutral_diff::Bool,
-                max_frag_charge::UInt8,
-                max_frag_rank::UInt8,
-                min_frag_intensity::Float32,
-                rank_to_score::Vector{UInt8},
-                frag_bounds::FragBoundModel,
-                frag_bin_tol_ppm::Float32,
-                rt_bin_tol_ppm::Float32,
-                model_type::KoinaModelType = InstrumentSpecificModel("default"))
+    sort_detailed_fragments_by_mz!(frags, prec_ranges) -> Int
 
-Build a Pioneer spectral library from preprocessed fragment and precursor data.
+Sort each precursor's fragments in `frags` in place by ascending m/z.
+`prec_ranges[k]` is the starting index of precursor `k`; precursor `k`'s
+range is `prec_ranges[k] : prec_ranges[k+1] - 1`.
 
-# Parameters
-- `spec_lib_path`: Path to the directory containing input files and where output files will be written
-- `y_start_index`: Minimum index for y-ions to include in the fragment index
-- `y_start`: Minimum index for y-ions to include in detailed fragments
-- `b_start_index`: Minimum index for b-ions to include in the fragment index
-- `b_start`: Minimum index for b-ions to include in detailed fragments
-- `include_p_index`: Whether to include precursor ions in the fragment index
-- `include_p`: Whether to include precursor ions in detailed fragments
-- `include_isotope`: Whether to include isotope peaks 
-- `include_immonium`: Whether to include immonium ions
-- `include_internal`: Whether to include internal fragment ions
-- `include_neutral_diff`: Whether to include fragments with neutral losses
-- `max_frag_charge`: Maximum fragment charge state to include
-- `max_frag_rank`: Maximum number of fragments per precursor (ranked by intensity)
-- `min_frag_intensity`: Minimum relative intensity threshold for fragments
-- `rank_to_score`: Vector mapping intensity rank to scoring value
-- `frag_bounds`: Model defining minimum and maximum fragment m/z bounds
-- `frag_bin_tol_ppm`: Fragment binning tolerance in parts per million
-- `rt_bin_tol_ppm`: Retention time binning tolerance in parts per million
-- `model_type`: Type of prediction model used (default: InstrumentSpecificModel("default"))
+This must run AFTER `build_partitioned_index_from_lib` because the
+partitioned index assigns bitmask bits via iteration order (`rank += 1`
+in `PartitionedFragmentIndex/build.jl`), which requires the rank-sorted
+layout. After the index is built, sorting `frags` by m/z satisfies
+`run_fused!`'s pre-condition (`verify_mz_sorted` in fusedScan.jl) without
+changing partitioned-index semantics — the index keeps its own array of
+`SimpleFrag`s with bitmask bits already encoded.
 
-# Returns
-- `nothing`: Results are written to files in `spec_lib_path`
-
-# Input Files
-Requires the following files in `spec_lib_path`:
-- fragments_table.arrow: Table of fragment data
-- prec_to_frag.arrow: Table mapping precursors to fragments
-- precursors_table.arrow: Table of precursor data
-
-# Output Files
-Creates the following files in `spec_lib_path`:
-- f_index_fragments.arrow: Fragment index
-- f_index_rt_bins.arrow: Retention time bins
-- f_index_fragment_bins.arrow: Fragment m/z bins
-- presearch_f_index_fragments.arrow: Presearch fragment index
-- presearch_f_index_rt_bins.arrow: Presearch retention time bins
-- presearch_f_index_fragment_bins.arrow: Presearch fragment m/z bins
-- detailed_fragments.jls: Detailed fragment information
-- precursor_to_fragment_indices.jls: Mapping of precursors to fragment indices
+Returns the number of precursors that needed mutation (the rest were
+already m/z-sorted — e.g. single-fragment precursors).
 """
-function buildPionLib(spec_lib_path::String,
-                      y_start_index::UInt8,
-                      y_start::UInt8,
-                      b_start_index::UInt8,
-                      b_start::UInt8,
-                      include_p_index::Bool,
-                      include_p::Bool,
-                      include_isotope::Bool,
-                      include_immonium::Bool,
-                      include_internal::Bool,
-                      include_neutral_diff::Bool,
-                      max_frag_charge::UInt8,
-                      max_frag_rank::UInt8,
-                      length_to_frag_count_multiple::AbstractFloat,
-                      min_frag_intensity::Float32,
-                      rank_to_score::Vector{UInt8},
-                      frag_bounds::FragBoundModel,
-                      frag_bin_tol_ppm::Float32,
-                      rt_bin_tol_ppm::Float32,
-                      model_type::KoinaModelType,
-                      )
-    fragments_table, prec_to_frag, precursors_table = nothing, nothing, nothing
-    try
-        fragments_table = Arrow.Table(joinpath(spec_lib_path,"fragments_table.arrow"));
-        prec_to_frag = Arrow.Table(joinpath(spec_lib_path,"prec_to_frag.arrow"));
-        precursors_table = Arrow.Table(joinpath(spec_lib_path,"precursors_table.arrow"));
-    catch e 
-        throw(e)
-        @error "could not find library..."
-        return nothing
+function sort_detailed_fragments_by_mz!(frags::AbstractVector,
+                                         prec_ranges::AbstractVector)
+    n_prec = length(prec_ranges) - 1
+    n_mutated = 0
+    @inbounds for pid in 1:n_prec
+        lo = Int(prec_ranges[pid])
+        hi = Int(prec_ranges[pid + 1]) - 1
+        lo > hi && continue
+        v = view(frags, lo:hi)
+        if !issorted(v, by = f -> f.mz)
+            sort!(v, by = f -> f.mz, alg = InsertionSort)
+            n_mutated += 1
+        end
     end
+    return n_mutated
+end
 
-    #Simple fragments that go into the fragment index 
-    #println("Get index fragments...")
-    simple_frags = getSimpleFrags(
-        fragments_table[:mz],
-        fragments_table[:is_y],
-        fragments_table[:is_b],
-        fragments_table[:is_p],
-        fragments_table[:fragment_index],
-        fragments_table[:charge],
-        fragments_table[:isotope],
-        fragments_table[:is_internal],
-        fragments_table[:is_immonium],
-        fragments_table[:has_neutral_diff],
-        precursors_table[:mz],
-        precursors_table[:irt],
-        precursors_table[:prec_charge],#precursor_charge],
-        prec_to_frag[:start_idx],
-        y_start_index,
-        b_start_index,
-        include_p_index,
-        include_isotope,
-        include_immonium,
-        include_internal,
-        include_neutral_diff,
-        max_frag_charge,
-        frag_bounds,
-        rank_to_score
-    );
-
-    #println("Build fragment index...")
-    ##########
-    #Builds fragment indexes and saves them for the spec_lib_path
-    sort!(simple_frags, by = x->x.prec_irt)
-    buildFragmentIndex!(
-        spec_lib_path,
-        simple_frags,
-        frag_bin_tol_ppm, #frag_tol_ppm
-        rt_bin_tol_ppm,  #irt_bin_width
-        index_name = ""
-    );
-    #println("Build presearch fragment index...")
-    sort!(simple_frags, by = x->x.prec_irt)
-    buildFragmentIndex!(
-        spec_lib_path,
-        simple_frags,
-        frag_bin_tol_ppm, #frag_tol_ppm
-        typemax(Float32),  #irt_tol
-        index_name = "presearch_"
-    );
-    simple_frags = nothing
-    GC.gc()
-
-    #println("Get full fragments list...")
-    detailed_frags, pid_to_fid = getDetailedFrags(
-    fragments_table[:mz],
-    fragments_table[:intensity],
-    fragments_table[:is_y],
-    fragments_table[:is_b],
-    fragments_table[:is_p],
-    fragments_table[:fragment_index],
-    fragments_table[:charge],
-    fragments_table[:sulfur_count],
-    fragments_table[:ion_type],
-    fragments_table[:isotope],
-    fragments_table[:is_internal],
-    fragments_table[:is_immonium],
-    fragments_table[:has_neutral_diff],
-    precursors_table[:mz],
-    precursors_table[:prec_charge],#:precursor_charge],
-    precursors_table[:length],
-    prec_to_frag[:start_idx],
-    y_start,
-    b_start,
-    include_p,
-    include_isotope,
-    include_immonium,
-    include_internal,
-    include_neutral_diff,
-    max_frag_charge,
-    frag_bounds,
-    max_frag_rank,
-    length_to_frag_count_multiple,
-    min_frag_intensity,
-    model_type
-    );
-    
-    serialize_to_jls(
-        joinpath(spec_lib_path, "detailed_fragments.jls"),
-        detailed_frags
-    )
-
-    serialize_to_jls(
-        joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"),
-        pid_to_fid
-    )
-
-    # Arrow tables can keep Windows file handles alive until GC runs.
-    # Release references before BuildSpecLib removes the intermediate Arrow files.
-    fragments_table = nothing
-    prec_to_frag = nothing
-    precursors_table = nothing
-    detailed_frags = nothing
-    pid_to_fid = nothing
-    GC.gc()
-
+function validate_fragment_index_filters(y_start_index::UInt8,
+                                         y_start::UInt8,
+                                         b_start_index::UInt8,
+                                         b_start::UInt8,
+                                         include_p_index::Bool,
+                                         include_p::Bool)
+    y_start_index < y_start && throw(ArgumentError(
+        "y_start_index ($y_start_index) cannot be less stringent than y_start ($y_start)"))
+    b_start_index < b_start && throw(ArgumentError(
+        "b_start_index ($b_start_index) cannot be less stringent than b_start ($b_start)"))
+    include_p_index && !include_p && throw(ArgumentError(
+        "include_p_index=true requires include_p=true because the index is built from detailed fragments"))
     return nothing
 end
 
@@ -222,7 +68,7 @@ end
                 frag_bounds::FragBoundModel,
                 frag_bin_tol_ppm::Float32,
                 rt_bin_tol_ppm::Float32,
-                model_type::KoinaModelType = InstrumentSpecificModel("default"))
+                model_type::SplineCoefficientModel)
 
 Build a Pioneer spectral library from preprocessed fragment and precursor data.
 
@@ -245,7 +91,7 @@ Build a Pioneer spectral library from preprocessed fragment and precursor data.
 - `frag_bounds`: Model defining minimum and maximum fragment m/z bounds
 - `frag_bin_tol_ppm`: Fragment binning tolerance in parts per million
 - `rt_bin_tol_ppm`: Retention time binning tolerance in parts per million
-- `model_type`: Type of prediction model used (default: InstrumentSpecificModel("default"))
+- `model_type`: SplineCoefficientModel describing the Altimeter prediction backend
 
 # Returns
 - `nothing`: Results are written to files in `spec_lib_path`
@@ -286,8 +132,15 @@ function buildPionLib(spec_lib_path::String,
                       frag_bounds::FragBoundModel,
                       frag_bin_tol_ppm::Float32,
                       rt_bin_tol_ppm::Float32,
-                      model_type::SplineCoefficientModel,
+                      model_type::SplineCoefficientModel;
+                      frag_bin_tol_mda::Float32 = 2.0f0,
                       )
+    validate_fragment_index_filters(
+        y_start_index, y_start,
+        b_start_index, b_start,
+        include_p_index, include_p,
+    )
+
     fragments_table, prec_to_frag, precursors_table = nothing, nothing, nothing
     try
         fragments_table = Arrow.Table(joinpath(spec_lib_path,"fragments_table.arrow"));
@@ -297,58 +150,6 @@ function buildPionLib(spec_lib_path::String,
         @error "could not find library..."
         return nothing
     end
-
-    #Simple fragments that go into the fragment index 
-    #println("Get index fragments...")
-    simple_frags = getSimpleFrags(
-        fragments_table[:mz],
-        fragments_table[:is_y],
-        fragments_table[:is_b],
-        fragments_table[:is_p],
-        fragments_table[:fragment_index],
-        fragments_table[:charge],
-        fragments_table[:isotope],
-        fragments_table[:is_internal],
-        fragments_table[:is_immonium],
-        fragments_table[:has_neutral_diff],
-        precursors_table[:mz],
-        precursors_table[:irt],
-        precursors_table[:prec_charge],#precursor_charge],
-        prec_to_frag[:start_idx],
-        y_start_index,
-        b_start_index,
-        include_p_index,
-        include_isotope,
-        include_immonium,
-        include_internal,
-        include_neutral_diff,
-        max_frag_charge,
-        frag_bounds,
-        rank_to_score
-    );
-
-    #println("Build fragment index...")
-    ##########
-    #Builds fragment indexes and saves them for the spec_lib_path
-    sort!(simple_frags, by = x->x.prec_irt)
-    buildFragmentIndex!(
-        spec_lib_path,
-        simple_frags,
-        frag_bin_tol_ppm, #frag_tol_ppm
-        rt_bin_tol_ppm,  #irt_bin_width
-        index_name = ""
-    );
-    #println("Build presearch fragment index...")
-    sort!(simple_frags, by = x->x.prec_irt)
-    buildFragmentIndex!(
-        spec_lib_path,
-        simple_frags,
-        frag_bin_tol_ppm, #frag_tol_ppm
-        typemax(Float32),  #irt_tol
-        index_name = "presearch_"
-    );
-    simple_frags = nothing
-    GC.gc()
 
     #println("Get full fragments list...")
     detailed_frags, pid_to_fid = getDetailedFrags(
@@ -384,7 +185,39 @@ function buildPionLib(spec_lib_path::String,
     min_frag_intensity,
     model_type
     );
-    
+
+    # Build partitioned fragment indexes BEFORE sorting detailed_frags by m/z.
+    # See sort_detailed_fragments_by_mz! for why the order matters.
+    precursors_arrow = Arrow.Table(joinpath(spec_lib_path, "precursors_table.arrow"))
+    temp_precursors = SetPrecursors(precursors_arrow)
+    # Load spline knots for SplineFragmentLookup
+    spl_knots = if isfile(joinpath(spec_lib_path, "spline_knots.jls"))
+        deserialize_from_jls(joinpath(spec_lib_path, "spline_knots.jls"))
+    elseif isfile(joinpath(spec_lib_path, "spline_knots.jld2"))
+        load(joinpath(spec_lib_path, "spline_knots.jld2"))["spl_knots"]
+    else
+        error("spline_knots file not found in $spec_lib_path")
+    end
+    temp_lookup = SplineFragmentLookup(detailed_frags, pid_to_fid, Tuple(spl_knots), 3)
+    temp_proteins = SetProteins(Arrow.Table(joinpath(spec_lib_path, "proteins_table.arrow")))
+    empty_pfi = LocalPartitionedFragmentIndex{Float32}(LocalPartition{Float32}[], Tuple{Float32,Float32}[], 0)
+    temp_lib = SplineFragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
+
+    partitioned_index = build_partitioned_index_from_lib(temp_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        rt_bin_tol=rt_bin_tol_ppm, rank_to_score=rank_to_score,
+        y_start_index=y_start_index, b_start_index=b_start_index,
+        include_p_index=include_p_index)
+
+    presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
+        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, frag_bin_tol_mda=frag_bin_tol_mda,
+        rt_bin_tol=typemax(Float32), rank_to_score=rank_to_score,
+        y_start_index=y_start_index, b_start_index=b_start_index,
+        include_p_index=include_p_index)
+
+    # Sort detailed_frags by m/z within each precursor (run_fused! pre-condition).
+    sort_detailed_fragments_by_mz!(detailed_frags, pid_to_fid)
+
     serialize_to_jls(
         joinpath(spec_lib_path, "detailed_fragments.jls"),
         detailed_frags
@@ -394,6 +227,9 @@ function buildPionLib(spec_lib_path::String,
         joinpath(spec_lib_path, "precursor_to_fragment_indices.jls"),
         pid_to_fid
     )
+
+    serialize_to_jls(joinpath(spec_lib_path, "partitioned_fragment_index.jls"), partitioned_index)
+    serialize_to_jls(joinpath(spec_lib_path, "presearch_partitioned_fragment_index.jls"), presearch_partitioned_index)
 
     # Arrow tables can keep Windows file handles alive until GC runs.
     # Release references before BuildSpecLib removes the intermediate Arrow files.
@@ -687,10 +523,10 @@ function getSimpleFrags(
                 precursor_mz[pid],
                 precursor_irt[pid],
                 precursor_charge[pid],
-                rank_to_score[rank]
+                UInt8(1) << UInt8(rank - 1)  # bitmask: rank 1→bit0, rank 2→bit1, ...
             )
             rank += 1
-            if rank > max_rank_index
+            if rank > min(max_rank_index, 8)  # cap at 8 bits
                 break
             end
         end
@@ -909,11 +745,14 @@ function buildFragmentIndex!(
     rt_bins = Vector{FragIndexBin{T}}(undef, length(frag_ions))
     frag_bins = Vector{FragIndexBin{T}}(undef, length(frag_ions))
     #println("building fragment index...")
+    # Legacy Arrow-based index (not used at search time — LocalPartitionedFragmentIndex
+    # from .jls files is used instead). Use fallback ppm if mDa mode is active.
+    legacy_ppm = frag_bin_tol_ppm > 0 ? frag_bin_tol_ppm : 2.5f0
     frag_bin_idx, rt_bin_idx = buildFragIndex!(index_fragments,
                     rt_bins,
                     frag_bins,
                     frag_ions,
-                    frag_bin_tol_ppm,
+                    legacy_ppm,
                     rt_bin_tol)
                     
     fragments = (IndexFragment = index_fragments,)
@@ -938,229 +777,6 @@ function filterFrag(rank::Int64, prec_len::UInt8, max_frag_rank::UInt8, length_t
     return rank > min(max_frag_rank, round((prec_len)*length_to_frag_count_multiple)+1)
 end
 
-"""
-    getDetailedFrags(
-        frag_mz::AbstractVector{Float32},
-        frag_intensity::AbstractVector{Float16},
-        frag_is_y::AbstractVector{Bool},
-        frag_is_b::AbstractVector{Bool},
-        frag_is_p::AbstractVector{Bool},
-        frag_index::AbstractVector{UInt8},
-        frag_charge::AbstractVector{UInt8},
-        frag_sulfur_count::AbstractVector{UInt8},
-        frag_ion_type::AbstractVector{UInt16},
-        frag_isotope::AbstractVector{UInt8},
-        frag_internal::AbstractVector{Bool},
-        frag_immonium::AbstractVector{Bool},
-        frag_neutral_diff::AbstractVector{Bool},
-        precursor_mz::AbstractVector{Float32},
-        precursor_charge::AbstractVector{UInt8},
-        prec_to_frag_idx::AbstractVector{UInt64},
-        y_start::UInt8,
-        b_start::UInt8,
-        include_p::Bool,
-        include_isotope::Bool,
-        include_immonium::Bool,
-        include_internal::Bool,
-        include_neutral_diff::Bool,
-        max_frag_charge::UInt8,
-        frag_bounds::FragBoundModel,
-        max_frag_rank::UInt8,
-        min_frag_intensity::AbstractFloat,
-        koina_model::KoinaModelType
-    )::Tuple{Vector{DetailedFrag{Float32}}, Vector{UInt64}}
-
-Extract detailed fragment information for peptide scoring.
-
-# Parameters
-- `frag_mz`: Fragment m/z values
-- `frag_intensity`: Fragment intensities
-- `frag_is_y`: Whether each fragment is a y-ion
-- `frag_is_b`: Whether each fragment is a b-ion
-- `frag_is_p`: Whether each fragment is a precursor ion
-- `frag_index`: Index of each fragment in its peptide sequence
-- `frag_charge`: Charge state of each fragment
-- `frag_sulfur_count`: Sulfur count for each fragment
-- `frag_ion_type`: Ion type identifier for each fragment
-- `frag_isotope`: Isotope state of each fragment
-- `frag_internal`: Whether each fragment is an internal fragment
-- `frag_immonium`: Whether each fragment is an immonium ion
-- `frag_neutral_diff`: Whether each fragment has neutral losses
-- `precursor_mz`: m/z values of precursors
-- `precursor_charge`: Charge states of precursors
-- `prec_to_frag_idx`: Index mapping precursors to their fragments
-- `y_start`: Minimum index for y-ions to include
-- `b_start`: Minimum index for b-ions to include
-- `include_p`: Whether to include precursor ions
-- `include_isotope`: Whether to include isotope peaks
-- `include_immonium`: Whether to include immonium ions
-- `include_internal`: Whether to include internal fragment ions
-- `include_neutral_diff`: Whether to include fragments with neutral losses
-- `max_frag_charge`: Maximum fragment charge state to include
-- `frag_bounds`: Model defining valid m/z range based on precursor m/z
-- `max_frag_rank`: Maximum number of fragments per precursor (ranked by intensity)
-- `min_frag_intensity`: Minimum relative intensity threshold for fragments
-- `koina_model`: Type of prediction model used
-
-# Returns
-- Tuple containing:
-  - Vector of DetailedFrag objects with comprehensive fragment information
-  - Vector mapping precursor indices to fragment indices
-"""
-function getDetailedFrags(
-    frag_mz::AbstractVector{Float32},
-    frag_intensity::AbstractVector{Float16},
-    frag_is_y::AbstractVector{Bool},
-    frag_is_b::AbstractVector{Bool},
-    frag_is_p::AbstractVector{Bool},
-    frag_index::AbstractVector{UInt8},
-    frag_charge::AbstractVector{UInt8},
-    frag_sulfur_count::AbstractVector{UInt8},
-    frag_ion_type::AbstractVector{UInt16},
-    frag_isotope::AbstractVector{UInt8},
-    frag_internal::AbstractVector{Bool},
-    frag_immonium::AbstractVector{Bool},
-    frag_neutral_diff::AbstractVector{Bool},
-    precursor_mz::AbstractVector{Float32},
-    precursor_charge::AbstractVector{UInt8},
-    prec_len::AbstractVector{UInt8},
-    prec_to_frag_idx::AbstractVector{UInt64},
-    y_start::UInt8,
-    b_start::UInt8,
-    include_p::Bool,
-    include_isotope::Bool,
-    include_immonium::Bool,
-    include_internal::Bool,
-    include_neutral_diff::Bool,
-    max_frag_charge::UInt8,
-    frag_bounds::FragBoundModel,
-    max_frag_rank::UInt8,
-    length_to_frag_count_multiple::AbstractFloat,
-    min_frag_intensity::AbstractFloat,
-    koina_model::KoinaModelType)
-
-    if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
-        #println("mistake")
-    end
-
-    #Maximum ranked fragment that can be included in the fragment index
-    max_frag_rank = UInt8(min(255, max_frag_rank))
-    #Number of precursors 
-    n_precursors = UInt32(length(precursor_mz))
-    #Keep track of number of fragments to allocate 
-    n_frags = zero(UInt64)
-    #println("counting fragments...")
-    for pid in ProgressBar(range(one(UInt32), n_precursors))
-        prec_mz = precursor_mz[pid] #Filter on precursor mass
-        frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
-        rank = 1
-        #count fragments for the current precursor
-        for frag_idx in range(frag_start_idx, frag_stop_idx)
-            #Filter on fragment properties
-            if min_frag_intensity > frag_intensity[frag_idx]
-                continue
-            end
-            if !fragFilter(
-                    frag_is_y[frag_idx],
-                    frag_is_b[frag_idx],
-                    frag_is_p[frag_idx],
-                    frag_index[frag_idx],
-                    frag_charge[frag_idx],
-                    frag_isotope[frag_idx],
-                    frag_internal[frag_idx],
-                    frag_immonium[frag_idx],
-                    frag_neutral_diff[frag_idx],
-                    frag_mz[frag_idx],
-                    frag_bounds,
-                    prec_mz,
-                    y_start,
-                    b_start,
-                    include_p,
-                    include_isotope,
-                    include_immonium,
-                    include_internal,
-                    include_neutral_diff,
-                    max_frag_charge)
-                continue
-            end
-            #update counters 
-            n_frags += one(UInt64)
-            rank += 1
-            if filterFrag(rank, prec_len[pid], max_frag_rank, length_to_frag_count_multiple)
-                break
-            end
-        end
-    end
-    detailed_frags = Vector{DetailedFrag{Float32}}(
-                                    undef, 
-                                    n_frags)   
-    prec_to_frag_idx_new = Vector{UInt64}(undef, n_precursors + 1)
-    detailed_frag_idx = 1
-    #println("writing fragments...")
-    for pid in ProgressBar(range(one(UInt32), n_precursors))
-        prec_mz = precursor_mz[pid]
-        #Index of the first fragment for the precursor 
-        prec_to_frag_idx_new[pid] = UInt64(detailed_frag_idx)
-        frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
-        rank = 1
-        for frag_idx in range(frag_start_idx, frag_stop_idx)
-            if !fragFilter(
-                    frag_is_y[frag_idx],
-                    frag_is_b[frag_idx],
-                    frag_is_p[frag_idx],
-                    frag_index[frag_idx],
-                    frag_charge[frag_idx],
-                    frag_isotope[frag_idx],
-                    frag_internal[frag_idx],
-                    frag_immonium[frag_idx],
-                    frag_neutral_diff[frag_idx],
-                    frag_mz[frag_idx],
-                    frag_bounds,
-                    prec_mz,
-                    y_start,
-                    b_start,
-                    include_p,
-                    include_isotope,
-                    include_immonium,
-                    include_internal,
-                    include_neutral_diff,
-                    max_frag_charge)
-                continue
-            end
-            if min_frag_intensity > frag_intensity[frag_idx]
-                continue
-            end
-            is_y, is_internal, is_immonium = frag_is_y[frag_idx], frag_internal[frag_idx], frag_immonium[frag_idx]
-            is_b, is_p = frag_is_b[frag_idx], frag_is_p[frag_idx]
-            detailed_frags[detailed_frag_idx] = DetailedFrag(
-                UInt32(pid),
-
-                frag_mz[frag_idx],
-                frag_intensity[frag_idx],
-
-                frag_ion_type[frag_idx],
-                is_y,
-                is_b,
-                is_p,
-                frag_isotope[frag_idx]>0,
-
-                frag_charge[frag_idx],
-                frag_index[frag_idx],
-                precursor_charge[pid],
-                UInt8(rank),
-                frag_sulfur_count[frag_idx]
-            )
-            detailed_frag_idx += 1
-            rank += 1
-            if filterFrag(rank, prec_len[pid], max_frag_rank, length_to_frag_count_multiple)
-                break
-            end
-        end
-
-    end
-    prec_to_frag_idx_new[end] = UInt64(detailed_frag_idx)
-    return detailed_frags[1:detailed_frag_idx-1], prec_to_frag_idx_new
-end
 
 """
     getDetailedFrags(
@@ -1193,7 +809,7 @@ end
         max_frag_rank::UInt8,
         min_frag_intensity::AbstractFloat,
         koina_model::SplineCoefficientModel
-    )::Tuple{Vector{SplineDetailedFrag{N, Float32}}, Vector{UInt64}} where {N}
+    )::Tuple{Vector{SplineCompactFrag{N, Float32}}, Vector{UInt64}} where {N}
 
 Extract detailed fragment information for peptide scoring, including spline coefficients.
 
@@ -1269,121 +885,47 @@ function getDetailedFrags(
     min_frag_intensity::AbstractFloat,
     koina_model::SplineCoefficientModel) where {N}
 
-    if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
-        #println("mistake")
-    end
+    # As of §9, every fragment present in the input table is already known to
+    # have passed all per-fragment metadata filters and the per-precursor
+    # rank cap — `filter_fragments!(::SplineCoefficientModel, ::SplineFragFilterCtx)`
+    # in fragment_predict.jl drops anything that wouldn't survive. The filter
+    # knobs (`y_start`, `b_start`, `include_*`, `max_frag_charge`,
+    # `max_frag_rank`, `length_to_frag_count_multiple`, `frag_bounds`,
+    # `min_frag_intensity`) and `precursor_mz`/`prec_len` remain in this
+    # signature for backward compatibility with existing callers but are no
+    # longer consulted here.
+    n_precursors = UInt32(length(prec_to_frag_idx) - 1)
+    n_frags = UInt64(length(frag_mz))
 
-    #Maximum ranked fragment that can be included in the fragment index
-    max_frag_rank = UInt8(min(255, max_frag_rank))
-    #Number of precursors 
-    n_precursors = UInt32(length(precursor_mz))
-    #Keep track of number of fragments to allocate 
-    n_frags = zero(UInt64)
-    #println("counting fragments...")
-    for pid in ProgressBar(range(one(UInt32), n_precursors))
-        prec_mz = precursor_mz[pid] #Filter on precursor mass
-        frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
-        rank = 1
-        #count fragments for the current precursor
-        for frag_idx in range(frag_start_idx, frag_stop_idx)
-            #Filter on fragment properties
-            if !fragFilter(
-                    frag_is_y[frag_idx],
-                    frag_is_b[frag_idx],
-                    frag_is_p[frag_idx],
-                    frag_index[frag_idx],
-                    frag_charge[frag_idx],
-                    frag_isotope[frag_idx],
-                    frag_internal[frag_idx],
-                    frag_immonium[frag_idx],
-                    frag_neutral_diff[frag_idx],
-                    frag_mz[frag_idx],
-                    frag_bounds,
-                    prec_mz,
-                    y_start,
-                    b_start,
-                    include_p,
-                    include_isotope,
-                    include_immonium,
-                    include_internal,
-                    include_neutral_diff,
-                    max_frag_charge)
-                continue
-            end
-            #update counters 
-            n_frags += one(UInt64)
-            rank += 1
-            if filterFrag(rank, prec_len[pid], max_frag_rank, length_to_frag_count_multiple)
-                break
-            end
-        end
-    end
     n_tuple_p = typeof(first(frag_coef))
     n_tuple_size = length(n_tuple_p.parameters)
     n_tuple_type = eltype(n_tuple_p)
-    detailed_frags = Vector{SplineDetailedFrag{n_tuple_size, n_tuple_type}}(
-                                    undef, 
-                                    n_frags)   
+    detailed_frags = Vector{SplineCompactFrag{n_tuple_size, n_tuple_type}}(undef, n_frags)
     prec_to_frag_idx_new = Vector{UInt64}(undef, n_precursors + 1)
     detailed_frag_idx = 1
-    #println("writing fragments...")
+
     for pid in ProgressBar(range(one(UInt32), n_precursors))
-        prec_mz = precursor_mz[pid]
-        #Index of the first fragment for the precursor 
         prec_to_frag_idx_new[pid] = UInt64(detailed_frag_idx)
         frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
         rank = 1
         for frag_idx in range(frag_start_idx, frag_stop_idx)
-            if !fragFilter(
-                    frag_is_y[frag_idx],
-                    frag_is_b[frag_idx],
-                    frag_is_p[frag_idx],
-                    frag_index[frag_idx],
-                    frag_charge[frag_idx],
-                    frag_isotope[frag_idx],
-                    frag_internal[frag_idx],
-                    frag_immonium[frag_idx],
-                    frag_neutral_diff[frag_idx],
-                    frag_mz[frag_idx],
-                    frag_bounds,
-                    prec_mz,
-                    y_start,
-                    b_start,
-                    include_p,
-                    include_isotope,
-                    include_immonium,
-                    include_internal,
-                    include_neutral_diff,
-                    max_frag_charge)
-                continue
-            end
-            is_y, is_internal, is_immonium = frag_is_y[frag_idx], frag_internal[frag_idx], frag_immonium[frag_idx]
-            is_b, is_p = frag_is_b[frag_idx], frag_is_p[frag_idx]
-            detailed_frags[detailed_frag_idx] = SplineDetailedFrag(
+            detailed_frags[detailed_frag_idx] = SplineCompactFrag(
                 UInt32(pid),
-
                 frag_mz[frag_idx],
                 frag_coef[frag_idx],
-
-                frag_ion_type[frag_idx],
-                is_y,
-                is_b,
-                is_p,
-                frag_isotope[frag_idx]>0,
-
+                frag_is_y[frag_idx],
+                frag_is_b[frag_idx],
+                frag_is_p[frag_idx],
+                frag_isotope[frag_idx] > 0,
                 frag_charge[frag_idx],
                 frag_index[frag_idx],
                 precursor_charge[pid],
                 UInt8(rank),
-                frag_sulfur_count[frag_idx]
+                frag_sulfur_count[frag_idx],
             )
             detailed_frag_idx += 1
             rank += 1
-            if filterFrag(rank, prec_len[pid], max_frag_rank, length_to_frag_count_multiple)
-                break
-            end
         end
-
     end
     prec_to_frag_idx_new[end] = UInt64(detailed_frag_idx)
     return detailed_frags[1:detailed_frag_idx-1], prec_to_frag_idx_new

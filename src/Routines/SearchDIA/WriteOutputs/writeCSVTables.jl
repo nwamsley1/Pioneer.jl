@@ -154,8 +154,7 @@ function writePrecursorCSV(
     long_precursors_path::String,
     file_names::Vector{String},
     normalized::Bool,
-    proteins::LibraryProteins,
-    match_between_runs::Bool;
+    proteins::LibraryProteins;
     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
@@ -210,10 +209,6 @@ function writePrecursorCSV(
     if isfile(wide_precursors_arrow_path)
         safeRm(wide_precursors_arrow_path, nothing)
     end
-    # Get conditional q-value column names based on MBR mode
-    global_qval_col = match_between_runs ? :MBR_boosted_global_qval : :global_qval
-    qval_col = match_between_runs ? :MBR_boosted_qval : :qval
-
     wide_columns = enabled_output_columns(output_schema_policy, :precursors, String[
         "species",
         "gene_names",
@@ -225,7 +220,7 @@ function writePrecursorCSV(
         "isotopic_mods",
         "prec_mz",
         "global_score",
-        String(global_qval_col),  # Conditional: MBR_boosted_global_qval or global_qval
+        "global_qval",
         "use_for_protein_quant",
         "precursor_idx",
         "target",
@@ -252,7 +247,6 @@ function writePrecursorCSV(
         rename!(precursors_long, rename_pairs)
     end
 
-    # order columns (tolerant to optional columns such as MBR outputs)
     requested_cols = enabled_output_columns(output_schema_policy, :precursors, Symbol[
         :file_name,
         :species,
@@ -267,11 +261,9 @@ function writePrecursorCSV(
         :missed_cleavage,
         :global_score,
         :score,
-        global_qval_col,  # Conditional: MBR_boosted_global_qval or global_qval
-        qval_col,         # Conditional: MBR_boosted_qval or qval
+        :global_qval,
+        :qval,
         :pep,
-        :MBR_candidate,
-        :MBR_transfer_q_value,
         :peak_area,
         :peak_area_normalized,
         :points_integrated,
@@ -336,7 +328,7 @@ function writePrecursorCSV(
     return wide_precursors_arrow_path
 end
 """
-    writePrecursorCSV_chunked(chunk_refs, out_dir, file_names, normalized, proteins, match_between_runs; ...)
+    writePrecursorCSV_chunked(chunk_refs, out_dir, file_names, normalized, proteins; ...)
 
 Chunked version of writePrecursorCSV that processes merge chunks one at a time,
 keeping memory bounded to ~1 chunk (~1 GB) instead of loading the full precursors table.
@@ -347,8 +339,7 @@ function writePrecursorCSV_chunked(
     out_dir::String,
     file_names::Vector{String},
     normalized::Bool,
-    proteins::LibraryProteins,
-    match_between_runs::Bool;
+    proteins::LibraryProteins;
     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
@@ -401,10 +392,6 @@ function writePrecursorCSV_chunked(
     wide_precursors_arrow_path = joinpath(out_dir, "precursors_wide.arrow")
     isfile(wide_precursors_arrow_path) && safeRm(wide_precursors_arrow_path, nothing)
 
-    # Column configuration
-    global_qval_col = match_between_runs ? :MBR_boosted_global_qval : :global_qval
-    qval_col = match_between_runs ? :MBR_boosted_qval : :qval
-
     wide_columns = enabled_output_columns(output_schema_policy, :precursors, String[
         "species",
         "gene_names",
@@ -416,7 +403,7 @@ function writePrecursorCSV_chunked(
         "isotopic_mods",
         "prec_mz",
         "global_score",
-        String(global_qval_col),
+        "global_qval",
         "use_for_protein_quant",
         "precursor_idx",
         "target",
@@ -439,11 +426,9 @@ function writePrecursorCSV_chunked(
         :missed_cleavage,
         :global_score,
         :score,
-        global_qval_col,
-        qval_col,
+        :global_qval,
+        :qval,
         :pep,
-        :MBR_candidate,
-        :MBR_transfer_q_value,
         :peak_area,
         :peak_area_normalized,
         :points_integrated,
@@ -466,8 +451,10 @@ function writePrecursorCSV_chunked(
         open(wide_precursors_path, "w") do io2
             open(Arrow.Writer, wide_precursors_arrow_path; file=true) do arrow_writer
                 headers_written = false
-                pbar = ProgressBar(total=n_chunks)
-                set_description(pbar, "Writing precursor CSV chunks:")
+                # Skip the progress bar when there's only one chunk —
+                # ProgressBars displays "Inf:Inf, InfGs/it" on n=1 (rate divide-by-zero).
+                pbar = n_chunks > 1 ? ProgressBar(total=n_chunks) : nothing
+                pbar !== nothing && set_description(pbar, "Writing precursor CSV chunks:")
 
                 for (ci, chunk_ref) in enumerate(chunk_refs)
                     precursors_long = DataFrame(Arrow.Table(file_path(chunk_ref)))
@@ -535,7 +522,7 @@ function writePrecursorCSV_chunked(
                     end
 
                     precursors_long = nothing  # Free chunk memory
-                    update(pbar)
+                    pbar !== nothing && update(pbar)
                 end
             end
         end

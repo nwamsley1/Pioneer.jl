@@ -29,18 +29,6 @@ the sort state of files in the FileOperations system.
 Sort State Management
 ==========================================================#
 
-@inline function _sort_value_lt_missing_last(a, b, reverse::Bool)
-    if ismissing(a)
-        return false
-    elseif ismissing(b)
-        return true
-    elseif reverse
-        return isless(b, a)
-    else
-        return isless(a, b)
-    end
-end
-
 """
     mark_sorted!(ref::FileReference, keys::Symbol...)
 
@@ -97,3 +85,4 @@ function Base.sort!(ref::FileReference, cols::Vector{Symbol};
     
     return ref
 end
+

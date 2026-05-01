@@ -72,7 +72,6 @@ end
         UInt8(2), #precursor charge state
         400.25f0, #minimum quadrupole m/z
         400.75f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
     @test (0, 1) == getPrecursorIsotopeSet(
@@ -80,7 +79,6 @@ end
         UInt8(2), #precursor charge state
         399.75f0, #minimum quadrupole m/z
         400.75f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
     @test (0, 0) == getPrecursorIsotopeSet(
@@ -88,7 +86,6 @@ end
         UInt8(2), #precursor charge state
         399.75f0, #minimum quadrupole m/z
         400.25f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
     @test (0, 2) == getPrecursorIsotopeSet(
@@ -96,7 +93,6 @@ end
         UInt8(3), #precursor charge state
         399.75f0, #minimum quadrupole m/z
         400.75f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
     @test (3, 3) == getPrecursorIsotopeSet(
@@ -104,7 +100,6 @@ end
         UInt8(3), #precursor charge state
         400.75f0, #minimum quadrupole m/z
         401.25f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
     #No isotopes in the range given 
@@ -113,7 +108,6 @@ end
         UInt8(3), #precursor charge state
         400.75f0, #minimum quadrupole m/z
         400.80f0, #maximum quadrupole m/z
-        max_iso = 5
     )
 
 end

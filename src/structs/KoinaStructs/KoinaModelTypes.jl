@@ -16,15 +16,8 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 abstract type KoinaModelType end
-struct InstrumentSpecificModel <: KoinaModelType
-    name::String 
-end
 
-struct InstrumentAgnosticModel <: KoinaModelType
-    name::String
-end
-
-struct SplineCoefficientModel <: KoinaModelType 
+struct SplineCoefficientModel <: KoinaModelType
     name::String
 end
 

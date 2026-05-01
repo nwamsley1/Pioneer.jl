@@ -24,7 +24,7 @@ This module provides functions for fitting RT conversion models using various me
 - Adaptive knot selection based on data size
 - Outlier removal via MAD threshold
 
-These utilities are shared across ParameterTuningSearch, FirstPassSearch, and potentially
+These utilities are shared across ParameterTuningSearch, MainSearch, and potentially
 other search methods to ensure consistent RT alignment methodology.
 """
 

@@ -5,7 +5,8 @@ using Random
 
 # Import only what we need from Pioneer (avoid Pioneer.func calls)
 using Pioneer: BasicMassSpecData,
-               getScanHeader, getScanNumber, getRetentionTime, getLowMz, getHighMz, getTIC, getMsOrder,
+               getScanHeader, getScanNumber, getBasePeakMz, getBasePeakIntensity,
+               getRetentionTime, getLowMz, getHighMz, getTIC, getMsOrder,
                getMzArray, getIntensityArray, getCenterMz, getIsolationWidthMz,
                getCenterMzs, getIsolationWidthMzs, getRetentionTimes, getTICs, getMsOrders,
                FilteredMassSpecData, IndexedMassSpecData, create_scan_mapping,
@@ -21,6 +22,8 @@ function write_basic_ms_arrow(path::String; n::Int=5)
     int_arrays = Vector{Vector{Union{Missing,Float32}}}(undef, n)
     headers = ["scan_$(i)" for i in 1:n]
     scan_nums = Int32.(1:n)
+    base_mz = Float32.(100 .+ collect(1:n))
+    base_int = Float32.(1000 .+ 10 .* collect(1:n))
     rt = Float32.(range(10, length=n, step=0.5))
     low_mz = Float32.(fill(100.0, n))
     high_mz = Float32.(fill(1000.0, n))
@@ -40,6 +43,8 @@ function write_basic_ms_arrow(path::String; n::Int=5)
         intensity_array = int_arrays,
         scanHeader = headers,
         scanNumber = scan_nums,
+        basePeakMz = base_mz,
+        basePeakIntensity = base_int,
         retentionTime = rt,
         lowMz = low_mz,
         highMz = high_mz,
@@ -66,6 +71,8 @@ end
     # Spot-check getters (Basic)
     @test getScanHeader(original, 1) == "scan_1"
     @test getScanNumber(original, 2) == Int32(2)
+    @test getBasePeakMz(original, 3) ≈ Float32(103)
+    @test getBasePeakIntensity(original, 4) ≈ Float32(1040)
     @test getRetentionTime(original, 5) ≈ Float32(12.0)
     @test getLowMz(original, 1) ≈ Float32(100.0)
     @test getHighMz(original, 1) ≈ Float32(1000.0)
@@ -153,6 +160,8 @@ end
         orig_idx = getOriginalScanIndex(indexed, i)
         @test getScanHeader(indexed, i) == getScanHeader(original, orig_idx)
         @test getScanNumber(indexed, i) == getScanNumber(original, orig_idx)
+        @test getBasePeakMz(indexed, i) ≈ getBasePeakMz(original, orig_idx)
+        @test getBasePeakIntensity(indexed, i) ≈ getBasePeakIntensity(original, orig_idx)
         @test getRetentionTime(indexed, i) ≈ getRetentionTime(original, orig_idx)
         @test getLowMz(indexed, i) ≈ getLowMz(original, orig_idx)
         @test getHighMz(indexed, i) ≈ getHighMz(original, orig_idx)
