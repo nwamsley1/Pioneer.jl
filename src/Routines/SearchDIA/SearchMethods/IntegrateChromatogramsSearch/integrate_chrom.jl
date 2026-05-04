@@ -131,7 +131,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         @inbounds for i in range(1, m)
             frac = fraction_col[i]
             if frac >= min_fraction_transmitted
-                b[i + n_pad] = intensity_col[i] / frac
+                b[i + n_pad] = intensity_col[i]
                 max_isolation = max(max_isolation, frac)
             else
                 b[i + n_pad] = 0.0f0

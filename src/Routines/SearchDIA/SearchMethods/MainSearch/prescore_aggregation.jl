@@ -91,9 +91,8 @@ end
 
 # Hardcoded prescore q-value threshold. The active filter cutoff between
 # MainSearch's per-file LightGBM and ScoringSearch's experiment-wide LightGBM.
-# Tuned via per-file ID sweep (see commit 5a24ccdf): Astral peaks at 1.5%,
-# Eclipse near-tied with 1%; 0.015 is the cross-dataset compromise.
-const PRESCORE_QVALUE_THRESHOLD = 0.015f0
+# Temporarily relaxed to 10% for quantitation evaluation on MTAC standard.
+const PRESCORE_QVALUE_THRESHOLD = 0.10f0
 
 # Floor for the per-file logit clamp inside _logodds_combine. Caps the
 # negative contribution of a single bad file (worst-case single-file logit
