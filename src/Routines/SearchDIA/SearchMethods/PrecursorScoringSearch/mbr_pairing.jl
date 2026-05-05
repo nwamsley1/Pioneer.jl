@@ -42,11 +42,13 @@ function regenerate_pair_ids!(
     # ── 1. Build precursor-level table from PSMs (one row per unique pid) ──
     prec_idx_col   = psms[!, :precursor_idx]::Vector{UInt32}
     target_col_psm = psms[!, :target]::Vector{Bool}
+    cv_fold_psm    = psms[!, :cv_fold]
     seen = Set{UInt32}()
     plist_pids   = UInt32[]
     plist_target = Bool[]
     plist_mz     = Float32[]
     plist_irt    = Float32[]
+    plist_fold   = UInt8[]  # cv_fold per precursor (constant across PSMs of same pid)
 
     prec_mz_full  = getMz(precursors)
     prec_irt_full = getIrt(precursors)
@@ -61,6 +63,7 @@ function regenerate_pair_ids!(
         push!(plist_target, target_col_psm[i])
         push!(plist_mz, prec_mz_full[pid])
         push!(plist_irt, prec_irt_full[pid])
+        push!(plist_fold, UInt8(cv_fold_psm[i]))
     end
     n_precs = length(plist_pids)
 
@@ -90,9 +93,13 @@ function regenerate_pair_ids!(
     bin_mz  = _bin_assign(plist_mz)
     bin_irt = _bin_assign(plist_irt)
 
+    # Stratum key: cv_fold × prec_mz_bin × irt_bin. Including cv_fold ensures
+    # T↔D pairs only form within the same fold, preventing cross-fold donor
+    # leakage downstream (compute_mbr_features! picks paired-partner PSMs as
+    # donors, so partners must share a fold to keep MBR features CV-clean).
     stratum = Vector{Int}(undef, n_precs)
     @inbounds for i in 1:n_precs
-        stratum[i] = 10 * Int(bin_mz[i]) + Int(bin_irt[i])
+        stratum[i] = 1000 * Int(plist_fold[i]) + 10 * Int(bin_mz[i]) + Int(bin_irt[i])
     end
 
     strata_t = Dict{Int, Vector{Int}}()
