@@ -55,7 +55,8 @@ function score_precursor_isotope_traces(
     ::Int64,                       # max_psms_in_memory (unused)
     ::Float32 = 0.01f0,            # q_value_threshold (unused)
     ms1_scoring::Bool = true,
-    ::Bool = false,                # force_oom (unused)
+    ::Bool = false;                # force_oom (unused)
+    match_between_runs::Bool = true,
 )
     # 1. Load PSMs into memory
     best_psms = load_psms_for_lightgbm(second_pass_folder)
@@ -89,44 +90,50 @@ function score_precursor_isotope_traces(
     #
     # This eliminates the Path-B leak (MBR features inflating non-candidate
     # scores in the qval distribution).
-    all_scores_p1, _, info_p1 = train_psm_classifier_with_fallback(
+    all_scores_p1, last_classifier_p1, info_p1 = train_psm_classifier_with_fallback(
         best_psms; features=features
     )
     best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores_p1, 1f-6, 1f0 - 1f-4))
-    @user_info "MBR Phase 2 — non-MBR pass trained on $(length(info_p1.available_features)) features"
+    @user_info "Pass 1 (non-MBR) trained on $(length(info_p1.available_features)) features"
 
-    # Compute the 4 MBR features + :MBR_is_best_decoy from cross-run donors.
-    compute_mbr_features!(best_psms; score_col=:trace_prob_prepass)
+    if match_between_runs
+        # Compute the MBR features + :MBR_is_best_decoy from cross-run donors.
+        compute_mbr_features!(best_psms; score_col=:trace_prob_prepass)
 
-    # Second pass: full feature set incl. MBR features. The output goes to
-    # :trace_prob_mbr, NOT :trace_prob — only the FTR controller consumes it.
-    all_scores_mbr, last_classifier, info = train_psm_classifier_with_fallback(
-        best_psms; features=features
-    )
-    best_psms[!, :trace_prob_mbr] = Float32.(clamp.(all_scores_mbr, 1f-6, 1f0 - 1f-4))
-    @user_info "MBR Phase 2 — MBR-boosted pass trained on $(length(info.available_features)) features (used by FTR only)"
+        # Second pass: full feature set incl. MBR features. Output → :trace_prob_mbr
+        # (used ONLY by the FTR controller, NOT by the qval pipeline).
+        all_scores_mbr, last_classifier, info = train_psm_classifier_with_fallback(
+            best_psms; features=features
+        )
+        best_psms[!, :trace_prob_mbr] = Float32.(clamp.(all_scores_mbr, 1f-6, 1f0 - 1f-4))
+        @user_info "Pass 2 (MBR-boosted) trained on $(length(info.available_features)) features (used by FTR only)"
 
-    # Feature importances of the MBR-boosted classifier (informational).
-    if last_classifier !== nothing
-        lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
-        imp = importance(lgbm_model)
-        if imp !== nothing
-            sorted_imp = sort(imp, by = x -> -x[2])
-            @user_info "PrecursorScoringSearch (MBR-boosted classifier, used only by FTR) importances (gain):"
-            for (fname, gain) in sorted_imp
-                @user_info "  $(rpad(string(fname), 40)) $(round(gain, digits=2))"
+        if last_classifier !== nothing
+            lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
+            imp = importance(lgbm_model)
+            if imp !== nothing
+                sorted_imp = sort(imp, by = x -> -x[2])
+                @user_info "MBR-boosted classifier importances (gain):"
+                for (fname, gain) in sorted_imp
+                    @user_info "  $(rpad(string(fname), 40)) $(round(gain, digits=2))"
+                end
             end
         end
+    else
+        @user_info "match_between_runs=false: skipping MBR feature computation, second pass, and FTR controller"
     end
 
-    # 7. :trace_prob = the NON-MBR pass-1 score. This drives the qval pipeline
-    # downstream so non-candidate rows can never be score-inflated by MBR.
+    # :trace_prob = NON-MBR pass-1 score. Drives the qval pipeline downstream.
     best_psms[!, :trace_prob] = best_psms[!, :trace_prob_prepass]
 
-    # MBR Phase 4 (Phase 5b reframing) — FTR control over the candidate cohort.
-    # Sets :mbr_recovered = true for candidates whose MBR-boosted score
-    # exceeds τ and aren't bad-transfer-labeled. Does NOT mutate :trace_prob.
-    apply_mbr_filter!(best_psms; alpha=0.01f0, q_thresh=0.01f0)
+    if match_between_runs
+        # FTR control over the candidate cohort. Sets :mbr_recovered = true for
+        # candidates whose FTR-model score exceeds τ and aren't bad-transfer-labeled.
+        apply_mbr_filter!(best_psms; alpha=0.01f0, q_thresh=0.01f0)
+    else
+        # No MBR: ensure downstream code finds the column but never bypasses qval.
+        best_psms[!, :mbr_recovered] = falses(nrow(best_psms))
+    end
 
     # 8. Distribute scored PSMs back to the per-file Arrow files
     write_scored_psms_to_files!(best_psms, file_paths)

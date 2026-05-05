@@ -73,9 +73,16 @@ struct PrecursorScoringSearchParameters <: SearchParameters
     # the LightGBM feature set, which kept the keep-as-true default.
     ms1_scoring::Bool
 
+    # When false, skip MBR feature computation, the MBR-boosted second pass,
+    # the FTR controller, and the qval bypass. Driven by global.match_between_runs.
+    match_between_runs::Bool
+
     function PrecursorScoringSearchParameters(params::PioneerParameters)
         ml_params = params.optimization.machine_learning
         global_params = params.global_settings
+
+        mbr = hasproperty(global_params, :match_between_runs) ?
+                Bool(global_params.match_between_runs) : true
 
         new(
             Float64(ml_params.max_psm_memory_mb),
@@ -83,6 +90,7 @@ struct PrecursorScoringSearchParameters <: SearchParameters
             _resolve_q_value_threshold(global_params),
 
             true,                                                 # ms1_scoring (hardcoded)
+            mbr,
         )
     end
 end
@@ -203,7 +211,8 @@ function summarize_results!(
             max_psms,
             params.q_value_threshold,
             params.ms1_scoring,
-            FORCE_OOM
+            FORCE_OOM;
+            match_between_runs = params.match_between_runs,
         )
     end
     #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
