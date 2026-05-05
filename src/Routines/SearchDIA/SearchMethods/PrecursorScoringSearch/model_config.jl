@@ -89,6 +89,12 @@ const ADVANCED_FEATURE_SET = [
     :max_weight,
     :fitted_hellinger,
     :n_scans,
+    # MBR Phase 2 features (auto-skipped on first pass when columns are absent;
+    # used in the second pass after compute_mbr_features! populates them).
+    :MBR_max_pair_prob,
+    :MBR_log2_weight_ratio,
+    :MBR_log2_explained_ratio,
+    :MBR_is_missing,
 ]
 
 """

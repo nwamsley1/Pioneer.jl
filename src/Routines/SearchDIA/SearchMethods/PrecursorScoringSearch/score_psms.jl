@@ -78,28 +78,39 @@ function score_precursor_isotope_traces(
                                        for pid in best_psms[!, :precursor_idx]]
     best_psms[!, :decoy] = best_psms[!, :target] .== false
 
-    # 5. Train via the shared helper (same hyperparameters + low-data probit
-    # fallback as MainSearch's per-file classifier).
+    # ── MBR Phase 2 — first pass + donor features + second pass ──
+    # Pass 1: train without MBR features (auto-skipped since columns are absent
+    # at this point) → store as :trace_prob_prepass.
+    all_scores_p1, _, info_p1 = train_psm_classifier_with_fallback(
+        best_psms; features=features
+    )
+    best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores_p1, 1f-6, 1f0 - 1f-4))
+    @user_info "MBR Phase 2 — first-pass trained on $(length(info_p1.available_features)) features"
+
+    # Compute the 4 MBR features + :MBR_is_best_decoy from cross-run donors.
+    compute_mbr_features!(best_psms; score_col=:trace_prob_prepass)
+
+    # Pass 2: full feature set incl. MBR features (now present).
     all_scores, last_classifier, info = train_psm_classifier_with_fallback(
         best_psms; features=features
     )
+    @user_info "MBR Phase 2 — second-pass trained on $(length(info.available_features)) features"
 
-    # 6. Log feature importances (LGBM only — probit doesn't expose them)
-    # Gated at debug_l2 — `importance()` allocates a Dict per call.
-    if last_classifier !== nothing && DEBUG_CONSOLE_LEVEL[] >= 2
+    # 6. Log feature importances — always so MBR features are visible in the log.
+    if last_classifier !== nothing
         lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            @debug_l2 "ScoringSearch LightGBM Feature Importances (gain):"
+            @user_info "PrecursorScoringSearch (post-MBR) LightGBM feature importances (gain):"
             for (fname, gain) in sorted_imp
-                @debug_l2 "  $(rpad(fname, 40)) $(round(gain, digits=2))"
+                @user_info "  $(rpad(string(fname), 40)) $(round(gain, digits=2))"
             end
         end
     end
 
     # 7. Write trace_prob to the DataFrame (clamped away from 0/1 for downstream
-    # log-odds aggregation stability).
+    # log-odds aggregation stability). This is the MBR-boosted score.
     best_psms[!, :trace_prob] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
 
     # 8. Distribute scored PSMs back to the per-file Arrow files
