@@ -79,43 +79,53 @@ function score_precursor_isotope_traces(
     best_psms[!, :decoy] = best_psms[!, :target] .== false
 
     # ── MBR Phase 2 — first pass + donor features + second pass ──
-    # Pass 1: train without MBR features (auto-skipped since columns are absent
-    # at this point) → store as :trace_prob_prepass.
+    # Architecture (Phase 5b refactor):
+    #   * :trace_prob (downstream qval pipeline) = NON-MBR score (pass 1 / iter 2 analog)
+    #   * :trace_prob_mbr = MBR-boosted score (pass 2) — used ONLY by FTR
+    #     controller to evaluate transfer-candidate recovery.
+    #   * Recovered candidates get :mbr_recovered = true and bypass the
+    #     downstream qval gate, but their :trace_prob (non-MBR) remains
+    #     untouched for downstream weighting / aggregation.
+    #
+    # This eliminates the Path-B leak (MBR features inflating non-candidate
+    # scores in the qval distribution).
     all_scores_p1, _, info_p1 = train_psm_classifier_with_fallback(
         best_psms; features=features
     )
     best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores_p1, 1f-6, 1f0 - 1f-4))
-    @user_info "MBR Phase 2 — first-pass trained on $(length(info_p1.available_features)) features"
+    @user_info "MBR Phase 2 — non-MBR pass trained on $(length(info_p1.available_features)) features"
 
     # Compute the 4 MBR features + :MBR_is_best_decoy from cross-run donors.
     compute_mbr_features!(best_psms; score_col=:trace_prob_prepass)
 
-    # Pass 2: full feature set incl. MBR features (now present).
-    all_scores, last_classifier, info = train_psm_classifier_with_fallback(
+    # Second pass: full feature set incl. MBR features. The output goes to
+    # :trace_prob_mbr, NOT :trace_prob — only the FTR controller consumes it.
+    all_scores_mbr, last_classifier, info = train_psm_classifier_with_fallback(
         best_psms; features=features
     )
-    @user_info "MBR Phase 2 — second-pass trained on $(length(info.available_features)) features"
+    best_psms[!, :trace_prob_mbr] = Float32.(clamp.(all_scores_mbr, 1f-6, 1f0 - 1f-4))
+    @user_info "MBR Phase 2 — MBR-boosted pass trained on $(length(info.available_features)) features (used by FTR only)"
 
-    # 6. Log feature importances — always so MBR features are visible in the log.
+    # Feature importances of the MBR-boosted classifier (informational).
     if last_classifier !== nothing
         lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            @user_info "PrecursorScoringSearch (post-MBR) LightGBM feature importances (gain):"
+            @user_info "PrecursorScoringSearch (MBR-boosted classifier, used only by FTR) importances (gain):"
             for (fname, gain) in sorted_imp
                 @user_info "  $(rpad(string(fname), 40)) $(round(gain, digits=2))"
             end
         end
     end
 
-    # 7. Write trace_prob to the DataFrame (clamped away from 0/1 for downstream
-    # log-odds aggregation stability). This is the MBR-boosted score.
-    best_psms[!, :trace_prob] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
+    # 7. :trace_prob = the NON-MBR pass-1 score. This drives the qval pipeline
+    # downstream so non-candidate rows can never be score-inflated by MBR.
+    best_psms[!, :trace_prob] = best_psms[!, :trace_prob_prepass]
 
-    # MBR Phase 4 — FTR control: zero out :trace_prob for transfer candidates
-    # that fail either the FTR threshold or the bad-transfer label. Must run
-    # before aggregate_per_file! so the zeros propagate into prec_prob.
+    # MBR Phase 4 (Phase 5b reframing) — FTR control over the candidate cohort.
+    # Sets :mbr_recovered = true for candidates whose MBR-boosted score
+    # exceeds τ and aren't bad-transfer-labeled. Does NOT mutate :trace_prob.
     apply_mbr_filter!(best_psms; alpha=0.01f0, q_thresh=0.01f0)
 
     # 8. Distribute scored PSMs back to the per-file Arrow files
