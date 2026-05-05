@@ -259,6 +259,7 @@ function importScripts()
         [
             "utils.jl",                        # get_qvalue_spline + other helpers
             "model_config.jl",                 # Model configuration
+            "mbr_pairing.jl",                  # MBR Phase 1: 1:1 pair regeneration with cloning
             "score_psms.jl",                   # PSM scoring functions
             "scoring_interface.jl",            # Interface functions
             "build_rt_indices.jl",             # RT index construction for IntegrateChromatogramsSearch

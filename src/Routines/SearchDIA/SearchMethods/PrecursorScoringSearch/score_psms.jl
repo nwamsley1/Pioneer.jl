@@ -62,6 +62,12 @@ function score_precursor_isotope_traces(
     n_psms = nrow(best_psms)
     @debug_l1 "PSM scoring: $n_psms PSMs loaded for experiment-wide LightGBM"
 
+    # 1b. MBR Phase 1: regenerate 1:1 target↔decoy :pair_id (see mbr_pairing.jl).
+    # The library's pair_id is many-to-one; FTR control downstream needs the
+    # per-pair_id 1:1 invariant. No row cloning — leftover precursors get
+    # standalone pair_ids.
+    regenerate_pair_ids!(best_psms, precursors)
+
     # 2. Build the feature list (the _qbin variants in ADVANCED_FEATURE_SET are
     # commented out, so we don't need to compute quantile-binned features here).
     features = copy(ADVANCED_FEATURE_SET)
@@ -73,7 +79,7 @@ function score_precursor_isotope_traces(
     best_psms[!, :decoy] = best_psms[!, :target] .== false
 
     # 5. Train via the shared helper (same hyperparameters + low-data probit
-    # fallback as MainSearch's per-file classifier)
+    # fallback as MainSearch's per-file classifier).
     all_scores, last_classifier, info = train_psm_classifier_with_fallback(
         best_psms; features=features
     )
