@@ -94,6 +94,7 @@ const ADVANCED_FEATURE_SET = [
     :MBR_max_pair_prob,
     :MBR_log2_weight_ratio,
     :MBR_log2_explained_ratio,
+    :MBR_best_irt_diff,
     :MBR_is_missing,
 ]
 

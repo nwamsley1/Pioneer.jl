@@ -28,10 +28,11 @@ struct _MBRDonorEntry
     trace_prob::Float32
     weight::Float32
     log2_intensity_explained::Float32
+    irt_residual::Float32  # irt_pred − irt_obs of the donor row
     ms_file_idx::UInt32
     is_decoy::Bool
 end
-const _MBR_DONOR_SENTINEL = _MBRDonorEntry(typemin(Float32), 0f0, 0f0, UInt32(0), false)
+const _MBR_DONOR_SENTINEL = _MBRDonorEntry(typemin(Float32), 0f0, 0f0, 0f0, UInt32(0), false)
 
 """
     compute_mbr_features!(psms; score_col=:trace_prob_prepass) -> NamedTuple
@@ -59,6 +60,12 @@ function compute_mbr_features!(
     log2ie_v    = Float32.(psms[!, :log2_intensity_explained])
     file_v      = UInt32.(psms[!, :ms_file_idx])
     decoy_v     = Bool.(psms[!, :decoy])
+    has_irt     = hasproperty(psms, :irt_pred) && hasproperty(psms, :irt_obs)
+    irt_res_v   = if has_irt
+        Float32.(psms[!, :irt_pred]) .- Float32.(psms[!, :irt_obs])
+    else
+        zeros(Float32, nrow(psms))
+    end
     n = nrow(psms)
 
     # ── Build top-2 donor entries per pair_id ──
@@ -66,7 +73,7 @@ function compute_mbr_features!(
     sizehint!(top2, n)
     @inbounds for i in 1:n
         pid = pair_id_col[i]
-        e = _MBRDonorEntry(score_v[i], weight_v[i], log2ie_v[i], file_v[i], decoy_v[i])
+        e = _MBRDonorEntry(score_v[i], weight_v[i], log2ie_v[i], irt_res_v[i], file_v[i], decoy_v[i])
         cur = get(top2, pid, (_MBR_DONOR_SENTINEL, _MBR_DONOR_SENTINEL))
         if e.trace_prob > cur[1].trace_prob
             top2[pid] = (e, cur[1])
@@ -79,6 +86,7 @@ function compute_mbr_features!(
     out_max_pair_prob = fill(-1f0, n)
     out_log2_w_ratio  = fill(-1f0, n)
     out_log2_e_ratio  = fill(-1f0, n)
+    out_best_irt_diff = fill(-1f0, n)
     out_is_missing    = trues(n)
     out_is_best_decoy = falses(n)
 
@@ -103,6 +111,9 @@ function compute_mbr_features!(
             out_log2_w_ratio[i] = log2(weight_v[i] / donor.weight)
         end
         out_log2_e_ratio[i]    = log2ie_v[i] - donor.log2_intensity_explained
+        if has_irt
+            out_best_irt_diff[i] = abs(irt_res_v[i] - donor.irt_residual)
+        end
         out_is_missing[i]      = false
         out_is_best_decoy[i]   = donor.is_decoy
     end
@@ -110,6 +121,7 @@ function compute_mbr_features!(
     psms[!, :MBR_max_pair_prob]      = out_max_pair_prob
     psms[!, :MBR_log2_weight_ratio]  = out_log2_w_ratio
     psms[!, :MBR_log2_explained_ratio] = out_log2_e_ratio
+    psms[!, :MBR_best_irt_diff]      = out_best_irt_diff
     psms[!, :MBR_is_missing]         = out_is_missing
     psms[!, :MBR_is_best_decoy]      = out_is_best_decoy
 
