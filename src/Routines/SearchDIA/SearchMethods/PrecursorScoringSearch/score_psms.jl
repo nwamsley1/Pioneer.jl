@@ -113,6 +113,11 @@ function score_precursor_isotope_traces(
     # log-odds aggregation stability). This is the MBR-boosted score.
     best_psms[!, :trace_prob] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
 
+    # MBR Phase 4 — FTR control: zero out :trace_prob for transfer candidates
+    # that fail either the FTR threshold or the bad-transfer label. Must run
+    # before aggregate_per_file! so the zeros propagate into prec_prob.
+    apply_mbr_filter!(best_psms; alpha=0.01f0, q_thresh=0.01f0)
+
     # 8. Distribute scored PSMs back to the per-file Arrow files
     write_scored_psms_to_files!(best_psms, file_paths)
 
