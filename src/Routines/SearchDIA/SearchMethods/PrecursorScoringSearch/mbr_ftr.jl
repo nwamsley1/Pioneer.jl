@@ -210,8 +210,12 @@ function apply_mbr_filter!(
         Float32(Inf)
     end
 
-    # ── 7. Recovery: candidate AND ftr_score ≥ τ AND NOT is_bad_transfer ──
-    recovered = candidate_mask .& (ftr_score .>= τ) .& (.!is_bad_transfer)
+    # ── 7. Recovery (Phase 8c): candidate AND ftr_score ≥ τ.
+    # No post-hoc .!is_bad_transfer hard-exclusion — the FTR α budget is the
+    # sole gate. Among recovered, the empirical bad fraction is bounded by α
+    # by construction of get_ftr_threshold. Lets the FTR LGBM (trained with
+    # D←D as bad in Phase 8b) be the sole arbiter of which transfers to keep.
+    recovered = candidate_mask .& (ftr_score .>= τ)
     n_recovered = count(recovered)
     rec_counts = _transfer_class_counts(recovered, target_col, mbr_best_decoy)
 
