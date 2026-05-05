@@ -123,16 +123,36 @@ function score_precursor_isotope_traces(
         @user_info "match_between_runs=false: skipping MBR feature computation, second pass, and FTR controller"
     end
 
-    # :trace_prob = NON-MBR pass-1 score. Drives the qval pipeline downstream.
-    best_psms[!, :trace_prob] = best_psms[!, :trace_prob_prepass]
-
     if match_between_runs
         # FTR control over the candidate cohort. Sets :mbr_recovered = true for
         # candidates whose FTR-model score exceeds τ and aren't bad-transfer-labeled.
         apply_mbr_filter!(best_psms; alpha=0.01f0, q_thresh=0.01f0)
     else
-        # No MBR: ensure downstream code finds the column but never bypasses qval.
         best_psms[!, :mbr_recovered] = falses(nrow(best_psms))
+    end
+
+    # Phase 7 — re-rank then recalibrate.
+    # :trace_prob is a hybrid score: prepass for non-recovered rows, MBR-boosted
+    # for recovered rows (both T←T targets and D←D decoys, since recovery is
+    # symmetric across is_bad_transfer-excluded candidates). The qval spline is
+    # rebuilt downstream on this combined score so target/decoy competition at
+    # the boosted-score level is honest, eliminating the qval-bypass hack and
+    # the EFDR-vs-decoy-FDR spike it caused.
+    if match_between_runs
+        combined = Float32.(best_psms[!, :trace_prob_prepass])
+        rec      = best_psms[!, :mbr_recovered]
+        mbr_s    = Float32.(best_psms[!, :trace_prob_mbr])
+        n_rec_targets = 0; n_rec_decoys = 0
+        @inbounds for i in eachindex(combined)
+            if rec[i]
+                combined[i] = mbr_s[i]
+                best_psms[i, :target] ? (n_rec_targets += 1) : (n_rec_decoys += 1)
+            end
+        end
+        best_psms[!, :trace_prob] = combined
+        @user_info "Phase 7 hybrid score: $(n_rec_targets) recovered targets + $(n_rec_decoys) recovered decoys boosted to :trace_prob_mbr; remaining $(nrow(best_psms) - n_rec_targets - n_rec_decoys) rows kept at :trace_prob_prepass"
+    else
+        best_psms[!, :trace_prob] = best_psms[!, :trace_prob_prepass]
     end
 
     # 8. Distribute scored PSMs back to the per-file Arrow files
