@@ -88,6 +88,7 @@ const ADVANCED_FEATURE_SET = [
     :max_scribe,
     :max_weight,
     :fitted_hellinger,
+    :n_scans,
 ]
 
 """

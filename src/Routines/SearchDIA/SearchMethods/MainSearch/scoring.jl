@@ -186,6 +186,15 @@ function train_lgbm_and_select_best(
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
 )
     t0 = time()
+    # Per-precursor PSM count, broadcast to every row so MainSearch's per-file
+    # LightGBM can use :n_scans as a feature.
+    if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
+        counts = Dict{UInt32, UInt32}()
+        @inbounds for pid in psms[!, :precursor_idx]::Vector{UInt32}
+            counts[pid] = get(counts, pid, UInt32(0)) + UInt32(1)
+        end
+        psms[!, :n_scans] = UInt32[counts[pid] for pid in psms[!, :precursor_idx]]
+    end
     all_scores, last_classifier, info = train_psm_classifier_with_fallback(psms; features=features)
     t_train_cv = time()
 

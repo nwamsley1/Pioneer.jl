@@ -192,6 +192,7 @@ const PRESCORE_FEATURES = [
     :max_unmatched_residual, :max_matched_residual, :Mox, :spectrum_peak_count,
     :sequence_length,
     :fitted_hellinger,
+    :n_scans,
 ]
 
 # Full feature set used in Phase 2 (ScoringSearch gets these via fold Arrow files)
