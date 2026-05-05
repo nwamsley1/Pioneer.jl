@@ -123,16 +123,55 @@ function score_precursor_isotope_traces(
         @user_info "match_between_runs=false: skipping MBR feature computation, second pass, and FTR controller"
     end
 
-    # :trace_prob = NON-MBR pass-1 score. Drives the qval pipeline downstream.
-    best_psms[!, :trace_prob] = best_psms[!, :trace_prob_prepass]
-
     if match_between_runs
         # FTR control over the candidate cohort. Sets :mbr_recovered = true for
         # candidates whose FTR-model score exceeds τ and aren't bad-transfer-labeled.
+        # Also writes :pre_mbr_qval (non-MBR pass-1 q-values).
         apply_mbr_filter!(best_psms; alpha=0.01f0, q_thresh=0.01f0)
+
+        # Phase 8a — filter then re-rank.
+        # Keep only PSMs that passed pre-MBR q ≤ 0.01 OR were FTR-recovered.
+        # Failed candidates get :trace_prob = 1f-6 sentinel so the downstream
+        # qval cut drops them naturally (without changing row counts in the
+        # per-(file, fold) Arrow writeback).
+        # Within the kept cohort, rank by :trace_prob_mbr — the boosted score
+        # is the consistent ranking signal across pre-MBR-pass + recovered.
+        pre_q   = best_psms[!, :pre_mbr_qval]
+        rec     = best_psms[!, :mbr_recovered]
+        cand    = best_psms[!, :MBR_transfer_candidate]
+        boosted = Float32.(best_psms[!, :trace_prob_mbr])
+
+        n_pre_pass    = 0
+        n_rec_only    = 0
+        n_pre_and_rec = 0
+        n_failed_cand = 0
+        n_non_cand    = 0  # not a candidate AND failed pre-MBR
+        trace = Vector{Float32}(undef, nrow(best_psms))
+        @inbounds for i in eachindex(trace)
+            pre_passed = pre_q[i] <= 0.01f0
+            recovered  = rec[i]
+            kept = pre_passed | recovered
+            trace[i] = kept ? boosted[i] : 1f-6
+            if pre_passed && recovered
+                n_pre_and_rec += 1
+            elseif pre_passed
+                n_pre_pass += 1
+            elseif recovered
+                n_rec_only += 1
+            elseif cand[i]
+                n_failed_cand += 1
+            else
+                n_non_cand += 1
+            end
+        end
+        best_psms[!, :trace_prob] = trace
+
+        @user_info "Phase 8a — kept (boosted score): pre-MBR-only=$n_pre_pass  recovered-only=$n_rec_only  both=$n_pre_and_rec"
+        @user_info "Phase 8a — suppressed (trace_prob=1f-6): failed-candidate=$n_failed_cand  non-candidate=$n_non_cand"
     else
-        # No MBR: ensure downstream code finds the column but never bypasses qval.
         best_psms[!, :mbr_recovered] = falses(nrow(best_psms))
+        # No MBR: drive qval pipeline from prepass.
+        best_psms[!, :trace_prob] = best_psms[!, :trace_prob_prepass]
     end
 
     # 8. Distribute scored PSMs back to the per-file Arrow files

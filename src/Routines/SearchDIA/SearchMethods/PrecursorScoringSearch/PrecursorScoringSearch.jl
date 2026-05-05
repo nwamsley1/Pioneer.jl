@@ -300,27 +300,15 @@ function summarize_results!(
         results.precursor_pep_interp[] = spline_result.pep_interp
 
         # Phase B — Single per-file pipeline combining Steps 5+10.
-        # MBR Phase 5b: rows with :mbr_recovered=true bypass the per-file
-        # :qval filter (their qval is overridden to 0). The cross-run
-        # :global_qval threshold still applies to all rows.
-        mbr_qval_bypass = "mbr_recovery_qval_bypass" => function(df)
-            if hasproperty(df, :mbr_recovered) && hasproperty(df, :qval)
-                qv = df[!, :qval]
-                rec = df[!, :mbr_recovered]
-                @inbounds for i in 1:nrow(df)
-                    if rec[i]
-                        qv[i] = 0.0f0
-                    end
-                end
-            end
-            return df
-        end
-
+        # MBR Phase 8a: no qval bypass. score_precursor_isotope_traces sets
+        # :trace_prob = :trace_prob_mbr for kept rows (pre-MBR-pass ∪ recovered)
+        # and 1f-6 for failed candidates / non-candidates, so the qval spline
+        # already reflects the kept cohort's honest target/decoy ratio at
+        # boosted-score levels.
         combined_pipeline = TransformPipeline() |>
             add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
             add_dict_column(:global_qval, :precursor_idx, global_qval_dict) |>
             add_interpolated_column(:qval, :prec_prob, qval_spline) |>
-            mbr_qval_bypass |>
             add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
             filter_by_multiple_thresholds([
                 (:global_qval, params.q_value_threshold),

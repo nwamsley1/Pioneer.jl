@@ -154,6 +154,7 @@ function apply_mbr_filter!(
         psms[!, :mbr_recovered]          = falses(0)
         psms[!, :MBR_transfer_candidate] = falses(0)
         psms[!, :ftr_score]              = Float32[]
+        psms[!, :pre_mbr_qval]           = Float32[]
         return (n_candidates=0, n_bad=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=0.0)
     end
 
@@ -211,6 +212,7 @@ function apply_mbr_filter!(
 
     psms[!, :mbr_recovered]          = recovered
     psms[!, :MBR_transfer_candidate] = candidate_mask
+    psms[!, :pre_mbr_qval]           = pre_qvals
 
     elapsed = time() - t0
 
