@@ -180,16 +180,12 @@ function apply_mbr_filter!(
                      (.!mbr_missing)
     n_candidates = count(candidate_mask)
 
-    # ── 3. is_bad_transfer (Phase 8b): T←D, D←T, AND D←D.
-    # D←D is a same-class transfer between two decoy matches — structurally
-    # analogous to entrap-T←entrap-T (same-class transfer of two "fake target"
-    # matches). Training the FTR LGBM with D←D as bad teaches it to suppress
-    # noise-pattern transfers; the hope is the model generalizes to also
-    # suppress entrap-T←entrap-T at scoring time.
+    # ── 3. is_bad_transfer (Phase 8e — revert to 6/8a definition):
+    # only T←D and D←T (cross-class swaps) count as bad. D←D is treated as
+    # neutral (same-class noise, FDR-symmetric mirror of T←T).
     is_bad_transfer = candidate_mask .&
                       ((target_col .& mbr_best_decoy) .|     # T←D
-                       (decoy_col  .& .!mbr_best_decoy) .|   # D←T
-                       (decoy_col  .& mbr_best_decoy))       # D←D
+                       (decoy_col  .& .!mbr_best_decoy))     # D←T
     n_bad = count(is_bad_transfer)
 
     # ── 4. Diagnostic: transfer composition in candidate (training) set ──
