@@ -323,7 +323,10 @@ function summarize_results!(
             mbr_qval_bypass |>
             add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
             filter_by_multiple_thresholds([
-                (:global_qval, params.q_value_threshold),
+                # Phase 8l (experiment): drop the cross-file :global_qval gate;
+                # filter only on per-row :qval (calibrated by the experiment-wide
+                # spline against target/decoy distribution).
+                # (:global_qval, params.q_value_threshold),
                 (:qval, params.q_value_threshold)
             ])
 
