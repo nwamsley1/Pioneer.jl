@@ -98,8 +98,6 @@ function build_precursor_global_prob_dicts(
     target_dict = Dict{UInt32, Bool}()
     sizehint!(target_dict, n_precursors)
 
-    n_swapped = 0
-    n_total_pushed = 0
     for ref in refs
         tbl = Arrow.Table(file_path(ref))
         n = length(tbl.precursor_idx)
@@ -108,31 +106,13 @@ function build_precursor_global_prob_dicts(
         prec_probs = tbl.prec_prob
         targets = tbl.target
 
-        # Phase 8h: hybrid global aggregation. For rows with :mbr_recovered=true,
-        # contribute the MBR-boosted :trace_prob_mbr instead of the non-MBR
-        # :prec_prob to the global logodds. Lets B1-style precursors clear
-        # global_qval ≤ 0.01 when FTR rescued them in some files. Both T←T
-        # targets and D←D / D←T decoys recovered by FTR get the swap →
-        # target/decoy symmetry preserved at the global level. Falls back to
-        # plain :prec_prob if either column is absent (e.g., MBR off).
-        has_boost  = hasproperty(tbl, :trace_prob_mbr) && hasproperty(tbl, :mbr_recovered)
-        boosted    = has_boost ? tbl.trace_prob_mbr : nothing
-        recovered  = has_boost ? tbl.mbr_recovered  : nothing
-
         @inbounds for i in 1:n
             pid = prec_ids[i]
             if !haskey(prob_acc, pid)
                 prob_acc[pid] = Float32[]
                 target_dict[pid] = targets[i]
             end
-            score = if has_boost && recovered[i]
-                n_swapped += 1
-                Float32(boosted[i])
-            else
-                prec_probs[i]
-            end
-            n_total_pushed += 1
-            push!(prob_acc[pid], score)
+            push!(prob_acc[pid], prec_probs[i])
         end
     end
 
@@ -142,9 +122,6 @@ function build_precursor_global_prob_dicts(
     for (pid, probs) in prob_acc
         global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
     end
-
-    pct = n_total_pushed == 0 ? 0.0 : round(100 * n_swapped / n_total_pushed, digits=2)
-    @user_info "Phase 8h global aggregator: $n_swapped of $n_total_pushed contributions ($pct%) used :trace_prob_mbr (MBR-recovered)"
 
     return global_prob_dict, target_dict
 end
