@@ -116,17 +116,11 @@ function build_precursor_global_prob_dicts(
         end
     end
 
-    # Phase 8g experiment: swap top-N logodds for the per-precursor max across files.
-    # Rationale: a precursor with at least one strong file's prec_prob should
-    # not be penalised by moderate prec_prob in other files. A B1-like precursor
-    # that the FTR rescued in one file at high :trace_prob_mbr won't be lifted
-    # by max(prec_prob) (because :prec_prob is non-MBR), but precursors that
-    # have at least one strong-natural file should rise more cleanly than under
-    # the top-N average. Compare ID counts vs the prior logodds default.
+    # Compute logodds per precursor
     global_prob_dict = Dict{UInt32, Float32}()
     sizehint!(global_prob_dict, length(prob_acc))
     for (pid, probs) in prob_acc
-        global_prob_dict[pid] = isempty(probs) ? 0.0f0 : maximum(probs)
+        global_prob_dict[pid] = logodds(probs, sqrt_n_runs)
     end
 
     return global_prob_dict, target_dict
