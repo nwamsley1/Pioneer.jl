@@ -37,6 +37,14 @@ function _aggregate_trace_to_precursor_probs!(df::DataFrame)
     end
     transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
                :trace_prob => prob_agg => :prec_prob)
+    # Phase 8i: also aggregate :trace_prob_mbr per (precursor, file) when present.
+    # Used by build_precursor_global_prob_dicts as the score everyone contributes
+    # to global_prob — symmetric for targets and decoys (both have :trace_prob_mbr
+    # from the MBR-boosted pass).
+    if hasproperty(df, :trace_prob_mbr)
+        transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
+                   :trace_prob_mbr => prob_agg => :prec_prob_mbr)
+    end
 end
 
 """
@@ -98,12 +106,18 @@ function build_precursor_global_prob_dicts(
     target_dict = Dict{UInt32, Bool}()
     sizehint!(target_dict, n_precursors)
 
+    # Phase 8i: use :prec_prob_mbr (per-(prec, file) aggregate of MBR-boosted
+    # :trace_prob_mbr) for everyone in the global aggregation. Both targets
+    # and decoys contribute the same MBR-boosted signal so target/decoy
+    # symmetry is preserved at the global level. Falls back to :prec_prob
+    # if :prec_prob_mbr is absent (e.g., MBR off).
     for ref in refs
         tbl = Arrow.Table(file_path(ref))
         n = length(tbl.precursor_idx)
         n == 0 && continue
         prec_ids = tbl.precursor_idx
-        prec_probs = tbl.prec_prob
+        # Use :prec_prob_mbr if present, else fall back to :prec_prob
+        prec_probs = hasproperty(tbl, :prec_prob_mbr) ? tbl.prec_prob_mbr : tbl.prec_prob
         targets = tbl.target
 
         @inbounds for i in 1:n
@@ -112,7 +126,7 @@ function build_precursor_global_prob_dicts(
                 prob_acc[pid] = Float32[]
                 target_dict[pid] = targets[i]
             end
-            push!(prob_acc[pid], prec_probs[i])
+            push!(prob_acc[pid], Float32(prec_probs[i]))
         end
     end
 
