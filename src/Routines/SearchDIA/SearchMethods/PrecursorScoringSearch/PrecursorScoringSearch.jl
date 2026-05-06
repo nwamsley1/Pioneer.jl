@@ -323,7 +323,11 @@ function summarize_results!(
             mbr_qval_bypass |>
             add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
             filter_by_multiple_thresholds([
-                (:global_qval, params.q_value_threshold),
+                # Phase 8m (experiment): relax :global_qval to 0.015 while
+                # keeping per-row :qval at 0.01. Empirically the actual EFDR at
+                # global_qval ≤ 0.01 was ~0.001 on Olsen Exploris, so there's
+                # headroom to admit more precursors before hitting nominal α.
+                (:global_qval, Float32(0.015)),
                 (:qval, params.q_value_threshold)
             ])
 
