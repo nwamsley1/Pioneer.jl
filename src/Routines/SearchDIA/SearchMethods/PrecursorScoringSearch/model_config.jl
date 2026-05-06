@@ -36,10 +36,8 @@ const ADVANCED_FEATURE_SET = [
     :charge,
     #:irt_pred_qbin,    # Quantile-binned version of :irt_pred
     :irt_pred,
-    :irt_obs,
     :irt_error,
     :irt_diff,
-    :rt,
     :max_y_ions,
     :y_ions_sum,
     :longest_y,

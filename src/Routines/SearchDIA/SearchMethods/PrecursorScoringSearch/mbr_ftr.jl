@@ -41,7 +41,7 @@ const FTR_FEATURES = Symbol[
     :trace_prob_mbr,
     # All ADVANCED_FEATURE_SET features — label-safe and rich:
     :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
-    :irt_pred, :irt_obs, :irt_error, :irt_diff, :rt,
+    :irt_pred, :irt_error, :irt_diff,
     :max_y_ions, :y_ions_sum, :longest_y, :y_count, :b_count,
     :isotope_count, :total_ions,
     :best_rank, :best_rank_iso, :topn, :topn_iso,
