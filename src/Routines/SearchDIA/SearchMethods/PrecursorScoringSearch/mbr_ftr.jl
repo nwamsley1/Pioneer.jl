@@ -23,16 +23,43 @@
 #   * Recovered candidates get :mbr_recovered = true; PrecursorScoringSearch's
 #     qval bypass step exempts them from the per-file qval cut.
 
-# Features for the FTR classifier. Excludes :target, :decoy, :MBR_is_best_decoy
-# (these define the label, would leak). :MBR_is_missing is constant on the
-# candidate cohort by construction (candidates require .!MBR_is_missing).
+# Donor q-value threshold for candidate eligibility. Defines the prepass-score
+# floor a donor must clear (= score-at-q≤MBR_DONOR_Q_THRESHOLD among targets).
+# Tighter (0.001) → only very confident donors → fewer candidates, safer FTR.
+# Looser (1.0) → any cross-run PSM is a valid donor → more candidates, broader recovery.
+const MBR_DONOR_Q_THRESHOLD = Float32(0.01)
+
+# Features for the FTR classifier.
+# Phase 8f: use the full ADVANCED_FEATURE_SET (already excludes :target /
+# :decoy / :MBR_is_best_decoy by construction — those would leak the label).
+# Plus the two pass-1/pass-2 scores (:trace_prob_prepass, :trace_prob_mbr)
+# which aren't in ADVANCED_FEATURE_SET. The training helper filters to
+# whatever columns actually exist on the candidate DataFrame at runtime,
+# so listing missing columns is harmless.
 const FTR_FEATURES = Symbol[
-    :trace_prob_mbr,
     :trace_prob_prepass,
-    :MBR_max_pair_prob,
-    :MBR_log2_weight_ratio,
-    :MBR_log2_explained_ratio,
-    :MBR_best_irt_diff,
+    :trace_prob_mbr,
+    # All ADVANCED_FEATURE_SET features — label-safe and rich:
+    :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
+    :irt_pred, :irt_error, :irt_diff,
+    :max_y_ions, :y_ions_sum, :longest_y, :y_count, :b_count,
+    :isotope_count, :total_ions,
+    :best_rank, :best_rank_iso, :topn, :topn_iso,
+    :gof, :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
+    :max_matched_residual, :max_unmatched_residual, :max_gof,
+    :fitted_spectral_contrast, :spectral_contrast,
+    :max_matched_ratio, :err_norm, :poisson, :weight,
+    :log2_intensity_explained, :tic, :smoothness,
+    :ms1_ms2_rt_diff,
+    :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
+    :fitted_spectral_contrast_ms1, :error_ms1, :m0_error_ms1,
+    :n_iso_ms1, :big_iso_ms1, :rt_max_intensity_ms1,
+    :rt_diff_max_intensity_ms1, :ms1_features_missing,
+    :percent_theoretical_ignored, :scribe, :max_scribe, :max_weight,
+    :fitted_hellinger, :n_scans,
+    # MBR-specific
+    :MBR_max_pair_prob, :MBR_log2_weight_ratio,
+    :MBR_log2_explained_ratio, :MBR_best_irt_diff, :MBR_is_missing,
 ]
 
 """
@@ -164,12 +191,16 @@ function apply_mbr_filter!(
     pre_qvals  = Vector{Float32}(undef, n)
     get_qvalues!(pre_score, target_col, pre_qvals)
 
-    target_pass = (pre_qvals .<= q_thresh) .& target_col
-    prob_thresh = if any(target_pass)
-        minimum(pre_score[target_pass])
+    # Donor score floor: lowest prepass score among targets passing
+    # MBR_DONOR_Q_THRESHOLD. Decouples donor q-cut from candidate q-cut so we
+    # can sweep donor stringency independently.
+    donor_target_pass = (pre_qvals .<= MBR_DONOR_Q_THRESHOLD) .& target_col
+    prob_thresh = if any(donor_target_pass)
+        minimum(pre_score[donor_target_pass])
     else
         Float32(Inf)
     end
+    @user_info "  MBR_DONOR_Q_THRESHOLD = $MBR_DONOR_Q_THRESHOLD; prob_thresh = $(round(prob_thresh, digits=4))"
 
     # ── 2. Candidates: failed pre-MBR q-cut AND have a strong cross-run donor ──
     mbr_pp         = Float32.(psms[!, :MBR_max_pair_prob])
