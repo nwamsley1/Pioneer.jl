@@ -92,7 +92,7 @@ end
 # Hardcoded prescore q-value threshold. The active filter cutoff between
 # MainSearch's per-file LightGBM and ScoringSearch's experiment-wide LightGBM.
 # Temporarily relaxed to 10% for quantitation evaluation on MTAC standard.
-const PRESCORE_QVALUE_THRESHOLD = 0.015f0
+const PRESCORE_QVALUE_THRESHOLD = 0.10f0
 
 # Floor for the per-file logit clamp inside _logodds_combine. Caps the
 # negative contribution of a single bad file (worst-case single-file logit
