@@ -21,6 +21,7 @@ struct SpectralScoresMainSearch{T<:AbstractFloat} <: SpectralScores{T}
     max_matched_residual::T
     max_unmatched_residual::T
     fitted_manhattan_distance::T
+    scribe::T
     percent_theoretical_ignored::T
     fitted_hellinger::T
 end
@@ -54,7 +55,7 @@ function getDistanceMetrics(w::Vector{T},
         # Skip zero-weight columns
         if w[col] <= zero(T)
             spectral_scores[col] = SpectralScoresMainSearch(
-                zero(U), zero(U), zero(U), zero(U), zero(U), zero(U)
+                zero(U), zero(U), zero(U), zero(U), zero(U), zero(U), zero(U)
             )
             continue
         end
@@ -70,6 +71,9 @@ function getDistanceMetrics(w::Vector{T},
         bc_sum = zero(T)         # Bhattacharyya coefficient
         sum_fitted = zero(T)     # sum of fitted_peak (for normalization)
         sum_shadow = zero(T)     # sum of clamped shadow_peak (for normalization)
+        scribe_sqrt_fitted_sum = zero(T)
+        scribe_sqrt_shadow_sum = zero(T)
+        scribe_n = 0
 
         @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
             x_sum += H.x[i]
@@ -81,10 +85,14 @@ function getDistanceMetrics(w::Vector{T},
             sum_of_residuals += r_abs
 
             # Hellinger: uses shadow_peak (per-precursor deconvolved observed) vs fitted_peak
+            fitted_i = max(fitted_peak, zero(T))
             x_i = max(shadow_peak, zero(T))  # clamp negative shadows
             sum_fitted += fitted_peak
             sum_shadow += x_i
-            bc_sum += sqrt(fitted_peak * x_i)
+            bc_sum += sqrt(fitted_i * x_i)
+            scribe_sqrt_fitted_sum += sqrt(fitted_i)
+            scribe_sqrt_shadow_sum += sqrt(x_i)
+            scribe_n += 1
 
             if matched_at(H, i)
                 sum_of_fitted_peaks_matched += fitted_peak
@@ -112,11 +120,25 @@ function getDistanceMetrics(w::Vector{T},
         hellinger_sq = hellinger_denom > 0 ? one(T) - bc_sum / hellinger_denom : one(T)
         fitted_hellinger = -log2(max(hellinger_sq, T(1e-10)))
 
+        scribe = zero(T)
+        if scribe_n > 0 && scribe_sqrt_fitted_sum > zero(T) && scribe_sqrt_shadow_sum > zero(T)
+            scribe_distance = zero(T)
+            @inbounds @fastmath for i in H.colptr[col]:(H.colptr[col+1]-1)
+                fitted_peak = max(w[col]*H.nzval[i], zero(T))
+                shadow_peak = max(fitted_peak - r[H.rowval[i]], zero(T))
+                fitted_norm = sqrt(fitted_peak) / scribe_sqrt_fitted_sum
+                shadow_norm = sqrt(shadow_peak) / scribe_sqrt_shadow_sum
+                scribe_distance += (fitted_norm - shadow_norm)^2
+            end
+            scribe = -log2(max(scribe_distance / T(scribe_n), T(1e-10)))
+        end
+
         spectral_scores[col] = SpectralScoresMainSearch(
             U(gof),
             U(max_matched_residual),
             U(max_unmatched_residual),
             U(fitted_manhattan_distance),
+            U(scribe),
             zero(U),  # percent_theoretical_ignored (single-pass, no iterative removal)
             U(fitted_hellinger)
         )

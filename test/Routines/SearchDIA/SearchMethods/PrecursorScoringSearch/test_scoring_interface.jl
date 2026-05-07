@@ -34,4 +34,22 @@
         # Test empty case
         @test logodds(Float64[], 1) == 0.0f0
     end
+
+    @testset "score_psms! integer cycle ids" begin
+        @test hasmethod(
+            Pioneer.score_psms!,
+            Tuple{
+                Pioneer.SearchDataStructures,
+                Pioneer.ParameterTuningSearchParameters,
+                Pioneer.AbstractSparseDesignMatrix,
+                Int64,
+                Int64,
+                Int64,
+                Pioneer.MassSpecData,
+                Int64,
+                Int64,
+                UInt32
+            }
+        )
+    end
 end

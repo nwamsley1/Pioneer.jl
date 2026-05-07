@@ -65,6 +65,7 @@ function build_lightgbm_classifier(; num_iterations::Integer = 100,
                                     metric = ["binary_logloss"],
                                     objective::AbstractString = "binary",
                                     is_unbalance = false,
+                                    scale_pos_weight::Real = 1.0,
                                     verbosity::Integer = -1)
     return LightGBM.LGBMClassification(
         objective = objective,
@@ -84,6 +85,7 @@ function build_lightgbm_classifier(; num_iterations::Integer = 100,
         num_class = 1,
         verbosity = Int(verbosity),
         is_unbalance = is_unbalance,
+        scale_pos_weight = float(scale_pos_weight),
         seed = 1776, # potentialy needed for stable results
         deterministic = true, # potentialy needed for stable results
         force_row_wise = true # potentialy needed for stable results

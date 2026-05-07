@@ -135,7 +135,12 @@ function process_search_results!(
 
     # Train LightGBM on ALL PSMs, select best scan per precursor
     n_total_psms = nrow(psms)
-    best_psms, scores, lgbm_timings = train_lgbm_and_select_best(psms)
+    precursors = getPrecursors(getSpecLib(search_context))
+    best_psms, scores, lgbm_timings = train_lgbm_and_select_best(
+        psms;
+        precursors = precursors,
+        label = "MainSearch $file_name",
+    )
     best_psms[!, :lgbm_prob] = scores
     t_lgbm = time()
 
@@ -171,7 +176,6 @@ function process_search_results!(
     dropVectorColumns!(best_psms)
 
     # Write per-fold main_search_psms (used by both aggregate_prescore_globally! and summarize_results!)
-    precursors = getPrecursors(getSpecLib(search_context))
     main_search_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "main_search_psms")
     best_cv_fold = UInt8[getCvFold(precursors, pid) for pid in best_psms.precursor_idx]
     for fold in UInt8[0, 1]
@@ -235,26 +239,18 @@ function summarize_results!(
     precursors = getPrecursors(getSpecLib(search_context))
     lib_irt = getIrt(precursors)
 
-    # Step 1: Per-fold global prescore aggregation → passing precursor sets + RT-binned tolerance
+    # Step 1: Global prescore aggregation is retained for RT-binned tolerance.
+    # The second-pass handoff gate below is per run/file, with CV folds mixed
+    # for q-value calculation and split again for downstream fold files.
     t1_start = time()
     fold0_result = aggregate_prescore_globally!(search_context; fold_suffix="_fold0")
     fold1_result = aggregate_prescore_globally!(search_context; fold_suffix="_fold1")
-    passing_fold0 = fold0_result.passing
-    passing_fold1 = fold1_result.passing
-    # Use whichever fold's RT-binned tolerance is available (they should be similar)
     rt_binned_tol = fold0_result.rt_binned_tol !== nothing ?
                     fold0_result.rt_binned_tol : fold1_result.rt_binned_tol
-    passing_precs = union(passing_fold0, passing_fold1)
-    # One-line summary (combined across folds; per-fold detail is at @debug_l1)
-    n_targets_total = fold0_result.n_targets_pass + fold1_result.n_targets_pass
-    n_decoys_total  = fold0_result.n_decoys_pass  + fold1_result.n_decoys_pass
-    n_pass_total    = n_targets_total + n_decoys_total
-    @user_info "  Global prescore: $n_pass_total precursors pass q≤$(fold0_result.qvalue_threshold) ($n_targets_total targets + $n_decoys_total decoys)"
     t1 = time() - t1_start
 
-    store_results!(search_context, MainSearch, (passing_precs=passing_precs,))
-
-    # Step 2: Load main_search_psms, filter to passing precursors, add deferred columns, write fold-split second_pass_psms
+    # Step 2: Load both fold files for each run, apply per-run prescore FDR,
+    # add deferred columns, then write fold-split second_pass_psms.
     t2_start = time()
     second_pass_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
 
@@ -267,6 +263,9 @@ function summarize_results!(
     n_processed_files = 0
     n_total_precs = 0
     n_kept_precs = 0
+    n_targets_total = 0
+    n_decoys_total = 0
+    passing_precs = Set{UInt32}()
 
     for ms_file_idx in 1:n_files
         file_name = getParsedFileName(ms_data, ms_file_idx)
@@ -274,11 +273,10 @@ function summarize_results!(
         base_path = joinpath(second_pass_dir, file_name)
 
         file_has_data = false
-        n_before_file = 0
-        n_after_file = 0
+        fold_tables = DataFrame[]
+        fold_out_paths = String[]
 
         for fold in UInt8[0, 1]
-            passing = fold == 0 ? passing_fold0 : passing_fold1
             psm_path = joinpath(main_search_psms_dir, "$(file_name)_fold$(fold).arrow")
             fold_out_path = "$(base_path)_fold$(fold).arrow"
 
@@ -289,18 +287,24 @@ function summarize_results!(
 
             # Load this fold's main search PSMs
             tbl = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
-            n_before = nrow(tbl)
-            n_before_file += n_before
-            n_total_precs += n_before
+            push!(fold_tables, tbl)
+            push!(fold_out_paths, fold_out_path)
+        end
 
-            # Filter to this fold's passing precursors
-            mask = in.(tbl[!, :precursor_idx], Ref(passing))
-            tbl = tbl[mask, :]
-            n_after = nrow(tbl)
-            n_after_file += n_after
-            n_kept_precs += n_after
+        isempty(fold_tables) && continue
 
-            if n_after == 0
+        filter_result = _filter_prescore_run_qvalues(fold_tables, PRESCORE_QVALUE_THRESHOLD)
+        n_before_file = filter_result.n_before
+        n_after_file = filter_result.n_after
+        n_total_precs += n_before_file
+        n_kept_precs += n_after_file
+        n_targets_total += filter_result.n_targets_pass
+        n_decoys_total += filter_result.n_decoys_pass
+
+        for (tbl, fold_out_path) in zip(filter_result.filtered_tables, fold_out_paths)
+            union!(passing_precs, tbl[!, :precursor_idx])
+
+            if nrow(tbl) == 0
                 isfile(fold_out_path) && rm(fold_out_path)
                 continue
             end
@@ -342,6 +346,11 @@ function summarize_results!(
         end
     end
     t2 = time() - t2_start
+
+    store_results!(search_context, MainSearch, (passing_precs=passing_precs,))
+
+    @user_info "  Run-level prescore: $n_kept_precs precursor-file entries pass q≤$(PRESCORE_QVALUE_THRESHOLD) " *
+               "($n_targets_total targets + $n_decoys_total decoys)"
 
     overall_pct = round(100.0 * n_kept_precs / max(1, n_total_precs), digits=1)
     @debug_l1 "MainSearch passing PSMs: $n_kept_precs / $n_total_precs precursors ($overall_pct%) across $n_processed_files files"

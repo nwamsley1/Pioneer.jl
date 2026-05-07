@@ -394,6 +394,7 @@ function fit_nce_from_psms!(
 
     # Build thread tasks from unique scans
     unique_scans = unique(Int.(scan_idxs_sorted))
+    cycle_idx_by_scan = _compute_ms2_window_cycle_indices(spectra, unique_scans)
     n_threads = Threads.nthreads()
     thread_tasks = [(i, Int[]) for i in 1:n_threads]
     for (idx, si) in enumerate(unique_scans)
@@ -408,7 +409,8 @@ function fit_nce_from_psms!(
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index,
-                search_data[first(thread_task)], params, precursors, ion_list,
+                search_data[first(thread_task)], params, ms_file_idx,
+                cycle_idx_by_scan, precursors, ion_list,
                 nce_model, qtm, mem, rt_to_irt, irt_tol)
         end
         result = vcat(fetch.(tasks)...)

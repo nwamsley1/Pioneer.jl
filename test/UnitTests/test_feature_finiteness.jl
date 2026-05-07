@@ -98,6 +98,7 @@ end
     @test isfinite(s.max_unmatched_residual)
     @test isfinite(s.fitted_manhattan_distance)
     @test isfinite(s.fitted_hellinger)
+    @test isfinite(s.scribe)
 
     # Case B — perfect multi-fragment match
     s = _score_single(1.0f0,
@@ -105,7 +106,7 @@ end
                       Float32[1.0, 2.0, 3.0],
                       Bool[true, true, true])
     for v in (s.gof, s.max_matched_residual, s.max_unmatched_residual,
-              s.fitted_manhattan_distance, s.fitted_hellinger)
+              s.fitted_manhattan_distance, s.fitted_hellinger, s.scribe)
         @test isfinite(v)
     end
 
@@ -115,7 +116,7 @@ end
                       Float32[1.0, 2.0],
                       Bool[true, true])
     for v in (s.gof, s.max_matched_residual, s.max_unmatched_residual,
-              s.fitted_manhattan_distance, s.fitted_hellinger)
+              s.fitted_manhattan_distance, s.fitted_hellinger, s.scribe)
         @test isfinite(v)
         @test v == zero(Float16)
     end
@@ -129,6 +130,7 @@ end
     @test isfinite(s.gof)
     @test isfinite(s.max_matched_residual)
     @test isfinite(s.max_unmatched_residual)
+    @test isfinite(s.scribe)
 
     # Case E — fitted peaks but observed all zero (extreme noise scenario)
     s = _score_single(1.0f0,
@@ -136,7 +138,7 @@ end
                       Float32[0.0, 0.0],
                       Bool[true, true])
     for v in (s.gof, s.max_matched_residual, s.max_unmatched_residual,
-              s.fitted_manhattan_distance, s.fitted_hellinger)
+              s.fitted_manhattan_distance, s.fitted_hellinger, s.scribe)
         @test isfinite(v)
     end
 
@@ -147,9 +149,20 @@ end
                       Float32[1.0, 1.0],
                       Bool[false, false])
     for v in (s.gof, s.max_matched_residual, s.max_unmatched_residual,
-              s.fitted_manhattan_distance, s.fitted_hellinger)
+              s.fitted_manhattan_distance, s.fitted_hellinger, s.scribe)
         @test isfinite(v)
     end
+
+    # Case F2 — Scribe uses the historical square-root normalized
+    # fitted-vs-observed formula. For fitted [1, 4] and observed [1, 9],
+    # the normalized root vectors are [1/3, 2/3] and [1/4, 3/4].
+    s = _score_single(1.0f0,
+                      Float32[1.0, 4.0],
+                      Float32[1.0, 9.0],
+                      Bool[true, true])
+    expected_scribe = Float16(-log2(((1/3 - 1/4)^2 + (2/3 - 3/4)^2) / 2))
+    @test s.scribe ≈ expected_scribe rtol=Float16(1e-3)
+    @test :scribe in Pioneer.PRESCORE_FEATURES
 
     # Case G — random stress, 200 trials with arbitrary intensities and
     # match flags. Floors must hold for every shape of input.
@@ -174,6 +187,7 @@ end
         @test isfinite(s.max_unmatched_residual)
         @test isfinite(s.fitted_manhattan_distance)
         @test isfinite(s.fitted_hellinger)
+        @test isfinite(s.scribe)
     end
 end
 

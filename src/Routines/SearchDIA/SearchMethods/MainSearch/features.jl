@@ -188,11 +188,11 @@ LightGBM Feature Set
 # Lean feature set for prescore LightGBM (fast per-file ranking)
 const PRESCORE_FEATURES = [
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
-    :total_ions, :total_ions_iso, :missed_cleavage, :y_count, :weight, :gof,
+    :total_ions, :total_ions_iso, :missed_cleavage, :y_count, :scribe, :weight, :gof,
     :max_unmatched_residual, :max_matched_residual, :Mox, :spectrum_peak_count,
     :sequence_length,
     :fitted_hellinger,
-    :n_scans,
+    :n_scans, :n_consecutive_cycles,
 ]
 
 # Full feature set used in Phase 2 (ScoringSearch gets these via fold Arrow files)

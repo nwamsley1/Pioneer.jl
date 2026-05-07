@@ -100,6 +100,73 @@ const PRESCORE_QVALUE_THRESHOLD = 0.10f0
 const LOGODDS_CLAMP_FLOOR = 0.02f0
 
 """
+    _filter_prescore_run_qvalues(fold_tables, qvalue_threshold)
+
+Apply the prescore handoff FDR gate within one MS run, mixing that run's CV
+fold rows for q-value calculation and returning fold-specific filtered tables.
+"""
+function _filter_prescore_run_qvalues(
+    fold_tables::Vector{DataFrame},
+    qvalue_threshold::Float32,
+)
+    n_before = sum(nrow, fold_tables)
+    filtered_tables = Vector{DataFrame}(undef, length(fold_tables))
+
+    if n_before == 0
+        for i in eachindex(fold_tables)
+            filtered_tables[i] = fold_tables[i][Int[], :]
+        end
+        return (
+            filtered_tables = filtered_tables,
+            n_before = 0,
+            n_after = 0,
+            n_targets_pass = 0,
+            n_decoys_pass = 0,
+            qvalue_threshold = qvalue_threshold,
+        )
+    end
+
+    probs = Vector{Float32}(undef, n_before)
+    targets = Vector{Bool}(undef, n_before)
+    ranges = Vector{UnitRange{Int}}(undef, length(fold_tables))
+
+    offset = 0
+    for (i, tbl) in enumerate(fold_tables)
+        n = nrow(tbl)
+        r = (offset + 1):(offset + n)
+        ranges[i] = r
+        if n > 0
+            probs[r] .= tbl[!, :lgbm_prob]
+            targets[r] .= tbl[!, :target]
+        end
+        offset += n
+    end
+
+    qvals = Vector{Float32}(undef, n_before)
+    get_qvalues!(probs, targets, qvals; doSort=true)
+
+    n_after = 0
+    n_targets_pass = 0
+    for (i, tbl) in enumerate(fold_tables)
+        r = ranges[i]
+        mask = qvals[r] .<= qvalue_threshold
+        filtered = tbl[mask, :]
+        filtered_tables[i] = filtered
+        n_after += nrow(filtered)
+        n_targets_pass += count(identity, filtered[!, :target])
+    end
+
+    return (
+        filtered_tables = filtered_tables,
+        n_before = n_before,
+        n_after = n_after,
+        n_targets_pass = n_targets_pass,
+        n_decoys_pass = n_after - n_targets_pass,
+        qvalue_threshold = qvalue_threshold,
+    )
+end
+
+"""
     aggregate_prescore_globally!(search_context; fold_suffix="") -> (Set{UInt32}, Union{Nothing, RTBinnedTolerance})
 
 Load per-file LightGBM prescore arrow files, aggregate raw LightGBM probabilities

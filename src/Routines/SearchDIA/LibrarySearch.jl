@@ -20,6 +20,49 @@
 const PROFILE_FRAG_INDEX = false   # fragment index search (searchFragmentIndexPartitionMajorHinted)
 const PROFILE_DECONV = false        # deconvolution (process_scans!)
 
+@inline function _ms2_window_cycle_key(center, width)
+    return (
+        Int32(round(Int, Float64(center) * 10)),
+        Int32(round(Int, Float64(width) * 10)),
+    )
+end
+
+function _fill_ms2_window_cycle_indices!(
+    cycle_idx_by_scan::AbstractVector{UInt32},
+    scan_idxs::AbstractVector{<:Integer},
+    center_mzs::AbstractVector,
+    isolation_widths::AbstractVector,
+)
+    fill!(cycle_idx_by_scan, UInt32(0))
+    window_counts = Dict{Tuple{Int32, Int32}, UInt32}()
+
+    for scan_idx in sort(Int.(scan_idxs))
+        (scan_idx < 1 || scan_idx > length(cycle_idx_by_scan)) && continue
+        center = center_mzs[scan_idx]
+        width = isolation_widths[scan_idx]
+        (ismissing(center) || ismissing(width)) && continue
+
+        key = _ms2_window_cycle_key(center, width)
+        cycle_idx = get(window_counts, key, UInt32(0)) + UInt32(1)
+        window_counts[key] = cycle_idx
+        cycle_idx_by_scan[scan_idx] = cycle_idx
+    end
+    return cycle_idx_by_scan
+end
+
+function _compute_ms2_window_cycle_indices(
+    spectra::MassSpecData,
+    scan_idxs::AbstractVector{<:Integer},
+)
+    cycle_idx_by_scan = zeros(UInt32, length(spectra))
+    return _fill_ms2_window_cycle_indices!(
+        cycle_idx_by_scan,
+        scan_idxs,
+        getCenterMzs(spectra),
+        getIsolationWidthMzs(spectra),
+    )
+end
+
 """
     library_search(spectra, search_context, params, ms_file_idx) -> DataFrame
 
@@ -97,6 +140,7 @@ function library_search(
     end
 
     isempty(all_scan_idxs) && return DataFrame()
+    cycle_idx_by_scan = _compute_ms2_window_cycle_indices(spectra, all_scan_idxs)
 
     # Build score filter: use learned LUT if available, otherwise fall back to count_ones
     bitvec_filter = getBitVecFilter(search_context, ms_file_idx)
@@ -158,7 +202,8 @@ function library_search(
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index,
-                search_data[first(thread_task)], params, precursors, ion_list,
+                search_data[first(thread_task)], params, ms_file_idx,
+                cycle_idx_by_scan, precursors, ion_list,
                 nce_model, qtm, mem, rt_to_irt, irt_tol)
         end
         # Unwrap TaskFailedException so the real error surfaces instead of

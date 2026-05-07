@@ -24,6 +24,8 @@ function process_scans_fused!(
     prec_index::PI,
     search_data::SearchDataStructures,
     params::P,
+    ms_file_idx::Int64,
+    cycle_idx_by_scan::AbstractVector{UInt32},
     precursors::LibraryPrecursors,
     ion_list::LibraryFragmentLookup,
     nce_model::NceModel{Float32},
@@ -59,15 +61,11 @@ function process_scans_fused!(
     kind = FusedStandard(prec_estimation, UInt8(max_frag_rank))
 
     last_val  = 0
-    cycle_idx = 0
 
     for scan_idx in scan_range
         (scan_idx < 1 || scan_idx > length(spectra)) && continue
 
         msn = getMsOrder(spectra, scan_idx)
-        if msn < 2
-            cycle_idx += 1
-        end
         msn ∉ getSpecOrder(params) && continue
         ismissing(get_prec_range(prec_index, scan_idx)) && continue
 
@@ -122,8 +120,9 @@ function process_scans_fused!(
 
         compute_distance_metrics!(Hs, search_data, params)
 
+        cycle_idx = cycle_idx_by_scan[scan_idx]
         last_val = score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
-                              spectra, last_val, cycle_idx; mem=mem)
+                              spectra, last_val, ms_file_idx, cycle_idx; mem=mem)
 
         reset_scan_arrays!(id_to_col, Hs, unscored_psms)
     end

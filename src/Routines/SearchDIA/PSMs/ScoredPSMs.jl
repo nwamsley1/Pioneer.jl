@@ -62,6 +62,7 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     max_matched_residual::L
     max_unmatched_residual::L
     fitted_manhattan_distance::L
+    scribe::L
     percent_theoretical_ignored::L
     weight::H
 
@@ -70,6 +71,7 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     #Non-scores/Labels
     precursor_idx::UInt32
     ms_file_idx::UInt32
+    cycle_idx::UInt32
     scan_idx::UInt32
 end
 function growScoredPSMs!(scored_psms::Vector{MainSearchScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
@@ -80,7 +82,8 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
                 spectral_scores::Vector{SpectralScoresMainSearch{L}},
                 weight::Vector{H},
                 IDtoCOL::AbstractPrecursorMap{UInt16},
-                cycle_idx::Int64,
+                ms_file_idx::Integer,
+                cycle_idx::Integer,
                 expected_matches::Float64,
                 last_val::Int64,
                 n_vals::Int64,
@@ -128,12 +131,14 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             spectral_scores[scores_idx].max_matched_residual,
             spectral_scores[scores_idx].max_unmatched_residual,
             spectral_scores[scores_idx].fitted_manhattan_distance,
+            spectral_scores[scores_idx].scribe,
             spectral_scores[scores_idx].percent_theoretical_ignored,
             weight[scores_idx],
 
             spectral_scores[scores_idx].fitted_hellinger,
 
             UInt32(unscored_PSMs[i].precursor_idx),
+            UInt32(ms_file_idx),
             UInt32(cycle_idx),
             UInt32(scan_idx)
         )
