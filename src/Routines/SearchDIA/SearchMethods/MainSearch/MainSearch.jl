@@ -159,7 +159,9 @@ function process_search_results!(
                 :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan,
                 :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan,
                 :irt_dist_best_max_residual_3scan, :irt_dist_to_weight_apex,
-                :ms1_iso_count, :ms1_m0_matched, :ms1_m0_mass_err_ppm, :ms1_log_iso_obs_pred]
+                :ms1_iso_count, :ms1_m0_matched, :ms1_m0_mass_err_ppm, :ms1_log_iso_obs_pred,
+                :ms1_m2_matched, :ms1_m3_matched,
+                :ms1_log_iso_obs_pred_m2, :ms1_log_iso_obs_pred_m3]
         keep = intersect(cols, propertynames(psms))
         Arrow.write(joinpath(diag_dir, "$(ms_file_idx).arrow"), psms[!, keep])
     end

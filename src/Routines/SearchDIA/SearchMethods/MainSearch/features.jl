@@ -198,6 +198,8 @@ const PRESCORE_FEATURES = [
     :irt_dist_to_weight_apex,
     :rank1_matched, :top3_matched, :top5_matched,
     :ms1_iso_count, :ms1_m0_matched, :ms1_m0_mass_err_ppm, :ms1_log_iso_obs_pred,
+    :ms1_m2_matched, :ms1_m3_matched,
+    :ms1_log_iso_obs_pred_m2, :ms1_log_iso_obs_pred_m3,
 ]
 
 """
@@ -228,6 +230,10 @@ function add_ms1_features!(psms::DataFrame,
     psms[!, :ms1_m0_matched]        = zeros(UInt8, n)
     psms[!, :ms1_m0_mass_err_ppm]   = zeros(Float32, n)
     psms[!, :ms1_log_iso_obs_pred]  = zeros(Float32, n)
+    psms[!, :ms1_m2_matched]        = zeros(UInt8, n)
+    psms[!, :ms1_m3_matched]        = zeros(UInt8, n)
+    psms[!, :ms1_log_iso_obs_pred_m2] = zeros(Float32, n)
+    psms[!, :ms1_log_iso_obs_pred_m3] = zeros(Float32, n)
     n == 0 && return
 
     # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
@@ -317,27 +323,50 @@ function add_ms1_features!(psms::DataFrame,
         target_m0 = prec_mz
         target_m1 = prec_mz + NEUTRON / Float32(prec_chg)
         target_m2 = prec_mz + 2*NEUTRON / Float32(prec_chg)
+        target_m3 = prec_mz + 3*NEUTRON / Float32(prec_chg)
 
         m0_hit, m0_int, m0_mz = _find_peak(target_m0)
         m1_hit, m1_int, _    = _find_peak(target_m1)
-        m2_hit, _, _         = _find_peak(target_m2)
+        m2_hit, m2_int, _    = _find_peak(target_m2)
+        m3_hit, m3_int, _    = _find_peak(target_m3)
 
         iso_count = UInt8((m0_hit ? 1 : 0) + (m1_hit ? 1 : 0) + (m2_hit ? 1 : 0))
         psms.ms1_iso_count[i]  = iso_count
         psms.ms1_m0_matched[i] = m0_hit ? UInt8(1) : UInt8(0)
+        psms.ms1_m2_matched[i] = m2_hit ? UInt8(1) : UInt8(0)
+        psms.ms1_m3_matched[i] = m3_hit ? UInt8(1) : UInt8(0)
         if m0_hit
             psms.ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
         end
-        if m0_hit && m1_hit && m0_int > 0
-            obs_ratio = m1_int / m0_int
-            # predicted M+1/M0 from isotope splines (requires precursor mass, sulfur)
-            prec_mass = prec_mz * Float32(prec_chg) - Float32(prec_chg) * Float32(1.00728)  # approx
+        if m0_hit && m0_int > 0
+            prec_mass = prec_mz * Float32(prec_chg) - Float32(prec_chg) * Float32(1.00728)
             sulfur_clamped = clamp(sulfur, 0, length(iso_splines.splines) - 1)
             pred_m0 = iso_splines(sulfur_clamped, 0, prec_mass)
-            pred_m1 = iso_splines(sulfur_clamped, 1, prec_mass)
-            if pred_m0 > 0 && pred_m1 > 0
-                pred_ratio = pred_m1 / pred_m0
-                psms.ms1_log_iso_obs_pred[i] = log(max(obs_ratio, 1f-6) / max(pred_ratio, 1f-6))
+            if pred_m0 > 0
+                if m1_hit
+                    pred_m1 = iso_splines(sulfur_clamped, 1, prec_mass)
+                    if pred_m1 > 0
+                        obs_ratio  = m1_int / m0_int
+                        pred_ratio = pred_m1 / pred_m0
+                        psms.ms1_log_iso_obs_pred[i] = log(max(obs_ratio, 1f-6) / max(pred_ratio, 1f-6))
+                    end
+                end
+                if m2_hit
+                    pred_m2 = iso_splines(sulfur_clamped, 2, prec_mass)
+                    if pred_m2 > 0
+                        obs_ratio2  = m2_int / m0_int
+                        pred_ratio2 = pred_m2 / pred_m0
+                        psms.ms1_log_iso_obs_pred_m2[i] = log(max(obs_ratio2, 1f-6) / max(pred_ratio2, 1f-6))
+                    end
+                end
+                if m3_hit
+                    pred_m3 = iso_splines(sulfur_clamped, 3, prec_mass)
+                    if pred_m3 > 0
+                        obs_ratio3  = m3_int / m0_int
+                        pred_ratio3 = pred_m3 / pred_m0
+                        psms.ms1_log_iso_obs_pred_m3[i] = log(max(obs_ratio3, 1f-6) / max(pred_ratio3, 1f-6))
+                    end
+                end
             end
         end
     end
