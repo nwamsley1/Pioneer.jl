@@ -142,6 +142,9 @@ function process_search_results!(
     # Add iRT distance from current scan to this precursor's deconv-apex scan
     add_apex_distance_feature!(psms)
 
+    # Phase 1 MS1 features: per-PSM isotope-match against nearest MS1 scan
+    add_ms1_features!(psms, spectra, search_context, ms_file_idx)
+
     # Pre-LGBM diagnostic dump (independent of post-LGBM dump). Captures
     # PSMs *before* LGBM training so single-class runs (target-only or
     # decoy-only) still produce usable PSM tables.
@@ -155,7 +158,8 @@ function process_search_results!(
                 :weight_ratio_at_scan, :weight_rank_at_scan, :irt_error,
                 :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan,
                 :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan,
-                :irt_dist_best_max_residual_3scan, :irt_dist_to_weight_apex]
+                :irt_dist_best_max_residual_3scan, :irt_dist_to_weight_apex,
+                :ms1_iso_count, :ms1_m0_matched, :ms1_m0_mass_err_ppm, :ms1_log_iso_obs_pred]
         keep = intersect(cols, propertynames(psms))
         Arrow.write(joinpath(diag_dir, "$(ms_file_idx).arrow"), psms[!, keep])
     end

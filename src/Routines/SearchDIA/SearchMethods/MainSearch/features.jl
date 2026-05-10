@@ -197,7 +197,152 @@ const PRESCORE_FEATURES = [
     :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan, :irt_dist_best_max_residual_3scan,
     :irt_dist_to_weight_apex,
     :rank1_matched, :top3_matched, :top5_matched,
+    :ms1_iso_count, :ms1_m0_matched, :ms1_m0_mass_err_ppm, :ms1_log_iso_obs_pred,
 ]
+
+"""
+    add_ms1_features!(psms, spectra, search_context, ms_file_idx;
+                       ms1_ppm_tol=10.0f0)
+
+Phase-1 MS1 features. For each PSM at (precursor_idx, MS2 scan_idx):
+
+1. Find the nearest MS1 scan in time.
+2. Search the MS1 spectrum for M0, M+1, M+2 of the precursor (charge-aware
+   m/z = prec_mz + iso × NEUTRON_MASS / charge), within ±ms1_ppm_tol ppm.
+3. Compute four features:
+   - `ms1_iso_count` (UInt8 0-3): number of isotopes (M0/M+1/M+2) detected
+   - `ms1_m0_matched` (UInt8 0/1): whether M0 was matched
+   - `ms1_m0_mass_err_ppm` (Float32): |observed − theoretical| in ppm; 0 if no M0
+   - `ms1_log_iso_obs_pred` (Float32): log((obs M+1 / obs M0) / (pred M+1 / pred M0));
+      0 if M0 or M+1 missing. Real precursors should have ratio ≈ 1 → log ≈ 0.
+
+If no MS1 scan is available (file has only MS2), all features are zeroed.
+"""
+function add_ms1_features!(psms::DataFrame,
+                            spectra,
+                            search_context,
+                            ms_file_idx::Integer;
+                            ms1_ppm_tol::Float32 = 10.0f0)
+    n = nrow(psms)
+    psms[!, :ms1_iso_count]         = zeros(UInt8, n)
+    psms[!, :ms1_m0_matched]        = zeros(UInt8, n)
+    psms[!, :ms1_m0_mass_err_ppm]   = zeros(Float32, n)
+    psms[!, :ms1_log_iso_obs_pred]  = zeros(Float32, n)
+    n == 0 && return
+
+    # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
+    n_scans = length(spectra)
+    ms1_scan_idxs = Int[]
+    ms1_scan_rts  = Float32[]
+    for s in 1:n_scans
+        if getMsOrder(spectra, s) == 1
+            push!(ms1_scan_idxs, s)
+            push!(ms1_scan_rts, Float32(getRetentionTime(spectra, s)))
+        end
+    end
+    if isempty(ms1_scan_idxs)
+        @debug_l1 "add_ms1_features!: no MS1 scans found, features all zero"
+        return
+    end
+
+    # 2. Per-precursor info
+    precursors = getPrecursors(getSpecLib(search_context))
+    prec_mzs       = getMz(precursors)
+    prec_charges   = getCharge(precursors)
+    prec_sulfs     = getSulfurCount(precursors)
+    iso_splines    = getIsoSplines(getSearchData(search_context)[1])
+
+    NEUTRON = Float32(1.00335)
+
+    # Cache MS1 spectra m/z + intensity per scan we visit (avoids repeated lookups)
+    cached_ms1_idx::Int = 0
+    cached_mz       = nothing
+    cached_int      = nothing
+
+    @inbounds for i in 1:n
+        scan_idx = Int(psms.scan_idx[i])
+        scan_rt  = Float32(getRetentionTime(spectra, scan_idx))
+
+        # Binary-search nearest MS1 scan by RT
+        pos = searchsortedfirst(ms1_scan_rts, scan_rt)
+        if pos == 1
+            ms1_idx = ms1_scan_idxs[1]
+        elseif pos > length(ms1_scan_rts)
+            ms1_idx = ms1_scan_idxs[end]
+        else
+            d_after  = abs(ms1_scan_rts[pos]   - scan_rt)
+            d_before = abs(ms1_scan_rts[pos-1] - scan_rt)
+            ms1_idx = d_before <= d_after ? ms1_scan_idxs[pos-1] : ms1_scan_idxs[pos]
+        end
+
+        if ms1_idx != cached_ms1_idx
+            cached_ms1_idx = ms1_idx
+            cached_mz  = getMzArray(spectra, ms1_idx)
+            cached_int = getIntensityArray(spectra, ms1_idx)
+        end
+
+        pid = UInt32(psms.precursor_idx[i])
+        prec_mz   = Float32(prec_mzs[pid])
+        prec_chg  = Int(prec_charges[pid])
+        sulfur    = Int(prec_sulfs[pid])
+        prec_chg == 0 && (prec_chg = 1)
+
+        # Per-isotope: target m/z, search ± ms1_ppm_tol
+        function _find_peak(mz_target::Float32)
+            half_tol = mz_target * ms1_ppm_tol * 1f-6
+            lo = mz_target - half_tol
+            hi = mz_target + half_tol
+            best_j = 0
+            best_diff = Inf32
+            best_int  = 0f0
+            best_mz   = 0f0
+            n_peaks = length(cached_mz)
+            i0 = searchsortedfirst(cached_mz, lo)
+            j = i0
+            while j <= n_peaks && cached_mz[j] <= hi
+                m = cached_mz[j]; ismissing(m) && (j+=1; continue)
+                it = cached_int[j]; ismissing(it) && (j+=1; continue)
+                diff = abs(Float32(m) - mz_target)
+                if diff < best_diff
+                    best_diff = diff
+                    best_j = j
+                    best_int = Float32(it)
+                    best_mz  = Float32(m)
+                end
+                j += 1
+            end
+            return best_j > 0, best_int, best_mz
+        end
+
+        target_m0 = prec_mz
+        target_m1 = prec_mz + NEUTRON / Float32(prec_chg)
+        target_m2 = prec_mz + 2*NEUTRON / Float32(prec_chg)
+
+        m0_hit, m0_int, m0_mz = _find_peak(target_m0)
+        m1_hit, m1_int, _    = _find_peak(target_m1)
+        m2_hit, _, _         = _find_peak(target_m2)
+
+        iso_count = UInt8((m0_hit ? 1 : 0) + (m1_hit ? 1 : 0) + (m2_hit ? 1 : 0))
+        psms.ms1_iso_count[i]  = iso_count
+        psms.ms1_m0_matched[i] = m0_hit ? UInt8(1) : UInt8(0)
+        if m0_hit
+            psms.ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
+        end
+        if m0_hit && m1_hit && m0_int > 0
+            obs_ratio = m1_int / m0_int
+            # predicted M+1/M0 from isotope splines (requires precursor mass, sulfur)
+            prec_mass = prec_mz * Float32(prec_chg) - Float32(prec_chg) * Float32(1.00728)  # approx
+            sulfur_clamped = clamp(sulfur, 0, length(iso_splines.splines) - 1)
+            pred_m0 = iso_splines(sulfur_clamped, 0, prec_mass)
+            pred_m1 = iso_splines(sulfur_clamped, 1, prec_mass)
+            if pred_m0 > 0 && pred_m1 > 0
+                pred_ratio = pred_m1 / pred_m0
+                psms.ms1_log_iso_obs_pred[i] = log(max(obs_ratio, 1f-6) / max(pred_ratio, 1f-6))
+            end
+        end
+    end
+    return
+end
 
 """
     add_apex_distance_feature!(psms::DataFrame)
