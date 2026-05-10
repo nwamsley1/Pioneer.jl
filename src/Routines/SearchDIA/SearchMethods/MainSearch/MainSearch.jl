@@ -133,8 +133,43 @@ function process_search_results!(
         return nothing
     end
 
+    # Add per-scan competition features: weight_ratio_at_scan, weight_rank_at_scan
+    add_scan_competition_features!(psms)
+
+    # Add chromatographic neighborhood features (3-scan window for each precursor)
+    add_neighborhood_features!(psms)
+
+    # Add iRT distance from current scan to this precursor's deconv-apex scan
+    add_apex_distance_feature!(psms)
+
+    # Pre-LGBM diagnostic dump (independent of post-LGBM dump). Captures
+    # PSMs *before* LGBM training so single-class runs (target-only or
+    # decoy-only) still produce usable PSM tables.
+    if get(ENV, "PIONEER_DUMP_PRE_LGBM", "0") == "1"
+        diag_dir = joinpath(getDataOutDir(search_context), "temp_data", "pre_lgbm_psms_diag")
+        isdir(diag_dir) || mkpath(diag_dir)
+        cols = [:precursor_idx, :scan_idx, :target, :weight, :gof, :fitted_manhattan_distance,
+                :fitted_hellinger, :max_matched_residual, :max_unmatched_residual,
+                :total_ions, :total_ions_iso, :y_count, :poisson, :err_norm,
+                :missed_cleavage, :Mox, :spectrum_peak_count, :sequence_length,
+                :weight_ratio_at_scan, :weight_rank_at_scan, :irt_error,
+                :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan,
+                :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan,
+                :irt_dist_best_max_residual_3scan, :irt_dist_to_weight_apex]
+        keep = intersect(cols, propertynames(psms))
+        Arrow.write(joinpath(diag_dir, "$(ms_file_idx).arrow"), psms[!, keep])
+    end
+
     # Train LightGBM on ALL PSMs, select best scan per precursor
     n_total_psms = nrow(psms)
+    # Diagnostic: dump pre-reduction PSMs (one row per (precursor_idx, scan_idx))
+    # Diagnostic: stash file_idx + dir so train_lgbm_and_select_best can dump pre-reduction
+    if get(ENV, "PIONEER_DUMP_ALL_PSMS", "0") == "1"
+        Pioneer.DIAG_DUMP_FILE_IDX[] = ms_file_idx
+        Pioneer.DIAG_DUMP_DIR[]      = joinpath(getDataOutDir(search_context), "temp_data", "all_psms_diag")
+    else
+        Pioneer.DIAG_DUMP_FILE_IDX[] = 0
+    end
     best_psms, scores, lgbm_timings = train_lgbm_and_select_best(psms)
     best_psms[!, :lgbm_prob] = scores
     t_lgbm = time()

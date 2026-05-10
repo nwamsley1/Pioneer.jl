@@ -41,8 +41,9 @@ struct ComplexUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     p_count::UInt8
     non_cannonical_count::UInt8
     error::T
+    matched_rank_mask::UInt8   # bit i = matched M0 fragment of rank (i+1); bits 0..7 → ranks 1..8
     precursor_idx::UInt32
     ms_file_idx::UInt32
 end
 
-ComplexUnscoredPSM{Float32}() = ComplexUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
+ComplexUnscoredPSM{Float32}() = ComplexUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), UInt32(0), UInt32(0))

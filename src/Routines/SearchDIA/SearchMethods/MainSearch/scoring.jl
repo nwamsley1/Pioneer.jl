@@ -16,6 +16,11 @@ const SHARED_LGBM_MAX_TRAIN = 250_000
 # Low-data threshold per fold: below this we CV-select between LightGBM and probit.
 const SHARED_LGBM_LOW_DATA_THRESHOLD = 10_000
 
+# Diagnostic dump: when nonzero, dump pre-reduction psms (with lgbm_score) to
+# DIAG_DUMP_DIR/<file_idx>.arrow inside train_lgbm_and_select_best.
+const DIAG_DUMP_FILE_IDX = Ref{Int64}(0)
+const DIAG_DUMP_DIR      = Ref{String}("")
+
 """
     train_psm_classifier_with_fallback(psms; features) -> (scores, last_classifier, info)
 
@@ -197,6 +202,15 @@ function train_lgbm_and_select_best(
 
     # Add scores to psms for best-per-precursor selection
     psms[!, :lgbm_score] = Float32.(all_scores)
+
+    # Diagnostic dump: pre-reduction PSMs WITH lgbm_score
+    if DIAG_DUMP_FILE_IDX[] != 0
+        diag_dir = DIAG_DUMP_DIR[]
+        isdir(diag_dir) || mkpath(diag_dir)
+        cols_to_keep = [:precursor_idx, :scan_idx, :target, :weight, :gof, :fitted_manhattan_distance, :lgbm_score]
+        keep = intersect(cols_to_keep, propertynames(psms))
+        Arrow.write(joinpath(diag_dir, "$(DIAG_DUMP_FILE_IDX[]).arrow"), psms[!, keep])
+    end
 
     # Select best scan per precursor by LightGBM score
     psms = select_best_per_precursor!(psms, :lgbm_score)

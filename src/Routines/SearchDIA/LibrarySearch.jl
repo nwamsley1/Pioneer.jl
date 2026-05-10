@@ -53,6 +53,36 @@ function library_search(
     # --- 1. Extract per-file models and library data ---
     spec_lib = getSpecLib(search_context)
     search_data = getSearchData(search_context)
+
+    # Always set current file_idx for downstream patches that reference it
+    # (e.g. SKIP_PRECS lookup in run_fused! for iterative refinement)
+    if params isa MainSearchParameters
+        DIAG_CURRENT_FILE_IDX[] = ms_file_idx
+        # Lazy-load blacklist on first call when env-var set
+        if isempty(SKIP_PRECS) && haskey(ENV, "PIONEER_SKIP_PRECS_PATH")
+            path = ENV["PIONEER_SKIP_PRECS_PATH"]
+            if isfile(path)
+                bl = Serialization.deserialize(path)  # Dict{Int64, Set{Tuple{UInt32,UInt32}}}
+                # Reshape to Dict{(fid, scan), Set{pid}}
+                for (fid, set) in bl
+                    for (pid, scan) in set
+                        s = get!(() -> Set{UInt32}(), SKIP_PRECS, (Int64(fid), scan))
+                        push!(s, pid)
+                    end
+                end
+                @user_info "Loaded SKIP_PRECS blacklist from $path: $(sum(length(v) for v in values(SKIP_PRECS); init=0)) entries across $(length(SKIP_PRECS)) (file, scan) keys"
+            end
+        end
+    end
+
+    # Diagnostic: capture per-file deconv candidate sets for MainSearch only
+    if get(ENV, "PIONEER_LOG_DROPPED_PRECS", "0") == "1" && params isa MainSearchParameters
+        _diag_ensure_thread_storage()
+        DIAG_LOG_DROPPED[] = true
+    else
+        DIAG_LOG_DROPPED[] = false
+    end
+
     irt_tol = get_irt_tolerance(search_context, params, ms_file_idx)
     # Use presearch index (no iRT bins) when iRT tolerance is infinite (RT model not fitted).
     # This avoids iterating all fine iRT bins for no benefit.

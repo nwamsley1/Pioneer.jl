@@ -17,6 +17,29 @@
 
 abstract type ScoredPSM{H,L<:AbstractFloat} <: PSM end
 
+# Counters for diagnostic accounting of skipped PSMs across all Score! calls.
+# Reset and read by the SearchDIA driver when PIONEER_LOG_SKIPPED=1.
+const SKIPPED_WEIGHT_TOTAL = Threads.Atomic{Int64}(0)
+const TOTAL_PSMS_CONSIDERED = Threads.Atomic{Int64}(0)
+
+# Per-thread diagnostic capture of precursors that ever appeared in deconv,
+# split by whether they passed the weight filter. Populated only when
+# PIONEER_LOG_DROPPED_PRECS=1. The current ms_file_idx is set by the search
+# driver before each file's deconv begins.
+const DIAG_CURRENT_FILE_IDX = Ref{Int64}(0)
+const DIAG_LOG_DROPPED = Ref{Bool}(false)
+# Sized at runtime by SearchDIA driver to current Threads.maxthreadid(); we
+# default to 1 here so module precompilation works with single-threaded julia.
+const DIAG_SEEN_PER_THREAD = Dict{Int, Set{UInt32}}[]
+const DIAG_DROPPED_PER_THREAD = Dict{Int, Set{UInt32}}[]
+function _diag_ensure_thread_storage()
+    n = Threads.maxthreadid()
+    while length(DIAG_SEEN_PER_THREAD) < n
+        push!(DIAG_SEEN_PER_THREAD, Dict{Int, Set{UInt32}}())
+        push!(DIAG_DROPPED_PER_THREAD, Dict{Int, Set{UInt32}}())
+    end
+end
+
 """
     psm_logfac(N) -> Float64
 
@@ -67,6 +90,11 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     fitted_hellinger::L
 
+    # M0 (mono) library-rank match indicators (set per-PSM by Score!)
+    rank1_matched::UInt8        # 1 if M0 rank-1 fragment matched, 0 otherwise
+    top3_matched::UInt8         # number of M0 ranks 1-3 matched (0..3)
+    top5_matched::UInt8         # number of M0 ranks 1-5 matched (0..5)
+
     #Non-scores/Labels
     precursor_idx::UInt32
     ms_file_idx::UInt32
@@ -100,6 +128,16 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
         precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
         scores_idx = IDtoCOL[precursor_idx]
 
+        # Diagnostic: record every candidate seen, plus those filtered for low weight
+        if DIAG_LOG_DROPPED[]
+            tid = Threads.threadid()
+            fid = DIAG_CURRENT_FILE_IDX[]
+            push!(get!(() -> Set{UInt32}(), DIAG_SEEN_PER_THREAD[tid], fid), precursor_idx)
+            if weight[scores_idx] < Float32(1e-6)
+                push!(get!(() -> Set{UInt32}(), DIAG_DROPPED_PER_THREAD[tid], fid), precursor_idx)
+            end
+        end
+
         if weight[scores_idx] < Float32(1e-6)
             skipped += 1
             skipped_weight += 1
@@ -113,6 +151,12 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
 
         total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
         total_ions_iso = Int64(unscored_PSMs[i].isotope_count)
+
+        # Decode matched library ranks from the bitmask (M0 fragments only)
+        mask = unscored_PSMs[i].matched_rank_mask
+        rank1_matched = (mask & UInt8(0b1)) != 0 ? UInt8(1) : UInt8(0)
+        top3_matched  = UInt8(count_ones(mask & UInt8(0b111)))
+        top5_matched  = UInt8(count_ones(mask & UInt8(0b11111)))
 
         scored_psms[start_idx + i - skipped] = MainSearchScoredPSM(
             unscored_PSMs[i].longest_y,
@@ -133,11 +177,15 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
 
             spectral_scores[scores_idx].fitted_hellinger,
 
+            rank1_matched, top3_matched, top5_matched,
+
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(cycle_idx),
             UInt32(scan_idx)
         )
         last_val += 1
     end
+    Threads.atomic_add!(SKIPPED_WEIGHT_TOTAL, skipped_weight)
+    Threads.atomic_add!(TOTAL_PSMS_CONSIDERED, n_vals)
     return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=skipped_frag_count, skipped_matched_ratio=0, skipped_topn=0, skipped_spectral_contrast=0)
 end

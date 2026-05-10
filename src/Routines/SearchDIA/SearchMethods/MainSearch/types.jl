@@ -98,7 +98,8 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
         # max_rank is hardcoded to typemax(UInt8) (=255 = "no rank cap"). The
         # library already enforces a per-precursor rank cap at build time
         # (BuildSpecLib's max_frag_rank=10), so the runtime knob was redundant.
-        max_frag_rank = UInt8(255)
+        # EXPERIMENT 2026-05-09: cap to 6 to test top-6 vs top-10 fragments.
+        max_frag_rank = UInt8(parse(Int, get(ENV, "PIONEER_MAX_FRAG_RANK", "255")))
 
         # n_isotopes lives at search.n_isotopes (flattened). Fall back to
         # the legacy nested location search.fragment_settings.n_isotopes
@@ -114,7 +115,19 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
 
             Float32(0.0),     # lambda (no regularization)
             NoNorm(),         # reg_type
-            PoissonMMSolver(),  # hardcoded: PMM is the production solver
+            (let s = get(ENV, "PIONEER_DECONV_SOLVER", "pmm")
+                if s == "ols"
+                    OLSSolver()
+                elseif s == "alasso"
+                    λ_rel = parse(Float32, get(ENV, "PIONEER_ALASSO_LAMBDA",  "0.01"))
+                    γ     = parse(Float32, get(ENV, "PIONEER_ALASSO_GAMMA",   "1.0"))
+                    ε_rel = parse(Float32, get(ENV, "PIONEER_ALASSO_EPS_REL", "1e-3"))
+                    nit   = parse(Int,     get(ENV, "PIONEER_ALASSO_NITER",   "3"))
+                    AdaptiveLassoSolver(λ_rel, γ, ε_rel, nit)
+                else
+                    PoissonMMSolver()
+                end
+            end),  # ENV-gated solver swap
             DECONV_MAX_ITER,          # max_iter_outer
             DECONV_CONVERGENCE_TOL,   # max_diff
 

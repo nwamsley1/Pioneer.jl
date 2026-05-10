@@ -192,7 +192,162 @@ const PRESCORE_FEATURES = [
     :max_unmatched_residual, :max_matched_residual, :Mox, :spectrum_peak_count,
     :sequence_length,
     :fitted_hellinger,
+    :weight_ratio_at_scan, :weight_rank_at_scan,
+    :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan,
+    :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan, :irt_dist_best_max_residual_3scan,
+    :irt_dist_to_weight_apex,
+    :rank1_matched, :top3_matched, :top5_matched,
 ]
+
+"""
+    add_apex_distance_feature!(psms::DataFrame)
+
+For each PSM, compute the iRT distance from this scan to the scan where the
+SAME precursor had its highest deconv weight (its "apex"). PSMs at the apex
+get value 0; PSMs far from the apex get a larger value. Real precursors
+should have all their PSMs clustered around the apex; noise hits may be
+scattered.
+
+Adds column `:irt_dist_to_weight_apex`.
+"""
+function add_apex_distance_feature!(psms::DataFrame)
+    n = nrow(psms)
+    psms[!, :irt_dist_to_weight_apex] = zeros(Float32, n)
+    n == 0 && return
+    @assert hasproperty(psms, :irt_obs) ":irt_obs required"
+    by_prec = Dict{eltype(psms.precursor_idx), Vector{Int}}()
+    @inbounds for i in 1:n
+        push!(get!(() -> Int[], by_prec, psms.precursor_idx[i]), i)
+    end
+    @inbounds for (_, idxs) in by_prec
+        # Find apex (max weight)
+        apex_i = idxs[1]; apex_w = Float32(psms.weight[apex_i])
+        for j in idxs
+            w = Float32(psms.weight[j])
+            if w > apex_w; apex_w = w; apex_i = j; end
+        end
+        apex_irt = Float32(psms.irt_obs[apex_i])
+        for i in idxs
+            psms.irt_dist_to_weight_apex[i] = abs(Float32(psms.irt_obs[i]) - apex_irt)
+        end
+    end
+    return
+end
+
+"""
+    add_neighborhood_features!(psms::DataFrame)
+
+For each PSM at (precursor_idx, scan_idx), look at the PSMs of the SAME
+precursor at the nearest earlier scan and the nearest later scan (if any).
+Within this 3-scan neighborhood, compute the BEST value for each of:
+- gof (higher = better, take max)
+- fitted_manhattan_distance (lower = better, take min)
+- max_matched_residual (lower = better, take min)
+
+Also record the |irt_obs| distance from the current scan to the scan that
+contributed the best value (a chromatographic-quality signal: real precursors
+should have their best neighbor close in iRT).
+
+Adds columns:
+- :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan
+- :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan, :irt_dist_best_max_residual_3scan
+
+PSMs that are the only PSM for a precursor get values from themselves; iRT
+distance = 0.
+"""
+function add_neighborhood_features!(psms::DataFrame)
+    n = nrow(psms)
+    psms[!, :best_gof_3scan]                  = Vector{Float32}(undef, n)
+    psms[!, :best_manhattan_3scan]            = Vector{Float32}(undef, n)
+    psms[!, :best_max_residual_3scan]         = Vector{Float32}(undef, n)
+    psms[!, :irt_dist_best_gof_3scan]         = zeros(Float32, n)
+    psms[!, :irt_dist_best_manhattan_3scan]   = zeros(Float32, n)
+    psms[!, :irt_dist_best_max_residual_3scan]= zeros(Float32, n)
+    n == 0 && return
+    @assert hasproperty(psms, :irt_obs) "neighborhood features require :irt_obs column"
+
+    # Group rows by precursor_idx; within each group sort indices by scan_idx
+    by_prec = Dict{eltype(psms.precursor_idx), Vector{Int}}()
+    @inbounds for i in 1:n
+        push!(get!(() -> Int[], by_prec, psms.precursor_idx[i]), i)
+    end
+
+    @inbounds for (_, idxs) in by_prec
+        if length(idxs) > 1
+            sort!(idxs, by = j -> psms.scan_idx[j])
+        end
+        for (k, i) in enumerate(idxs)
+            cur_irt = Float32(psms.irt_obs[i])
+            cur_gof = Float32(psms.gof[i])
+            cur_man = Float32(psms.fitted_manhattan_distance[i])
+            cur_mr  = Float32(psms.max_matched_residual[i])
+            best_gof = cur_gof; gof_idx = i
+            best_man = cur_man; man_idx = i
+            best_mr  = cur_mr;  mr_idx  = i
+            for off in (-1, 1)
+                kk = k + off
+                if 1 <= kk <= length(idxs)
+                    j = idxs[kk]
+                    g = Float32(psms.gof[j])
+                    if g > best_gof; best_gof = g; gof_idx = j; end
+                    m = Float32(psms.fitted_manhattan_distance[j])
+                    if m < best_man; best_man = m; man_idx = j; end
+                    r = Float32(psms.max_matched_residual[j])
+                    if r < best_mr;  best_mr  = r;  mr_idx  = j; end
+                end
+            end
+            psms.best_gof_3scan[i]                   = best_gof
+            psms.best_manhattan_3scan[i]             = best_man
+            psms.best_max_residual_3scan[i]          = best_mr
+            psms.irt_dist_best_gof_3scan[i]          = abs(Float32(psms.irt_obs[gof_idx]) - cur_irt)
+            psms.irt_dist_best_manhattan_3scan[i]    = abs(Float32(psms.irt_obs[man_idx]) - cur_irt)
+            psms.irt_dist_best_max_residual_3scan[i] = abs(Float32(psms.irt_obs[mr_idx]) - cur_irt)
+        end
+    end
+    return
+end
+
+"""
+    add_scan_competition_features!(psms::DataFrame)
+
+Add per-scan competition features:
+- `weight_ratio_at_scan`: weight / max(weight) over all PSMs at the same scan
+- `weight_rank_at_scan`: rank (1 = highest) of this PSM's weight at its scan
+
+Scans with a single PSM get `weight_ratio_at_scan=1.0` and `weight_rank_at_scan=1`.
+"""
+function add_scan_competition_features!(psms::DataFrame)
+    n = nrow(psms)
+    weight_ratio = Vector{Float32}(undef, n)
+    weight_rank  = Vector{UInt16}(undef, n)
+    if n == 0
+        psms[!, :weight_ratio_at_scan] = weight_ratio
+        psms[!, :weight_rank_at_scan]  = weight_rank
+        return
+    end
+    scan = psms[!, :scan_idx]
+    w    = psms[!, :weight]
+    # Group rows by scan (build mapping scan_idx → vector of row indices)
+    by_scan = Dict{eltype(scan), Vector{Int}}()
+    @inbounds for i in 1:n
+        push!(get!(() -> Int[], by_scan, scan[i]), i)
+    end
+    @inbounds for (_, idxs) in by_scan
+        # weights at this scan
+        weights = Float32[Float32(w[i]) for i in idxs]
+        max_w = maximum(weights)
+        # rank: descending by weight (1 = highest)
+        order = sortperm(weights, rev=true)
+        for (rank, j) in enumerate(order)
+            i = idxs[j]
+            weight_ratio[i] = max_w > 0 ? weights[j] / max_w : Float32(1)
+            weight_rank[i]  = UInt16(min(rank, typemax(UInt16)))
+        end
+    end
+    psms[!, :weight_ratio_at_scan] = weight_ratio
+    psms[!, :weight_rank_at_scan]  = weight_rank
+    return
+end
 
 # Full feature set used in Phase 2 (ScoringSearch gets these via fold Arrow files)
 const LGBM_RECOVERY_FEATURES = [

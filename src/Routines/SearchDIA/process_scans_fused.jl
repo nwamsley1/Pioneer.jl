@@ -47,6 +47,9 @@ function process_scans_fused!(
     prec_charges = getCharge(precursors)
     prec_sulfs   = getSulfurCount(precursors)
     prec_irts    = getIrt(precursors)
+    prec_is_decoy = getIsDecoy(precursors)
+
+    split_deconv = get(ENV, "PIONEER_SPLIT_DECONV", "0") == "1"
 
     prec_estimation     = getPrecEstimation(params)
     n_frag_isotopes     = getNFragIsotopes(params)
@@ -89,43 +92,59 @@ function process_scans_fused!(
         prec_range = get_prec_range(prec_index, scan_idx)
         precs_vec  = get_precursors(prec_index)
 
-        nmatches, nmisses = run_fused!(
-            kind,
-            Hs, unscored_psms, id_to_col, fused_scratch,
-            corr_mz, obs_low, obs_high, peak_mz_len,
-            isotopes_buf, prec_trans_buf,
-            ion_list, nce_model,
-            precs_vec, prec_range,
-            prec_mzs, prec_charges, prec_sulfs, prec_irts,
-            getIsoSplines(search_data), quad_fn, mem,
-            scan_int, scan_irt, irt_tol_f32,
-            frag_mz_bounds, n_frag_isotopes,
-            isotope_err_bounds;
-            m_rank = last(getMinTopNofM(params))
-        )
-
-        if nmatches ≤ 2
+        # Run deconv pipeline for one prec subset (per-scan slice).
+        # Returns updated last_val. The PSMs from this call accumulate in scored_psms.
+        function _run_subset!(sub_indices)
+            isempty(sub_indices) && return last_val
+            nmatches, nmisses = run_fused!(
+                kind,
+                Hs, unscored_psms, id_to_col, fused_scratch,
+                corr_mz, obs_low, obs_high, peak_mz_len,
+                isotopes_buf, prec_trans_buf,
+                ion_list, nce_model,
+                precs_vec, sub_indices,
+                prec_mzs, prec_charges, prec_sulfs, prec_irts,
+                getIsoSplines(search_data), quad_fn, mem,
+                scan_int, scan_irt, irt_tol_f32,
+                frag_mz_bounds, n_frag_isotopes,
+                isotope_err_bounds;
+                m_rank = last(getMinTopNofM(params)),
+                scan_idx = Int64(scan_idx)
+            )
+            if nmatches ≤ 2
+                reset_scan_arrays!(id_to_col, Hs, unscored_psms)
+                return last_val
+            end
+            resize_if_needed!(search_data, params)
+            converged = post_design_matrix!(search_data, Hs, params)
+            if !converged
+                reset_scan_arrays!(id_to_col, Hs, unscored_psms)
+                return last_val
+            end
+            compute_distance_metrics!(Hs, search_data, params)
+            new_last_val = score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
+                                  spectra, last_val, cycle_idx; mem=mem)
             reset_scan_arrays!(id_to_col, Hs, unscored_psms)
-            continue
+            return new_last_val
         end
 
-        resize_if_needed!(search_data, params)
-
-        converged = post_design_matrix!(search_data, Hs, params)
-        if !converged
-            reset_scan_arrays!(id_to_col, Hs, unscored_psms)
-            continue
+        if split_deconv
+            # Partition this scan's candidates by target/decoy and run deconv twice.
+            # Each call resets scratch and accumulates PSMs into the same scored_psms buffer.
+            target_idx = Int64[]
+            decoy_idx  = Int64[]
+            for i in prec_range
+                if prec_is_decoy[precs_vec[i]]
+                    push!(decoy_idx, Int64(i))
+                else
+                    push!(target_idx, Int64(i))
+                end
+            end
+            last_val = _run_subset!(target_idx)
+            last_val = _run_subset!(decoy_idx)
+        else
+            last_val = _run_subset!(collect(Int64, prec_range))
         end
-
-        # NOTE: no ScoreFragmentMatches! — work is done inline in run_fused!
-        # via apply_complex_scoring!.
-
-        compute_distance_metrics!(Hs, search_data, params)
-
-        last_val = score_psms!(search_data, params, Hs, scan_idx, nmatches, nmisses,
-                              spectra, last_val, cycle_idx; mem=mem)
-
-        reset_scan_arrays!(id_to_col, Hs, unscored_psms)
     end
 
     return DataFrame(@view(get_scored_psms(search_data, params)[1:last_val]))

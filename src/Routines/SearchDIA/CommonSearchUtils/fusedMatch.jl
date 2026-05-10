@@ -235,6 +235,7 @@ error accumulation.
 
     rank    = getRank(frag)
     ion_pos = getIonPosition(frag)
+    matched_rank_mask = score.matched_rank_mask
 
     if iso_idx != UInt8(0)
         isotope_count += UInt8(1)
@@ -251,6 +252,10 @@ error accumulation.
             end
         end
     else
+        # M0 fragment match: set bit (rank-1) in mask (bits 0..7 → ranks 1..8)
+        if rank >= UInt8(1) && rank <= UInt8(8)
+            matched_rank_mask |= (UInt8(1) << (rank - UInt8(1)))
+        end
         if rank < best_rank
             best_rank = rank
         end
@@ -287,7 +292,7 @@ error accumulation.
         min(y_count, UInt8(255)), y_int,
         min(y_count_iso, UInt8(255)),
         p_count, non_cannonical_count,
-        error, prec_idx, ms_file_idx)
+        error, matched_rank_mask, prec_idx, ms_file_idx)
     return nothing
 end
 
@@ -334,6 +339,12 @@ function prepare_scan_peaks!(corrected::Vector{Float32},
 end
 
 const NEUTRON_F32 = Float32(1.00335)
+
+# Per-(file_idx, scan_idx) → Set{precursor_idx} blacklist used by run_fused!
+# to skip specific (precursor, scan) deconv candidates (iterative refinement).
+# Loaded from PIONEER_SKIP_PRECS_PATH (deserialized Dict{Int64,Set{Tuple{UInt32,UInt32}}}).
+# DIAG_CURRENT_FILE_IDX is reused as the file-index source.
+const SKIP_PRECS = Dict{Tuple{Int64,UInt32}, Set{UInt32}}()
 
 """
     scan_for_nearest_in_window(corrected_mz, obs_low, obs_high,
@@ -605,7 +616,7 @@ function run_fused!(
     ion_list::LibraryFragmentLookup,
     nce_model::NceModel{Float32},
     precursors_passed::Vector{UInt32},
-    prec_range::UnitRange{Int64},
+    prec_range::AbstractVector{Int64},
     prec_mzs::AbstractArray{Float32},
     prec_charges::AbstractArray{UInt8},
     prec_sulfur_counts::AbstractArray{UInt8},
@@ -619,8 +630,17 @@ function run_fused!(
     frag_mz_bounds::Tuple{Float32, Float32},
     n_frag_isotopes::Int64,
     isotope_err_bounds::Tuple{I, I};
-    m_rank::Int64 = 3
+    m_rank::Int64 = 3,
+    scan_idx::Int64 = 0   # for blacklist lookup; 0 disables
 ) where {K<:FusedSearchKind, I<:Integer}
+
+    # Per-scan blacklist (precursor_idx values to skip in this scan, this file).
+    # Populated by SKIP_PRECS dict if PIONEER_SKIP_PRECS_PATH was loaded.
+    skip_set = if !isempty(SKIP_PRECS) && scan_idx > 0
+        get(SKIP_PRECS, (DIAG_CURRENT_FILE_IDX[], UInt32(scan_idx)), nothing)
+    else
+        nothing
+    end
 
     reset!(Hs)
 
@@ -644,6 +664,10 @@ function run_fused!(
 
     @inbounds for i in prec_range
         prec_idx = precursors_passed[i]
+        # Skip blacklisted (precursor_idx, scan_idx) pairs (iterative refinement)
+        if skip_set !== nothing && prec_idx in skip_set
+            continue
+        end
         prec_charge = prec_charges[prec_idx]
         prec_mz = prec_mzs[prec_idx]
 
