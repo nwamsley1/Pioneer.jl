@@ -200,6 +200,9 @@ const PRESCORE_FEATURES = [
     :ms1_iso_count, :ms1_m0_matched, :ms1_m0_mass_err_ppm, :ms1_log_iso_obs_pred,
     :ms1_m2_matched, :ms1_m3_matched,
     :ms1_log_iso_obs_pred_m2, :ms1_log_iso_obs_pred_m3,
+    :ms1_corr_weight_m0, :ms1_corr_m0_m1,
+    :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
+    :ms1_m0_intensity, :ms1_m1_intensity,
 ]
 
 """
@@ -234,6 +237,9 @@ function add_ms1_features!(psms::DataFrame,
     psms[!, :ms1_m3_matched]        = zeros(UInt8, n)
     psms[!, :ms1_log_iso_obs_pred_m2] = zeros(Float32, n)
     psms[!, :ms1_log_iso_obs_pred_m3] = zeros(Float32, n)
+    # B1: per-PSM intensities (used by per-precursor chromatogram pass)
+    psms[!, :ms1_m0_intensity]      = zeros(Float32, n)
+    psms[!, :ms1_m1_intensity]      = zeros(Float32, n)
     n == 0 && return
 
     # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
@@ -335,6 +341,8 @@ function add_ms1_features!(psms::DataFrame,
         psms.ms1_m0_matched[i] = m0_hit ? UInt8(1) : UInt8(0)
         psms.ms1_m2_matched[i] = m2_hit ? UInt8(1) : UInt8(0)
         psms.ms1_m3_matched[i] = m3_hit ? UInt8(1) : UInt8(0)
+        psms.ms1_m0_intensity[i] = m0_hit ? m0_int : 0f0
+        psms.ms1_m1_intensity[i] = m1_hit ? m1_int : 0f0
         if m0_hit
             psms.ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
         end
@@ -368,6 +376,105 @@ function add_ms1_features!(psms::DataFrame,
                     end
                 end
             end
+        end
+    end
+
+    # B1: per-precursor MS1 chromatogram features
+    _add_ms1_chromatogram_features!(psms)
+    return
+end
+
+"""
+    _add_ms1_chromatogram_features!(psms)
+
+Phase 2 (B1): per-precursor MS1 chromatogram correlation features. Operates on
+the per-PSM `ms1_m0_intensity`, `ms1_m1_intensity`, `weight`, and `irt` columns
+populated by the deconv pipeline + Phase 1 MS1 lookup. Adds:
+
+- `ms1_corr_weight_m0` — Pearson correlation between the per-precursor weight
+  chromatogram and the MS1 M0 intensity chromatogram (both sampled at the MS2
+  scans where the precursor has a PSM). Real precursors: high (~1).
+- `ms1_corr_m0_m1` — Pearson(M0 chrom, M+1 chrom). Real isotope envelopes
+  co-elute; chimeric MS1 noise does not.
+- `ms1_apex_offset_irt` — |this_psm_irt − arg-irt-max(M0 chrom)|; how far this
+  scan is from the M0 elution apex.
+- `ms1_weight_apex_to_m0_apex_irt` — |arg-irt-max(weight) − arg-irt-max(M0)|;
+  agreement between MS2 and MS1 apex location. Real: 0; chimeric: large.
+"""
+function _add_ms1_chromatogram_features!(psms::DataFrame)
+    n = nrow(psms)
+    psms[!, :ms1_corr_weight_m0]            = zeros(Float32, n)
+    psms[!, :ms1_corr_m0_m1]                = zeros(Float32, n)
+    psms[!, :ms1_apex_offset_irt]           = zeros(Float32, n)
+    psms[!, :ms1_weight_apex_to_m0_apex_irt]= zeros(Float32, n)
+    n == 0 && return
+
+    # Required columns
+    if !all(c -> hasproperty(psms, c), (:precursor_idx, :ms1_m0_intensity, :ms1_m1_intensity, :weight, :irt_obs))
+        @debug_l1 "_add_ms1_chromatogram_features!: missing required columns, skipping"
+        return
+    end
+
+    # Index PSMs by precursor_idx (no DataFrame groupby — just a per-row pass)
+    prec = psms.precursor_idx
+    m0   = psms.ms1_m0_intensity
+    m1   = psms.ms1_m1_intensity
+    w    = psms.weight
+    irt  = psms.irt_obs
+
+    # Build per-precursor index buckets
+    buckets = Dict{UInt32, Vector{Int}}()
+    @inbounds for i in 1:n
+        push!(get!(() -> Int[], buckets, UInt32(prec[i])), i)
+    end
+
+    # For each precursor, compute chrom features once, broadcast to all PSMs
+    @inbounds for (_pid, idxs) in buckets
+        length(idxs) < 2 && continue   # correlation undefined with <2 points
+        # Extract per-precursor chromatograms
+        npts = length(idxs)
+        v_m0  = Vector{Float32}(undef, npts)
+        v_m1  = Vector{Float32}(undef, npts)
+        v_w   = Vector{Float32}(undef, npts)
+        v_irt = Vector{Float32}(undef, npts)
+        for (k, i) in enumerate(idxs)
+            v_m0[k]  = m0[i]
+            v_m1[k]  = m1[i]
+            v_w[k]   = Float32(w[i])
+            v_irt[k] = Float32(irt[i])
+        end
+
+        # Pearson correlations (need variance > 0 in each vector)
+        function _pcor(x::Vector{Float32}, y::Vector{Float32})
+            mx = mean(x); my = mean(y)
+            sx = 0f0; sy = 0f0; sxy = 0f0
+            @inbounds for j in 1:length(x)
+                dx = x[j]-mx; dy = y[j]-my
+                sx  += dx*dx; sy += dy*dy; sxy += dx*dy
+            end
+            d = sqrt(sx*sy)
+            d > 0 ? sxy/d : 0f0
+        end
+        c_wm0 = _pcor(v_w,  v_m0)
+        c_m01 = _pcor(v_m0, v_m1)
+
+        # Apex of M0 and weight (arg-max). Use first-occurrence on ties.
+        ai_m0 = 1; vmax_m0 = v_m0[1]
+        ai_w  = 1; vmax_w  = v_w[1]
+        @inbounds for k in 2:npts
+            if v_m0[k] > vmax_m0; vmax_m0 = v_m0[k]; ai_m0 = k; end
+            if v_w[k]  > vmax_w;  vmax_w  = v_w[k];  ai_w  = k; end
+        end
+        irt_apex_m0 = v_irt[ai_m0]
+        irt_apex_w  = v_irt[ai_w]
+        weight_apex_to_m0 = abs(irt_apex_w - irt_apex_m0)
+
+        # Broadcast to all PSMs of this precursor
+        for (k, i) in enumerate(idxs)
+            psms.ms1_corr_weight_m0[i]             = c_wm0
+            psms.ms1_corr_m0_m1[i]                 = c_m01
+            psms.ms1_apex_offset_irt[i]            = abs(v_irt[k] - irt_apex_m0)
+            psms.ms1_weight_apex_to_m0_apex_irt[i] = weight_apex_to_m0
         end
     end
     return
