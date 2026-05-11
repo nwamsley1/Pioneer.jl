@@ -198,10 +198,10 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     
     # PSM scoring.
     # `complex_unscored_psms` is the per-(scan, precursor) accumulator
-    # updated inline by run_fused!'s apply_complex_scoring!.
+    # updated inline by run_fused!'s apply_main_scoring!.
     # `main_search_scored_psms` + `main_search_spectral_scores` are the
     # final per-scan rows produced by Score! / getDistanceMetrics.
-    complex_unscored_psms::Vector{ComplexUnscoredPSM{Float32}}
+    complex_unscored_psms::Vector{MainUnscoredPSM{Float32}}
     main_search_scored_psms::Vector{MainSearchScoredPSM{Float32, Float16}}
     main_search_spectral_scores::Vector{SpectralScoresMainSearch{Float16}}
 

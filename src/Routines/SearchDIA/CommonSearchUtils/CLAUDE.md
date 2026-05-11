@@ -41,7 +41,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with `C
 
 | Kind | Used by | Iso passes | `do_prec_check` | Match recording |
 |---|---|---|---|---|
-| `FusedStandard` | `MainSearch`, NCE tuning | 1 | true | `apply_complex_scoring!` updates `ComplexUnscoredPSM` |
+| `FusedStandard` | `MainSearch`, NCE tuning | 1 | true | `apply_main_scoring!` updates `MainUnscoredPSM` |
 | `FusedRTIndexed` | `IntegrateChromatogramsSearch` | 1 | false (filters applied upstream) | no-op (chromatogram points read post-deconv) |
 | `FusedQuadEst` | `QuadTuningSearch` | 3 (one per precursor isotope) | false | no-op |
 
@@ -102,5 +102,5 @@ The following classic-pipeline helpers and types are gone — if you see them re
 - `SparseArray` (replaced by `SparseArrayFused`)
 - `sortSparse!` (no longer needed; `run_fused!` writes CSC directly)
 - `FragmentMatch`, `UnmatchedIon`, `PrecursorMatch` (replaced by direct `SparseArrayFused` writes for matches; `MassErrSample` for ParameterTuning)
-- `ScoreFragmentMatches!`, `ModifyFeatures!` (replaced by `apply_complex_scoring!` called inline from `run_fused!`)
+- `ScoreFragmentMatches!`, `ModifyFeatures!` (replaced by `apply_main_scoring!` called inline from `run_fused!`)
 - `ArrayDict` (replaced by `AbstractPrecursorMap{V}` with `DensePrecMap` / `SparsePrecMap`)

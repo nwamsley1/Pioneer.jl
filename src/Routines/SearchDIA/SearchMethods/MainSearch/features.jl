@@ -201,7 +201,7 @@ const PRESCORE_FEATURES = [
     :ms1_corr_weight_m0, :ms1_corr_m0_m1,
     :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
-    # Per-rank M0 fragment intensities (from ComplexUnscoredPSM)
+    # Per-rank M0 fragment intensities (from MainUnscoredPSM)
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
     # Per-precursor fragment chromatogram features
     :frag_corr_top1_top2, :frag_corr_top1_top3, :frag_corr_top1_weight,
@@ -452,7 +452,7 @@ end
 
 Per-precursor MS2 fragment chromatogram features. For each precursor, builds
 6 fragment chromatograms (`frag1_int .. frag6_int` indexed by MS2 scan, captured
-in `Score!` from `ComplexUnscoredPSM`) plus the deconv weight chromatogram, then
+in `Score!` from `MainUnscoredPSM`) plus the deconv weight chromatogram, then
 computes:
 
 - `frag_corr_top1_top2`        Pearson(rank-1 frag chrom, rank-2 frag chrom)

@@ -18,13 +18,13 @@
 abstract type UnscoredPSM{T<:AbstractFloat} <: PSM end
 
 """
-    ComplexUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
+    MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
 
 Per-(scan, precursor) accumulator updated inline during the fused scan
-pass via `apply_complex_scoring!`. After the scan completes, `Score!`
+pass via `apply_main_scoring!`. After the scan completes, `Score!`
 reads these into a `MainSearchScoredPSM` row.
 """
-struct ComplexUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
+struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     best_rank::UInt8 #Highest ranking predicted framgent that was observed
     best_rank_iso::UInt8
     topn::UInt8 #How many of the topN predicted fragments were observed.
@@ -53,4 +53,4 @@ struct ComplexUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     ms_file_idx::UInt32
 end
 
-ComplexUnscoredPSM{Float32}() = ComplexUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), UInt32(0), UInt32(0))
+MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), UInt32(0), UInt32(0))

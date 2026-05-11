@@ -19,7 +19,7 @@ const FullPrecCapture        = Pioneer.FullPrecCapture
 const PartialPrecCapture     = Pioneer.PartialPrecCapture
 const SparseArrayFused       = Pioneer.SparseArrayFused
 const FusedScratch           = Pioneer.FusedScratch
-const ComplexUnscoredPSM     = Pioneer.ComplexUnscoredPSM
+const MainUnscoredPSM     = Pioneer.MainUnscoredPSM
 const DensePrecMap           = Pioneer.DensePrecMap
 const StandardFragmentLookup = Pioneer.StandardFragmentLookup
 const CompactFrag            = Pioneer.CompactFrag
@@ -85,7 +85,7 @@ function make_fused_fixture(;
     Hs = SparseArrayFused(UInt32(64))
 
     # PSM accumulator (one slot per possible column = up to n_precursors)
-    unscored_psms = [ComplexUnscoredPSM{Float32}() for _ in 1:max(8, n_precursors)]
+    unscored_psms = [MainUnscoredPSM{Float32}() for _ in 1:max(8, n_precursors)]
 
     # id_to_col: map prec_id -> column. FusedQuadEst uses (prec_id-1)*3 + iso_pass,
     # so size is 3*n_precursors + 1; for Standard it's just n_precursors.
@@ -228,7 +228,7 @@ end
         @test fx.Hs.n_vals == 2     # two entries in that column
         # id_to_col must record the column for prec_idx=1 (Standard maps to prec_idx).
         @test fx.id_to_col[1] == UInt16(1)
-        # ComplexUnscoredPSM should have been updated for col=1.
+        # MainUnscoredPSM should have been updated for col=1.
         @test fx.unscored_psms[1].precursor_idx == UInt32(1)
         # Both peaks landed in the matched buffer (rows 1 and 2).
         rows_in_col = sort([fx.Hs.rowval[i] for i in 1:fx.Hs.n_vals])
@@ -791,7 +791,7 @@ end
 
     # ------------------------------------------------------------
     @testset "unscored_psms: p-ion match increments p_count, leaves y/b at 0" begin
-        # P-ion (precursor ion) match. apply_complex_scoring! routes via the
+        # P-ion (precursor ion) match. apply_main_scoring! routes via the
         # isP branch on the mono path, incrementing p_count. b_count, y_count,
         # longest_b, longest_y stay at 0.
         frags = [(UInt32(1), 200.0f0, 1000.0f0, UInt8(0), :p, UInt8(2))]
@@ -816,7 +816,7 @@ end
 
     # ------------------------------------------------------------
     @testset "unscored_psms: non-canonical ion (no flag) increments fallback counter" begin
-        # apply_complex_scoring! has an `else` branch that catches frags
+        # apply_main_scoring! has an `else` branch that catches frags
         # which are neither y, b, nor p — increments non_cannonical_count.
         # Build a frag with all flags false (we hijack the constructor by
         # passing :other ion_type → none of is_y/is_b/is_p set).

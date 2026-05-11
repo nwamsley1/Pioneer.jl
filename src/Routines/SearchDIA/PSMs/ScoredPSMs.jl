@@ -112,7 +112,7 @@ function growScoredPSMs!(scored_psms::Vector{MainSearchScoredPSM{H,L}}, block_si
     scored_psms = append!(scored_psms, Vector{MainSearchScoredPSM{H,L}}(undef, block_size))
 end
 function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
-                unscored_PSMs::Vector{ComplexUnscoredPSM{H}},
+                unscored_PSMs::Vector{MainUnscoredPSM{H}},
                 spectral_scores::Vector{SpectralScoresMainSearch{L}},
                 weight::Vector{H},
                 IDtoCOL::AbstractPrecursorMap{UInt16},

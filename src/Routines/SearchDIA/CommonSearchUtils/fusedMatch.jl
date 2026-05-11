@@ -48,7 +48,7 @@ per-precursor-RT + min_fraction_transmitted filters are all applied
 repeating the iRT / isotope_err_bounds checks (`check_prec_filters = false`).
 
 Inline PSM scoring is a no-op — chromatogram points are recorded
-post-deconv from `weights + id_to_col` (not from `ComplexUnscoredPSM`).
+post-deconv from `weights + id_to_col` (not from `MainUnscoredPSM`).
 """
 struct FusedRTIndexed{P<:PrecEstimation} <: FusedSearchKind
     prec_estimation::P
@@ -172,40 +172,40 @@ classic Quad path skips these.
                    ppm_err, m_rank, prec_idx)
 
 Per-match inline scoring hook. Standard updates
-`unscored_psms[col]::ComplexUnscoredPSM`. Quad is a no-op (tuning reads
+`unscored_psms[col]::MainUnscoredPSM`. Quad is a no-op (tuning reads
 from `Hs + weights` after deconv; no PSM accumulation).
 """
 @inline function record_match!(::FusedSearchKind,
-        unscored_psms::Vector{ComplexUnscoredPSM{Float32}}, col::Int, frag,
+        unscored_psms::Vector{MainUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
         m_rank::Int64, prec_idx::UInt32)
-    apply_complex_scoring!(unscored_psms, col, frag, iso_idx,
+    apply_main_scoring!(unscored_psms, col, frag, iso_idx,
                             intensity, ppm_err, m_rank, prec_idx)
     return nothing
 end
 
-@inline record_match!(::FusedQuadEst, ::Vector{ComplexUnscoredPSM{Float32}},
+@inline record_match!(::FusedQuadEst, ::Vector{MainUnscoredPSM{Float32}},
         ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32) = nothing
 
-@inline record_match!(::FusedRTIndexed, ::Vector{ComplexUnscoredPSM{Float32}},
+@inline record_match!(::FusedRTIndexed, ::Vector{MainUnscoredPSM{Float32}},
         ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32) = nothing
 
 #==========================================================
-Inline scoring for the fused path — mirrors ModifyFeatures!(ComplexUnscoredPSM, …)
+Inline scoring for the fused path — mirrors ModifyFeatures!(MainUnscoredPSM, …)
 byte-for-byte, but takes a CompactFrag + iso_idx directly instead of a
 FragmentMatch object (since the fused path never constructs matches).
 ==========================================================#
 
 """
-    apply_complex_scoring!(unscored, col, frag, iso_idx, intensity, ppm_err, m_rank, prec_idx)
+    apply_main_scoring!(unscored, col, frag, iso_idx, intensity, ppm_err, m_rank, prec_idx)
 
 Update `unscored[col]` with one (fragment, isotope) match. Equivalent to
-`ModifyFeatures!(score::ComplexUnscoredPSM, …)` called from classic's
+`ModifyFeatures!(score::MainUnscoredPSM, …)` called from classic's
 `ScoreFragmentMatches!` — same branching on isotope vs mono, same rank /
 topn / longest-y / longest-b / count accumulation, same `abs(ppm_err)`
 error accumulation.
 """
-@inline function apply_complex_scoring!(unscored::Vector{ComplexUnscoredPSM{Float32}},
+@inline function apply_main_scoring!(unscored::Vector{MainUnscoredPSM{Float32}},
                                          col::Int,
                                          frag,
                                          iso_idx::UInt8,
@@ -297,7 +297,7 @@ error accumulation.
 
     error += abs(ppm_err)
 
-    @inbounds unscored[col] = ComplexUnscoredPSM{Float32}(
+    @inbounds unscored[col] = MainUnscoredPSM{Float32}(
         best_rank, best_rank_iso,
         min(topn, UInt8(255)), min(topn_iso, UInt8(255)),
         longest_y, longest_b, longest_y_iso,
@@ -613,14 +613,14 @@ CSC order.
 **Outputs**:
 - `Hs` — CSC design matrix with `rowval/nzval/x/matched/isotope/colptr`
   set and `Hs.n/n_vals/m` finalized.
-- `unscored_psms[col]` for each column populated via `apply_complex_scoring!`.
+- `unscored_psms[col]` for each column populated via `apply_main_scoring!`.
 - `id_to_col[prec_idx] = col` for precursors with ≥1 match.
 - `(nmatches, nmisses)` — match ratio used by `Score!`.
 """
 function run_fused!(
     kind::K,
     Hs::SparseArrayFused{UInt32, Float32},
-    unscored_psms::Vector{ComplexUnscoredPSM{Float32}},
+    unscored_psms::Vector{MainUnscoredPSM{Float32}},
     id_to_col::AbstractPrecursorMap{UInt16},
     scratch::FusedScratch,
     scan_corrected_mz::Vector{Float32},

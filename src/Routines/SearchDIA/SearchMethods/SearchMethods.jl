@@ -280,7 +280,7 @@ function initSimpleSearchContext(
         # avoids rehash on busy scans.
         SparsePrecMap{UInt16}(sizehint=8192),
         iso_splines,
-        [ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)],
+        [MainUnscoredPSM{Float32}() for _ in range(1, 5000)],
         Vector{MainSearchScoredPSM{Float32, Float16}}(undef, 5000),
         Vector{SpectralScoresMainSearch{Float16}}(undef, 5000),
         zeros(UInt32, 5000),
