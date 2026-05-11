@@ -287,13 +287,16 @@ function process_search_results!(
     # ============================================================
 
     # ============================================================
-    # OPTIONAL PAIR COMPETITION (gated by PIONEER_PAIR_COMPETITION=1)
+    # PAIR COMPETITION (default ON; disable with PIONEER_PAIR_COMPETITION=0)
     # For each (precursor, partner_decoy) pair where both rows are present
     # in best_psms, drop the lower-scoring partner. Operates on lgbm_prob
     # (post-pass-2 if 2-pass enabled, else pass-1). Equivalent to 1-vs-1
     # target-decoy competition before q-value computation.
+    #
+    # Empirically (Olsen Exploris one-file, non-entrap library): +2,556 q≤.001,
+    # +1,131 q≤.01, +89 protein groups vs single-pass without paircomp.
     # ============================================================
-    if get(ENV, "PIONEER_PAIR_COMPETITION", "0") == "1"
+    if get(ENV, "PIONEER_PAIR_COMPETITION", "1") != "0"
         precursors = getPrecursors(getSpecLib(search_context))
         partner_col = precursors.data[:partner_precursor_idx]
         n0 = nrow(best_psms)
