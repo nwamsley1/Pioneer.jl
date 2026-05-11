@@ -196,7 +196,6 @@ const PRESCORE_FEATURES = [
     :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan,
     :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan, :irt_dist_best_max_residual_3scan,
     :irt_dist_to_weight_apex,
-    :rank1_matched, :top3_matched, :top5_matched,
     :ms1_m0_mass_err_ppm,
     :ms1_corr_weight_m0, :ms1_corr_m0_m1,
     :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,

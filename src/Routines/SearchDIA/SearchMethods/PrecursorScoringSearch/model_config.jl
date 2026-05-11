@@ -33,7 +33,6 @@ const ADVANCED_FEATURE_SET = [
     #:prec_mz_qbin,     # Quantile-binned version of :prec_mz
     :prec_mz,
     :sequence_length,
-    :charge,
     #:irt_pred_qbin,    # Quantile-binned version of :irt_pred
     :irt_pred,
     :irt_error,
@@ -42,7 +41,6 @@ const ADVANCED_FEATURE_SET = [
     :y_ions_sum,
     :longest_y,
     :y_count,
-    :b_count,
     :isotope_count,
     :total_ions,
     :best_rank,
@@ -87,7 +85,6 @@ const ADVANCED_FEATURE_SET = [
     :rt_diff_max_intensity_ms1,
     :ms1_features_missing,
 
-    :percent_theoretical_ignored,
     :scribe,
     :max_scribe,
     :max_weight,
