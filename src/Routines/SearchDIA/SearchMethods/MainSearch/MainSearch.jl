@@ -167,7 +167,7 @@ function process_search_results!(
                 :frag_corr_top1_top2, :frag_corr_top1_top3, :frag_corr_top1_weight,
                 :frag_corr_mean_pairwise, :frag_corr_min_pairwise, :frag_corr_top3_weight,
                 :frag_apex_dispersion_irt, :n_correlated_fragments,
-                :irt_obs]
+                :irt_obs, :rt]
         keep = intersect(cols, propertynames(psms))
         Arrow.write(joinpath(diag_dir, "$(ms_file_idx).arrow"), psms[!, keep])
     end
