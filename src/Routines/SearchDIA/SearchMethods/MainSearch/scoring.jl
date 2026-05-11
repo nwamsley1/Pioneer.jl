@@ -11,8 +11,10 @@
 # from 70,053 to 73,150 (+3,097, +4.4%). Biggest single knob: min_data_in_leaf
 # 30 -> 300 (+549). l1=l2=1 adds +278; longer training (3000 iter / lr=0.007)
 # adds another +291. Cross-entropy/lambdarank/scale_pos_weight all neutral or
-# negative. Tuned config takes ~3-5x longer per fold (3000 vs 50 trees) but
-# the tighter min_data_in_leaf and L2 keep wall-time tractable.
+# negative. Cost: ~45x more LGBM wall-time per fold (~28s vs ~0.6s on 250k
+# rows / 29 features / 10 threads); for a 50-file experiment the MainSearch
+# LGBM portion goes from <1min to ~45min. Per-iteration cost is roughly
+# linear in num_iterations until the model exhausts useful splits.
 const SHARED_LGBM_HP = (num_iterations=3000, learning_rate=0.007, max_depth=8,
                         num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
                         bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,

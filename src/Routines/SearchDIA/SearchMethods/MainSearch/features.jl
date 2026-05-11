@@ -197,9 +197,7 @@ const PRESCORE_FEATURES = [
     :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan, :irt_dist_best_max_residual_3scan,
     :irt_dist_to_weight_apex,
     :rank1_matched, :top3_matched, :top5_matched,
-    :ms1_iso_count, :ms1_m0_matched, :ms1_m0_mass_err_ppm, :ms1_log_iso_obs_pred,
-    :ms1_m2_matched, :ms1_m3_matched,
-    :ms1_log_iso_obs_pred_m2, :ms1_log_iso_obs_pred_m3,
+    :ms1_m0_mass_err_ppm,
     :ms1_corr_weight_m0, :ms1_corr_m0_m1,
     :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
@@ -209,17 +207,25 @@ const PRESCORE_FEATURES = [
     add_ms1_features!(psms, spectra, search_context, ms_file_idx;
                        ms1_ppm_tol=10.0f0)
 
-Phase-1 MS1 features. For each PSM at (precursor_idx, MS2 scan_idx):
+Per-PSM MS1 point-lookup features. For each PSM at (precursor_idx, MS2 scan_idx):
 
-1. Find the nearest MS1 scan in time.
-2. Search the MS1 spectrum for M0, M+1, M+2 of the precursor (charge-aware
+1. Find the nearest MS1 scan in time (binary search on RT).
+2. Search the MS1 spectrum for M0 and M+1 of the precursor (charge-aware
    m/z = prec_mz + iso × NEUTRON_MASS / charge), within ±ms1_ppm_tol ppm.
-3. Compute four features:
-   - `ms1_iso_count` (UInt8 0-3): number of isotopes (M0/M+1/M+2) detected
-   - `ms1_m0_matched` (UInt8 0/1): whether M0 was matched
+3. Populate three features per PSM:
    - `ms1_m0_mass_err_ppm` (Float32): |observed − theoretical| in ppm; 0 if no M0
-   - `ms1_log_iso_obs_pred` (Float32): log((obs M+1 / obs M0) / (pred M+1 / pred M0));
-      0 if M0 or M+1 missing. Real precursors should have ratio ≈ 1 → log ≈ 0.
+   - `ms1_m0_intensity` (Float32): observed M0 intensity; 0 if not matched
+   - `ms1_m1_intensity` (Float32): observed M+1 intensity; 0 if not matched
+
+The intensities are also consumed by `_add_ms1_chromatogram_features!` to build
+per-precursor M0 / M+1 / weight chromatograms and compute correlation features.
+
+Earlier versions of this function also computed `ms1_iso_count`, `ms1_m{0,2,3}_matched`,
+`ms1_log_iso_obs_pred[_m{2,3}]` (sulfur-aware predicted/observed isotope ratios), and
+M+2/M+3 lookups. Feature-importance analysis (2026-05-10) showed the LGBM model recovers
+all signal from raw `m0/m1_intensity` (presence ⇔ intensity > 0; ratio implicitly via
+tree splits); the explicit features were redundant. Removing them costs ~174 IDs at
+q≤.01 within run-to-run noise and slightly improves q≤.001 (+296).
 
 If no MS1 scan is available (file has only MS2), all features are zeroed.
 """
@@ -229,15 +235,8 @@ function add_ms1_features!(psms::DataFrame,
                             ms_file_idx::Integer;
                             ms1_ppm_tol::Float32 = 10.0f0)
     n = nrow(psms)
-    psms[!, :ms1_iso_count]         = zeros(UInt8, n)
-    psms[!, :ms1_m0_matched]        = zeros(UInt8, n)
     psms[!, :ms1_m0_mass_err_ppm]   = zeros(Float32, n)
-    psms[!, :ms1_log_iso_obs_pred]  = zeros(Float32, n)
-    psms[!, :ms1_m2_matched]        = zeros(UInt8, n)
-    psms[!, :ms1_m3_matched]        = zeros(UInt8, n)
-    psms[!, :ms1_log_iso_obs_pred_m2] = zeros(Float32, n)
-    psms[!, :ms1_log_iso_obs_pred_m3] = zeros(Float32, n)
-    # B1: per-PSM intensities (used by per-precursor chromatogram pass)
+    # Per-PSM intensities (also consumed by the per-precursor chromatogram pass)
     psms[!, :ms1_m0_intensity]      = zeros(Float32, n)
     psms[!, :ms1_m1_intensity]      = zeros(Float32, n)
     n == 0 && return
@@ -261,8 +260,6 @@ function add_ms1_features!(psms::DataFrame,
     precursors = getPrecursors(getSpecLib(search_context))
     prec_mzs       = getMz(precursors)
     prec_charges   = getCharge(precursors)
-    prec_sulfs     = getSulfurCount(precursors)
-    iso_splines    = getIsoSplines(getSearchData(search_context)[1])
 
     NEUTRON = Float32(1.00335)
 
@@ -296,7 +293,6 @@ function add_ms1_features!(psms::DataFrame,
         pid = UInt32(psms.precursor_idx[i])
         prec_mz   = Float32(prec_mzs[pid])
         prec_chg  = Int(prec_charges[pid])
-        sulfur    = Int(prec_sulfs[pid])
         prec_chg == 0 && (prec_chg = 1)
 
         # Per-isotope: target m/z, search ± ms1_ppm_tol
@@ -328,54 +324,14 @@ function add_ms1_features!(psms::DataFrame,
 
         target_m0 = prec_mz
         target_m1 = prec_mz + NEUTRON / Float32(prec_chg)
-        target_m2 = prec_mz + 2*NEUTRON / Float32(prec_chg)
-        target_m3 = prec_mz + 3*NEUTRON / Float32(prec_chg)
 
         m0_hit, m0_int, m0_mz = _find_peak(target_m0)
         m1_hit, m1_int, _    = _find_peak(target_m1)
-        m2_hit, m2_int, _    = _find_peak(target_m2)
-        m3_hit, m3_int, _    = _find_peak(target_m3)
 
-        iso_count = UInt8((m0_hit ? 1 : 0) + (m1_hit ? 1 : 0) + (m2_hit ? 1 : 0))
-        psms.ms1_iso_count[i]  = iso_count
-        psms.ms1_m0_matched[i] = m0_hit ? UInt8(1) : UInt8(0)
-        psms.ms1_m2_matched[i] = m2_hit ? UInt8(1) : UInt8(0)
-        psms.ms1_m3_matched[i] = m3_hit ? UInt8(1) : UInt8(0)
         psms.ms1_m0_intensity[i] = m0_hit ? m0_int : 0f0
         psms.ms1_m1_intensity[i] = m1_hit ? m1_int : 0f0
         if m0_hit
             psms.ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
-        end
-        if m0_hit && m0_int > 0
-            prec_mass = prec_mz * Float32(prec_chg) - Float32(prec_chg) * Float32(1.00728)
-            sulfur_clamped = clamp(sulfur, 0, length(iso_splines.splines) - 1)
-            pred_m0 = iso_splines(sulfur_clamped, 0, prec_mass)
-            if pred_m0 > 0
-                if m1_hit
-                    pred_m1 = iso_splines(sulfur_clamped, 1, prec_mass)
-                    if pred_m1 > 0
-                        obs_ratio  = m1_int / m0_int
-                        pred_ratio = pred_m1 / pred_m0
-                        psms.ms1_log_iso_obs_pred[i] = log(max(obs_ratio, 1f-6) / max(pred_ratio, 1f-6))
-                    end
-                end
-                if m2_hit
-                    pred_m2 = iso_splines(sulfur_clamped, 2, prec_mass)
-                    if pred_m2 > 0
-                        obs_ratio2  = m2_int / m0_int
-                        pred_ratio2 = pred_m2 / pred_m0
-                        psms.ms1_log_iso_obs_pred_m2[i] = log(max(obs_ratio2, 1f-6) / max(pred_ratio2, 1f-6))
-                    end
-                end
-                if m3_hit
-                    pred_m3 = iso_splines(sulfur_clamped, 3, prec_mass)
-                    if pred_m3 > 0
-                        obs_ratio3  = m3_int / m0_int
-                        pred_ratio3 = pred_m3 / pred_m0
-                        psms.ms1_log_iso_obs_pred_m3[i] = log(max(obs_ratio3, 1f-6) / max(pred_ratio3, 1f-6))
-                    end
-                end
-            end
         end
     end
 
