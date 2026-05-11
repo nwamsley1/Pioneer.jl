@@ -126,6 +126,65 @@ allocation, not per-scan.
 | MS2 ppm floor | OFF (no-op in practice) | (env var removed; was `PIONEER_MS2_MIN_PPM`) |
 | iRT σ-tolerance multiplier | 3 | `PIONEER_IRT_SIGMA_TOL=4` (validated; tried but didn't lift) |
 | Max frag rank | 255 (no cap) | `PIONEER_MAX_FRAG_RANK=6` (top-6 only) |
+| Global prescore filter (q≤0.015) | **OFF** (report-only) | `PIONEER_GLOBAL_PRESCORE_FILTER=1` to enforce |
+
+### MBR / FTR status (2026-05-11 audit)
+
+Despite `"match_between_runs": true` parsing correctly from the config, neither
+MBR nor the FTR controller is wired into the live scoring path on this branch:
+
+- The active scoring path is `score_precursor_isotope_traces` →
+  `train_psm_classifier_with_fallback`. That function is a plain 2-fold CV
+  LightGBM with no iterations, no MBR feature computation, no pair-based
+  iteration scheme.
+- The trait-based `ScoringConfig` / `PairBasedMBR` / `FixedIterationScheme`
+  machinery in `src/utils/ML/PSMScoring/` is **dead** — no live call site
+  builds it. The legacy `sort_of_percolator!` wrapper is also un-called.
+- `precursors_long.arrow` from a current run has **zero `MBR_*` or `FTR_*`
+  columns**. ProteinScoringSearch checks for `MBR_boosted_prec_prob` /
+  `MBR_boosted_qval` and silently falls back to plain `prec_prob` since
+  they're absent.
+
+### LightGBM hyperparameters (per-file MainSearch == experiment-wide PrecursorScoring)
+
+Both stages call the **same** `train_psm_classifier_with_fallback` helper, so
+they share `SHARED_LGBM_HP` (`src/Routines/SearchDIA/SearchMethods/MainSearch/scoring.jl:25`):
+
+```julia
+num_iterations    = 200
+learning_rate     = 0.10
+max_depth         = 8
+num_leaves        = 63
+min_data_in_leaf  = 300
+feature_fraction  = 0.8
+bagging_fraction  = 0.8
+bagging_freq      = 1
+max_bin           = 255
+lambda_l1         = 1.0
+lambda_l2         = 1.0
+is_unbalance      = false
+```
+
+Plus `MAX_TRAIN = 250_000` (per-fold subsample cap), `LOW_DATA_THRESHOLD = 10_000`
+(below which the helper falls back to probit). The `LightGBMScorer` defaults in
+`src/utils/ML/PSMScoring/types.jl` (lr=.05, max_depth=10, bagging_fraction=.25,
+feature_fraction=.5) belong to the dead trait-based path and are **not** used.
+
+### Diagnostic @user_info during tuning
+
+Promoted from `@debug_l2` so they're visible without verbose flags:
+
+- `MainSearch per-file LGBM top-15 feature gains:` — printed per file per fold.
+- `[after best-per-precursor] (file_idx=N, name): N best-per-precursor PSMs;
+  targets q≤.001=N q≤.01=N PEP≤.01=N PEP≤.05=N` — per file after LGBM.
+- `[after paircomp]` — same metrics, post pair-competition.
+- `Global prescore: N precursors pass q≤0.015 (N targets + N decoys)
+  [report only, no filter | FILTER ENFORCED]` — once before PrecursorScoring.
+- `ScoringSearch experiment-wide LGBM top-20 feature gains:` — once at the
+  start of the PrecursorScoring stage.
+
+Revert these to `@debug_l2` (or remove the `print_importances` knob) once
+the feature set and pipeline stabilize.
 
 ---
 
