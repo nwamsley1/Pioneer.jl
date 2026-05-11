@@ -131,6 +131,9 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
     skipped = 0
     skipped_weight = 0
     skipped_frag_count = 0
+    # Env-var gate: if PIONEER_KEEP_ZERO_WEIGHT=1, retain PSMs with weight ≈ 0
+    # instead of dropping them. Replace 0-weight with 1e-6 to avoid NaN in log2().
+    keep_zero_weight = get(ENV, "PIONEER_KEEP_ZERO_WEIGHT", "0") == "1"
     for i in range(1, n_vals)
 
         precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
@@ -146,7 +149,7 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             end
         end
 
-        if weight[scores_idx] < Float32(1e-6)
+        if !keep_zero_weight && weight[scores_idx] < Float32(1e-6)
             skipped += 1
             skipped_weight += 1
             continue

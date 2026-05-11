@@ -287,6 +287,12 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     out_n_above_hm = compute_fwhm ? Vector{UInt16}() : nothing
     out_rt_fwhm = (compute_fwhm && compute_rt) ? Vector{Float32}() : nothing
     out_best_rt = compute_rt ? Vector{Float32}() : nothing
+    # Re-added 2026-05-11 (orphaned in 2025-03 consolidation):
+    # `smoothness` = Σ(((Δw_left + Δw_right)/w_apex)²) — squared second-derivative
+    # of weight chromatogram; real peaks → smooth → low value, noise → jagged → high.
+    # `num_scans` = group_len (count of PSMs / MS2 scans for this precursor).
+    out_smoothness = (compute_fwhm && compute_rt) ? Vector{Float32}() : nothing
+    out_num_scans  = Vector{UInt16}()
 
     if compute_fwhm
         sizehint!(out_irt_fwhm, n ÷ 10)
@@ -298,9 +304,16 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     if out_best_rt !== nothing
         sizehint!(out_best_rt, n ÷ 10)
     end
+    if out_smoothness !== nothing
+        sizehint!(out_smoothness, n ÷ 10)
+    end
+    sizehint!(out_num_scans, n ÷ 10)
 
-    # Reusable buffer for p75 score computation (avoids per-group allocation)
+    # Reusable buffers
     p75_buf = Vector{Float32}(undef, 128)
+    smooth_w_buf  = Vector{Float32}(undef, 128)  # weights sorted by rt
+    smooth_rt_buf = Vector{Float32}(undef, 128)  # rt sorted ascending
+    smooth_ord_buf = Vector{Int}(undef, 128)     # per-group sort permutation
 
     # Single pass: process each precursor group contiguously
     gi = 1
@@ -388,6 +401,60 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
             end
         end
 
+        # --- Sub-pass 3: smoothness (squared second-derivative of weight chrom) ---
+        if out_smoothness !== nothing
+            if length(smooth_w_buf) < group_len
+                resize!(smooth_w_buf,  group_len)
+                resize!(smooth_rt_buf, group_len)
+                resize!(smooth_ord_buf, group_len)
+            end
+            # Populate buffers and sort by RT
+            @inbounds for k in 0:(group_len - 1)
+                row = perm[group_start + k]
+                smooth_w_buf[k+1]  = weights[row]
+                smooth_rt_buf[k+1] = rt_vals[row]
+                smooth_ord_buf[k+1] = k + 1
+            end
+            sort!(view(smooth_ord_buf, 1:group_len), by = ki -> smooth_rt_buf[ki])
+            # Compute the roughness sum
+            rough = 0f0
+            if mw > 0f0
+                if group_len == 1
+                    # Single point — original code: rough = (−2w/w_apex)² = 4
+                    rough = 4f0
+                else
+                    @inbounds for k in 1:group_len
+                        ki = smooth_ord_buf[k]
+                        w_i = smooth_w_buf[ki]
+                        if k == 1
+                            ki_r = smooth_ord_buf[k+1]
+                            dt_r = smooth_rt_buf[ki_r] - smooth_rt_buf[ki]
+                            d_r = dt_r > 0 ? (smooth_w_buf[ki_r] - w_i) / dt_r : 0f0
+                            d_l = dt_r > 0 ? (-w_i) / dt_r : 0f0
+                            rough += ((d_l + d_r) / mw)^2
+                        elseif k == group_len
+                            ki_l = smooth_ord_buf[k-1]
+                            dt_l = smooth_rt_buf[ki] - smooth_rt_buf[ki_l]
+                            d_l = dt_l > 0 ? (smooth_w_buf[ki_l] - w_i) / dt_l : 0f0
+                            d_r = dt_l > 0 ? (-w_i) / dt_l : 0f0
+                            rough += ((d_l + d_r) / mw)^2
+                        else
+                            ki_l = smooth_ord_buf[k-1]
+                            ki_r = smooth_ord_buf[k+1]
+                            dt_l = smooth_rt_buf[ki] - smooth_rt_buf[ki_l]
+                            dt_r = smooth_rt_buf[ki_r] - smooth_rt_buf[ki]
+                            d_l = dt_l > 0 ? (smooth_w_buf[ki_l] - w_i) / dt_l : 0f0
+                            d_r = dt_r > 0 ? (smooth_w_buf[ki_r] - w_i) / dt_r : 0f0
+                            rough += ((d_l + d_r) / mw)^2
+                        end
+                    end
+                end
+            end
+            push!(out_smoothness, rough)
+        end
+
+        push!(out_num_scans, UInt16(group_len))
+
         if out_best_rt !== nothing
             push!(out_best_rt, rt_vals[best_row])
         end
@@ -407,6 +474,10 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     if out_best_rt !== nothing
         result[!, :best_rt] = out_best_rt
     end
+    if out_smoothness !== nothing
+        result[!, :smoothness] = out_smoothness
+    end
+    result[!, :num_scans] = out_num_scans
 
     return result
 end

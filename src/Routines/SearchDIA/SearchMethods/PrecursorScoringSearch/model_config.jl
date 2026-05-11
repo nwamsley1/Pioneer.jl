@@ -66,6 +66,10 @@ const ADVANCED_FEATURE_SET = [
     #:tic_qbin,         # Quantile-binned version of :tic
     :tic,
     :smoothness,
+    :num_scans,
+    :irt_fwhm,
+    :rt_fwhm,
+    :n_above_hm,
 
     :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
     #:ms1_irt_diff,

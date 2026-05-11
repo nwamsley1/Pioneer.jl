@@ -186,6 +186,106 @@ function process_search_results!(
     best_psms[!, :lgbm_prob] = scores
     t_lgbm = time()
 
+    # ============================================================
+    # OPTIONAL 2-PASS REFINEMENT (gated by PIONEER_PEP_FILTER_REDECONV)
+    #
+    # Compute PEP per precursor from pass-1 LGBM scores. Remove precursors
+    # with PEP > threshold (default 0.9). Re-run library_search restricted
+    # to surviving precursors → cleaner deconv (less peak competition) →
+    # re-train LGBM on pass-2 PSMs. Replaces best_psms with pass-2 output.
+    # ============================================================
+    if get(ENV, "PIONEER_PEP_FILTER_REDECONV", "0") == "1"
+        pass1_psms_n = nrow(psms)
+        pass1_precs_n = nrow(best_psms)
+
+        # Filter selection: qval if PIONEER_QVAL_FILTER_THR set, else PEP
+        use_qval = haskey(ENV, "PIONEER_QVAL_FILTER_THR")
+        thr = use_qval ? Float32(parse(Float64, ENV["PIONEER_QVAL_FILTER_THR"])) :
+                          Float32(parse(Float64, get(ENV, "PIONEER_PEP_FILTER_THR", "0.9")))
+
+        # Compute the discriminant
+        probs = Float32.(best_psms[!, :lgbm_prob])
+        targets_bool = Vector{Bool}(best_psms[!, :target])
+
+        if use_qval
+            # Compute per-file q-values on best-per-precursor pass-1 scores
+            sort_idx = sortperm(probs; rev=true)
+            qv = zeros(Float64, length(probs))
+            let nT = 0, nD = 0
+                for k in eachindex(sort_idx)
+                    i = sort_idx[k]
+                    if targets_bool[i]; nT += 1; else; nD += 1; end
+                    qv[i] = nD / max(nT, 1)
+                end
+                # Monotonize from end → start (revisit in score-descending order)
+                fdr = Inf
+                for k in length(sort_idx):-1:1
+                    i = sort_idx[k]
+                    if qv[i] > fdr; qv[i] = fdr; else; fdr = qv[i]; end
+                end
+            end
+            allowed_pids = Set{UInt32}()
+            for i in eachindex(qv)
+                if qv[i] <= thr
+                    push!(allowed_pids, UInt32(best_psms.precursor_idx[i]))
+                end
+            end
+            filter_desc = "qval≤$(thr)"
+        else
+            peps = Vector{Float32}(undef, length(probs))
+            get_PEP!(probs, targets_bool, peps; doSort=true, fdr_scale_factor=1.0f0)
+            allowed_pids = Set{UInt32}()
+            for i in 1:length(peps)
+                if peps[i] <= thr
+                    push!(allowed_pids, UInt32(best_psms.precursor_idx[i]))
+                end
+            end
+            filter_desc = "PEP≤$(thr)"
+        end
+        pass1_kept = length(allowed_pids)
+        pass1_removed = pass1_precs_n - pass1_kept
+        @user_info "  PEP-filter 2-pass (file_idx=$ms_file_idx, $file_name): " *
+                   "pass1 PSMs=$pass1_psms_n → best-per-precursor=$pass1_precs_n; " *
+                   "$filter_desc keeps $pass1_kept precursors, removes $pass1_removed " *
+                   "($(round(100*pass1_removed/max(pass1_precs_n,1), digits=1))%)"
+
+        if !isempty(allowed_pids)
+            t_pass2_lib_start = time()
+            psms2 = library_search(spectra, search_context, params, ms_file_idx;
+                                    allowed_precursors=allowed_pids)
+            t_pass2_lib = time() - t_pass2_lib_start
+            pass2_psms_n = nrow(psms2)
+            @user_info "  PEP-filter 2-pass (file_idx=$ms_file_idx): pass2 library_search returned " *
+                       "$pass2_psms_n (precursor,scan) PSMs (was $pass1_psms_n in pass-1) " *
+                       "in $(round(t_pass2_lib, digits=2))s"
+
+            if nrow(psms2) > 0
+                # Re-do feature prep on pass-2 PSMs (same flow as pass-1)
+                prepare_psm_features!(psms2, params, search_context, ms_file_idx, spectra, prescore_only=true)
+                add_scan_competition_features!(psms2)
+                add_neighborhood_features!(psms2)
+                add_apex_distance_feature!(psms2)
+                add_ms1_features!(psms2, spectra, search_context, ms_file_idx)
+
+                # Re-train LGBM and re-select best per precursor on pass-2 PSMs
+                best_psms2, scores2, _ = train_lgbm_and_select_best(psms2)
+                best_psms2[!, :lgbm_prob] = scores2
+                pass2_precs_n = nrow(best_psms2)
+                @user_info "  PEP-filter 2-pass (file_idx=$ms_file_idx): pass2 LGBM → " *
+                           "$pass2_precs_n best-per-precursor PSMs (was $pass1_precs_n in pass-1, " *
+                           "$(pass2_precs_n - pass1_kept) added beyond surviving allowlist)"
+
+                # Replace pass-1 best_psms with pass-2
+                best_psms = best_psms2
+            else
+                @user_info "  PEP-filter 2-pass (file_idx=$ms_file_idx): pass2 produced 0 PSMs, keeping pass-1 results"
+            end
+        else
+            @user_info "  PEP-filter 2-pass (file_idx=$ms_file_idx): no precursors survived PEP filter, keeping pass-1 results"
+        end
+    end
+    # ============================================================
+
     # RT recalibration: refit iRT spline from high-confidence PSMs
     recalibrate_rt!(search_context, ms_file_idx, best_psms, best_psms[!, :lgbm_prob])
 
