@@ -313,6 +313,101 @@ error accumulation.
 end
 
 """
+    apply_tuning_scoring!(unscored::Vector{TuningUnscoredPSM}, col, frag, iso_idx,
+                           intensity, ppm_err, m_rank, prec_idx)
+
+Slim variant of `apply_main_scoring!` for tuning paths. Identical
+accumulation except it skips the MainSearch-only `matched_rank_mask`
+update and `frag1..6_int` captures (those fields don't exist on
+`TuningUnscoredPSM`).
+"""
+@inline function apply_tuning_scoring!(unscored::Vector{TuningUnscoredPSM{Float32}},
+                                         col::Int,
+                                         frag,
+                                         iso_idx::UInt8,
+                                         intensity::Float32,
+                                         ppm_err::Float32,
+                                         m_rank::Int64,
+                                         prec_idx::UInt32)
+    @inbounds score = unscored[col]
+
+    best_rank            = score.best_rank
+    best_rank_iso        = score.best_rank_iso
+    topn                 = score.topn
+    topn_iso             = score.topn_iso
+    longest_y            = score.longest_y
+    longest_b            = score.longest_b
+    longest_y_iso        = score.longest_y_iso
+    isotope_count        = score.isotope_count
+    b_count              = score.b_count
+    b_int                = score.b_int
+    y_count              = score.y_count
+    y_int                = score.y_int
+    y_count_iso          = score.y_count_iso
+    p_count              = score.p_count
+    non_cannonical_count = score.non_cannonical_count
+    error                = score.error
+    ms_file_idx          = score.ms_file_idx
+
+    rank    = getRank(frag)
+    ion_pos = getIonPosition(frag)
+
+    if iso_idx != UInt8(0)
+        isotope_count += UInt8(1)
+        if rank < best_rank_iso
+            best_rank_iso = rank
+        end
+        if rank <= UInt8(m_rank)
+            topn_iso += UInt8(1)
+        end
+        if isY(frag)
+            y_count_iso += UInt8(1)
+            if ion_pos > longest_y_iso
+                longest_y_iso = ion_pos
+            end
+        end
+    else
+        if rank < best_rank
+            best_rank = rank
+        end
+        if rank <= UInt8(m_rank)
+            topn += UInt8(1)
+        end
+        if isB(frag)
+            b_count += UInt8(1)
+            b_int += intensity
+            if ion_pos > longest_b
+                longest_b = ion_pos
+            end
+        elseif isY(frag)
+            y_count += UInt8(1)
+            y_int += intensity
+            if ion_pos > longest_y
+                longest_y = ion_pos
+            end
+        elseif isP(frag)
+            p_count += UInt8(1)
+        else
+            non_cannonical_count += UInt8(1)
+        end
+    end
+
+    error += abs(ppm_err)
+
+    @inbounds unscored[col] = TuningUnscoredPSM{Float32}(
+        best_rank, best_rank_iso,
+        min(topn, UInt8(255)), min(topn_iso, UInt8(255)),
+        longest_y, longest_b, longest_y_iso,
+        min(isotope_count, UInt8(255)),
+        min(b_count, UInt8(255)), b_int,
+        min(y_count, UInt8(255)), y_int,
+        min(y_count_iso, UInt8(255)),
+        p_count, non_cannonical_count,
+        error, prec_idx, ms_file_idx)
+    return nothing
+end
+
+"""
     prepare_scan_peaks!(corrected, obs_low, obs_high, mem, scan_mz, scan_int) -> Int
 
 Per-scan precompute of the SoA peak table used by `run_fused!`. For each

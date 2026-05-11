@@ -207,3 +207,108 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
     Threads.atomic_add!(TOTAL_PSMS_CONSIDERED, n_vals)
     return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=skipped_frag_count, skipped_matched_ratio=0, skipped_topn=0, skipped_spectral_contrast=0)
 end
+
+"""
+    TuningScoredPSM{H,L} <: ScoredPSM{H,L}
+
+Slim per-scan row produced by `Score!` for tuning paths
+(ParameterTuningSearch, QuadTuningSearch). Same shape as
+`MainSearchScoredPSM` minus the MainSearch-only fragment-chromatogram
+fields (`rank1_matched`, `top3_matched`, `top5_matched`,
+`frag1_int..frag6_int`) since tuning code never consumes them.
+"""
+struct TuningScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
+    longest_y::UInt8
+    b_count::UInt8
+    y_count::UInt8
+    total_ions::UInt8
+    total_ions_iso::UInt8
+
+    poisson::L
+    log2_intensity_explained::L
+    error::L
+
+    gof::L
+    max_matched_residual::L
+    max_unmatched_residual::L
+    fitted_manhattan_distance::L
+    percent_theoretical_ignored::L
+    weight::H
+
+    fitted_hellinger::L
+
+    precursor_idx::UInt32
+    ms_file_idx::UInt32
+    scan_idx::UInt32
+end
+
+function growScoredPSMs!(scored_psms::Vector{TuningScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
+    scored_psms = append!(scored_psms, Vector{TuningScoredPSM{H,L}}(undef, block_size))
+end
+
+function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
+                unscored_PSMs::Vector{TuningUnscoredPSM{H}},
+                spectral_scores::Vector{SpectralScoresMainSearch{L}},
+                weight::Vector{H},
+                IDtoCOL::AbstractPrecursorMap{UInt16},
+                cycle_idx::Int64,
+                expected_matches::Float64,
+                last_val::Int64,
+                n_vals::Int64,
+                spectrum_intensity::H,
+                scan_idx::Int64;
+                block_size::Int64 = 10000,
+                default_top3_ll::Float32 = Float32(0)
+                ) where {L,H<:AbstractFloat}
+
+    getPoisson(lam, observed) = psm_getPoisson(lam, observed)
+    start_idx = last_val
+    skipped = 0
+    skipped_weight = 0
+    keep_zero_weight = get(ENV, "PIONEER_KEEP_ZERO_WEIGHT", "0") == "1"
+    for i in range(1, n_vals)
+        precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
+        scores_idx = IDtoCOL[precursor_idx]
+
+        if !keep_zero_weight && weight[scores_idx] < Float32(1e-6)
+            skipped += 1
+            skipped_weight += 1
+            continue
+        end
+
+        if start_idx + i - skipped > length(scored_psms)
+            growScoredPSMs!(scored_psms, block_size);
+        end
+
+        total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
+        total_ions_iso = Int64(unscored_PSMs[i].isotope_count)
+
+        scored_psms[start_idx + i - skipped] = TuningScoredPSM{H,L}(
+            unscored_PSMs[i].longest_y,
+            unscored_PSMs[i].b_count,
+            unscored_PSMs[i].y_count,
+            UInt8(min(total_ions, 255)),
+            UInt8(min(total_ions_iso, 255)),
+            L(getPoisson(expected_matches, total_ions + total_ions_iso)),
+            L(log2(max(unscored_PSMs[i].b_int + unscored_PSMs[i].y_int, Float32(1e-20))/max(spectrum_intensity, Float32(1e-20)))),
+            L(log2(max(unscored_PSMs[i].error, Float32(1e-20)))),
+
+            spectral_scores[scores_idx].gof,
+            spectral_scores[scores_idx].max_matched_residual,
+            spectral_scores[scores_idx].max_unmatched_residual,
+            spectral_scores[scores_idx].fitted_manhattan_distance,
+            spectral_scores[scores_idx].percent_theoretical_ignored,
+            weight[scores_idx],
+
+            spectral_scores[scores_idx].fitted_hellinger,
+
+            UInt32(unscored_PSMs[i].precursor_idx),
+            UInt32(cycle_idx),
+            UInt32(scan_idx)
+        )
+        last_val += 1
+    end
+    Threads.atomic_add!(SKIPPED_WEIGHT_TOTAL, skipped_weight)
+    Threads.atomic_add!(TOTAL_PSMS_CONSIDERED, n_vals)
+    return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=0, skipped_matched_ratio=0, skipped_topn=0, skipped_spectral_contrast=0)
+end
