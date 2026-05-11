@@ -26,6 +26,18 @@ const SHARED_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
                         num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
                         bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
                         max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
+
+# Per-experiment scoring LGBM hyperparams (used by PrecursorScoringSearch).
+# Same shape as SHARED_LGBM_HP but lower learning rate × more iterations:
+# lr_total stays in the lr_total≈20 sweet-spot identified for the per-file HP,
+# while the slower lr lets boosting refine more decision boundaries on the
+# larger, mixed-file PSM pool. Tunable independently of per-file via this
+# constant; per-file HP is intentionally untouched.
+const SCORING_LGBM_HP = (num_iterations=600, learning_rate=0.033, max_depth=8,
+                         num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
+                         bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
+                         max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
+
 # Per-fold training cap; folds larger than this are random-subsampled.
 const SHARED_LGBM_MAX_TRAIN = 250_000
 # Low-data threshold per fold: below this we CV-select between LightGBM and probit.
@@ -61,6 +73,7 @@ Used by both `train_lgbm_and_select_best` (MainSearch) and
 function train_psm_classifier_with_fallback(
     psms::DataFrame;
     features::Vector{Symbol},
+    lgbm_hp = SHARED_LGBM_HP,
 )
     targets_col = psms[!, :target]
     n_total = nrow(psms)
@@ -77,7 +90,6 @@ function train_psm_classifier_with_fallback(
     idx1 = findall(cv_fold .== 1)
     all_scores = Vector{Float64}(undef, n_total)
 
-    lgbm_hp = SHARED_LGBM_HP
     MAX_TRAIN = SHARED_LGBM_MAX_TRAIN
     LOW_DATA_THRESHOLD = SHARED_LGBM_LOW_DATA_THRESHOLD
 

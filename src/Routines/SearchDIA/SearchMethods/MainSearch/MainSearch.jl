@@ -488,6 +488,72 @@ function summarize_results!(
                (enforce_filter ? " [FILTER ENFORCED]" : " [report only, no filter — set PIONEER_GLOBAL_PRESCORE_FILTER=1 to enforce]")
     t1 = time() - t1_start
 
+    # ============================================================
+    # GLOBAL PAIR COMPETITION (env-gated; default OFF)
+    #
+    # PIONEER_GLOBAL_PAIR_COMPETITION=1 enables. For each (target, paired_decoy)
+    # pair where both are present in the global aggregation, compare their
+    # log-odds-combined global probability and mark the lower-scoring one as a
+    # "loser". Loser precursors are filtered from per-file fold output files
+    # so neither ScoringSearch nor any downstream stage sees them.
+    #
+    # Distinct from the per-file pair competition (which runs inside
+    # process_search_results! using per-file lgbm_prob).
+    # ============================================================
+    global_paircomp = get(ENV, "PIONEER_GLOBAL_PAIR_COMPETITION", "0") == "1"
+    global_losers = Set{UInt32}()
+    if global_paircomp
+        partner_col = precursors.data[:partner_precursor_idx]
+        # Build pid → (global_prob, is_target) lookup from BOTH folds. A precursor
+        # is typically in one fold; we union per-pid taking the max prob if a
+        # precursor somehow appears in both (shouldn't happen with the standard
+        # cv_fold assignment, but defensive).
+        prob_by_pid   = Dict{UInt32, Float32}()
+        target_by_pid = Dict{UInt32, Bool}()
+        for r in (fold0_result, fold1_result)
+            for k in eachindex(r.global_prec_idxs)
+                pid = UInt32(r.global_prec_idxs[k])
+                p   = Float32(r.global_probs[k])
+                if haskey(prob_by_pid, pid)
+                    prob_by_pid[pid]   = max(prob_by_pid[pid], p)
+                else
+                    prob_by_pid[pid]   = p
+                    target_by_pid[pid] = r.global_targets[k]
+                end
+            end
+        end
+
+        n_unique_global = length(prob_by_pid)
+        n_pairs_found = 0; n_dropped_t = 0; n_dropped_d = 0
+        seen = Set{Tuple{UInt32, UInt32}}()
+        for pid in keys(prob_by_pid)
+            ptr_raw = partner_col[Int(pid)]
+            partner = ismissing(ptr_raw) ? UInt32(0) : UInt32(ptr_raw)
+            (partner == 0 || partner == pid) && continue
+            haskey(prob_by_pid, partner) || continue
+            pair_key = (min(pid, partner), max(pid, partner))
+            pair_key in seen && continue
+            push!(seen, pair_key)
+            n_pairs_found += 1
+            my_p   = prob_by_pid[pid]
+            ptr_p  = prob_by_pid[partner]
+            # Drop the lower one. Ties: drop the decoy (target wins).
+            loser = if my_p < ptr_p
+                pid
+            elseif my_p > ptr_p
+                partner
+            else
+                target_by_pid[pid] ? partner : pid
+            end
+            push!(global_losers, loser)
+            if target_by_pid[loser]; n_dropped_t += 1; else; n_dropped_d += 1; end
+        end
+        @user_info "  Global pair competition: $n_unique_global unique precursors aggregated; " *
+                   "$n_pairs_found target/decoy pairs both present globally; " *
+                   "dropped $n_dropped_t targets + $n_dropped_d decoys " *
+                   "($(length(global_losers)) loser precursors)"
+    end
+
     store_results!(search_context, MainSearch, (passing_precs=passing_precs,))
 
     # Step 2: Load main_search_psms, filter to passing precursors, add deferred columns, write fold-split second_pass_psms
@@ -533,6 +599,11 @@ function summarize_results!(
             if enforce_filter
                 mask = in.(tbl[!, :precursor_idx], Ref(passing))
                 tbl = tbl[mask, :]
+            end
+            # Global-paircomp loser drop (env-gated; orthogonal to enforce_filter).
+            if global_paircomp && !isempty(global_losers)
+                keep_mask = .!in.(tbl[!, :precursor_idx], Ref(global_losers))
+                tbl = tbl[keep_mask, :]
             end
             n_after = nrow(tbl)
             n_after_file += n_after

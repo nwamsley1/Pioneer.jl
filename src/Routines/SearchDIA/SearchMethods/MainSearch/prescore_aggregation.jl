@@ -305,5 +305,9 @@ function aggregate_prescore_globally!(search_context::SearchContext;
         n_targets_pass     = n_targets_pass,
         n_decoys_pass      = n_decoys_pass,
         qvalue_threshold   = qvalue_threshold,
+        # Returned for downstream global pair competition; per-precursor parallel arrays.
+        global_prec_idxs   = global_prec_idxs,
+        global_probs       = global_probs,
+        global_targets     = global_targets,
     )
 end

@@ -72,10 +72,11 @@ function score_precursor_isotope_traces(
                                        for pid in best_psms[!, :precursor_idx]]
     best_psms[!, :decoy] = best_psms[!, :target] .== false
 
-    # 5. Train via the shared helper (same hyperparameters + low-data probit
-    # fallback as MainSearch's per-file classifier)
+    # 5. Train via the shared helper. Uses SCORING_LGBM_HP (more iterations,
+    # lower learning rate) than per-file MainSearch's SHARED_LGBM_HP — the larger
+    # mixed-file PSM pool benefits from finer-grained boosting.
     all_scores, last_classifier, info = train_psm_classifier_with_fallback(
-        best_psms; features=features
+        best_psms; features=features, lgbm_hp=SCORING_LGBM_HP
     )
 
     # 6. Log feature importances (LGBM only — probit doesn't expose them).
