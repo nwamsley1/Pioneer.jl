@@ -95,6 +95,14 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     top3_matched::UInt8         # number of M0 ranks 1-3 matched (0..3)
     top5_matched::UInt8         # number of M0 ranks 1-5 matched (0..5)
 
+    # Per-rank M0 fragment intensities (top 6, for chromatogram-correlation features)
+    frag1_int::H
+    frag2_int::H
+    frag3_int::H
+    frag4_int::H
+    frag5_int::H
+    frag6_int::H
+
     #Non-scores/Labels
     precursor_idx::UInt32
     ms_file_idx::UInt32
@@ -178,6 +186,13 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             spectral_scores[scores_idx].fitted_hellinger,
 
             rank1_matched, top3_matched, top5_matched,
+
+            unscored_PSMs[i].frag1_int,
+            unscored_PSMs[i].frag2_int,
+            unscored_PSMs[i].frag3_int,
+            unscored_PSMs[i].frag4_int,
+            unscored_PSMs[i].frag5_int,
+            unscored_PSMs[i].frag6_int,
 
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(cycle_idx),
