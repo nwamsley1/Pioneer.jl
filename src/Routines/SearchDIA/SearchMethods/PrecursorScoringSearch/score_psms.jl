@@ -78,17 +78,19 @@ function score_precursor_isotope_traces(
         best_psms; features=features
     )
 
-    # 6. Log feature importances (LGBM only — probit doesn't expose them)
-    # Gated at debug_l2 — `importance()` allocates a Dict per call.
-    if last_classifier !== nothing && DEBUG_CONSOLE_LEVEL[] >= 2
+    # 6. Log feature importances (LGBM only — probit doesn't expose them).
+    # Promoted to @user_info for the tuning phase; revert to @debug_l2 once stable.
+    if last_classifier !== nothing
         lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            @debug_l2 "ScoringSearch LightGBM Feature Importances (gain):"
-            for (fname, gain) in sorted_imp
-                @debug_l2 "  $(rpad(fname, 40)) $(round(gain, digits=2))"
+            top = first(sorted_imp, min(20, length(sorted_imp)))
+            lines = ["ScoringSearch experiment-wide LGBM top-20 feature gains:"]
+            for (fname, gain) in top
+                push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
             end
+            @user_info join(lines, "\n")
         end
     end
 

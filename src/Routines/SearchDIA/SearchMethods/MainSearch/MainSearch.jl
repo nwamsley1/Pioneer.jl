@@ -480,7 +480,12 @@ function summarize_results!(
     n_targets_total = fold0_result.n_targets_pass + fold1_result.n_targets_pass
     n_decoys_total  = fold0_result.n_decoys_pass  + fold1_result.n_decoys_pass
     n_pass_total    = n_targets_total + n_decoys_total
-    @user_info "  Global prescore: $n_pass_total precursors pass q≤$(fold0_result.qvalue_threshold) ($n_targets_total targets + $n_decoys_total decoys)"
+    # PIONEER_GLOBAL_PRESCORE_FILTER (default "0" = report only, no filter).
+    # When "1", the passing-set is enforced and PSMs of non-passing precursors are
+    # dropped before ScoringSearch reads them.
+    enforce_filter = get(ENV, "PIONEER_GLOBAL_PRESCORE_FILTER", "0") == "1"
+    @user_info "  Global prescore: $n_pass_total precursors pass q≤$(fold0_result.qvalue_threshold) ($n_targets_total targets + $n_decoys_total decoys)" *
+               (enforce_filter ? " [FILTER ENFORCED]" : " [report only, no filter — set PIONEER_GLOBAL_PRESCORE_FILTER=1 to enforce]")
     t1 = time() - t1_start
 
     store_results!(search_context, MainSearch, (passing_precs=passing_precs,))
@@ -524,9 +529,11 @@ function summarize_results!(
             n_before_file += n_before
             n_total_precs += n_before
 
-            # Filter to this fold's passing precursors
-            mask = in.(tbl[!, :precursor_idx], Ref(passing))
-            tbl = tbl[mask, :]
+            # Filter to this fold's passing precursors — only when enforce_filter is set.
+            if enforce_filter
+                mask = in.(tbl[!, :precursor_idx], Ref(passing))
+                tbl = tbl[mask, :]
+            end
             n_after = nrow(tbl)
             n_after_file += n_after
             n_kept_precs += n_after
