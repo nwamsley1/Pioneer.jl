@@ -372,6 +372,31 @@ function process_search_results!(
     end
     # ============================================================
 
+    # ============================================================
+    # PER-FILE PEP FILTER (default ON at PEP ≤ 0.9)
+    # PIONEER_MAIN_PEP_FILTER_THR sets the threshold; set ≥ 1.0 to disable.
+    # Computed on best-per-precursor PSMs (post-paircomp) so each precursor
+    # gets one PEP value. Precursors with PEP > threshold never enter the
+    # second_pass arrow files and therefore can't reach ScoringSearch.
+    # ============================================================
+    pep_filter_thr = parse(Float32, get(ENV, "PIONEER_MAIN_PEP_FILTER_THR", "0.9"))
+    if pep_filter_thr < 1.0f0 && nrow(best_psms) > 0
+        probs_filt = Float32.(best_psms[!, :lgbm_prob])
+        is_t_filt  = Vector{Bool}(best_psms[!, :target])
+        peps_filt  = Vector{Float32}(undef, length(probs_filt))
+        get_PEP!(probs_filt, is_t_filt, peps_filt; doSort=true, fdr_scale_factor=1.0f0)
+        keep = peps_filt .<= pep_filter_thr
+        n_before_pep = nrow(best_psms)
+        n_drop_t = count(.!keep .& is_t_filt)
+        n_drop_d = count(.!keep .& .!is_t_filt)
+        deleteat!(best_psms, .!keep)
+        @user_info "  PEP filter (file_idx=$ms_file_idx, $file_name): PEP > $pep_filter_thr drops " *
+                   "$n_drop_t targets + $n_drop_d decoys " *
+                   "($n_before_pep → $(nrow(best_psms)) best-per-precursor PSMs)"
+        _summarize_psm_counts(best_psms, "after PEP filter", ms_file_idx, file_name)
+    end
+    # ============================================================
+
     # RT recalibration: refit iRT spline from high-confidence PSMs
     recalibrate_rt!(search_context, ms_file_idx, best_psms, best_psms[!, :lgbm_prob])
 
