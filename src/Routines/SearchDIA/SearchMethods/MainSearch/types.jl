@@ -124,6 +124,9 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
                     ε_rel = parse(Float32, get(ENV, "PIONEER_ALASSO_EPS_REL", "1e-3"))
                     nit   = parse(Int,     get(ENV, "PIONEER_ALASSO_NITER",   "3"))
                     AdaptiveLassoSolver(λ_rel, γ, ε_rel, nit)
+                elseif s == "lasso"
+                    λ_rel = parse(Float32, get(ENV, "PIONEER_LASSO_LAMBDA", "0.01"))
+                    LassoSolver(λ_rel)
                 else
                     PoissonMMSolver()
                 end

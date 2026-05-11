@@ -29,6 +29,13 @@ struct AdaptiveLassoSolver <: DeconvolutionSolver
     n_iters::Int
 end
 
+# Simple non-iterative L1-regularized NNLS. Parameters:
+#   λ_rel ∈ (0, 1) — fraction of unpenalized λ_max that becomes λ_eff
+# Single solve with uniform penalty_weights = 1.
+struct LassoSolver <: DeconvolutionSolver
+    λ_rel::Float32
+end
+
 const POISSON_MU_FLOOR = 1f-6
 
 """
@@ -251,6 +258,10 @@ function solve_deconvolution!(s::AdaptiveLassoSolver, Hs, r, w, colnorm2, μ, y,
     return solveIteratedAdaptiveLasso!(Hs, r, w, colnorm2,
         eltype(w)(s.λ_rel), eltype(w)(s.γ), eltype(w)(s.ε_rel), s.n_iters,
         max_iter, conv)
+end
+
+function solve_deconvolution!(s::LassoSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)
+    return solveLasso!(Hs, r, w, colnorm2, eltype(w)(s.λ_rel), max_iter, conv)
 end
 
 function solve_deconvolution!(::PoissonMMSolver, Hs, r, w, colnorm2, μ, y, max_iter, conv)

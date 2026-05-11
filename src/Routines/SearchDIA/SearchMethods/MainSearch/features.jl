@@ -239,7 +239,7 @@ function add_ms1_features!(psms::DataFrame,
                             spectra,
                             search_context,
                             ms_file_idx::Integer;
-                            ms1_ppm_tol::Float32 = 10.0f0)
+                            ms1_ppm_tol::Float32 = Float32(parse(Float64, get(ENV, "PIONEER_MS1_PPM_TOL", "10.0"))))
     n = nrow(psms)
     psms[!, :ms1_m0_mass_err_ppm]   = zeros(Float32, n)
     # Per-PSM intensities (also consumed by the per-precursor chromatogram pass)

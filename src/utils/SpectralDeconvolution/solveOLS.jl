@@ -154,6 +154,72 @@ function solveWeightedL1NN!(Hs::AbstractSparseDesignMatrix{Ti, T},
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Simple non-iterative L1-regularized NNLS.
+# Algorithm:
+#   1. Compute λ_max = max_j |c_j^T y| at w=0 (glmnet convention).
+#   2. λ_eff = λ_rel · λ_max.
+#   3. Solve weighted-L1 NNLS with uniform penalty_weights = 1 (standard LASSO).
+# Returns (converged, iters_used).
+# ─────────────────────────────────────────────────────────────────────────────
+function solveLasso!(Hs::AbstractSparseDesignMatrix{Ti, T},
+                      r::Vector{T},
+                      X₁::Vector{T},
+                      colnorm2::Vector{T},
+                      λ_rel::T,
+                      max_iter_outer::Int64,
+                      relative_convergence_threshold::T) where {Ti<:Integer,T<:AbstractFloat}
+    # Precompute column norms
+    @inbounds for col in 1:Hs.n
+        s = zero(T)
+        for j in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+            s += Hs.nzval[j]^2
+        end
+        colnorm2[col] = s
+    end
+
+    # Compute λ_max at w=0
+    @inbounds for j in 1:Hs.n
+        X₁[j] = zero(T)
+    end
+    initResiduals!(r, Hs, X₁)
+    Threads.atomic_add!(DIAG_ALASSO_CALLS, 1)
+    λ_max = zero(T)
+    @inbounds for col in 1:Hs.n
+        g = zero(T)
+        for j in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+            g += Hs.nzval[j] * r[Hs.rowval[j]]
+        end
+        ag = abs(g)
+        if ag > λ_max
+            λ_max = ag
+        end
+    end
+    λ_eff = λ_rel * λ_max
+
+    if λ_eff == zero(T)
+        # No signal — fall back to OLS
+        solveOLS!(Hs, r, X₁, colnorm2, max_iter_outer, relative_convergence_threshold)
+        return (true, 0)
+    end
+
+    # Single weighted-L1 NNLS solve with uniform penalty weights
+    penalty_weights = ones(T, Hs.n)
+    initResiduals!(r, Hs, X₁)
+    converged, iters = solveWeightedL1NN!(Hs, r, X₁, colnorm2,
+                                            penalty_weights, λ_eff,
+                                            max_iter_outer, relative_convergence_threshold)
+    n_zero_now = 0
+    @inbounds for j in 1:Hs.n
+        n_zero_now += (X₁[j] == zero(T))
+    end
+    Threads.atomic_add!(DIAG_ALASSO_ZEROS_AFTER_FINAL, n_zero_now)
+    Threads.atomic_add!(DIAG_ALASSO_NCOLS, Int(Hs.n))
+    Threads.atomic_add!(DIAG_ALASSO_LAMBDA_MAX_SUM, Float64(λ_max))
+    Threads.atomic_add!(DIAG_ALASSO_LAMBDA_EFF_SUM, Float64(λ_eff))
+    return (converged, iters)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Iterated Adaptive LASSO (non-negative, identity-link, OLS loss).
 # Algorithm:
 #   1. Run unpenalized non-negative OLS → w⁽⁰⁾.
