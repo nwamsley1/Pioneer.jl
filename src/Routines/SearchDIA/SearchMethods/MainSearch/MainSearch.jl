@@ -265,7 +265,36 @@ function summarize_results!(
     n_kept_precs = 0
     n_targets_total = 0
     n_decoys_total = 0
+    n_rescue_total = 0
+    n_rescue_targets_total = 0
+    n_rescue_decoys_total = 0
     passing_precs = Set{UInt32}()
+
+    # Prepass: build a precursor -> strict-pass runs index. The rescue handoff
+    # uses this to carry forward candidates that failed this run's q-value gate
+    # but passed strictly in at least one other run.
+    strict_runs_by_precursor = Dict{UInt32, Set{UInt32}}()
+    for ms_file_idx in 1:n_files
+        file_name = getParsedFileName(ms_data, ms_file_idx)
+        fold_tables = DataFrame[]
+
+        for fold in UInt8[0, 1]
+            psm_path = joinpath(main_search_psms_dir, "$(file_name)_fold$(fold).arrow")
+            isfile(psm_path) || continue
+            push!(fold_tables, DataFrame(Tables.columntable(Arrow.Table(psm_path))))
+        end
+
+        isempty(fold_tables) && continue
+
+        strict_result = _filter_prescore_run_qvalues(fold_tables, PRESCORE_QVALUE_THRESHOLD)
+        for tbl in strict_result.filtered_tables
+            for pid in tbl[!, :precursor_idx]
+                push!(get!(strict_runs_by_precursor, UInt32(pid), Set{UInt32}()), UInt32(ms_file_idx))
+            end
+        end
+    end
+
+    @debug_l1 "Prescore strict-pass run index: $(length(strict_runs_by_precursor)) unique precursors"
 
     for ms_file_idx in 1:n_files
         file_name = getParsedFileName(ms_data, ms_file_idx)
@@ -293,13 +322,21 @@ function summarize_results!(
 
         isempty(fold_tables) && continue
 
-        filter_result = _filter_prescore_run_qvalues(fold_tables, PRESCORE_QVALUE_THRESHOLD)
+        filter_result = _filter_prescore_run_qvalues(
+            fold_tables,
+            PRESCORE_QVALUE_THRESHOLD;
+            ms_file_idx = UInt32(ms_file_idx),
+            strict_runs_by_precursor = strict_runs_by_precursor,
+        )
         n_before_file = filter_result.n_before
         n_after_file = filter_result.n_after
         n_total_precs += n_before_file
         n_kept_precs += n_after_file
         n_targets_total += filter_result.n_targets_pass
         n_decoys_total += filter_result.n_decoys_pass
+        n_rescue_total += filter_result.n_rescue_pass
+        n_rescue_targets_total += filter_result.n_rescue_targets
+        n_rescue_decoys_total += filter_result.n_rescue_decoys
 
         for (tbl, fold_out_path) in zip(filter_result.filtered_tables, fold_out_paths)
             union!(passing_precs, tbl[!, :precursor_idx])
@@ -351,6 +388,10 @@ function summarize_results!(
 
     @user_info "  Run-level prescore: $n_kept_precs precursor-file entries pass q≤$(PRESCORE_QVALUE_THRESHOLD) " *
                "($n_targets_total targets + $n_decoys_total decoys)"
+    if n_rescue_total > 0
+        @user_info "  Prescore cross-run rescue: $n_rescue_total candidates added " *
+                   "($n_rescue_targets_total targets + $n_rescue_decoys_total decoys)"
+    end
 
     overall_pct = round(100.0 * n_kept_precs / max(1, n_total_precs), digits=1)
     @debug_l1 "MainSearch passing PSMs: $n_kept_precs / $n_total_precs precursors ($overall_pct%) across $n_processed_files files"

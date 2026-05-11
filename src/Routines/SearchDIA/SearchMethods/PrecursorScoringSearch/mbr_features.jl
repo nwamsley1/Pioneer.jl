@@ -60,6 +60,9 @@ function compute_mbr_features!(
     log2ie_v    = Float32.(psms[!, :log2_intensity_explained])
     file_v      = UInt32.(psms[!, :ms_file_idx])
     decoy_v     = Bool.(psms[!, :decoy])
+    strict_donor_v = hasproperty(psms, :prescore_strict_pass) ?
+                     Bool.(psms[!, :prescore_strict_pass]) :
+                     trues(nrow(psms))
     has_irt     = hasproperty(psms, :irt_pred) && hasproperty(psms, :irt_obs)
     irt_res_v   = if has_irt
         Float32.(psms[!, :irt_pred]) .- Float32.(psms[!, :irt_obs])
@@ -72,6 +75,7 @@ function compute_mbr_features!(
     top2 = Dict{UInt32, NTuple{2, _MBRDonorEntry}}()
     sizehint!(top2, n)
     @inbounds for i in 1:n
+        strict_donor_v[i] || continue
         pid = pair_id_col[i]
         e = _MBRDonorEntry(score_v[i], weight_v[i], log2ie_v[i], irt_res_v[i], file_v[i], decoy_v[i])
         cur = get(top2, pid, (_MBR_DONOR_SENTINEL, _MBR_DONOR_SENTINEL))

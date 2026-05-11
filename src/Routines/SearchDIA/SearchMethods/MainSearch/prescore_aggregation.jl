@@ -108,9 +108,14 @@ fold rows for q-value calculation and returning fold-specific filtered tables.
 function _filter_prescore_run_qvalues(
     fold_tables::Vector{DataFrame},
     qvalue_threshold::Float32,
+    ;
+    ms_file_idx::Union{Nothing,UInt32} = nothing,
+    strict_runs_by_precursor::Union{Nothing,Dict{UInt32,Set{UInt32}}} = nothing,
 )
     n_before = sum(nrow, fold_tables)
     filtered_tables = Vector{DataFrame}(undef, length(fold_tables))
+    enable_rescue = ms_file_idx !== nothing && strict_runs_by_precursor !== nothing
+    current_run = enable_rescue ? ms_file_idx::UInt32 : UInt32(0)
 
     if n_before == 0
         for i in eachindex(fold_tables)
@@ -122,6 +127,10 @@ function _filter_prescore_run_qvalues(
             n_after = 0,
             n_targets_pass = 0,
             n_decoys_pass = 0,
+            n_strict_pass = 0,
+            n_rescue_pass = 0,
+            n_rescue_targets = 0,
+            n_rescue_decoys = 0,
             qvalue_threshold = qvalue_threshold,
         )
     end
@@ -147,13 +156,45 @@ function _filter_prescore_run_qvalues(
 
     n_after = 0
     n_targets_pass = 0
+    n_strict_pass = 0
+    n_rescue_pass = 0
+    n_rescue_targets = 0
     for (i, tbl) in enumerate(fold_tables)
         r = ranges[i]
-        mask = qvals[r] .<= qvalue_threshold
+        qvals_run = qvals[r]
+        strict_mask = qvals_run .<= qvalue_threshold
+        rescue_mask = falses(nrow(tbl))
+        donor_run_count = zeros(UInt16, nrow(tbl))
+
+        if enable_rescue
+            precursor_idx = tbl[!, :precursor_idx]
+            @inbounds for j in eachindex(precursor_idx)
+                donor_runs = get(strict_runs_by_precursor::Dict{UInt32,Set{UInt32}}, UInt32(precursor_idx[j]), nothing)
+                donor_runs === nothing && continue
+
+                n_donor_runs = 0
+                for run in donor_runs
+                    if run != current_run
+                        n_donor_runs += 1
+                    end
+                end
+                donor_run_count[j] = UInt16(min(n_donor_runs, typemax(UInt16)))
+                rescue_mask[j] = !strict_mask[j] && n_donor_runs > 0
+            end
+        end
+
+        mask = strict_mask .| rescue_mask
         filtered = tbl[mask, :]
+        filtered[!, :prescore_qval] = qvals_run[mask]
+        filtered[!, :prescore_strict_pass] = strict_mask[mask]
+        filtered[!, :prescore_rescue_candidate] = rescue_mask[mask]
+        filtered[!, :prescore_donor_run_count] = donor_run_count[mask]
         filtered_tables[i] = filtered
         n_after += nrow(filtered)
+        n_strict_pass += count(strict_mask)
+        n_rescue_pass += count(rescue_mask)
         n_targets_pass += count(identity, filtered[!, :target])
+        n_rescue_targets += count(j -> rescue_mask[j] && tbl[j, :target], eachindex(rescue_mask))
     end
 
     return (
@@ -162,6 +203,10 @@ function _filter_prescore_run_qvalues(
         n_after = n_after,
         n_targets_pass = n_targets_pass,
         n_decoys_pass = n_after - n_targets_pass,
+        n_strict_pass = n_strict_pass,
+        n_rescue_pass = n_rescue_pass,
+        n_rescue_targets = n_rescue_targets,
+        n_rescue_decoys = n_rescue_pass - n_rescue_targets,
         qvalue_threshold = qvalue_threshold,
     )
 end
