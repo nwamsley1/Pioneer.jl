@@ -285,6 +285,9 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     irt_obs = has_irt ? psms[!, :irt_obs]::Vector{Float32} : nothing
     rt_vals = has_rt ? psms[!, :rt]::Vector{Float32} : nothing
     weights = (has_irt && has_weight) ? psms[!, :weight]::Vector{Float32} : nothing
+    # Per-scan columns used for max-across-scans aggregation features.
+    gof_vec  = hasproperty(psms, :gof) ? psms[!, :gof] : nothing
+    fmd_vec  = hasproperty(psms, :fitted_manhattan_distance) ? psms[!, :fitted_manhattan_distance] : nothing
     n = nrow(psms)
 
     # sortperm groups PSMs by precursor_idx for contiguous processing
@@ -306,6 +309,11 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     # `num_scans` = group_len (count of PSMs / MS2 scans for this precursor).
     out_smoothness = (compute_fwhm && compute_rt) ? Vector{Float32}() : nothing
     out_num_scans  = Vector{UInt16}()
+    # Per-precursor max-across-scans aggregations (added 2026-05-11 so the
+    # experiment-wide LightGBM gets the same max_* signal it had pre-consolidation).
+    out_max_weight = weights !== nothing ? Vector{Float32}() : nothing
+    out_max_gof    = gof_vec  !== nothing ? Vector{eltype(gof_vec)}()  : nothing
+    out_max_fmd    = fmd_vec  !== nothing ? Vector{eltype(fmd_vec)}()  : nothing
 
     if compute_fwhm
         sizehint!(out_irt_fwhm, n ÷ 10)
@@ -321,6 +329,9 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
         sizehint!(out_smoothness, n ÷ 10)
     end
     sizehint!(out_num_scans, n ÷ 10)
+    out_max_weight !== nothing && sizehint!(out_max_weight, n ÷ 10)
+    out_max_gof    !== nothing && sizehint!(out_max_gof,    n ÷ 10)
+    out_max_fmd    !== nothing && sizehint!(out_max_fmd,    n ÷ 10)
 
     # Reusable buffers
     p75_buf = Vector{Float32}(undef, 128)
@@ -338,10 +349,12 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
         end
         group_len = gi - group_start
 
-        # --- Sub-pass 1: find max_weight and best-score row ---
+        # --- Sub-pass 1: find max_weight, max_gof, max_fmd, and best-score row ---
         best_s = typemin(Float32)
         best_row = perm[group_start]
         mw = 0f0
+        max_gof_val = out_max_gof !== nothing ? typemin(eltype(out_max_gof)) : nothing
+        max_fmd_val = out_max_fmd !== nothing ? typemin(eltype(out_max_fmd)) : nothing
 
         @inbounds for k in 0:(group_len - 1)
             row = perm[group_start + k]
@@ -355,6 +368,14 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
                 if w > mw
                     mw = w
                 end
+            end
+            if max_gof_val !== nothing
+                g = gof_vec[row]
+                g > max_gof_val && (max_gof_val = g)
+            end
+            if max_fmd_val !== nothing
+                f = fmd_vec[row]
+                f > max_fmd_val && (max_fmd_val = f)
             end
         end
 
@@ -471,6 +492,9 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
         if out_best_rt !== nothing
             push!(out_best_rt, rt_vals[best_row])
         end
+        out_max_weight !== nothing && push!(out_max_weight, mw)
+        out_max_gof    !== nothing && push!(out_max_gof,    max_gof_val)
+        out_max_fmd    !== nothing && push!(out_max_fmd,    max_fmd_val)
     end  # while gi <= n
 
     # Build result from selected rows
@@ -491,6 +515,9 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
         result[!, :smoothness] = out_smoothness
     end
     result[!, :num_scans] = out_num_scans
+    out_max_weight !== nothing && (result[!, :max_weight] = out_max_weight)
+    out_max_gof    !== nothing && (result[!, :max_gof]    = out_max_gof)
+    out_max_fmd    !== nothing && (result[!, :max_fitted_manhattan_distance] = out_max_fmd)
 
     return result
 end

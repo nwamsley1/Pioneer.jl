@@ -95,6 +95,14 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     top3_matched::UInt8         # number of M0 ranks 1-3 matched (0..3)
     top5_matched::UInt8         # number of M0 ranks 1-5 matched (0..5)
 
+    # Rank/topn features carried from MainUnscoredPSM. Added 2026-05-11 so the
+    # experiment-wide LightGBM in PrecursorScoringSearch has the same rank
+    # signal as the per-file LightGBM (previously dropped by Score!).
+    best_rank::UInt8           # smallest M0 fragment rank that matched (lower is better)
+    best_rank_iso::UInt8       # same for isotope (M1+) fragments
+    topn::UInt8                # # of M0 fragments matched at rank ≤ m_rank
+    topn_iso::UInt8            # same for isotope fragments
+
     # Per-rank M0 fragment intensities (top 6, for chromatogram-correlation features)
     frag1_int::H
     frag2_int::H
@@ -189,6 +197,11 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             spectral_scores[scores_idx].fitted_hellinger,
 
             rank1_matched, top3_matched, top5_matched,
+
+            unscored_PSMs[i].best_rank,
+            unscored_PSMs[i].best_rank_iso,
+            unscored_PSMs[i].topn,
+            unscored_PSMs[i].topn_iso,
 
             unscored_PSMs[i].frag1_int,
             unscored_PSMs[i].frag2_int,

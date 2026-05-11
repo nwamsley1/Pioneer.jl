@@ -37,32 +37,32 @@ const ADVANCED_FEATURE_SET = [
     :irt_pred,
     :irt_error,
     :irt_diff,
-    :max_y_ions,
-    :y_ions_sum,
     :longest_y,
     :y_count,
-    :isotope_count,
+    # `isotope_count` was redundant with `total_ions_iso` (the new name in
+    # MainSearchScoredPSM) — removed 2026-05-11.
     :total_ions,
+    # best_rank / best_rank_iso / topn / topn_iso re-added to MainSearchScoredPSM
+    # via Score! on 2026-05-11 so they now propagate to second_pass_psms.
     :best_rank,
     :best_rank_iso,
     :topn,
     :topn_iso,
     :gof,
-    :max_fitted_manhattan_distance,
-    :max_fitted_spectral_contrast,
+    :max_fitted_manhattan_distance,   # populated by select_best_per_precursor!
     :max_matched_residual,
     :max_unmatched_residual,
-    :max_gof,
-    :fitted_spectral_contrast,
-    :spectral_contrast,
-    :max_matched_ratio,
+    :max_gof,                         # populated by select_best_per_precursor!
+    # Removed 2026-05-11 — never populated by the current pipeline:
+    # :max_y_ions, :y_ions_sum, :max_fitted_spectral_contrast,
+    # :fitted_spectral_contrast, :spectral_contrast, :max_matched_ratio,
+    # :tic, :scribe, :max_scribe. Add back when the corresponding feature-
+    # computation code is wired up.
     :err_norm,
     :poisson,
     #:weight_qbin,      # Quantile-binned version of :weight
     :weight,
     :log2_intensity_explained,
-    #:tic_qbin,         # Quantile-binned version of :tic
-    :tic,
     :smoothness,
     :num_scans,
     :irt_fwhm,
@@ -97,9 +97,7 @@ const ADVANCED_FEATURE_SET = [
     :frag_corr_mean_pairwise, :frag_corr_min_pairwise, :frag_corr_top3_weight,
     :frag_apex_dispersion_irt, :n_correlated_fragments,
 
-    :scribe,
-    :max_scribe,
-    :max_weight,
+    :max_weight,                      # populated by select_best_per_precursor!
     :fitted_hellinger,
 ]
 
