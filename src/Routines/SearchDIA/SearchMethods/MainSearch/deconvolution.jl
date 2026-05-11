@@ -25,9 +25,11 @@ end
 Resize working arrays when needed for larger deconvolution problems.
 """
 function resize_arrays!(search_data::SearchDataStructures, weights::Vector{Float32})
-    new_entries = n_active(getIdToCol(search_data)) - length(weights) + 1000
-    resize!(weights, length(weights) + new_entries)
-    resize!(getColNorm2(search_data), length(getColNorm2(search_data)) + new_entries)
-    resize!(getMainSearchSpectralScores(search_data), length(getMainSearchSpectralScores(search_data)) + new_entries)
-    append!(getComplexUnscoredPsms(search_data), [eltype(getComplexUnscoredPsms(search_data))() for _ in 1:new_entries])
+    target_len = n_active(getIdToCol(search_data)) + 1000
+    length(weights) < target_len && resize!(weights, target_len)
+    length(getColNorm2(search_data)) < target_len && resize!(getColNorm2(search_data), target_len)
+    if length(getMainSearchSpectralScores(search_data)) < target_len
+        resize!(getMainSearchSpectralScores(search_data), target_len)
+    end
+    grow_unscored_psms_if_needed!(getComplexUnscoredPsms(search_data), target_len)
 end

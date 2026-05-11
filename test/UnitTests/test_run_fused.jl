@@ -11,6 +11,7 @@
 
 using Test
 using Pioneer
+using Pioneer: parseIsoXML
 
 const FusedStandard          = Pioneer.FusedStandard
 const FusedRTIndexed         = Pioneer.FusedRTIndexed
@@ -903,6 +904,38 @@ end
         @test n_match == n
         @test length(fx.scratch.row) >= n   # grew to fit
         @test fx.Hs.n_vals == n
+    end
+
+    # ------------------------------------------------------------
+    @testset "unscored_psms grows when active columns exceed capacity" begin
+        # ParameterTuning can see >5000 active candidate columns in one scan
+        # before process_scans_fused! reaches its post-run resize hook. Keep
+        # this fixture small but shrink unscored_psms below the number of
+        # matching precursor columns to reproduce the same boundary.
+        n = 10
+        frags = [(UInt32(i), Float32(200 + 10*i), 1000.0f0, UInt8(0)) for i in 1:n]
+        peak_mz = Float32[200 + 10*i for i in 1:n]
+        fx = make_fused_fixture(
+            n_precursors = n,
+            prec_mzs = fill(500.0f0, n),
+            prec_charges = fill(UInt8(2), n),
+            prec_sulfur_counts = fill(UInt8(0), n),
+            prec_irts = fill(50.0f0, n),
+            frags = frags,
+            prec_frag_ranges = UInt64.(1:(n + 1)),
+            peak_mz = peak_mz,
+            peak_int = fill(1500.0f0, n),
+            prec_range = 1:n,
+        )
+        resize!(fx.unscored_psms, 4)
+
+        n_match, n_miss = call_run_fused!(fx)
+
+        @test n_match == n
+        @test n_miss == 0
+        @test fx.Hs.n == n
+        @test length(fx.unscored_psms) >= n
+        @test fx.unscored_psms[n].precursor_idx == UInt32(n)
     end
 
 end

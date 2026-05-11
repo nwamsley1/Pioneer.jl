@@ -46,3 +46,19 @@ struct ComplexUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
 end
 
 ComplexUnscoredPSM{Float32}() = ComplexUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
+
+function grow_unscored_psms_if_needed!(
+    unscored_psms::Vector{<:ComplexUnscoredPSM},
+    needed_len::Integer,
+)
+    needed = Int(needed_len)
+    needed <= length(unscored_psms) && return unscored_psms
+
+    old_len = length(unscored_psms)
+    new_len = max(needed, max(1, old_len * 2))
+    resize!(unscored_psms, new_len)
+    @inbounds for i in (old_len + 1):new_len
+        unscored_psms[i] = eltype(unscored_psms)()
+    end
+    return unscored_psms
+end

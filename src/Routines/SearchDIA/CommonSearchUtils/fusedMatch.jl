@@ -179,6 +179,7 @@ from `Hs + weights` after deconv; no PSM accumulation).
         unscored_psms::Vector{ComplexUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
         m_rank::Int64, prec_idx::UInt32)
+    grow_unscored_psms_if_needed!(unscored_psms, col)
     apply_complex_scoring!(unscored_psms, col, frag, iso_idx,
                             intensity, ppm_err, m_rank, prec_idx)
     return nothing
