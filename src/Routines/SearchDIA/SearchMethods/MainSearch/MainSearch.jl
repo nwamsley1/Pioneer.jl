@@ -27,6 +27,32 @@ Pipeline:
 """
 struct MainSearch <: SearchMethod end
 
+"""
+    _summarize_psm_counts(best_psms, stage_label, ms_file_idx, file_name)
+
+Compute per-file q-values and PEPs from `best_psms[!, :lgbm_prob]` + `:target`
+and emit a one-line @user_info summary with target counts at q≤.001, q≤.01,
+PEP≤.01, PEP≤.05. Diagnostic only — purely transparent (no mutation of
+best_psms columns). Promoted from @debug_l2 during the tuning phase.
+"""
+function _summarize_psm_counts(best_psms::DataFrame, stage_label::AbstractString,
+                                ms_file_idx::Integer, file_name::AbstractString)
+    nrow(best_psms) == 0 && return
+    probs = Float32.(best_psms[!, :lgbm_prob])
+    is_t  = Vector{Bool}(best_psms[!, :target])
+    qv = zeros(Float32, length(probs))
+    get_qvalues!(probs, is_t, qv; doSort=true, fdr_scale_factor=1.0f0)
+    peps = Vector{Float32}(undef, length(probs))
+    get_PEP!(probs, is_t, peps; doSort=true, fdr_scale_factor=1.0f0)
+    n_t_q001  = count((qv .<= 0.001f0) .& is_t)
+    n_t_q01   = count((qv .<= 0.01f0)  .& is_t)
+    n_t_pep01 = count((peps .<= 0.01f0) .& is_t)
+    n_t_pep05 = count((peps .<= 0.05f0) .& is_t)
+    @user_info "  [$stage_label] (file_idx=$ms_file_idx, $file_name): " *
+               "$(nrow(best_psms)) best-per-precursor PSMs; " *
+               "targets q≤.001=$n_t_q001  q≤.01=$n_t_q01  PEP≤.01=$n_t_pep01  PEP≤.05=$n_t_pep05"
+end
+
 #==========================================================
 Type Definitions
 ==========================================================#
@@ -184,6 +210,7 @@ function process_search_results!(
     end
     best_psms, scores, lgbm_timings = train_lgbm_and_select_best(psms)
     best_psms[!, :lgbm_prob] = scores
+    _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm = time()
 
     # ============================================================
@@ -339,6 +366,7 @@ function process_search_results!(
         @user_info "  Pair competition (file_idx=$ms_file_idx, $file_name): " *
                    "$n_pairs pairs found; dropped $n_dropped_t targets + $n_dropped_d decoys " *
                    "($(n0) → $(nrow(best_psms)) best-per-precursor PSMs)"
+        _summarize_psm_counts(best_psms, "after paircomp", ms_file_idx, file_name)
     end
     # ============================================================
 

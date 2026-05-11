@@ -234,15 +234,17 @@ function train_lgbm_and_select_best(
     scores = psms[!, :lgbm_score]
     t_best = time()
 
-    # Feature importances (debug_l2 only — `importance()` allocates a Dict per call)
-    if DEBUG_CONSOLE_LEVEL[] >= 2
-        imp = importance(model)
+    # Feature importances — top 15 by gain. Promoted from debug_l2 to user_info
+    # for the tuning phase; revert to @debug_l2 once feature set stabilizes.
+    let imp = importance(model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            @debug_l2 "MainSearch LightGBM Feature Importances (gain):"
-            for (fname, gain) in sorted_imp
-                @debug_l2 "  $(rpad(fname, 40)) $(round(gain, digits=2))"
+            top = first(sorted_imp, min(15, length(sorted_imp)))
+            lines = ["MainSearch LGBM top-15 feature gains:"]
+            for (fname, gain) in top
+                push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
             end
+            @user_info join(lines, "\n")
         end
     end
 
