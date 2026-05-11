@@ -75,7 +75,7 @@ Dispatched array accessors
 
 get_scored_psms(sd::SearchDataStructures, ::MainSearchParameters) = getMainSearchScoredPsms(sd)
 get_scored_psms(sd::SearchDataStructures, ::ParameterTuningSearchParameters) = getTuningScoredPsms(sd)
-get_unscored_psms(sd::SearchDataStructures, ::MainSearchParameters) = getComplexUnscoredPsms(sd)
+get_unscored_psms(sd::SearchDataStructures, ::MainSearchParameters) = getMainUnscoredPsms(sd)
 get_unscored_psms(sd::SearchDataStructures, ::ParameterTuningSearchParameters) = getTuningUnscoredPsms(sd)
 # QuadTuningSearchParameters dispatches live in QuadTuningSearch/utils.jl
 # (loaded after this file — QuadTuning types aren't available yet here).
@@ -187,7 +187,7 @@ function score_psms!(
 )
     score_result = Score!(
         getMainSearchScoredPsms(search_data),
-        getComplexUnscoredPsms(search_data),
+        getMainUnscoredPsms(search_data),
         getMainSearchSpectralScores(search_data),
         getTempWeights(search_data),
         getIdToCol(search_data),

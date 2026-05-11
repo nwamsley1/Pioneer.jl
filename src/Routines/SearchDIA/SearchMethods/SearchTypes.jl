@@ -197,11 +197,11 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     iso_splines::I
     
     # PSM scoring.
-    # MainSearch buffers — `complex_unscored_psms` (per-(scan, precursor)
+    # MainSearch buffers — `main_unscored_psms` (per-(scan, precursor)
     # accumulator written by apply_main_scoring!) and `main_search_scored_psms`
     # (per-scan rows produced by Score!) carry the full MainSearch feature set
     # including fragment-chromatogram captures.
-    complex_unscored_psms::Vector{MainUnscoredPSM{Float32}}
+    main_unscored_psms::Vector{MainUnscoredPSM{Float32}}
     main_search_scored_psms::Vector{MainSearchScoredPSM{Float32, Float16}}
     main_search_spectral_scores::Vector{SpectralScoresMainSearch{Float16}}
     # Tuning buffers — slim variants used by ParameterTuning, QuadTuning, and
@@ -427,7 +427,7 @@ getMassErrSamples(s::SearchDataStructures) = s.mass_err_samples
 getIdToCol(s::SearchDataStructures) = s.id_to_col
 getIsoSplines(s::SearchDataStructures) = s.iso_splines
 
-getComplexUnscoredPsms(s::SearchDataStructures) = s.complex_unscored_psms
+getMainUnscoredPsms(s::SearchDataStructures) = s.main_unscored_psms
 
 getMainSearchScoredPsms(s::SearchDataStructures) = s.main_search_scored_psms
 getMainSearchSpectralScores(s::SearchDataStructures) = s.main_search_spectral_scores
