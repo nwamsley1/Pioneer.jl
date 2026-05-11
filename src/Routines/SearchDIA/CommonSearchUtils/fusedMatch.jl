@@ -171,11 +171,14 @@ classic Quad path skips these.
     record_match!(kind, unscored_psms, col, frag, iso_idx, intensity,
                    ppm_err, m_rank, prec_idx)
 
-Per-match inline scoring hook. Standard updates
-`unscored_psms[col]::MainUnscoredPSM`. Quad is a no-op (tuning reads
-from `Hs + weights` after deconv; no PSM accumulation).
+Per-match inline scoring hook, dispatched on `(kind, eltype(unscored_psms))`.
+
+- `FusedStandard` + `MainUnscoredPSM`  → `apply_main_scoring!` (MainSearch)
+- `FusedStandard` + `TuningUnscoredPSM` → `apply_tuning_scoring!` (Tuning paths)
+- `FusedQuadEst` / `FusedRTIndexed`     → no-op (tuning reads `Hs + weights`
+  after deconv; no PSM accumulation)
 """
-@inline function record_match!(::FusedSearchKind,
+@inline function record_match!(::FusedStandard,
         unscored_psms::Vector{MainUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
         m_rank::Int64, prec_idx::UInt32)
@@ -184,10 +187,19 @@ from `Hs + weights` after deconv; no PSM accumulation).
     return nothing
 end
 
-@inline record_match!(::FusedQuadEst, ::Vector{MainUnscoredPSM{Float32}},
+@inline function record_match!(::FusedStandard,
+        unscored_psms::Vector{TuningUnscoredPSM{Float32}}, col::Int, frag,
+        iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
+        m_rank::Int64, prec_idx::UInt32)
+    apply_tuning_scoring!(unscored_psms, col, frag, iso_idx,
+                            intensity, ppm_err, m_rank, prec_idx)
+    return nothing
+end
+
+@inline record_match!(::FusedQuadEst, ::AbstractVector{<:UnscoredPSM},
         ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32) = nothing
 
-@inline record_match!(::FusedRTIndexed, ::Vector{MainUnscoredPSM{Float32}},
+@inline record_match!(::FusedRTIndexed, ::AbstractVector{<:UnscoredPSM},
         ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32) = nothing
 
 #==========================================================
@@ -715,7 +727,7 @@ CSC order.
 function run_fused!(
     kind::K,
     Hs::SparseArrayFused{UInt32, Float32},
-    unscored_psms::Vector{MainUnscoredPSM{Float32}},
+    unscored_psms::AbstractVector{<:UnscoredPSM{Float32}},
     id_to_col::AbstractPrecursorMap{UInt16},
     scratch::FusedScratch,
     scan_corrected_mz::Vector{Float32},

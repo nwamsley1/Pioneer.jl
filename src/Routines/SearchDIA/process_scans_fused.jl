@@ -34,7 +34,7 @@ function process_scans_fused!(
 ) where {P<:FragmentIndexSearchParameters, PI<:PrecursorIndex}
 
     Hs              = getHsFused(search_data)
-    unscored_psms   = getComplexUnscoredPsms(search_data)
+    unscored_psms   = get_unscored_psms(search_data, params)
     id_to_col       = getIdToCol(search_data)
     fused_scratch   = getFusedScratch(search_data)
     corr_mz         = getScanCorrectedMz(search_data)

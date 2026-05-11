@@ -29,5 +29,8 @@ function resize_arrays!(search_data::SearchDataStructures, weights::Vector{Float
     resize!(weights, length(weights) + new_entries)
     resize!(getColNorm2(search_data), length(getColNorm2(search_data)) + new_entries)
     resize!(getMainSearchSpectralScores(search_data), length(getMainSearchSpectralScores(search_data)) + new_entries)
+    # Grow both PSM buffer families so any active search method (Main or
+    # Tuning) has enough slots; cheap and only triggers on >5000 active prec.
     append!(getComplexUnscoredPsms(search_data), [eltype(getComplexUnscoredPsms(search_data))() for _ in 1:new_entries])
+    append!(getTuningUnscoredPsms(search_data),  [eltype(getTuningUnscoredPsms(search_data))()  for _ in 1:new_entries])
 end
