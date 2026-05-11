@@ -197,13 +197,19 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     iso_splines::I
     
     # PSM scoring.
-    # `complex_unscored_psms` is the per-(scan, precursor) accumulator
-    # updated inline by run_fused!'s apply_main_scoring!.
-    # `main_search_scored_psms` + `main_search_spectral_scores` are the
-    # final per-scan rows produced by Score! / getDistanceMetrics.
+    # MainSearch buffers — `complex_unscored_psms` (per-(scan, precursor)
+    # accumulator written by apply_main_scoring!) and `main_search_scored_psms`
+    # (per-scan rows produced by Score!) carry the full MainSearch feature set
+    # including fragment-chromatogram captures.
     complex_unscored_psms::Vector{MainUnscoredPSM{Float32}}
     main_search_scored_psms::Vector{MainSearchScoredPSM{Float32, Float16}}
     main_search_spectral_scores::Vector{SpectralScoresMainSearch{Float16}}
+    # Tuning buffers — slim variants used by ParameterTuning, QuadTuning, and
+    # IntegrateChromatograms paths. Same structural shape minus the
+    # MainSearch-only fragment-chromatogram fields (frag1..6_int,
+    # matched_rank_mask, rank1/top3/top5_matched).
+    tuning_unscored_psms::Vector{TuningUnscoredPSM{Float32}}
+    tuning_scored_psms::Vector{TuningScoredPSM{Float32, Float16}}
 
     # Working arrays
     prec_ids::Vector{UInt32}
@@ -425,6 +431,10 @@ getComplexUnscoredPsms(s::SearchDataStructures) = s.complex_unscored_psms
 
 getMainSearchScoredPsms(s::SearchDataStructures) = s.main_search_scored_psms
 getMainSearchSpectralScores(s::SearchDataStructures) = s.main_search_spectral_scores
+
+# Tuning-path buffer getters (slim PSM types).
+getTuningUnscoredPsms(s::SearchDataStructures) = s.tuning_unscored_psms
+getTuningScoredPsms(s::SearchDataStructures) = s.tuning_scored_psms
 
 getPrecIds(s::SearchDataStructures) = s.prec_ids
 getWeights(s::SearchDataStructures) = s.weights
