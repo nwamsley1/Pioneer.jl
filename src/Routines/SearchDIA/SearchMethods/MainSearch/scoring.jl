@@ -6,16 +6,23 @@
 
 # Shared LightGBM hyperparameters — used by both MainSearch (per-file) and
 # PrecursorScoringSearch (experiment-wide).
-# Tuned 2026-05-10 via paired-EFDR sweep on Olsen Exploris one-file (entrap1
-# library): vs prior config (50 iter / lr=0.10 / min_data=30), q<=0.01 went
-# from 70,053 to 73,150 (+3,097, +4.4%). Biggest single knob: min_data_in_leaf
-# 30 -> 300 (+549). l1=l2=1 adds +278; longer training (3000 iter / lr=0.007)
-# adds another +291. Cross-entropy/lambdarank/scale_pos_weight all neutral or
-# negative. Cost: ~45x more LGBM wall-time per fold (~28s vs ~0.6s on 250k
-# rows / 29 features / 10 threads); for a 50-file experiment the MainSearch
-# LGBM portion goes from <1min to ~45min. Per-iteration cost is roughly
-# linear in num_iterations until the model exhausts useful splits.
-const SHARED_LGBM_HP = (num_iterations=3000, learning_rate=0.007, max_depth=8,
+# Tuned 2026-05-10. Final config picked to balance ID count vs wall time on
+# Olsen Exploris one-file with the full MS1 + frag-chromatogram feature set.
+#
+# Iteration / learning-rate sweep results (paired EFDR, ~46 features incl.
+# MS1Corr + frag-chrom features, 250k rows × 10 threads):
+#
+#   Config             wall    q<=.001  q<=.01   EFDR@.01  Notes
+#   3000 iter, lr=.007 130 s   52,600   75,236   0.0106    Reference (heavy)
+#   200 iter, lr=.10    9.6s   51,729   74,400   0.0100    Chosen (-1.1% IDs, 13.5x faster)
+#   100 iter, lr=.10    5.5s   51,099   73,235   0.0099    -2.7% IDs, 24x faster
+#   50  iter, lr=.20    3.5s   51,023   73,226   0.0101    Cheap mode, -2.7% IDs, 37x faster
+#   50  iter, lr=.10    3.4s   45,607   71,327   0.0100    Too-few iter for the regularization
+#
+# The key knob is "effective lr_total = num_iterations * learning_rate":
+# configs at lr_total ~ 20 (200/0.10) win; lr_total ~ 10 (100/0.10) saturates
+# slightly below; lr_total < 10 with min_data=300/l1=l2=1 under-fits.
+const SHARED_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
                         num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
                         bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
                         max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
