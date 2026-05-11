@@ -48,9 +48,11 @@ function _summarize_psm_counts(best_psms::DataFrame, stage_label::AbstractString
     n_t_q01   = count((qv .<= 0.01f0)  .& is_t)
     n_t_pep01 = count((peps .<= 0.01f0) .& is_t)
     n_t_pep05 = count((peps .<= 0.05f0) .& is_t)
+    # Trailing "\n" pushes the next ProgressBar tick to a fresh line so this
+    # message doesn't get overwritten when the per-file iteration advances.
     @user_info "  [$stage_label] (file_idx=$ms_file_idx, $file_name): " *
                "$(nrow(best_psms)) best-per-precursor PSMs; " *
-               "targets q≤.001=$n_t_q001  q≤.01=$n_t_q01  PEP≤.01=$n_t_pep01  PEP≤.05=$n_t_pep05"
+               "targets q≤.001=$n_t_q001  q≤.01=$n_t_q01  PEP≤.01=$n_t_pep01  PEP≤.05=$n_t_pep05\n"
 end
 
 #==========================================================
