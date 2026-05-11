@@ -69,21 +69,33 @@ const ADVANCED_FEATURE_SET = [
     :rt_fwhm,
     :n_above_hm,
 
-    :ms1_ms2_rt_diff,  # MS1-MS2 RT difference in iRT space
-    #:ms1_irt_diff,
-    #:weight_ms1,
+    # ============================================================================
+    # PRESCORE-shared features. Every feature in PRESCORE_FEATURES (the per-file
+    # MainSearch LightGBM input) is also listed here so the experiment-wide
+    # LightGBM trains on the same signal. Previous *_ms1 family
+    # (gof_ms1/error_ms1/m0_error_ms1/etc.) was dead — no code populates those
+    # columns and they were silently dropped by hasproperty filtering. Replaced
+    # 2026-05-11 with the live set; cross-checked against the second_pass_psms
+    # Arrow schema.
+    # ============================================================================
+    :fitted_manhattan_distance,
+    :total_ions_iso,
+    :spectrum_peak_count,
+    :weight_ratio_at_scan, :weight_rank_at_scan,
+    :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan,
+    :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan, :irt_dist_best_max_residual_3scan,
+    :irt_dist_to_weight_apex,
 
-    :gof_ms1,
-    :max_matched_residual_ms1,
-    :max_unmatched_residual_ms1,
-    :fitted_spectral_contrast_ms1,
-    :error_ms1,
-    :m0_error_ms1,
-    :n_iso_ms1,
-    :big_iso_ms1,
-    :rt_max_intensity_ms1,
-    :rt_diff_max_intensity_ms1,
-    :ms1_features_missing,
+    # MS1 point-lookup + chromatogram features.
+    :ms1_m0_intensity, :ms1_m1_intensity, :ms1_m0_mass_err_ppm,
+    :ms1_corr_weight_m0, :ms1_corr_m0_m1,
+    :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
+
+    # Per-rank MS2-fragment intensities + per-precursor chromatogram features.
+    :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
+    :frag_corr_top1_top2, :frag_corr_top1_top3, :frag_corr_top1_weight,
+    :frag_corr_mean_pairwise, :frag_corr_min_pairwise, :frag_corr_top3_weight,
+    :frag_apex_dispersion_irt, :n_correlated_fragments,
 
     :scribe,
     :max_scribe,
@@ -102,12 +114,13 @@ The mutated feature vector (for chaining).
 """
 function apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
     if !ms1_scoring
+        # Live MS1 features (populated by add_ms1_features! and the per-precursor
+        # MS1 chromatogram pass). Updated 2026-05-11 to match the live set in
+        # ADVANCED_FEATURE_SET (the previous *_ms1 names were dead).
         ms1_features = Set([
-            :ms1_irt_diff, :ms1_ms2_rt_diff, :weight_ms1, :gof_ms1,
-            :max_matched_residual_ms1, :max_unmatched_residual_ms1,
-            :fitted_spectral_contrast_ms1, :error_ms1, :m0_error_ms1,
-            :n_iso_ms1, :big_iso_ms1, :rt_max_intensity_ms1,
-            :rt_diff_max_intensity_ms1, :ms1_features_missing,
+            :ms1_m0_intensity, :ms1_m1_intensity, :ms1_m0_mass_err_ppm,
+            :ms1_corr_weight_m0, :ms1_corr_m0_m1,
+            :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
         ])
         filter!(f -> !(f in ms1_features), features)
     end
