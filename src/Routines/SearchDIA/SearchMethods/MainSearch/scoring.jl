@@ -251,9 +251,8 @@ function train_lgbm_and_select_best(
     let imp = importance(model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            top = first(sorted_imp, min(15, length(sorted_imp)))
-            lines = ["MainSearch per-file LGBM top-15 feature gains:"]
-            for (fname, gain) in top
+            lines = ["MainSearch per-file LGBM feature gains (all $(length(sorted_imp))):"]
+            for (fname, gain) in sorted_imp
                 push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
             end
             @user_info join(lines, "\n")

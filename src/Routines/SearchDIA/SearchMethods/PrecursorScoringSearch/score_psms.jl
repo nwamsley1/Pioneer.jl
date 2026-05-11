@@ -86,9 +86,8 @@ function score_precursor_isotope_traces(
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            top = first(sorted_imp, min(20, length(sorted_imp)))
-            lines = ["ScoringSearch experiment-wide LGBM top-20 feature gains:"]
-            for (fname, gain) in top
+            lines = ["ScoringSearch experiment-wide LGBM feature gains (all $(length(sorted_imp))):"]
+            for (fname, gain) in sorted_imp
                 push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
             end
             @user_info join(lines, "\n")
