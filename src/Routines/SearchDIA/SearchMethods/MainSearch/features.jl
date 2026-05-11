@@ -207,6 +207,9 @@ const PRESCORE_FEATURES = [
     :frag_corr_top1_top2, :frag_corr_top1_top3, :frag_corr_top1_weight,
     :frag_corr_mean_pairwise, :frag_corr_min_pairwise, :frag_corr_top3_weight,
     :frag_apex_dispersion_irt, :n_correlated_fragments,
+    # Direct MS1↔fragment cross-correlations (independent of deconv weight)
+    :ms1_corr_m0_fragsum, :ms1_corr_m0_frag1, :ms1_corr_m0_best,
+    :ms1_apex_offset_fragsum_irt,
 ]
 
 """
@@ -477,6 +480,11 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     psms[!, :frag_corr_top3_weight]    = zeros(Float32, n)
     psms[!, :frag_apex_dispersion_irt] = zeros(Float32, n)
     psms[!, :n_correlated_fragments]   = zeros(UInt8,  n)
+    # Direct MS1↔fragment cross-correlation features (independent of deconv weight)
+    psms[!, :ms1_corr_m0_fragsum]      = zeros(Float32, n)
+    psms[!, :ms1_corr_m0_frag1]        = zeros(Float32, n)
+    psms[!, :ms1_corr_m0_best]         = zeros(Float32, n)
+    psms[!, :ms1_apex_offset_fragsum_irt] = zeros(Float32, n)
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -484,12 +492,14 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
         @debug_l1 "_add_fragment_chromatogram_features!: missing required columns, skipping"
         return
     end
+    have_ms1 = hasproperty(psms, :ms1_m0_intensity)
 
     prec   = psms.precursor_idx
     weight = psms.weight
     irt    = psms.irt_obs
     f      = (psms.frag1_int, psms.frag2_int, psms.frag3_int,
               psms.frag4_int, psms.frag5_int, psms.frag6_int)
+    m0_col = have_ms1 ? psms.ms1_m0_intensity : nothing
 
     buckets = Dict{UInt32, Vector{Int}}()
     @inbounds for i in 1:n
@@ -575,6 +585,45 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             if _pcor(F[r], W) > 0.7f0; n_corr += UInt8(1); end
         end
 
+        # MS1↔fragment direct cross-correlations
+        c_m0_fragsum = 0f0; c_m0_frag1 = 0f0; c_m0_best = 0f0
+        apex_off_fragsum_irt = 0f0
+        if have_ms1
+            M0 = Vector{Float32}(undef, npts)
+            for (k, i) in enumerate(idxs); M0[k] = Float32(m0_col[i]); end
+            # Build fragsum chromatogram (Σ of fragments with signal at each scan)
+            fragsum = Vector{Float32}(undef, npts)
+            for k in 1:npts
+                s = 0f0
+                for r in 1:6
+                    if has_signal[r]; s += F[r][k]; end
+                end
+                fragsum[k] = s
+            end
+            # Find best fragment by consensus (sum of pairwise corrs to others)
+            best_r = 0; best_sum = -Inf32
+            for r in 1:6
+                has_signal[r] || continue
+                s = 0f0; cnt = 0
+                for r2 in 1:6
+                    (r2 == r || !has_signal[r2]) && continue
+                    s += _pcor(F[r], F[r2]); cnt += 1
+                end
+                if cnt > 0 && s > best_sum; best_sum = s; best_r = r; end
+            end
+            # MS1 must have signal to correlate
+            if maximum(M0) > 0
+                if maximum(fragsum) > 0; c_m0_fragsum = _pcor(M0, fragsum); end
+                if has_signal[1]; c_m0_frag1 = _pcor(M0, F[1]); end
+                if best_r > 0; c_m0_best = _pcor(M0, F[best_r]); end
+                # Apex offset between M0 and fragsum
+                if maximum(fragsum) > 0
+                    ai_m0 = argmax(M0); ai_fs = argmax(fragsum)
+                    apex_off_fragsum_irt = abs(IRT[ai_m0] - IRT[ai_fs])
+                end
+            end
+        end
+
         for i in idxs
             psms.frag_corr_top1_top2[i]      = c_top1_top2
             psms.frag_corr_top1_top3[i]      = c_top1_top3
@@ -584,6 +633,10 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             psms.frag_corr_top3_weight[i]    = c_top3_w
             psms.frag_apex_dispersion_irt[i] = apex_disp
             psms.n_correlated_fragments[i]   = n_corr
+            psms.ms1_corr_m0_fragsum[i]      = c_m0_fragsum
+            psms.ms1_corr_m0_frag1[i]        = c_m0_frag1
+            psms.ms1_corr_m0_best[i]         = c_m0_best
+            psms.ms1_apex_offset_fragsum_irt[i] = apex_off_fragsum_irt
         end
     end
     return

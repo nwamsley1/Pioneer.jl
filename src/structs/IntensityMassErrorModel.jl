@@ -15,6 +15,11 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# Optional MS2 ppm floor — if PIONEER_MS2_MIN_PPM is set, the intensity-aware
+# half-width returned by getCorrectedMzAndBounds / getMzBoundsReverse will be
+# clamped so it's at least (min_ppm × m/z × 1e-6). Set to 0 (default) for no floor.
+const PIONEER_MS2_MIN_PPM = Float32(parse(Float64, get(ENV, "PIONEER_MS2_MIN_PPM", "0.0")))
+
 """
 Precomputed linear extrapolation at the boundaries of a spline.
 Outside [lo, hi] (typically the 2% and 98% quantiles of training data),
@@ -217,6 +222,11 @@ end
 function getMzBoundsReverse(m::IntensityMassErrorModel, mass::Float32, log2I::Float32)
     σ_mda = _gaussian_sigma_mda(m, log2I) * _mz_spread_correction(m, mass)
     half_width = m.k * σ_mda / 1f3  # mDa → Da
+    # Optional ppm floor (PIONEER_MS2_MIN_PPM); 0 disables.
+    if PIONEER_MS2_MIN_PPM > 0f0
+        min_hw = mass * PIONEER_MS2_MIN_PPM * 1f-6
+        half_width = max(half_width, min_hw)
+    end
     return Float32(mass - half_width), Float32(mass + half_width)
 end
 
@@ -234,6 +244,11 @@ Avoids redundant log2 computation vs calling getCorrectedMz + getMzBoundsReverse
         corrected = mz - bias_da
         σ_mda = _gaussian_sigma_mda(m, log2I) * _mz_spread_correction(m, corrected)
         half_width = m.k * σ_mda * 1f-3  # mDa → Da (multiply faster than divide)
+        # Optional ppm floor (PIONEER_MS2_MIN_PPM); 0 disables.
+        if PIONEER_MS2_MIN_PPM > 0f0
+            min_hw = corrected * PIONEER_MS2_MIN_PPM * 1f-6
+            half_width = max(half_width, min_hw)
+        end
         return corrected, corrected - half_width, corrected + half_width
     end
 end
