@@ -387,7 +387,7 @@ function build_chromatograms(
     isotopes_buf = getIsotopes(search_data)
     prec_trans_buf = getPrecursorTransmission(search_data)
     id_to_col = getIdToCol(search_data)
-    unscored_psms = getComplexUnscoredPsms(search_data)
+    unscored_psms = getTuningUnscoredPsms(search_data)  # placeholder — FusedRTIndexed record_match! is no-op
 
     # Pre-allocate chromatograms with better size estimate (~100 points per scan average)
     estimated_points = length(scan_range) * 100
