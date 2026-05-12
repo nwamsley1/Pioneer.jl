@@ -92,8 +92,6 @@ const ADVANCED_FEATURE_SET = [
     :irt_dist_best_gof_9scan, :irt_dist_best_manhattan_9scan, :irt_dist_best_max_residual_9scan,
     :best_gof_11scan, :best_manhattan_11scan, :best_max_residual_11scan,
     :irt_dist_best_gof_11scan, :irt_dist_best_manhattan_11scan, :irt_dist_best_max_residual_11scan,
-    :best_gof_15scan, :best_manhattan_15scan, :best_max_residual_15scan,
-    :irt_dist_best_gof_15scan, :irt_dist_best_manhattan_15scan, :irt_dist_best_max_residual_15scan,
     :irt_dist_to_weight_apex,
 
     # MS1 point-lookup + chromatogram features.
