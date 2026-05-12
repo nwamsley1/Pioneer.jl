@@ -236,9 +236,17 @@ const PRESCORE_FEATURES = [
     :irt_dist_best_gof_5scan, :irt_dist_best_manhattan_5scan, :irt_dist_best_max_residual_5scan,
     :worst_max_residual_11scan, :worst_manhattan_11scan,
     :irt_dist_to_weight_apex,
-    # Batch A — edge-distance (Peak-Shape A/B doc, 2026-05-12)
-    :n_scans_left_capped3, :n_scans_right_capped3, :min_edge_distance,
-    :is_at_edge, :relative_position, :dist_to_relative_center,
+    # Batch A — edge-distance (kept 2 of 6; dropped capped-3 zero-gain features)
+    :relative_position, :dist_to_relative_center,
+    # Batch B — weight-chromatogram peak-shape stats
+    :weight_apex_relative_pos, :weight_chrom_skewness, :weight_chrom_kurtosis,
+    :apex_to_edge_weight_ratio, :n_above_hm_left_of_apex, :n_above_hm_right_of_apex,
+    :hm_asymmetry,
+    # Batch C — DIA-NN-style log-quadratic Gaussian fit
+    :weight_chrom_gaussian_r2, :weight_chrom_gaussian_sigma, :weight_chrom_gaussian_apex_irt,
+    # Batch D — DIA-NN direct ports (pShape 5-bin + pBestCorrDelta + pTotCorrSum)
+    :shape_m2, :shape_m1, :shape_0, :shape_p1, :shape_p2,
+    :gof_minus_max_gof_precursor, :gof_fraction_of_total_precursor,
     :ms1_m0_mass_err_ppm,
     :ms1_corr_weight_m0, :ms1_corr_m0_m1, :ms1_corr_weight_m1,
     :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
@@ -844,13 +852,32 @@ Adds column `:irt_dist_to_weight_apex`.
 function add_apex_distance_feature!(psms::DataFrame)
     n = nrow(psms)
     psms[!, :irt_dist_to_weight_apex] = zeros(Float32, n)
-    # Batch A — edge-distance features (per-precursor, position-in-scan-list).
-    psms[!, :n_scans_left_capped3]   = zeros(UInt8, n)
-    psms[!, :n_scans_right_capped3]  = zeros(UInt8, n)
-    psms[!, :min_edge_distance]      = zeros(UInt8, n)
-    psms[!, :is_at_edge]             = zeros(UInt8, n)
+    # Batch A — edge-distance features (kept the 2 that scored; dropped 4 zero-gain).
     psms[!, :relative_position]      = zeros(Float32, n)
     psms[!, :dist_to_relative_center]= zeros(Float32, n)
+    # Batch B — weight-chromatogram peak-shape stats (per-precursor, broadcast to all PSMs).
+    psms[!, :weight_apex_relative_pos]    = zeros(Float32, n)
+    psms[!, :weight_chrom_skewness]       = zeros(Float32, n)
+    psms[!, :weight_chrom_kurtosis]       = zeros(Float32, n)
+    psms[!, :apex_to_edge_weight_ratio]   = zeros(Float32, n)
+    psms[!, :n_above_hm_left_of_apex]     = zeros(UInt8,   n)
+    psms[!, :n_above_hm_right_of_apex]    = zeros(UInt8,   n)
+    psms[!, :hm_asymmetry]                = zeros(Float32, n)
+    # Batch C — log-quadratic Gaussian fit to weight chromatogram.
+    psms[!, :weight_chrom_gaussian_r2]       = zeros(Float32, n)
+    psms[!, :weight_chrom_gaussian_sigma]    = zeros(Float32, n)
+    psms[!, :weight_chrom_gaussian_apex_irt] = zeros(Float32, n)
+    # Batch D — DIA-NN ports. shape_{m2..p2} = 5-bin normalized weight profile
+    # centered on each PSM's scan position k within its precursor's scan list.
+    psms[!, :shape_m2] = zeros(Float32, n)
+    psms[!, :shape_m1] = zeros(Float32, n)
+    psms[!, :shape_0]  = zeros(Float32, n)
+    psms[!, :shape_p1] = zeros(Float32, n)
+    psms[!, :shape_p2] = zeros(Float32, n)
+    # pBestCorrDelta analog: gof - max(gof over this precursor's scans). ≤ 0.
+    psms[!, :gof_minus_max_gof_precursor] = zeros(Float32, n)
+    # pTotCorrSum analog: log(gof / (sum(gof over precursor) + 1)). Fraction of total signal.
+    psms[!, :gof_fraction_of_total_precursor] = zeros(Float32, n)
     n == 0 && return
     @assert hasproperty(psms, :irt_obs) ":irt_obs required"
     by_prec = Dict{eltype(psms.precursor_idx), Vector{Int}}()
@@ -858,30 +885,163 @@ function add_apex_distance_feature!(psms::DataFrame)
         push!(get!(() -> Int[], by_prec, psms.precursor_idx[i]), i)
     end
     @inbounds for (_, idxs) in by_prec
-        # Sort by irt for edge-distance position
+        # Sort by irt for position features
         if length(idxs) > 1
             sort!(idxs, by = j -> Float32(psms.irt_obs[j]))
         end
-        # Find apex (max weight)
+        N = length(idxs)
+        # Find apex (max weight) and apex position
         apex_i = idxs[1]; apex_w = Float32(psms.weight[apex_i])
-        for j in idxs
+        apex_k = 0
+        for (k0, j) in enumerate(idxs)
             w = Float32(psms.weight[j])
-            if w > apex_w; apex_w = w; apex_i = j; end
+            if w > apex_w; apex_w = w; apex_i = j; apex_k = k0 - 1; end
         end
         apex_irt = Float32(psms.irt_obs[apex_i])
-        N = length(idxs)
+        apex_rel = N > 1 ? Float32(apex_k) / Float32(N - 1) : 0.5f0
+
+        # Batch B sub-pass: moments of weight chromatogram + half-max asymmetry.
+        # Skewness = E[((w-μ)/σ)^3]; excess kurtosis = E[((w-μ)/σ)^4] - 3.
+        # Zero variance → 0. Single-PSM precursors → 0 for all.
+        wsum = 0f0; w2sum = 0f0
+        for j in idxs; wj = Float32(psms.weight[j]); wsum += wj; w2sum += wj*wj; end
+        mu  = wsum / Float32(N)
+        var = max(w2sum / Float32(N) - mu*mu, 0f0)
+        sigma = sqrt(var)
+        skew = 0f0; kurt = 0f0
+        if sigma > 1f-12 && N >= 3
+            s3 = 0f0; s4 = 0f0
+            for j in idxs
+                z = (Float32(psms.weight[j]) - mu) / sigma
+                s3 += z^3; s4 += z^4
+            end
+            skew = s3 / Float32(N)
+            kurt = s4 / Float32(N) - 3f0
+        end
+        # Apex-to-edge ratio: max(w) / max(w_first, w_last). Single-scan → 1.
+        edge_w = N >= 2 ? max(Float32(psms.weight[idxs[1]]), Float32(psms.weight[idxs[end]])) : apex_w
+        apex_edge_ratio = edge_w > 1f-12 ? apex_w / edge_w : Float32(N == 1 ? 1f0 : 0f0)
+        # Half-max asymmetry around apex
+        half_max = 0.5f0 * apex_w
+        n_left_hm = UInt8(0); n_right_hm = UInt8(0)
+        for (k0, j) in enumerate(idxs)
+            (Float32(psms.weight[j]) >= half_max) || continue
+            k = k0 - 1
+            if k < apex_k; n_left_hm  += UInt8(1)
+            elseif k > apex_k; n_right_hm += UInt8(1)
+            end
+        end
+        hm_total = Int(n_left_hm) + Int(n_right_hm)
+        asym = hm_total > 0 ? Float32(abs(Int(n_left_hm) - Int(n_right_hm))) / Float32(hm_total) : 0f0
+
+        # Batch C: log-quadratic Gaussian fit. y = log(w + eps) = a + b·x + c·x²
+        # where x = irt. If c < 0, this is a valid Gaussian: σ = sqrt(-1/(2c)),
+        # apex_irt = -b/(2c). Skip if N < 3 (system underdetermined).
+        gauss_r2 = 0f0; gauss_sigma = 0f0; gauss_apex_irt = 0f0
+        if N >= 3 && apex_w > 1f-12
+            # Normal equations for [a,b,c]:
+            # Σ1·a + Σx·b + Σx²·c = Σy
+            # Σx·a + Σx²·b + Σx³·c = Σxy
+            # Σx²·a + Σx³·b + Σx⁴·c = Σx²y
+            S0 = Float64(N); S1 = 0.0; S2 = 0.0; S3 = 0.0; S4 = 0.0
+            Sy = 0.0; Sxy = 0.0; Sx2y = 0.0
+            Y = Vector{Float64}(undef, N)
+            X = Vector{Float64}(undef, N)
+            for (k0, j) in enumerate(idxs)
+                xi = Float64(psms.irt_obs[j])
+                yi = log(max(Float64(psms.weight[j]), 1e-6))
+                X[k0] = xi; Y[k0] = yi
+                S1 += xi; xi2 = xi*xi; S2 += xi2
+                S3 += xi2*xi; S4 += xi2*xi2
+                Sy += yi; Sxy += xi*yi; Sx2y += xi2*yi
+            end
+            # Solve 3x3 via Cramer's rule (cheap; N is tiny)
+            M11=S0; M12=S1; M13=S2
+            M21=S1; M22=S2; M23=S3
+            M31=S2; M32=S3; M33=S4
+            det_M = M11*(M22*M33 - M23*M32) - M12*(M21*M33 - M23*M31) + M13*(M21*M32 - M22*M31)
+            if abs(det_M) > 1e-20
+                det_a = Sy*(M22*M33 - M23*M32) - M12*(Sxy*M33 - M23*Sx2y) + M13*(Sxy*M32 - M22*Sx2y)
+                det_b = M11*(Sxy*M33 - M23*Sx2y) - Sy*(M21*M33 - M23*M31) + M13*(M21*Sx2y - Sxy*M31)
+                det_c = M11*(M22*Sx2y - Sxy*M32) - M12*(M21*Sx2y - Sxy*M31) + Sy*(M21*M32 - M22*M31)
+                a = det_a / det_M; b = det_b / det_M; c = det_c / det_M
+                # R² of the log-space fit
+                ymean = Sy / S0
+                ss_tot = 0.0; ss_res = 0.0
+                for k0 in 1:N
+                    yhat = a + b*X[k0] + c*X[k0]*X[k0]
+                    ss_res += (Y[k0] - yhat)^2
+                    ss_tot += (Y[k0] - ymean)^2
+                end
+                gauss_r2 = Float32(ss_tot > 1e-20 ? 1.0 - ss_res/ss_tot : 0.0)
+                if c < 0
+                    gauss_sigma    = Float32(sqrt(-1.0/(2.0*c)))
+                    gauss_apex_irt = Float32(-b/(2.0*c))
+                end
+            end
+        end
+
+        # Batch D pre-computation: precursor-wide max_gof and sum_gof
+        has_gof = hasproperty(psms, :gof)
+        max_gof_prec = 0f0; sum_gof_prec = 0f0
+        if has_gof
+            for j in idxs
+                g = Float32(psms.gof[j])
+                if g > max_gof_prec; max_gof_prec = g; end
+                sum_gof_prec += g
+            end
+        end
+
         for (k0, i) in enumerate(idxs)
-            k = k0 - 1                          # 0-indexed scan position
-            n_left  = min(k,            3)
-            n_right = min(N - 1 - k,    3)
+            k = k0 - 1
             rel_pos = N > 1 ? Float32(k) / Float32(N - 1) : 0.5f0
-            psms.irt_dist_to_weight_apex[i] = abs(Float32(psms.irt_obs[i]) - apex_irt)
-            psms.n_scans_left_capped3[i]    = UInt8(n_left)
-            psms.n_scans_right_capped3[i]   = UInt8(n_right)
-            psms.min_edge_distance[i]       = UInt8(min(n_left, n_right))
-            psms.is_at_edge[i]              = UInt8((n_left == 0 || n_right == 0) ? 1 : 0)
-            psms.relative_position[i]       = rel_pos
-            psms.dist_to_relative_center[i] = abs(0.5f0 - rel_pos)
+            # Batch D shape_*: take 5 weights at positions k-2..k+2; pad with 0 if outside;
+            # normalize so the 5 sum to 1.
+            sh_total = 0f0
+            sh_v1 = 0f0; sh_v2 = 0f0; sh_v3 = 0f0; sh_v4 = 0f0; sh_v5 = 0f0
+            for off in -2:2
+                kk = k + off
+                if 0 <= kk <= N - 1
+                    w = Float32(psms.weight[idxs[kk + 1]])
+                    if     off == -2; sh_v1 = w
+                    elseif off == -1; sh_v2 = w
+                    elseif off ==  0; sh_v3 = w
+                    elseif off ==  1; sh_v4 = w
+                    else;             sh_v5 = w
+                    end
+                    sh_total += w
+                end
+            end
+            if sh_total > 1f-12
+                sh_v1 /= sh_total; sh_v2 /= sh_total; sh_v3 /= sh_total
+                sh_v4 /= sh_total; sh_v5 /= sh_total
+            end
+            # Batch D pBestCorrDelta / pTotCorrSum analogs (using gof)
+            this_gof = has_gof ? Float32(psms.gof[i]) : 0f0
+            gof_minus_max = has_gof ? this_gof - max_gof_prec : 0f0
+            gof_frac = (has_gof && sum_gof_prec > 0) ?
+                Float32(log(max(Float64(this_gof) / (Float64(sum_gof_prec) + 1.0), 1e-12))) : 0f0
+
+            psms.irt_dist_to_weight_apex[i]       = abs(Float32(psms.irt_obs[i]) - apex_irt)
+            psms.relative_position[i]             = rel_pos
+            psms.dist_to_relative_center[i]       = abs(0.5f0 - rel_pos)
+            psms.shape_m2[i] = sh_v1
+            psms.shape_m1[i] = sh_v2
+            psms.shape_0[i]  = sh_v3
+            psms.shape_p1[i] = sh_v4
+            psms.shape_p2[i] = sh_v5
+            psms.gof_minus_max_gof_precursor[i]     = gof_minus_max
+            psms.gof_fraction_of_total_precursor[i] = gof_frac
+            psms.weight_apex_relative_pos[i]      = apex_rel
+            psms.weight_chrom_skewness[i]         = skew
+            psms.weight_chrom_kurtosis[i]         = kurt
+            psms.apex_to_edge_weight_ratio[i]     = apex_edge_ratio
+            psms.n_above_hm_left_of_apex[i]       = n_left_hm
+            psms.n_above_hm_right_of_apex[i]      = n_right_hm
+            psms.hm_asymmetry[i]                  = asym
+            psms.weight_chrom_gaussian_r2[i]       = gauss_r2
+            psms.weight_chrom_gaussian_sigma[i]    = gauss_sigma
+            psms.weight_chrom_gaussian_apex_irt[i] = gauss_apex_irt
         end
     end
     return
