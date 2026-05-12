@@ -195,6 +195,8 @@ const PRESCORE_FEATURES = [
     :weight_ratio_at_scan, :weight_rank_at_scan,
     :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan,
     :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan, :irt_dist_best_max_residual_3scan,
+    :best_gof_5scan, :best_manhattan_5scan, :best_max_residual_5scan,
+    :irt_dist_best_gof_5scan, :irt_dist_best_manhattan_5scan, :irt_dist_best_max_residual_5scan,
     :irt_dist_to_weight_apex,
     :ms1_m0_mass_err_ppm,
     :ms1_corr_weight_m0, :ms1_corr_m0_m1,
@@ -627,31 +629,59 @@ end
     add_neighborhood_features!(psms::DataFrame)
 
 For each PSM at (precursor_idx, scan_idx), look at the PSMs of the SAME
-precursor at the nearest earlier scan and the nearest later scan (if any).
-Within this 3-scan neighborhood, compute the BEST value for each of:
+precursor within ±k scans (sorted by scan_idx). For each of:
 - gof (higher = better, take max)
 - fitted_manhattan_distance (lower = better, take min)
 - max_matched_residual (lower = better, take min)
 
-Also record the |irt_obs| distance from the current scan to the scan that
-contributed the best value (a chromatographic-quality signal: real precursors
-should have their best neighbor close in iRT).
+compute the BEST value in the window and the |iRT| distance from this PSM to
+the scan that contributed the best value (a chromatographic-quality signal:
+real precursors should have their best neighbor close in iRT).
 
-Adds columns:
-- :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan
-- :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan, :irt_dist_best_max_residual_3scan
+Currently emits TWO window sizes for A/B comparison via LightGBM gain:
+- 3-scan (`half_window=1`): self + 1 before + 1 after — the original window.
+- 5-scan (`half_window=2`): self + 2 before + 2 after — wider chromatographic
+  context, includes flanking shoulders of an elution peak.
+
+Adds columns (12 total):
+- `:best_gof_3scan`, `:best_manhattan_3scan`, `:best_max_residual_3scan`,
+  `:irt_dist_best_gof_3scan`, `:irt_dist_best_manhattan_3scan`,
+  `:irt_dist_best_max_residual_3scan`,
+- `:best_gof_5scan`, `:best_manhattan_5scan`, `:best_max_residual_5scan`,
+  `:irt_dist_best_gof_5scan`, `:irt_dist_best_manhattan_5scan`,
+  `:irt_dist_best_max_residual_5scan`.
 
 PSMs that are the only PSM for a precursor get values from themselves; iRT
 distance = 0.
 """
 function add_neighborhood_features!(psms::DataFrame)
+    _add_neighborhood_features_window!(psms, 1, "_3scan")
+    _add_neighborhood_features_window!(psms, 2, "_5scan")
+    return
+end
+
+"""
+    _add_neighborhood_features_window!(psms, half_window, suffix)
+
+Worker for `add_neighborhood_features!`. Writes columns
+`best_gof<suffix>`, `best_manhattan<suffix>`, `best_max_residual<suffix>`,
+and their `irt_dist_*<suffix>` companions, computed over the window
+`-half_window .. +half_window` around each PSM's scan within its precursor.
+"""
+function _add_neighborhood_features_window!(psms::DataFrame, half_window::Int, suffix::String)
     n = nrow(psms)
-    psms[!, :best_gof_3scan]                  = Vector{Float32}(undef, n)
-    psms[!, :best_manhattan_3scan]            = Vector{Float32}(undef, n)
-    psms[!, :best_max_residual_3scan]         = Vector{Float32}(undef, n)
-    psms[!, :irt_dist_best_gof_3scan]         = zeros(Float32, n)
-    psms[!, :irt_dist_best_manhattan_3scan]   = zeros(Float32, n)
-    psms[!, :irt_dist_best_max_residual_3scan]= zeros(Float32, n)
+    gof_col      = Symbol("best_gof", suffix)
+    man_col      = Symbol("best_manhattan", suffix)
+    mr_col       = Symbol("best_max_residual", suffix)
+    dgof_col     = Symbol("irt_dist_best_gof", suffix)
+    dman_col     = Symbol("irt_dist_best_manhattan", suffix)
+    dmr_col      = Symbol("irt_dist_best_max_residual", suffix)
+    psms[!, gof_col]  = Vector{Float32}(undef, n)
+    psms[!, man_col]  = Vector{Float32}(undef, n)
+    psms[!, mr_col]   = Vector{Float32}(undef, n)
+    psms[!, dgof_col] = zeros(Float32, n)
+    psms[!, dman_col] = zeros(Float32, n)
+    psms[!, dmr_col]  = zeros(Float32, n)
     n == 0 && return
     @assert hasproperty(psms, :irt_obs) "neighborhood features require :irt_obs column"
 
@@ -673,7 +703,8 @@ function add_neighborhood_features!(psms::DataFrame)
             best_gof = cur_gof; gof_idx = i
             best_man = cur_man; man_idx = i
             best_mr  = cur_mr;  mr_idx  = i
-            for off in (-1, 1)
+            for off in -half_window:half_window
+                off == 0 && continue
                 kk = k + off
                 if 1 <= kk <= length(idxs)
                     j = idxs[kk]
@@ -685,12 +716,12 @@ function add_neighborhood_features!(psms::DataFrame)
                     if r < best_mr;  best_mr  = r;  mr_idx  = j; end
                 end
             end
-            psms.best_gof_3scan[i]                   = best_gof
-            psms.best_manhattan_3scan[i]             = best_man
-            psms.best_max_residual_3scan[i]          = best_mr
-            psms.irt_dist_best_gof_3scan[i]          = abs(Float32(psms.irt_obs[gof_idx]) - cur_irt)
-            psms.irt_dist_best_manhattan_3scan[i]    = abs(Float32(psms.irt_obs[man_idx]) - cur_irt)
-            psms.irt_dist_best_max_residual_3scan[i] = abs(Float32(psms.irt_obs[mr_idx]) - cur_irt)
+            psms[!, gof_col][i]  = best_gof
+            psms[!, man_col][i]  = best_man
+            psms[!, mr_col][i]   = best_mr
+            psms[!, dgof_col][i] = abs(Float32(psms.irt_obs[gof_idx]) - cur_irt)
+            psms[!, dman_col][i] = abs(Float32(psms.irt_obs[man_idx]) - cur_irt)
+            psms[!, dmr_col][i]  = abs(Float32(psms.irt_obs[mr_idx]) - cur_irt)
         end
     end
     return
