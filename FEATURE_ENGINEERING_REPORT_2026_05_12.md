@@ -192,6 +192,93 @@ without polluting the LGBM with low-gain features.
    isotope-ratio calculator; if found, drop-in replace
    `iso_splines(sulfur, ...)` with that for `ms1_m1_to_m0_pred`.
 
+## Addendum — M+1 fragment intensities + correlations (overnight follow-up)
+
+After the initial 17-feature batch, attempted the **M+1 fragment captures**
+(idea #6) that I'd flagged as deferred. This required widening
+`MainUnscoredPSM` and `MainSearchScoredPSM` with 6 new fields each
+(`frag1..6_int_m1`), updating `apply_main_scoring!` to capture per-rank
+M+1 intensities when `iso_idx == 1`, and adding 5 new correlation
+features in `_add_fragment_chromatogram_features!`.
+
+Branch isolation: changes live on `feature/ms1-phase1-m1frag` branched
+off `01455cfc` of `feature/ms1-phase1`. Two commits:
+- `ad414f70` — struct widening (verified ecoli 2,270 / 1,391, all 149
+  fused-match unit tests pass).
+- `39aff6fe` — new correlation features.
+
+Revert path: `git checkout feature/ms1-phase1; git branch -D feature/ms1-phase1-m1frag`
+gets us back to a clean state if anything else surfaces.
+
+### Headline (2-file Olsen, M+1 features included)
+
+| Run | f1 q≤.01 | f2 q≤.01 | Final IDs | PGs |
+|---|---:|---:|---:|---:|
+| Baseline (post-trim) | 40,495 | 40,679 | 87,929 | 12,403 |
+| + 17 new features (no M+1 frag) | 41,424 | 40,733 | 88,478 | 12,291 |
+| **+ M+1 fragment intensities + corr** | **41,213** | **41,183** | **88,875** | 12,386 |
+
+**Net vs the no-M+1 variant:** +397 final IDs (and +450 on file-2 q≤.01,
+which was nearly flat in the prior batch — the M+1 features are filling
+the file-2 gap). **Net vs baseline:** +946 final IDs.
+
+### M+1 feature gains (this run)
+
+| Feature | Gain | Notes |
+|---|---:|---|
+| `ms1_corr_weight_m1` | 2,962 | Mirror of existing m0 corr (also new today) |
+| `frag_corr_m0_m1_mean` | **2,565** | **★ Mean Pearson(frag M0, frag M+1) over the 6 ranks** |
+| `frag_corr_m0_m1_top1` | **2,193** | Rank-1 fragment M0 vs M+1 chromatograms |
+| `ms1_m1_to_m0_pred` | 2,088 | Predicted ratio from iso_splines |
+| `frag_corr_m0_m1_top3` | 1,830 | Rank-3 fragment M0 vs M+1 |
+| `frag_corr_m0_m1_top2` | 1,693 | Rank-2 fragment M0 vs M+1 |
+| `ms1_m1_to_m0_ratio` | 1,021 | Observed ratio |
+| Raw `frag1..6_int_m1` | 250–555 each | Substrate — low individually but enables the corrs above |
+| `n_correlated_m0_m1_fragments` | 349 | Thresholded count weaker than the continuous mean |
+
+All four `frag_corr_m0_m1_*` aggregates landed in the top-20 of the
+per-file LGBM importance dump. The hypothesis was correct — real
+precursors' M0 and M+1 fragment chromatograms coelute perfectly while
+chimeric hits don't. This is the **largest single-batch lift we've
+measured for the per-file LGBM** since adding `worst_max_residual_*`.
+
+### Things that went smoothly
+
+1. Struct widening was straightforward — Pioneer compiled cleanly,
+   149/149 unit tests passed.
+2. Ecoli integration produced consistent IDs both pre- and post-struct
+   change (2,270 / 1,391).
+3. No threading or race conditions surfaced.
+
+### Things to refocus on in the morning
+
+1. **The 23-file confirmation run is still going** on the
+   `feature/ms1-phase1` branch (no M+1 features). When it finishes, compare
+   to the all-23 baseline from yesterday's A/B (87,386 IDs / 12,199 PGs at
+   q≤.01 — these are *full Olsen Exploris*, not the 2-file subset).
+   Expected: similar +500 lift if the 2-file signal generalizes.
+2. **Consider running 23-file with the M+1 features** (commit
+   `39aff6fe`) — that's the real production-scale test.
+3. **Trim opportunity:** the trim set in the main report can be applied
+   on top of this branch. Specifically drop the low-gain ones
+   (composition counts, n_correlated_fragments_90, etc.) while keeping
+   the M+1 family. New total: ~9 keeper features from the prior batch
+   + 5 M+1 correlation features + 6 raw M+1 intensities = ~20 high-
+   value additions.
+4. **Composition-exact isotope ratio** — still on the to-do list. With
+   `frag_corr_m0_m1_mean` at 2,565 gain, the same composition-exact
+   logic applied to the *predicted* M0/M+1 fragment ratios could
+   sharpen those further.
+
+### Things that did NOT cause trouble (but did cause concern initially)
+
+- The first run failed with `TypeError: expected Int64, got UInt8` from
+  `IsotopeSplineModel` — fixed by `Int64(...)` conversion (commit
+  `01455cfc`).
+- The second run failed with `BoundsError` because some peptides have
+  sulfur count > 5 (model max). Fixed with `clamp(sulf, 0, 5)` in the
+  same commit. After that, all runs completed cleanly.
+
 ## How to reproduce
 
 ```bash
