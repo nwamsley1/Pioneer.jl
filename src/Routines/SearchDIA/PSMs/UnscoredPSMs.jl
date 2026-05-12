@@ -49,11 +49,19 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     frag4_int::T
     frag5_int::T
     frag6_int::T
+    # Per-rank M+1 (first isotopologue) fragment intensities; captures only iso_idx==1.
+    # Added 2026-05-12 to enable per-fragment M0/M+1 correlation features.
+    frag1_int_m1::T
+    frag2_int_m1::T
+    frag3_int_m1::T
+    frag4_int_m1::T
+    frag5_int_m1::T
+    frag6_int_m1::T
     precursor_idx::UInt32
     ms_file_idx::UInt32
 end
 
-MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), UInt32(0), UInt32(0))
+MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), UInt32(0), UInt32(0))
 
 """
     TuningUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}

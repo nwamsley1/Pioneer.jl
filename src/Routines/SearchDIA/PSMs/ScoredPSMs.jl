@@ -111,6 +111,14 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     frag5_int::H
     frag6_int::H
 
+    # Per-rank M+1 (first isotopologue) fragment intensities. Added 2026-05-12.
+    frag1_int_m1::H
+    frag2_int_m1::H
+    frag3_int_m1::H
+    frag4_int_m1::H
+    frag5_int_m1::H
+    frag6_int_m1::H
+
     #Non-scores/Labels
     precursor_idx::UInt32
     ms_file_idx::UInt32
@@ -209,6 +217,13 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             unscored_PSMs[i].frag4_int,
             unscored_PSMs[i].frag5_int,
             unscored_PSMs[i].frag6_int,
+
+            unscored_PSMs[i].frag1_int_m1,
+            unscored_PSMs[i].frag2_int_m1,
+            unscored_PSMs[i].frag3_int_m1,
+            unscored_PSMs[i].frag4_int_m1,
+            unscored_PSMs[i].frag5_int_m1,
+            unscored_PSMs[i].frag6_int_m1,
 
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(cycle_idx),

@@ -254,6 +254,13 @@ error accumulation.
     frag4_int = score.frag4_int
     frag5_int = score.frag5_int
     frag6_int = score.frag6_int
+    # M+1 per-rank captures (only iso_idx==1)
+    frag1_int_m1 = score.frag1_int_m1
+    frag2_int_m1 = score.frag2_int_m1
+    frag3_int_m1 = score.frag3_int_m1
+    frag4_int_m1 = score.frag4_int_m1
+    frag5_int_m1 = score.frag5_int_m1
+    frag6_int_m1 = score.frag6_int_m1
 
     if iso_idx != UInt8(0)
         isotope_count += UInt8(1)
@@ -267,6 +274,16 @@ error accumulation.
             y_count_iso += UInt8(1)
             if ion_pos > longest_y_iso
                 longest_y_iso = ion_pos
+            end
+        end
+        # M+1 per-rank intensity capture (only iso_idx==1 — first isotopologue)
+        if iso_idx == UInt8(1)
+            if rank == UInt8(1);     frag1_int_m1 += intensity
+            elseif rank == UInt8(2); frag2_int_m1 += intensity
+            elseif rank == UInt8(3); frag3_int_m1 += intensity
+            elseif rank == UInt8(4); frag4_int_m1 += intensity
+            elseif rank == UInt8(5); frag5_int_m1 += intensity
+            elseif rank == UInt8(6); frag6_int_m1 += intensity
             end
         end
     else
@@ -320,6 +337,7 @@ error accumulation.
         p_count, non_cannonical_count,
         error, matched_rank_mask,
         frag1_int, frag2_int, frag3_int, frag4_int, frag5_int, frag6_int,
+        frag1_int_m1, frag2_int_m1, frag3_int_m1, frag4_int_m1, frag5_int_m1, frag6_int_m1,
         prec_idx, ms_file_idx)
     return nothing
 end
