@@ -250,25 +250,48 @@ measured for the per-file LGBM** since adding `worst_max_residual_*`.
    change (2,270 / 1,391).
 3. No threading or race conditions surfaced.
 
+### 23-file confirmation (without M+1 features) — completed
+
+The 23-file run on `feature/ms1-phase1` (commit `01455cfc` — 17 new
+features minus M+1 fragments) finished. Compared to yesterday's same
+config (`tune_run_all23_perfile`, default per-file paircomp, no new
+features at all):
+
+| Metric | Yesterday (no new features) | Today (17 new features) | Δ |
+|---|---:|---:|---:|
+| q≤.001 | 958,355 | **966,262** | **+7,907** |
+| q≤.01 | 1,087,173 | 1,089,961 | +2,788 |
+| PGs q≤.01 | 142,524 | 142,027 | −497 |
+
+Big lift at the strictest cutoff (q≤.001, +7.9k). q≤.01 less dramatic
+(+2.8k). PG count slipped 497 (consistent with the −112 PG dip seen on
+the 2-file run — there's a small redistribution effect where PSMs
+concentrate into slightly fewer unique PGs).
+
+A 23-file run on the `m1frag` branch (with M+1 fragment features) is now
+running in parallel. Output dir: `tune_run_all23_m1frag/`. Should land
+in ~25-40 min on its own. The 2-file delta suggests we'll see another
++500-800 IDs from M+1 features at scale.
+
 ### Things to refocus on in the morning
 
-1. **The 23-file confirmation run is still going** on the
-   `feature/ms1-phase1` branch (no M+1 features). When it finishes, compare
-   to the all-23 baseline from yesterday's A/B (87,386 IDs / 12,199 PGs at
-   q≤.01 — these are *full Olsen Exploris*, not the 2-file subset).
-   Expected: similar +500 lift if the 2-file signal generalizes.
-2. **Consider running 23-file with the M+1 features** (commit
-   `39aff6fe`) — that's the real production-scale test.
-3. **Trim opportunity:** the trim set in the main report can be applied
+1. **Check `tune_run_all23_m1frag` numbers** (run launched ~00:35). They
+   should show another lift on top of the 23-file no-M+1 result above.
+2. **Trim opportunity:** the trim set in the main report can be applied
    on top of this branch. Specifically drop the low-gain ones
    (composition counts, n_correlated_fragments_90, etc.) while keeping
    the M+1 family. New total: ~9 keeper features from the prior batch
    + 5 M+1 correlation features + 6 raw M+1 intensities = ~20 high-
    value additions.
-4. **Composition-exact isotope ratio** — still on the to-do list. With
+3. **Composition-exact isotope ratio** — still on the to-do list. With
    `frag_corr_m0_m1_mean` at 2,565 gain, the same composition-exact
    logic applied to the *predicted* M0/M+1 fragment ratios could
    sharpen those further.
+4. **PG-count dip investigation.** Across both 2-file (−112) and 23-file
+   (−497) the new features cost a small number of PGs. Likely a PSM
+   redistribution effect (more PSMs land on already-identified proteins
+   instead of marginal new ones). Worth a quick look — could be real
+   improvement (we removed bad-quality proteins) or worth tuning.
 
 ### Things that did NOT cause trouble (but did cause concern initially)
 
