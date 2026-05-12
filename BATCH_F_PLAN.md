@@ -75,14 +75,38 @@ MBR-caused false transfers.
 | MBR recovered | 64,171 (96.62%) | 181,973 (96.16%) |
 | MaxLFQ groups | 5,682 | 6,464 |
 
-Dennis FTR:
-- Baseline yeast in HelaOnly (Run A): 874
-- Combined yeast in HelaOnly (Run B): 1,280
-- Net false transfers = 406
-- Dennis FTR (vs HelaOnly total in B): 406 / 409,709 = **0.10%**
-- Simple FTR (B-only):                 1,280 / 854,261 = 0.15%
+Dennis FTR (corrected per Nathan 2026-05-12):
+- Numerator   = yeast in HelaOnly (B) − yeast in HelaOnly (A) = 1,280 − 874 = 406
+- Denominator = HelaOnly total (B) − HelaOnly total (A)       = 409,709 − 402,796 = 6,913
+- **Dennis FTR = 406 / 6,913 = 5.87%**
 
-Both an order of magnitude below the α=0.01 budget.
+i.e. of the 6,913 IDs MBR added to HelaOnly files (above the HelaOnly-
+alone baseline), 5.87% are yeast false transfers.
+
+This is **above** the α=0.01 (1%) FTR budget by ~6×. The α budget is
+honored for `is_bad_transfer = (T←D) | (D←T)` (cross-class transfers in
+the target/decoy sense) — confirmed by the entrapment plots tracking
+y=x within 0.0005. But yeast→HelaOnly is a different error:
+**same-class, wrong-species** transfer, structurally invisible to the
+current FTR controller because:
+1. The recipient HelaOnly file has no yeast PSMs to train against as negatives.
+2. The donor's MBR_max_pair_prob_true is high — the yeast donor in a
+   HelaYeast file is a genuine ID.
+3. iRT, mass, intensity-ratio all look normal; nothing in the feature
+   set signals "wrong proteome for this file".
+
+Mitigation ideas (to investigate):
+- Tighten `MBR_DONOR_Q_THRESHOLD` (currently 0.01) so only very confident
+  donors qualify.
+- Add a per-file species-prior feature: fraction of confident HelaOnly
+  IDs that are yeast (should be ≈0). The FTR LGBM could learn to
+  down-weight transfers when the recipient file has no precedent for
+  that species.
+- Apply per-recipient-file FTR threshold: stricter τ for files with
+  homogeneous species composition.
+- Compare against live MBR (pre-Batch F) on this same 20-file set to
+  establish whether Batch F regressed species-FTR vs the previous
+  design.
 
 EFDR calibration (mean abs |EFDR − decoyFDR| at q ≤ 0.01):
 
