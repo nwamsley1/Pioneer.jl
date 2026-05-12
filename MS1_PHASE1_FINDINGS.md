@@ -184,7 +184,7 @@ the feature set and pipeline stabilize.
 
 ---
 
-## 7. 23-file Olsen Exploris pair-competition A/B (2026-05-11)
+## 5. 23-file Olsen Exploris pair-competition A/B (2026-05-11)
 
 Full Olsen Exploris dataset (23 .arrow files at
 `/Users/nathanwamsley/Data/RegressionTestsLite/Olsen_3P_Exploris/`). Five
@@ -242,7 +242,7 @@ via cross-file evidence.
 
 ---
 
-## 5. Feature importance (mean gain, Olsen Exploris, post-refactor)
+## 6. Feature importance (mean gain, Olsen Exploris, post-refactor)
 
 Top 20 over both stages (MainSearch per-file LGBM = 4 calls; PrecursorScoring
 experiment-wide LGBM = 2 calls; shared features get 6):
@@ -276,7 +276,7 @@ a few thousand IDs. Headline metrics (q≤.01, protein groups) are more stable.
 
 ---
 
-## 6. Running the pipeline from the terminal
+## 7. Running the pipeline from the terminal
 
 Copy `dev/tuning_config_template.json` to a working dir and edit `paths`.
 Then:
