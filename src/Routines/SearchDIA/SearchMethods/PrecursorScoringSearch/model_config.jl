@@ -109,6 +109,10 @@ const ADVANCED_FEATURE_SET = [
     :frag_apex_dispersion_irt, :n_correlated_fragments,
     :n_correlated_fragments_50, :n_correlated_fragments_90,
     :frag_corr_best_weight, :frag_corr_best_m0,
+    # M+1 fragment intensities + per-fragment M0/M+1 correlations (2026-05-12)
+    :frag1_int_m1, :frag2_int_m1, :frag3_int_m1, :frag4_int_m1, :frag5_int_m1, :frag6_int_m1,
+    :frag_corr_m0_m1_top1, :frag_corr_m0_m1_top2, :frag_corr_m0_m1_top3,
+    :frag_corr_m0_m1_mean, :n_correlated_m0_m1_fragments,
 
     :max_weight,                      # populated by select_best_per_precursor!
     :fitted_hellinger,

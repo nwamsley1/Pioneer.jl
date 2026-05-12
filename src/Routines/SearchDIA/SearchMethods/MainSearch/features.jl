@@ -255,6 +255,10 @@ const PRESCORE_FEATURES = [
     :frag_apex_dispersion_irt, :n_correlated_fragments,
     :n_correlated_fragments_50, :n_correlated_fragments_90,
     :frag_corr_best_weight, :frag_corr_best_m0,
+    # M+1 fragment intensities + per-fragment M0/M+1 correlations (2026-05-12)
+    :frag1_int_m1, :frag2_int_m1, :frag3_int_m1, :frag4_int_m1, :frag5_int_m1, :frag6_int_m1,
+    :frag_corr_m0_m1_top1, :frag_corr_m0_m1_top2, :frag_corr_m0_m1_top3,
+    :frag_corr_m0_m1_mean, :n_correlated_m0_m1_fragments,
 ]
 
 """
@@ -562,6 +566,15 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     psms[!, :frag_corr_best_weight]    = zeros(Float32, n)
     psms[!, :frag_corr_best_m0]        = zeros(Float32, n)
     psms[!, :frag_corr_top5_weight]    = zeros(Float32, n)  # mean of top-5 vs weight (top-K sweep)
+    # Per-fragment M0 vs M+1 isotope correlations. Real precursors: the M0 and
+    # M+1 chromatograms of the SAME fragment coelute → Pearson ≈ 1. Chimeric
+    # hits: M+1 may be missing, scattered, or owned by a different precursor.
+    # Added 2026-05-12.
+    psms[!, :frag_corr_m0_m1_top1]      = zeros(Float32, n)
+    psms[!, :frag_corr_m0_m1_top2]      = zeros(Float32, n)
+    psms[!, :frag_corr_m0_m1_top3]      = zeros(Float32, n)
+    psms[!, :frag_corr_m0_m1_mean]      = zeros(Float32, n)
+    psms[!, :n_correlated_m0_m1_fragments] = zeros(UInt8, n)
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -575,6 +588,10 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     irt    = psms.irt_obs
     f      = (psms.frag1_int, psms.frag2_int, psms.frag3_int,
               psms.frag4_int, psms.frag5_int, psms.frag6_int)
+    has_m1 = all(c -> hasproperty(psms, c), (:frag1_int_m1, :frag2_int_m1, :frag3_int_m1,
+                                              :frag4_int_m1, :frag5_int_m1, :frag6_int_m1))
+    f_m1   = has_m1 ? (psms.frag1_int_m1, psms.frag2_int_m1, psms.frag3_int_m1,
+                       psms.frag4_int_m1, psms.frag5_int_m1, psms.frag6_int_m1) : nothing
     has_m0 = hasproperty(psms, :ms1_m0_intensity)
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
 
@@ -706,6 +723,38 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             end
         end
 
+        # Per-fragment M0/M+1 correlations: for each rank with both M0 and M+1
+        # signal, compute Pearson(M0_chrom, M+1_chrom). Real precursors: ≈ 1.
+        c_m0m1_perrank = (0f0, 0f0, 0f0, 0f0, 0f0, 0f0)
+        if has_m1
+            FM1 = Vector{Vector{Float32}}(undef, 6)
+            for r in 1:6
+                v = Vector{Float32}(undef, npts)
+                for (k, i) in enumerate(idxs); v[k] = Float32(f_m1[r][i]); end
+                FM1[r] = v
+            end
+            c1 = has_signal[1] && maximum(FM1[1]) > 0 ? _pcor(F[1], FM1[1]) : 0f0
+            c2 = has_signal[2] && maximum(FM1[2]) > 0 ? _pcor(F[2], FM1[2]) : 0f0
+            c3 = has_signal[3] && maximum(FM1[3]) > 0 ? _pcor(F[3], FM1[3]) : 0f0
+            c4 = has_signal[4] && maximum(FM1[4]) > 0 ? _pcor(F[4], FM1[4]) : 0f0
+            c5 = has_signal[5] && maximum(FM1[5]) > 0 ? _pcor(F[5], FM1[5]) : 0f0
+            c6 = has_signal[6] && maximum(FM1[6]) > 0 ? _pcor(F[6], FM1[6]) : 0f0
+            c_m0m1_perrank = (c1, c2, c3, c4, c5, c6)
+        end
+        # Aggregate stats over the 6 per-rank M0/M+1 correlations
+        c_m0m1_sum = 0f0; c_m0m1_n = 0; n_corr_m0m1 = UInt8(0)
+        for r in 1:6
+            cr = c_m0m1_perrank[r]
+            if cr != 0f0
+                c_m0m1_sum += cr; c_m0m1_n += 1
+                if cr > 0.7f0; n_corr_m0m1 += UInt8(1); end
+            end
+        end
+        c_m0m1_mean = c_m0m1_n > 0 ? c_m0m1_sum / c_m0m1_n : 0f0
+        c_m0m1_t1 = c_m0m1_perrank[1]
+        c_m0m1_t2 = c_m0m1_perrank[2]
+        c_m0m1_t3 = c_m0m1_perrank[3]
+
         for i in idxs
             psms.frag_corr_top1_top2[i]      = c_top1_top2
             psms.frag_corr_top1_top3[i]      = c_top1_top3
@@ -720,6 +769,11 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             psms.n_correlated_fragments_90[i]  = n_corr_90
             psms.frag_corr_best_weight[i]      = c_best_w
             psms.frag_corr_best_m0[i]          = c_best_m0
+            psms.frag_corr_m0_m1_top1[i]       = c_m0m1_t1
+            psms.frag_corr_m0_m1_top2[i]       = c_m0m1_t2
+            psms.frag_corr_m0_m1_top3[i]       = c_m0m1_t3
+            psms.frag_corr_m0_m1_mean[i]       = c_m0m1_mean
+            psms.n_correlated_m0_m1_fragments[i] = n_corr_m0m1
         end
     end
     return
