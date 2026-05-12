@@ -68,8 +68,9 @@ function score_precursor_isotope_traces(
 
     # 1c. MBR Batch F: build experiment-global counterfactual partner map.
     # Adds :counterfactual_partner_pid for compute_mbr_features_dual!.
+    # iRT-NN variant: closest-pred-iRT opposite within (cv_fold × mz_decile).
     if match_between_runs
-        regenerate_counterfactual_partners!(best_psms, precursors)
+        regenerate_counterfactual_partners_irt_nn!(best_psms, precursors)
     end
 
     # 2. Build the feature list (the _qbin variants in ADVANCED_FEATURE_SET are
