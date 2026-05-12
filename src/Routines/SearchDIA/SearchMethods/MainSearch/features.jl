@@ -236,17 +236,17 @@ const PRESCORE_FEATURES = [
     :irt_dist_best_gof_5scan, :irt_dist_best_manhattan_5scan, :irt_dist_best_max_residual_5scan,
     :worst_max_residual_11scan, :worst_manhattan_11scan,
     :irt_dist_to_weight_apex,
-    # Batch A — edge-distance (kept 2 of 6; dropped capped-3 zero-gain features)
-    :relative_position, :dist_to_relative_center,
-    # Batch B — weight-chromatogram peak-shape stats
-    :weight_apex_relative_pos, :weight_chrom_skewness, :weight_chrom_kurtosis,
-    :apex_to_edge_weight_ratio, :n_above_hm_left_of_apex, :n_above_hm_right_of_apex,
-    :hm_asymmetry,
-    # Batch C — DIA-NN-style log-quadratic Gaussian fit
-    :weight_chrom_gaussian_r2, :weight_chrom_gaussian_sigma, :weight_chrom_gaussian_apex_irt,
-    # Batch D — DIA-NN direct ports (pShape 5-bin + pBestCorrDelta + pTotCorrSum)
-    :shape_m2, :shape_m1, :shape_0, :shape_p1, :shape_p2,
-    :gof_minus_max_gof_precursor, :gof_fraction_of_total_precursor,
+    # Batch A/B/C/D peak-shape features — TEMPORARILY DISABLED for isolated
+    # Batch E A/B testing (2026-05-12 afternoon). The code that *computes*
+    # these still runs in add_apex_distance_feature!, but the LGBM no longer
+    # sees them. Re-enable when isolated Batch E testing completes.
+    # :relative_position, :dist_to_relative_center,
+    # :weight_apex_relative_pos, :weight_chrom_skewness, :weight_chrom_kurtosis,
+    # :apex_to_edge_weight_ratio, :n_above_hm_left_of_apex, :n_above_hm_right_of_apex,
+    # :hm_asymmetry,
+    # :weight_chrom_gaussian_r2, :weight_chrom_gaussian_sigma, :weight_chrom_gaussian_apex_irt,
+    # :shape_m2, :shape_m1, :shape_0, :shape_p1, :shape_p2,
+    # :gof_minus_max_gof_precursor, :gof_fraction_of_total_precursor,
     :ms1_m0_mass_err_ppm,
     :ms1_corr_weight_m0, :ms1_corr_m0_m1, :ms1_corr_weight_m1,
     :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
