@@ -45,6 +45,94 @@ function reset!(state::Chromatogram)
     return
 end
 
+function debug_save_chromatogram_integration_plot(
+    plot_path::AbstractString,
+    rt_col::AbstractVector{<:AbstractFloat},
+    intensity_col::AbstractVector{<:AbstractFloat},
+    fraction_col::AbstractVector{<:AbstractFloat},
+    wh_smoothed_col::AbstractVector{<:AbstractFloat},
+    baseline_subtracted_col::AbstractVector{<:AbstractFloat},
+    scan_range::UnitRange{Int},
+    apex_scan::Int,
+    peak_area::Float32,
+    points_integrated::Integer,
+    min_fraction_transmitted::Float32,
+    status::AbstractString,
+    title::AbstractString,
+)
+    isempty(plot_path) && return nothing
+    ensure_directory_exists(String(plot_path))
+
+    withenv("GKSwstype" => "100", "GKS_WSTYPE" => "100") do
+        Plots.gr()
+
+        rt_vals = Float64.(rt_col)
+        raw_vals = Float64.(intensity_col)
+        wh_smoothed_vals = Float64.(wh_smoothed_col)
+        baseline_subtracted_vals = Float64.(baseline_subtracted_col)
+        fraction_vals = Float64.(fraction_col)
+
+        plot_title = isempty(title) ? "Chromatogram integration debug" : String(title)
+        area_text = @sprintf("%.6g", Float64(peak_area))
+        p_signal = Plots.plot(
+            rt_vals,
+            raw_vals,
+            seriestype = :scatter,
+            alpha = 0.55,
+            ms = 4,
+            label = "raw",
+            xlabel = "retention time",
+            ylabel = "intensity",
+            title = plot_title * " status=$(status) area=$(area_text) points=$(points_integrated)",
+            size = (1100, 800),
+            dpi = 150,
+        )
+        Plots.plot!(p_signal, rt_vals, wh_smoothed_vals, lw = 2.0, color = :purple, label = "WH smoothed")
+        Plots.plot!(
+            p_signal,
+            rt_vals,
+            baseline_subtracted_vals,
+            lw = 2.0,
+            color = :orange,
+            ls = :dash,
+            label = "baseline-subtracted",
+        )
+        Plots.vline!(p_signal, [rt_vals[apex_scan]], color = :red, lw = 1.5, ls = :dash, label = "apex")
+        Plots.vline!(
+            p_signal,
+            [rt_vals[first(scan_range)], rt_vals[last(scan_range)]],
+            color = :black,
+            lw = 1.0,
+            ls = :dot,
+            label = "bounds",
+        )
+
+        p_fraction = Plots.plot(
+            rt_vals,
+            fraction_vals,
+            seriestype = :scatter,
+            alpha = 0.7,
+            ms = 4,
+            label = "fraction transmitted",
+            xlabel = "retention time",
+            ylabel = "precursor fraction transmitted",
+        )
+        Plots.hline!(
+            p_fraction,
+            [Float64(min_fraction_transmitted)],
+            color = :red,
+            lw = 1.0,
+            ls = :dash,
+            label = "minimum",
+        )
+
+        p = Plots.plot(p_signal, p_fraction, layout = (2, 1), size = (1100, 800), dpi = 150)
+        Plots.savefig(p, String(plot_path))
+    end
+
+    debug_l1("chromatogram_debug_plot path=$(plot_path)")
+    return nothing
+end
 
 """
     integrate_chrom(chrom::SubDataFrame, apex_scan::Int64,
@@ -94,7 +182,10 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                                 λ::Float32;
                                 min_fraction_transmitted::Float32 = 0.0f0,
                                 n_pad::Int64 = 0,
-                                isplot::Bool = false)
+                                isplot::Bool = false,
+                                debug_plot_path::Union{Nothing, AbstractString} = nothing,
+                                debug_plot_title::AbstractString = "",
+                                debug_plot_data::Union{Nothing, Base.RefValue} = nothing)
 
     m = length(rt_col)
 
@@ -432,6 +523,10 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
     z  = ws.z
     x  = ws.x_tmp
     u2 = ws.u2
+    should_capture_debug_plot_data = debug_plot_path !== nothing || debug_plot_data !== nothing
+    wh_smoothed = should_capture_debug_plot_data ?
+        collect(@view z[(n_pad + 1):(n_pad + m)]) :
+        Float32[]
 
     #Second discrete derivative of smoothed data
     fillU2!(u2, z, x, n_active)
@@ -459,11 +554,43 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         scan_range,
         n_pad
     )
+    baseline_subtracted = should_capture_debug_plot_data ?
+        collect(@view z[(n_pad + 1):(n_pad + m)]) :
+        Float32[]
+
+    if debug_plot_data !== nothing
+        debug_plot_data[] = (
+            rt = Float32.(rt_col),
+            raw = Float32.(intensity_col),
+            fraction_transmitted = Float32.(fraction_col),
+            wh_smoothed = wh_smoothed,
+            baseline_subtracted = baseline_subtracted,
+            scan_range = scan_range,
+            apex_scan = apex_scan,
+        )
+    end
 
     #File `state` to fit EGH function. Get the inensity, and rt normalization factors
     # Guard: if smoothed apex is zero or NaN after baseline subtraction, skip integration
     _apex_val = z[apex_scan + n_pad]
     if _apex_val <= 0f0 || isnan(_apex_val)
+        if debug_plot_path !== nothing
+            debug_save_chromatogram_integration_plot(
+                debug_plot_path,
+                rt_col,
+                intensity_col,
+                fraction_col,
+                wh_smoothed,
+                baseline_subtracted,
+                scan_range,
+                apex_scan,
+                0f0,
+                0,
+                min_fraction_transmitted,
+                "skipped_zero_apex",
+                debug_plot_title,
+            )
+        end
         return 0f0, scan_idx_col[apex_scan], Int(0)
     end
 
@@ -509,6 +636,24 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
     scan_stop  = last(scan_range) + n_pad
     num_points_integrated = count(i -> z[i] >= min_abundance, scan_start:scan_stop)
 
+    if debug_plot_path !== nothing
+        debug_save_chromatogram_integration_plot(
+            debug_plot_path,
+            rt_col,
+            intensity_col,
+            fraction_col,
+            wh_smoothed,
+            baseline_subtracted,
+            scan_range,
+            apex_scan,
+            trapezoid_area,
+            num_points_integrated,
+            min_fraction_transmitted,
+            "integrated",
+            debug_plot_title,
+        )
+    end
+
     #trapezoid_area = 0.0f0
     return trapezoid_area, scan_idx_col[apex_scan], num_points_integrated
 end
@@ -521,7 +666,10 @@ function integrate_chrom(chrom::SubDataFrame,
                                 λ::Float32;
                                 min_fraction_transmitted::Float32 = 0.0f0,
                                 n_pad::Int64 = 0,
-                                isplot::Bool = false)
+                                isplot::Bool = false,
+                                debug_plot_path::Union{Nothing, AbstractString} = nothing,
+                                debug_plot_title::AbstractString = "",
+                                debug_plot_data::Union{Nothing, Base.RefValue} = nothing)
     return integrate_chrom(
         chrom[!, :rt],
         chrom[!, :scan_idx],
@@ -534,6 +682,9 @@ function integrate_chrom(chrom::SubDataFrame,
         λ;
         min_fraction_transmitted = min_fraction_transmitted,
         n_pad = n_pad,
-        isplot = isplot
+        isplot = isplot,
+        debug_plot_path = debug_plot_path,
+        debug_plot_title = debug_plot_title,
+        debug_plot_data = debug_plot_data
     )
 end

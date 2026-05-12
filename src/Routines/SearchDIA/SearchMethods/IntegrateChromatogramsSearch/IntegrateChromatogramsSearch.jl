@@ -68,10 +68,10 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         # Extract relevant parameter groups
         search_params = params.search
 
-        # Hardcoded — formerly read from global.isotope_settings (removed from
-        # the public schema; values shipped at defaults in every config).
-        isotope_trace_type = SeperateTraces()
+        # Chromatogram integration always treats isotope-capture states as one
+        # precursor trace, ordered by RT.
         min_fraction_transmitted = 0.25f0
+        isotope_trace_type = CombineTraces(Float32(min_fraction_transmitted))
         prec_estimation = PartialPrecCapture()
 
         # max_rank hardcoded to typemax(UInt8); the library already enforces
@@ -184,41 +184,32 @@ function process_file!(
     # config schema.
     #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
     #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
-    if seperateTraces(params.isotope_tracetype)
-        get_isotopes_captured!(
-            chromatograms,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            chromatograms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
-        )
-    end
+    sort_chromatograms_for_integration!(chromatograms)
 
-    if seperateTraces(params.isotope_tracetype)
-        fast_df_sort!(chromatograms, [:precursor_idx, :isotopes_captured, :rt])
-    else
-        fast_df_sort!(chromatograms, [:precursor_idx, :rt])
-    end
+    # Chromatogram integration uses combined traces: every point for a precursor
+    # participates in one RT-ordered chromatogram, regardless of isotope-capture state.
+    get_isotopes_captured!(
+        chromatograms,
+        getQuadTransmissionModel(search_context, ms_file_idx),
+        getSearchData(search_context),
+        chromatograms[!, :scan_idx],
+        getCharge(getPrecursors(getSpecLib(search_context))),
+        getMz(getPrecursors(getSpecLib(search_context))),
+        getSulfurCount(getPrecursors(getSpecLib(search_context))),
+        getCenterMzs(spectra),
+        getIsolationWidthMzs(spectra);
+        compute_isotope_set=false
+    )
 
-    # CombineTraces: compute fraction_transmitted AFTER sort (order-independent per-row calc)
-    if !seperateTraces(params.isotope_tracetype)
-        get_isotopes_captured!(
-            chromatograms,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            chromatograms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra);
-            compute_isotope_set=false
-        )
-    end
+    debug_write_target_chromatogram_plots(
+        chromatograms,
+        passing_psms,
+        params.min_fraction_transmitted,
+        params.wh_smoothing_strength,
+        getDataOutDir(search_context),
+        ms_file_idx,
+        getFileIdToName(getMSData(search_context), ms_file_idx),
+    )
 
     # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)
     if nrow(chromatograms) > 0

@@ -69,6 +69,117 @@ function find_nearest_scan(scan_indices::AbstractVector{UInt32}, target_scan::UI
     return nearest_idx
 end
 
+function sort_chromatograms_for_integration!(chromatograms::DataFrame)
+    nrow(chromatograms) == 0 && return chromatograms
+    fast_df_sort!(chromatograms, [:precursor_idx, :rt])
+    return chromatograms
+end
+
+const DEBUG_CHROM_TARGET_PRECURSOR_IDX = Ref{UInt32}(UInt32(591443))
+
+@inline function debug_should_plot_chromatogram(precursor_idx::Integer)
+    return DEBUG_CONSOLE_LEVEL[] >= 1 &&
+        UInt32(precursor_idx) == DEBUG_CHROM_TARGET_PRECURSOR_IDX[]
+end
+
+function debug_sanitize_chromatogram_filename(value::AbstractString)
+    safe = replace(String(value), r"[^A-Za-z0-9]+" => "_")
+    safe = replace(safe, r"^_+|_+$" => "")
+    return isempty(safe) ? "run" : safe
+end
+
+function debug_chromatogram_plot_path(
+    output_root::AbstractString,
+    ms_file_idx::Integer,
+    file_name::AbstractString,
+    precursor_idx::Integer,
+    row_idx::Integer,
+)
+    safe_name = debug_sanitize_chromatogram_filename(file_name)
+    return joinpath(
+        String(output_root),
+        "qc_plots",
+        "chromatogram_integration_debug",
+        "file_$(Int(ms_file_idx))_$(safe_name)_precursor_$(UInt32(precursor_idx))_row_$(Int(row_idx)).png",
+    )
+end
+
+function debug_write_target_chromatogram_plots(
+    chromatograms::DataFrame,
+    passing_psms::DataFrame,
+    min_fraction_transmitted::Float32,
+    λ::Float32,
+    output_root::AbstractString,
+    ms_file_idx::Integer,
+    file_name::AbstractString,
+)
+    DEBUG_CONSOLE_LEVEL[] >= 1 || return nothing
+
+    target_precursor_idx = DEBUG_CHROM_TARGET_PRECURSOR_IDX[]
+    target_rows = findall(==(target_precursor_idx), passing_psms[!, :precursor_idx])
+    isempty(target_rows) && return nothing
+
+    if nrow(chromatograms) == 0
+        debug_l1("chromatogram_debug_plot precursor_idx=$(target_precursor_idx) " *
+                 "ms_file_idx=$(ms_file_idx) skipped=true reason=no_chromatograms")
+        return nothing
+    end
+
+    prec_col = chromatograms[!, :precursor_idx]::AbstractVector{UInt32}
+    chrom_index, _ = build_chrom_index(prec_col, nrow(chromatograms))
+    if !haskey(chrom_index, target_precursor_idx)
+        debug_l1("chromatogram_debug_plot precursor_idx=$(target_precursor_idx) " *
+                 "ms_file_idx=$(ms_file_idx) skipped=true reason=target_chromatogram_missing")
+        return nothing
+    end
+
+    chrom_range = chrom_index[target_precursor_idx]
+    n_pad = Int64(0)
+    N = length(chrom_range) + (2 * n_pad)
+    N <= 0 && return nothing
+
+    rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
+    scan_idx_all = chromatograms[!, :scan_idx]::AbstractVector{UInt32}
+    intensity_all = chromatograms[!, :intensity]::AbstractVector{Float32}
+    fraction_all = chromatograms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
+    avg_cycle_time = (rt_all[last(chrom_range)] - rt_all[first(chrom_range)]) / length(chrom_range)
+
+    for row_idx in target_rows
+        apex_scan = find_nearest_scan(
+            @view(scan_idx_all[chrom_range]),
+            passing_psms[row_idx, :scan_idx],
+        )
+        plot_path = debug_chromatogram_plot_path(
+            output_root,
+            ms_file_idx,
+            file_name,
+            target_precursor_idx,
+            row_idx,
+        )
+        plot_title = "file $(Int(ms_file_idx)) $(file_name) precursor $(target_precursor_idx)"
+
+        ws = WHWorkspace(N)
+        state = Chromatogram(zeros(Float32, N), zeros(Float32, N), 0)
+        integrate_chrom(
+            @view(rt_all[chrom_range]),
+            @view(scan_idx_all[chrom_range]),
+            @view(intensity_all[chrom_range]),
+            @view(fraction_all[chrom_range]),
+            apex_scan,
+            ws,
+            state,
+            avg_cycle_time,
+            λ,
+            min_fraction_transmitted = min_fraction_transmitted,
+            n_pad = n_pad,
+            debug_plot_path = plot_path,
+            debug_plot_title = plot_title,
+        )
+    end
+
+    return nothing
+end
+
 """
     integrate_precursors(chromatograms, min_fraction_transmitted, precursor_idx,
                          apex_scan_idx, peak_area, new_best_scan, points_integrated;
@@ -873,4 +984,3 @@ function process_final_psms!(
     
     return nothing
 end
-
