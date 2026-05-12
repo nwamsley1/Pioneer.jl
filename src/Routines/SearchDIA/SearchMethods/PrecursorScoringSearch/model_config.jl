@@ -89,15 +89,14 @@ const ADVANCED_FEATURE_SET = [
     :irt_dist_best_gof_5scan, :irt_dist_best_manhattan_5scan, :irt_dist_best_max_residual_5scan,
     :worst_max_residual_11scan, :worst_manhattan_11scan,
     :irt_dist_to_weight_apex,
-    # Batch A/B/C/D peak-shape features — TEMPORARILY DISABLED for isolated
-    # Batch E A/B testing (2026-05-12 afternoon). See features.jl note.
+    # Batch A/B/C/D peak-shape features — DISABLED. A/B test 2026-05-12 showed
+    # −667 IDs when stacked on top of Batch E (heavy overlap).
     # :relative_position, :dist_to_relative_center,
     # :weight_apex_relative_pos, :weight_chrom_skewness, :weight_chrom_kurtosis,
-    # :apex_to_edge_weight_ratio, :n_above_hm_left_of_apex, :n_above_hm_right_of_apex,
-    # :hm_asymmetry,
+    # :apex_to_edge_weight_ratio, :n_above_hm_right_of_apex,
     # :weight_chrom_gaussian_r2, :weight_chrom_gaussian_sigma, :weight_chrom_gaussian_apex_irt,
     # :shape_m2, :shape_m1, :shape_0, :shape_p1, :shape_p2,
-    # :gof_minus_max_gof_precursor, :gof_fraction_of_total_precursor,
+    # :gof_minus_max_gof_precursor,
 
     # MS1 point-lookup + chromatogram features.
     :ms1_m0_intensity, :ms1_m1_intensity, :ms1_m0_mass_err_ppm,
