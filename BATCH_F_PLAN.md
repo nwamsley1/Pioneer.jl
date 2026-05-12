@@ -38,41 +38,58 @@ All other features are identical across the pair. LGBM gain is concentrated
 on the MBR feature axis by construction. Threshold is set q-value style on
 the *doubled* training frame.
 
-## Open questions — resolved defaults
+## Confirmed design choices
 
 1. **Threshold direction** — reject `is_false_mbr=true` rows at α=0.01,
-   computed q-value-style with monotonization (use the same machinery
-   as `get_qvalues!` in `src/utils/ML/fdrUtilities.jl`, just swap
-   `is_decoy → is_false_mbr` and `target ↔ is_real`). Recovery:
-   candidates whose `_true`-row score has q ≤ 0.01.
-2. **Partner stability** — assign once at pair-regen time, stable across
-   all files and all FTR runs. Re-shuffling per candidate would make the
-   FTR LGBM's training set non-deterministic and would defeat the
-   paired-counterfactual logic.
-3. **`_false` lookup window** — exclude file=k for symmetry with
-   `_true`. Otherwise a same-file partner could "win" by chance and
-   leak into the donor.
-4. **Lone precursors** — skip from FTR (no counterfactual = no training
-   row pair). Candidate set tightens to "has a true donor AND has a
-   counterfactual partner". Diagnostic: log how many candidates we lose.
+   computed q-value-style with monotonization. Reuse the existing
+   `get_qvalues!` in `src/utils/ML/fdrUtilities.jl`: swap
+   `is_decoy → is_false_mbr` (so "decoys" in q-value parlance are the
+   fake-MBR rows). The threshold τ_q is the highest score for which
+   the q-value (= empirical fraction of `is_false_mbr=true` rows
+   among rows scoring ≥ that score, monotonized) is ≤ α. Recovery:
+   candidates whose `_true`-row q-value ≤ α.
+
+2. **Partner stability — fully experiment-global.** Build the partner
+   map once over **every unique precursor_idx that appears in at least
+   one PSM in the experiment** (= unique values in `best_psms.precursor_idx`).
+   No per-file partnering; a precursor has one global partner used by
+   every row of that precursor across every file. Use `get!` to write
+   each partner exactly once for determinism.
+
+3. **`_false` lookup window** — exclude file=k for symmetry with `_true`.
+
+4. **No lone precursors** — every precursor must have a partner.
+   Algorithm: stratify on (cv_fold × mz_decile × 0.5-iRT bin); pair within
+   stratum using M:N wrap (`mod1`). If a stratum has only targets or only
+   decoys, fall back outward:
+     a. nearest non-empty neighbor stratum in the same cv_fold + mz_decile
+        (search by widening the iRT window until a partner is found),
+     b. then the same cv_fold globally (any iRT, any mz),
+     c. then experiment-globally (any cv_fold).
+   Log how many precursors fell back to each tier — if many fall to (b)/(c)
+   the 0.5-iRT bin is too fine and should be widened. Hard requirement:
+   `partner_map` covers every unique `precursor_idx` in the PSM table.
+
 5. **All 5 MBR features get the `_true`/`_false` split:**
    - `MBR_max_pair_prob_true` / `_false`
    - `MBR_log2_weight_ratio_true` / `_false`
    - `MBR_log2_explained_ratio_true` / `_false`
    - `MBR_best_irt_diff_true` / `_false`
    - `MBR_is_missing_true` / `_false`
-6. **Non-MBR features in FTR LGBM** — keep them all (today's
-   `FTR_FEATURES` ≈ 48). In the doubled training frame their values are
-   identical between paired rows, so LGBM trees splitting on them gain
-   zero IG within a pair. Across-candidate variation may still inform the
-   model (e.g., "marginal MBR is OK iff the candidate has high
-   spectral_contrast"). Cost is small; if importance is zero we'll drop
-   them.
-7. **Drop Pass 2 entirely** — `:trace_prob_mbr` exists today only to
-   feed the FTR LGBM as one input feature. In Batch F the FTR LGBM
-   learns MBR signal directly from the `_true`/`_false` split, so Pass 2
-   is redundant. Cuts one full LGBM training (~30s of the 173s
-   precursor-scoring step on 8-file Olsen).
+
+6. **Non-MBR features in FTR LGBM** — keep them all (~48 features). In
+   the doubled training frame their values are identical between paired
+   rows, so trees splitting on them gain zero IG within a pair.
+   Cross-candidate variation may still inform the model (e.g., "marginal
+   MBR is OK iff the candidate has high spectral_contrast"). Drop later
+   if importance is zero.
+
+7. **Drop Pass 2 entirely.** `:trace_prob_mbr` exists today only to feed
+   the FTR LGBM as one input feature. In Batch F the FTR LGBM learns the
+   MBR signal directly from the `_true`/`_false` split, so Pass 2 is
+   redundant. Cuts one full LightGBM training (~30s of the 173s
+   precursor-scoring step on 8-file Olsen). Removes `:trace_prob_mbr`
+   from `FTR_FEATURES` too.
 
 ## File-level changes
 
@@ -82,36 +99,15 @@ the *doubled* training frame.
 | `mbr_features.jl` | New `compute_mbr_features_dual!` — builds two parallel donor lookups (per `precursor_idx` and per `partner_pid`) and writes 10 `MBR_*_{true,false}` columns. | +120 (rewrite) |
 | `mbr_ftr.jl` | New `apply_mbr_filter_paired!` — row-doubled FTR training + q-value threshold. Old `apply_mbr_filter!` stays for A/B comparison. | +180 |
 | `model_config.jl::ADVANCED_FEATURE_SET` | Replace 5 MBR features with the 5 `_true` variants (do NOT add `_false` — they're FTR-only). | trivial |
-| `score_psms.jl` | Drop Pass 2 call + `:trace_prob_mbr` assignment. Switch from `apply_mbr_filter!` → `apply_mbr_filter_paired!`. | -20 +10 |
+| `score_psms.jl` | Add `regenerate_counterfactual_partners!` call after `regenerate_pair_ids!`. Drop Pass 2 call + `:trace_prob_mbr` assignment. Switch from `apply_mbr_filter!` → `apply_mbr_filter_paired!`. | -20 +10 |
 | `PrecursorScoringSearch.jl` | Unchanged (qval bypass step keys on `:mbr_recovered` regardless of which FTR variant produced it). | 0 |
 | `ftrUtilities.jl` | Possibly add `get_ftr_qvalues!` (q-value style with monotonization). Or reuse `get_qvalues!` directly with `is_false_mbr` in place of `is_decoy`. | +20 |
 
 ## Pair regeneration with finer iRT bins
 
-Modify the stratum key in `regenerate_pair_ids!` and add a parallel
-partner-map computation:
-
-```julia
-# Replace 10-decile iRT binning with fixed 0.5-iRT-wide bins:
-irt_min, irt_max = extrema(plist_irt)
-n_irt_bins = max(1, ceil(Int, (irt_max - irt_min) / 0.5f0))
-bin_irt[i] = clamp(1 + floor(Int, (plist_irt[i] - irt_min) / 0.5f0), 1, n_irt_bins)
-
-# Stratum key (unchanged structure, finer iRT):
-stratum[i] = 1_000_000 * Int(cv_fold) +
-             10_000   * mz_decile     +   # 1..10
-                        bin_irt[i]        # 1..n_irt_bins
-```
-
-Keep the **strict 1:1 pair_id assignment** as today (each pid gets one
-pair_id; pairs have one target + one decoy where possible; lone pids
-get standalone pair_ids). This stays useful for:
-- the qval-bypass step (which keys on rows, not on partners)
-- diagnostic logging
-- future re-introduction of pair-based MBR features if the
-  counterfactual approach turns out worse
-
-Then add a **separate M:N partner map** for the counterfactual:
+Keep the **strict 1:1 pair_id assignment** as today (`regenerate_pair_ids!`)
+since the qval-bypass step and diagnostic logging still use `pair_id`.
+Add a **separate experiment-global partner-map** for the counterfactual:
 
 ```julia
 function regenerate_counterfactual_partners!(
@@ -120,32 +116,75 @@ function regenerate_counterfactual_partners!(
     rng_seed::Int = 1846,           # different seed from pair_id
     irt_bin_width::Float32 = 0.5f0,
 )
-    # Build precursor-level table same as regenerate_pair_ids! but stratum
-    # uses irt_bin_width-wide bins.
-    # For each stratum:
-    ts, ds = targets, decoys
-    isempty(ts) || isempty(ds) && continue
-    n = max(length(ts), length(ds))    # cover both sides
-    shuffle!(rng, ts); shuffle!(rng, ds)
-    for k in 1:n
-        t = ts[mod1(k, length(ts))]
-        d = ds[mod1(k, length(ds))]
-        # First wins: don't overwrite an existing partner for stability.
-        get!(pid_to_partner, t, d)
-        get!(pid_to_partner, d, t)
+    rng = MersenneTwister(rng_seed)
+    # ── 1. Build precursor-level table over UNIQUE precursors in psms ──
+    # (every unique precursor_idx in psms.precursor_idx is eligible).
+    seen = Set{UInt32}(); plist = (pid, target, mz, irt, cv_fold)[]  # one row per unique pid
+
+    # ── 2. Stratify (cv_fold × mz_decile × 0.5-iRT bin) ──
+    # mz_decile from 10-quantile binning of plist.mz
+    # irt_bin   from floor((plist.irt - irt_min) / 0.5)
+    stratum_key = 10_000_000 * cv_fold + 10_000 * mz_decile + irt_bin
+
+    # ── 3. Build target/decoy lists per stratum ──
+    strata_t[s], strata_d[s] = targets, decoys in stratum s
+
+    # ── 4. Partner assignment with hard "no-lone" guarantee ──
+    pid_to_partner = Dict{UInt32, UInt32}()
+    sizehint!(pid_to_partner, length(plist))
+    n_in_stratum = 0; n_fb_neighbor = 0; n_fb_fold = 0; n_fb_global = 0
+
+    for s in keys(merge(strata_t, strata_d))
+        ts = copy(get(strata_t, s, UInt32[]))
+        ds = copy(get(strata_d, s, UInt32[]))
+        shuffle!(rng, ts); shuffle!(rng, ds)
+        if !isempty(ts) && !isempty(ds)
+            # M:N wrap within stratum
+            n = max(length(ts), length(ds))
+            for k in 1:n
+                t = ts[mod1(k, length(ts))]
+                d = ds[mod1(k, length(ds))]
+                get!(pid_to_partner, t, d)   # write-on-first
+                get!(pid_to_partner, d, t)
+            end
+            n_in_stratum += length(ts) + length(ds)
+        end
+        # else: one-sided stratum — handled in the fallback pass below
     end
-    # Apply to PSM rows
+
+    # ── 5. Fallback for any precursor still missing a partner ──
+    # (one-sided strata leave their occupants with no partner.)
+    # Tiers: (a) nearest non-empty neighbor stratum in same cv_fold+mz_decile,
+    #        (b) same cv_fold (any mz/irt),
+    #        (c) experiment-globally.
+    # For each unpartnered precursor, sample one OPPOSITE-class precursor
+    # from the smallest-tier non-empty pool that has one. Write with get!.
+
+    for pid in unpartnered:
+        partner = find_partner_widening(pid, target_pools, decoy_pools)
+        get!(pid_to_partner, pid, partner)
+        # bump n_fb_* counter
+
+    # ── 6. Apply to PSM rows ──
     psms[!, :counterfactual_partner_pid] = UInt32[
-        get(pid_to_partner, p, UInt32(0)) for p in prec_idx_col
+        pid_to_partner[p] for p in psms.precursor_idx
     ]
-    # Log: % of pids that got a partner, distribution of stratum sizes
+
+    @user_info "MBR Batch F — counterfactual partner map:"
+    @user_info "  unique precursors: $(length(plist))"
+    @user_info "  partnered within stratum:    $n_in_stratum"
+    @user_info "  fallback to neighbor:         $n_fb_neighbor"
+    @user_info "  fallback to fold-global:      $n_fb_fold"
+    @user_info "  fallback to experiment-global: $n_fb_global"
+    @assert all(haskey(pid_to_partner, p) for p in plist.pid) \
+        "Counterfactual partner map missing some precursors"
 end
 ```
 
-Use `get!` (write only on first encounter) so the partner is stable —
-later targets in the same stratum that rotate around `ds` will overwrite
-the FIRST occurrence; using `get!` prevents that. Result: each target's
-partner is fixed at the first pass through its stratum.
+The hard `@assert` at the bottom enforces the "no lone precursors"
+requirement. If any precursor falls through all three fallback tiers
+(which can only happen if the experiment has *zero* opposite-class
+precursors anywhere — degenerate), the run errors out loudly.
 
 ## Dual donor lookup
 
@@ -283,21 +322,26 @@ Recovery: rows with `q ≤ α=0.01`.
 
 ## Diagnostics to log per run
 
-- Counterfactual partner coverage: % of precursors with a partner assigned
-- Per-stratum sizes — distribution of `min(|T|, |D|)` after fine binning
-- Candidate count with vs without the `_false` requirement
+- Counterfactual partner coverage by tier: stratum / fold-neighbor /
+  fold-global / experiment-global (hard requirement: 100%, asserted)
+- Per-stratum target/decoy sizes — distribution after fine binning
+- Candidate count (note: `_false` requirement always satisfied since
+  every precursor now has a partner)
 - Doubled-frame size + LGBM training time
-- Q-value distribution of `_true` rows; histogram of `_false` rows
-- Recovery composition: T←T / T←D / D←T / D←D (same as today's log)
-- Empirical FTR among recovered rows (should be ≤ α=0.01 by construction
-  of q-value monotonization)
+- Q-value distribution among `_true` rows; histogram among `_false` rows
+- Recovery composition: T←T / T←D / D←T / D←D
+- Empirical FTR among recovered rows (≤ α=0.01 by construction of
+  q-value monotonization)
 
 ## Risks / things to watch
 
-1. **Partner-coverage cliff at finer iRT bins.** 0.5-iRT bins on Olsen
+1. **Stratum starvation at 0.5-iRT bins.** 0.5-iRT bins on Olsen
    (iRT range ~100 units after normalization) ⇒ ~200 bins per (mz_decile,
-   cv_fold) ⇒ many bins with <2 targets or <2 decoys. If counterfactual
-   partner coverage drops below ~80%, widen the bin (e.g., 1.0 iRT).
+   cv_fold) ⇒ many bins with one-sided occupancy. The fallback tiers
+   guarantee 100% partner coverage, but if too many fall to tier (b) or
+   (c) the partners are no longer "comparable" to the candidate's true
+   donor (mz/irt mismatch). If fallback-fraction > ~30%, widen the iRT
+   bin (1.0 or 2.0 iRT) to push the failure rate down.
 2. **Doubled-frame size** for 150k candidates → 300k training rows.
    Should be fine; current FTR LGBM trains on the 150k candidates in
    ~1s; doubling stays sub-minute.
