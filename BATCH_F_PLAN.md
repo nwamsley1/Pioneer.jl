@@ -59,6 +59,44 @@ Plots: `efdr_comparison_prec_prob.{png,pdf}`, `efdr_comparison_global_prob.{png,
 Conclusion: Batch F's MBR + FTR is FDR-calibrated. The reported q-values
 are honest; the α=0.01 FTR budget does not inflate the empirical FDR.
 
+## YeastMBR Dennis FTR + EFDR (Batch F iRT-NN, entr1 lib, 2026-05-12)
+
+20-file YeastMBR subset: 10 HelaOnly (GO113 Inj1-10) + 10 Hela+Yeast
+(GO114 Inj1-10). Dennis method = compare yeast IDs in HelaOnly files
+between Run A (HelaOnly alone) and Run B (Combined). Difference is the
+MBR-caused false transfers.
+
+| | Run A (HelaOnly alone) | Run B (Combined 20-file) |
+|---|---:|---:|
+| Total q≤.01 target rows | 402,796 | 854,261 |
+| Yeast in HelaOnly | 874 | 1,280 |
+| Yeast in HelaYeast | — | 40,106 |
+| MBR candidates | 66,416 (7.18%) | 189,235 (9.48%) |
+| MBR recovered | 64,171 (96.62%) | 181,973 (96.16%) |
+| MaxLFQ groups | 5,682 | 6,464 |
+
+Dennis FTR:
+- Baseline yeast in HelaOnly (Run A): 874
+- Combined yeast in HelaOnly (Run B): 1,280
+- Net false transfers = 406
+- Dennis FTR (vs HelaOnly total in B): 406 / 409,709 = **0.10%**
+- Simple FTR (B-only):                 1,280 / 854,261 = 0.15%
+
+Both an order of magnitude below the α=0.01 budget.
+
+EFDR calibration (mean abs |EFDR − decoyFDR| at q ≤ 0.01):
+
+| Method | Run A prec / global | Run B prec / global |
+|---|---|---|
+| Combined EFDR | 0.0004 / 0.0003 | 0.0005 / 0.0003 |
+| Paired EFDR | 0.0004 / 0.0002 | 0.0004 / 0.0002 |
+
+All within 0.0005 of perfect.
+
+Of the 6,913 added IDs in HelaOnly between Runs A and B, only 406 are
+yeast false transfers (~6%) — the rest are real human MBR rescues
+within the HelaOnly pool.
+
 ## Baseline to beat
 
 8-file Olsen Exploris MBR run (commit `f459df89`, 2026-05-12):
