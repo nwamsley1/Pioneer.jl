@@ -36,7 +36,16 @@ was not seen in the i'th experiment, then S[i, j] == missing.
 ### Examples 
 
 """
-function getS(peptides::AbstractVector{UInt32}, peptides_dict::Dict{UInt32, Int64}, experiments::AbstractVector{UInt16}, experiments_dict::Dict{UInt16, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
+function getS(
+    peptides::AbstractVector{UInt32},
+    peptides_dict::Dict{UInt32, Int64},
+    experiments::AbstractVector{<:Integer},
+    experiments_dict::Dict{E, Int64},
+    abundance::AbstractVector{<:Union{Missing, Real}},
+    M::Int,
+    N::Int
+) where {E<:Integer}
+    T = Base.nonmissingtype(eltype(abundance))
     S = Matrix{Union{Missing, T}}(missing, M, N)
     for i in eachindex(peptides)
         if !ismissing(abundance[i])
@@ -453,14 +462,14 @@ function getProtAbundance(protein::String,
                             entrap_id::UInt8,
                             species::String,
                             peptides::AbstractVector{UInt32}, 
-                            experiments::AbstractVector{UInt16}, 
+                            experiments::AbstractVector{<:Integer},
                             use_for_quant::AbstractVector{Bool},
-                            abundance::AbstractVector{Union{T, Missing}},
-                            global_qvals::AbstractVector{Union{F,Missing}},
-                            qvals::AbstractVector{Union{F,Missing}},
-                            peps::AbstractVector{Union{F,Missing}},
-                            pg_scores::AbstractVector{Union{F,Missing}},
-                            global_pg_scores::AbstractVector{Union{F,Missing}},
+                            abundance::AbstractVector{<:Union{Missing, Real}},
+                            global_qvals::AbstractVector{<:Union{Missing, Real}},
+                            qvals::AbstractVector{<:Union{Missing, Real}},
+                            peps::AbstractVector{<:Union{Missing, Real}},
+                            pg_scores::AbstractVector{<:Union{Missing, Real}},
+                            global_pg_scores::AbstractVector{<:Union{Missing, Real}},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}},
@@ -473,7 +482,7 @@ function getProtAbundance(protein::String,
                             pep_out::Vector{Union{Missing, Float32}},
                             pg_score_out::Vector{Union{Missing, Float32}},
                             global_pg_score_out::Vector{Union{Missing, Float32}},
-                            total_peak_area_out::Vector{Union{Missing, Float32}}) where {T <: Real, F <: Real}
+                            total_peak_area_out::Vector{Union{Missing, Float32}})
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -510,12 +519,12 @@ function getProtAbundance(protein::String,
                             species::String,
                             protein::String,
                             unique_peptides::Vector{UInt32}, 
-                            log2_abundances::AbstractVector{Union{Missing, T}},
-                            global_qvals::AbstractVector{Union{Float32,Missing}},
-                            qvals::AbstractVector{Union{Float32,Missing}},
-                            peps::AbstractVector{Union{Float32,Missing}},
-                            pg_scores::AbstractVector{Union{Float32,Missing}},
-                            global_pg_scores::AbstractVector{Union{Float32,Missing}},
+                            log2_abundances::AbstractVector{Union{Missing, A}},
+                            global_qvals::AbstractVector{<:Union{Missing, Real}},
+                            qvals::AbstractVector{<:Union{Missing, Real}},
+                            peps::AbstractVector{<:Union{Missing, Real}},
+                            pg_scores::AbstractVector{<:Union{Missing, Real}},
+                            global_pg_scores::AbstractVector{<:Union{Missing, Real}},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}}, 
@@ -529,13 +538,13 @@ function getProtAbundance(protein::String,
                             global_pg_score_out::Vector{Union{Missing, Float32}},
                             total_peak_area_out::Vector{Union{Missing, Float32}},
                             experiments_out::Vector{Union{Missing, I}}, 
-                            S::Matrix{Union{Missing, T}},
-                            total_peak_area::AbstractVector{Union{Missing, Float32}}) where {T<:Real,I<:Integer}
+                            S::Matrix{Union{Missing, S_T}},
+                            total_peak_area::AbstractVector{Union{Missing, Float32}}) where {A<:Real,S_T<:Real,I<:Integer}
         
         function appendPeptides!(peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
                                 row_idx::Int64,
                                 unique_peptides::Vector{UInt32}, 
-                                S::Matrix{Union{Missing,T}})
+                                S::Matrix{Union{Missing,S_T}})
             #Each column of S corresponds to and experiment and each row corresponds to a peptide
             #Need to get each non-missing peptide for each experiment. Concatenate the non-missing peptides
             #For and experiment with a semi-colon. See example in the getProtAbundance docstring 

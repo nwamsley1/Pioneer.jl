@@ -223,6 +223,47 @@ end
     end
 end
 
+@testset "getProtAbundance accepts non-nullable normalized quant values" begin
+    peptides  = UInt32[1, 1, 1, 2, 2, 2]
+    exps      = UInt16[1, 2, 3, 1, 2, 3]
+    use_quant = Bool[true, true, true, true, true, true]
+    abundance = Float64[10.0, 20.0, 40.0, 5.0, 10.0, 20.0]
+    qvals     = Float32[0.01f0, 0.01f0, 0.01f0, 0.02f0, 0.02f0, 0.02f0]
+    gqvals    = Float32[0.005f0, 0.005f0, 0.005f0, 0.01f0, 0.01f0, 0.01f0]
+    peps      = Float32[0.05f0, 0.05f0, 0.05f0, 0.1f0, 0.1f0, 0.1f0]
+    scores    = Float32[5.0f0, 5.0f0, 5.0f0, 3.0f0, 3.0f0, 3.0f0]
+    gscores   = Float32[4.0f0, 4.0f0, 4.0f0, 2.0f0, 2.0f0, 2.0f0]
+
+    n_experiments = 3
+    target_out       = Vector{Union{Missing, Bool}}(missing, n_experiments)
+    entrap_out       = Vector{Union{Missing, UInt8}}(missing, n_experiments)
+    species_out      = Vector{Union{Missing, String}}(missing, n_experiments)
+    protein_out      = Vector{Union{Missing, String}}(missing, n_experiments)
+    peptides_out     = Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}(missing, n_experiments)
+    experiments_out  = Vector{Union{Missing, UInt32}}(missing, n_experiments)
+    log2_abund_out   = Vector{Union{Missing, Float32}}(missing, n_experiments)
+    gqval_out        = Vector{Union{Missing, Float32}}(missing, n_experiments)
+    qval_out         = Vector{Union{Missing, Float32}}(missing, n_experiments)
+    pep_out          = Vector{Union{Missing, Float32}}(missing, n_experiments)
+    score_out        = Vector{Union{Missing, Float32}}(missing, n_experiments)
+    gscore_out       = Vector{Union{Missing, Float32}}(missing, n_experiments)
+    peak_area_out    = Vector{Union{Missing, Float32}}(missing, n_experiments)
+
+    Pioneer.getProtAbundance(
+        "ProteinA", 1, true, UInt8(0), "HUMAN",
+        peptides, exps, use_quant, abundance,
+        gqvals, qvals, peps, scores, gscores,
+        target_out, entrap_out, species_out, protein_out,
+        peptides_out, experiments_out, log2_abund_out,
+        gqval_out, qval_out, pep_out, score_out, gscore_out,
+        peak_area_out,
+    )
+
+    @test all(!ismissing, log2_abund_out)
+    @test all(!ismissing, peak_area_out)
+    @test all(x -> x == "ProteinA", protein_out)
+end
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # getProtAbundance — missing data handling
 # ═══════════════════════════════════════════════════════════════════════════════
