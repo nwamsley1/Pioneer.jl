@@ -258,7 +258,8 @@ const PRESCORE_FEATURES = [
     # M+1 fragment intensities + per-fragment M0/M+1 correlations (2026-05-12)
     :frag1_int_m1, :frag2_int_m1, :frag3_int_m1, :frag4_int_m1, :frag5_int_m1, :frag6_int_m1,
     :frag_corr_m0_m1_top1, :frag_corr_m0_m1_top2, :frag_corr_m0_m1_top3,
-    :frag_corr_m0_m1_mean, :n_correlated_m0_m1_fragments,
+    :frag_corr_m0_m1_mean,
+    :n_correlated_m0_m1_fragments, :n_correlated_m0_m1_fragments_50,
 ]
 
 """
@@ -574,7 +575,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     psms[!, :frag_corr_m0_m1_top2]      = zeros(Float32, n)
     psms[!, :frag_corr_m0_m1_top3]      = zeros(Float32, n)
     psms[!, :frag_corr_m0_m1_mean]      = zeros(Float32, n)
-    psms[!, :n_correlated_m0_m1_fragments] = zeros(UInt8, n)
+    psms[!, :n_correlated_m0_m1_fragments]    = zeros(UInt8, n)  # threshold 0.7
+    psms[!, :n_correlated_m0_m1_fragments_50] = zeros(UInt8, n)  # threshold 0.5
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -742,12 +744,15 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             c_m0m1_perrank = (c1, c2, c3, c4, c5, c6)
         end
         # Aggregate stats over the 6 per-rank M0/M+1 correlations
-        c_m0m1_sum = 0f0; c_m0m1_n = 0; n_corr_m0m1 = UInt8(0)
+        c_m0m1_sum = 0f0; c_m0m1_n = 0
+        n_corr_m0m1    = UInt8(0)   # threshold 0.7 (original)
+        n_corr_m0m1_50 = UInt8(0)   # threshold 0.5 — mirror of n_correlated_fragments_50
         for r in 1:6
             cr = c_m0m1_perrank[r]
             if cr != 0f0
                 c_m0m1_sum += cr; c_m0m1_n += 1
-                if cr > 0.7f0; n_corr_m0m1 += UInt8(1); end
+                if cr > 0.5f0; n_corr_m0m1_50 += UInt8(1); end
+                if cr > 0.7f0; n_corr_m0m1    += UInt8(1); end
             end
         end
         c_m0m1_mean = c_m0m1_n > 0 ? c_m0m1_sum / c_m0m1_n : 0f0
@@ -773,7 +778,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             psms.frag_corr_m0_m1_top2[i]       = c_m0m1_t2
             psms.frag_corr_m0_m1_top3[i]       = c_m0m1_t3
             psms.frag_corr_m0_m1_mean[i]       = c_m0m1_mean
-            psms.n_correlated_m0_m1_fragments[i] = n_corr_m0m1
+            psms.n_correlated_m0_m1_fragments[i]    = n_corr_m0m1
+            psms.n_correlated_m0_m1_fragments_50[i] = n_corr_m0m1_50
         end
     end
     return

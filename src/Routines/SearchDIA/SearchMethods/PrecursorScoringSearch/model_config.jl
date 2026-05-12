@@ -112,7 +112,8 @@ const ADVANCED_FEATURE_SET = [
     # M+1 fragment intensities + per-fragment M0/M+1 correlations (2026-05-12)
     :frag1_int_m1, :frag2_int_m1, :frag3_int_m1, :frag4_int_m1, :frag5_int_m1, :frag6_int_m1,
     :frag_corr_m0_m1_top1, :frag_corr_m0_m1_top2, :frag_corr_m0_m1_top3,
-    :frag_corr_m0_m1_mean, :n_correlated_m0_m1_fragments,
+    :frag_corr_m0_m1_mean,
+    :n_correlated_m0_m1_fragments, :n_correlated_m0_m1_fragments_50,
 
     :max_weight,                      # populated by select_best_per_precursor!
     :fitted_hellinger,
