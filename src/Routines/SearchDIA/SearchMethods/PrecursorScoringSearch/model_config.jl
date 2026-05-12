@@ -89,6 +89,9 @@ const ADVANCED_FEATURE_SET = [
     :irt_dist_best_gof_5scan, :irt_dist_best_manhattan_5scan, :irt_dist_best_max_residual_5scan,
     :worst_max_residual_11scan, :worst_manhattan_11scan,
     :irt_dist_to_weight_apex,
+    # Batch A — edge-distance (Peak-Shape A/B doc, 2026-05-12)
+    :n_scans_left_capped3, :n_scans_right_capped3, :min_edge_distance,
+    :is_at_edge, :relative_position, :dist_to_relative_center,
 
     # MS1 point-lookup + chromatogram features.
     :ms1_m0_intensity, :ms1_m1_intensity, :ms1_m0_mass_err_ppm,

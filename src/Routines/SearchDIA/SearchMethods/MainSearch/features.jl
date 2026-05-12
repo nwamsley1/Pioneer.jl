@@ -236,6 +236,9 @@ const PRESCORE_FEATURES = [
     :irt_dist_best_gof_5scan, :irt_dist_best_manhattan_5scan, :irt_dist_best_max_residual_5scan,
     :worst_max_residual_11scan, :worst_manhattan_11scan,
     :irt_dist_to_weight_apex,
+    # Batch A — edge-distance (Peak-Shape A/B doc, 2026-05-12)
+    :n_scans_left_capped3, :n_scans_right_capped3, :min_edge_distance,
+    :is_at_edge, :relative_position, :dist_to_relative_center,
     :ms1_m0_mass_err_ppm,
     :ms1_corr_weight_m0, :ms1_corr_m0_m1, :ms1_corr_weight_m1,
     :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
@@ -841,6 +844,13 @@ Adds column `:irt_dist_to_weight_apex`.
 function add_apex_distance_feature!(psms::DataFrame)
     n = nrow(psms)
     psms[!, :irt_dist_to_weight_apex] = zeros(Float32, n)
+    # Batch A — edge-distance features (per-precursor, position-in-scan-list).
+    psms[!, :n_scans_left_capped3]   = zeros(UInt8, n)
+    psms[!, :n_scans_right_capped3]  = zeros(UInt8, n)
+    psms[!, :min_edge_distance]      = zeros(UInt8, n)
+    psms[!, :is_at_edge]             = zeros(UInt8, n)
+    psms[!, :relative_position]      = zeros(Float32, n)
+    psms[!, :dist_to_relative_center]= zeros(Float32, n)
     n == 0 && return
     @assert hasproperty(psms, :irt_obs) ":irt_obs required"
     by_prec = Dict{eltype(psms.precursor_idx), Vector{Int}}()
@@ -848,6 +858,10 @@ function add_apex_distance_feature!(psms::DataFrame)
         push!(get!(() -> Int[], by_prec, psms.precursor_idx[i]), i)
     end
     @inbounds for (_, idxs) in by_prec
+        # Sort by irt for edge-distance position
+        if length(idxs) > 1
+            sort!(idxs, by = j -> Float32(psms.irt_obs[j]))
+        end
         # Find apex (max weight)
         apex_i = idxs[1]; apex_w = Float32(psms.weight[apex_i])
         for j in idxs
@@ -855,8 +869,19 @@ function add_apex_distance_feature!(psms::DataFrame)
             if w > apex_w; apex_w = w; apex_i = j; end
         end
         apex_irt = Float32(psms.irt_obs[apex_i])
-        for i in idxs
+        N = length(idxs)
+        for (k0, i) in enumerate(idxs)
+            k = k0 - 1                          # 0-indexed scan position
+            n_left  = min(k,            3)
+            n_right = min(N - 1 - k,    3)
+            rel_pos = N > 1 ? Float32(k) / Float32(N - 1) : 0.5f0
             psms.irt_dist_to_weight_apex[i] = abs(Float32(psms.irt_obs[i]) - apex_irt)
+            psms.n_scans_left_capped3[i]    = UInt8(n_left)
+            psms.n_scans_right_capped3[i]   = UInt8(n_right)
+            psms.min_edge_distance[i]       = UInt8(min(n_left, n_right))
+            psms.is_at_edge[i]              = UInt8((n_left == 0 || n_right == 0) ? 1 : 0)
+            psms.relative_position[i]       = rel_pos
+            psms.dist_to_relative_center[i] = abs(0.5f0 - rel_pos)
         end
     end
     return
