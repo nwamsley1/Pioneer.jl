@@ -138,13 +138,14 @@ const ADVANCED_FEATURE_SET = [
     :max_weight,                      # populated by select_best_per_precursor!
     :fitted_hellinger,
     :n_scans,
-    # MBR Phase 2 features (auto-skipped on first pass when columns are absent;
-    # used in the second pass after compute_mbr_features! populates them).
-    :MBR_max_pair_prob,
-    :MBR_log2_weight_ratio,
-    :MBR_log2_explained_ratio,
-    :MBR_best_irt_diff,
-    :MBR_is_missing,
+    # MBR Batch F: only the _true variants appear here (Pass-1 LGBM auto-skips
+    # them since they're computed after Pass 1). The _false variants live only
+    # in the FTR controller's doubled training frame.
+    :MBR_max_pair_prob_true,
+    :MBR_log2_weight_ratio_true,
+    :MBR_log2_explained_ratio_true,
+    :MBR_best_irt_diff_true,
+    :MBR_is_missing_true,
 ]
 
 """

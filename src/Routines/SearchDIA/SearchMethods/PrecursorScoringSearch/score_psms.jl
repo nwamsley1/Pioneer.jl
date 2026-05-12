@@ -64,10 +64,13 @@ function score_precursor_isotope_traces(
     @debug_l1 "PSM scoring: $n_psms PSMs loaded for experiment-wide LightGBM"
 
     # 1b. MBR Phase 1: regenerate 1:1 target↔decoy :pair_id (see mbr_pairing.jl).
-    # The library's pair_id is many-to-one; FTR control downstream needs the
-    # per-pair_id 1:1 invariant. No row cloning — leftover precursors get
-    # standalone pair_ids.
     regenerate_pair_ids!(best_psms, precursors)
+
+    # 1c. MBR Batch F: build experiment-global counterfactual partner map.
+    # Adds :counterfactual_partner_pid for compute_mbr_features_dual!.
+    if match_between_runs
+        regenerate_counterfactual_partners!(best_psms, precursors)
+    end
 
     # 2. Build the feature list (the _qbin variants in ADVANCED_FEATURE_SET are
     # commented out, so we don't need to compute quantile-binned features here).
@@ -100,28 +103,21 @@ function score_precursor_isotope_traces(
     info            = info_p1
 
     if match_between_runs
-        # Compute the MBR features + :MBR_is_best_decoy from cross-run donors.
-        compute_mbr_features!(best_psms; score_col=:trace_prob_prepass)
-
-        # Second pass: full feature set incl. MBR features. Output → :trace_prob_mbr
-        # (used ONLY by the FTR controller, NOT by the qval pipeline).
-        all_scores_mbr, last_classifier, info = train_psm_classifier_with_fallback(
-            best_psms; features=features, lgbm_hp=SCORING_LGBM_HP
-        )
-        best_psms[!, :trace_prob_mbr] = Float32.(clamp.(all_scores_mbr, 1f-6, 1f0 - 1f-4))
-        @user_info "Pass 2 (MBR-boosted) trained on $(length(info.available_features)) features (used by FTR only)"
+        # Batch F: compute dual MBR features (_true and _false donors).
+        # No Pass 2 — the FTR LGBM learns the MBR signal directly from the
+        # _true/_false split in apply_mbr_filter_paired!.
+        compute_mbr_features_dual!(best_psms; score_col=:trace_prob_prepass)
     else
-        @user_info "match_between_runs=false: skipping MBR feature computation, second pass, and FTR controller"
+        @user_info "match_between_runs=false: skipping MBR features and FTR controller"
     end
 
-    # Log feature importances of the final classifier (pass 2 if MBR on, else pass 1).
+    # Log Pass-1 feature importances (the only pass in Batch F).
     if last_classifier !== nothing
         lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            label = match_between_runs ? "MBR-boosted (pass 2)" : "non-MBR (pass 1)"
-            lines = ["ScoringSearch $label LGBM feature gains (all $(length(sorted_imp))):"]
+            lines = ["ScoringSearch Pass-1 LGBM feature gains (all $(length(sorted_imp))):"]
             for (fname, gain) in sorted_imp
                 push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
             end
@@ -133,9 +129,8 @@ function score_precursor_isotope_traces(
     best_psms[!, :trace_prob] = best_psms[!, :trace_prob_prepass]
 
     if match_between_runs
-        # FTR control over the candidate cohort. Sets :mbr_recovered = true for
-        # candidates whose FTR-model score exceeds τ.
-        apply_mbr_filter!(best_psms; alpha=0.01f0, q_thresh=0.01f0)
+        # Batch F: paired-counterfactual FTR with q-value threshold.
+        apply_mbr_filter_paired!(best_psms; alpha=0.01f0, q_thresh=0.01f0)
     else
         # No MBR: ensure downstream code finds the column but never bypasses qval.
         best_psms[!, :mbr_recovered] = falses(nrow(best_psms))

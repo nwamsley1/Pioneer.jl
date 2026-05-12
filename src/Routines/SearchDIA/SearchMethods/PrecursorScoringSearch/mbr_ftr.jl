@@ -288,3 +288,229 @@ function apply_mbr_filter!(
         elapsed_s       = elapsed,
     )
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MBR Batch F — paired-counterfactual FTR controller with q-value threshold
+# ─────────────────────────────────────────────────────────────────────────────
+
+# FTR features for the Batch F controller. Same as Phase 8f's FTR_FEATURES but
+# - drops :trace_prob_mbr (Pass 2 no longer exists in Batch F)
+# - uses the _true variants for the in-place MBR features (the _false copies
+#   are swapped in for the bottom half of the doubled training frame).
+const FTR_FEATURES_F_TRUE = Symbol[
+    :trace_prob_prepass,
+    :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
+    :irt_pred, :irt_error, :irt_diff,
+    :max_y_ions, :y_ions_sum, :longest_y, :y_count, :b_count,
+    :isotope_count, :total_ions,
+    :best_rank, :best_rank_iso, :topn, :topn_iso,
+    :gof, :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
+    :max_matched_residual, :max_unmatched_residual, :max_gof,
+    :fitted_spectral_contrast, :spectral_contrast,
+    :max_matched_ratio, :err_norm, :poisson, :weight,
+    :log2_intensity_explained, :tic, :smoothness,
+    :ms1_ms2_rt_diff,
+    :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
+    :fitted_spectral_contrast_ms1, :error_ms1, :m0_error_ms1,
+    :n_iso_ms1, :big_iso_ms1, :rt_max_intensity_ms1,
+    :rt_diff_max_intensity_ms1, :ms1_features_missing,
+    :percent_theoretical_ignored, :scribe, :max_scribe, :max_weight,
+    :fitted_hellinger, :n_scans,
+    # MBR _true variant — top half of doubled training frame.
+    :MBR_max_pair_prob_true, :MBR_log2_weight_ratio_true,
+    :MBR_log2_explained_ratio_true, :MBR_best_irt_diff_true, :MBR_is_missing_true,
+]
+
+# Same features but with the MBR columns swapped to _false. Used for the
+# bottom half of the doubled training frame. Each entry must mirror
+# FTR_FEATURES_F_TRUE position-for-position so the LGBM sees the same
+# semantic feature columns in the same order.
+const FTR_FEATURES_F_FALSE = Symbol[
+    f === :MBR_max_pair_prob_true        ? :MBR_max_pair_prob_false :
+    f === :MBR_log2_weight_ratio_true    ? :MBR_log2_weight_ratio_false :
+    f === :MBR_log2_explained_ratio_true ? :MBR_log2_explained_ratio_false :
+    f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
+    f === :MBR_is_missing_true           ? :MBR_is_missing_false :
+    f
+    for f in FTR_FEATURES_F_TRUE
+]
+
+"""
+    apply_mbr_filter_paired!(psms; alpha=0.01f0, q_thresh=0.01f0) -> NamedTuple
+
+MBR Batch F — paired-counterfactual FTR controller.
+
+Algorithm (see BATCH_F_PLAN.md):
+1. Candidate gate = (pre_qvals > q_thresh) & (MBR_max_pair_prob_true ≥
+   prob_thresh) & (!MBR_is_missing_true) & (!MBR_is_missing_false).
+2. Build a row-doubled training frame:
+   - top half: candidate rows with FTR_FEATURES_F_TRUE values  → label is_real=true
+   - bottom half: SAME candidate rows with FTR_FEATURES_F_FALSE values → label is_real=false
+3. Train 2-fold CV LightGBM on the doubled frame with label=is_real.
+   OOF scores: higher = more "real" by the model's lights.
+4. Compute q-values on the doubled frame via get_qvalues! (target=is_real,
+   monotonized). Pick rows whose q ≤ alpha.
+5. Recovery: candidate rows whose TOP-HALF (real-MBR) row has q ≤ alpha.
+
+Sets `:mbr_recovered`, `:MBR_transfer_candidate`, `:ftr_qval_true` on
+`psms` in-place. Does NOT mutate `:trace_prob`.
+"""
+function apply_mbr_filter_paired!(
+    psms::DataFrame;
+    alpha::Float32    = 0.01f0,
+    q_thresh::Float32 = 0.01f0,
+)
+    t0 = time()
+
+    n = nrow(psms)
+    if n == 0
+        @user_info "MBR Batch F — apply_mbr_filter_paired!: no PSMs to filter"
+        psms[!, :mbr_recovered]          = falses(0)
+        psms[!, :MBR_transfer_candidate] = falses(0)
+        psms[!, :ftr_qval_true]          = Float32[]
+        return (n_candidates=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=0.0)
+    end
+
+    # ── 1. Pre-MBR q-values from the non-MBR (pass-1) score ──
+    pre_score  = Float32.(psms[!, :trace_prob_prepass])
+    target_col = Bool.(psms[!, :target])
+    decoy_col  = Bool.(psms[!, :decoy])
+    pre_qvals  = Vector{Float32}(undef, n)
+    get_qvalues!(pre_score, target_col, pre_qvals)
+
+    donor_target_pass = (pre_qvals .<= MBR_DONOR_Q_THRESHOLD) .& target_col
+    prob_thresh = if any(donor_target_pass)
+        minimum(pre_score[donor_target_pass])
+    else
+        Float32(Inf)
+    end
+
+    # ── 2. Candidates: failed q-cut, have BOTH _true and _false donors ──
+    mbr_pp_t       = Float32.(psms[!, :MBR_max_pair_prob_true])
+    mbr_miss_t     = Bool.(psms[!, :MBR_is_missing_true])
+    mbr_miss_f     = Bool.(psms[!, :MBR_is_missing_false])
+    candidate_mask = (pre_qvals .> q_thresh) .&
+                     (mbr_pp_t  .>= prob_thresh) .&
+                     (.!mbr_miss_t) .&
+                     (.!mbr_miss_f)
+    n_cand = count(candidate_mask)
+    cand_idx = findall(candidate_mask)
+
+    @user_info "MBR Batch F — paired FTR recovery:"
+    @user_info "  MBR_DONOR_Q_THRESHOLD = $MBR_DONOR_Q_THRESHOLD; prob_thresh = $(round(prob_thresh, digits=4))"
+    @user_info "  candidates (pre-MBR q>$q_thresh + both donors): $n_cand / $n ($(round(100*n_cand/n, digits=2))%)"
+    @user_info "  α (q-value FTR budget): $alpha"
+
+    if n_cand == 0
+        psms[!, :mbr_recovered]          = falses(n)
+        psms[!, :MBR_transfer_candidate] = candidate_mask
+        psms[!, :ftr_qval_true]          = fill(NaN32, n)
+        return (n_candidates=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=time()-t0)
+    end
+
+    # ── 3. Build the doubled training frame ──
+    # Top half: real-MBR rows (FTR_FEATURES_F_TRUE values). Label = true.
+    # Bottom half: same candidates with _false MBR values swapped in. Label = false.
+    sub = psms[cand_idx, :]
+    available_true  = filter(f -> hasproperty(sub, f), FTR_FEATURES_F_TRUE)
+    # Position-aligned _false set (only matters that the MBR cols flip; non-MBR
+    # cols are identical between TRUE and FALSE lists, so available_true tells
+    # us which non-MBR cols actually exist).
+    feat_to_idx = Dict{Symbol, Int}()
+    for (i, f) in enumerate(FTR_FEATURES_F_TRUE); feat_to_idx[f] = i; end
+    available_false = Symbol[]
+    for f in available_true
+        push!(available_false, FTR_FEATURES_F_FALSE[feat_to_idx[f]])
+    end
+    X_true  = feature_matrix(sub, available_true)
+    X_false = feature_matrix(sub, available_false)
+    X       = vcat(X_true, X_false)              # 2 n_cand × n_features
+    y       = vcat(trues(n_cand), falses(n_cand))  # label = is_real
+    cv_double = vcat(sub[!, :cv_fold], sub[!, :cv_fold])
+
+    # ── 4. 2-fold CV LightGBM on the doubled frame ──
+    pos0 = findall(cv_double .== 0)
+    pos1 = findall(cv_double .== 1)
+    ftr_score_double = fill(NaN32, 2 * n_cand)
+    last_cls = nothing
+    for (train_pos, test_pos) in ((pos1, pos0), (pos0, pos1))
+        (isempty(train_pos) || isempty(test_pos)) && continue
+        y_tr = y[train_pos]
+        if length(unique(y_tr)) == 1
+            ftr_score_double[test_pos] .= y_tr[1] ? 1f0 : 0f0
+            continue
+        end
+        cls = build_lightgbm_classifier(; SHARED_LGBM_HP...)
+        LightGBM.fit!(cls, X[train_pos, :], _prepare_labels(y_tr); verbosity = -1)
+        raw = LightGBM.predict(cls, X[test_pos, :])
+        s = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
+        ftr_score_double[test_pos] .= Float32.(s)
+        last_cls = cls
+    end
+
+    # ── 5. Q-value on the doubled frame (target=is_real, decoy=is_fake) ──
+    qvals_double = Vector{Float32}(undef, 2 * n_cand)
+    get_qvalues!(ftr_score_double, y, qvals_double)
+    # qvals_double[i] = (# fakes ranked ≥ row i) / (# reals ranked ≥ row i),
+    # monotonized to be non-increasing as score increases.
+
+    # ── 6. Recovery: top-half rows (real-MBR) with q ≤ alpha ──
+    qvals_top = qvals_double[1:n_cand]
+    recovered_in_cand = qvals_top .<= alpha
+    n_recovered = count(recovered_in_cand)
+
+    mbr_recovered_full = falses(n)
+    ftr_qval_full      = fill(NaN32, n)
+    @inbounds for (k, i) in enumerate(cand_idx)
+        ftr_qval_full[i] = qvals_top[k]
+        if recovered_in_cand[k]
+            mbr_recovered_full[i] = true
+        end
+    end
+    psms[!, :mbr_recovered]          = mbr_recovered_full
+    psms[!, :MBR_transfer_candidate] = candidate_mask
+    psms[!, :ftr_qval_true]          = ftr_qval_full
+
+    # ── 7. Threshold for log: highest ftr_score on a top-half row with q ≤ α ──
+    τ = n_recovered > 0 ?
+        minimum(ftr_score_double[1:n_cand][recovered_in_cand]) :
+        Float32(Inf)
+
+    # ── 8. Recovered transfer composition ──
+    # Use library label + MBR_is_best_decoy-equivalent — donor polarity from
+    # the true-donor's target/decoy class. The dual-features file does not
+    # currently log donor target/decoy; infer from the precursor itself (T←T
+    # for targets, D←D for decoys, since the donor is the SAME precursor).
+    # T←D / D←T can only happen via the counterfactual, which is never used
+    # for recovery; here counts are simpler: T or D recoveries.
+    n_t_rec = count(i -> mbr_recovered_full[i] && target_col[i], 1:n)
+    n_d_rec = n_recovered - n_t_rec
+
+    @user_info "  doubled-frame rows: $(2*n_cand)  (top=real, bottom=fake)"
+    @user_info "  τ (FTR score, q ≤ α): $(round(τ, digits=4))"
+    @user_info "  RECOVERED (top-half q ≤ α): $n_recovered ($(round(100*n_recovered/max(n_cand,1), digits=2))% of candidates)"
+    @user_info "  recovered targets: $n_t_rec   recovered decoys: $n_d_rec"
+
+    if last_cls !== nothing
+        lgbm_model = LightGBMModel(last_cls, available_true, nothing)
+        imp = importance(lgbm_model)
+        if imp !== nothing
+            sorted_imp = sort(imp, by = x -> -x[2])
+            @user_info "  Batch F FTR-model feature importances (gain):"
+            for (fname, gain) in sorted_imp
+                @user_info "    $(rpad(string(fname), 36)) $(round(gain, digits=2))"
+            end
+        end
+    end
+
+    elapsed = time() - t0
+    @user_info "  apply_mbr_filter_paired! elapsed: $(round(elapsed, digits=2))s"
+
+    return (
+        n_candidates = n_cand,
+        threshold    = τ,
+        n_recovered  = n_recovered,
+        prob_thresh  = prob_thresh,
+        elapsed_s    = elapsed,
+    )
+end
