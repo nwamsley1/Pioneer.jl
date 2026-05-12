@@ -120,13 +120,16 @@ allocation, not per-scan.
 | Knob | Default | Override |
 |---|---|---|
 | Deconv solver | **PMM** | `PIONEER_DECONV_SOLVER=lasso\|alasso\|ols` |
-| Pair competition | **ON** | `PIONEER_PAIR_COMPETITION=0` to disable |
+| Per-file pair competition | **ON** (open question — see §7) | `PIONEER_PAIR_COMPETITION=0` to disable |
+| Per-file PEP filter (post-paircomp) | **ON at 0.9** | `PIONEER_MAIN_PEP_FILTER_THR=<float>` (≥1.0 disables) |
+| MainSearch global pair competition | OFF | `PIONEER_GLOBAL_PAIR_COMPETITION=1` |
+| ScoringSearch global pair competition | OFF | `PIONEER_SCORING_PAIR_COMPETITION=1` |
+| Global prescore filter (q≤0.015) | **OFF** (report-only) | `PIONEER_GLOBAL_PRESCORE_FILTER=1` to enforce |
 | 2-pass refinement | OFF | `PIONEER_TWO_PASS_QVAL=<frac>` / `PIONEER_TWO_PASS_PEP=<frac>` |
 | Keep zero weight | OFF | `PIONEER_KEEP_ZERO_WEIGHT=1` |
 | MS2 ppm floor | OFF (no-op in practice) | (env var removed; was `PIONEER_MS2_MIN_PPM`) |
 | iRT σ-tolerance multiplier | 3 | `PIONEER_IRT_SIGMA_TOL=4` (validated; tried but didn't lift) |
 | Max frag rank | 255 (no cap) | `PIONEER_MAX_FRAG_RANK=6` (top-6 only) |
-| Global prescore filter (q≤0.015) | **OFF** (report-only) | `PIONEER_GLOBAL_PRESCORE_FILTER=1` to enforce |
 
 ### MBR / FTR status (2026-05-11 audit)
 
@@ -145,46 +148,97 @@ MBR nor the FTR controller is wired into the live scoring path on this branch:
   `MBR_boosted_qval` and silently falls back to plain `prec_prob` since
   they're absent.
 
-### LightGBM hyperparameters (per-file MainSearch == experiment-wide PrecursorScoring)
+### LightGBM hyperparameters (split as of 2026-05-11)
 
-Both stages call the **same** `train_psm_classifier_with_fallback` helper, so
-they share `SHARED_LGBM_HP` (`src/Routines/SearchDIA/SearchMethods/MainSearch/scoring.jl:25`):
+Both stages call `train_psm_classifier_with_fallback`, but now with separate
+hyperparam constants (commit `e2e2194c`):
 
-```julia
-num_iterations    = 200
-learning_rate     = 0.10
-max_depth         = 8
-num_leaves        = 63
-min_data_in_leaf  = 300
-feature_fraction  = 0.8
-bagging_fraction  = 0.8
-bagging_freq      = 1
-max_bin           = 255
-lambda_l1         = 1.0
-lambda_l2         = 1.0
-is_unbalance      = false
-```
+| Stage | Const | num_iterations | learning_rate | lr_total |
+|---|---|---:|---:|---:|
+| MainSearch per-file | `SHARED_LGBM_HP` | 200 | 0.10 | 20 |
+| **PrecursorScoringSearch experiment-wide** | `SCORING_LGBM_HP` | **600** | **0.033** | ~20 |
 
-Plus `MAX_TRAIN = 250_000` (per-fold subsample cap), `LOW_DATA_THRESHOLD = 10_000`
-(below which the helper falls back to probit). The `LightGBMScorer` defaults in
-`src/utils/ML/PSMScoring/types.jl` (lr=.05, max_depth=10, bagging_fraction=.25,
-feature_fraction=.5) belong to the dead trait-based path and are **not** used.
+Other params identical: `max_depth=8, num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1, max_bin=255, lambda_l1=1.0, lambda_l2=1.0, is_unbalance=false`.
+Plus `MAX_TRAIN = 250_000` (per-fold subsample), `LOW_DATA_THRESHOLD = 10_000` (probit fallback). The
+`LightGBMScorer` defaults in `src/utils/ML/PSMScoring/types.jl` belong to the
+dead trait-based path and are **not** used.
 
 ### Diagnostic @user_info during tuning
 
 Promoted from `@debug_l2` so they're visible without verbose flags:
 
-- `MainSearch per-file LGBM top-15 feature gains:` — printed per file per fold.
+- `MainSearch per-file LGBM feature gains (all N):` — every feature gain, per file per fold (was top-15).
 - `[after best-per-precursor] (file_idx=N, name): N best-per-precursor PSMs;
   targets q≤.001=N q≤.01=N PEP≤.01=N PEP≤.05=N` — per file after LGBM.
-- `[after paircomp]` — same metrics, post pair-competition.
+- `[after paircomp]` — same metrics, post per-file pair-competition.
+- `PEP filter (file_idx=N, name): PEP > 0.9 drops N targets + N decoys (N → N)` — per file.
+- `[after PEP filter]` — same metric snapshot.
 - `Global prescore: N precursors pass q≤0.015 (N targets + N decoys)
   [report only, no filter | FILTER ENFORCED]` — once before PrecursorScoring.
-- `ScoringSearch experiment-wide LGBM top-20 feature gains:` — once at the
-  start of the PrecursorScoring stage.
+- `Global pair competition: N pairs found; dropped N targets + N decoys` — when `PIONEER_GLOBAL_PAIR_COMPETITION=1`.
+- `ScoringSearch global pair competition: N pairs both present in experiment-wide global_prob; dropped N targets + N decoys` — when `PIONEER_SCORING_PAIR_COMPETITION=1`.
+- `ScoringSearch experiment-wide LGBM feature gains (all N):` — all gains.
 
 Revert these to `@debug_l2` (or remove the `print_importances` knob) once
 the feature set and pipeline stabilize.
+
+---
+
+## 7. 23-file Olsen Exploris pair-competition A/B (2026-05-11)
+
+Full Olsen Exploris dataset (23 .arrow files at
+`/Users/nathanwamsley/Data/RegressionTestsLite/Olsen_3P_Exploris/`). Five
+paircomp variants tested, otherwise identical config (all features above
+active, global prescore filter OFF, PEP filter ON at 0.9, PMM solver).
+
+| Config | env vars | q≤.001 | Δ | q≤.01 | Δ | PGs q≤.01 | Δ |
+|---|---|---:|---:|---:|---:|---:|---:|
+| **nopc** | `PIONEER_PAIR_COMPETITION=0` | 958,554 | — | 1,083,790 | — | 141,336 | — |
+| **mainglobal** | `PIONEER_PAIR_COMPETITION=0`, `PIONEER_GLOBAL_PAIR_COMPETITION=1` | 973,245 | +14,691 | **1,101,047** | **+17,257** | **143,101** | **+1,765** |
+| **scoringglobal** | `PIONEER_PAIR_COMPETITION=0`, `PIONEER_SCORING_PAIR_COMPETITION=1` | **980,711** | **+22,157** | 1,086,874 | +3,084 | 142,764 | +1,428 |
+| **perfile** (current default) | (none — default) | 958,355 | −199 | 1,087,173 | +3,383 | 142,524 | +1,188 |
+| **both globals** | `PIONEER_PAIR_COMPETITION=0`, `PIONEER_GLOBAL_PAIR_COMPETITION=1`, `PIONEER_SCORING_PAIR_COMPETITION=1` | 973,965 | +15,411 | 1,101,278 | +17,488 | 143,134 | +1,798 |
+
+### Findings
+
+1. **Per-file paircomp (the current default) buys essentially nothing at q≤.001**
+   on 23 files — 958,355 vs 958,554 with no paircomp at all (−199 IDs). At q≤.01
+   it adds +3,383; ScoringSearch global adds nearly the same (+3,084) without
+   the per-file's q≤.001 cost. Conclusion: **per-file paircomp's default-ON is
+   likely the wrong choice**; either flip to default-OFF or document as
+   2-file-dataset-only.
+
+2. **ScoringSearch global wins at q≤.001 (+22,157)** — same-model comparison
+   (experiment-wide LGBM scored every precursor) makes the target/decoy
+   comparison apples-to-apples. Strictest cutoff benefits most from cleanest
+   comparison.
+
+3. **MainSearch global wins at q≤.01 and PGs (+17,257 / +1,765)** — even with
+   the unfair-model-comparison caveat (per-file LGBMs from different CV folds),
+   running paircomp *before* the experiment-wide LGBM gives that LGBM a cleaner
+   positive class to learn from, and that benefit accumulates downstream.
+
+4. **Combining both globals is marginal vs MainSearch global alone**:
+   - q≤.001: combined=973,965, scoringglobal alone=980,711 — combined is
+     **worse** than scoringglobal alone (-6,746). MainSearch first removes
+     pairs that would have been productive in ScoringSearch.
+   - q≤.01 & PGs: combined narrowly beats mainglobal alone (+231 / +33). Tiny.
+   - **Verdict**: don't combine. Pick one based on which cutoff matters more.
+
+### Recommendations
+
+- For high-confidence IDs (q≤.001-driven analyses):
+  `PIONEER_PAIR_COMPETITION=0 PIONEER_SCORING_PAIR_COMPETITION=1`
+- For PG-count-driven analyses:
+  `PIONEER_PAIR_COMPETITION=0 PIONEER_GLOBAL_PAIR_COMPETITION=1`
+- Avoid leaving per-file paircomp on as the sole strategy on multi-file
+  datasets; either disable or pair with one of the globals.
+
+Open: should the per-file paircomp default flip to OFF? It dominated on the
+2-file Olsen subset (pre-tuning baseline showed +1,131 at q≤.01) but pulls
+no weight at 23 files. Plausible explanation: per-file paircomp removes
+borderline targets that the experiment-wide LGBM could later have rescued
+via cross-file evidence.
 
 ---
 
@@ -254,4 +308,52 @@ count((df.global_qval .<= 0.01)  .& df.target)    # q≤.01
 
 pg = DataFrame(Arrow.Table("/path/to/results/protein_groups_long.arrow"))
 count((pg.global_qval .<= 0.01)  .& pg.target)    # PGs @ q≤.01
+```
+
+---
+
+## 8. Disk cleanup (2026-05-11 audit)
+
+72 `temp_data` folders accumulated across the two Olsen Exploris regression-
+test data directories totalling ~33 GB. Staged-delete script at
+`/tmp/cleanup_temp_data.sh` (dry-run default; set `DRY_RUN=0` to act).
+
+**Deletes** all per-experiment `temp_data` from these classes:
+- All `perfile_*` and `perfile_alasso_*`, `perfile_ols_*`, `perfile_pmm_*` etc.
+  (legacy per-file experiments pre-dating the per-method type refactor).
+- All `nonentrap_lasso_*` (LASSO worse than PMM, validated).
+- All `nonentrap_2pass_*`, `2pass_k1_keep_temp_results`,
+  `nonentrap_smoothness_2pass_qval25`, `nonentrap_pmm_smooth_paircomp_2pass`,
+  `nonentrap_best_2pass_pep90`, `nonentrap_keepzero_2pass_qval25`
+  (2-pass less helpful than paircomp, validated).
+- `nonentrap_ms1ppm_5/15/20` (MS1 ppm sweep — defaults validated).
+- `nonentrap_paircomp_minppm10` (MS2 ppm floor — was a no-op).
+- `irt4_keep_temp_results` (iRT σ=4 experiment — no lift).
+- `nonentrap_ms1frag_xcorr` (MS1↔fragment xcorr — reverted).
+- `nonentrap_typesplit` (per-method PSM type verification — bit-identical to
+  xcorr; purpose served).
+- `nonentrap_featimp` (today's importance dump — TSV already extracted).
+- `tune_run_01`, `tune_run_decoyiRT` (today's tuning template smoke tests).
+- `v066_hupo_diag_results`, `baseline_keep_temp_results`,
+  `newlib_baseline_keep_temp_results`, `deconv2x/3x_keep_temp_results`,
+  `nonentrap_keepzero`, `l1_smoke_results`
+  (old baselines / superseded experiments).
+- 23-file Olsen Exploris A/B `temp_data` (the `precursors_long.arrow` +
+  `protein_groups_long.arrow` files at each run root are tiny and stay —
+  those are the actual analysis outputs).
+
+**Kept** (4 reference baselines):
+- `nonentrap_baseline/temp_data` (228M)
+- `nonentrap_best/temp_data` (513M)
+- `nonentrap_best_smoothness/temp_data` (516M)
+- `nonentrap_pmm_paircomp/temp_data` (445M) — today's pre-refactor baseline.
+
+**Recovered**: ~24 GB from Olsen_3P_Exploris_one alone, plus ~5 GB from the
+23-file Olsen Exploris A/B temp_data, ~29 GB total.
+
+Run dry first:
+
+```bash
+DRY_RUN=1 bash /tmp/cleanup_temp_data.sh   # show what would be deleted
+DRY_RUN=0 bash /tmp/cleanup_temp_data.sh   # actually delete
 ```
