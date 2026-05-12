@@ -295,6 +295,52 @@ PG count recovered slightly with M+1 features (−483 vs no-features
 becomes −483+14 = nearly even). Still down from yesterday's baseline,
 but M+1 doesn't make the PG dip worse.
 
+### MTAC 3P Standard cross-dataset confirmation
+
+The MTAC 3P Standard dataset is 6 .arrow files of a different sample type
+(`Sample-A/B_Standard_5min_Rep1..3`) using the Astral library
+(`altimeter_3P_len7o40_ch2o3_mc1_OlsenAstral_mzsorted.poin`, different
+from the Exploris library used in the Olsen runs above). Baseline
+reference is the pre-existing `perfile_pep09_mbroff_results` (same
+config: per-file paircomp ON, PEP filter 0.9, MBR off).
+
+| MTAC 3P Standard | q≤.001 | q≤.01 | PGs |
+|---|---:|---:|---:|
+| Baseline (perfile_pep09_mbroff) | 388,206 | 463,976 | 55,958 |
+| **+ 17 features + M+1 fragments** | **440,912** | **519,838** | **60,437** |
+| **Δ** | **+52,706 (+13.6%)** | **+55,862 (+12.0%)** | **+4,479 (+8.0%)** |
+
+**Massive lift across all three metrics**, and notably **PG count went up
++4,479** — opposite of the Olsen Exploris result where PGs dipped slightly.
+
+Possible explanations for the dataset-dependent PG direction:
+1. MTAC has lower starting PG counts (~56k vs Olsen ~143k) so the new
+   features have more headroom to identify previously-unscored proteins.
+2. The Astral library differs from the Exploris library — different fragment
+   prediction quality interacts with our new features differently.
+3. MTAC sample type may have cleaner chromatographic peaks (5-min gradient,
+   alternating acquisition) where the per-fragment M0/M+1 correlation
+   features are more informative.
+
+Either way, **the new feature stack generalizes to a different sample
+type + different library + different acquisition** with a 12-14% ID lift.
+
+Per-file MainSearch q≤.01 after paircomp (M+1 features active):
+
+| File | q≤.001 | q≤.01 |
+|---|---:|---:|
+| Sample-A_Rep1 | 52,481 | 80,821 |
+| Sample-A_Rep2 | 52,824 | 79,247 |
+| Sample-A_Rep3 | 49,962 | 79,258 |
+| Sample-B_Rep1 | 55,088 | 84,352 |
+| Sample-B_Rep2 | 53,262 | 81,700 |
+| Sample-B_Rep3 | 52,829 | 83,056 |
+| **Sum** | **316,446** | **488,434** |
+
+The per-file MainSearch sum (488,434 q≤.01) is below the experiment-wide
+ScoringSearch total (519,838 q≤.01) — as expected, ScoringSearch recovers
+additional IDs via the second-stage LGBM + global aggregation.
+
 ### Things to refocus on in the morning
 
 1. **Check `tune_run_all23_m1frag` numbers** (run launched ~00:35). They
