@@ -76,12 +76,26 @@ MBR-caused false transfers.
 | MaxLFQ groups | 5,682 | 6,464 |
 
 Dennis FTR (corrected per Nathan 2026-05-12):
-- Numerator   = yeast in HelaOnly (B) − yeast in HelaOnly (A) = 1,280 − 874 = 406
-- Denominator = HelaOnly total (B) − HelaOnly total (A)       = 409,709 − 402,796 = 6,913
-- **Dennis FTR = 406 / 6,913 = 5.87%**
 
-i.e. of the 6,913 IDs MBR added to HelaOnly files (above the HelaOnly-
-alone baseline), 5.87% are yeast false transfers.
+| Level | Numerator | Denominator | Dennis FTR |
+|---|---:|---:|---:|
+| Row-level (file × pid) | 406 | 6,913 | **5.87%** |
+| Precursor-level (unique pids) | 174 | 1,381 | **12.60%** |
+
+Row-level: of 6,913 row-IDs MBR added to HelaOnly files (above the
+HelaOnly-alone baseline), 5.87% are yeast.
+
+Precursor-level: of 1,381 unique precursors newly identified in
+HelaOnly files in Run B (that weren't in Run A), 12.60% are yeast.
+
+Files-per-precursor for the added IDs:
+- All added precursors:      6,913 / 1,381 ≈ 5.0 files (good propagation)
+- Yeast false transfers:       406 /   174 ≈ 2.3 files (poor propagation)
+
+The 2× gap is itself a discriminating signal: real MBR rescues
+propagate to many HelaOnly files; false yeast transfers stick in
+fewer. Cross-file coverage in the recipient pool is a candidate FTR
+feature we're not yet using.
 
 This is **above** the α=0.01 (1%) FTR budget by ~6×. The α budget is
 honored for `is_bad_transfer = (T←D) | (D←T)` (cross-class transfers in
