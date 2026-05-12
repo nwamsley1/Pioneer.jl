@@ -45,6 +45,124 @@ end
     @test !hasproperty(psms, :max_n_consecutive_scans)
 end
 
+@testset "MainSearch best scan selection restores apex summary features" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[1, 1, 1],
+        lgbm_score = Float32[0.3, 0.9, 0.2],
+        weight = Float32[1, 4, 1],
+        rt = Float32[0, 1, 2],
+        irt_obs = Float32[0, 1, 2],
+        gof = Float16[2, 5, 3],
+        fitted_manhattan_distance = Float16[1, 7, 4],
+        fitted_spectral_contrast = Float16[0.1, 0.8, 0.5],
+        matched_ratio = Float16[0.2, 0.4, 0.9],
+        scribe = Float16[1, 6, 3],
+        y_count = UInt8[2, 5, 3],
+    )
+
+    selected = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
+
+    @test nrow(selected) == 1
+    @test !hasproperty(selected, :num_scans)
+    @test selected.max_weight == Float32[4]
+    @test selected.max_gof == Float16[5]
+    @test selected.max_fitted_manhattan_distance == Float16[7]
+    @test selected.max_fitted_spectral_contrast == Float16[0.8]
+    @test selected.max_matched_ratio == Float16[0.9]
+    @test selected.max_scribe == Float16[6]
+    @test selected.y_ions_sum == UInt16[10]
+    @test selected.max_y_ions == UInt16[5]
+    @test isfinite(selected.smoothness[1])
+    @test selected.smoothness[1] > 0
+end
+
+@testset "MainSearch feature aliases avoid duplicate old names" begin
+    @test :best_rank in fieldnames(Pioneer.MainSearchScoredPSM)
+    @test :best_rank_iso in fieldnames(Pioneer.MainSearchScoredPSM)
+    @test :topn in fieldnames(Pioneer.MainSearchScoredPSM)
+    @test :topn_iso in fieldnames(Pioneer.MainSearchScoredPSM)
+    @test :spectral_contrast in fieldnames(Pioneer.MainSearchScoredPSM)
+    @test :fitted_spectral_contrast in fieldnames(Pioneer.MainSearchScoredPSM)
+    @test :matched_ratio in fieldnames(Pioneer.MainSearchScoredPSM)
+    @test :total_ions_iso in Pioneer.ADVANCED_FEATURE_SET
+    @test !(:isotope_count in Pioneer.ADVANCED_FEATURE_SET)
+    @test :n_scans in Pioneer.ADVANCED_FEATURE_SET
+    @test !(:num_scans in Pioneer.ADVANCED_FEATURE_SET)
+end
+
+@testset "MainSearch MS1 feature handoff schema" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[1, 2],
+        rt = Float32[10.0, 12.0],
+        irt_obs = Float32[100.0, 120.0],
+    )
+    ms1_psms = DataFrame(
+        precursor_idx = UInt32[1],
+        m0 = Bool[true],
+        n_iso = UInt8[3],
+        big_iso = UInt8[3],
+        m0_error = Float16[0.5],
+        error = Float16[1.5],
+        spectral_contrast = Float16[0.9],
+        fitted_spectral_contrast = Float16[0.8],
+        gof = Float16[4.0],
+        max_matched_residual = Float16[5.0],
+        max_unmatched_residual = Float16[0.0],
+        fitted_manhattan_distance = Float16[3.0],
+        matched_ratio = Float16[2.0],
+        weight = Float32[100.0],
+        ms_file_idx = UInt32[1],
+        scan_idx = UInt32[7],
+        rt = Float32[10.25],
+        rt_max_intensity = Float32[10.5],
+        rt_diff_max_intensity = Float32[0.5],
+        pair_idx = UInt32[42],
+    )
+
+    Pioneer._join_ms1_features!(psms, ms1_psms, x -> Float32(10x))
+
+    @test psms.ms1_features_missing == Bool[false, true]
+    @test psms.n_iso_ms1 == UInt8[3, 0]
+    @test psms.big_iso_ms1 == UInt8[3, 0]
+    @test psms.error_ms1 == Float16[1.5, -1.0]
+    @test psms.rt_ms1 == Float32[10.25, -1.0]
+    @test psms.ms1_ms2_rt_diff == Float32[2.5, -1.0]
+    @test hasproperty(psms, :weight_ms1)
+    @test all(f -> hasproperty(psms, f), filter(f -> occursin("ms1", String(f)), Pioneer.ADVANCED_FEATURE_SET))
+end
+
+@testset "MainSearch MS1 isotope scan scoring" begin
+    isotopes = Pioneer.Isotope{Float32}[
+        Pioneer.Isotope(500.0f0, 0.8f0, UInt8(1), UInt32(1)),
+        Pioneer.Isotope(500.5017f0, 0.2f0, UInt8(2), UInt32(1)),
+        Pioneer.Isotope(501.0034f0, 0.05f0, UInt8(3), UInt32(1)),
+    ]
+    scan_mz = Union{Missing, Float32}[500.0001f0, 500.5016f0, 700.0f0]
+    scan_int = Union{Missing, Float32}[800.0f0, 200.0f0, 10.0f0]
+    corrected = Float32[]
+    obs_low = Float32[]
+    obs_high = Float32[]
+
+    score = Pioneer._score_ms1_candidate_scan(
+        isotopes,
+        scan_mz,
+        scan_int,
+        Pioneer.MassErrorModel(0.0f0, (20.0f0, 20.0f0)),
+        corrected,
+        obs_low,
+        obs_high,
+    )
+
+    @test score.has_features
+    @test score.m0
+    @test score.n_iso == UInt8(2)
+    @test score.big_iso == UInt8(2)
+    @test score.weight > 900.0f0
+    @test abs(score.m0_error) < Float16(1.0)
+    @test isfinite(score.gof)
+    @test isfinite(score.fitted_spectral_contrast)
+end
+
 @testset "MainSearch semi-supervised LightGBM smoke" begin
     n = 80
     target = Bool[i % 4 != 0 for i in 1:n]

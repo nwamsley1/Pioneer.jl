@@ -46,6 +46,10 @@ end
 
 struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     #Ion Count Statistics
+    best_rank::UInt8
+    best_rank_iso::UInt8
+    topn::UInt8
+    topn_iso::UInt8
     longest_y::UInt8
     b_count::UInt8
     y_count::UInt8
@@ -67,6 +71,9 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     weight::H
 
     fitted_hellinger::L
+    spectral_contrast::L
+    fitted_spectral_contrast::L
+    matched_ratio::L
 
     #Non-scores/Labels
     precursor_idx::UInt32
@@ -118,6 +125,10 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
         total_ions_iso = Int64(unscored_PSMs[i].isotope_count)
 
         scored_psms[start_idx + i - skipped] = MainSearchScoredPSM(
+            unscored_PSMs[i].best_rank,
+            unscored_PSMs[i].best_rank_iso,
+            unscored_PSMs[i].topn,
+            unscored_PSMs[i].topn_iso,
             unscored_PSMs[i].longest_y,
             unscored_PSMs[i].b_count,
             unscored_PSMs[i].y_count,
@@ -136,6 +147,9 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             weight[scores_idx],
 
             spectral_scores[scores_idx].fitted_hellinger,
+            spectral_scores[scores_idx].spectral_contrast,
+            spectral_scores[scores_idx].fitted_spectral_contrast,
+            spectral_scores[scores_idx].matched_ratio,
 
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(ms_file_idx),

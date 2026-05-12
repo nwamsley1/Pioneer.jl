@@ -294,6 +294,7 @@ function importScripts()
         "types.jl",                      # MainSearchParameters (no deps)
         "deconvolution.jl",              # deconvolve_spectra, deconvolve_scans! (thin wrapper)
         "features.jl",                   # prepare_psm_features!, add_features! (uses types)
+        "ms1_features.jl",               # restored MS1 isotope features for final scoring
         "scoring.jl",                    # train_lgbm_and_select_best (uses features)
         "utils.jl",                      # recalibrate_rt!
         "MainSearch.jl"                  # struct + interface (uses everything above)

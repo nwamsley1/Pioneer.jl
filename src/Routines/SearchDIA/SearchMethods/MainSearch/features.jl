@@ -101,6 +101,7 @@ function add_features!(psms::DataFrame,
     spectrum_peak_count = zeros(Float16, N);
     Mox = zeros(UInt8, N);
     sequence_length = zeros(UInt8, N);
+    TIC = zeros(Float16, N);
 
     # Columns only needed for Phase 2 (full feature set)
     if !prescore_only
@@ -110,7 +111,6 @@ function add_features!(psms::DataFrame,
         adjusted_intensity_explained = zeros(Float16, N);
         prec_charges = zeros(UInt8, N)
         prec_mzs = zeros(Float32, N);
-        TIC = zeros(Float16, N);
     end
 
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx]
@@ -146,11 +146,11 @@ function add_features!(psms::DataFrame,
             Mox[i] = _mox_vals[prec_idx]
             spectrum_peak_count[i] = length(masses[scan_idx[i]])
             sequence_length[i] = prec_length[prec_idx]
+            TIC[i] = Float16(log2(max(tic[scan_idx[i]], Float32(1e-20))))
 
             if !prescore_only
                 entrap_group_id[i] = entrap_group_ids[prec_idx]
                 irt_diff[i] = abs(irt_obs[i] - prec_irt[prec_idx])
-                TIC[i] = Float16(log2(tic[scan_idx[i]]))
                 adjusted_intensity_explained[i] = Float16(log2(TIC[i]) + log2_intensity_explained[i]);
                 prec_charges[i] = prec_charge[prec_idx]
                 pair_idxs[i] = extract_pair_idx(precursor_pair_idxs, prec_idx)
@@ -166,10 +166,10 @@ function add_features!(psms::DataFrame,
     psms[!,:Mox] = Mox
     psms[!,:spectrum_peak_count] = spectrum_peak_count
     psms[!,:sequence_length] = sequence_length
+    psms[!,:tic] = TIC
 
     if !prescore_only
         psms[!,:irt_diff] = irt_diff
-        psms[!,:tic] = TIC
         psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
         psms[!,:charge] = prec_charges
         psms[!,:pair_id] = pair_idxs
@@ -203,7 +203,7 @@ const LGBM_RECOVERY_FEATURES = [
     # Scores / weights
     :scribe, :weight, :log2_intensity_explained,
     # Ion counts
-    :y_count, :b_count, :isotope_count, :total_ions, :total_ions_iso,
+    :y_count, :b_count, :total_ions, :total_ions_iso,
     # RT
     :irt_error, :irt_diff,
     # Peptide properties

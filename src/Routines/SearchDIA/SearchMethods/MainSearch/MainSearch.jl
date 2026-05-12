@@ -172,6 +172,11 @@ function process_search_results!(
     best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     t_phase2 = time()
 
+    # Restore the MS1 isotope evidence columns consumed by the final
+    # experiment-wide scorer.
+    add_ms1_features!(best_psms, search_context, ms_file_idx, spectra)
+    t_ms1 = time()
+
     # Drop vector columns that can't be serialized to Arrow
     dropVectorColumns!(best_psms)
 
@@ -189,7 +194,7 @@ function process_search_results!(
     r = s -> round(s, digits=2)
     @debug_l1 "MainSearch scoring: $file_name — $(n_total_psms) PSMs → $(nrow(best_psms)) precursors " *
                "(feat=$(r(t_features-t_start))s, lgbm=$(r(lgbm_timings.train_cv))s, recal=$(r(t_recal-t_lgbm))s, " *
-               "phase2=$(r(t_phase2-t_recal))s, write=$(r(t_write-t_phase2))s, total=$(r(t_total))s)"
+               "phase2=$(r(t_phase2-t_recal))s, ms1=$(r(t_ms1-t_phase2))s, write=$(r(t_write-t_ms1))s, total=$(r(t_total))s)"
 
     return nothing
 end

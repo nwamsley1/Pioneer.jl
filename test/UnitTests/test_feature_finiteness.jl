@@ -93,6 +93,9 @@ end
                       Float32[1.0],   # nzval (theoretical)
                       Float32[1.0],   # x (observed)
                       Bool[true])
+    @test :spectral_contrast in fieldnames(typeof(s))
+    @test :fitted_spectral_contrast in fieldnames(typeof(s))
+    @test :matched_ratio in fieldnames(typeof(s))
     @test isfinite(s.gof)
     @test isfinite(s.max_matched_residual)
     @test isfinite(s.max_unmatched_residual)
@@ -163,6 +166,18 @@ end
     expected_scribe = Float16(-log2(((1/3 - 1/4)^2 + (2/3 - 3/4)^2) / 2))
     @test s.scribe ≈ expected_scribe rtol=Float16(1e-3)
     @test :scribe in Pioneer.PRESCORE_FEATURES
+
+    # Case F3 — an over-interfered theoretical peak should be removable by
+    # the spectral-contrast/scribe calculation, yielding a nonzero ignored
+    # theoretical signal fraction rather than the old all-zero placeholder.
+    s = _score_single(1.0f0,
+                      Float32[1.0, 1.0, 10.0, 1.0],
+                      Float32[1.0, 1.0, 100.0, 1.0],
+                      Bool[true, true, true, true])
+    @test s.percent_theoretical_ignored > zero(Float16)
+    @test isfinite(s.spectral_contrast)
+    @test isfinite(s.fitted_spectral_contrast)
+    @test isfinite(s.matched_ratio)
 
     # Case G — random stress, 200 trials with arbitrary intensities and
     # match flags. Floors must hold for every shape of input.

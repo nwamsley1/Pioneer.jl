@@ -530,7 +530,7 @@ function train_psm_classifier_with_fallback(
         n_lgbm   = _fold_oof_psms_at_1pct(targets_col[idx0], lgbm_scores[1])   + _fold_oof_psms_at_1pct(targets_col[idx1], lgbm_scores[2])
         n_probit = _fold_oof_psms_at_1pct(targets_col[idx0], probit_scores[1]) + _fold_oof_psms_at_1pct(targets_col[idx1], probit_scores[2])
         winner = n_lgbm >= n_probit ? "lgbm" : "probit"
-        @debug_l1 "  Low-data CV selection (min fold=$min_fold_size < $LOW_DATA_THRESHOLD): lgbm=$n_lgbm probit=$n_probit → $winner"
+        @debug_l1 "  Low-data CV selection (min fold=$min_fold_size < $LOW_DATA_THRESHOLD): lgbm=$n_lgbm probit=$n_probit -> $winner"
         chosen = n_lgbm >= n_probit ? lgbm_scores : probit_scores
         all_scores[idx0] .= chosen[1]
         all_scores[idx1] .= chosen[2]
@@ -833,13 +833,54 @@ function train_lgbm_and_select_best(
     return psms, Vector{Float32}(scores), timings
 end
 
+@inline function _safe_mainsearch_slope(delta_weight::Float32, delta_rt::Float32)
+    return delta_rt == 0f0 ? 0f0 : delta_weight / delta_rt
+end
+
+function _mainsearch_group_smoothness(
+    rows::AbstractVector{Int},
+    n_rows::Int,
+    weights::AbstractVector{Float32},
+    rt_vals::AbstractVector{Float32},
+    max_weight::Float32,
+)
+    max_weight <= 0f0 && return 0f0
+    smoothness = 0f0
+    @inbounds for pos in 1:n_rows
+        row = rows[pos]
+        w = weights[row]
+        curvature = if n_rows == 1
+            -2f0 * w
+        elseif pos == 1
+            next_row = rows[pos + 1]
+            dt = rt_vals[next_row] - rt_vals[row]
+            _safe_mainsearch_slope(weights[next_row] - w, dt) +
+                _safe_mainsearch_slope(-w, dt)
+        elseif pos == n_rows
+            prev_row = rows[pos - 1]
+            dt = rt_vals[row] - rt_vals[prev_row]
+            _safe_mainsearch_slope(weights[prev_row] - w, dt) +
+                _safe_mainsearch_slope(-w, dt)
+        else
+            prev_row = rows[pos - 1]
+            next_row = rows[pos + 1]
+            _safe_mainsearch_slope(weights[prev_row] - w, rt_vals[row] - rt_vals[prev_row]) +
+                _safe_mainsearch_slope(weights[next_row] - w, rt_vals[next_row] - rt_vals[row])
+        end
+        term = (curvature / max_weight)^2
+        isfinite(term) && (smoothness += term)
+    end
+    return smoothness
+end
+
 """
     select_best_per_precursor!(psms::DataFrame, score_col::Symbol) -> DataFrame
 
 Keeps one row per precursor_idx. Uses sortperm for contiguous group processing:
 per group, selects the highest-weight PSM among those with score ≥ p75 (if ≥4 PSMs),
 otherwise the highest-score PSM. Computes `irt_fwhm` (iRT span of scans with
-weight ≥ 50% of peak weight), `n_above_hm`, `rt_fwhm`, and `best_rt` per precursor.
+weight ≥ 50% of peak weight), `n_above_hm`, `rt_fwhm`, `best_rt`, and restored
+apex-window summary features per precursor.
 """
 function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     scores = psms[!, score_col]::Vector{Float32}
@@ -847,9 +888,17 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     has_irt = hasproperty(psms, :irt_obs)
     has_weight = hasproperty(psms, :weight)
     has_rt = hasproperty(psms, :rt)
+    has_summary = has_weight && has_rt
     irt_obs = has_irt ? psms[!, :irt_obs]::Vector{Float32} : nothing
     rt_vals = has_rt ? psms[!, :rt]::Vector{Float32} : nothing
     weights = (has_irt && has_weight) ? psms[!, :weight]::Vector{Float32} : nothing
+    summary_weights = has_weight ? psms[!, :weight]::Vector{Float32} : nothing
+    gof_vals = hasproperty(psms, :gof) ? psms[!, :gof] : nothing
+    fmd_vals = hasproperty(psms, :fitted_manhattan_distance) ? psms[!, :fitted_manhattan_distance] : nothing
+    fsc_vals = hasproperty(psms, :fitted_spectral_contrast) ? psms[!, :fitted_spectral_contrast] : nothing
+    matched_ratio_vals = hasproperty(psms, :matched_ratio) ? psms[!, :matched_ratio] : nothing
+    scribe_vals = hasproperty(psms, :scribe) ? psms[!, :scribe] : nothing
+    y_count_vals = hasproperty(psms, :y_count) ? psms[!, :y_count] : nothing
     n = nrow(psms)
 
     # sortperm groups PSMs by precursor_idx for contiguous processing
@@ -865,6 +914,15 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     out_n_above_hm = compute_fwhm ? Vector{UInt16}() : nothing
     out_rt_fwhm = (compute_fwhm && compute_rt) ? Vector{Float32}() : nothing
     out_best_rt = compute_rt ? Vector{Float32}() : nothing
+    out_max_weight = has_summary ? Vector{Float32}() : nothing
+    out_smoothness = has_summary ? Vector{Float32}() : nothing
+    out_max_gof = gof_vals !== nothing ? Vector{Float16}() : nothing
+    out_max_fmd = fmd_vals !== nothing ? Vector{Float16}() : nothing
+    out_max_fsc = fsc_vals !== nothing ? Vector{Float16}() : nothing
+    out_max_matched_ratio = matched_ratio_vals !== nothing ? Vector{Float16}() : nothing
+    out_max_scribe = scribe_vals !== nothing ? Vector{Float16}() : nothing
+    out_y_ions_sum = y_count_vals !== nothing ? Vector{UInt16}() : nothing
+    out_max_y_ions = y_count_vals !== nothing ? Vector{UInt16}() : nothing
 
     if compute_fwhm
         sizehint!(out_irt_fwhm, n ÷ 10)
@@ -876,9 +934,16 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     if out_best_rt !== nothing
         sizehint!(out_best_rt, n ÷ 10)
     end
+    for out in (
+        out_max_weight, out_smoothness, out_max_gof, out_max_fmd, out_max_fsc,
+        out_max_matched_ratio, out_max_scribe, out_y_ions_sum, out_max_y_ions,
+    )
+        out === nothing || sizehint!(out, n ÷ 10)
+    end
 
     # Reusable buffer for p75 score computation (avoids per-group allocation)
     p75_buf = Vector{Float32}(undef, 128)
+    row_buf = Vector{Int}(undef, 128)
 
     # Single pass: process each precursor group contiguously
     gi = 1
@@ -889,6 +954,12 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
             gi += 1
         end
         group_len = gi - group_start
+        if length(row_buf) < group_len
+            resize!(row_buf, group_len)
+        end
+        @inbounds for k in 0:(group_len - 1)
+            row_buf[k + 1] = perm[group_start + k]
+        end
 
         # --- Sub-pass 1: find max_weight and best-score row ---
         best_s = typemin(Float32)
@@ -969,6 +1040,75 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
         if out_best_rt !== nothing
             push!(out_best_rt, rt_vals[best_row])
         end
+
+        if has_summary
+            rows_view = view(row_buf, 1:group_len)
+            sort!(rows_view, by = row -> rt_vals[row])
+            apex_pos = 1
+            max_weight = typemin(Float32)
+            @inbounds for pos in 1:group_len
+                row = row_buf[pos]
+                w = summary_weights[row]
+                if w > max_weight
+                    max_weight = w
+                    apex_pos = pos
+                end
+            end
+            window_start = max(1, apex_pos - 2)
+            window_stop = min(group_len, apex_pos + 2)
+
+            push!(out_max_weight, max_weight)
+            push!(out_smoothness, _mainsearch_group_smoothness(
+                rows_view, group_len, summary_weights, rt_vals, max_weight
+            ))
+
+            if out_max_gof !== nothing
+                max_val = typemin(Float32)
+                @inbounds for pos in window_start:window_stop
+                    max_val = max(max_val, Float32(gof_vals[row_buf[pos]]))
+                end
+                push!(out_max_gof, Float16(max_val))
+            end
+            if out_max_fmd !== nothing
+                max_val = typemin(Float32)
+                @inbounds for pos in window_start:window_stop
+                    max_val = max(max_val, Float32(fmd_vals[row_buf[pos]]))
+                end
+                push!(out_max_fmd, Float16(max_val))
+            end
+            if out_max_fsc !== nothing
+                max_val = typemin(Float32)
+                @inbounds for pos in window_start:window_stop
+                    max_val = max(max_val, Float32(fsc_vals[row_buf[pos]]))
+                end
+                push!(out_max_fsc, Float16(max_val))
+            end
+            if out_max_matched_ratio !== nothing
+                max_val = typemin(Float32)
+                @inbounds for pos in window_start:window_stop
+                    max_val = max(max_val, Float32(matched_ratio_vals[row_buf[pos]]))
+                end
+                push!(out_max_matched_ratio, Float16(max_val))
+            end
+            if out_max_scribe !== nothing
+                max_val = typemin(Float32)
+                @inbounds for pos in window_start:window_stop
+                    max_val = max(max_val, Float32(scribe_vals[row_buf[pos]]))
+                end
+                push!(out_max_scribe, Float16(max_val))
+            end
+            if out_y_ions_sum !== nothing
+                y_sum = UInt32(0)
+                max_y = UInt16(0)
+                @inbounds for pos in window_start:window_stop
+                    y = UInt16(y_count_vals[row_buf[pos]])
+                    y_sum += UInt32(y)
+                    max_y = max(max_y, y)
+                end
+                push!(out_y_ions_sum, UInt16(min(y_sum, UInt32(typemax(UInt16)))))
+                push!(out_max_y_ions, max_y)
+            end
+        end
     end  # while gi <= n
 
     # Build result from selected rows
@@ -984,6 +1124,19 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     end
     if out_best_rt !== nothing
         result[!, :best_rt] = out_best_rt
+    end
+    if out_max_weight !== nothing
+        result[!, :max_weight] = out_max_weight
+        result[!, :smoothness] = out_smoothness
+    end
+    out_max_gof !== nothing && (result[!, :max_gof] = out_max_gof)
+    out_max_fmd !== nothing && (result[!, :max_fitted_manhattan_distance] = out_max_fmd)
+    out_max_fsc !== nothing && (result[!, :max_fitted_spectral_contrast] = out_max_fsc)
+    out_max_matched_ratio !== nothing && (result[!, :max_matched_ratio] = out_max_matched_ratio)
+    out_max_scribe !== nothing && (result[!, :max_scribe] = out_max_scribe)
+    if out_y_ions_sum !== nothing
+        result[!, :y_ions_sum] = out_y_ions_sum
+        result[!, :max_y_ions] = out_max_y_ions
     end
 
     return result

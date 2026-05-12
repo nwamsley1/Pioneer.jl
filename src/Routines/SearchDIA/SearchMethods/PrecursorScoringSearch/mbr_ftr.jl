@@ -43,7 +43,7 @@ const FTR_FEATURES = Symbol[
     :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
     :irt_pred, :irt_error, :irt_diff,
     :max_y_ions, :y_ions_sum, :longest_y, :y_count, :b_count,
-    :isotope_count, :total_ions,
+    :total_ions, :total_ions_iso,
     :best_rank, :best_rank_iso, :topn, :topn_iso,
     :gof, :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
     :max_matched_residual, :max_unmatched_residual, :max_gof,
