@@ -260,8 +260,7 @@ const PRESCORE_FEATURES = [
     :frag_corr_m0_m1_top1, :frag_corr_m0_m1_top2, :frag_corr_m0_m1_top3,
     :frag_corr_m0_m1_mean,
     :n_correlated_m0_m1_fragments, :n_correlated_m0_m1_fragments_50,
-    :frag_corr_mean_pairwise_spearman, :frag_corr_top1_weight_spearman,
-    :frag_corr_m0_m1_mean_spearman,
+    :frag_corr_mean_pairwise_spearman,
 ]
 
 """
@@ -579,12 +578,13 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     psms[!, :frag_corr_m0_m1_mean]      = zeros(Float32, n)
     psms[!, :n_correlated_m0_m1_fragments]    = zeros(UInt8, n)  # threshold 0.7
     psms[!, :n_correlated_m0_m1_fragments_50] = zeros(UInt8, n)  # threshold 0.5
-    # Spearman variants of the highest-gain Pearson correlations. Robust to
-    # outlier scans; the rank transform also strips out the linear-scale
-    # assumption that Pearson makes.
+    # Spearman variant of frag_corr_mean_pairwise. 2-file Olsen A/B showed
+    # Spearman beats Pearson here (~2467 vs 2183 mean gain) because averaging
+    # 15 fragment-pair correlations + rank transform absorbs outlier scans.
+    # The Spearman variants of `top1_weight` and `m0_m1_mean` were tested but
+    # LOST to Pearson (intensity scale matters for single-pair comparisons),
+    # so we keep only the mean_pairwise version.
     psms[!, :frag_corr_mean_pairwise_spearman] = zeros(Float32, n)
-    psms[!, :frag_corr_top1_weight_spearman]   = zeros(Float32, n)
-    psms[!, :frag_corr_m0_m1_mean_spearman]    = zeros(Float32, n)
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -690,14 +690,14 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
         mean_pairwise = pair_count > 0 ? pair_sum / pair_count : 0f0
         min_pairwise  = any_pair ? pair_min : 0f0
 
-        # Spearman variants. Recompute mean-pairwise + top1-weight on ranks.
+        # Spearman variant of mean_pairwise (only — top1_weight + m0_m1_mean
+        # Spearman variants lost to Pearson in A/B; see commit 81d68d8b notes).
         pair_sum_sp = 0f0; pair_count_sp = 0
         for r1 in 1:6, r2 in (r1+1):6
             (has_signal[r1] && has_signal[r2]) || continue
             pair_sum_sp += _scor(F[r1], F[r2]); pair_count_sp += 1
         end
         mean_pairwise_sp = pair_count_sp > 0 ? pair_sum_sp / pair_count_sp : 0f0
-        c_top1_weight_sp = has_signal[1] ? _scor(F[1], W) : 0f0
 
         c_top1_top2  = (has_signal[1] && has_signal[2]) ? _pcor(F[1], F[2]) : 0f0
         c_top1_top3  = (has_signal[1] && has_signal[3]) ? _pcor(F[1], F[3]) : 0f0
@@ -775,7 +775,6 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
         # Per-fragment M0/M+1 correlations: for each rank with both M0 and M+1
         # signal, compute Pearson(M0_chrom, M+1_chrom). Real precursors: ≈ 1.
         c_m0m1_perrank = (0f0, 0f0, 0f0, 0f0, 0f0, 0f0)
-        c_m0m1_mean_sp = 0f0
         if has_m1
             FM1 = Vector{Vector{Float32}}(undef, 6)
             for r in 1:6
@@ -790,13 +789,6 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             c5 = has_signal[5] && maximum(FM1[5]) > 0 ? _pcor(F[5], FM1[5]) : 0f0
             c6 = has_signal[6] && maximum(FM1[6]) > 0 ? _pcor(F[6], FM1[6]) : 0f0
             c_m0m1_perrank = (c1, c2, c3, c4, c5, c6)
-            # Spearman variant of the mean
-            sp_sum = 0f0; sp_n = 0
-            for r in 1:6
-                (has_signal[r] && maximum(FM1[r]) > 0) || continue
-                sp_sum += _scor(F[r], FM1[r]); sp_n += 1
-            end
-            c_m0m1_mean_sp = sp_n > 0 ? sp_sum / sp_n : 0f0
         end
         # Aggregate stats over the 6 per-rank M0/M+1 correlations
         c_m0m1_sum = 0f0; c_m0m1_n = 0
@@ -836,8 +828,6 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             psms.n_correlated_m0_m1_fragments[i]    = n_corr_m0m1
             psms.n_correlated_m0_m1_fragments_50[i] = n_corr_m0m1_50
             psms.frag_corr_mean_pairwise_spearman[i] = mean_pairwise_sp
-            psms.frag_corr_top1_weight_spearman[i]   = c_top1_weight_sp
-            psms.frag_corr_m0_m1_mean_spearman[i]    = c_m0m1_mean_sp
         end
     end
     return

@@ -114,8 +114,7 @@ const ADVANCED_FEATURE_SET = [
     :frag_corr_m0_m1_top1, :frag_corr_m0_m1_top2, :frag_corr_m0_m1_top3,
     :frag_corr_m0_m1_mean,
     :n_correlated_m0_m1_fragments, :n_correlated_m0_m1_fragments_50,
-    :frag_corr_mean_pairwise_spearman, :frag_corr_top1_weight_spearman,
-    :frag_corr_m0_m1_mean_spearman,
+    :frag_corr_mean_pairwise_spearman,
 
     :max_weight,                      # populated by select_best_per_precursor!
     :fitted_hellinger,
