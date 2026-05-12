@@ -92,14 +92,23 @@ const ADVANCED_FEATURE_SET = [
 
     # MS1 point-lookup + chromatogram features.
     :ms1_m0_intensity, :ms1_m1_intensity, :ms1_m0_mass_err_ppm,
-    :ms1_corr_weight_m0, :ms1_corr_m0_m1,
+    :ms1_corr_weight_m0, :ms1_corr_m0_m1, :ms1_corr_weight_m1,
     :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
+    # Isotope envelope features (2026-05-11)
+    :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred, :ms1_envelope_dev_log2,
+    # Sequence composition
+    :his_count, :pro_count, :lys_count, :arg_count,
+    # Cross-precursor competition
+    :weight_ratio_to_2nd_best, :weight_ratio_to_3rd_best, :n_competitors_50pct,
 
     # Per-rank MS2-fragment intensities + per-precursor chromatogram features.
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
     :frag_corr_top1_top2, :frag_corr_top1_top3, :frag_corr_top1_weight,
     :frag_corr_mean_pairwise, :frag_corr_min_pairwise, :frag_corr_top3_weight,
+    :frag_corr_top5_weight,
     :frag_apex_dispersion_irt, :n_correlated_fragments,
+    :n_correlated_fragments_50, :n_correlated_fragments_90,
+    :frag_corr_best_weight, :frag_corr_best_m0,
 
     :max_weight,                      # populated by select_best_per_precursor!
     :fitted_hellinger,

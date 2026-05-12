@@ -84,6 +84,7 @@ function add_features!(psms::DataFrame,
 
     precursors_lib = getPrecursors(getSpecLib(search_context))
     structural_mods = getStructuralMods(precursors_lib)
+    prec_sequence = getSequence(precursors_lib)
     prec_mz = getMz(precursors_lib)
     prec_irt = getIrt(precursors_lib)
     prec_charge = getCharge(precursors_lib)
@@ -101,6 +102,12 @@ function add_features!(psms::DataFrame,
     spectrum_peak_count = zeros(Float16, N);
     Mox = zeros(UInt8, N);
     sequence_length = zeros(UInt8, N);
+    # Sequence composition counts. Histidine + proline known to influence
+    # ionization/fragmentation behavior. Lazy-populated like Mox.
+    his_count = zeros(UInt8, N)
+    pro_count = zeros(UInt8, N)
+    lys_count = zeros(UInt8, N)
+    arg_count = zeros(UInt8, N)
 
     # Columns only needed for Phase 2 (full feature set)
     if !prescore_only
@@ -126,10 +133,23 @@ function add_features!(psms::DataFrame,
         return zero(UInt8)
     end
 
-    # Lazy-populate Mox cache: Vector-backed for O(1) lookup, computed on first access per precursor
+    function _count_aa(seq::AbstractString, aa::Char)
+        c = 0
+        for ch in seq
+            if ch == aa; c += 1; end
+        end
+        return UInt8(min(c, 255))
+    end
+
+    # Lazy-populate per-precursor caches: Vector-backed for O(1) lookup.
     n_lib = length(prec_irt)
     _mox_vals = Vector{UInt8}(undef, n_lib)
     _mox_computed = falses(n_lib)
+    _his_vals = Vector{UInt8}(undef, n_lib)
+    _pro_vals = Vector{UInt8}(undef, n_lib)
+    _lys_vals = Vector{UInt8}(undef, n_lib)
+    _arg_vals = Vector{UInt8}(undef, n_lib)
+    _aa_computed = falses(n_lib)
 
     parallel_foreach!(size(psms, 1)) do chunk
         for i in chunk
@@ -144,6 +164,18 @@ function add_features!(psms::DataFrame,
                 _mox_computed[prec_idx] = true
             end
             Mox[i] = _mox_vals[prec_idx]
+            if !_aa_computed[prec_idx]
+                seq = prec_sequence[prec_idx]
+                _his_vals[prec_idx] = _count_aa(seq, 'H')
+                _pro_vals[prec_idx] = _count_aa(seq, 'P')
+                _lys_vals[prec_idx] = _count_aa(seq, 'K')
+                _arg_vals[prec_idx] = _count_aa(seq, 'R')
+                _aa_computed[prec_idx] = true
+            end
+            his_count[i] = _his_vals[prec_idx]
+            pro_count[i] = _pro_vals[prec_idx]
+            lys_count[i] = _lys_vals[prec_idx]
+            arg_count[i] = _arg_vals[prec_idx]
             spectrum_peak_count[i] = length(masses[scan_idx[i]])
             sequence_length[i] = prec_length[prec_idx]
 
@@ -164,6 +196,10 @@ function add_features!(psms::DataFrame,
     psms[!,:irt_error] = irt_error
     psms[!,:missed_cleavage] = missed_cleavage
     psms[!,:Mox] = Mox
+    psms[!,:his_count] = his_count
+    psms[!,:pro_count] = pro_count
+    psms[!,:lys_count] = lys_count
+    psms[!,:arg_count] = arg_count
     psms[!,:spectrum_peak_count] = spectrum_peak_count
     psms[!,:sequence_length] = sequence_length
 
@@ -201,15 +237,24 @@ const PRESCORE_FEATURES = [
     :worst_max_residual_11scan, :worst_manhattan_11scan,
     :irt_dist_to_weight_apex,
     :ms1_m0_mass_err_ppm,
-    :ms1_corr_weight_m0, :ms1_corr_m0_m1,
+    :ms1_corr_weight_m0, :ms1_corr_m0_m1, :ms1_corr_weight_m1,
     :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
+    # Isotope envelope features (2026-05-11)
+    :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred, :ms1_envelope_dev_log2,
+    # Sequence composition
+    :his_count, :pro_count, :lys_count, :arg_count,
+    # Cross-precursor competition
+    :weight_ratio_to_2nd_best, :weight_ratio_to_3rd_best, :n_competitors_50pct,
     # Per-rank M0 fragment intensities (from MainUnscoredPSM)
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
     # Per-precursor fragment chromatogram features
     :frag_corr_top1_top2, :frag_corr_top1_top3, :frag_corr_top1_weight,
     :frag_corr_mean_pairwise, :frag_corr_min_pairwise, :frag_corr_top3_weight,
+    :frag_corr_top5_weight,
     :frag_apex_dispersion_irt, :n_correlated_fragments,
+    :n_correlated_fragments_50, :n_correlated_fragments_90,
+    :frag_corr_best_weight, :frag_corr_best_m0,
 ]
 
 """
@@ -248,6 +293,12 @@ function add_ms1_features!(psms::DataFrame,
     # Per-PSM intensities (also consumed by the per-precursor chromatogram pass)
     psms[!, :ms1_m0_intensity]      = zeros(Float32, n)
     psms[!, :ms1_m1_intensity]      = zeros(Float32, n)
+    # Isotope envelope features (re-added 2026-05-11). The predicted M+1/M0
+    # ratio comes from the sulfur-aware iso_splines (averagine-like). Real
+    # precursors match prediction; noise/chimeric peaks deviate.
+    psms[!, :ms1_m1_to_m0_ratio]     = zeros(Float32, n)
+    psms[!, :ms1_m1_to_m0_pred]      = zeros(Float32, n)
+    psms[!, :ms1_envelope_dev_log2]  = zeros(Float32, n)
     n == 0 && return
 
     # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
@@ -269,6 +320,8 @@ function add_ms1_features!(psms::DataFrame,
     precursors = getPrecursors(getSpecLib(search_context))
     prec_mzs       = getMz(precursors)
     prec_charges   = getCharge(precursors)
+    prec_sulfurs   = getSulfurCount(precursors)
+    iso_splines    = getIsoSplines(getSearchData(search_context)[1])
 
     NEUTRON = Float32(1.00335)
 
@@ -342,6 +395,20 @@ function add_ms1_features!(psms::DataFrame,
         if m0_hit
             psms.ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
         end
+        # Isotope envelope ratio features
+        if m0_hit && m0_int > 0f0 && m1_hit
+            obs_ratio = m1_int / m0_int
+            sulf = prec_sulfurs[pid]
+            # iso_splines(sulfur, isotope, mass) gives P(isotope | sulfurs, mass).
+            # Use prec_mz × charge as an approximate neutral mass for the spline.
+            prec_mass_approx = prec_mz * Float32(prec_chg)
+            p0 = max(iso_splines(sulf, UInt8(0), prec_mass_approx), 1f-12)
+            p1 = max(iso_splines(sulf, UInt8(1), prec_mass_approx), 1f-12)
+            pred_ratio = Float32(p1 / p0)
+            psms.ms1_m1_to_m0_ratio[i]    = Float32(obs_ratio)
+            psms.ms1_m1_to_m0_pred[i]     = pred_ratio
+            psms.ms1_envelope_dev_log2[i] = log2(max(obs_ratio, 1f-6) / max(pred_ratio, 1f-6))
+        end
     end
 
     # B1: per-precursor MS1 chromatogram features
@@ -372,6 +439,7 @@ function _add_ms1_chromatogram_features!(psms::DataFrame)
     n = nrow(psms)
     psms[!, :ms1_corr_weight_m0]            = zeros(Float32, n)
     psms[!, :ms1_corr_m0_m1]                = zeros(Float32, n)
+    psms[!, :ms1_corr_weight_m1]            = zeros(Float32, n)
     psms[!, :ms1_apex_offset_irt]           = zeros(Float32, n)
     psms[!, :ms1_weight_apex_to_m0_apex_irt]= zeros(Float32, n)
     n == 0 && return
@@ -424,6 +492,7 @@ function _add_ms1_chromatogram_features!(psms::DataFrame)
         end
         c_wm0 = _pcor(v_w,  v_m0)
         c_m01 = _pcor(v_m0, v_m1)
+        c_wm1 = _pcor(v_w,  v_m1)
 
         # Apex of M0 and weight (arg-max). Use first-occurrence on ties.
         ai_m0 = 1; vmax_m0 = v_m0[1]
@@ -440,6 +509,7 @@ function _add_ms1_chromatogram_features!(psms::DataFrame)
         for (k, i) in enumerate(idxs)
             psms.ms1_corr_weight_m0[i]             = c_wm0
             psms.ms1_corr_m0_m1[i]                 = c_m01
+            psms.ms1_corr_weight_m1[i]             = c_wm1
             psms.ms1_apex_offset_irt[i]            = abs(v_irt[k] - irt_apex_m0)
             psms.ms1_weight_apex_to_m0_apex_irt[i] = weight_apex_to_m0
         end
@@ -479,7 +549,17 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     psms[!, :frag_corr_min_pairwise]   = zeros(Float32, n)
     psms[!, :frag_corr_top3_weight]    = zeros(Float32, n)
     psms[!, :frag_apex_dispersion_irt] = zeros(Float32, n)
-    psms[!, :n_correlated_fragments]   = zeros(UInt8,  n)
+    psms[!, :n_correlated_fragments]      = zeros(UInt8,  n)  # threshold 0.7 (original)
+    psms[!, :n_correlated_fragments_50]   = zeros(UInt8,  n)  # threshold 0.5
+    psms[!, :n_correlated_fragments_90]   = zeros(UInt8,  n)  # threshold 0.9
+    # DIA-NN-style "best fragment" reference: pick the fragment with the highest
+    # sum of correlations to the other top-6 fragments (consensus). Then compute
+    # weight↔best-frag and m0↔best-frag correlations (if MS1 m0 column is
+    # available). Real precursors: weight and m0 chromatograms both track the
+    # consensus best fragment closely; chimeric: best-frag is decoupled.
+    psms[!, :frag_corr_best_weight]    = zeros(Float32, n)
+    psms[!, :frag_corr_best_m0]        = zeros(Float32, n)
+    psms[!, :frag_corr_top5_weight]    = zeros(Float32, n)  # mean of top-5 vs weight (top-K sweep)
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -493,6 +573,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     irt    = psms.irt_obs
     f      = (psms.frag1_int, psms.frag2_int, psms.frag3_int,
               psms.frag4_int, psms.frag5_int, psms.frag6_int)
+    has_m0 = hasproperty(psms, :ms1_m0_intensity)
+    m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
 
     buckets = Dict{UInt32, Vector{Int}}()
     @inbounds for i in 1:n
@@ -571,11 +653,55 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
         end
         apex_disp = length(apex_irts) >= 2 ? Float32(std(apex_irts)) : 0f0
 
-        # Count fragments with chrom-corr to weight > 0.7
-        n_corr = UInt8(0)
+        # Per-fragment weight correlation (reused below for n_corr_* and best frag).
+        c_fw = Vector{Float32}(undef, 6)
+        for r in 1:6
+            c_fw[r] = has_signal[r] ? _pcor(F[r], W) : 0f0
+        end
+        n_corr_50 = UInt8(0); n_corr_70 = UInt8(0); n_corr_90 = UInt8(0)
         for r in 1:6
             has_signal[r] || continue
-            if _pcor(F[r], W) > 0.7f0; n_corr += UInt8(1); end
+            if c_fw[r] > 0.5f0; n_corr_50 += UInt8(1); end
+            if c_fw[r] > 0.7f0; n_corr_70 += UInt8(1); end
+            if c_fw[r] > 0.9f0; n_corr_90 += UInt8(1); end
+        end
+
+        # Mean correlation of top-5 fragments (rank 1..5) to weight chromatogram
+        n_top5 = 0; s_top5 = 0f0
+        for r in 1:5
+            has_signal[r] || continue
+            s_top5 += c_fw[r]; n_top5 += 1
+        end
+        c_top5_w = n_top5 > 0 ? s_top5 / n_top5 : 0f0
+
+        # DIA-NN-style best fragment: pick the rank r with the highest sum of
+        # pairwise correlations to the other top-6 fragments (consensus).
+        best_r = 0
+        best_consensus = typemin(Float32)
+        for r in 1:6
+            has_signal[r] || continue
+            consensus = 0f0; npairs = 0
+            for r2 in 1:6
+                (r2 == r || !has_signal[r2]) && continue
+                consensus += _pcor(F[r], F[r2]); npairs += 1
+            end
+            avg = npairs > 0 ? consensus / npairs : typemin(Float32)
+            if avg > best_consensus
+                best_consensus = avg
+                best_r = r
+            end
+        end
+        c_best_w = 0f0
+        c_best_m0 = 0f0
+        if best_r > 0
+            c_best_w = c_fw[best_r]
+            if has_m0
+                v_m0 = Vector{Float32}(undef, npts)
+                for (k, i) in enumerate(idxs); v_m0[k] = Float32(m0_int[i]); end
+                if maximum(v_m0) > 0
+                    c_best_m0 = _pcor(F[best_r], v_m0)
+                end
+            end
         end
 
         for i in idxs
@@ -585,8 +711,13 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             psms.frag_corr_mean_pairwise[i]  = mean_pairwise
             psms.frag_corr_min_pairwise[i]   = min_pairwise
             psms.frag_corr_top3_weight[i]    = c_top3_w
+            psms.frag_corr_top5_weight[i]    = c_top5_w
             psms.frag_apex_dispersion_irt[i] = apex_disp
-            psms.n_correlated_fragments[i]   = n_corr
+            psms.n_correlated_fragments[i]     = n_corr_70
+            psms.n_correlated_fragments_50[i]  = n_corr_50
+            psms.n_correlated_fragments_90[i]  = n_corr_90
+            psms.frag_corr_best_weight[i]      = c_best_w
+            psms.frag_corr_best_m0[i]          = c_best_m0
         end
     end
     return
@@ -778,34 +909,61 @@ Scans with a single PSM get `weight_ratio_at_scan=1.0` and `weight_rank_at_scan=
 """
 function add_scan_competition_features!(psms::DataFrame)
     n = nrow(psms)
-    weight_ratio = Vector{Float32}(undef, n)
-    weight_rank  = Vector{UInt16}(undef, n)
+    weight_ratio       = Vector{Float32}(undef, n)
+    weight_rank        = Vector{UInt16}(undef, n)
+    # New: ratio to the 2nd-best and 3rd-best competitor (∈ (0, 1] when present,
+    # else 1.0). For the apex PSM at a scan, ratio_to_2nd = max_w / w_2nd ≥ 1
+    # so we flip and report w_other / w_apex for symmetric interpretation
+    # (1.0 = strongly dominant; <1 = competing precursors exist).
+    weight_ratio_2nd   = Vector{Float32}(undef, n)
+    weight_ratio_3rd   = Vector{Float32}(undef, n)
+    n_competitors_50pct = Vector{UInt16}(undef, n)
     if n == 0
-        psms[!, :weight_ratio_at_scan] = weight_ratio
-        psms[!, :weight_rank_at_scan]  = weight_rank
+        psms[!, :weight_ratio_at_scan]   = weight_ratio
+        psms[!, :weight_rank_at_scan]    = weight_rank
+        psms[!, :weight_ratio_to_2nd_best] = weight_ratio_2nd
+        psms[!, :weight_ratio_to_3rd_best] = weight_ratio_3rd
+        psms[!, :n_competitors_50pct]    = n_competitors_50pct
         return
     end
     scan = psms[!, :scan_idx]
     w    = psms[!, :weight]
-    # Group rows by scan (build mapping scan_idx → vector of row indices)
     by_scan = Dict{eltype(scan), Vector{Int}}()
     @inbounds for i in 1:n
         push!(get!(() -> Int[], by_scan, scan[i]), i)
     end
     @inbounds for (_, idxs) in by_scan
-        # weights at this scan
         weights = Float32[Float32(w[i]) for i in idxs]
         max_w = maximum(weights)
-        # rank: descending by weight (1 = highest)
         order = sortperm(weights, rev=true)
+        sorted_w = weights[order]   # descending
+        w2 = length(sorted_w) >= 2 ? sorted_w[2] : 0f0
+        w3 = length(sorted_w) >= 3 ? sorted_w[3] : 0f0
+        # Count competitors at this scan with weight ≥ 50% of apex
+        n_50 = UInt16(0)
+        if max_w > 0
+            half = 0.5f0 * max_w
+            for wt in weights
+                if wt >= half; n_50 += UInt16(1); end
+            end
+        end
         for (rank, j) in enumerate(order)
             i = idxs[j]
             weight_ratio[i] = max_w > 0 ? weights[j] / max_w : Float32(1)
             weight_rank[i]  = UInt16(min(rank, typemax(UInt16)))
+            # The "ratio to 2nd/3rd best" is computed from this PSM's perspective:
+            # for apex (rank=1) it's w_apex / w_2nd (or 1 if no 2nd); for others
+            # it's their weight / w_2nd (the runner-up's perspective).
+            weight_ratio_2nd[i] = w2 > 0 ? weights[j] / w2 : Float32(1)
+            weight_ratio_3rd[i] = w3 > 0 ? weights[j] / w3 : Float32(1)
+            n_competitors_50pct[i] = n_50
         end
     end
-    psms[!, :weight_ratio_at_scan] = weight_ratio
-    psms[!, :weight_rank_at_scan]  = weight_rank
+    psms[!, :weight_ratio_at_scan]    = weight_ratio
+    psms[!, :weight_rank_at_scan]     = weight_rank
+    psms[!, :weight_ratio_to_2nd_best] = weight_ratio_2nd
+    psms[!, :weight_ratio_to_3rd_best] = weight_ratio_3rd
+    psms[!, :n_competitors_50pct]     = n_competitors_50pct
     return
 end
 
