@@ -134,6 +134,17 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     frag5_pred::H
     frag6_pred::H
 
+    # E6 M0 (Batch E, 2026-05-12): log(b_int + 1) − log(y_int + 1). Real
+    # peptides have characteristic b/y intensity ratios; chimeric hits don't.
+    log_by_ratio_m0::L
+
+    # E3 (Batch E, 2026-05-12): log2((b_int + y_int + 1) / (pred_int_sum_m0 + 1)).
+    # Completeness-of-match — observed vs predicted matched intensity.
+    matched_ratio::L
+
+    # E6 M01 (Batch E, 2026-05-12): log b/y ratio over M0 + M+1 ions.
+    log_by_ratio_m01::L
+
     #Non-scores/Labels
     precursor_idx::UInt32
     ms_file_idx::UInt32
@@ -250,6 +261,15 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             unscored_PSMs[i].frag4_pred,
             unscored_PSMs[i].frag5_pred,
             unscored_PSMs[i].frag6_pred,
+
+            L(log(Float32(unscored_PSMs[i].b_int) + 1f0) -
+              log(Float32(unscored_PSMs[i].y_int) + 1f0)),
+
+            L(log2((Float32(unscored_PSMs[i].b_int) + Float32(unscored_PSMs[i].y_int) + 1f0) /
+                   (Float32(unscored_PSMs[i].pred_int_sum_m0) + 1f0))),
+
+            L(log(Float32(unscored_PSMs[i].b_int) + Float32(unscored_PSMs[i].b_int_m1) + 1f0) -
+              log(Float32(unscored_PSMs[i].y_int) + Float32(unscored_PSMs[i].y_int_m1) + 1f0)),
 
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(cycle_idx),

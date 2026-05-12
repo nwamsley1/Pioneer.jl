@@ -282,6 +282,14 @@ const PRESCORE_FEATURES = [
     # frag_corr_best_* / frag_corr_mean_pairwise; A/B test 2026-05-12 showed
     # −38 PGs when added. Code still computes :frag_corr_to_median_mean column.
     # :frag_corr_to_median_mean,
+    # Batch E — E14 (delta median-apex vs scan-center) + E6 M0 (log b/y ratio)
+    :delta_frame_peak_center,
+    :log_by_ratio_m0,
+    # Batch E — E3 (matched_ratio) DROPPED — A/B test 2026-05-12 showed −104 PGs
+    # when added on top of E7+E1+E2+E14+E6 M0. Code path stays for future use.
+    # :matched_ratio,
+    # E6 M01 DROPPED — redundant with log_by_ratio_m0 (same LGBM gain, no lift).
+    # :log_by_ratio_m01,
 ]
 
 """
@@ -613,6 +621,10 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     # signal at scan k. Different reference than frag_corr_best_* (consensus)
     # and frag_corr_mean_pairwise (15 pairs averaged).
     psms[!, :frag_corr_to_median_mean]        = zeros(Float32, n)
+    # E14 (Batch E, 2026-05-12): median fragment apex iRT − midpoint of the
+    # precursor's iRT scan range. Real peptides peak near scan-window center;
+    # chimeric hits often peak at the edges of the window.
+    psms[!, :delta_frame_peak_center]         = zeros(Float32, n)
     # Spearman A/B (2-file Olsen, two runs) settled the choice per feature:
     # - frag_corr_mean_pairwise → Spearman wins (~+10% gain). It's now the
     #   ONLY mean_pairwise feature (Pearson variant removed, no redundancy).
@@ -754,6 +766,23 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             push!(apex_irts, IRT[ai])
         end
         apex_disp = length(apex_irts) >= 2 ? Float32(std(apex_irts)) : 0f0
+
+        # E14: median fragment apex iRT − midpoint of precursor scan-window
+        delta_frame = 0f0
+        if !isempty(apex_irts)
+            sorted_apex = sort(apex_irts)
+            m = length(sorted_apex)
+            median_apex = isodd(m) ?
+                sorted_apex[(m + 1) ÷ 2] :
+                (sorted_apex[m ÷ 2] + sorted_apex[m ÷ 2 + 1]) / 2f0
+            irt_lo = IRT[1]; irt_hi = IRT[1]
+            @inbounds for k in 2:npts
+                vk = IRT[k]
+                if vk < irt_lo; irt_lo = vk; end
+                if vk > irt_hi; irt_hi = vk; end
+            end
+            delta_frame = Float32(median_apex - (irt_lo + irt_hi) / 2f0)
+        end
 
         # Per-fragment weight correlation (reused below for n_corr_* and best frag).
         c_fw = Vector{Float32}(undef, 6)
@@ -948,6 +977,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             psms.pred_obs_area_spectral_contrast[i] = pred_area_sc
             psms.pred_obs_area_scribe[i]            = pred_area_sb
             psms.frag_corr_to_median_mean[i]        = c_to_median_mean
+            psms.delta_frame_peak_center[i]         = delta_frame
         end
     end
     return

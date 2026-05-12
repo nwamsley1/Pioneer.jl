@@ -274,6 +274,9 @@ Run pending; numbers will be filled in as the test sequence progresses.
 | + E7 + E1 + E2 (combined) | **88,793** | **41,750** | **41,209** | **12,506** | pred_obs_max_scribe top (gain f1=3058, f2=2460, ScoringSearch=5122); all 4 used. +381 IDs / +148 PGs vs isolated baseline |
 | ↳ scribe-only drop test | 88,646 | 41,323 | 40,988 | 12,440 | Cosine NOT redundant: −147 IDs, −66 PGs vs all-4. Keeping all 4. |
 | + E7 + E1 + E2 + E10 | 88,880 | 41,274 | 41,159 | 12,468 | Δ +87 IDs / **−38 PGs** vs no-E10. LGBM gain ~1700 but redundant with frag_corr_best_*. **Drop E10.** |
+| + E7+E1+E2 **+ E14 + E6 M0** | **89,137** | **41,868** | 40,809 | **12,520** | Δ +344 IDs / +14 PGs vs E7+E1+E2. E14 gain f1=3243 (strongest on file 1); E6 M0 gain 1763/1980/4584. **Keep both — current best.** |
+| + E3 + E6 M01 (on top) | 89,010 | 41,612 | 40,979 | 12,505 | Δ −127 IDs / −15 PGs (within noise); log_by_ratio_m01 gain ≈ log_by_ratio_m0 → redundant |
+| + E3 only (drop M01) | 88,979 | 41,781 | 41,302 | 12,416 | Δ −158 IDs / **−104 PGs**. **Drop E3 + E6 M01.** |
 | + E2 alone | | | | | (combined above) |
 | + E1 alone | | | | | (combined above) |
 | + E11/E12 alone | | | | | top-3 b/y to median corr |

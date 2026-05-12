@@ -129,6 +129,12 @@ const ADVANCED_FEATURE_SET = [
     :pred_obs_area_spectral_contrast, :pred_obs_area_scribe,
     # E10 dropped (A/B test 2026-05-12: −38 PGs, redundant with frag_corr_best_*)
     # :frag_corr_to_median_mean,
+    # E14 (delta median-apex vs scan center) + E6 M0 (log b/y ratio)
+    :delta_frame_peak_center, :log_by_ratio_m0,
+    # E3 (matched_ratio) DROPPED — A/B test 2026-05-12: −104 PGs vs E7+E1+E2+E14+E6 M0
+    # E6 M01 DROPPED — redundant with log_by_ratio_m0
+    # :matched_ratio,
+    # :log_by_ratio_m01,
 
     :max_weight,                      # populated by select_best_per_precursor!
     :fitted_hellinger,

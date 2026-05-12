@@ -270,6 +270,9 @@ error accumulation.
     frag4_pred = score.frag4_pred
     frag5_pred = score.frag5_pred
     frag6_pred = score.frag6_pred
+    pred_int_sum_m0 = score.pred_int_sum_m0
+    b_int_m1        = score.b_int_m1
+    y_int_m1        = score.y_int_m1
 
     if iso_idx != UInt8(0)
         isotope_count += UInt8(1)
@@ -293,6 +296,10 @@ error accumulation.
             elseif rank == UInt8(4); frag4_int_m1 += intensity
             elseif rank == UInt8(5); frag5_int_m1 += intensity
             elseif rank == UInt8(6); frag6_int_m1 += intensity
+            end
+            # E6 M01: b/y M+1 intensity sums for log(b/y) ratio over M0+M+1
+            if isB(frag);     b_int_m1 += intensity
+            elseif isY(frag); y_int_m1 += intensity
             end
         end
     else
@@ -321,6 +328,8 @@ error accumulation.
         elseif rank == UInt8(5); frag5_pred = max(frag5_pred, pred_int)
         elseif rank == UInt8(6); frag6_pred = max(frag6_pred, pred_int)
         end
+        # E3: matched-fragment predicted-intensity sum (M0 only, all ranks)
+        pred_int_sum_m0 += pred_int
         if rank < best_rank
             best_rank = rank
         end
@@ -362,6 +371,7 @@ error accumulation.
         frag1_int_m1, frag2_int_m1, frag3_int_m1, frag4_int_m1, frag5_int_m1, frag6_int_m1,
         top3_abs_ppm_err_sum, top3_ppm_err_count,
         frag1_pred, frag2_pred, frag3_pred, frag4_pred, frag5_pred, frag6_pred,
+        pred_int_sum_m0, b_int_m1, y_int_m1,
         prec_idx, ms_file_idx)
     return nothing
 end
