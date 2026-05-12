@@ -33,6 +33,32 @@ healthy.
 vs ~94% on 8 files), so 2-file regressed −1,170 IDs. The proper test is
 8-file (multi-condition) and the proper test wins.
 
+## Entrapment FDR validation (8-file Olsen, entr1 library)
+
+Re-ran the same 8-file pipeline against the entrapment library
+`altimeter_3P_len7o40_ch2o3_mc1_OlsenExploris_mzsorted_entr1.poin`
+(13.6M precursors, half target / half entrapment). Output:
+`mbr_entr_run_01/efdr_out/`.
+
+Search totals: 386,017 IDs / 49,376 PGs / 7,083 MaxLFQ groups.
+FTR: 56,989 candidates (6.43%) → 54,983 recovered (96.48%).
+
+Calibration errors (mean abs |EFDR − decoyFDR| over q ≤ 0.01 range):
+
+| Method | prec_prob (per-file) | global_prob (global) |
+|---|---:|---:|
+| Combined EFDR | 0.0005 | 0.0004 |
+| Paired EFDR | 0.0005 | 0.0004 |
+
+At decoy FDR = 1%:
+- per-file EFDR ≈ 0.70–0.73% (slightly conservative)
+- global EFDR ≈ 1.0% (essentially on y=x)
+
+Plots: `efdr_comparison_prec_prob.{png,pdf}`, `efdr_comparison_global_prob.{png,pdf}`.
+
+Conclusion: Batch F's MBR + FTR is FDR-calibrated. The reported q-values
+are honest; the α=0.01 FTR budget does not inflate the empirical FDR.
+
 ## Baseline to beat
 
 8-file Olsen Exploris MBR run (commit `f459df89`, 2026-05-12):
