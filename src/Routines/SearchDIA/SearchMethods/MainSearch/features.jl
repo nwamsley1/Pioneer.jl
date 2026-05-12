@@ -195,19 +195,16 @@ const PRESCORE_FEATURES = [
     :weight_ratio_at_scan, :weight_rank_at_scan,
     :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan,
     :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan, :irt_dist_best_max_residual_3scan,
-    :worst_gof_3scan, :worst_manhattan_3scan, :worst_max_residual_3scan,
+    :worst_max_residual_3scan, :worst_manhattan_3scan,
     :best_gof_5scan, :best_manhattan_5scan, :best_max_residual_5scan,
     :irt_dist_best_gof_5scan, :irt_dist_best_manhattan_5scan, :irt_dist_best_max_residual_5scan,
-    :worst_gof_5scan, :worst_manhattan_5scan, :worst_max_residual_5scan,
     :best_gof_7scan, :best_manhattan_7scan, :best_max_residual_7scan,
     :irt_dist_best_gof_7scan, :irt_dist_best_manhattan_7scan, :irt_dist_best_max_residual_7scan,
-    :worst_gof_7scan, :worst_manhattan_7scan, :worst_max_residual_7scan,
     :best_gof_9scan, :best_manhattan_9scan, :best_max_residual_9scan,
     :irt_dist_best_gof_9scan, :irt_dist_best_manhattan_9scan, :irt_dist_best_max_residual_9scan,
-    :worst_gof_9scan, :worst_manhattan_9scan, :worst_max_residual_9scan,
     :best_gof_11scan, :best_manhattan_11scan, :best_max_residual_11scan,
     :irt_dist_best_gof_11scan, :irt_dist_best_manhattan_11scan, :irt_dist_best_max_residual_11scan,
-    :worst_gof_11scan, :worst_manhattan_11scan, :worst_max_residual_11scan,
+    :worst_max_residual_11scan, :worst_manhattan_11scan,
     :irt_dist_to_weight_apex,
     :ms1_m0_mass_err_ppm,
     :ms1_corr_weight_m0, :ms1_corr_m0_m1,
@@ -666,16 +663,21 @@ PSMs that are the only PSM for a precursor get values from themselves; iRT
 distance = 0.
 """
 function add_neighborhood_features!(psms::DataFrame)
-    # Window sweep on 2-file Olsen showed best_gof_11scan dominates importance
-    # (~79k gain, 5× best_gof_9scan; 50× best_gof_3scan). Tried 15-scan — at
-    # that width best_gof gain dropped (~63k) and total IDs slipped −228 vs the
-    # 3-11 set, consistent with the window starting to span adjacent precursor
-    # peaks at typical DIA cycle times. 3/5/7/9/11 is the stable optimum.
-    _add_neighborhood_features_window!(psms, 1, "_3scan")
+    # `best_*` + `irt_dist_best_*` emitted for all 5 windows (3/5/7/9/11) —
+    # useful to pick the right best PSM per precursor at multiple chromatographic
+    # scales. The 5-window sweep on 2-file Olsen showed best_gof_11scan was
+    # dominant (50× best_gof_3scan); going to 15-scan regressed total IDs.
+    #
+    # `worst_*` consistency features: of the 15 emitted in the initial worst
+    # sweep, only worst_max_residual_11scan (gain 84,599) and worst_manhattan_11scan
+    # (gain 6,426) rose above the 1.5k-gain floor; worst_gof_* was weak at all
+    # widths. So we restrict worst features to 2 metrics × 2 widths = 4 features:
+    # worst_max_residual @ 3-scan + 11-scan, worst_manhattan @ 3-scan + 11-scan.
+    _add_neighborhood_features_window!(psms, 1, "_3scan";  emit_worst=(:max_residual, :manhattan))
     _add_neighborhood_features_window!(psms, 2, "_5scan")
     _add_neighborhood_features_window!(psms, 3, "_7scan")
     _add_neighborhood_features_window!(psms, 4, "_9scan")
-    _add_neighborhood_features_window!(psms, 5, "_11scan")
+    _add_neighborhood_features_window!(psms, 5, "_11scan"; emit_worst=(:max_residual, :manhattan))
     return
 end
 
@@ -687,7 +689,8 @@ Worker for `add_neighborhood_features!`. Writes columns
 and their `irt_dist_*<suffix>` companions, computed over the window
 `-half_window .. +half_window` around each PSM's scan within its precursor.
 """
-function _add_neighborhood_features_window!(psms::DataFrame, half_window::Int, suffix::String)
+function _add_neighborhood_features_window!(psms::DataFrame, half_window::Int, suffix::String;
+                                             emit_worst::NTuple = ())
     n = nrow(psms)
     gof_col      = Symbol("best_gof", suffix)
     man_col      = Symbol("best_manhattan", suffix)
@@ -695,21 +698,23 @@ function _add_neighborhood_features_window!(psms::DataFrame, half_window::Int, s
     dgof_col     = Symbol("irt_dist_best_gof", suffix)
     dman_col     = Symbol("irt_dist_best_manhattan", suffix)
     dmr_col      = Symbol("irt_dist_best_max_residual", suffix)
-    # "Worst-in-window" consistency checks (real precursors elute smoothly so
-    # the worst scan in the window should still be acceptable; chimeric/noise
-    # often has one terrible scan).
-    worst_gof_col = Symbol("worst_gof", suffix)
-    worst_man_col = Symbol("worst_manhattan", suffix)
-    worst_mr_col  = Symbol("worst_max_residual", suffix)
-    psms[!, gof_col]       = Vector{Float32}(undef, n)
-    psms[!, man_col]       = Vector{Float32}(undef, n)
-    psms[!, mr_col]        = Vector{Float32}(undef, n)
-    psms[!, dgof_col]      = zeros(Float32, n)
-    psms[!, dman_col]      = zeros(Float32, n)
-    psms[!, dmr_col]       = zeros(Float32, n)
-    psms[!, worst_gof_col] = Vector{Float32}(undef, n)
-    psms[!, worst_man_col] = Vector{Float32}(undef, n)
-    psms[!, worst_mr_col]  = Vector{Float32}(undef, n)
+    psms[!, gof_col]  = Vector{Float32}(undef, n)
+    psms[!, man_col]  = Vector{Float32}(undef, n)
+    psms[!, mr_col]   = Vector{Float32}(undef, n)
+    psms[!, dgof_col] = zeros(Float32, n)
+    psms[!, dman_col] = zeros(Float32, n)
+    psms[!, dmr_col]  = zeros(Float32, n)
+    # Worst-in-window features are computed only for the metrics specified by
+    # `emit_worst` (subset of `:gof`, `:manhattan`, `:max_residual`).
+    want_worst_gof = :gof in emit_worst
+    want_worst_man = :manhattan in emit_worst
+    want_worst_mr  = :max_residual in emit_worst
+    worst_gof_col = want_worst_gof ? Symbol("worst_gof",          suffix) : nothing
+    worst_man_col = want_worst_man ? Symbol("worst_manhattan",    suffix) : nothing
+    worst_mr_col  = want_worst_mr  ? Symbol("worst_max_residual", suffix) : nothing
+    if want_worst_gof; psms[!, worst_gof_col] = Vector{Float32}(undef, n); end
+    if want_worst_man; psms[!, worst_man_col] = Vector{Float32}(undef, n); end
+    if want_worst_mr;  psms[!, worst_mr_col]  = Vector{Float32}(undef, n); end
     n == 0 && return
     @assert hasproperty(psms, :irt_obs) "neighborhood features require :irt_obs column"
 
@@ -741,24 +746,24 @@ function _add_neighborhood_features_window!(psms::DataFrame, half_window::Int, s
                     j = idxs[kk]
                     g = Float32(psms.gof[j])
                     if g > best_gof; best_gof = g; gof_idx = j; end
-                    if g < worst_gof; worst_gof = g; end
+                    if want_worst_gof && g < worst_gof; worst_gof = g; end
                     m = Float32(psms.fitted_manhattan_distance[j])
                     if m < best_man; best_man = m; man_idx = j; end
-                    if m > worst_man; worst_man = m; end
+                    if want_worst_man && m > worst_man; worst_man = m; end
                     r = Float32(psms.max_matched_residual[j])
                     if r < best_mr;  best_mr  = r;  mr_idx  = j; end
-                    if r > worst_mr; worst_mr = r; end
+                    if want_worst_mr && r > worst_mr; worst_mr = r; end
                 end
             end
-            psms[!, gof_col][i]       = best_gof
-            psms[!, man_col][i]       = best_man
-            psms[!, mr_col][i]        = best_mr
-            psms[!, dgof_col][i]      = abs(Float32(psms.irt_obs[gof_idx]) - cur_irt)
-            psms[!, dman_col][i]      = abs(Float32(psms.irt_obs[man_idx]) - cur_irt)
-            psms[!, dmr_col][i]       = abs(Float32(psms.irt_obs[mr_idx])  - cur_irt)
-            psms[!, worst_gof_col][i] = worst_gof
-            psms[!, worst_man_col][i] = worst_man
-            psms[!, worst_mr_col][i]  = worst_mr
+            psms[!, gof_col][i]  = best_gof
+            psms[!, man_col][i]  = best_man
+            psms[!, mr_col][i]   = best_mr
+            psms[!, dgof_col][i] = abs(Float32(psms.irt_obs[gof_idx]) - cur_irt)
+            psms[!, dman_col][i] = abs(Float32(psms.irt_obs[man_idx]) - cur_irt)
+            psms[!, dmr_col][i]  = abs(Float32(psms.irt_obs[mr_idx])  - cur_irt)
+            if want_worst_gof; psms[!, worst_gof_col][i] = worst_gof; end
+            if want_worst_man; psms[!, worst_man_col][i] = worst_man; end
+            if want_worst_mr;  psms[!, worst_mr_col][i]  = worst_mr;  end
         end
     end
     return
