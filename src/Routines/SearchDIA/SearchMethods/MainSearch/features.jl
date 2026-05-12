@@ -203,6 +203,8 @@ const PRESCORE_FEATURES = [
     :irt_dist_best_gof_9scan, :irt_dist_best_manhattan_9scan, :irt_dist_best_max_residual_9scan,
     :best_gof_11scan, :best_manhattan_11scan, :best_max_residual_11scan,
     :irt_dist_best_gof_11scan, :irt_dist_best_manhattan_11scan, :irt_dist_best_max_residual_11scan,
+    :best_gof_15scan, :best_manhattan_15scan, :best_max_residual_15scan,
+    :irt_dist_best_gof_15scan, :irt_dist_best_manhattan_15scan, :irt_dist_best_max_residual_15scan,
     :irt_dist_to_weight_apex,
     :ms1_m0_mass_err_ppm,
     :ms1_corr_weight_m0, :ms1_corr_m0_m1,
@@ -666,6 +668,7 @@ function add_neighborhood_features!(psms::DataFrame)
     _add_neighborhood_features_window!(psms, 3, "_7scan")
     _add_neighborhood_features_window!(psms, 4, "_9scan")
     _add_neighborhood_features_window!(psms, 5, "_11scan")
+    _add_neighborhood_features_window!(psms, 7, "_15scan")
     return
 end
 
