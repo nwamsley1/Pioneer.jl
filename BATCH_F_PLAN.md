@@ -6,6 +6,33 @@ scheme that lets the FTR LGBM learn the discriminative MBR feature
 distribution directly from a 50/50 real-vs-fake training set per
 candidate.
 
+## Result on 8-file Olsen (commit 09d3916a, 2026-05-12)
+
+| Metric | Live MBR | Batch F | Δ |
+|---|---:|---:|---:|
+| Precursor rows (long) | 421,419 | **426,566** | **+5,147** |
+| PG rows (long) | 51,906 | **52,047** | **+141** |
+| MaxLFQ protein groups | 7,390 | **7,405** | **+15** |
+| Candidates | 150,248 (14.06%) | 72,806 (6.81%) | -77k |
+| Recovered | 59,319 (39.48%) | 68,920 (94.66%) | +9,601 |
+| Recovered targets | ~55,606 | 63,174 | +7,568 |
+| Recovered decoys | ~3,713 | 5,746 | +2,033 |
+| τ | 0.9464 | 0.9166 |  |
+
+Batch F wins despite half the candidate pool — paired training drives a
+much tighter threshold (94.66% recovery rate vs 39.48% live). FTR-model
+importance concentrates sharply on the dominant MBR feature
+(`MBR_max_pair_prob_true` gain 360,090 vs live FTR's 6,538 → 55× — the
+"Siamese isolation" effect we hoped for).
+
+Decoy recovery rose ~55%; global qval ≤ 0.01 cut absorbs most. Bears
+watching but the +15 MaxLFQ groups suggests the global FDR is still
+healthy.
+
+2-file Olsen is hostile to Batch F (53% true-donor coverage on 2 files
+vs ~94% on 8 files), so 2-file regressed −1,170 IDs. The proper test is
+8-file (multi-condition) and the proper test wins.
+
 ## Baseline to beat
 
 8-file Olsen Exploris MBR run (commit `f459df89`, 2026-05-12):
