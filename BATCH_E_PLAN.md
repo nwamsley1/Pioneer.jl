@@ -241,11 +241,83 @@ Both are 1-hour audits. I'll do them before implementing tier 1.
 
 ---
 
-## Decision: combine or isolate?
+## Methodology — isolated testing (revised 2026-05-12 afternoon)
 
-So far we've been doing additive batches (A → A+B → A+B+C → A+B+C+D). This makes per-feature attribution cleaner via LGBM gain but accumulates risk. For Batch E I'd suggest:
+Original plan was additive batches. Revised per your direction: each Batch
+E feature is tested **in isolation** against the m1frag baseline (without
+the A/B/C/D peak-shape features). Reasons:
 
-- **Tier 1 features (3 sub-batches above)** stay additive — each builds on the prior.
-- **Tier 2** is also additive on top of tier 1.
+- LGBM has `feature_fraction=0.8` — with ~100+ features in registries the
+  per-tree subsample may not see a new feature often enough to learn it,
+  causing us to miss real signal hidden behind feature bloat.
+- We've validated A/B/C/D as keepers separately. They can be re-added at
+  the end for the "everything together" final run.
 
-If at any point a single sub-batch tanks IDs by >5% (vs LGBM noise), revert that sub-batch's commits and continue forward without it. Each sub-batch gets its own git commit so reverts are mechanical.
+**Procedure (per Batch E candidate):**
+1. Disable previous E feature(s) from `PRESCORE_FEATURES` /
+   `ADVANCED_FEATURE_SET` registries (comment out — keep code).
+2. Implement next E feature, register in both lists.
+3. Run 2-file Olsen; record per-file q≤.01, final IDs, PGs, and gain.
+4. Repeat for next feature.
+
+A/B/C/D feature code is still in `add_apex_distance_feature!` —
+re-enabling is just uncommenting registry entries.
+
+### Isolated baseline (m1frag without peak-shape A/B/C/D)
+
+Run pending; numbers will be filled in as the test sequence progresses.
+
+| Stage | Final IDs | f1 q≤.01 | f2 q≤.01 | PGs q≤.01 | Feature added |
+|---|---:|---:|---:|---:|---|
+| Isolated baseline (A/B/C/D off) | 88,412 | 41,413 | 40,984 | 12,358 | — |
+| + E7 alone | 88,152 | 41,476 | 40,460 | **12,459** | LGBM gain f1=1818, f2=2030, ScoringSearch=5873; final IDs −260 (noise), **PGs +101** |
+| + E7 + E1 + E2 (combined) | **88,793** | **41,750** | **41,209** | **12,506** | pred_obs_max_scribe top (gain f1=3058, f2=2460, ScoringSearch=5122); all 4 used. +381 IDs / +148 PGs vs isolated baseline |
+| ↳ scribe-only drop test | 88,646 | 41,323 | 40,988 | 12,440 | Cosine NOT redundant: −147 IDs, −66 PGs vs all-4. Keeping all 4. |
+| + E7 + E1 + E2 + E10 | 88,880 | 41,274 | 41,159 | 12,468 | Δ +87 IDs / **−38 PGs** vs no-E10. LGBM gain ~1700 but redundant with frag_corr_best_*. **Drop E10.** |
+| + E2 alone | | | | | (combined above) |
+| + E1 alone | | | | | (combined above) |
+| + E11/E12 alone | | | | | top-3 b/y to median corr |
+| + E6 alone | | | | | log b/y intensity ratio |
+| + E14 alone | | | | | delta median-apex vs scan center |
+| + E3 alone | | | | | matched_ratio |
+| + best of E together | | | | | final combined run |
+
+## Important correction (2026-05-12 afternoon): predicted intensity capture
+
+For E1 and E2 (and any feature using *predicted* fragment intensities),
+**we cannot look these up from the bare library** at feature-compute time.
+The library contains raw predicted intensities; the actual *expected*
+intensities for a given scan require the NCE collision-energy spline
+evaluation and the isotope-abundance spline evaluation. Both are already
+done during the fused scan loop and used to weight fragments in the
+design matrix. So the predicted intensity at *match time* is the source
+of truth.
+
+Concretely, this means E1 and E2 require:
+
+1. **`MainUnscoredPSM` widening:** add `frag1_pred..frag6_pred::Float32`
+   fields (6 new fields — mirrors the existing `frag1_int..frag6_int` raw
+   intensity captures).
+2. **`apply_main_scoring!` change:** when matching a fragment, pass in
+   (or look up via `isotopes_buf`) the post-NCE-and-iso-spline predicted
+   intensity for that (fragment, isotope). For ranks 1..6 M0, store in
+   the new fields.
+3. **`MainSearchScoredPSM` widening:** same 6 fields, propagated by
+   `Score!`.
+4. **`features.jl` change:** in `_add_fragment_chromatogram_features!`,
+   use the new `frag_r_pred` per-row to build the predicted-intensity
+   vector for the precursor (likely just take the max or sum across
+   scans, since the predicted intensity is fundamentally per-fragment
+   not per-scan — sanity-check this at audit time).
+
+**Cost estimate (revised):** E1/E2 are now substantially bigger than I
+initially scoped. Same shape as the M+1 fragment-intensity capture work
+we did last night (commit `ad414f70`). ~40-60 LOC across 3 files. Plan
+to do them in tier 1 since they're orthogonal to the per-precursor
+peak-shape mathematics that A/B/C/D explored.
+
+**Audit before implementation:** how is the post-spline predicted
+intensity actually computed and where in the fused scan loop is it
+accessible? Check `getFragIsotopes!` and `setup_transmission!` —
+probably the cleanest place to capture is right where the design-matrix
+column is being built.

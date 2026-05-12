@@ -271,6 +271,17 @@ const PRESCORE_FEATURES = [
     :frag_corr_m0_m1_top1, :frag_corr_m0_m1_top2, :frag_corr_m0_m1_top3,
     :frag_corr_m0_m1_mean,
     :n_correlated_m0_m1_fragments, :n_correlated_m0_m1_fragments_50,
+    # Batch E isolated test — E7: mean |ppm_err| over matched top-3 M0 fragments
+    :top3_ms2_mass_error_mean,
+    # Batch E — E1 (area) + E2 (max): predicted-vs-observed spectral_contrast + scribe.
+    # Drop test (2026-05-12): cosine-only run lost −147 IDs / −66 PGs; cosine
+    # is not redundant with scribe — keeping all 4.
+    :pred_obs_max_spectral_contrast, :pred_obs_max_scribe,
+    :pred_obs_area_spectral_contrast, :pred_obs_area_scribe,
+    # E10 (mean fragment-to-median-chrom corr) DROPPED — redundant with
+    # frag_corr_best_* / frag_corr_mean_pairwise; A/B test 2026-05-12 showed
+    # −38 PGs when added. Code still computes :frag_corr_to_median_mean column.
+    # :frag_corr_to_median_mean,
 ]
 
 """
@@ -588,6 +599,20 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     psms[!, :frag_corr_m0_m1_mean]      = zeros(Float32, n)
     psms[!, :n_correlated_m0_m1_fragments]    = zeros(UInt8, n)  # threshold 0.7
     psms[!, :n_correlated_m0_m1_fragments_50] = zeros(UInt8, n)  # threshold 0.5
+    # E1/E2 (Batch E, 2026-05-12): predicted-vs-observed fragment intensity
+    # similarity. Uses per-rank `frag_r_pred` (post-NCE/iso-spline predicted
+    # intensity captured at scan time in apply_main_scoring!).
+    # - E2 (max): observed = max across this precursor's scans
+    # - E1 (area): observed = sum across this precursor's scans
+    psms[!, :pred_obs_max_spectral_contrast]  = zeros(Float32, n)
+    psms[!, :pred_obs_max_scribe]             = zeros(Float32, n)
+    psms[!, :pred_obs_area_spectral_contrast] = zeros(Float32, n)
+    psms[!, :pred_obs_area_scribe]            = zeros(Float32, n)
+    # E10 (Batch E, 2026-05-12): mean Pearson(F[r], median_chrom) over r∈1..6
+    # with signal. median_chrom[k] = median of {F[r][k]} across ranks with
+    # signal at scan k. Different reference than frag_corr_best_* (consensus)
+    # and frag_corr_mean_pairwise (15 pairs averaged).
+    psms[!, :frag_corr_to_median_mean]        = zeros(Float32, n)
     # Spearman A/B (2-file Olsen, two runs) settled the choice per feature:
     # - frag_corr_mean_pairwise → Spearman wins (~+10% gain). It's now the
     #   ONLY mean_pairwise feature (Pearson variant removed, no redundancy).
@@ -611,6 +636,10 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
                                               :frag4_int_m1, :frag5_int_m1, :frag6_int_m1))
     f_m1   = has_m1 ? (psms.frag1_int_m1, psms.frag2_int_m1, psms.frag3_int_m1,
                        psms.frag4_int_m1, psms.frag5_int_m1, psms.frag6_int_m1) : nothing
+    has_pred = all(c -> hasproperty(psms, c), (:frag1_pred, :frag2_pred, :frag3_pred,
+                                                :frag4_pred, :frag5_pred, :frag6_pred))
+    f_pred = has_pred ? (psms.frag1_pred, psms.frag2_pred, psms.frag3_pred,
+                         psms.frag4_pred, psms.frag5_pred, psms.frag6_pred) : nothing
     has_m0 = hasproperty(psms, :ms1_m0_intensity)
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
 
@@ -813,6 +842,87 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
         c_m0m1_t2 = c_m0m1_perrank[2]
         c_m0m1_t3 = c_m0m1_perrank[3]
 
+        # E10: mean Pearson(F[r], median_chrom) over ranks with signal.
+        # median_chrom[k] = median of {F[r][k] : r has signal} at scan k.
+        c_to_median_mean = 0f0
+        let n_with_signal = 0
+            @inbounds for r in 1:6
+                has_signal[r] && (n_with_signal += 1)
+            end
+            if n_with_signal >= 2
+                med = Vector{Float32}(undef, npts)
+                buf = Vector{Float32}(undef, n_with_signal)
+                @inbounds for k in 1:npts
+                    j = 0
+                    for r in 1:6
+                        has_signal[r] || continue
+                        j += 1; buf[j] = F[r][k]
+                    end
+                    # Sort the first n_with_signal entries; pick median.
+                    sort!(view(buf, 1:n_with_signal))
+                    med[k] = n_with_signal % 2 == 1 ?
+                        buf[(n_with_signal + 1) ÷ 2] :
+                        (buf[n_with_signal ÷ 2] + buf[n_with_signal ÷ 2 + 1]) / 2f0
+                end
+                csum = 0f0; cnt = 0
+                @inbounds for r in 1:6
+                    has_signal[r] || continue
+                    csum += _pcor(F[r], med); cnt += 1
+                end
+                c_to_median_mean = cnt > 0 ? csum / cnt : 0f0
+            end
+        end
+
+        # E1/E2: predicted-vs-observed fragment intensity similarity
+        pred_max_sc = 0f0; pred_max_sb = 0f0
+        pred_area_sc = 0f0; pred_area_sb = 0f0
+        if has_pred
+            pred6 = Vector{Float32}(undef, 6)
+            obs_max6 = Vector{Float32}(undef, 6)
+            obs_area6 = Vector{Float32}(undef, 6)
+            @inbounds for r in 1:6
+                pmax = 0f0
+                for i in idxs
+                    v = Float32(f_pred[r][i])
+                    if v > pmax; pmax = v; end
+                end
+                pred6[r] = pmax
+                # F[r] is the per-scan observed-intensity vector
+                omax = 0f0; osum = 0f0
+                for k in 1:npts
+                    vk = F[r][k]
+                    osum += vk
+                    if vk > omax; omax = vk; end
+                end
+                obs_max6[r]  = omax
+                obs_area6[r] = osum
+            end
+            # L1 normalize (sum=1 over the 6 ranks; skip if any side all-zero)
+            spred = sum(pred6); smax = sum(obs_max6); sarea = sum(obs_area6)
+            if spred > 0f0 && smax > 0f0
+                p = pred6 ./ spred; q = obs_max6 ./ smax
+                dot_pq = 0f0; np2 = 0f0; nq2 = 0f0; absd = 0f0
+                @inbounds for r in 1:6
+                    dot_pq += p[r]*q[r]; np2 += p[r]*p[r]; nq2 += q[r]*q[r]
+                    absd += abs(p[r] - q[r])
+                end
+                d = sqrt(np2*nq2)
+                pred_max_sc = d > 0f0 ? Float32(dot_pq / d) : 0f0
+                pred_max_sb = Float32(-log2(absd / 2f0 + 1f-6))
+            end
+            if spred > 0f0 && sarea > 0f0
+                p = pred6 ./ spred; q = obs_area6 ./ sarea
+                dot_pq = 0f0; np2 = 0f0; nq2 = 0f0; absd = 0f0
+                @inbounds for r in 1:6
+                    dot_pq += p[r]*q[r]; np2 += p[r]*p[r]; nq2 += q[r]*q[r]
+                    absd += abs(p[r] - q[r])
+                end
+                d = sqrt(np2*nq2)
+                pred_area_sc = d > 0f0 ? Float32(dot_pq / d) : 0f0
+                pred_area_sb = Float32(-log2(absd / 2f0 + 1f-6))
+            end
+        end
+
         for i in idxs
             psms.frag_corr_top1_top2[i]      = c_top1_top2
             psms.frag_corr_top1_top3[i]      = c_top1_top3
@@ -833,6 +943,11 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             psms.frag_corr_m0_m1_mean[i]       = c_m0m1_mean
             psms.n_correlated_m0_m1_fragments[i]    = n_corr_m0m1
             psms.n_correlated_m0_m1_fragments_50[i] = n_corr_m0m1_50
+            psms.pred_obs_max_spectral_contrast[i]  = pred_max_sc
+            psms.pred_obs_max_scribe[i]             = pred_max_sb
+            psms.pred_obs_area_spectral_contrast[i] = pred_area_sc
+            psms.pred_obs_area_scribe[i]            = pred_area_sb
+            psms.frag_corr_to_median_mean[i]        = c_to_median_mean
         end
     end
     return

@@ -57,11 +57,25 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     frag4_int_m1::T
     frag5_int_m1::T
     frag6_int_m1::T
+    # E7 (Batch E, 2026-05-12): top-3 fragment ppm-error capture. Accumulates
+    # |ppm_err| for M0 matches at ranks 1-3 only; mean computed in Score!.
+    top3_abs_ppm_err_sum::T
+    top3_ppm_err_count::UInt8
+    # E1/E2 (Batch E, 2026-05-12): per-rank post-NCE/iso-spline predicted
+    # intensity captures (M0 only). Captures the max across this precursor's
+    # scans — predicted intensity varies with quad transmission per scan; max
+    # gives a stable per-fragment value for spectral_contrast / scribe.
+    frag1_pred::T
+    frag2_pred::T
+    frag3_pred::T
+    frag4_pred::T
+    frag5_pred::T
+    frag6_pred::T
     precursor_idx::UInt32
     ms_file_idx::UInt32
 end
 
-MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), UInt32(0), UInt32(0))
+MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), UInt32(0), UInt32(0))
 
 """
     TuningUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}

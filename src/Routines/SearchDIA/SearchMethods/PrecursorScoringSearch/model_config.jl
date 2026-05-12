@@ -123,6 +123,12 @@ const ADVANCED_FEATURE_SET = [
     :frag_corr_m0_m1_top1, :frag_corr_m0_m1_top2, :frag_corr_m0_m1_top3,
     :frag_corr_m0_m1_mean,
     :n_correlated_m0_m1_fragments, :n_correlated_m0_m1_fragments_50,
+    # Batch E isolated test — E7 + E1/E2 (cosine confirmed non-redundant via A/B drop test)
+    :top3_ms2_mass_error_mean,
+    :pred_obs_max_spectral_contrast, :pred_obs_max_scribe,
+    :pred_obs_area_spectral_contrast, :pred_obs_area_scribe,
+    # E10 dropped (A/B test 2026-05-12: −38 PGs, redundant with frag_corr_best_*)
+    # :frag_corr_to_median_mean,
 
     :max_weight,                      # populated by select_best_per_precursor!
     :fitted_hellinger,

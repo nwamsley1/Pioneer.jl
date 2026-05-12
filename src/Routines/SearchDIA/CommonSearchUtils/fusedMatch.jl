@@ -181,26 +181,26 @@ Per-match inline scoring hook, dispatched on `(kind, eltype(unscored_psms))`.
 @inline function record_match!(::FusedStandard,
         unscored_psms::Vector{MainUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
-        m_rank::Int64, prec_idx::UInt32)
+        m_rank::Int64, prec_idx::UInt32, pred_int::Float32)
     apply_main_scoring!(unscored_psms, col, frag, iso_idx,
-                            intensity, ppm_err, m_rank, prec_idx)
+                            intensity, ppm_err, m_rank, prec_idx, pred_int)
     return nothing
 end
 
 @inline function record_match!(::FusedStandard,
         unscored_psms::Vector{TuningUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
-        m_rank::Int64, prec_idx::UInt32)
+        m_rank::Int64, prec_idx::UInt32, ::Float32)
     apply_tuning_scoring!(unscored_psms, col, frag, iso_idx,
                             intensity, ppm_err, m_rank, prec_idx)
     return nothing
 end
 
 @inline record_match!(::FusedQuadEst, ::AbstractVector{<:UnscoredPSM},
-        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32) = nothing
+        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32, ::Float32) = nothing
 
 @inline record_match!(::FusedRTIndexed, ::AbstractVector{<:UnscoredPSM},
-        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32) = nothing
+        ::Int, _, ::UInt8, ::Float32, ::Float32, ::Int64, ::UInt32, ::Float32) = nothing
 
 #==========================================================
 Inline scoring for the fused path — mirrors ModifyFeatures!(MainUnscoredPSM, …)
@@ -224,7 +224,8 @@ error accumulation.
                                          intensity::Float32,
                                          ppm_err::Float32,
                                          m_rank::Int64,
-                                         prec_idx::UInt32)
+                                         prec_idx::UInt32,
+                                         pred_int::Float32)
     @inbounds score = unscored[col]
 
     best_rank            = score.best_rank
@@ -261,6 +262,14 @@ error accumulation.
     frag4_int_m1 = score.frag4_int_m1
     frag5_int_m1 = score.frag5_int_m1
     frag6_int_m1 = score.frag6_int_m1
+    top3_abs_ppm_err_sum = score.top3_abs_ppm_err_sum
+    top3_ppm_err_count   = score.top3_ppm_err_count
+    frag1_pred = score.frag1_pred
+    frag2_pred = score.frag2_pred
+    frag3_pred = score.frag3_pred
+    frag4_pred = score.frag4_pred
+    frag5_pred = score.frag5_pred
+    frag6_pred = score.frag6_pred
 
     if iso_idx != UInt8(0)
         isotope_count += UInt8(1)
@@ -298,6 +307,19 @@ error accumulation.
         elseif rank == UInt8(4); frag4_int += intensity
         elseif rank == UInt8(5); frag5_int += intensity
         elseif rank == UInt8(6); frag6_int += intensity
+        end
+        # E7: top-3 M0 fragment ppm-error capture
+        if rank <= UInt8(3)
+            top3_abs_ppm_err_sum += abs(ppm_err)
+            top3_ppm_err_count   += UInt8(1)
+        end
+        # E1/E2: per-rank predicted-intensity capture (max across scans for M0)
+        if rank == UInt8(1);     frag1_pred = max(frag1_pred, pred_int)
+        elseif rank == UInt8(2); frag2_pred = max(frag2_pred, pred_int)
+        elseif rank == UInt8(3); frag3_pred = max(frag3_pred, pred_int)
+        elseif rank == UInt8(4); frag4_pred = max(frag4_pred, pred_int)
+        elseif rank == UInt8(5); frag5_pred = max(frag5_pred, pred_int)
+        elseif rank == UInt8(6); frag6_pred = max(frag6_pred, pred_int)
         end
         if rank < best_rank
             best_rank = rank
@@ -338,6 +360,8 @@ error accumulation.
         error, matched_rank_mask,
         frag1_int, frag2_int, frag3_int, frag4_int, frag5_int, frag6_int,
         frag1_int_m1, frag2_int_m1, frag3_int_m1, frag4_int_m1, frag5_int_m1, frag6_int_m1,
+        top3_abs_ppm_err_sum, top3_ppm_err_count,
+        frag1_pred, frag2_pred, frag3_pred, frag4_pred, frag5_pred, frag6_pred,
         prec_idx, ms_file_idx)
     return nothing
 end
@@ -898,7 +922,7 @@ function run_fused!(
 
                         ppm_err = compute_ppm_err(iso_mz, best_mz)
                         record_match!(kind, unscored_psms, Int(this_col),
-                            frag, UInt8(iso_idx), int_obs, ppm_err, m_rank, prec_idx)
+                            frag, UInt8(iso_idx), int_obs, ppm_err, m_rank, prec_idx, pred_int)
 
                         if iso_idx == 0
                             mono_landing = best_peak
