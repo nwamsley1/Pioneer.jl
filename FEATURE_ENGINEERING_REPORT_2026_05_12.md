@@ -273,6 +273,28 @@ running in parallel. Output dir: `tune_run_all23_m1frag/`. Should land
 in ~25-40 min on its own. The 2-file delta suggests we'll see another
 +500-800 IDs from M+1 features at scale.
 
+### 23-file confirmation (M+1 features) — completed
+
+The 23-file `m1frag` run finished. Three-way comparison:
+
+| Run | q≤.001 | q≤.01 | PGs |
+|---|---:|---:|---:|
+| Yesterday no-features | 958,355 | 1,087,173 | 142,524 |
+| Today 17 features no M+1 | 966,262 | 1,089,961 | 142,027 |
+| **Today 17 + M+1 fragment features** | **968,822** | **1,091,822** | **142,041** |
+
+**M+1 features at scale: +2,560 q≤.001, +1,861 q≤.01, +14 PGs** over the
+17-feature batch. **Net vs yesterday: +10,467 q≤.001, +4,649 q≤.01.**
+
+This is bigger than the 2-file run predicted (was +397 final IDs on 2
+files; ~+1,861 q≤.01 on 23 files). The signal grows with scale —
+likely because larger PSM pools give the LGBM more variance to learn
+the per-fragment M0/M+1 correlations on.
+
+PG count recovered slightly with M+1 features (−483 vs no-features
+becomes −483+14 = nearly even). Still down from yesterday's baseline,
+but M+1 doesn't make the PG dip worse.
+
 ### Things to refocus on in the morning
 
 1. **Check `tune_run_all23_m1frag` numbers** (run launched ~00:35). They
