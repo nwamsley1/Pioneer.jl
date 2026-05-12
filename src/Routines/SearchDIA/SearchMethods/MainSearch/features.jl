@@ -398,12 +398,14 @@ function add_ms1_features!(psms::DataFrame,
         # Isotope envelope ratio features
         if m0_hit && m0_int > 0f0 && m1_hit
             obs_ratio = m1_int / m0_int
-            sulf = prec_sulfurs[pid]
+            sulf_raw = Int(prec_sulfurs[pid])
+            # IsotopeSplineModel is indexed 0..5 (6 entries). Clamp for high-S peptides.
+            sulf = clamp(sulf_raw, 0, 5)
             # iso_splines(sulfur, isotope, mass) gives P(isotope | sulfurs, mass).
             # Use prec_mz × charge as an approximate neutral mass for the spline.
             prec_mass_approx = prec_mz * Float32(prec_chg)
-            p0 = max(iso_splines(sulf, UInt8(0), prec_mass_approx), 1f-12)
-            p1 = max(iso_splines(sulf, UInt8(1), prec_mass_approx), 1f-12)
+            p0 = max(iso_splines(Int64(sulf), Int64(0), prec_mass_approx), 1f-12)
+            p1 = max(iso_splines(Int64(sulf), Int64(1), prec_mass_approx), 1f-12)
             pred_ratio = Float32(p1 / p0)
             psms.ms1_m1_to_m0_ratio[i]    = Float32(obs_ratio)
             psms.ms1_m1_to_m0_pred[i]     = pred_ratio
