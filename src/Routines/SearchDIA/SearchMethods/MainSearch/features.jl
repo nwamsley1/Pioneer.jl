@@ -288,6 +288,9 @@ const PRESCORE_FEATURES = [
     # :matched_ratio,
     # E6 M01 DROPPED — redundant with log_by_ratio_m0 (same LGBM gain, no lift).
     # :log_by_ratio_m01,
+    # MBR — per-precursor PSM count (used by ScoringSearch and the experiment-wide
+    # LightGBM; populated in train_lgbm_and_select_best).
+    :n_scans,
 ]
 
 """

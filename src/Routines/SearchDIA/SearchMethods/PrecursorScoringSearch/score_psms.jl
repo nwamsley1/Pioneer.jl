@@ -55,12 +55,19 @@ function score_precursor_isotope_traces(
     ::Int64,                       # max_psms_in_memory (unused)
     ::Float32 = 0.01f0,            # q_value_threshold (unused)
     ms1_scoring::Bool = true,
-    ::Bool = false,                # force_oom (unused)
+    ::Bool = false;                # force_oom (unused)
+    match_between_runs::Bool = true,
 )
     # 1. Load PSMs into memory
     best_psms = load_psms_for_lightgbm(second_pass_folder)
     n_psms = nrow(best_psms)
     @debug_l1 "PSM scoring: $n_psms PSMs loaded for experiment-wide LightGBM"
+
+    # 1b. MBR Phase 1: regenerate 1:1 target↔decoy :pair_id (see mbr_pairing.jl).
+    # The library's pair_id is many-to-one; FTR control downstream needs the
+    # per-pair_id 1:1 invariant. No row cloning — leftover precursors get
+    # standalone pair_ids.
+    regenerate_pair_ids!(best_psms, precursors)
 
     # 2. Build the feature list (the _qbin variants in ADVANCED_FEATURE_SET are
     # commented out, so we don't need to compute quantile-binned features here).
@@ -72,21 +79,49 @@ function score_precursor_isotope_traces(
                                        for pid in best_psms[!, :precursor_idx]]
     best_psms[!, :decoy] = best_psms[!, :target] .== false
 
-    # 5. Train via the shared helper. Uses SCORING_LGBM_HP (more iterations,
-    # lower learning rate) than per-file MainSearch's SHARED_LGBM_HP — the larger
-    # mixed-file PSM pool benefits from finer-grained boosting.
-    all_scores, last_classifier, info = train_psm_classifier_with_fallback(
+    # ── MBR Phase 2 — first pass + donor features + second pass ──
+    # Architecture (Phase 5b refactor):
+    #   * :trace_prob (downstream qval pipeline) = NON-MBR score (pass 1)
+    #   * :trace_prob_mbr = MBR-boosted score (pass 2) — used ONLY by FTR
+    #     controller to evaluate transfer-candidate recovery.
+    #   * Recovered candidates get :mbr_recovered = true and bypass the
+    #     downstream qval gate, but their :trace_prob (non-MBR) remains
+    #     untouched for downstream weighting / aggregation.
+    #
+    # This eliminates the Path-B leak (MBR features inflating non-candidate
+    # scores in the qval distribution).
+    all_scores_p1, last_classifier_p1, info_p1 = train_psm_classifier_with_fallback(
         best_psms; features=features, lgbm_hp=SCORING_LGBM_HP
     )
+    best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores_p1, 1f-6, 1f0 - 1f-4))
+    @user_info "Pass 1 (non-MBR) trained on $(length(info_p1.available_features)) features"
 
-    # 6. Log feature importances (LGBM only — probit doesn't expose them).
-    # Promoted to @user_info for the tuning phase; revert to @debug_l2 once stable.
+    last_classifier = last_classifier_p1
+    info            = info_p1
+
+    if match_between_runs
+        # Compute the MBR features + :MBR_is_best_decoy from cross-run donors.
+        compute_mbr_features!(best_psms; score_col=:trace_prob_prepass)
+
+        # Second pass: full feature set incl. MBR features. Output → :trace_prob_mbr
+        # (used ONLY by the FTR controller, NOT by the qval pipeline).
+        all_scores_mbr, last_classifier, info = train_psm_classifier_with_fallback(
+            best_psms; features=features, lgbm_hp=SCORING_LGBM_HP
+        )
+        best_psms[!, :trace_prob_mbr] = Float32.(clamp.(all_scores_mbr, 1f-6, 1f0 - 1f-4))
+        @user_info "Pass 2 (MBR-boosted) trained on $(length(info.available_features)) features (used by FTR only)"
+    else
+        @user_info "match_between_runs=false: skipping MBR feature computation, second pass, and FTR controller"
+    end
+
+    # Log feature importances of the final classifier (pass 2 if MBR on, else pass 1).
     if last_classifier !== nothing
         lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
         imp = importance(lgbm_model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
-            lines = ["ScoringSearch experiment-wide LGBM feature gains (all $(length(sorted_imp))):"]
+            label = match_between_runs ? "MBR-boosted (pass 2)" : "non-MBR (pass 1)"
+            lines = ["ScoringSearch $label LGBM feature gains (all $(length(sorted_imp))):"]
             for (fname, gain) in sorted_imp
                 push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
             end
@@ -94,9 +129,17 @@ function score_precursor_isotope_traces(
         end
     end
 
-    # 7. Write trace_prob to the DataFrame (clamped away from 0/1 for downstream
-    # log-odds aggregation stability).
-    best_psms[!, :trace_prob] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
+    # :trace_prob = NON-MBR pass-1 score. Drives the qval pipeline downstream.
+    best_psms[!, :trace_prob] = best_psms[!, :trace_prob_prepass]
+
+    if match_between_runs
+        # FTR control over the candidate cohort. Sets :mbr_recovered = true for
+        # candidates whose FTR-model score exceeds τ.
+        apply_mbr_filter!(best_psms; alpha=0.01f0, q_thresh=0.01f0)
+    else
+        # No MBR: ensure downstream code finds the column but never bypasses qval.
+        best_psms[!, :mbr_recovered] = falses(nrow(best_psms))
+    end
 
     # 8. Distribute scored PSMs back to the per-file Arrow files
     write_scored_psms_to_files!(best_psms, file_paths)

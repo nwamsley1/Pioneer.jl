@@ -168,6 +168,7 @@ function importScripts()
         joinpath(package_root, "src", "utils", "ML"),
         [
             "fdrUtilities.jl",
+            "ftrUtilities.jl",
             "probitRegression.jl",
             "piecewiseLinearFunction.jl",
             "wittakerHendersonSmoothing.jl",
@@ -259,6 +260,9 @@ function importScripts()
         [
             "utils.jl",                        # get_qvalue_spline + other helpers
             "model_config.jl",                 # Model configuration
+            "mbr_pairing.jl",                  # MBR Phase 1: 1:1 pair regeneration with cloning
+            "mbr_features.jl",                 # MBR Phase 2: donor tracking + per-row MBR features
+            "mbr_ftr.jl",                      # MBR Phase 4: FTR controller on MBR-boosted score
             "score_psms.jl",                   # PSM scoring functions
             "scoring_interface.jl",            # Interface functions
             "build_rt_indices.jl",             # RT index construction for IntegrateChromatogramsSearch

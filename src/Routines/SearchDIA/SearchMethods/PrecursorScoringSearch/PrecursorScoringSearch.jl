@@ -73,9 +73,16 @@ struct PrecursorScoringSearchParameters <: SearchParameters
     # the LightGBM feature set, which kept the keep-as-true default.
     ms1_scoring::Bool
 
+    # When false, skip MBR feature computation, the MBR-boosted second pass,
+    # the FTR controller, and the qval bypass. Driven by global.match_between_runs.
+    match_between_runs::Bool
+
     function PrecursorScoringSearchParameters(params::PioneerParameters)
         ml_params = params.optimization.machine_learning
         global_params = params.global_settings
+
+        mbr = hasproperty(global_params, :match_between_runs) ?
+                Bool(global_params.match_between_runs) : true
 
         new(
             Float64(ml_params.max_psm_memory_mb),
@@ -83,6 +90,7 @@ struct PrecursorScoringSearchParameters <: SearchParameters
             _resolve_q_value_threshold(global_params),
 
             true,                                                 # ms1_scoring (hardcoded)
+            mbr,
         )
     end
 end
@@ -203,7 +211,8 @@ function summarize_results!(
             max_psms,
             params.q_value_threshold,
             params.ms1_scoring,
-            FORCE_OOM
+            FORCE_OOM;
+            match_between_runs = params.match_between_runs,
         )
     end
     #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
@@ -339,11 +348,28 @@ function summarize_results!(
         results.precursor_qval_interp[] = qval_spline
         results.precursor_pep_interp[] = spline_result.pep_interp
 
-        # Phase B — Single per-file pipeline combining Steps 5+10
+        # Phase B — Single per-file pipeline combining Steps 5+10.
+        # MBR Phase 5b: rows with :mbr_recovered=true bypass the per-file
+        # :qval filter (their qval is overridden to 0). The cross-run
+        # :global_qval threshold still applies to all rows.
+        mbr_qval_bypass = "mbr_recovery_qval_bypass" => function(df)
+            if hasproperty(df, :mbr_recovered) && hasproperty(df, :qval)
+                qv = df[!, :qval]
+                rec = df[!, :mbr_recovered]
+                @inbounds for i in 1:nrow(df)
+                    if rec[i]
+                        qv[i] = 0.0f0
+                    end
+                end
+            end
+            return df
+        end
+
         combined_pipeline = TransformPipeline() |>
             add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
             add_dict_column(:global_qval, :precursor_idx, global_qval_dict) |>
             add_interpolated_column(:qval, :prec_prob, qval_spline) |>
+            mbr_qval_bypass |>
             add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
             filter_by_multiple_thresholds([
                 (:global_qval, params.q_value_threshold),
