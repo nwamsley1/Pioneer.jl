@@ -260,7 +260,8 @@ const PRESCORE_FEATURES = [
     :frag_corr_m0_m1_top1, :frag_corr_m0_m1_top2, :frag_corr_m0_m1_top3,
     :frag_corr_m0_m1_mean,
     :n_correlated_m0_m1_fragments, :n_correlated_m0_m1_fragments_50,
-    :frag_corr_mean_pairwise_spearman,
+    :frag_corr_mean_pairwise_spearman, :frag_corr_min_pairwise_spearman,
+    :frag_corr_top3_weight_spearman,   :frag_corr_top5_weight_spearman,
 ]
 
 """
@@ -585,6 +586,11 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     # LOST to Pearson (intensity scale matters for single-pair comparisons),
     # so we keep only the mean_pairwise version.
     psms[!, :frag_corr_mean_pairwise_spearman] = zeros(Float32, n)
+    # Additional Spearman variants for aggregate features under A/B test.
+    # Will drop the loser of each pair after the next 2-file Olsen run.
+    psms[!, :frag_corr_min_pairwise_spearman]  = zeros(Float32, n)
+    psms[!, :frag_corr_top3_weight_spearman]   = zeros(Float32, n)
+    psms[!, :frag_corr_top5_weight_spearman]   = zeros(Float32, n)
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -679,37 +685,39 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
         pair_sum   = 0f0
         pair_min   = 1f0
         any_pair = false
+        # Spearman variants computed in the same loop
+        pair_sum_sp = 0f0
+        pair_min_sp = 1f0
         for r1 in 1:6, r2 in (r1+1):6
             (has_signal[r1] && has_signal[r2]) || continue
-            c = _pcor(F[r1], F[r2])
-            pair_sum += c
-            pair_count += 1
-            if c < pair_min; pair_min = c; end
+            c   = _pcor(F[r1], F[r2])
+            csp = _scor(F[r1], F[r2])
+            pair_sum    += c
+            pair_sum_sp += csp
+            pair_count  += 1
+            if c   < pair_min;    pair_min    = c;   end
+            if csp < pair_min_sp; pair_min_sp = csp; end
             any_pair = true
         end
-        mean_pairwise = pair_count > 0 ? pair_sum / pair_count : 0f0
-        min_pairwise  = any_pair ? pair_min : 0f0
-
-        # Spearman variant of mean_pairwise (only — top1_weight + m0_m1_mean
-        # Spearman variants lost to Pearson in A/B; see commit 81d68d8b notes).
-        pair_sum_sp = 0f0; pair_count_sp = 0
-        for r1 in 1:6, r2 in (r1+1):6
-            (has_signal[r1] && has_signal[r2]) || continue
-            pair_sum_sp += _scor(F[r1], F[r2]); pair_count_sp += 1
-        end
-        mean_pairwise_sp = pair_count_sp > 0 ? pair_sum_sp / pair_count_sp : 0f0
+        mean_pairwise     = pair_count > 0 ? pair_sum    / pair_count : 0f0
+        mean_pairwise_sp  = pair_count > 0 ? pair_sum_sp / pair_count : 0f0
+        min_pairwise      = any_pair ? pair_min    : 0f0
+        min_pairwise_sp   = any_pair ? pair_min_sp : 0f0
 
         c_top1_top2  = (has_signal[1] && has_signal[2]) ? _pcor(F[1], F[2]) : 0f0
         c_top1_top3  = (has_signal[1] && has_signal[3]) ? _pcor(F[1], F[3]) : 0f0
         c_top1_weight = has_signal[1] ? _pcor(F[1], W) : 0f0
 
         # Mean correlation of top-3 fragments to weight chromatogram
-        n_top3 = 0; s_top3 = 0f0
+        n_top3 = 0; s_top3 = 0f0; s_top3_sp = 0f0
         for r in 1:3
             has_signal[r] || continue
-            s_top3 += _pcor(F[r], W); n_top3 += 1
+            s_top3    += _pcor(F[r], W)
+            s_top3_sp += _scor(F[r], W)
+            n_top3 += 1
         end
-        c_top3_w = n_top3 > 0 ? s_top3 / n_top3 : 0f0
+        c_top3_w    = n_top3 > 0 ? s_top3    / n_top3 : 0f0
+        c_top3_w_sp = n_top3 > 0 ? s_top3_sp / n_top3 : 0f0
 
         # Apex dispersion across fragments with signal
         apex_irts = Float32[]
@@ -735,12 +743,15 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
         end
 
         # Mean correlation of top-5 fragments (rank 1..5) to weight chromatogram
-        n_top5 = 0; s_top5 = 0f0
+        n_top5 = 0; s_top5 = 0f0; s_top5_sp = 0f0
         for r in 1:5
             has_signal[r] || continue
-            s_top5 += c_fw[r]; n_top5 += 1
+            s_top5    += c_fw[r]
+            s_top5_sp += _scor(F[r], W)
+            n_top5 += 1
         end
-        c_top5_w = n_top5 > 0 ? s_top5 / n_top5 : 0f0
+        c_top5_w    = n_top5 > 0 ? s_top5    / n_top5 : 0f0
+        c_top5_w_sp = n_top5 > 0 ? s_top5_sp / n_top5 : 0f0
 
         # DIA-NN-style best fragment: pick the rank r with the highest sum of
         # pairwise correlations to the other top-6 fragments (consensus).
@@ -828,6 +839,9 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             psms.n_correlated_m0_m1_fragments[i]    = n_corr_m0m1
             psms.n_correlated_m0_m1_fragments_50[i] = n_corr_m0m1_50
             psms.frag_corr_mean_pairwise_spearman[i] = mean_pairwise_sp
+            psms.frag_corr_min_pairwise_spearman[i]  = min_pairwise_sp
+            psms.frag_corr_top3_weight_spearman[i]   = c_top3_w_sp
+            psms.frag_corr_top5_weight_spearman[i]   = c_top5_w_sp
         end
     end
     return
