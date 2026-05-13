@@ -122,6 +122,46 @@ Mitigation ideas (to investigate):
   establish whether Batch F regressed species-FTR vs the previous
   design.
 
+## YeastMBR Dennis-FTR sweep (4 variants, 20 files, 2026-05-12)
+
+Compared FTR-threshold mode (qval vs PEP on the FTR LGBM output) and the
+per-file PEP filter (default 0.9 vs strict 0.25) plus a no-MBR baseline.
+
+Dennis FTR comparison:
+
+| Variant                  | Row Dennis FTR     | Precursor Dennis FTR | MBR rec |
+|--------------------------|-------------------:|---------------------:|--------:|
+| qval (baseline)          | 406 / 6913 = 5.87% | 174 / 1381 = 12.60%  | 93,283  |
+| **FTR-PEP threshold**    | **89 / 5150 = 1.73%** | **31 / 1133 = 2.74%** | 76,328  |
+| no MBR                   | -10 / 1737 = -0.58%| 2 / 386 = 0.52%      | 0       |
+| per-file PEP ≤ 0.25      | -42 / -881 = NaN   | -12 / -392 = NaN     | 4,120   |
+
+Run B totals:
+
+| Variant               | Total IDs | HelaOnly | Yeast_in_H | MBR_rec |
+|-----------------------|----------:|---------:|-----------:|--------:|
+| qval (baseline)       | 854,261   | 409,709  | 1,280      | 93,283  |
+| FTR-PEP threshold     | 838,142   | 403,136  | 908        | 76,328  |
+| no MBR                | 761,254   | 370,198  | 564        | 0       |
+| per-file PEP ≤ 0.25   | 745,180   | 359,291  | 463        | 4,120   |
+
+Findings:
+- **FTR-PEP threshold** drops Dennis FTR 3-5x (5.87% → 1.73% row,
+  12.60% → 2.74% prec) at -16k total IDs (-1.9%) and -17k MBR recoveries.
+  PEP is per-row local probability; it filters the high-PEP tail of the
+  FTR-LGBM score where species-mismatched transfers cluster. Best
+  practical compromise.
+- **no MBR** is the ground-truth baseline: Dennis FTR is statistical
+  noise around zero. Cost: -93k total IDs vs MBR (-10.9%), zero MBR
+  rescues.
+- **per-file PEP ≤ 0.25** breaks the pipeline: filter throws away so
+  many precursors before ScoringSearch that Run B has FEWER HelaOnly IDs
+  than Run A (negative denominator). Most useful precursors live in
+  PEP ∈ (0.25, 0.9); filtering at 0.25 is too aggressive.
+
+Recommendation: switch FTR-threshold default to PEP. Cuts species-FTR
+from 12.6% to 2.7% (per-precursor) while keeping 83% of MBR's ID gain.
+
 EFDR calibration (mean abs |EFDR − decoyFDR| at q ≤ 0.01):
 
 | Method | Run A prec / global | Run B prec / global |
