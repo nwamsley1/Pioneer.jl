@@ -448,21 +448,33 @@ function apply_mbr_filter_paired!(
         last_cls = cls
     end
 
-    # ── 5. Q-value on the doubled frame (target=is_real, decoy=is_fake) ──
+    # ── 5. Q-value AND PEP on the doubled frame (target=is_real, decoy=is_fake) ──
     qvals_double = Vector{Float32}(undef, 2 * n_cand)
+    pep_double   = Vector{Float32}(undef, 2 * n_cand)
     get_qvalues!(ftr_score_double, y, qvals_double)
+    get_PEP!(ftr_score_double, y, pep_double)
     # qvals_double[i] = (# fakes ranked ≥ row i) / (# reals ranked ≥ row i),
     # monotonized to be non-increasing as score increases.
+    # pep_double[i]   = per-row P(is_false | score), isotonic-regression-derived.
 
-    # ── 6. Recovery: top-half rows (real-MBR) with q ≤ alpha ──
+    # ── 6. Recovery: top-half rows (real-MBR) with q ≤ alpha or pep ≤ alpha
+    #    Selectable via ENV var PIONEER_FTR_MODE = "qval" (default) or "pep".
     qvals_top = qvals_double[1:n_cand]
-    recovered_in_cand = qvals_top .<= alpha
+    pep_top   = pep_double[1:n_cand]
+    ftr_mode  = get(ENV, "PIONEER_FTR_MODE", "qval")
+    # PIONEER_FTR_ALPHA env var overrides the default `alpha` kwarg so users
+    # can sweep without recompiling.
+    α_use = parse(Float32, get(ENV, "PIONEER_FTR_ALPHA", string(alpha)))
+    recovered_in_cand = ftr_mode == "pep" ? (pep_top .<= α_use) : (qvals_top .<= α_use)
     n_recovered = count(recovered_in_cand)
+    @user_info "  FTR threshold mode: $ftr_mode (alpha=$α_use)"
 
     mbr_recovered_full = falses(n)
     ftr_qval_full      = fill(NaN32, n)
+    ftr_pep_full       = fill(NaN32, n)
     @inbounds for (k, i) in enumerate(cand_idx)
         ftr_qval_full[i] = qvals_top[k]
+        ftr_pep_full[i]  = pep_top[k]
         if recovered_in_cand[k]
             mbr_recovered_full[i] = true
         end
@@ -470,6 +482,7 @@ function apply_mbr_filter_paired!(
     psms[!, :mbr_recovered]          = mbr_recovered_full
     psms[!, :MBR_transfer_candidate] = candidate_mask
     psms[!, :ftr_qval_true]          = ftr_qval_full
+    psms[!, :ftr_pep_true]           = ftr_pep_full
 
     # ── 7. Threshold for log: highest ftr_score on a top-half row with q ≤ α ──
     τ = n_recovered > 0 ?

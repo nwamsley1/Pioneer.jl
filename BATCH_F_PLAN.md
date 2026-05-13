@@ -162,6 +162,29 @@ Findings:
 Recommendation: switch FTR-threshold default to PEP. Cuts species-FTR
 from 12.6% to 2.7% (per-precursor) while keeping 83% of MBR's ID gain.
 
+### Sweep at tighter PEP α (2026-05-12 evening)
+
+Added PIONEER_FTR_ALPHA env var; reran HelaOnly+Combined at α=0.005.
+
+| Variant            | Row Dennis FTR | Prec Dennis FTR | Run B IDs | MBR rec |
+|--------------------|---------------:|----------------:|----------:|--------:|
+| qval baseline      |          5.87% |          12.60% |   854,261 |  93,283 |
+| FTR-PEP α=0.01     |          1.73% |           2.74% |   838,142 |  76,328 |
+| **FTR-PEP α=0.005**|        **0.70%** |       **2.07%** | **826,104** | **64,845** |
+| no MBR (gold)      |       noise (0%) |      noise (0.5%) |   761,254 |       0 |
+
+- Row Dennis FTR drops 2.5x going from α=0.01 to α=0.005 (1.73% → 0.70%).
+- Prec Dennis FTR drops modestly (2.74% → 2.07%) — multi-file-persistent
+  yeast transfers are harder to kill on per-precursor basis.
+- ID cost: -12,038 (-1.4%); MBR recoveries: -11,483 (-15%).
+- Most of the ID loss is from MBR recoveries; non-MBR IDs are essentially
+  unchanged.
+- vs no-MBR baseline: keeps +64,850 IDs (8.5% lift) at <1% row-FTR.
+
+α=0.005 is the best operating point so far on this dataset. The
+species-mismatch error mode that exists outside the FTR controller's
+training signal is now near the search-baseline noise floor.
+
 EFDR calibration (mean abs |EFDR − decoyFDR| at q ≤ 0.01):
 
 | Method | Run A prec / global | Run B prec / global |
