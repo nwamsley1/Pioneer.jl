@@ -48,7 +48,8 @@ const ADVANCED_FEATURE_SET = [
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred, :ms1_envelope_dev_log2,
     :lys_count,
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
-    :frag_corr_mean_pairwise, :frag_corr_min_pairwise,
+    # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
+    :frag_corr_min_pairwise,
     :frag_apex_dispersion_irt,
     :n_correlated_fragments_90,
     :frag_corr_best_m0,

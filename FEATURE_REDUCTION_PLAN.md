@@ -122,3 +122,33 @@ Treat as "drop OK" when ALL of:
 - Olsen / MTAC per-file Δ ≥ −500
 
 Otherwise, keep the feature.
+
+## Tier-1 Results (2026-05-13)
+
+Tested 6 single-feature drops on 2-file Olsen Exploris + 2-file MTAC 3P
+(MBR on, FTR-PEP α=0.005). Baselines: Olsen 90,593 IDs / 12,445 PGs;
+MTAC 179,461 IDs / 20,354 PGs.
+
+| Feature | Olsen Δ IDs | Olsen Δ PGs | MTAC Δ IDs | MTAC Δ PGs | Verdict |
+|---|---:|---:|---:|---:|---|
+| `frag_corr_mean_pairwise` | **+471** | **+140** | **+649** | **+8** | **DROP** |
+| `frag_corr_m0_m1_top1` | −133 | +6 | **−771** | **−157** | KEEP |
+| `poisson` | −120 | +12 | **−800** | **−134** | KEEP |
+| `fitted_hellinger` | +221 | +68 | **−1,437** | **−197** | KEEP |
+| `weight_ratio_at_scan` + `weight_rank_at_scan` | +241 | +50 | +30 | −89 | borderline KEEP |
+| `irt_dist_to_weight_apex` | +344 | +21 | −294 | −172 | KEEP |
+
+**Only `frag_corr_mean_pairwise` is cross-dataset safe.** Dropped from
+both `PRESCORE_FEATURES` and `ADVANCED_FEATURE_SET`. This eliminates the
+Spearman 15-rank-sort-per-precursor computation — meaningful runtime win.
+
+Cross-dataset pattern: features that look droppable on Olsen alone
+(positive single-drop Δ) tend to be load-bearing on MTAC. The minimal
+cross-validated reduction is smaller than the per-dataset minimum.
+
+New sizes:
+- PRESCORE_FEATURES: 66 → 65
+- ADVANCED_FEATURE_SET: 71 → 70
+
+Next: Tier 2 (redundant pairs) and Tier 3 (per-family further reduction)
+on the new 65/70 baseline.

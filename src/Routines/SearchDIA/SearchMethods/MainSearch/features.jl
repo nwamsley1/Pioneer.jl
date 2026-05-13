@@ -262,7 +262,9 @@ const PRESCORE_FEATURES = [
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
 
     # Fragment-chromatogram correlations (frag_w_corr family dropped; pairs dropped)
-    :frag_corr_mean_pairwise, :frag_corr_min_pairwise,
+    # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13 — cross-dataset test
+    # showed Olsen +471 IDs / MTAC +649 IDs. Saves 15 rank-sorts per precursor.
+    :frag_corr_min_pairwise,
     :frag_apex_dispersion_irt,
     :n_correlated_fragments_90,
     :frag_corr_best_m0,
