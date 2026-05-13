@@ -223,85 +223,85 @@ LightGBM Feature Set
 
 # Lean feature set for prescore LightGBM (fast per-file ranking)
 const PRESCORE_FEATURES = [
+    # ====================================================================
+    # Smart-composite reduced feature set (2026-05-13).
+    # Built from family-aware ablation campaign on 2-file Olsen Exploris +
+    # 2-file MTAC 3P with cross-dataset reconciliation. Dropped 40 features
+    # whose drop_all or keep-only-winner was positive on BOTH datasets.
+    # Result on full pipeline (with MBR):
+    #   Olsen: 91,193 → 91,576 final IDs (+383), 12,458 → 12,555 PGs (+97)
+    #   MTAC:  180,428 → 180,672 IDs (+244),  20,107 → 20,335 PGs (+228)
+    # ====================================================================
+
+    # Core PSM / sequence metrics
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :total_ions_iso, :missed_cleavage, :y_count, :weight, :gof,
-    :max_unmatched_residual, :max_matched_residual, :Mox, :spectrum_peak_count,
-    :sequence_length,
+    :max_matched_residual, :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
+
+    # Cross-precursor at-scan
     :weight_ratio_at_scan, :weight_rank_at_scan,
-    :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan,
-    :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan, :irt_dist_best_max_residual_3scan,
-    :worst_max_residual_3scan, :worst_manhattan_3scan,
+
+    # Window-based PSM-quality features (win3 reduced to 1 winner; win5 kept; win11 kept)
+    :best_max_residual_3scan,
     :best_gof_5scan, :best_manhattan_5scan, :best_max_residual_5scan,
     :irt_dist_best_gof_5scan, :irt_dist_best_manhattan_5scan, :irt_dist_best_max_residual_5scan,
     :worst_max_residual_11scan, :worst_manhattan_11scan,
     :irt_dist_to_weight_apex,
-    # Batch A/B/C/D peak-shape features — DISABLED again. A/B test 2026-05-12:
-    # adding all 17 on top of Batch E lost −667 IDs (88,470 vs 89,137); heavy
-    # overlap with Batch E features. Code still computes them.
-    # :relative_position, :dist_to_relative_center,
-    # :weight_apex_relative_pos, :weight_chrom_skewness, :weight_chrom_kurtosis,
-    # :apex_to_edge_weight_ratio, :n_above_hm_right_of_apex,
-    # :weight_chrom_gaussian_r2, :weight_chrom_gaussian_sigma, :weight_chrom_gaussian_apex_irt,
-    # :shape_m2, :shape_m1, :shape_0, :shape_p1, :shape_p2,
-    # :gof_minus_max_gof_precursor,
+
+    # MS1 features (chromatogram-correlations dropped, only m0_corr kept)
     :ms1_m0_mass_err_ppm,
-    :ms1_corr_weight_m0, :ms1_corr_m0_m1, :ms1_corr_weight_m1,
-    :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
+    :ms1_corr_weight_m0, :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
-    # Isotope envelope features (2026-05-11)
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred, :ms1_envelope_dev_log2,
-    # Sequence composition
-    :his_count, :pro_count, :lys_count, :arg_count,
-    # Cross-precursor competition
-    :weight_ratio_to_2nd_best, :weight_ratio_to_3rd_best, :n_competitors_50pct,
-    # Per-rank M0 fragment intensities (from MainUnscoredPSM)
+
+    # Sequence composition (3 of 4 dropped; lys_count winner)
+    :lys_count,
+
+    # Per-rank M0 fragment intensities (kept; used by chromatogram features)
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
-    # Per-precursor fragment chromatogram features
-    :frag_corr_top1_top2, :frag_corr_top1_top3, :frag_corr_top1_weight,
-    :frag_corr_mean_pairwise, :frag_corr_min_pairwise, :frag_corr_top3_weight,
-    :frag_corr_top5_weight,
-    :frag_apex_dispersion_irt, :n_correlated_fragments,
-    :n_correlated_fragments_50, :n_correlated_fragments_90,
-    :frag_corr_best_weight, :frag_corr_best_m0,
-    # M+1 fragment intensities + per-fragment M0/M+1 correlations (2026-05-12)
-    :frag1_int_m1, :frag2_int_m1, :frag3_int_m1, :frag4_int_m1, :frag5_int_m1, :frag6_int_m1,
-    :frag_corr_m0_m1_top1, :frag_corr_m0_m1_top2, :frag_corr_m0_m1_top3,
-    :frag_corr_m0_m1_mean,
-    :n_correlated_m0_m1_fragments, :n_correlated_m0_m1_fragments_50,
-    # Batch E isolated test — E7: mean |ppm_err| over matched top-3 M0 fragments
+
+    # Fragment-chromatogram correlations (frag_w_corr family dropped; pairs dropped)
+    :frag_corr_mean_pairwise, :frag_corr_min_pairwise,
+    :frag_apex_dispersion_irt,
+    :n_correlated_fragments_90,
+    :frag_corr_best_m0,
+
+    # M0/M+1 correlations (top1 winner; others dropped)
+    :frag_corr_m0_m1_top1,
+
+    # Batch E features (E7, E14, E6 M0 kept; E1/E2 pred_obs dropped via composite)
     :top3_ms2_mass_error_mean,
-    # Batch E — E1 (area) + E2 (max): predicted-vs-observed spectral_contrast + scribe.
-    # Drop test (2026-05-12): cosine-only run lost −147 IDs / −66 PGs; cosine
-    # is not redundant with scribe — keeping all 4.
-    :pred_obs_max_spectral_contrast, :pred_obs_max_scribe,
-    :pred_obs_area_spectral_contrast, :pred_obs_area_scribe,
-    # E10 (mean fragment-to-median-chrom corr) DROPPED — redundant with
-    # frag_corr_best_* / frag_corr_mean_pairwise; A/B test 2026-05-12 showed
-    # −38 PGs when added. Code still computes :frag_corr_to_median_mean column.
-    # :frag_corr_to_median_mean,
-    # Batch E — E14 (delta median-apex vs scan-center) + E6 M0 (log b/y ratio)
     :delta_frame_peak_center,
     :log_by_ratio_m0,
-    # Batch E — E3 (matched_ratio) DROPPED — A/B test 2026-05-12 showed −104 PGs
-    # when added on top of E7+E1+E2+E14+E6 M0. Code path stays for future use.
-    # :matched_ratio,
-    # E6 M01 DROPPED — redundant with log_by_ratio_m0 (same LGBM gain, no lift).
-    # :log_by_ratio_m01,
-    # MBR — per-precursor PSM count (used by ScoringSearch and the experiment-wide
-    # LightGBM; populated in train_lgbm_and_select_best).
+
+    # n_scans (cross-experiment PSM count)
     :n_scans,
-    # 2026-05-13: 14 features backported from ADVANCED_FEATURE_SET. Historical
-    # drift left these out of PRESCORE_FEATURES even though they're available
-    # at MainSearch time. Verified on 2-file Olsen + MTAC (with MBR):
-    #   Olsen: per-file +130, final IDs +1,075, PGs +140
-    #   MTAC : per-file -7,   final IDs +2,896, PGs +317
-    # MTAC pattern shows downstream cascade benefits via the prescore q-filter.
+
+    # Backported from ADVANCED (verified +1k/+3k final IDs on Olsen/MTAC).
     :best_rank, :best_rank_iso, :topn, :topn_iso,
     :irt_diff, :irt_pred, :prec_mz,
     :irt_fwhm, :rt_fwhm,
     :num_scans, :n_above_hm, :smoothness,
     :log2_intensity_explained, :longest_y,
+
+    # === REMOVED in smart composite (kept for reference; not used by LGBM) ===
+    # win3 — 7 features dropped: best_gof_3scan, best_manhattan_3scan,
+    #   irt_dist_best_gof_3scan, irt_dist_best_manhattan_3scan,
+    #   irt_dist_best_max_residual_3scan, worst_max_residual_3scan,
+    #   worst_manhattan_3scan
+    # cross_prec (3): weight_ratio_to_2nd_best, weight_ratio_to_3rd_best, n_competitors_50pct
+    # ms1_chromcorr (3): ms1_corr_m0_m1, ms1_corr_weight_m1, ms1_apex_offset_irt
+    # seq_comp (3 of 4): his_count, pro_count, arg_count
+    # frag_pair (2): frag_corr_top1_top2, frag_corr_top1_top3
+    # frag_w_corr (4): frag_corr_top1_weight, frag_corr_top3_weight,
+    #                   frag_corr_top5_weight, frag_corr_best_weight
+    # n_corr_frag (2 of 3): n_correlated_fragments, n_correlated_fragments_50
+    # m1_frag_int (6): frag1_int_m1..frag6_int_m1
+    # m0_m1_corr (3 of 4): frag_corr_m0_m1_top2, frag_corr_m0_m1_top3, frag_corr_m0_m1_mean
+    # n_corr_m0m1 (2): n_correlated_m0_m1_fragments, n_correlated_m0_m1_fragments_50
+    # pred_obs (4): pred_obs_max_*_contrast, pred_obs_max_scribe, pred_obs_area_*
+    # max_aggregates (1 in PRESCORE): max_unmatched_residual
 ]
 
 """
