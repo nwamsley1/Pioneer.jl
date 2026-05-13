@@ -319,6 +319,10 @@ const FTR_FEATURES_F_TRUE = Symbol[
     # MBR _true variant — top half of doubled training frame.
     :MBR_max_pair_prob_true, :MBR_log2_weight_ratio_true,
     :MBR_log2_explained_ratio_true, :MBR_best_irt_diff_true, :MBR_is_missing_true,
+    # New (2026-05-12 evening): consensus + b/y features.
+    :MBR_top_n_median_score_true, :MBR_top_n_irt_diff_true, :MBR_log_by_diff_true,
+    # New (2026-05-12 night): fragment-pattern similarity (RV-coefficient analog).
+    :MBR_frag_pattern_cosine_true, :MBR_frag_pattern_scribe_true,
 ]
 
 # Same features but with the MBR columns swapped to _false. Used for the
@@ -331,6 +335,11 @@ const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_log2_explained_ratio_true ? :MBR_log2_explained_ratio_false :
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
     f === :MBR_is_missing_true           ? :MBR_is_missing_false :
+    f === :MBR_top_n_median_score_true   ? :MBR_top_n_median_score_false :
+    f === :MBR_top_n_irt_diff_true       ? :MBR_top_n_irt_diff_false :
+    f === :MBR_log_by_diff_true          ? :MBR_log_by_diff_false :
+    f === :MBR_frag_pattern_cosine_true  ? :MBR_frag_pattern_cosine_false :
+    f === :MBR_frag_pattern_scribe_true  ? :MBR_frag_pattern_scribe_false :
     f
     for f in FTR_FEATURES_F_TRUE
 ]

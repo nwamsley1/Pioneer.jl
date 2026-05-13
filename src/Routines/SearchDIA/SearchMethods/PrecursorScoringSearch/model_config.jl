@@ -146,6 +146,13 @@ const ADVANCED_FEATURE_SET = [
     :MBR_log2_explained_ratio_true,
     :MBR_best_irt_diff_true,
     :MBR_is_missing_true,
+    # 2026-05-12 evening: consensus aggregates + b/y diff.
+    :MBR_top_n_median_score_true,
+    :MBR_top_n_irt_diff_true,
+    :MBR_log_by_diff_true,
+    # 2026-05-12 night: fragment-pattern similarity (RV-coefficient analog).
+    :MBR_frag_pattern_cosine_true,
+    :MBR_frag_pattern_scribe_true,
 ]
 
 """
@@ -168,6 +175,32 @@ function apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
             :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
         ])
         filter!(f -> !(f in ms1_features), features)
+    end
+    return features
+end
+
+"""
+    apply_feature_blacklist!(features::Vector{Symbol})
+
+Remove features named in env var `PIONEER_FEATURE_BLACKLIST` (comma-separated
+list of symbols, with or without leading `:`). Used by the overnight ablation
+campaign to test feature minimization without recompiling.
+"""
+function apply_feature_blacklist!(features::Vector{Symbol})
+    bl_str = get(ENV, "PIONEER_FEATURE_BLACKLIST", "")
+    isempty(bl_str) && return features
+    blset = Set{Symbol}()
+    for raw in split(bl_str, ',')
+        s = strip(raw)
+        isempty(s) && continue
+        s = startswith(s, ":") ? s[2:end] : s
+        push!(blset, Symbol(s))
+    end
+    n_before = length(features)
+    filter!(f -> !(f in blset), features)
+    n_after = length(features)
+    if n_before != n_after
+        @user_info "  PIONEER_FEATURE_BLACKLIST removed $(n_before - n_after) features; $n_after remain"
     end
     return features
 end

@@ -77,6 +77,7 @@ function score_precursor_isotope_traces(
     # commented out, so we don't need to compute quantile-binned features here).
     features = copy(ADVANCED_FEATURE_SET)
     apply_ms1_filtering!(features, ms1_scoring)
+    apply_feature_blacklist!(features)
 
     # 3. Add columns the helper / downstream code may inspect
     best_psms[!, :accession_numbers] = [getAccessionNumbers(precursors)[pid]

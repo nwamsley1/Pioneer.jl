@@ -185,6 +185,40 @@ Added PIONEER_FTR_ALPHA env var; reran HelaOnly+Combined at α=0.005.
 species-mismatch error mode that exists outside the FTR controller's
 training signal is now near the search-baseline noise floor.
 
+### Adding 5 more MBR features (v3, 2026-05-13 morning)
+
+Added: top_n_median_score, top_n_irt_diff (consensus over top-K =
+ceil(sqrt(N_files)) entries), log_by_diff (b/y log-ratio diff vs donor),
+frag_pattern_cosine, frag_pattern_scribe (donor-vs-recipient 6-vector
+fragment-intensity similarity — the v0.6.6 RV-coefficient analog).
+
+| Variant            | Run B IDs | Row Dennis FTR | MBR rec |
+|--------------------|----------:|---------------:|--------:|
+| PEP α=0.005 v1 (5 MBR)   | 826,104 | 0.70%          | 64,845  |
+| PEP α=0.005 v3 (10 MBR)  | 835,094 | **1.70%**      | 73,836  |
+
+Result: +9k IDs but Dennis FTR DOUBLED. The new features pick up real
+signal (top_n_median_score gain 97k, top_n_irt_diff 69k — both in the
+top-3 by gain) but they make the FTR-LGBM overconfident: it accepts
+more transfers, including more wrong-species ones.
+
+FTR feature importance ranking (v3, combined):
+1. MBR_max_pair_prob_true:           805,311  (dominant)
+2. MBR_top_n_median_score_true:       97,517  (NEW)
+3. MBR_top_n_irt_diff_true:           68,663  (NEW)
+4. MBR_best_irt_diff_true:            19,498
+5. MBR_log2_weight_ratio_true:         5,127
+6. MBR_frag_pattern_scribe_true:       4,909  (NEW, RV analog)
+7. MBR_frag_pattern_cosine_true:       3,401  (NEW, RV analog)
+8. MBR_log_by_diff_true:               2,947  (NEW)
+
+The new features are genuine signal. To use them well we'd need to
+tighten α (e.g., 0.001) to compensate for the increased model
+confidence, or accept the FTR/ID trade-off.
+
+Next: 2-file Olsen ablation campaign (family-aware "keep best of group"
+strategy) to find the minimal feature set.
+
 ### Protein-level Dennis FTR (2026-05-12)
 
 Computed from `protein_groups_long.arrow` filtered to target + qval ≤ 0.01.

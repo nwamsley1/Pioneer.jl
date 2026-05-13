@@ -29,10 +29,23 @@ struct _MBRDonorEntry
     weight::Float32
     log2_intensity_explained::Float32
     irt_residual::Float32  # irt_pred − irt_obs of the donor row
+    irt_obs::Float32       # raw observed iRT of the donor row (for top-N median)
+    log_by_ratio::Float32  # log(b_int+1) - log(y_int+1) of the donor row
+    # Per-rank M0 fragment intensities of the donor row (for cross-run fragment
+    # pattern similarity — the develop-schema analog of v0.6.6's chromatogram
+    # RV-coefficient).
+    frag1_int::Float32
+    frag2_int::Float32
+    frag3_int::Float32
+    frag4_int::Float32
+    frag5_int::Float32
+    frag6_int::Float32
     ms_file_idx::UInt32
     is_decoy::Bool
 end
-const _MBR_DONOR_SENTINEL = _MBRDonorEntry(typemin(Float32), 0f0, 0f0, 0f0, UInt32(0), false)
+const _MBR_DONOR_SENTINEL = _MBRDonorEntry(typemin(Float32), 0f0, 0f0, 0f0, 0f0, 0f0,
+                                            0f0, 0f0, 0f0, 0f0, 0f0, 0f0,
+                                            UInt32(0), false)
 
 """
     compute_mbr_features!(psms; score_col=:trace_prob_prepass) -> NamedTuple
@@ -73,7 +86,9 @@ function compute_mbr_features!(
     sizehint!(top2, n)
     @inbounds for i in 1:n
         pid = pair_id_col[i]
-        e = _MBRDonorEntry(score_v[i], weight_v[i], log2ie_v[i], irt_res_v[i], file_v[i], decoy_v[i])
+        e = _MBRDonorEntry(score_v[i], weight_v[i], log2ie_v[i], irt_res_v[i],
+                           0f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0f0,
+                           file_v[i], decoy_v[i])
         cur = get(top2, pid, (_MBR_DONOR_SENTINEL, _MBR_DONOR_SENTINEL))
         if e.trace_prob > cur[1].trace_prob
             top2[pid] = (e, cur[1])
@@ -184,33 +199,68 @@ function compute_mbr_features_dual!(
     log2ie_v    = Float32.(psms[!, :log2_intensity_explained])
     file_v      = UInt32.(psms[!, :ms_file_idx])
     has_irt     = hasproperty(psms, :irt_pred) && hasproperty(psms, :irt_obs)
+    irt_obs_v   = has_irt ? Float32.(psms[!, :irt_obs]) : zeros(Float32, nrow(psms))
     irt_res_v   = has_irt ?
-        (Float32.(psms[!, :irt_pred]) .- Float32.(psms[!, :irt_obs])) :
+        (Float32.(psms[!, :irt_pred]) .- irt_obs_v) :
         zeros(Float32, nrow(psms))
+    has_logby   = hasproperty(psms, :log_by_ratio_m0)
+    log_by_v    = has_logby ? Float32.(psms[!, :log_by_ratio_m0]) : zeros(Float32, nrow(psms))
+    # Per-rank M0 fragment intensities (for fragment-pattern cosine/scribe).
+    has_frag = all(c -> hasproperty(psms, c),
+                   (:frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int))
+    frag_v = has_frag ?
+        (Float32.(psms.frag1_int), Float32.(psms.frag2_int), Float32.(psms.frag3_int),
+         Float32.(psms.frag4_int), Float32.(psms.frag5_int), Float32.(psms.frag6_int)) :
+        (zeros(Float32, nrow(psms)), zeros(Float32, nrow(psms)), zeros(Float32, nrow(psms)),
+         zeros(Float32, nrow(psms)), zeros(Float32, nrow(psms)), zeros(Float32, nrow(psms)))
     n = nrow(psms)
 
-    # Build per-precursor_idx top-2 dict (NOT pair_id this time).
-    top2 = Dict{UInt32, NTuple{2, _MBRDonorEntry}}()
-    sizehint!(top2, n)
+    # Top-K per precursor_idx for the consensus aggregates (median score,
+    # median irt_obs). K = ceil(sqrt(N_files)).
+    # N=1 → K=1; N=2 → K=2; N=5 → K=3; N=10 → K=4; N=20 → K=5; N=100 → K=10.
+    n_files = length(Set(file_v))
+    K = max(1, ceil(Int, sqrt(Float32(n_files))))
+    # Collect all entries per pid, then trim to top-K by trace_prob descending.
+    all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
+    sizehint!(all_entries, max(64, n ÷ 8))
     @inbounds for i in 1:n
         pid = pid_col[i]
-        e = _MBRDonorEntry(score_v[i], weight_v[i], log2ie_v[i], irt_res_v[i], file_v[i], false)
-        cur = get(top2, pid, (_MBR_DONOR_SENTINEL, _MBR_DONOR_SENTINEL))
-        if e.trace_prob > cur[1].trace_prob
-            top2[pid] = (e, cur[1])
-        elseif e.trace_prob > cur[2].trace_prob
-            top2[pid] = (cur[1], e)
+        e = _MBRDonorEntry(score_v[i], weight_v[i], log2ie_v[i], irt_res_v[i],
+                           irt_obs_v[i], log_by_v[i],
+                           frag_v[1][i], frag_v[2][i], frag_v[3][i],
+                           frag_v[4][i], frag_v[5][i], frag_v[6][i],
+                           file_v[i], false)
+        push!(get!(() -> _MBRDonorEntry[], all_entries, pid), e)
+    end
+    # Sort each pid's entries by trace_prob desc, keep top-K.
+    @inbounds for (_pid, entries) in all_entries
+        sort!(entries; by = e -> -e.trace_prob)
+        if length(entries) > K
+            resize!(entries, K)
         end
     end
 
-    # Helper: pick the top-prepass donor for pid restricted to file != my_file.
+    # Per-pid aggregates over the top-K entries.
+    med_score_per_pid    = Dict{UInt32, Float32}()
+    med_irt_obs_per_pid  = Dict{UInt32, Float32}()
+    sizehint!(med_score_per_pid, length(all_entries))
+    sizehint!(med_irt_obs_per_pid, length(all_entries))
+    @inbounds for (pid, entries) in all_entries
+        isempty(entries) && continue
+        sc = Float32[e.trace_prob for e in entries]
+        ir = Float32[e.irt_obs    for e in entries]
+        med_score_per_pid[pid]   = Float32(median(sc))
+        med_irt_obs_per_pid[pid] = Float32(median(ir))
+    end
+
+    # Helper: top-prepass donor for pid with file != my_file.
     @inline function _donor_for(pid::UInt32, my_file::UInt32)
-        cur = get(top2, pid, nothing)
-        cur === nothing && return nothing
-        if cur[1].trace_prob > typemin(Float32) && cur[1].ms_file_idx != my_file
-            return cur[1]
-        elseif cur[2].trace_prob > typemin(Float32) && cur[2].ms_file_idx != my_file
-            return cur[2]
+        entries = get(all_entries, pid, nothing)
+        entries === nothing && return nothing
+        @inbounds for e in entries
+            if e.ms_file_idx != my_file
+                return e
+            end
         end
         return nothing
     end
@@ -220,12 +270,58 @@ function compute_mbr_features_dual!(
     out_le_t  = fill(-1f0, n); out_le_f  = fill(-1f0, n)
     out_ir_t  = fill(-1f0, n); out_ir_f  = fill(-1f0, n)
     out_miss_t = trues(n);     out_miss_f = trues(n)
+    # New features (2026-05-12 evening additions):
+    out_med_score_t = fill(-1f0, n); out_med_score_f = fill(-1f0, n)
+    out_top_irt_t   = fill(-1f0, n); out_top_irt_f   = fill(-1f0, n)
+    out_log_by_t    = fill(-1f0, n); out_log_by_f    = fill(-1f0, n)
+    # Fragment-pattern cosine + scribe (donor vs recipient observed frag-int 6-vector).
+    # Re-incarnation of v0.6.6's MBR_rv_coefficient using fragment-intensity
+    # fingerprints (chromatogram vectors are no longer available post-MainSearch).
+    out_frag_cos_t  = fill(-1f0, n); out_frag_cos_f  = fill(-1f0, n)
+    out_frag_scr_t  = fill(-1f0, n); out_frag_scr_f  = fill(-1f0, n)
+
+    # Per-row scratch: normalized recipient frag vector. Compute on the fly.
+    @inline function _norm_l1(a, b, c, d, e, f)
+        s = a + b + c + d + e + f
+        s > 0f0 ? (a/s, b/s, c/s, d/s, e/s, f/s) : (0f0, 0f0, 0f0, 0f0, 0f0, 0f0)
+    end
+    @inline function _cosine6(p::NTuple{6,Float32}, q::NTuple{6,Float32})
+        dotpq = p[1]*q[1] + p[2]*q[2] + p[3]*q[3] + p[4]*q[4] + p[5]*q[5] + p[6]*q[6]
+        np2 = p[1]^2 + p[2]^2 + p[3]^2 + p[4]^2 + p[5]^2 + p[6]^2
+        nq2 = q[1]^2 + q[2]^2 + q[3]^2 + q[4]^2 + q[5]^2 + q[6]^2
+        d = sqrt(np2 * nq2)
+        d > 0f0 ? Float32(dotpq / d) : 0f0
+    end
+    @inline function _scribe6(p::NTuple{6,Float32}, q::NTuple{6,Float32})
+        absd = abs(p[1]-q[1]) + abs(p[2]-q[2]) + abs(p[3]-q[3]) +
+               abs(p[4]-q[4]) + abs(p[5]-q[5]) + abs(p[6]-q[6])
+        Float32(-log2(absd / 2f0 + 1f-6))
+    end
 
     n_true_present = 0; n_false_present = 0
     @inbounds for i in 1:n
         my_file = file_v[i]
+        my_pid  = pid_col[i]
+        my_partner = partner_col[i]
+        # Normalized recipient fragment-intensity 6-vector (computed lazily;
+        # zero-pattern if no frag information).
+        v_self_norm = _norm_l1(frag_v[1][i], frag_v[2][i], frag_v[3][i],
+                                frag_v[4][i], frag_v[5][i], frag_v[6][i])
+        v_self_has_signal = (v_self_norm[1] + v_self_norm[2] + v_self_norm[3] +
+                              v_self_norm[4] + v_self_norm[5] + v_self_norm[6]) > 0f0
+        # Per-pid aggregates (these are file-independent; safe to read directly).
+        med_s_true = get(med_score_per_pid,   my_pid,     -1f0)
+        med_i_true = get(med_irt_obs_per_pid, my_pid,     irt_obs_v[i])
+        med_s_fls  = get(med_score_per_pid,   my_partner, -1f0)
+        med_i_fls  = get(med_irt_obs_per_pid, my_partner, irt_obs_v[i])
+        out_med_score_t[i] = med_s_true
+        out_med_score_f[i] = med_s_fls
+        if has_irt
+            out_top_irt_t[i] = abs(irt_obs_v[i] - med_i_true)
+            out_top_irt_f[i] = abs(irt_obs_v[i] - med_i_fls)
+        end
         # _true donor
-        donor_t = _donor_for(pid_col[i], my_file)
+        donor_t = _donor_for(my_pid, my_file)
         if donor_t !== nothing
             n_true_present += 1
             out_max_t[i] = donor_t.trace_prob
@@ -236,10 +332,24 @@ function compute_mbr_features_dual!(
             if has_irt
                 out_ir_t[i] = abs(irt_res_v[i] - donor_t.irt_residual)
             end
+            if has_logby
+                out_log_by_t[i] = log_by_v[i] - donor_t.log_by_ratio
+            end
+            # Fragment-pattern cosine + scribe (donor vs recipient).
+            if has_frag && v_self_has_signal
+                v_donor_norm = _norm_l1(donor_t.frag1_int, donor_t.frag2_int, donor_t.frag3_int,
+                                         donor_t.frag4_int, donor_t.frag5_int, donor_t.frag6_int)
+                v_donor_has_signal = (v_donor_norm[1] + v_donor_norm[2] + v_donor_norm[3] +
+                                       v_donor_norm[4] + v_donor_norm[5] + v_donor_norm[6]) > 0f0
+                if v_donor_has_signal
+                    out_frag_cos_t[i] = _cosine6(v_self_norm, v_donor_norm)
+                    out_frag_scr_t[i] = _scribe6(v_self_norm, v_donor_norm)
+                end
+            end
             out_miss_t[i] = false
         end
-        # _false donor (counterfactual partner's top score across files != k)
-        donor_f = _donor_for(partner_col[i], my_file)
+        # _false donor
+        donor_f = _donor_for(my_partner, my_file)
         if donor_f !== nothing
             n_false_present += 1
             out_max_f[i] = donor_f.trace_prob
@@ -249,6 +359,19 @@ function compute_mbr_features_dual!(
             out_le_f[i] = log2ie_v[i] - donor_f.log2_intensity_explained
             if has_irt
                 out_ir_f[i] = abs(irt_res_v[i] - donor_f.irt_residual)
+            end
+            if has_logby
+                out_log_by_f[i] = log_by_v[i] - donor_f.log_by_ratio
+            end
+            if has_frag && v_self_has_signal
+                v_donor_norm = _norm_l1(donor_f.frag1_int, donor_f.frag2_int, donor_f.frag3_int,
+                                         donor_f.frag4_int, donor_f.frag5_int, donor_f.frag6_int)
+                v_donor_has_signal = (v_donor_norm[1] + v_donor_norm[2] + v_donor_norm[3] +
+                                       v_donor_norm[4] + v_donor_norm[5] + v_donor_norm[6]) > 0f0
+                if v_donor_has_signal
+                    out_frag_cos_f[i] = _cosine6(v_self_norm, v_donor_norm)
+                    out_frag_scr_f[i] = _scribe6(v_self_norm, v_donor_norm)
+                end
             end
             out_miss_f[i] = false
         end
@@ -264,10 +387,21 @@ function compute_mbr_features_dual!(
     psms[!, :MBR_best_irt_diff_false]        = out_ir_f
     psms[!, :MBR_is_missing_true]            = out_miss_t
     psms[!, :MBR_is_missing_false]           = out_miss_f
+    # New features (2026-05-12 evening additions)
+    psms[!, :MBR_top_n_median_score_true]    = out_med_score_t
+    psms[!, :MBR_top_n_median_score_false]   = out_med_score_f
+    psms[!, :MBR_top_n_irt_diff_true]        = out_top_irt_t
+    psms[!, :MBR_top_n_irt_diff_false]       = out_top_irt_f
+    psms[!, :MBR_log_by_diff_true]           = out_log_by_t
+    psms[!, :MBR_log_by_diff_false]          = out_log_by_f
+    psms[!, :MBR_frag_pattern_cosine_true]   = out_frag_cos_t
+    psms[!, :MBR_frag_pattern_cosine_false]  = out_frag_cos_f
+    psms[!, :MBR_frag_pattern_scribe_true]   = out_frag_scr_t
+    psms[!, :MBR_frag_pattern_scribe_false]  = out_frag_scr_f
 
     elapsed = time() - t0
     @user_info "MBR Batch F — dual donor features:"
-    @user_info "  unique precursor_idx tracked: $(length(top2))"
+    @user_info "  unique precursor_idx tracked: $(length(all_entries))"
     @user_info "  PSMs with TRUE  donor: $n_true_present / $n  ($(round(100*n_true_present/max(n,1), digits=1))%)"
     @user_info "  PSMs with FALSE donor: $n_false_present / $n  ($(round(100*n_false_present/max(n,1), digits=1))%)"
     if n_true_present > 0
