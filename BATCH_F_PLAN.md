@@ -185,6 +185,45 @@ Added PIONEER_FTR_ALPHA env var; reran HelaOnly+Combined at α=0.005.
 species-mismatch error mode that exists outside the FTR controller's
 training signal is now near the search-baseline noise floor.
 
+### Protein-level Dennis FTR (2026-05-12)
+
+Computed from `protein_groups_long.arrow` filtered to target + qval ≤ 0.01.
+
+Row-level (file × protein-group rows):
+
+| Variant            | Row Protein Dennis FTR |
+|--------------------|-----------------------:|
+| qval baseline      | −26 / 365 =  −7.1%     |
+| FTR-PEP α=0.01     | −44 / 609 =  −7.2%     |
+| FTR-PEP α=0.005    | −52 / 178 = −29.2%     |
+| no MBR             | −58 / 122 = −47.5%     |
+| per-file PEP≤0.25  | −55 / 268 = −20.5%     |
+
+All negative — at the row level, adding HelaYeast files sharpens global
+protein inference and REMOVES weakly-supported yeast PG rows from
+HelaOnly. MBR partially re-adds some (less negative for MBR-on variants)
+but doesn't fully compensate.
+
+Unique-protein-group level (each PG counted once per variant):
+
+| Variant            | Unique Yeast PG Dennis FTR | Run A yeast PGs | Run B yeast PGs |
+|--------------------|---------------------------:|----------------:|----------------:|
+| qval baseline      |    7 / 12 =  +58.3%        |              27 |              34 |
+| FTR-PEP α=0.01     |   -5 / 58 =  -8.6%         |              27 |              22 |
+| FTR-PEP α=0.005    |   -6 / 13 = -46.2%         |              27 |              21 |
+| no MBR             |   -9 / 20 = -45.0%         |              29 |              20 |
+| per-file PEP≤0.25  |   -4 / 98 =  -4.1%         |              22 |              18 |
+
+Here MBR's footprint at the protein level shows up clearly:
+- qval baseline: +7 net unique yeast PGs in HelaOnly (false positives via MBR).
+  58.3% of newly-added unique PGs in HelaOnly are yeast.
+- FTR-PEP α=0.01: Flips the sign; 22 unique yeast PGs (−5 vs Run A).
+- FTR-PEP α=0.005: 21 unique yeast PGs (matches the no-MBR floor of 20).
+
+**FTR-PEP α=0.005 matches the no-MBR floor at the protein level** while
+keeping +64k precursor IDs. This is the strongest argument for α=0.005
+as the operating point.
+
 EFDR calibration (mean abs |EFDR − decoyFDR| at q ≤ 0.01):
 
 | Method | Run A prec / global | Run B prec / global |
