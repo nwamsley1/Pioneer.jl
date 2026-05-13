@@ -204,3 +204,33 @@ function apply_feature_blacklist!(features::Vector{Symbol})
     end
     return features
 end
+
+"""
+    apply_feature_includes!(features::Vector{Symbol})
+
+Append features named in env var `PIONEER_FEATURE_INCLUDE` (comma-separated)
+to the feature list (idempotent — duplicates are ignored). Used to test
+adding ADVANCED_FEATURE_SET-only features into MainSearch PRESCORE_FEATURES
+without code edits.
+"""
+function apply_feature_includes!(features::Vector{Symbol})
+    incl_str = get(ENV, "PIONEER_FEATURE_INCLUDE", "")
+    isempty(incl_str) && return features
+    existing = Set(features)
+    added = 0
+    for raw in split(incl_str, ',')
+        s = strip(raw)
+        isempty(s) && continue
+        s = startswith(s, ":") ? s[2:end] : s
+        sym = Symbol(s)
+        if !(sym in existing)
+            push!(features, sym)
+            push!(existing, sym)
+            added += 1
+        end
+    end
+    if added > 0
+        @user_info "  PIONEER_FEATURE_INCLUDE added $added features; $(length(features)) total"
+    end
+    return features
+end

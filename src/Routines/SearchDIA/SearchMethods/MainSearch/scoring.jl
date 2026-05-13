@@ -79,6 +79,7 @@ function train_psm_classifier_with_fallback(
     n_total = nrow(psms)
 
     # Filter to available features
+    apply_feature_includes!(features)
     apply_feature_blacklist!(features)
     available_features = filter(f -> hasproperty(psms, f), features)
 

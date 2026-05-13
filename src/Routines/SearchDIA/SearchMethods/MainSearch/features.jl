@@ -291,6 +291,17 @@ const PRESCORE_FEATURES = [
     # MBR — per-precursor PSM count (used by ScoringSearch and the experiment-wide
     # LightGBM; populated in train_lgbm_and_select_best).
     :n_scans,
+    # 2026-05-13: 14 features backported from ADVANCED_FEATURE_SET. Historical
+    # drift left these out of PRESCORE_FEATURES even though they're available
+    # at MainSearch time. Verified on 2-file Olsen + MTAC (with MBR):
+    #   Olsen: per-file +130, final IDs +1,075, PGs +140
+    #   MTAC : per-file -7,   final IDs +2,896, PGs +317
+    # MTAC pattern shows downstream cascade benefits via the prescore q-filter.
+    :best_rank, :best_rank_iso, :topn, :topn_iso,
+    :irt_diff, :irt_pred, :prec_mz,
+    :irt_fwhm, :rt_fwhm,
+    :num_scans, :n_above_hm, :smoothness,
+    :log2_intensity_explained, :longest_y,
 ]
 
 """
