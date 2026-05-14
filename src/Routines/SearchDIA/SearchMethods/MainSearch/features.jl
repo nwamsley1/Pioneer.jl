@@ -235,8 +235,8 @@ const PRESCORE_FEATURES = [
 
     # Core PSM / sequence metrics
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
-    :total_ions, :total_ions_iso, :missed_cleavage, :y_count, :weight, :gof,
-    :max_matched_residual, :Mox, :spectrum_peak_count, :sequence_length,
+    :total_ions, :missed_cleavage, :y_count, :weight, :gof,
+    :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
 
     # Cross-precursor at-scan
@@ -247,16 +247,12 @@ const PRESCORE_FEATURES = [
     :best_gof_5scan, :best_manhattan_5scan, :best_max_residual_5scan,
     :irt_dist_best_gof_5scan, :irt_dist_best_manhattan_5scan, :irt_dist_best_max_residual_5scan,
     :worst_max_residual_11scan, :worst_manhattan_11scan,
-    :irt_dist_to_weight_apex,
 
     # MS1 features (chromatogram-correlations dropped, only m0_corr kept)
     :ms1_m0_mass_err_ppm,
-    :ms1_corr_weight_m0, :ms1_weight_apex_to_m0_apex_irt,
+    :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
-    :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred, :ms1_envelope_dev_log2,
-
-    # Sequence composition (3 of 4 dropped; lys_count winner)
-    :lys_count,
+    :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
 
     # Per-rank M0 fragment intensities (kept; used by chromatogram features)
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
@@ -264,7 +260,6 @@ const PRESCORE_FEATURES = [
     # Fragment-chromatogram correlations (frag_w_corr family dropped; pairs dropped)
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13 — cross-dataset test
     # showed Olsen +471 IDs / MTAC +649 IDs. Saves 15 rank-sorts per precursor.
-    :frag_corr_min_pairwise,
     :frag_apex_dispersion_irt,
     :n_correlated_fragments_90,
     :frag_corr_best_m0,
@@ -281,10 +276,12 @@ const PRESCORE_FEATURES = [
     :n_scans,
 
     # Backported from ADVANCED (verified +1k/+3k final IDs on Olsen/MTAC).
-    :best_rank, :best_rank_iso, :topn, :topn_iso,
-    :irt_diff, :irt_pred, :prec_mz,
-    :irt_fwhm, :rt_fwhm,
-    :num_scans, :n_above_hm, :smoothness,
+    # Tier-2 drop-all-5 (2026-05-13) removed: rt_fwhm, num_scans, irt_pred,
+    # best_rank_iso, total_ions_iso — individually each lost 176–1,143 IDs
+    # but dropped together they're net-neutral (Olsen +138, MTAC −405).
+    :irt_diff, :prec_mz,
+    :irt_fwhm,
+    :smoothness,
     :log2_intensity_explained, :longest_y,
 
     # === REMOVED in smart composite (kept for reference; not used by LGBM) ===

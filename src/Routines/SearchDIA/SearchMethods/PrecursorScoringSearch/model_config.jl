@@ -31,25 +31,22 @@ classifier definition. This file is just the feature list + an MS1 filter.
 # Listed as a literal here because Julia precompile struggled with
 # `vcat(collect(PRESCORE_FEATURES), …)` evaluated at const time.
 const ADVANCED_FEATURE_SET = [
-    # ── PRESCORE_FEATURES (66 features, kept in sync manually) ──
+    # ── PRESCORE_FEATURES (50 features, kept in sync manually) ──
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
-    :total_ions, :total_ions_iso, :missed_cleavage, :y_count, :weight, :gof,
-    :max_matched_residual, :Mox, :spectrum_peak_count, :sequence_length,
+    :total_ions, :missed_cleavage, :y_count, :weight, :gof,
+    :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
     :weight_ratio_at_scan, :weight_rank_at_scan,
     :best_max_residual_3scan,
     :best_gof_5scan, :best_manhattan_5scan, :best_max_residual_5scan,
     :irt_dist_best_gof_5scan, :irt_dist_best_manhattan_5scan, :irt_dist_best_max_residual_5scan,
     :worst_max_residual_11scan, :worst_manhattan_11scan,
-    :irt_dist_to_weight_apex,
     :ms1_m0_mass_err_ppm,
-    :ms1_corr_weight_m0, :ms1_weight_apex_to_m0_apex_irt,
+    :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
-    :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred, :ms1_envelope_dev_log2,
-    :lys_count,
+    :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
-    :frag_corr_min_pairwise,
     :frag_apex_dispersion_irt,
     :n_correlated_fragments_90,
     :frag_corr_best_m0,
@@ -58,11 +55,16 @@ const ADVANCED_FEATURE_SET = [
     :delta_frame_peak_center,
     :log_by_ratio_m0,
     :n_scans,
-    :best_rank, :best_rank_iso, :topn, :topn_iso,
-    :irt_diff, :irt_pred, :prec_mz,
-    :irt_fwhm, :rt_fwhm,
-    :num_scans, :n_above_hm, :smoothness,
+    :irt_diff, :prec_mz,
+    :irt_fwhm,
+    :smoothness,
     :log2_intensity_explained, :longest_y,
+    # Tier-2 drop-all-5 (2026-05-13): rt_fwhm, num_scans, irt_pred,
+    # best_rank_iso, total_ions_iso removed.
+    # Tier-4 drop-top-10 (2026-05-14): max_matched_residual, lys_count,
+    # frag_corr_min_pairwise, ms1_corr_weight_m0, irt_dist_to_weight_apex,
+    # best_rank, ms1_envelope_dev_log2, n_above_hm, topn, topn_iso removed —
+    # 8-file Olsen: −476 IDs (−0.11%), +203 PGs (+0.39%), pf −864 (−0.24%).
     # ── MBR features (only available post-MainSearch) ──
     :MBR_max_pair_prob_true,
     :MBR_log2_weight_ratio_true,

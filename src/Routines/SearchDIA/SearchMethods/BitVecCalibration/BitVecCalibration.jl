@@ -257,7 +257,13 @@ reset_results!(::BitVecCalibrationResults) = nothing
 const BITVEC_MIN_TOTAL_COUNTS = Int64(10_000_000)
 const BITVEC_INITIAL_SCANS = Int64(2000)
 const BITVEC_COARSE_GROUP_THRESHOLD = Int64(1_000_000)
-const BITVEC_MIN_EXCESS_RATE = Float32(0.03)
+const BITVEC_MIN_EXCESS_RATE_DEFAULT = Float32(0.03)
+# Read env var at call time so PIONEER_BITVEC_MIN_EXCESS_RATE picks up
+# changes across Julia invocations without precompile caching the value.
+function bitvec_min_excess_rate()
+    s = get(ENV, "PIONEER_BITVEC_MIN_EXCESS_RATE", "")
+    isempty(s) ? BITVEC_MIN_EXCESS_RATE_DEFAULT : parse(Float32, s)
+end
 
 function process_file!(
     results::BitVecCalibrationResults,
@@ -329,7 +335,7 @@ function process_file!(
 
     # Compute per-file filter
     fdr_scale = Float64(getLibraryFdrScaleFactor(search_context))
-    min_excess_rate = Float64(BITVEC_MIN_EXCESS_RATE)
+    min_excess_rate = Float64(bitvec_min_excess_rate())
     α = 1.0  # pseudocount
 
     filter_table = Vector{Bool}(undef, 256)
@@ -406,7 +412,7 @@ function summarize_results!(
     end
 
     z = Float64(BITVEC_DIAGNOSTIC_Z)
-    min_r = Float64(BITVEC_MIN_EXCESS_RATE)
+    min_r = Float64(bitvec_min_excess_rate())
     fdr_scale = Float64(getLibraryFdrScaleFactor(search_context))
     result = _adaptive_merge(tc, dc, z, min_r, fdr_scale)
     partition = result.partition

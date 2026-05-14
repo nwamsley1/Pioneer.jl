@@ -192,3 +192,176 @@ Key pattern:
   differentiation.
 
 No code changes from Tier 2. Sizes remain 65 PRESCORE / 70 ADVANCED.
+
+## Tier-2 Drop-All-5 (2026-05-13)
+
+Tested all 5 Tier-2 features dropped simultaneously
+(`rt_fwhm,num_scans,irt_pred,best_rank_iso,total_ions_iso`).
+
+| Dataset | Baseline (65/70) | Drop-all-5 | Δ IDs | Δ PGs | pf Δ |
+|---|---:|---:|---:|---:|---:|
+| Olsen | 91,064 / 12,585 | **91,202 / 12,577** | **+138** | −8 | **+463** |
+| MTAC  | 180,110 / 20,362 | 179,705 / 20,372 | −405 | **+10** | −1,062 |
+
+**Surprise: the combined drop is better than any single drop**, and well
+inside tolerance on both datasets. The 5 features were interacting
+destructively — removing any one made things worse (each cost 176–1,143
+final IDs individually) but removing all 5 together is net-neutral on
+Olsen IDs (+138 IDs) and roughly neutral on MTAC (−0.2%).
+
+**Verdict: DROP ALL 5.** New sizes: 60 PRESCORE / 65 ADVANCED.
+
+Apply this drop next: edit `PRESCORE_FEATURES` and `ADVANCED_FEATURE_SET`
+to remove `rt_fwhm, num_scans, irt_pred, best_rank_iso, total_ions_iso`.
+
+## Pre-filter threshold diagnostic (2026-05-13)
+
+Goal: identify cheap row-level filters that remove PSMs essentially
+nothing will score above PEP 0.9, to shrink the data flowing into LGBM.
+
+Setup: Olsen 2-file run with `PIONEER_MAIN_PEP_FILTER_THR=1.0` (PEP
+filter effectively off) and `delete_temp=false`. Counted how many rows
+in the main-search and second-pass PSM tables each candidate rule would
+drop.
+
+**main_search_psms (per-fold, 4 files):**
+
+| Rule | File 1 fold0 | File 1 fold1 | File 2 fold0 | File 2 fold1 |
+|---|---:|---:|---:|---:|
+| `topn==0 && topn_iso==0` | 2.0% | 1.9% | 1.4% | 1.3% |
+| `total_ions <= 2`        | **8.5%** | **8.3%** | **20.4%** | **21.2%** |
+| `b_count + y_count == 0` | 0.0% | 0.0% | 0.1% | 0.1% |
+| `best_rank > 6`          | 0.3% | 0.2% | 0.3% | 0.3% |
+| `weight < 1e-4`          | 0.0% | 0.0% | 0.0% | 0.0% |
+| **UNION of all 5**       | 9.6% | 9.4% | 21.0% | 21.9% |
+
+**second_pass_psms (2 files):**
+
+| Rule | File 1 (842,829) | File 2 (983,142) |
+|---|---:|---:|
+| `topn==0 && topn_iso==0` | 1.9% | 1.3% |
+| `total_ions <= 2`        | 8.4% | **20.8%** |
+| `b_count + y_count == 0` | 0.0% | 0.1% |
+| `best_rank > 6`          | 0.3% | 0.3% |
+| `weight < 1e-4`          | 0.0% | 0.0% |
+| **UNION of all 5**       | 9.5% | 21.4% |
+| Union AND `prob >= 0.5`  | 5.0% | 11.6% |
+
+**Findings:**
+- `total_ions <= 2` is the only rule that meaningfully shrinks data
+  (8–21% of rows). Everything else is < 0.5%.
+- `weight < 1e-4` removes nothing — the per-precursor deconv weight is
+  almost always ≥ 1e-4 by the time these tables are written.
+- **Caveat: 5–11.6% of the union-dropped rows have main-search
+  `prob ≥ 0.5`.** That's not the same as "would be kept at q ≤ 0.01"
+  but it's a clear signal that `total_ions <= 2` is NOT safe — many
+  short-peptide PSMs (especially in File 2) score reasonably well and
+  would be erased by this rule.
+- The cheap, safe filters (`topn==0 && topn_iso==0`, `b_count+y_count==0`,
+  `weight < 1e-4`, `best_rank > 6`) collectively remove < 2.5%. Not
+  worth a new code path on their own.
+
+**Recommendation:** Do not add a pre-LGBM `total_ions <= 2` filter
+without an ablation showing IDs are preserved. The cheap rules are too
+small to bother with. The PEP-0.9 filter is already doing the bulk of
+the work.
+
+## BitVec min_excess_rate 0.03 → 0.02 (2026-05-13)
+
+Tested lowering the bitvec-LUT excess-rate threshold from 0.03 to 0.02
+on the 60/65 feature set. Made `BITVEC_MIN_EXCESS_RATE` env-var
+configurable via `PIONEER_BITVEC_MIN_EXCESS_RATE` (default unchanged at 0.03).
+
+| Dataset | bitvec=0.03 | bitvec=0.02 | Δ IDs | Δ PGs |
+|---|---:|---:|---:|---:|
+| Olsen | 91,202 / 12,577 | **92,397 / 12,595** | **+1,195** (+1.31%) | +18 |
+| MTAC  | 179,954 / 20,395 | **180,510 / 20,406** | **+556** (+0.31%) | +11 |
+
+Both datasets positive — Olsen substantially so. **Not changing default** —
+recorded for future consideration. Worth re-confirming on YeastMBR /
+HelaOnly before baking in.
+
+## Tier-3 baseline (60/65 set, bitvec=0.03)
+
+| Dataset | IDs | PGs | pf q≤.01 sum |
+|---|---:|---:|---:|
+| Olsen | 91,202 | 12,577 | 83,198 |
+| MTAC  | 179,954 | 20,395 | (from log) |
+
+
+## Tier-3 Results (2026-05-13)
+
+Tested 9 single-feature / family drops on 60/65 baseline.
+Olsen 2-file baseline: 91,202 IDs / 12,577 PGs / pf=83,198.
+MTAC 2-file baseline: 179,896 IDs / 20,481 PGs / pf=157,678.
+
+| Drop | Olsen ΔIDs | Olsen ΔPGs | Olsen Δpf | MTAC ΔIDs | MTAC ΔPGs | MTAC Δpf | Verdict |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `drop_win11` (worst_*_11scan ×2)   | +276 | −142 | **−790** | **+619** | **+188** | **+2373** | borderline (Olsen pf bad) |
+| `drop_win5_keep_manhattan` (×5)    | +287 | +39  | −184 | +190 | −107 | −385 | borderline |
+| `drop_frag_int_keep_frag1` (×5)    | **−223** | −60 | −3  | +177 | −118 | +358 | KEEP (Olsen IDs lose) |
+| `drop_ms1_env_keep_dev` (m0_ratio, m0_pred) | +187 | −23 | **−779** | +95 | +8 | +345 | borderline (Olsen pf bad) |
+| `drop_weight_at_scan_pair`         | +291 | −50 | +103 | +14 | −47 | −431 | borderline |
+| `drop_best_max_residual_3scan`     | +271 | +44 | −19 | **−1468** | **−158** | +425 | **KEEP** (MTAC disaster) |
+| `drop_ms1_m1_intensity`            | **+448** | −41 | −8 | +127 | −135 | −78 | **DROP** (cleanest) |
+| `drop_top3_ms2_mass_error_mean`    | +156 | −113 | −253 | +402 | −42 | +392 | borderline |
+| `drop_log_by_ratio_m0`             | +27 | −136 | −101 | +395 | −41 | +507 | borderline (PGs) |
+
+**Clean wins (positive IDs both datasets, pf within tolerance):**
+- `drop_ms1_m1_intensity` is the only single-drop with positive IDs on both
+  datasets AND no per-file MainSearch impact.
+
+**MBR-rescue caveat:** `drop_win11` and `drop_ms1_env_keep_dev` each lose
+~780 per-file Olsen IDs but recover positive at final ID level via MBR.
+That is end-pipeline improvement but a feature-quality regression at the
+MainSearch LGBM level.
+
+**Hard KEEPs (Tier-3):**
+- `frag2..6_int` — Olsen loses 223 IDs.
+- `best_max_residual_3scan` — MTAC loses 1,468 IDs.
+
+Next: test combined drop of promising candidates (replicating Tier-2
+"drop-all-5" finding that individually-borderline drops can be net
+positive together).
+
+## drop_clean10 8-file Olsen verification (2026-05-14)
+
+Tested drop_clean10 on the 8-file Olsen Exploris MBR validation set
+(rep1+rep2 of E5/E20/E30/E45 conditions) to check whether 2-file
+results scale.
+
+Blacklist (10 features): `ms1_m1_intensity, best_gof_5scan,
+best_max_residual_5scan, irt_dist_best_gof_5scan,
+irt_dist_best_manhattan_5scan, irt_dist_best_max_residual_5scan,
+weight_ratio_at_scan, weight_rank_at_scan, top3_ms2_mass_error_mean,
+log_by_ratio_m0`
+
+|  | Baseline | drop_clean10 | Δ | % |
+|---|---:|---:|---:|---:|
+| Final IDs | 424,639 | 421,611 | −3,028 | **−0.71%** |
+| Final PGs | 51,873  | 51,787  | −86    | −0.17% |
+| pf sum    | 355,948 | 353,167 | −2,781 | −0.78% |
+
+Per-file MainSearch q≤.01:
+
+| File | Baseline | drop_clean10 | Δ | % |
+|---|---:|---:|---:|---:|
+| 1 | 45,836 | 45,298 | −538 | −1.17% |
+| 2 | 44,447 | 43,900 | −547 | −1.23% |
+| 3 | 45,501 | 45,421 |  −80 | −0.18% |
+| 4 | 45,675 | 45,094 | −581 | −1.27% |
+| 5 | 47,846 | 47,455 | −391 | −0.82% |
+| 6 | 47,193 | 46,875 | −318 | −0.67% |
+| 7 | 40,248 | 39,939 | −309 | −0.77% |
+| 8 | 39,202 | 39,185 |  −17 | −0.04% |
+
+Loss is fairly uniform (0.18–1.27% per file). Not hiding a catastrophic
+failure on a single file. 3 files (1, 2, 4) lose 1.2% each — real
+per-file LGBM regression, not pure MBR artifact.
+
+The 2-file experiment was misleadingly optimistic: 2-file Olsen showed
+−0.26% final / −0.62% pf, but the 8-file shows −0.71% final / −0.78%
+pf — about 3× worse on final IDs.
+
+**Decision (user): record but don't apply yet. <1% drop is acceptable
+if we accumulate more drops; revisit after wider feature sweep.**
