@@ -591,54 +591,35 @@ MS1Corr — co-elution of multiple ions of the same precursor is the strongest
 discriminative signal in DIA, only here we exploit it among MS2 fragments
 rather than MS1 isotopes.
 """
+# Pearson correlation helper (Float32-ized, returns 0 on zero variance).
+# Top-level (not closure) so the compiler specializes without boxing.
+@inline function _frag_pcor(x::Vector{Float32}, y::Vector{Float32})
+    m = length(x)
+    m < 2 && return 0f0
+    mx = mean(x); my = mean(y)
+    sx = 0f0; sy = 0f0; sxy = 0f0
+    @inbounds for j in 1:m
+        dx = x[j]-mx; dy = y[j]-my
+        sx += dx*dx; sy += dy*dy; sxy += dx*dy
+    end
+    d = sqrt(sx*sy)
+    d > 0 ? Float32(sxy/d) : 0f0
+end
+
 function _add_fragment_chromatogram_features!(psms::DataFrame)
     n = nrow(psms)
-    psms[!, :frag_corr_top1_top2]      = zeros(Float32, n)
-    psms[!, :frag_corr_top1_top3]      = zeros(Float32, n)
-    psms[!, :frag_corr_top1_weight]    = zeros(Float32, n)
-    psms[!, :frag_corr_mean_pairwise]  = zeros(Float32, n)  # Spearman (won 2-file A/B vs Pearson)
-    psms[!, :frag_corr_min_pairwise]   = zeros(Float32, n)  # Pearson (Spearman lost)
-    psms[!, :frag_corr_top3_weight]    = zeros(Float32, n)  # Pearson (Spearman lost)
-    psms[!, :frag_apex_dispersion_irt] = zeros(Float32, n)
-    psms[!, :n_correlated_fragments]      = zeros(UInt8,  n)  # threshold 0.7 (original)
-    psms[!, :n_correlated_fragments_50]   = zeros(UInt8,  n)  # threshold 0.5
-    psms[!, :n_correlated_fragments_90]   = zeros(UInt8,  n)  # threshold 0.9
-    # DIA-NN-style "best fragment" reference: pick the fragment with the highest
-    # sum of correlations to the other top-6 fragments (consensus). Then compute
-    # weight↔best-frag and m0↔best-frag correlations (if MS1 m0 column is
-    # available). Real precursors: weight and m0 chromatograms both track the
-    # consensus best fragment closely; chimeric: best-frag is decoupled.
-    psms[!, :frag_corr_best_weight]    = zeros(Float32, n)
-    psms[!, :frag_corr_best_m0]        = zeros(Float32, n)
-    psms[!, :frag_corr_top5_weight]    = zeros(Float32, n)  # mean of top-5 vs weight (top-K sweep)
-    # Per-fragment M0 vs M+1 isotope correlations. Real precursors: the M0 and
-    # M+1 chromatograms of the SAME fragment coelute → Pearson ≈ 1. Chimeric
-    # hits: M+1 may be missing, scattered, or owned by a different precursor.
-    # Added 2026-05-12.
-    # E1/E2 (Batch E, 2026-05-12): predicted-vs-observed fragment intensity
-    # similarity. Uses per-rank `frag_r_pred` (post-NCE/iso-spline predicted
-    # intensity captured at scan time in apply_main_scoring!).
-    # - E2 (max): observed = max across this precursor's scans
-    # - E1 (area): observed = sum across this precursor's scans
-    psms[!, :pred_obs_max_spectral_contrast]  = zeros(Float32, n)
-    psms[!, :pred_obs_max_scribe]             = zeros(Float32, n)
-    psms[!, :pred_obs_area_spectral_contrast] = zeros(Float32, n)
-    psms[!, :pred_obs_area_scribe]            = zeros(Float32, n)
-    # E10 (Batch E, 2026-05-12): mean Pearson(F[r], median_chrom) over r∈1..6
-    # with signal. median_chrom[k] = median of {F[r][k]} across ranks with
-    # signal at scan k. Different reference than frag_corr_best_* (consensus)
-    # and frag_corr_mean_pairwise (15 pairs averaged).
-    psms[!, :frag_corr_to_median_mean]        = zeros(Float32, n)
-    # E14 (Batch E, 2026-05-12): median fragment apex iRT − midpoint of the
-    # precursor's iRT scan range. Real peptides peak near scan-window center;
-    # chimeric hits often peak at the edges of the window.
-    psms[!, :delta_frame_peak_center]         = zeros(Float32, n)
-    # Spearman A/B (2-file Olsen, two runs) settled the choice per feature:
-    # - frag_corr_mean_pairwise → Spearman wins (~+10% gain). It's now the
-    #   ONLY mean_pairwise feature (Pearson variant removed, no redundancy).
-    # - frag_corr_min_pairwise, frag_corr_top3_weight, frag_corr_top5_weight,
-    #   frag_corr_top1_weight, frag_corr_m0_m1_mean → Pearson wins. Those
-    #   stay as Pearson, no Spearman counterpart added.
+    # Only the 4 features actually consumed by PRESCORE_FEATURES / ADVANCED_FEATURE_SET
+    # are computed and written. Earlier versions emitted 15 more outputs
+    # (frag_corr_mean_pairwise — 15 Spearman per precursor; frag_corr_min_pairwise
+    # — 15 Pearson; frag_corr_top1_top2/_top3/_weight, frag_corr_top3_weight,
+    # frag_corr_top5_weight, n_correlated_fragments / _50, frag_corr_best_weight,
+    # frag_corr_to_median_mean — 1 sort + 6 Pearson per precursor; pred_obs_max/area
+    # spectral_contrast/scribe). Dropping them removes ~50 correlation calls + 1
+    # sort + ~10 vector allocations per precursor.
+    psms[!, :frag_apex_dispersion_irt]    = zeros(Float32, n)
+    psms[!, :n_correlated_fragments_90]   = zeros(UInt8,  n)
+    psms[!, :frag_corr_best_m0]           = zeros(Float32, n)
+    psms[!, :delta_frame_peak_center]     = zeros(Float32, n)
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -652,10 +633,6 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     irt    = psms.irt_obs
     f      = (psms.frag1_int, psms.frag2_int, psms.frag3_int,
               psms.frag4_int, psms.frag5_int, psms.frag6_int)
-    has_pred = all(c -> hasproperty(psms, c), (:frag1_pred, :frag2_pred, :frag3_pred,
-                                                :frag4_pred, :frag5_pred, :frag6_pred))
-    f_pred = has_pred ? (psms.frag1_pred, psms.frag2_pred, psms.frag3_pred,
-                         psms.frag4_pred, psms.frag5_pred, psms.frag6_pred) : nothing
     has_m0 = hasproperty(psms, :ms1_m0_intensity)
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
 
@@ -664,50 +641,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
         push!(get!(() -> Int[], buckets, UInt32(prec[i])), i)
     end
 
-    # Pearson correlation helper (Float32-ized, returns 0 on zero variance)
-    function _pcor(x::Vector{Float32}, y::Vector{Float32})
-        m = length(x)
-        m < 2 && return 0f0
-        mx = mean(x); my = mean(y)
-        sx = 0f0; sy = 0f0; sxy = 0f0
-        @inbounds for j in 1:m
-            dx = x[j]-mx; dy = y[j]-my
-            sx += dx*dx; sy += dy*dy; sxy += dx*dy
-        end
-        d = sqrt(sx*sy)
-        d > 0 ? Float32(sxy/d) : 0f0
-    end
-
-    # Spearman correlation = Pearson on the ranks. Robust to a single outlier
-    # scan (e.g., a contaminated spike). Ties get averaged ranks ("rank-average"
-    # convention). Allocates two transient rank buffers per call.
-    _scratch_rx = Vector{Float32}()
-    _scratch_ry = Vector{Float32}()
-    _scratch_perm = Vector{Int}()
-    function _scor(x::Vector{Float32}, y::Vector{Float32})
-        m = length(x)
-        m < 2 && return 0f0
-        resize!(_scratch_rx, m); resize!(_scratch_ry, m)
-        resize!(_scratch_perm, m)
-        _rankavg!(_scratch_rx, x, _scratch_perm)
-        _rankavg!(_scratch_ry, y, _scratch_perm)
-        return _pcor(_scratch_rx, _scratch_ry)
-    end
-    function _rankavg!(out::Vector{Float32}, v::Vector{Float32}, perm::Vector{Int})
-        m = length(v)
-        @inbounds for j in 1:m; perm[j] = j; end
-        sort!(perm, by = j -> v[j])
-        # Assign rank-averaged ranks. Walk sorted permutation, group ties.
-        i = 1
-        @inbounds while i <= m
-            j = i
-            while j < m && v[perm[j+1]] == v[perm[i]]; j += 1; end
-            r = Float32((i + j) / 2)   # average rank for tie group
-            for k in i:j; out[perm[k]] = r; end
-            i = j + 1
-        end
-    end
-
+    # Pearson correlation helper (Float32-ized, returns 0 on zero variance).
+    # Moved to top-level so the compiler can specialize without closure boxing.
     @inbounds for (_pid, idxs) in buckets
         npts = length(idxs)
         npts < 2 && continue
@@ -728,40 +663,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
 
         has_signal = ntuple(r -> maximum(F[r]) > 0, 6)
 
-        # Pairwise frag-vs-frag correlations (skip pairs where either side has no signal).
-        # Spearman A/B (2-file Olsen) showed Spearman beats Pearson for the
-        # AVERAGE over pairs (rank transform absorbs outlier scans when averaging),
-        # while Pearson beats Spearman for the MIN (preserves the magnitude of the
-        # worst-fit pair). So we use Spearman for mean_pairwise, Pearson for min_pairwise.
-        pair_count = 0
-        pair_sum_sp = 0f0
-        pair_min    = 1f0
-        any_pair = false
-        for r1 in 1:6, r2 in (r1+1):6
-            (has_signal[r1] && has_signal[r2]) || continue
-            pair_sum_sp += _scor(F[r1], F[r2])
-            c_pear = _pcor(F[r1], F[r2])
-            if c_pear < pair_min; pair_min = c_pear; end
-            pair_count += 1
-            any_pair = true
-        end
-        mean_pairwise_sp = pair_count > 0 ? pair_sum_sp / pair_count : 0f0
-        min_pairwise     = any_pair ? pair_min : 0f0
-
-        c_top1_top2  = (has_signal[1] && has_signal[2]) ? _pcor(F[1], F[2]) : 0f0
-        c_top1_top3  = (has_signal[1] && has_signal[3]) ? _pcor(F[1], F[3]) : 0f0
-        c_top1_weight = has_signal[1] ? _pcor(F[1], W) : 0f0
-
-        # Mean correlation of top-3 fragments to weight chromatogram. Pearson —
-        # Spearman lost here (frag/weight is linear-scale, rank transform discards it).
-        n_top3 = 0; s_top3 = 0f0
-        for r in 1:3
-            has_signal[r] || continue
-            s_top3 += _pcor(F[r], W); n_top3 += 1
-        end
-        c_top3_w = n_top3 > 0 ? s_top3 / n_top3 : 0f0
-
-        # Apex dispersion across fragments with signal
+        # Apex dispersion across fragments with signal (also feeds delta_frame).
         apex_irts = Float32[]
         for r in 1:6
             has_signal[r] || continue
@@ -788,30 +690,21 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             delta_frame = Float32(median_apex - (irt_lo + irt_hi) / 2f0)
         end
 
-        # Per-fragment weight correlation (reused below for n_corr_* and best frag).
+        # Per-fragment weight correlation — needed for n_correlated_fragments_90
+        # and to seed the consensus-best-fragment selection below.
         c_fw = Vector{Float32}(undef, 6)
         for r in 1:6
-            c_fw[r] = has_signal[r] ? _pcor(F[r], W) : 0f0
+            c_fw[r] = has_signal[r] ? _frag_pcor(F[r], W) : 0f0
         end
-        n_corr_50 = UInt8(0); n_corr_70 = UInt8(0); n_corr_90 = UInt8(0)
+        n_corr_90 = UInt8(0)
         for r in 1:6
             has_signal[r] || continue
-            if c_fw[r] > 0.5f0; n_corr_50 += UInt8(1); end
-            if c_fw[r] > 0.7f0; n_corr_70 += UInt8(1); end
             if c_fw[r] > 0.9f0; n_corr_90 += UInt8(1); end
         end
 
-        # Mean correlation of top-5 fragments (rank 1..5) to weight chromatogram.
-        # Pearson — Spearman lost here too.
-        n_top5 = 0; s_top5 = 0f0
-        for r in 1:5
-            has_signal[r] || continue
-            s_top5 += c_fw[r]; n_top5 += 1
-        end
-        c_top5_w = n_top5 > 0 ? s_top5 / n_top5 : 0f0
-
-        # DIA-NN-style best fragment: pick the rank r with the highest sum of
-        # pairwise correlations to the other top-6 fragments (consensus).
+        # DIA-NN-style best fragment: rank r with the highest mean correlation
+        # to the other top-6 fragments. 30 Pearson calls per precursor.
+        # Required to anchor frag_corr_best_m0 = Pearson(best_frag, MS1 m0 chrom).
         best_r = 0
         best_consensus = typemin(Float32)
         for r in 1:6
@@ -819,7 +712,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             consensus = 0f0; npairs = 0
             for r2 in 1:6
                 (r2 == r || !has_signal[r2]) && continue
-                consensus += _pcor(F[r], F[r2]); npairs += 1
+                consensus += _frag_pcor(F[r], F[r2]); npairs += 1
             end
             avg = npairs > 0 ? consensus / npairs : typemin(Float32)
             if avg > best_consensus
@@ -827,120 +720,20 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
                 best_r = r
             end
         end
-        c_best_w = 0f0
         c_best_m0 = 0f0
-        if best_r > 0
-            c_best_w = c_fw[best_r]
-            if has_m0
-                v_m0 = Vector{Float32}(undef, npts)
-                for (k, i) in enumerate(idxs); v_m0[k] = Float32(m0_int[i]); end
-                if maximum(v_m0) > 0
-                    c_best_m0 = _pcor(F[best_r], v_m0)
-                end
-            end
-        end
-
-        # E10: mean Pearson(F[r], median_chrom) over ranks with signal.
-        # median_chrom[k] = median of {F[r][k] : r has signal} at scan k.
-        c_to_median_mean = 0f0
-        let n_with_signal = 0
-            @inbounds for r in 1:6
-                has_signal[r] && (n_with_signal += 1)
-            end
-            if n_with_signal >= 2
-                med = Vector{Float32}(undef, npts)
-                buf = Vector{Float32}(undef, n_with_signal)
-                @inbounds for k in 1:npts
-                    j = 0
-                    for r in 1:6
-                        has_signal[r] || continue
-                        j += 1; buf[j] = F[r][k]
-                    end
-                    # Sort the first n_with_signal entries; pick median.
-                    sort!(view(buf, 1:n_with_signal))
-                    med[k] = n_with_signal % 2 == 1 ?
-                        buf[(n_with_signal + 1) ÷ 2] :
-                        (buf[n_with_signal ÷ 2] + buf[n_with_signal ÷ 2 + 1]) / 2f0
-                end
-                csum = 0f0; cnt = 0
-                @inbounds for r in 1:6
-                    has_signal[r] || continue
-                    csum += _pcor(F[r], med); cnt += 1
-                end
-                c_to_median_mean = cnt > 0 ? csum / cnt : 0f0
-            end
-        end
-
-        # E1/E2: predicted-vs-observed fragment intensity similarity
-        pred_max_sc = 0f0; pred_max_sb = 0f0
-        pred_area_sc = 0f0; pred_area_sb = 0f0
-        if has_pred
-            pred6 = Vector{Float32}(undef, 6)
-            obs_max6 = Vector{Float32}(undef, 6)
-            obs_area6 = Vector{Float32}(undef, 6)
-            @inbounds for r in 1:6
-                pmax = 0f0
-                for i in idxs
-                    v = Float32(f_pred[r][i])
-                    if v > pmax; pmax = v; end
-                end
-                pred6[r] = pmax
-                # F[r] is the per-scan observed-intensity vector
-                omax = 0f0; osum = 0f0
-                for k in 1:npts
-                    vk = F[r][k]
-                    osum += vk
-                    if vk > omax; omax = vk; end
-                end
-                obs_max6[r]  = omax
-                obs_area6[r] = osum
-            end
-            # L1 normalize (sum=1 over the 6 ranks; skip if any side all-zero)
-            spred = sum(pred6); smax = sum(obs_max6); sarea = sum(obs_area6)
-            if spred > 0f0 && smax > 0f0
-                p = pred6 ./ spred; q = obs_max6 ./ smax
-                dot_pq = 0f0; np2 = 0f0; nq2 = 0f0; absd = 0f0
-                @inbounds for r in 1:6
-                    dot_pq += p[r]*q[r]; np2 += p[r]*p[r]; nq2 += q[r]*q[r]
-                    absd += abs(p[r] - q[r])
-                end
-                d = sqrt(np2*nq2)
-                pred_max_sc = d > 0f0 ? Float32(dot_pq / d) : 0f0
-                pred_max_sb = Float32(-log2(absd / 2f0 + 1f-6))
-            end
-            if spred > 0f0 && sarea > 0f0
-                p = pred6 ./ spred; q = obs_area6 ./ sarea
-                dot_pq = 0f0; np2 = 0f0; nq2 = 0f0; absd = 0f0
-                @inbounds for r in 1:6
-                    dot_pq += p[r]*q[r]; np2 += p[r]*p[r]; nq2 += q[r]*q[r]
-                    absd += abs(p[r] - q[r])
-                end
-                d = sqrt(np2*nq2)
-                pred_area_sc = d > 0f0 ? Float32(dot_pq / d) : 0f0
-                pred_area_sb = Float32(-log2(absd / 2f0 + 1f-6))
+        if best_r > 0 && has_m0
+            v_m0 = Vector{Float32}(undef, npts)
+            for (k, i) in enumerate(idxs); v_m0[k] = Float32(m0_int[i]); end
+            if maximum(v_m0) > 0
+                c_best_m0 = _frag_pcor(F[best_r], v_m0)
             end
         end
 
         for i in idxs
-            psms.frag_corr_top1_top2[i]      = c_top1_top2
-            psms.frag_corr_top1_top3[i]      = c_top1_top3
-            psms.frag_corr_top1_weight[i]    = c_top1_weight
-            psms.frag_corr_mean_pairwise[i]  = mean_pairwise_sp  # Spearman
-            psms.frag_corr_min_pairwise[i]   = min_pairwise
-            psms.frag_corr_top3_weight[i]    = c_top3_w
-            psms.frag_corr_top5_weight[i]    = c_top5_w
             psms.frag_apex_dispersion_irt[i] = apex_disp
-            psms.n_correlated_fragments[i]     = n_corr_70
-            psms.n_correlated_fragments_50[i]  = n_corr_50
-            psms.n_correlated_fragments_90[i]  = n_corr_90
-            psms.frag_corr_best_weight[i]      = c_best_w
-            psms.frag_corr_best_m0[i]          = c_best_m0
-            psms.pred_obs_max_spectral_contrast[i]  = pred_max_sc
-            psms.pred_obs_max_scribe[i]             = pred_max_sb
-            psms.pred_obs_area_spectral_contrast[i] = pred_area_sc
-            psms.pred_obs_area_scribe[i]            = pred_area_sb
-            psms.frag_corr_to_median_mean[i]        = c_to_median_mean
-            psms.delta_frame_peak_center[i]         = delta_frame
+            psms.n_correlated_fragments_90[i] = n_corr_90
+            psms.frag_corr_best_m0[i]         = c_best_m0
+            psms.delta_frame_peak_center[i]   = delta_frame
         end
     end
     return
