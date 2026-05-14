@@ -457,9 +457,13 @@ function add_ms1_features!(psms::DataFrame,
     end
 
     # B1: per-precursor MS1 chromatogram features
-    _add_ms1_chromatogram_features!(psms)
+    t_ms1_chrom = @elapsed _add_ms1_chromatogram_features!(psms)
     # B2: per-precursor MS2-fragment chromatogram features (uses frag1..6_int captured by Score!)
-    _add_fragment_chromatogram_features!(psms)
+    t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(psms)
+    @user_info "  chrom-feature passes (file_idx=$ms_file_idx): " *
+               "ms1_chrom=$(round(t_ms1_chrom, digits=2))s  " *
+               "frag_chrom=$(round(t_frag_chrom, digits=2))s  " *
+               "(n_psms=$(nrow(psms)))"
     return
 end
 

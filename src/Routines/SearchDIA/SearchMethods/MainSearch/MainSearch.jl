@@ -132,7 +132,8 @@ function process_file!(
     results.psms[] = psms
     t_lib_search = time() - t_file_start
 
-    @debug_l1 "MainSearch: $file_name — $(nrow(psms)) PSMs, library_search=$(round(t_lib_search, digits=2))s"
+    @user_info "  MainSearch process_file! (file_idx=$ms_file_idx, $file_name): " *
+               "$(nrow(psms)) PSMs from deconv; library_search elapsed: $(round(t_lib_search, digits=2))s"
 
     return results
 end
@@ -153,7 +154,7 @@ function process_search_results!(
     file_name = getParsedFileName(search_context, ms_file_idx)
 
     # Compute only prescore features (skip columns recomputed in Phase 2)
-    prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra, prescore_only=true)
+    t_prepare = @elapsed prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra, prescore_only=true)
     t_features = time()
 
     if nrow(psms) == 0
@@ -161,17 +162,10 @@ function process_search_results!(
         return nothing
     end
 
-    # Add per-scan competition features: weight_ratio_at_scan, weight_rank_at_scan
-    add_scan_competition_features!(psms)
-
-    # Add chromatographic neighborhood features (3-scan window for each precursor)
-    add_neighborhood_features!(psms)
-
-    # Add iRT distance from current scan to this precursor's deconv-apex scan
-    add_apex_distance_feature!(psms)
-
-    # Phase 1 MS1 features: per-PSM isotope-match against nearest MS1 scan
-    add_ms1_features!(psms, spectra, search_context, ms_file_idx)
+    t_competition = @elapsed add_scan_competition_features!(psms)
+    t_neighborhood = @elapsed add_neighborhood_features!(psms)
+    t_apex = @elapsed add_apex_distance_feature!(psms)
+    t_ms1 = @elapsed add_ms1_features!(psms, spectra, search_context, ms_file_idx)
 
     # Pre-LGBM diagnostic dump (independent of post-LGBM dump). Captures
     # PSMs *before* LGBM training so single-class runs (target-only or
@@ -441,9 +435,12 @@ function process_search_results!(
     # Timing summary
     t_total = t_write - t_start
     r = s -> round(s, digits=2)
-    @debug_l1 "MainSearch scoring: $file_name — $(n_total_psms) PSMs → $(nrow(best_psms)) precursors " *
-               "(feat=$(r(t_features-t_start))s, lgbm=$(r(lgbm_timings.train_cv))s, recal=$(r(t_recal-t_lgbm))s, " *
-               "phase2=$(r(t_phase2-t_recal))s, write=$(r(t_write-t_phase2))s, total=$(r(t_total))s)"
+    @user_info "  MainSearch process_search_results! (file_idx=$ms_file_idx, $file_name): " *
+               "$n_total_psms PSMs → $(nrow(best_psms)) precursors  total=$(r(t_total))s\n" *
+               "    feature pass: prepare=$(r(t_prepare))s  competition=$(r(t_competition))s  " *
+               "neighborhood=$(r(t_neighborhood))s  apex=$(r(t_apex))s  ms1=$(r(t_ms1))s\n" *
+               "    lgbm=$(r(lgbm_timings.train_cv))s  recal=$(r(t_recal-t_lgbm))s  " *
+               "phase2=$(r(t_phase2-t_recal))s  write=$(r(t_write-t_phase2))s"
 
     return nothing
 end
