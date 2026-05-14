@@ -255,7 +255,9 @@ const PRESCORE_FEATURES = [
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
 
     # Per-rank M0 fragment intensities (kept; used by chromatogram features)
-    :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
+    # frag5_int, frag6_int dropped 2026-05-14 (Tier-5 drop_5to6) — 8-file Olsen
+    # +794 IDs / +29 PGs. Still captured per-scan for chromatogram-correlation features.
+    :frag1_int, :frag2_int, :frag3_int, :frag4_int,
 
     # Fragment-chromatogram correlations (frag_w_corr family dropped; pairs dropped)
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13 — cross-dataset test
