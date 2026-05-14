@@ -1195,9 +1195,16 @@ function add_neighborhood_features!(psms::DataFrame)
     # `worst_*` features stay at 3-scan + 11-scan (chosen because the 11-scan
     # worst_max_residual was the dominant feature when first tried). worst is
     # restricted to max_residual + manhattan; worst_gof was uninformative.
-    _add_neighborhood_features_window!(psms, 1, "_3scan";  emit_worst=(:max_residual, :manhattan))
-    _add_neighborhood_features_window!(psms, 2, "_5scan")
-    _add_neighborhood_features_window!(psms, 5, "_11scan"; emit_best=false,
+    # 3-scan: only best_max_residual_3scan survives the current LGBM feature set.
+    # The 5 other best-* / irt_dist-* outputs and 2 worst-* outputs are unused.
+    _add_neighborhood_features_window!(psms, 1, "_3scan";
+                                        emit_best=(:max_residual,),
+                                        emit_worst=())
+    # 5-scan: all 6 best-* / irt_dist-* outputs are used.
+    _add_neighborhood_features_window!(psms, 2, "_5scan";
+                                        emit_best=(:gof, :manhattan, :max_residual))
+    # 11-scan: only the 2 worst-* outputs are used.
+    _add_neighborhood_features_window!(psms, 5, "_11scan"; emit_best=(),
                                         emit_worst=(:max_residual, :manhattan))
     return
 end
@@ -1211,25 +1218,24 @@ and their `irt_dist_*<suffix>` companions, computed over the window
 `-half_window .. +half_window` around each PSM's scan within its precursor.
 """
 function _add_neighborhood_features_window!(psms::DataFrame, half_window::Int, suffix::String;
-                                             emit_best::Bool = true,
+                                             emit_best::NTuple = (:gof, :manhattan, :max_residual),
                                              emit_worst::NTuple = ())
     n = nrow(psms)
-    if emit_best
-        gof_col      = Symbol("best_gof", suffix)
-        man_col      = Symbol("best_manhattan", suffix)
-        mr_col       = Symbol("best_max_residual", suffix)
-        dgof_col     = Symbol("irt_dist_best_gof", suffix)
-        dman_col     = Symbol("irt_dist_best_manhattan", suffix)
-        dmr_col      = Symbol("irt_dist_best_max_residual", suffix)
-        psms[!, gof_col]  = Vector{Float32}(undef, n)
-        psms[!, man_col]  = Vector{Float32}(undef, n)
-        psms[!, mr_col]   = Vector{Float32}(undef, n)
-        psms[!, dgof_col] = zeros(Float32, n)
-        psms[!, dman_col] = zeros(Float32, n)
-        psms[!, dmr_col]  = zeros(Float32, n)
-    end
-    # Worst-in-window features are computed only for the metrics specified by
-    # `emit_worst` (subset of `:gof`, `:manhattan`, `:max_residual`).
+    # Per-metric gating — only the requested best_* / irt_dist_best_* columns
+    # are allocated and the per-PSM inner loop only updates those it needs.
+    want_best_gof = :gof in emit_best
+    want_best_man = :manhattan in emit_best
+    want_best_mr  = :max_residual in emit_best
+    gof_col = want_best_gof ? Symbol("best_gof", suffix) : nothing
+    man_col = want_best_man ? Symbol("best_manhattan", suffix) : nothing
+    mr_col  = want_best_mr  ? Symbol("best_max_residual", suffix) : nothing
+    dgof_col = want_best_gof ? Symbol("irt_dist_best_gof", suffix) : nothing
+    dman_col = want_best_man ? Symbol("irt_dist_best_manhattan", suffix) : nothing
+    dmr_col  = want_best_mr  ? Symbol("irt_dist_best_max_residual", suffix) : nothing
+    if want_best_gof; psms[!, gof_col]  = Vector{Float32}(undef, n); psms[!, dgof_col] = zeros(Float32, n); end
+    if want_best_man; psms[!, man_col]  = Vector{Float32}(undef, n); psms[!, dman_col] = zeros(Float32, n); end
+    if want_best_mr;  psms[!, mr_col]   = Vector{Float32}(undef, n); psms[!, dmr_col]  = zeros(Float32, n); end
+
     want_worst_gof = :gof in emit_worst
     want_worst_man = :manhattan in emit_worst
     want_worst_mr  = :max_residual in emit_worst
@@ -1240,23 +1246,37 @@ function _add_neighborhood_features_window!(psms::DataFrame, half_window::Int, s
     if want_worst_man; psms[!, worst_man_col] = Vector{Float32}(undef, n); end
     if want_worst_mr;  psms[!, worst_mr_col]  = Vector{Float32}(undef, n); end
     n == 0 && return
+
+    # Fast exit if nothing to compute
+    if !(want_best_gof || want_best_man || want_best_mr ||
+         want_worst_gof || want_worst_man || want_worst_mr)
+        return
+    end
     @assert hasproperty(psms, :irt_obs) "neighborhood features require :irt_obs column"
 
+    # Cache columns we'll touch (avoids per-iter property lookup + boxing)
+    gof_v = psms.gof
+    man_v = psms.fitted_manhattan_distance
+    mr_v  = psms.max_matched_residual
+    irt_v = psms.irt_obs
+    pid_v = psms.precursor_idx
+    scan_v = psms.scan_idx
+
     # Group rows by precursor_idx; within each group sort indices by scan_idx
-    by_prec = Dict{eltype(psms.precursor_idx), Vector{Int}}()
+    by_prec = Dict{eltype(pid_v), Vector{Int}}()
     @inbounds for i in 1:n
-        push!(get!(() -> Int[], by_prec, psms.precursor_idx[i]), i)
+        push!(get!(() -> Int[], by_prec, pid_v[i]), i)
     end
 
     @inbounds for (_, idxs) in by_prec
         if length(idxs) > 1
-            sort!(idxs, by = j -> psms.scan_idx[j])
+            sort!(idxs, by = j -> scan_v[j])
         end
         for (k, i) in enumerate(idxs)
-            cur_irt = Float32(psms.irt_obs[i])
-            cur_gof = Float32(psms.gof[i])
-            cur_man = Float32(psms.fitted_manhattan_distance[i])
-            cur_mr  = Float32(psms.max_matched_residual[i])
+            cur_irt = Float32(irt_v[i])
+            cur_gof = want_best_gof || want_worst_gof ? Float32(gof_v[i]) : 0f0
+            cur_man = want_best_man || want_worst_man ? Float32(man_v[i]) : 0f0
+            cur_mr  = want_best_mr  || want_worst_mr  ? Float32(mr_v[i])  : 0f0
             best_gof = cur_gof; gof_idx = i
             best_man = cur_man; man_idx = i
             best_mr  = cur_mr;  mr_idx  = i
@@ -1268,24 +1288,34 @@ function _add_neighborhood_features_window!(psms::DataFrame, half_window::Int, s
                 kk = k + off
                 if 1 <= kk <= length(idxs)
                     j = idxs[kk]
-                    g = Float32(psms.gof[j])
-                    if g > best_gof; best_gof = g; gof_idx = j; end
-                    if want_worst_gof && g < worst_gof; worst_gof = g; end
-                    m = Float32(psms.fitted_manhattan_distance[j])
-                    if m < best_man; best_man = m; man_idx = j; end
-                    if want_worst_man && m > worst_man; worst_man = m; end
-                    r = Float32(psms.max_matched_residual[j])
-                    if r < best_mr;  best_mr  = r;  mr_idx  = j; end
-                    if want_worst_mr && r > worst_mr; worst_mr = r; end
+                    if want_best_gof || want_worst_gof
+                        g = Float32(gof_v[j])
+                        if want_best_gof  && g > best_gof; best_gof = g; gof_idx = j; end
+                        if want_worst_gof && g < worst_gof; worst_gof = g; end
+                    end
+                    if want_best_man || want_worst_man
+                        m = Float32(man_v[j])
+                        if want_best_man  && m < best_man; best_man = m; man_idx = j; end
+                        if want_worst_man && m > worst_man; worst_man = m; end
+                    end
+                    if want_best_mr || want_worst_mr
+                        r = Float32(mr_v[j])
+                        if want_best_mr  && r < best_mr;  best_mr  = r;  mr_idx  = j; end
+                        if want_worst_mr && r > worst_mr; worst_mr = r; end
+                    end
                 end
             end
-            if emit_best
+            if want_best_gof
                 psms[!, gof_col][i]  = best_gof
+                psms[!, dgof_col][i] = abs(Float32(irt_v[gof_idx]) - cur_irt)
+            end
+            if want_best_man
                 psms[!, man_col][i]  = best_man
+                psms[!, dman_col][i] = abs(Float32(irt_v[man_idx]) - cur_irt)
+            end
+            if want_best_mr
                 psms[!, mr_col][i]   = best_mr
-                psms[!, dgof_col][i] = abs(Float32(psms.irt_obs[gof_idx]) - cur_irt)
-                psms[!, dman_col][i] = abs(Float32(psms.irt_obs[man_idx]) - cur_irt)
-                psms[!, dmr_col][i]  = abs(Float32(psms.irt_obs[mr_idx])  - cur_irt)
+                psms[!, dmr_col][i]  = abs(Float32(irt_v[mr_idx])  - cur_irt)
             end
             if want_worst_gof; psms[!, worst_gof_col][i] = worst_gof; end
             if want_worst_man; psms[!, worst_man_col][i] = worst_man; end
