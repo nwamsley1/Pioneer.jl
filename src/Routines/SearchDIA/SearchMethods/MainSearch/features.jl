@@ -978,27 +978,125 @@ PSMs that are the only PSM for a precursor get values from themselves; iRT
 distance = 0.
 """
 function add_neighborhood_features!(psms::DataFrame)
-    # `best_*` + `irt_dist_best_*` emitted only for the narrow 3-scan + 5-scan
-    # windows (the strict elution-shoulder context). Window sweep showed wider
-    # best_gof_*scan variants dominated individual feature importance, but
-    # adding 7/9/11/15 didn't translate into a corresponding per-file q≤.01 lift
-    # — within LGBM run-to-run noise. Trim to 3+5 to keep the feature count
-    # lean.
-    #
-    # `worst_*` features stay at 3-scan + 11-scan (chosen because the 11-scan
-    # worst_max_residual was the dominant feature when first tried). worst is
-    # restricted to max_residual + manhattan; worst_gof was uninformative.
-    # 3-scan: only best_max_residual_3scan survives the current LGBM feature set.
-    # The 5 other best-* / irt_dist-* outputs and 2 worst-* outputs are unused.
-    _add_neighborhood_features_window!(psms, 1, "_3scan";
-                                        emit_best=(:max_residual,),
-                                        emit_worst=())
-    # 5-scan: all 6 best-* / irt_dist-* outputs are used.
-    _add_neighborhood_features_window!(psms, 2, "_5scan";
-                                        emit_best=(:gof, :manhattan, :max_residual))
-    # 11-scan: only the 2 worst-* outputs are used.
-    _add_neighborhood_features_window!(psms, 5, "_11scan"; emit_best=(),
-                                        emit_worst=(:max_residual, :manhattan))
+    # Single fused pass over precursor buckets emits all 10 neighborhood
+    # features in one walk per PSM. The 11-scan walk is the widest window
+    # — every neighbor in 11-scan is also (conditionally) in 5-scan and
+    # 3-scan, so we accumulate three sets of trackers concurrently and
+    # write back at the end. Replaces three separate calls that each
+    # re-bucketed and re-sorted per precursor.
+    _add_neighborhood_features_fused!(psms)
+    return
+end
+
+"""
+    _add_neighborhood_features_fused!(psms)
+
+Emits in a single pass:
+- `best_max_residual_3scan`, `irt_dist_best_max_residual_3scan`
+- `best_gof_5scan`, `best_manhattan_5scan`, `best_max_residual_5scan`
+- `irt_dist_best_gof_5scan`, `irt_dist_best_manhattan_5scan`, `irt_dist_best_max_residual_5scan`
+- `worst_max_residual_11scan`, `worst_manhattan_11scan`
+
+These are the outputs the current PRESCORE_FEATURES / ADVANCED_FEATURE_SET
+consume from the neighborhood family, plus `irt_dist_best_max_residual_3scan`
+(unused by LGBM but kept for diagnostic parity with prior versions).
+
+Replaces three separate `_add_neighborhood_features_window!` calls.
+"""
+function _add_neighborhood_features_fused!(psms::DataFrame)
+    n = nrow(psms)
+    # Output buffers (single allocation each, written in inner loop)
+    bmr3   = zeros(Float32, n); dmr3   = zeros(Float32, n)
+    bgof5  = zeros(Float32, n); dgof5  = zeros(Float32, n)
+    bman5  = zeros(Float32, n); dman5  = zeros(Float32, n)
+    bmr5   = zeros(Float32, n); dmr5   = zeros(Float32, n)
+    wmr11  = zeros(Float32, n)
+    wman11 = zeros(Float32, n)
+
+    if n > 0
+        @assert hasproperty(psms, :irt_obs) "neighborhood features require :irt_obs"
+        gof_v  = psms.gof
+        man_v  = psms.fitted_manhattan_distance
+        mr_v   = psms.max_matched_residual
+        irt_v  = psms.irt_obs
+        pid_v  = psms.precursor_idx
+        scan_v = psms.scan_idx
+
+        # Single bucketing + single sort per precursor
+        by_prec = Dict{eltype(pid_v), Vector{Int}}()
+        @inbounds for i in 1:n
+            push!(get!(() -> Int[], by_prec, pid_v[i]), i)
+        end
+
+        @inbounds for (_, idxs) in by_prec
+            L = length(idxs)
+            if L > 1
+                sort!(idxs, by = j -> scan_v[j])
+            end
+            for (k, i) in enumerate(idxs)
+                cur_irt = Float32(irt_v[i])
+                cur_gof = Float32(gof_v[i])
+                cur_man = Float32(man_v[i])
+                cur_mr  = Float32(mr_v[i])
+
+                # 3-scan window: best max_residual (min)
+                b_mr3 = cur_mr;   mr3_idx = i
+                # 5-scan window: best gof (max), best manhattan/max_residual (min)
+                b_gof5 = cur_gof; gof5_idx = i
+                b_man5 = cur_man; man5_idx = i
+                b_mr5  = cur_mr;  mr5_idx  = i
+                # 11-scan window: worst max_residual / manhattan (max)
+                w_mr11  = cur_mr
+                w_man11 = cur_man
+
+                # Walk ±5 neighbors. |off| ≤ 1 → 3-scan; ≤ 2 → 5-scan;
+                # all ≤ 5 → 11-scan. Three windows updated concurrently.
+                for off in -5:5
+                    off == 0 && continue
+                    kk = k + off
+                    1 <= kk <= L || continue
+                    j = idxs[kk]
+                    absoff = ifelse(off < 0, -off, off)
+
+                    r = Float32(mr_v[j])
+                    if r > w_mr11; w_mr11 = r; end                       # 11
+                    if absoff <= 2 && r < b_mr5; b_mr5 = r; mr5_idx = j; end  # 5
+                    if absoff <= 1 && r < b_mr3; b_mr3 = r; mr3_idx = j; end  # 3
+
+                    m = Float32(man_v[j])
+                    if m > w_man11; w_man11 = m; end                      # 11
+                    if absoff <= 2 && m < b_man5; b_man5 = m; man5_idx = j; end  # 5
+
+                    if absoff <= 2  # gof only needed for 5-scan
+                        g = Float32(gof_v[j])
+                        if g > b_gof5; b_gof5 = g; gof5_idx = j; end
+                    end
+                end
+
+                bmr3[i]   = b_mr3
+                dmr3[i]   = abs(Float32(irt_v[mr3_idx]) - cur_irt)
+                bgof5[i]  = b_gof5
+                dgof5[i]  = abs(Float32(irt_v[gof5_idx]) - cur_irt)
+                bman5[i]  = b_man5
+                dman5[i]  = abs(Float32(irt_v[man5_idx]) - cur_irt)
+                bmr5[i]   = b_mr5
+                dmr5[i]   = abs(Float32(irt_v[mr5_idx]) - cur_irt)
+                wmr11[i]  = w_mr11
+                wman11[i] = w_man11
+            end
+        end
+    end
+
+    psms[!, :best_max_residual_3scan]                = bmr3
+    psms[!, :irt_dist_best_max_residual_3scan]       = dmr3
+    psms[!, :best_gof_5scan]                         = bgof5
+    psms[!, :best_manhattan_5scan]                   = bman5
+    psms[!, :best_max_residual_5scan]                = bmr5
+    psms[!, :irt_dist_best_gof_5scan]                = dgof5
+    psms[!, :irt_dist_best_manhattan_5scan]          = dman5
+    psms[!, :irt_dist_best_max_residual_5scan]       = dmr5
+    psms[!, :worst_max_residual_11scan]              = wmr11
+    psms[!, :worst_manhattan_11scan]                 = wman11
     return
 end
 
