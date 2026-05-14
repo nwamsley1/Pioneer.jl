@@ -111,14 +111,6 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     frag5_int::H
     frag6_int::H
 
-    # Per-rank M+1 (first isotopologue) fragment intensities. Added 2026-05-12.
-    frag1_int_m1::H
-    frag2_int_m1::H
-    frag3_int_m1::H
-    frag4_int_m1::H
-    frag5_int_m1::H
-    frag6_int_m1::H
-
     # E7 (Batch E, 2026-05-12): mean |ppm_err| over matched M0 fragments at
     # ranks 1-3. Zero if no top-3 matches in this scan.
     top3_ms2_mass_error_mean::H
@@ -141,9 +133,6 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     # E3 (Batch E, 2026-05-12): log2((b_int + y_int + 1) / (pred_int_sum_m0 + 1)).
     # Completeness-of-match — observed vs predicted matched intensity.
     matched_ratio::L
-
-    # E6 M01 (Batch E, 2026-05-12): log b/y ratio over M0 + M+1 ions.
-    log_by_ratio_m01::L
 
     #Non-scores/Labels
     precursor_idx::UInt32
@@ -244,13 +233,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             unscored_PSMs[i].frag5_int,
             unscored_PSMs[i].frag6_int,
 
-            unscored_PSMs[i].frag1_int_m1,
-            unscored_PSMs[i].frag2_int_m1,
-            unscored_PSMs[i].frag3_int_m1,
-            unscored_PSMs[i].frag4_int_m1,
-            unscored_PSMs[i].frag5_int_m1,
-            unscored_PSMs[i].frag6_int_m1,
-
             H(unscored_PSMs[i].top3_ppm_err_count > 0 ?
                 unscored_PSMs[i].top3_abs_ppm_err_sum / unscored_PSMs[i].top3_ppm_err_count :
                 zero(H)),
@@ -267,9 +249,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
 
             L(log2((Float32(unscored_PSMs[i].b_int) + Float32(unscored_PSMs[i].y_int) + 1f0) /
                    (Float32(unscored_PSMs[i].pred_int_sum_m0) + 1f0))),
-
-            L(log(Float32(unscored_PSMs[i].b_int) + Float32(unscored_PSMs[i].b_int_m1) + 1f0) -
-              log(Float32(unscored_PSMs[i].y_int) + Float32(unscored_PSMs[i].y_int_m1) + 1f0)),
 
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(cycle_idx),

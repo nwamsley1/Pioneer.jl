@@ -49,14 +49,6 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     frag4_int::T
     frag5_int::T
     frag6_int::T
-    # Per-rank M+1 (first isotopologue) fragment intensities; captures only iso_idx==1.
-    # Added 2026-05-12 to enable per-fragment M0/M+1 correlation features.
-    frag1_int_m1::T
-    frag2_int_m1::T
-    frag3_int_m1::T
-    frag4_int_m1::T
-    frag5_int_m1::T
-    frag6_int_m1::T
     # E7 (Batch E, 2026-05-12): top-3 fragment ppm-error capture. Accumulates
     # |ppm_err| for M0 matches at ranks 1-3 only; mean computed in Score!.
     top3_abs_ppm_err_sum::T
@@ -75,16 +67,11 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     # ALL matched M0 fragments (any rank). Paired with b_int + y_int to give
     # matched_ratio = log2((obs matched) / (pred matched)) in Score!.
     pred_int_sum_m0::T
-    # E6 M01 (Batch E, 2026-05-12): summed b/y M+1 intensities. Combined with
-    # M0 b_int / y_int to compute log_by_ratio_m01 = log(b+1) − log(y+1) over
-    # the M0+M+1 ion population.
-    b_int_m1::T
-    y_int_m1::T
     precursor_idx::UInt32
     ms_file_idx::UInt32
 end
 
-MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), UInt32(0), UInt32(0))
+MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), UInt32(0), UInt32(0))
 
 """
     TuningUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}

@@ -50,7 +50,6 @@ const ADVANCED_FEATURE_SET = [
     :frag_apex_dispersion_irt,
     :n_correlated_fragments_90,
     :frag_corr_best_m0,
-    :frag_corr_m0_m1_top1,
     :top3_ms2_mass_error_mean,
     :delta_frame_peak_center,
     :log_by_ratio_m0,
