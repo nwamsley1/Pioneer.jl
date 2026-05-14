@@ -1005,7 +1005,6 @@ Replaces three separate `_add_neighborhood_features_window!` calls.
 """
 function _add_neighborhood_features_fused!(psms::DataFrame)
     n = nrow(psms)
-    # Output buffers (single allocation each, written in inner loop)
     bmr3   = zeros(Float32, n); dmr3   = zeros(Float32, n)
     bgof5  = zeros(Float32, n); dgof5  = zeros(Float32, n)
     bman5  = zeros(Float32, n); dman5  = zeros(Float32, n)
@@ -1022,55 +1021,86 @@ function _add_neighborhood_features_fused!(psms::DataFrame)
         pid_v  = psms.precursor_idx
         scan_v = psms.scan_idx
 
-        # Single bucketing + single sort per precursor
-        by_prec = Dict{eltype(pid_v), Vector{Int}}()
+        # Pack (precursor_idx << 32 | scan_idx) into one UInt64 per PSM; sortperm
+        # on UInt64 keys gives (precursor, scan) order in a single O(n log n)
+        # sort with cache-friendly linear scan afterwards. Replaces the prior
+        # Dict{UInt32,Vector{Int}} + per-precursor sort! which allocated one
+        # Vector{Int} per precursor (~5–10k extra heap allocs per file).
+        keys = Vector{UInt64}(undef, n)
         @inbounds for i in 1:n
-            push!(get!(() -> Int[], by_prec, pid_v[i]), i)
+            keys[i] = (UInt64(pid_v[i]) << 32) | UInt64(scan_v[i])
         end
+        perm = sortperm(keys)
 
-        @inbounds for (_, idxs) in by_prec
-            L = length(idxs)
-            if L > 1
-                sort!(idxs, by = j -> scan_v[j])
+        # Linear scan over the permutation. Each precursor's PSMs are contiguous
+        # in perm and already in scan order.
+        i_start = 1
+        @inbounds while i_start <= n
+            cur_pid = pid_v[perm[i_start]]
+            i_end = i_start
+            while i_end < n && pid_v[perm[i_end+1]] == cur_pid
+                i_end += 1
             end
-            for (k, i) in enumerate(idxs)
+            L = i_end - i_start + 1
+
+            for k in 0:(L-1)
+                i = perm[i_start + k]
                 cur_irt = Float32(irt_v[i])
                 cur_gof = Float32(gof_v[i])
                 cur_man = Float32(man_v[i])
                 cur_mr  = Float32(mr_v[i])
 
-                # 3-scan window: best max_residual (min)
                 b_mr3 = cur_mr;   mr3_idx = i
-                # 5-scan window: best gof (max), best manhattan/max_residual (min)
                 b_gof5 = cur_gof; gof5_idx = i
                 b_man5 = cur_man; man5_idx = i
                 b_mr5  = cur_mr;  mr5_idx  = i
-                # 11-scan window: worst max_residual / manhattan (max)
                 w_mr11  = cur_mr
                 w_man11 = cur_man
 
-                # Walk ±5 neighbors. |off| ≤ 1 → 3-scan; ≤ 2 → 5-scan;
-                # all ≤ 5 → 11-scan. Three windows updated concurrently.
-                for off in -5:5
-                    off == 0 && continue
+                # ── Inner ±1 (in 3-scan AND 5-scan AND 11-scan):
+                # both windows + worst tracker get all three metric updates.
+                for off in (-1, 1)
                     kk = k + off
-                    1 <= kk <= L || continue
-                    j = idxs[kk]
-                    absoff = ifelse(off < 0, -off, off)
-
+                    (kk < 0 || kk > L-1) && continue
+                    j = perm[i_start + kk]
                     r = Float32(mr_v[j])
-                    if r > w_mr11; w_mr11 = r; end                       # 11
-                    if absoff <= 2 && r < b_mr5; b_mr5 = r; mr5_idx = j; end  # 5
-                    if absoff <= 1 && r < b_mr3; b_mr3 = r; mr3_idx = j; end  # 3
-
+                    if r > w_mr11; w_mr11 = r; end
+                    if r < b_mr5;  b_mr5 = r; mr5_idx = j; end
+                    if r < b_mr3;  b_mr3 = r; mr3_idx = j; end
                     m = Float32(man_v[j])
-                    if m > w_man11; w_man11 = m; end                      # 11
-                    if absoff <= 2 && m < b_man5; b_man5 = m; man5_idx = j; end  # 5
+                    if m > w_man11; w_man11 = m; end
+                    if m < b_man5;  b_man5 = m; man5_idx = j; end
+                    g = Float32(gof_v[j])
+                    if g > b_gof5;  b_gof5 = g; gof5_idx = j; end
+                end
 
-                    if absoff <= 2  # gof only needed for 5-scan
-                        g = Float32(gof_v[j])
-                        if g > b_gof5; b_gof5 = g; gof5_idx = j; end
-                    end
+                # ── Middle ±2 (in 5-scan AND 11-scan, NOT 3-scan):
+                # skip best_mr3 update.
+                for off in (-2, 2)
+                    kk = k + off
+                    (kk < 0 || kk > L-1) && continue
+                    j = perm[i_start + kk]
+                    r = Float32(mr_v[j])
+                    if r > w_mr11; w_mr11 = r; end
+                    if r < b_mr5;  b_mr5 = r; mr5_idx = j; end
+                    m = Float32(man_v[j])
+                    if m > w_man11; w_man11 = m; end
+                    if m < b_man5;  b_man5 = m; man5_idx = j; end
+                    g = Float32(gof_v[j])
+                    if g > b_gof5;  b_gof5 = g; gof5_idx = j; end
+                end
+
+                # ── Outer ±3, ±4, ±5 (in 11-scan ONLY):
+                # only worst_mr11 / worst_man11 trackers update.
+                # Don't even load gof.
+                for off in (-5, -4, -3, 3, 4, 5)
+                    kk = k + off
+                    (kk < 0 || kk > L-1) && continue
+                    j = perm[i_start + kk]
+                    r = Float32(mr_v[j])
+                    if r > w_mr11; w_mr11 = r; end
+                    m = Float32(man_v[j])
+                    if m > w_man11; w_man11 = m; end
                 end
 
                 bmr3[i]   = b_mr3
@@ -1084,6 +1114,7 @@ function _add_neighborhood_features_fused!(psms::DataFrame)
                 wmr11[i]  = w_mr11
                 wman11[i] = w_man11
             end
+            i_start = i_end + 1
         end
     end
 
