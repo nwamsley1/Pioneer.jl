@@ -164,7 +164,10 @@ function process_search_results!(
 
     t_competition = @elapsed add_scan_competition_features!(psms)
     t_neighborhood = @elapsed add_neighborhood_features!(psms)
-    t_apex = @elapsed add_apex_distance_feature!(psms)
+    # add_apex_distance_feature! produces 19 features, none of which are used by
+    # the current PRESCORE_FEATURES / ADVANCED_FEATURE_SET. Skipped to save ~9s
+    # per file; function preserved for re-enable via PIONEER_DUMP_PRE_LGBM diag.
+    t_apex = 0.0
     t_ms1 = @elapsed add_ms1_features!(psms, spectra, search_context, ms_file_idx)
 
     # Pre-LGBM diagnostic dump (independent of post-LGBM dump). Captures
