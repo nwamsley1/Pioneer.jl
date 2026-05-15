@@ -31,6 +31,9 @@ struct _MBRDonorEntry
     irt_residual::Float32  # irt_pred − irt_obs of the donor row
     irt_obs::Float32       # raw observed iRT of the donor row (for top-N median)
     log_by_ratio::Float32  # log(b_int+1) - log(y_int+1) of the donor row
+    rt_obs::Float32        # literal scan RT (minutes) of the donor row — rtv1.
+                           # iRT is spline-calibrated; raw RT carries independent
+                           # gradient-bounded signal for species-mismatch transfers.
     # Per-rank M0 fragment intensities of the donor row (for cross-run fragment
     # pattern similarity — the develop-schema analog of v0.6.6's chromatogram
     # RV-coefficient).
@@ -44,6 +47,7 @@ struct _MBRDonorEntry
     is_decoy::Bool
 end
 const _MBR_DONOR_SENTINEL = _MBRDonorEntry(typemin(Float32), 0f0, 0f0, 0f0, 0f0, 0f0,
+                                            0f0,
                                             0f0, 0f0, 0f0, 0f0, 0f0, 0f0,
                                             UInt32(0), false)
 
@@ -87,7 +91,8 @@ function compute_mbr_features!(
     @inbounds for i in 1:n
         pid = pair_id_col[i]
         e = _MBRDonorEntry(score_v[i], weight_v[i], log2ie_v[i], irt_res_v[i],
-                           0f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0f0,
+                           0f0, 0f0, 0f0,
+                           0f0, 0f0, 0f0, 0f0, 0f0, 0f0,
                            file_v[i], decoy_v[i])
         cur = get(top2, pid, (_MBR_DONOR_SENTINEL, _MBR_DONOR_SENTINEL))
         if e.trace_prob > cur[1].trace_prob
@@ -205,6 +210,8 @@ function compute_mbr_features_dual!(
         zeros(Float32, nrow(psms))
     has_logby   = hasproperty(psms, :log_by_ratio_m0)
     log_by_v    = has_logby ? Float32.(psms[!, :log_by_ratio_m0]) : zeros(Float32, nrow(psms))
+    has_rt      = hasproperty(psms, :rt)
+    rt_obs_v    = has_rt ? Float32.(psms[!, :rt]) : zeros(Float32, nrow(psms))
     # Per-rank M0 fragment intensities (for fragment-pattern cosine/scribe).
     has_frag = all(c -> hasproperty(psms, c),
                    (:frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int))
@@ -226,7 +233,7 @@ function compute_mbr_features_dual!(
     @inbounds for i in 1:n
         pid = pid_col[i]
         e = _MBRDonorEntry(score_v[i], weight_v[i], log2ie_v[i], irt_res_v[i],
-                           irt_obs_v[i], log_by_v[i],
+                           irt_obs_v[i], log_by_v[i], rt_obs_v[i],
                            frag_v[1][i], frag_v[2][i], frag_v[3][i],
                            frag_v[4][i], frag_v[5][i], frag_v[6][i],
                            file_v[i], false)
@@ -279,6 +286,13 @@ function compute_mbr_features_dual!(
     # fingerprints (chromatogram vectors are no longer available post-MainSearch).
     out_frag_cos_t  = fill(-1f0, n); out_frag_cos_f  = fill(-1f0, n)
     out_frag_scr_t  = fill(-1f0, n); out_frag_scr_f  = fill(-1f0, n)
+    # rtv1 (2026-05-13): literal donor-vs-recipient scan RT diff. iRT is
+    # spline-calibrated and absorbs gradient drift between files; raw RT
+    # carries independent species-discrimination signal.
+    out_rt_t        = fill(-1f0, n); out_rt_f        = fill(-1f0, n)
+    # rtv2 (2026-05-13): Kendall τ on M0 fragment intensity 6-vector. Rank-based
+    # so magnitude-invariant; targets species-mismatch noise patterns directly.
+    out_frag_kt_t   = fill(-2f0, n); out_frag_kt_f   = fill(-2f0, n)
 
     # Per-row scratch: normalized recipient frag vector. Compute on the fly.
     @inline function _norm_l1(a, b, c, d, e, f)
@@ -291,6 +305,27 @@ function compute_mbr_features_dual!(
         nq2 = q[1]^2 + q[2]^2 + q[3]^2 + q[4]^2 + q[5]^2 + q[6]^2
         d = sqrt(np2 * nq2)
         d > 0f0 ? Float32(dotpq / d) : 0f0
+    end
+    # rtv2 (2026-05-13): Kendall τ over 15 ordered pairs of the 6-vector. Tied
+    # pairs (zero diff on either side) excluded from the denominator. Range
+    # [-1, +1]; sentinel -2f0 for "no donor or no informative pair." Rank-based
+    # so insensitive to magnitude noise — targets the species-mismatch failure
+    # mode where matched "fragments" in a HelaOnly file at YEAST m/z targets
+    # have random ordering vs the structured donor pattern.
+    @inline function _kendall6(p::NTuple{6,Float32}, q::NTuple{6,Float32})
+        nc = 0; nd = 0
+        @inbounds for i in 1:5
+            for j in (i+1):6
+                di = p[i] - p[j]; dj = q[i] - q[j]
+                si = di > 0f0 ? 1 : (di < 0f0 ? -1 : 0)
+                sj = dj > 0f0 ? 1 : (dj < 0f0 ? -1 : 0)
+                if si != 0 && sj != 0
+                    si == sj ? (nc += 1) : (nd += 1)
+                end
+            end
+        end
+        nt = nc + nd
+        nt > 0 ? Float32((nc - nd) / nt) : -2f0
     end
     @inline function _scribe6(p::NTuple{6,Float32}, q::NTuple{6,Float32})
         absd = abs(p[1]-q[1]) + abs(p[2]-q[2]) + abs(p[3]-q[3]) +
@@ -344,6 +379,9 @@ function compute_mbr_features_dual!(
                 if has_logby
                     out_log_by_t[i] = log_by_v[i] - donor_t.log_by_ratio
                 end
+                if has_rt
+                    out_rt_t[i] = abs(rt_obs_v[i] - donor_t.rt_obs)
+                end
                 if has_frag && v_self_has_signal
                     v_donor_norm = _norm_l1(donor_t.frag1_int, donor_t.frag2_int, donor_t.frag3_int,
                                              donor_t.frag4_int, donor_t.frag5_int, donor_t.frag6_int)
@@ -352,6 +390,7 @@ function compute_mbr_features_dual!(
                     if v_donor_has_signal
                         out_frag_cos_t[i] = _cosine6(v_self_norm, v_donor_norm)
                         out_frag_scr_t[i] = _scribe6(v_self_norm, v_donor_norm)
+                        out_frag_kt_t[i]  = _kendall6(v_self_norm, v_donor_norm)
                     end
                 end
                 out_miss_t[i] = false
@@ -371,6 +410,9 @@ function compute_mbr_features_dual!(
                 if has_logby
                     out_log_by_f[i] = log_by_v[i] - donor_f.log_by_ratio
                 end
+                if has_rt
+                    out_rt_f[i] = abs(rt_obs_v[i] - donor_f.rt_obs)
+                end
                 if has_frag && v_self_has_signal
                     v_donor_norm = _norm_l1(donor_f.frag1_int, donor_f.frag2_int, donor_f.frag3_int,
                                              donor_f.frag4_int, donor_f.frag5_int, donor_f.frag6_int)
@@ -379,6 +421,7 @@ function compute_mbr_features_dual!(
                     if v_donor_has_signal
                         out_frag_cos_f[i] = _cosine6(v_self_norm, v_donor_norm)
                         out_frag_scr_f[i] = _scribe6(v_self_norm, v_donor_norm)
+                        out_frag_kt_f[i]  = _kendall6(v_self_norm, v_donor_norm)
                     end
                 end
                 out_miss_f[i] = false
@@ -409,6 +452,11 @@ function compute_mbr_features_dual!(
     psms[!, :MBR_frag_pattern_cosine_false]  = out_frag_cos_f
     psms[!, :MBR_frag_pattern_scribe_true]   = out_frag_scr_t
     psms[!, :MBR_frag_pattern_scribe_false]  = out_frag_scr_f
+    # rtv1 + rtv2 (2026-05-13)
+    psms[!, :MBR_best_rt_diff_true]          = out_rt_t
+    psms[!, :MBR_best_rt_diff_false]         = out_rt_f
+    psms[!, :MBR_frag_rank_corr_true]        = out_frag_kt_t
+    psms[!, :MBR_frag_rank_corr_false]       = out_frag_kt_f
 
     elapsed = time() - t0
     @user_info "MBR Batch F — dual donor features:"
