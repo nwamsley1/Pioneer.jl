@@ -1005,12 +1005,18 @@ Replaces three separate `_add_neighborhood_features_window!` calls.
 """
 function _add_neighborhood_features_fused!(psms::DataFrame)
     n = nrow(psms)
-    bmr3   = zeros(Float32, n); dmr3   = zeros(Float32, n)
-    bgof5  = zeros(Float32, n); dgof5  = zeros(Float32, n)
-    bman5  = zeros(Float32, n); dman5  = zeros(Float32, n)
-    bmr5   = zeros(Float32, n); dmr5   = zeros(Float32, n)
-    wmr11  = zeros(Float32, n)
-    wman11 = zeros(Float32, n)
+    # Output buffers as Float16 to match the precision of the upstream
+    # `gof`, `fitted_manhattan_distance`, `max_matched_residual` columns
+    # (themselves Float16 in MainSearchScoredPSM). The inner loop still
+    # accumulates in Float32 for fast arithmetic; only the final write
+    # converts to Float16. Halves the output memory footprint (60MB per
+    # file) — also better cache density for LGBM training.
+    bmr3   = zeros(Float16, n); dmr3   = zeros(Float16, n)
+    bgof5  = zeros(Float16, n); dgof5  = zeros(Float16, n)
+    bman5  = zeros(Float16, n); dman5  = zeros(Float16, n)
+    bmr5   = zeros(Float16, n); dmr5   = zeros(Float16, n)
+    wmr11  = zeros(Float16, n)
+    wman11 = zeros(Float16, n)
 
     if n > 0
         @assert hasproperty(psms, :irt_obs) "neighborhood features require :irt_obs"
