@@ -298,84 +298,95 @@ function compute_mbr_features_dual!(
         Float32(-log2(absd / 2f0 + 1f-6))
     end
 
-    n_true_present = 0; n_false_present = 0
-    @inbounds for i in 1:n
-        my_file = file_v[i]
-        my_pid  = pid_col[i]
-        my_partner = partner_col[i]
-        # Normalized recipient fragment-intensity 6-vector (computed lazily;
-        # zero-pattern if no frag information).
-        v_self_norm = _norm_l1(frag_v[1][i], frag_v[2][i], frag_v[3][i],
-                                frag_v[4][i], frag_v[5][i], frag_v[6][i])
-        v_self_has_signal = (v_self_norm[1] + v_self_norm[2] + v_self_norm[3] +
-                              v_self_norm[4] + v_self_norm[5] + v_self_norm[6]) > 0f0
-        # Per-pid aggregates (these are file-independent; safe to read directly).
-        med_s_true = get(med_score_per_pid,   my_pid,     -1f0)
-        med_i_true = get(med_irt_obs_per_pid, my_pid,     irt_obs_v[i])
-        med_s_fls  = get(med_score_per_pid,   my_partner, -1f0)
-        med_i_fls  = get(med_irt_obs_per_pid, my_partner, irt_obs_v[i])
-        out_med_score_t[i] = med_s_true
-        out_med_score_f[i] = med_s_fls
-        if has_irt
-            out_top_irt_t[i] = abs(irt_obs_v[i] - med_i_true)
-            out_top_irt_f[i] = abs(irt_obs_v[i] - med_i_fls)
-        end
-        # _true donor
-        donor_t = _donor_for(my_pid, my_file)
-        if donor_t !== nothing
-            n_true_present += 1
-            out_max_t[i] = donor_t.trace_prob
-            if donor_t.weight > 0 && weight_v[i] > 0
-                out_lw_t[i] = log2(weight_v[i] / donor_t.weight)
-            end
-            out_le_t[i] = log2ie_v[i] - donor_t.log2_intensity_explained
+    # Per-thread present-counter buffers (avoid atomic contention; sum at end).
+    nt = Threads.nthreads()
+    n_true_per_thread  = zeros(Int, nt)
+    n_false_per_thread = zeros(Int, nt)
+
+    # Threaded per-PSM walk. Each row writes to disjoint output indices and
+    # only reads (without modifying) the shared `all_entries`, `med_*`, and
+    # input arrays — no synchronization needed.
+    Threads.@threads :static for i in 1:n
+        tid = Threads.threadid()
+        @inbounds begin
+            my_file = file_v[i]
+            my_pid  = pid_col[i]
+            my_partner = partner_col[i]
+            # Normalized recipient fragment-intensity 6-vector (lazy; zero-pattern
+            # when no frag information available).
+            v_self_norm = _norm_l1(frag_v[1][i], frag_v[2][i], frag_v[3][i],
+                                    frag_v[4][i], frag_v[5][i], frag_v[6][i])
+            v_self_has_signal = (v_self_norm[1] + v_self_norm[2] + v_self_norm[3] +
+                                  v_self_norm[4] + v_self_norm[5] + v_self_norm[6]) > 0f0
+            # Per-pid aggregates (file-independent; safe to read concurrently).
+            med_s_true = get(med_score_per_pid,   my_pid,     -1f0)
+            med_i_true = get(med_irt_obs_per_pid, my_pid,     irt_obs_v[i])
+            med_s_fls  = get(med_score_per_pid,   my_partner, -1f0)
+            med_i_fls  = get(med_irt_obs_per_pid, my_partner, irt_obs_v[i])
+            out_med_score_t[i] = med_s_true
+            out_med_score_f[i] = med_s_fls
             if has_irt
-                out_ir_t[i] = abs(irt_res_v[i] - donor_t.irt_residual)
+                out_top_irt_t[i] = abs(irt_obs_v[i] - med_i_true)
+                out_top_irt_f[i] = abs(irt_obs_v[i] - med_i_fls)
             end
-            if has_logby
-                out_log_by_t[i] = log_by_v[i] - donor_t.log_by_ratio
-            end
-            # Fragment-pattern cosine + scribe (donor vs recipient).
-            if has_frag && v_self_has_signal
-                v_donor_norm = _norm_l1(donor_t.frag1_int, donor_t.frag2_int, donor_t.frag3_int,
-                                         donor_t.frag4_int, donor_t.frag5_int, donor_t.frag6_int)
-                v_donor_has_signal = (v_donor_norm[1] + v_donor_norm[2] + v_donor_norm[3] +
-                                       v_donor_norm[4] + v_donor_norm[5] + v_donor_norm[6]) > 0f0
-                if v_donor_has_signal
-                    out_frag_cos_t[i] = _cosine6(v_self_norm, v_donor_norm)
-                    out_frag_scr_t[i] = _scribe6(v_self_norm, v_donor_norm)
+            # _true donor
+            donor_t = _donor_for(my_pid, my_file)
+            if donor_t !== nothing
+                n_true_per_thread[tid] += 1
+                out_max_t[i] = donor_t.trace_prob
+                if donor_t.weight > 0 && weight_v[i] > 0
+                    out_lw_t[i] = log2(weight_v[i] / donor_t.weight)
                 end
-            end
-            out_miss_t[i] = false
-        end
-        # _false donor
-        donor_f = _donor_for(my_partner, my_file)
-        if donor_f !== nothing
-            n_false_present += 1
-            out_max_f[i] = donor_f.trace_prob
-            if donor_f.weight > 0 && weight_v[i] > 0
-                out_lw_f[i] = log2(weight_v[i] / donor_f.weight)
-            end
-            out_le_f[i] = log2ie_v[i] - donor_f.log2_intensity_explained
-            if has_irt
-                out_ir_f[i] = abs(irt_res_v[i] - donor_f.irt_residual)
-            end
-            if has_logby
-                out_log_by_f[i] = log_by_v[i] - donor_f.log_by_ratio
-            end
-            if has_frag && v_self_has_signal
-                v_donor_norm = _norm_l1(donor_f.frag1_int, donor_f.frag2_int, donor_f.frag3_int,
-                                         donor_f.frag4_int, donor_f.frag5_int, donor_f.frag6_int)
-                v_donor_has_signal = (v_donor_norm[1] + v_donor_norm[2] + v_donor_norm[3] +
-                                       v_donor_norm[4] + v_donor_norm[5] + v_donor_norm[6]) > 0f0
-                if v_donor_has_signal
-                    out_frag_cos_f[i] = _cosine6(v_self_norm, v_donor_norm)
-                    out_frag_scr_f[i] = _scribe6(v_self_norm, v_donor_norm)
+                out_le_t[i] = log2ie_v[i] - donor_t.log2_intensity_explained
+                if has_irt
+                    out_ir_t[i] = abs(irt_res_v[i] - donor_t.irt_residual)
                 end
+                if has_logby
+                    out_log_by_t[i] = log_by_v[i] - donor_t.log_by_ratio
+                end
+                if has_frag && v_self_has_signal
+                    v_donor_norm = _norm_l1(donor_t.frag1_int, donor_t.frag2_int, donor_t.frag3_int,
+                                             donor_t.frag4_int, donor_t.frag5_int, donor_t.frag6_int)
+                    v_donor_has_signal = (v_donor_norm[1] + v_donor_norm[2] + v_donor_norm[3] +
+                                           v_donor_norm[4] + v_donor_norm[5] + v_donor_norm[6]) > 0f0
+                    if v_donor_has_signal
+                        out_frag_cos_t[i] = _cosine6(v_self_norm, v_donor_norm)
+                        out_frag_scr_t[i] = _scribe6(v_self_norm, v_donor_norm)
+                    end
+                end
+                out_miss_t[i] = false
             end
-            out_miss_f[i] = false
+            # _false donor
+            donor_f = _donor_for(my_partner, my_file)
+            if donor_f !== nothing
+                n_false_per_thread[tid] += 1
+                out_max_f[i] = donor_f.trace_prob
+                if donor_f.weight > 0 && weight_v[i] > 0
+                    out_lw_f[i] = log2(weight_v[i] / donor_f.weight)
+                end
+                out_le_f[i] = log2ie_v[i] - donor_f.log2_intensity_explained
+                if has_irt
+                    out_ir_f[i] = abs(irt_res_v[i] - donor_f.irt_residual)
+                end
+                if has_logby
+                    out_log_by_f[i] = log_by_v[i] - donor_f.log_by_ratio
+                end
+                if has_frag && v_self_has_signal
+                    v_donor_norm = _norm_l1(donor_f.frag1_int, donor_f.frag2_int, donor_f.frag3_int,
+                                             donor_f.frag4_int, donor_f.frag5_int, donor_f.frag6_int)
+                    v_donor_has_signal = (v_donor_norm[1] + v_donor_norm[2] + v_donor_norm[3] +
+                                           v_donor_norm[4] + v_donor_norm[5] + v_donor_norm[6]) > 0f0
+                    if v_donor_has_signal
+                        out_frag_cos_f[i] = _cosine6(v_self_norm, v_donor_norm)
+                        out_frag_scr_f[i] = _scribe6(v_self_norm, v_donor_norm)
+                    end
+                end
+                out_miss_f[i] = false
+            end
         end
     end
+    n_true_present  = sum(n_true_per_thread)
+    n_false_present = sum(n_false_per_thread)
 
     psms[!, :MBR_max_pair_prob_true]         = out_max_t
     psms[!, :MBR_max_pair_prob_false]        = out_max_f
