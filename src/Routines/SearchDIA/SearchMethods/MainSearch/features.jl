@@ -553,68 +553,92 @@ function _add_ms1_chromatogram_features!(psms::DataFrame)
         return
     end
 
-    # Index PSMs by precursor_idx (no DataFrame groupby — just a per-row pass)
     prec = psms.precursor_idx
     m0   = psms.ms1_m0_intensity
     m1   = psms.ms1_m1_intensity
     w    = psms.weight
     irt  = psms.irt_obs
 
-    # Build per-precursor index buckets
-    buckets = Dict{UInt32, Vector{Int}}()
+    # Single sortperm on precursor_idx + UInt32 boundary enumeration —
+    # mirrors the neighborhood / frag_chrom parallelization pattern.
+    pkeys = Vector{UInt32}(undef, n)
     @inbounds for i in 1:n
-        push!(get!(() -> Int[], buckets, UInt32(prec[i])), i)
+        pkeys[i] = UInt32(prec[i])
+    end
+    perm = sortperm(pkeys)
+
+    n_prec = 0
+    @inbounds let i = 1
+        while i <= n
+            n_prec += 1
+            cur = pkeys[perm[i]]
+            while i < n && pkeys[perm[i+1]] == cur
+                i += 1
+            end
+            i += 1
+        end
+    end
+    starts = Vector{UInt32}(undef, n_prec)
+    ends   = Vector{UInt32}(undef, n_prec)
+    @inbounds let i = 1, p = 0
+        while i <= n
+            p += 1
+            starts[p] = UInt32(i)
+            cur = pkeys[perm[i]]
+            while i < n && pkeys[perm[i+1]] == cur
+                i += 1
+            end
+            ends[p] = UInt32(i)
+            i += 1
+        end
     end
 
-    # For each precursor, compute chrom features once, broadcast to all PSMs
-    @inbounds for (_pid, idxs) in buckets
-        length(idxs) < 2 && continue   # correlation undefined with <2 points
-        # Extract per-precursor chromatograms
-        npts = length(idxs)
-        v_m0  = Vector{Float32}(undef, npts)
-        v_m1  = Vector{Float32}(undef, npts)
-        v_w   = Vector{Float32}(undef, npts)
-        v_irt = Vector{Float32}(undef, npts)
-        for (k, i) in enumerate(idxs)
-            v_m0[k]  = m0[i]
-            v_m1[k]  = m1[i]
-            v_w[k]   = Float32(w[i])
-            v_irt[k] = Float32(irt[i])
-        end
+    Threads.@threads :static for p in 1:n_prec
+        @inbounds begin
+            i_start = Int(starts[p])
+            i_end   = Int(ends[p])
+            npts    = i_end - i_start + 1
+            npts < 2 && continue
 
-        # Pearson correlations (need variance > 0 in each vector)
-        function _pcor(x::Vector{Float32}, y::Vector{Float32})
-            mx = mean(x); my = mean(y)
-            sx = 0f0; sy = 0f0; sxy = 0f0
-            @inbounds for j in 1:length(x)
-                dx = x[j]-mx; dy = y[j]-my
-                sx  += dx*dx; sy += dy*dy; sxy += dx*dy
+            # Extract per-precursor chromatograms (m0, m1, weight, iRT)
+            v_m0  = Vector{Float32}(undef, npts)
+            v_m1  = Vector{Float32}(undef, npts)
+            v_w   = Vector{Float32}(undef, npts)
+            v_irt = Vector{Float32}(undef, npts)
+            for k in 1:npts
+                i_orig = perm[i_start + k - 1]
+                v_m0[k]  = m0[i_orig]
+                v_m1[k]  = m1[i_orig]
+                v_w[k]   = Float32(w[i_orig])
+                v_irt[k] = Float32(irt[i_orig])
             end
-            d = sqrt(sx*sy)
-            d > 0 ? sxy/d : 0f0
-        end
-        c_wm0 = _pcor(v_w,  v_m0)
-        c_m01 = _pcor(v_m0, v_m1)
-        c_wm1 = _pcor(v_w,  v_m1)
 
-        # Apex of M0 and weight (arg-max). Use first-occurrence on ties.
-        ai_m0 = 1; vmax_m0 = v_m0[1]
-        ai_w  = 1; vmax_w  = v_w[1]
-        @inbounds for k in 2:npts
-            if v_m0[k] > vmax_m0; vmax_m0 = v_m0[k]; ai_m0 = k; end
-            if v_w[k]  > vmax_w;  vmax_w  = v_w[k];  ai_w  = k; end
-        end
-        irt_apex_m0 = v_irt[ai_m0]
-        irt_apex_w  = v_irt[ai_w]
-        weight_apex_to_m0 = abs(irt_apex_w - irt_apex_m0)
+            # Three Pearson correlations (uses the same top-level _frag_pcor
+            # helper defined for the fragment-chromatogram path).
+            c_wm0 = _frag_pcor(v_w,  v_m0)
+            c_m01 = _frag_pcor(v_m0, v_m1)
+            c_wm1 = _frag_pcor(v_w,  v_m1)
 
-        # Broadcast to all PSMs of this precursor
-        for (k, i) in enumerate(idxs)
-            psms.ms1_corr_weight_m0[i]             = c_wm0
-            psms.ms1_corr_m0_m1[i]                 = c_m01
-            psms.ms1_corr_weight_m1[i]             = c_wm1
-            psms.ms1_apex_offset_irt[i]            = abs(v_irt[k] - irt_apex_m0)
-            psms.ms1_weight_apex_to_m0_apex_irt[i] = weight_apex_to_m0
+            # Apex of M0 and weight (arg-max). First-occurrence on ties.
+            ai_m0 = 1; vmax_m0 = v_m0[1]
+            ai_w  = 1; vmax_w  = v_w[1]
+            for k in 2:npts
+                if v_m0[k] > vmax_m0; vmax_m0 = v_m0[k]; ai_m0 = k; end
+                if v_w[k]  > vmax_w;  vmax_w  = v_w[k];  ai_w  = k; end
+            end
+            irt_apex_m0 = v_irt[ai_m0]
+            irt_apex_w  = v_irt[ai_w]
+            weight_apex_to_m0 = abs(irt_apex_w - irt_apex_m0)
+
+            # Scatter outputs back to original row indices
+            for k in 1:npts
+                i_orig = perm[i_start + k - 1]
+                psms.ms1_corr_weight_m0[i_orig]             = c_wm0
+                psms.ms1_corr_m0_m1[i_orig]                 = c_m01
+                psms.ms1_corr_weight_m1[i_orig]             = c_wm1
+                psms.ms1_apex_offset_irt[i_orig]            = abs(v_irt[k] - irt_apex_m0)
+                psms.ms1_weight_apex_to_m0_apex_irt[i_orig] = weight_apex_to_m0
+            end
         end
     end
     return
