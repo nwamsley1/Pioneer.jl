@@ -257,7 +257,7 @@ reset_results!(::BitVecCalibrationResults) = nothing
 const BITVEC_MIN_TOTAL_COUNTS = Int64(10_000_000)
 const BITVEC_INITIAL_SCANS = Int64(2000)
 const BITVEC_COARSE_GROUP_THRESHOLD = Int64(1_000_000)
-const BITVEC_MIN_EXCESS_RATE_DEFAULT = Float32(0.03)
+const BITVEC_MIN_EXCESS_RATE_DEFAULT = Float32(0.02)
 # Read env var at call time so PIONEER_BITVEC_MIN_EXCESS_RATE picks up
 # changes across Julia invocations without precompile caching the value.
 function bitvec_min_excess_rate()
