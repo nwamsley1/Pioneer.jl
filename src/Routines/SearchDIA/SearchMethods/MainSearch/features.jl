@@ -1032,23 +1032,37 @@ function _add_neighborhood_features_fused!(psms::DataFrame)
         end
         perm = sortperm(keys)
 
-        # First pass: enumerate precursor-run boundaries (start, end) in `perm`.
-        # Sequential only — bookkeeping is cheap and lets the per-precursor loop
-        # be embarrassingly parallel.
-        starts = Int[]; ends = Int[]
-        sizehint!(starts, n >> 4); sizehint!(ends, n >> 4)
+        # First sequential pass: count precursor runs so we can size-exact
+        # allocate the boundary vectors below.
+        n_prec = 0
         @inbounds let i = 1
             while i <= n
-                push!(starts, i)
+                n_prec += 1
                 cur = pid_v[perm[i]]
                 while i < n && pid_v[perm[i+1]] == cur
                     i += 1
                 end
-                push!(ends, i)
                 i += 1
             end
         end
-        n_prec = length(starts)
+
+        # Second sequential pass: fill exact-size UInt32 boundary vectors.
+        # Indices into `perm` are bounded by n (≤ few million per file), so
+        # UInt32 (max 4.29B) is plenty and halves the memory vs Int.
+        starts = Vector{UInt32}(undef, n_prec)
+        ends   = Vector{UInt32}(undef, n_prec)
+        @inbounds let i = 1, p = 0
+            while i <= n
+                p += 1
+                starts[p] = UInt32(i)
+                cur = pid_v[perm[i]]
+                while i < n && pid_v[perm[i+1]] == cur
+                    i += 1
+                end
+                ends[p] = UInt32(i)
+                i += 1
+            end
+        end
 
         # Parallel per-precursor walk. Each precursor's output rows are disjoint
         # in the buffers (each `i` belongs to exactly one precursor), and all
