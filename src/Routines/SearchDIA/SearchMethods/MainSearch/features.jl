@@ -328,33 +328,61 @@ q≤.01 within run-to-run noise and slightly improves q≤.001 (+296).
 
 If no MS1 scan is available (file has only MS2), all features are zeroed.
 """
-# Top-level helper for the MS1 per-PSM peak search. Lifted out of the closure
-# in add_ms1_features! so the compiler specializes it cleanly (no boxing of the
-# cached_mz / cached_int arrays) and so each thread-pinned task can call it.
-@inline function _ms1_find_peak(cached_mz, cached_int, mz_target::Float32, ms1_ppm_tol::Float32)
+# Top-level helper for the MS1 per-PSM peak search. Operates on clean
+# Vector{Float32} arrays (missings stripped during cache refresh — see
+# _ms1_refresh_cache!). Uses the same `bsearch_hybrid` primitive as the
+# MS2 fused-match path so we get a branchless binary search to the window
+# lower bound, followed by a tight scalar walk for the in-window peaks.
+@inline function _ms1_find_peak(mz::Vector{Float32}, intens::Vector{Float32},
+                                 mz_target::Float32, ms1_ppm_tol::Float32)
     half_tol = mz_target * ms1_ppm_tol * 1f-6
     lo = mz_target - half_tol
     hi = mz_target + half_tol
-    best_j = 0
+    n_peaks = length(mz)
+    n_peaks == 0 && return (false, 0f0, 0f0)
+    i0 = bsearch_hybrid(mz, lo, 1, n_peaks)
     best_diff = Inf32
     best_int  = 0f0
     best_mz   = 0f0
-    n_peaks = length(cached_mz)
-    i0 = searchsortedfirst(cached_mz, lo)
-    j = i0
-    @inbounds while j <= n_peaks && cached_mz[j] <= hi
-        m = cached_mz[j]; ismissing(m) && (j+=1; continue)
-        it = cached_int[j]; ismissing(it) && (j+=1; continue)
-        diff = abs(Float32(m) - mz_target)
+    found = false
+    @inbounds @fastmath for j in i0:n_peaks
+        m = mz[j]
+        m > hi && break
+        diff = abs(m - mz_target)
         if diff < best_diff
             best_diff = diff
-            best_j = j
-            best_int = Float32(it)
-            best_mz  = Float32(m)
+            best_int  = intens[j]
+            best_mz   = m
+            found = true
         end
-        j += 1
     end
-    return best_j > 0, best_int, best_mz
+    return found, best_int, best_mz
+end
+
+# Filter the (possibly Union{Missing,Float32}) MS1 spectrum into per-task
+# scratch Vector{Float32} buffers, dropping any peaks where either m/z or
+# intensity is missing. Result: dense, type-stable arrays that bsearch_hybrid
+# and the SIMD-friendly walk can consume directly.
+@inline function _ms1_refresh_cache!(scratch_mz::Vector{Float32}, scratch_int::Vector{Float32},
+                                      raw_mz, raw_int)
+    n_raw = length(raw_mz)
+    n_clean = 0
+    @inbounds for j in 1:n_raw
+        if !ismissing(raw_mz[j]) && !ismissing(raw_int[j])
+            n_clean += 1
+        end
+    end
+    resize!(scratch_mz, n_clean)
+    resize!(scratch_int, n_clean)
+    k = 0
+    @inbounds for j in 1:n_raw
+        m = raw_mz[j]; ismissing(m) && continue
+        it = raw_int[j]; ismissing(it) && continue
+        k += 1
+        scratch_mz[k]  = Float32(m)
+        scratch_int[k] = Float32(it)
+    end
+    return scratch_mz, scratch_int
 end
 
 # Per-chunk worker. Each task processes its row range with a thread-local
@@ -365,10 +393,11 @@ function _ms1_lookup_chunk!(psms, spectra,
                              ms1_scan_idxs, ms1_scan_rts,
                              ms1_ppm_tol::Float32, NEUTRON::Float32,
                              chunk_start::Int, chunk_end::Int)
-    cached_ms1_idx = 0
-    cached_mz  = getMzArray(spectra, ms1_scan_idxs[1])      # placeholder for stable type
-    cached_int = getIntensityArray(spectra, ms1_scan_idxs[1])
-    cached_ms1_idx = -1   # force first miss below
+    # Per-task scratch buffers; reused (resize-only) across cache misses
+    # within this chunk. Type-stable Vector{Float32}.
+    cached_mz  = Vector{Float32}()
+    cached_int = Vector{Float32}()
+    cached_ms1_idx::Int = -1   # force first miss
 
     @inbounds for i in chunk_start:chunk_end
         scan_idx = Int(psms.scan_idx[i])
@@ -387,8 +416,9 @@ function _ms1_lookup_chunk!(psms, spectra,
 
         if ms1_idx != cached_ms1_idx
             cached_ms1_idx = ms1_idx
-            cached_mz  = getMzArray(spectra, ms1_idx)
-            cached_int = getIntensityArray(spectra, ms1_idx)
+            _ms1_refresh_cache!(cached_mz, cached_int,
+                                getMzArray(spectra, ms1_idx),
+                                getIntensityArray(spectra, ms1_idx))
         end
 
         pid = UInt32(psms.precursor_idx[i])
