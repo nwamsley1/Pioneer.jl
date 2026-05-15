@@ -328,6 +328,101 @@ q≤.01 within run-to-run noise and slightly improves q≤.001 (+296).
 
 If no MS1 scan is available (file has only MS2), all features are zeroed.
 """
+# Top-level helper for the MS1 per-PSM peak search. Lifted out of the closure
+# in add_ms1_features! so the compiler specializes it cleanly (no boxing of the
+# cached_mz / cached_int arrays) and so each thread-pinned task can call it.
+@inline function _ms1_find_peak(cached_mz, cached_int, mz_target::Float32, ms1_ppm_tol::Float32)
+    half_tol = mz_target * ms1_ppm_tol * 1f-6
+    lo = mz_target - half_tol
+    hi = mz_target + half_tol
+    best_j = 0
+    best_diff = Inf32
+    best_int  = 0f0
+    best_mz   = 0f0
+    n_peaks = length(cached_mz)
+    i0 = searchsortedfirst(cached_mz, lo)
+    j = i0
+    @inbounds while j <= n_peaks && cached_mz[j] <= hi
+        m = cached_mz[j]; ismissing(m) && (j+=1; continue)
+        it = cached_int[j]; ismissing(it) && (j+=1; continue)
+        diff = abs(Float32(m) - mz_target)
+        if diff < best_diff
+            best_diff = diff
+            best_j = j
+            best_int = Float32(it)
+            best_mz  = Float32(m)
+        end
+        j += 1
+    end
+    return best_j > 0, best_int, best_mz
+end
+
+# Per-chunk worker. Each task processes its row range with a thread-local
+# MS1-spectrum cache so the (getMzArray, getIntensityArray) lookups amortize
+# across consecutive PSMs that share the same nearest MS1 scan.
+function _ms1_lookup_chunk!(psms, spectra,
+                             prec_mzs, prec_charges, prec_sulfurs, iso_splines,
+                             ms1_scan_idxs, ms1_scan_rts,
+                             ms1_ppm_tol::Float32, NEUTRON::Float32,
+                             chunk_start::Int, chunk_end::Int)
+    cached_ms1_idx = 0
+    cached_mz  = getMzArray(spectra, ms1_scan_idxs[1])      # placeholder for stable type
+    cached_int = getIntensityArray(spectra, ms1_scan_idxs[1])
+    cached_ms1_idx = -1   # force first miss below
+
+    @inbounds for i in chunk_start:chunk_end
+        scan_idx = Int(psms.scan_idx[i])
+        scan_rt  = Float32(getRetentionTime(spectra, scan_idx))
+
+        pos = searchsortedfirst(ms1_scan_rts, scan_rt)
+        ms1_idx = if pos == 1
+            ms1_scan_idxs[1]
+        elseif pos > length(ms1_scan_rts)
+            ms1_scan_idxs[end]
+        else
+            d_after  = abs(ms1_scan_rts[pos]   - scan_rt)
+            d_before = abs(ms1_scan_rts[pos-1] - scan_rt)
+            d_before <= d_after ? ms1_scan_idxs[pos-1] : ms1_scan_idxs[pos]
+        end
+
+        if ms1_idx != cached_ms1_idx
+            cached_ms1_idx = ms1_idx
+            cached_mz  = getMzArray(spectra, ms1_idx)
+            cached_int = getIntensityArray(spectra, ms1_idx)
+        end
+
+        pid = UInt32(psms.precursor_idx[i])
+        prec_mz   = Float32(prec_mzs[pid])
+        prec_chg  = Int(prec_charges[pid])
+        prec_chg == 0 && (prec_chg = 1)
+
+        target_m0 = prec_mz
+        target_m1 = prec_mz + NEUTRON / Float32(prec_chg)
+
+        m0_hit, m0_int, m0_mz = _ms1_find_peak(cached_mz, cached_int, target_m0, ms1_ppm_tol)
+        m1_hit, m1_int, _    = _ms1_find_peak(cached_mz, cached_int, target_m1, ms1_ppm_tol)
+
+        psms.ms1_m0_intensity[i] = m0_hit ? m0_int : 0f0
+        psms.ms1_m1_intensity[i] = m1_hit ? m1_int : 0f0
+        if m0_hit
+            psms.ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
+        end
+        if m0_hit && m0_int > 0f0 && m1_hit
+            obs_ratio = m1_int / m0_int
+            sulf_raw = Int(prec_sulfurs[pid])
+            sulf = clamp(sulf_raw, 0, 5)
+            prec_mass_approx = prec_mz * Float32(prec_chg)
+            p0 = max(iso_splines(Int64(sulf), Int64(0), prec_mass_approx), 1f-12)
+            p1 = max(iso_splines(Int64(sulf), Int64(1), prec_mass_approx), 1f-12)
+            pred_ratio = Float32(p1 / p0)
+            psms.ms1_m1_to_m0_ratio[i]    = Float32(obs_ratio)
+            psms.ms1_m1_to_m0_pred[i]     = pred_ratio
+            psms.ms1_envelope_dev_log2[i] = log2(max(obs_ratio, 1f-6) / max(pred_ratio, 1f-6))
+        end
+    end
+    return
+end
+
 function add_ms1_features!(psms::DataFrame,
                             spectra,
                             search_context,
@@ -335,12 +430,8 @@ function add_ms1_features!(psms::DataFrame,
                             ms1_ppm_tol::Float32 = Float32(parse(Float64, get(ENV, "PIONEER_MS1_PPM_TOL", "10.0"))))
     n = nrow(psms)
     psms[!, :ms1_m0_mass_err_ppm]   = zeros(Float32, n)
-    # Per-PSM intensities (also consumed by the per-precursor chromatogram pass)
     psms[!, :ms1_m0_intensity]      = zeros(Float32, n)
     psms[!, :ms1_m1_intensity]      = zeros(Float32, n)
-    # Isotope envelope features (re-added 2026-05-11). The predicted M+1/M0
-    # ratio comes from the sulfur-aware iso_splines (averagine-like). Real
-    # precursors match prediction; noise/chimeric peaks deviate.
     psms[!, :ms1_m1_to_m0_ratio]     = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_pred]      = zeros(Float32, n)
     psms[!, :ms1_envelope_dev_log2]  = zeros(Float32, n)
@@ -370,92 +461,23 @@ function add_ms1_features!(psms::DataFrame,
 
     NEUTRON = Float32(1.00335)
 
-    # Cache MS1 spectra m/z + intensity per scan we visit (avoids repeated lookups)
-    cached_ms1_idx::Int = 0
-    cached_mz       = nothing
-    cached_int      = nothing
-
-    @inbounds for i in 1:n
-        scan_idx = Int(psms.scan_idx[i])
-        scan_rt  = Float32(getRetentionTime(spectra, scan_idx))
-
-        # Binary-search nearest MS1 scan by RT
-        pos = searchsortedfirst(ms1_scan_rts, scan_rt)
-        if pos == 1
-            ms1_idx = ms1_scan_idxs[1]
-        elseif pos > length(ms1_scan_rts)
-            ms1_idx = ms1_scan_idxs[end]
-        else
-            d_after  = abs(ms1_scan_rts[pos]   - scan_rt)
-            d_before = abs(ms1_scan_rts[pos-1] - scan_rt)
-            ms1_idx = d_before <= d_after ? ms1_scan_idxs[pos-1] : ms1_scan_idxs[pos]
-        end
-
-        if ms1_idx != cached_ms1_idx
-            cached_ms1_idx = ms1_idx
-            cached_mz  = getMzArray(spectra, ms1_idx)
-            cached_int = getIntensityArray(spectra, ms1_idx)
-        end
-
-        pid = UInt32(psms.precursor_idx[i])
-        prec_mz   = Float32(prec_mzs[pid])
-        prec_chg  = Int(prec_charges[pid])
-        prec_chg == 0 && (prec_chg = 1)
-
-        # Per-isotope: target m/z, search ± ms1_ppm_tol
-        function _find_peak(mz_target::Float32)
-            half_tol = mz_target * ms1_ppm_tol * 1f-6
-            lo = mz_target - half_tol
-            hi = mz_target + half_tol
-            best_j = 0
-            best_diff = Inf32
-            best_int  = 0f0
-            best_mz   = 0f0
-            n_peaks = length(cached_mz)
-            i0 = searchsortedfirst(cached_mz, lo)
-            j = i0
-            while j <= n_peaks && cached_mz[j] <= hi
-                m = cached_mz[j]; ismissing(m) && (j+=1; continue)
-                it = cached_int[j]; ismissing(it) && (j+=1; continue)
-                diff = abs(Float32(m) - mz_target)
-                if diff < best_diff
-                    best_diff = diff
-                    best_j = j
-                    best_int = Float32(it)
-                    best_mz  = Float32(m)
-                end
-                j += 1
-            end
-            return best_j > 0, best_int, best_mz
-        end
-
-        target_m0 = prec_mz
-        target_m1 = prec_mz + NEUTRON / Float32(prec_chg)
-
-        m0_hit, m0_int, m0_mz = _find_peak(target_m0)
-        m1_hit, m1_int, _    = _find_peak(target_m1)
-
-        psms.ms1_m0_intensity[i] = m0_hit ? m0_int : 0f0
-        psms.ms1_m1_intensity[i] = m1_hit ? m1_int : 0f0
-        if m0_hit
-            psms.ms1_m0_mass_err_ppm[i] = abs(m0_mz - target_m0) / target_m0 * 1f6
-        end
-        # Isotope envelope ratio features
-        if m0_hit && m0_int > 0f0 && m1_hit
-            obs_ratio = m1_int / m0_int
-            sulf_raw = Int(prec_sulfurs[pid])
-            # IsotopeSplineModel is indexed 0..5 (6 entries). Clamp for high-S peptides.
-            sulf = clamp(sulf_raw, 0, 5)
-            # iso_splines(sulfur, isotope, mass) gives P(isotope | sulfurs, mass).
-            # Use prec_mz × charge as an approximate neutral mass for the spline.
-            prec_mass_approx = prec_mz * Float32(prec_chg)
-            p0 = max(iso_splines(Int64(sulf), Int64(0), prec_mass_approx), 1f-12)
-            p1 = max(iso_splines(Int64(sulf), Int64(1), prec_mass_approx), 1f-12)
-            pred_ratio = Float32(p1 / p0)
-            psms.ms1_m1_to_m0_ratio[i]    = Float32(obs_ratio)
-            psms.ms1_m1_to_m0_pred[i]     = pred_ratio
-            psms.ms1_envelope_dev_log2[i] = log2(max(obs_ratio, 1f-6) / max(pred_ratio, 1f-6))
-        end
+    # Parallel per-PSM lookup. Each PSM writes to disjoint indices in the output
+    # columns (ms1_m0_intensity[i], etc.) so no synchronization needed. We use
+    # Threads.@spawn per chunk so each task keeps its own ms1-spectrum cache
+    # (consecutive PSMs in a chunk often map to the same nearest MS1 scan).
+    nt = Threads.nthreads()
+    chunk_size = max(1, cld(n, nt))
+    @sync for t in 1:nt
+        chunk_start = (t - 1) * chunk_size + 1
+        chunk_start > n && break
+        chunk_end = min(t * chunk_size, n)
+        Threads.@spawn _ms1_lookup_chunk!(
+            psms, spectra,
+            prec_mzs, prec_charges, prec_sulfurs, iso_splines,
+            ms1_scan_idxs, ms1_scan_rts,
+            ms1_ppm_tol, NEUTRON,
+            chunk_start, chunk_end
+        )
     end
 
     # B1: per-precursor MS1 chromatogram features
