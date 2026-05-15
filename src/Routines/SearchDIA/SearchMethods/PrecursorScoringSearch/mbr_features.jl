@@ -334,7 +334,11 @@ function compute_mbr_features_dual!(
     end
 
     # Per-thread present-counter buffers (avoid atomic contention; sum at end).
-    nt = Threads.nthreads()
+    # Size by maxthreadid(), not nthreads(): Julia 1.9+ may run @threads tasks
+    # on the interactive thread (threadid > nthreads), and @inbounds writes to
+    # an under-sized buffer corrupt the heap. Bus errors / abort traps / TypeErrors
+    # observed when launched without `julia -t N` (nthreads()=1, maxthreadid()=2).
+    nt = Threads.maxthreadid()
     n_true_per_thread  = zeros(Int, nt)
     n_false_per_thread = zeros(Int, nt)
 
