@@ -482,7 +482,7 @@ function apply_mbr_filter_paired!(
     #    Selectable via ENV var PIONEER_FTR_MODE = "qval" (default) or "pep".
     qvals_top = qvals_double[1:n_cand]
     pep_top   = pep_double[1:n_cand]
-    ftr_mode  = get(ENV, "PIONEER_FTR_MODE", "qval")
+    ftr_mode  = get(ENV, "PIONEER_FTR_MODE", "pep")
     # PIONEER_FTR_ALPHA env var overrides the default `alpha` kwarg so users
     # can sweep without recompiling.
     α_use = parse(Float32, get(ENV, "PIONEER_FTR_ALPHA", string(alpha)))
