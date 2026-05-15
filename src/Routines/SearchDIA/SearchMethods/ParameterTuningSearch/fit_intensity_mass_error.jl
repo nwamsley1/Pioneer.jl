@@ -548,6 +548,24 @@ function fit_intensity_mass_error_model(
         end
     end
 
+    # Empirical k: fit k so the ±k·σ envelope covers ~95% of observed
+    # bias-corrected residuals. Replaces the previous static k=1.96 (which
+    # only achieves 95% under a Gaussian assumption — Olsen Exploris fragments
+    # showed ~86% empirical coverage at k=1.96, evidence the residual tails
+    # are heavier than Gaussian). Per-file fit; clamped to [1.96, 4.5] to
+    # avoid pathological blow-up on noisy files.
+    laplace_to_gauss = log(2.0) / 0.6744897501960817
+    σ_per_frag_mda = Vector{Float64}(undef, n)
+    @inbounds for i in 1:n
+        σ_base = max(Float64(spread_spline_f64(Float32(log2I[i]))), 1e-4) * laplace_to_gauss
+        mz_corr = max(Float64(mz_spread_α) + Float64(mz_spread_β) * mz_f64[i] +
+                      Float64(mz_spread_γ) * mz_f64[i]^2, 0.1)
+        σ_per_frag_mda[i] = σ_base * mz_corr
+    end
+    normalized_residuals = abs.(full_residuals_mda) ./ σ_per_frag_mda
+    k_emp = Float32(quantile(normalized_residuals, 0.95))
+    k = clamp(k_emp, 1.96f0, 4.5f0)
+
     # Conservative tolerance in Da = collection tolerance from the SimpleMassErrorModel.
     # SimpleMassErrorModel stores tolerance in ppm; convert to Da at max training m/z.
     max_training_mz = Float32(maximum(mz_f64))
@@ -562,7 +580,6 @@ function fit_intensity_mass_error_model(
 
     # Default Gaussian log-density for missing top-3 fragments:
     # evaluated at 99th percentile using median intensity
-    laplace_to_gauss = log(2.0) / 0.6744897501960817
     median_log2I = Float32(median(log2I))
     σ_mda_default = max(Float64(spread_spline(median_log2I)), 1e-4) * laplace_to_gauss
     σ_da_default = σ_mda_default / 1e3
