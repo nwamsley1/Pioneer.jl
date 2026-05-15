@@ -479,10 +479,16 @@ function apply_mbr_filter_paired!(
     # pep_double[i]   = per-row P(is_false | score), isotonic-regression-derived.
 
     # ── 6. Recovery: top-half rows (real-MBR) with q ≤ alpha or pep ≤ alpha
-    #    Selectable via ENV var PIONEER_FTR_MODE = "qval" (default) or "pep".
+    #    Selectable via ENV var PIONEER_FTR_MODE = "pep" (default) or "qval".
+    #    PEP-based recovery at α=0.01 gives ~half the Dennis-FTR species-
+    #    mismatch rate vs qval-based at the same α (validated 2026-05-15 on
+    #    40-file YeastMBR + 20-file HelaOnly: any-YEAST 9.66% qval → 4.49% pep,
+    #    strict-YEAST 8.86% → 3.32%). PEP is more conservative — ~33% fewer
+    #    ΔTotal recoveries — but the surviving recoveries are dramatically
+    #    cleaner. Set PIONEER_FTR_MODE=qval to recover the old behavior.
     qvals_top = qvals_double[1:n_cand]
     pep_top   = pep_double[1:n_cand]
-    ftr_mode  = get(ENV, "PIONEER_FTR_MODE", "qval")
+    ftr_mode  = get(ENV, "PIONEER_FTR_MODE", "pep")
     # PIONEER_FTR_ALPHA env var overrides the default `alpha` kwarg so users
     # can sweep without recompiling.
     α_use = parse(Float32, get(ENV, "PIONEER_FTR_ALPHA", string(alpha)))
