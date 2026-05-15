@@ -33,7 +33,7 @@ const SHARED_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
 # while the slower lr lets boosting refine more decision boundaries on the
 # larger, mixed-file PSM pool. Tunable independently of per-file via this
 # constant; per-file HP is intentionally untouched.
-const SCORING_LGBM_HP = (num_iterations=600, learning_rate=0.033, max_depth=8,
+const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
                          num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
                          bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
                          max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
