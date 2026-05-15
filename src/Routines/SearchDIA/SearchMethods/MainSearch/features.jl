@@ -688,104 +688,146 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     has_m0 = hasproperty(psms, :ms1_m0_intensity)
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
 
-    buckets = Dict{UInt32, Vector{Int}}()
+    # Single sortperm on precursor_idx (UInt32 key) — replaces the Dict + per-
+    # precursor Vector{Int} bucketing. Per-precursor row order within the run
+    # does not affect any of the 4 output features (correlations + apex stats
+    # are order-independent).
+    pkeys = Vector{UInt32}(undef, n)
     @inbounds for i in 1:n
-        push!(get!(() -> Int[], buckets, UInt32(prec[i])), i)
+        pkeys[i] = UInt32(prec[i])
+    end
+    perm = sortperm(pkeys)
+
+    # Enumerate precursor-run boundaries: count, then exact-size UInt32 fill.
+    n_prec = 0
+    @inbounds let i = 1
+        while i <= n
+            n_prec += 1
+            cur = pkeys[perm[i]]
+            while i < n && pkeys[perm[i+1]] == cur
+                i += 1
+            end
+            i += 1
+        end
+    end
+    starts = Vector{UInt32}(undef, n_prec)
+    ends   = Vector{UInt32}(undef, n_prec)
+    @inbounds let i = 1, p = 0
+        while i <= n
+            p += 1
+            starts[p] = UInt32(i)
+            cur = pkeys[perm[i]]
+            while i < n && pkeys[perm[i+1]] == cur
+                i += 1
+            end
+            ends[p] = UInt32(i)
+            i += 1
+        end
     end
 
-    # Pearson correlation helper (Float32-ized, returns 0 on zero variance).
-    # Moved to top-level so the compiler can specialize without closure boxing.
-    @inbounds for (_pid, idxs) in buckets
-        npts = length(idxs)
-        npts < 2 && continue
+    # Parallel per-precursor walk. Each precursor writes to disjoint row indices
+    # in the 4 output columns; all input arrays are read-only.
+    Threads.@threads :static for p in 1:n_prec
+        @inbounds begin
+            i_start = Int(starts[p])
+            i_end   = Int(ends[p])
+            npts    = i_end - i_start + 1
+            npts < 2 && continue
 
-        # Extract chromatograms for the 6 fragments + weight + iRT
-        F = Vector{Vector{Float32}}(undef, 6)
-        for r in 1:6
-            v = Vector{Float32}(undef, npts)
-            for (k, i) in enumerate(idxs); v[k] = Float32(f[r][i]); end
-            F[r] = v
-        end
-        W   = Vector{Float32}(undef, npts)
-        IRT = Vector{Float32}(undef, npts)
-        for (k, i) in enumerate(idxs)
-            W[k]   = Float32(weight[i])
-            IRT[k] = Float32(irt[i])
-        end
-
-        has_signal = ntuple(r -> maximum(F[r]) > 0, 6)
-
-        # Apex dispersion across fragments with signal (also feeds delta_frame).
-        apex_irts = Float32[]
-        for r in 1:6
-            has_signal[r] || continue
-            ai = 1; vmax = F[r][1]
-            for k in 2:npts; if F[r][k] > vmax; vmax = F[r][k]; ai = k; end; end
-            push!(apex_irts, IRT[ai])
-        end
-        apex_disp = length(apex_irts) >= 2 ? Float32(std(apex_irts)) : 0f0
-
-        # E14: median fragment apex iRT − midpoint of precursor scan-window
-        delta_frame = 0f0
-        if !isempty(apex_irts)
-            sorted_apex = sort(apex_irts)
-            m = length(sorted_apex)
-            median_apex = isodd(m) ?
-                sorted_apex[(m + 1) ÷ 2] :
-                (sorted_apex[m ÷ 2] + sorted_apex[m ÷ 2 + 1]) / 2f0
-            irt_lo = IRT[1]; irt_hi = IRT[1]
-            @inbounds for k in 2:npts
-                vk = IRT[k]
-                if vk < irt_lo; irt_lo = vk; end
-                if vk > irt_hi; irt_hi = vk; end
+            # Extract chromatograms for the 6 fragments + weight + iRT
+            F = Vector{Vector{Float32}}(undef, 6)
+            for r in 1:6
+                v = Vector{Float32}(undef, npts)
+                for k in 1:npts
+                    v[k] = Float32(f[r][perm[i_start + k - 1]])
+                end
+                F[r] = v
             end
-            delta_frame = Float32(median_apex - (irt_lo + irt_hi) / 2f0)
-        end
-
-        # Per-fragment weight correlation — needed for n_correlated_fragments_90
-        # and to seed the consensus-best-fragment selection below.
-        c_fw = Vector{Float32}(undef, 6)
-        for r in 1:6
-            c_fw[r] = has_signal[r] ? _frag_pcor(F[r], W) : 0f0
-        end
-        n_corr_90 = UInt8(0)
-        for r in 1:6
-            has_signal[r] || continue
-            if c_fw[r] > 0.9f0; n_corr_90 += UInt8(1); end
-        end
-
-        # DIA-NN-style best fragment: rank r with the highest mean correlation
-        # to the other top-6 fragments. 30 Pearson calls per precursor.
-        # Required to anchor frag_corr_best_m0 = Pearson(best_frag, MS1 m0 chrom).
-        best_r = 0
-        best_consensus = typemin(Float32)
-        for r in 1:6
-            has_signal[r] || continue
-            consensus = 0f0; npairs = 0
-            for r2 in 1:6
-                (r2 == r || !has_signal[r2]) && continue
-                consensus += _frag_pcor(F[r], F[r2]); npairs += 1
+            W   = Vector{Float32}(undef, npts)
+            IRT = Vector{Float32}(undef, npts)
+            for k in 1:npts
+                i_orig = perm[i_start + k - 1]
+                W[k]   = Float32(weight[i_orig])
+                IRT[k] = Float32(irt[i_orig])
             end
-            avg = npairs > 0 ? consensus / npairs : typemin(Float32)
-            if avg > best_consensus
-                best_consensus = avg
-                best_r = r
-            end
-        end
-        c_best_m0 = 0f0
-        if best_r > 0 && has_m0
-            v_m0 = Vector{Float32}(undef, npts)
-            for (k, i) in enumerate(idxs); v_m0[k] = Float32(m0_int[i]); end
-            if maximum(v_m0) > 0
-                c_best_m0 = _frag_pcor(F[best_r], v_m0)
-            end
-        end
 
-        for i in idxs
-            psms.frag_apex_dispersion_irt[i] = apex_disp
-            psms.n_correlated_fragments_90[i] = n_corr_90
-            psms.frag_corr_best_m0[i]         = c_best_m0
-            psms.delta_frame_peak_center[i]   = delta_frame
+            has_signal = ntuple(r -> maximum(F[r]) > 0, 6)
+
+            # Apex dispersion across fragments with signal (also feeds delta_frame).
+            apex_irts = Float32[]
+            for r in 1:6
+                has_signal[r] || continue
+                ai = 1; vmax = F[r][1]
+                for k in 2:npts; if F[r][k] > vmax; vmax = F[r][k]; ai = k; end; end
+                push!(apex_irts, IRT[ai])
+            end
+            apex_disp = length(apex_irts) >= 2 ? Float32(std(apex_irts)) : 0f0
+
+            # E14: median fragment apex iRT − midpoint of precursor scan-window
+            delta_frame = 0f0
+            if !isempty(apex_irts)
+                sorted_apex = sort(apex_irts)
+                m = length(sorted_apex)
+                median_apex = isodd(m) ?
+                    sorted_apex[(m + 1) ÷ 2] :
+                    (sorted_apex[m ÷ 2] + sorted_apex[m ÷ 2 + 1]) / 2f0
+                irt_lo = IRT[1]; irt_hi = IRT[1]
+                for k in 2:npts
+                    vk = IRT[k]
+                    if vk < irt_lo; irt_lo = vk; end
+                    if vk > irt_hi; irt_hi = vk; end
+                end
+                delta_frame = Float32(median_apex - (irt_lo + irt_hi) / 2f0)
+            end
+
+            # Per-fragment weight correlation — feeds n_correlated_fragments_90.
+            c_fw = Vector{Float32}(undef, 6)
+            for r in 1:6
+                c_fw[r] = has_signal[r] ? _frag_pcor(F[r], W) : 0f0
+            end
+            n_corr_90 = UInt8(0)
+            for r in 1:6
+                has_signal[r] || continue
+                if c_fw[r] > 0.9f0; n_corr_90 += UInt8(1); end
+            end
+
+            # DIA-NN-style best fragment: rank r with the highest mean correlation
+            # to the other top-6 fragments. 30 Pearson calls per precursor.
+            # Anchors frag_corr_best_m0 = Pearson(best_frag, MS1 m0 chrom).
+            best_r = 0
+            best_consensus = typemin(Float32)
+            for r in 1:6
+                has_signal[r] || continue
+                consensus = 0f0; npairs = 0
+                for r2 in 1:6
+                    (r2 == r || !has_signal[r2]) && continue
+                    consensus += _frag_pcor(F[r], F[r2]); npairs += 1
+                end
+                avg = npairs > 0 ? consensus / npairs : typemin(Float32)
+                if avg > best_consensus
+                    best_consensus = avg
+                    best_r = r
+                end
+            end
+            c_best_m0 = 0f0
+            if best_r > 0 && has_m0
+                v_m0 = Vector{Float32}(undef, npts)
+                for k in 1:npts
+                    v_m0[k] = Float32(m0_int[perm[i_start + k - 1]])
+                end
+                if maximum(v_m0) > 0
+                    c_best_m0 = _frag_pcor(F[best_r], v_m0)
+                end
+            end
+
+            # Scatter outputs to original row indices
+            for k in 1:npts
+                i_orig = perm[i_start + k - 1]
+                psms.frag_apex_dispersion_irt[i_orig] = apex_disp
+                psms.n_correlated_fragments_90[i_orig] = n_corr_90
+                psms.frag_corr_best_m0[i_orig]         = c_best_m0
+                psms.delta_frame_peak_center[i_orig]   = delta_frame
+            end
         end
     end
     return
