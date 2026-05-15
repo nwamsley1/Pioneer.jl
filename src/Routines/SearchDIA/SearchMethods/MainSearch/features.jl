@@ -1032,89 +1032,102 @@ function _add_neighborhood_features_fused!(psms::DataFrame)
         end
         perm = sortperm(keys)
 
-        # Linear scan over the permutation. Each precursor's PSMs are contiguous
-        # in perm and already in scan order.
-        i_start = 1
-        @inbounds while i_start <= n
-            cur_pid = pid_v[perm[i_start]]
-            i_end = i_start
-            while i_end < n && pid_v[perm[i_end+1]] == cur_pid
-                i_end += 1
+        # First pass: enumerate precursor-run boundaries (start, end) in `perm`.
+        # Sequential only — bookkeeping is cheap and lets the per-precursor loop
+        # be embarrassingly parallel.
+        starts = Int[]; ends = Int[]
+        sizehint!(starts, n >> 4); sizehint!(ends, n >> 4)
+        @inbounds let i = 1
+            while i <= n
+                push!(starts, i)
+                cur = pid_v[perm[i]]
+                while i < n && pid_v[perm[i+1]] == cur
+                    i += 1
+                end
+                push!(ends, i)
+                i += 1
             end
-            L = i_end - i_start + 1
+        end
+        n_prec = length(starts)
 
-            for k in 0:(L-1)
-                i = perm[i_start + k]
-                cur_irt = Float32(irt_v[i])
-                cur_gof = Float32(gof_v[i])
-                cur_man = Float32(man_v[i])
-                cur_mr  = Float32(mr_v[i])
+        # Parallel per-precursor walk. Each precursor's output rows are disjoint
+        # in the buffers (each `i` belongs to exactly one precursor), and all
+        # input arrays are read-only — no synchronization needed. `@threads
+        # :static` partitions precursors evenly across Julia threads.
+        Threads.@threads :static for p in 1:n_prec
+            @inbounds begin
+                i_start = starts[p]
+                i_end   = ends[p]
+                L = i_end - i_start + 1
 
-                b_mr3 = cur_mr;   mr3_idx = i
-                b_gof5 = cur_gof; gof5_idx = i
-                b_man5 = cur_man; man5_idx = i
-                b_mr5  = cur_mr;  mr5_idx  = i
-                w_mr11  = cur_mr
-                w_man11 = cur_man
+                for k in 0:(L-1)
+                    i = perm[i_start + k]
+                    cur_irt = Float32(irt_v[i])
+                    cur_gof = Float32(gof_v[i])
+                    cur_man = Float32(man_v[i])
+                    cur_mr  = Float32(mr_v[i])
 
-                # ── Inner ±1 (in 3-scan AND 5-scan AND 11-scan):
-                # both windows + worst tracker get all three metric updates.
-                for off in (-1, 1)
-                    kk = k + off
-                    (kk < 0 || kk > L-1) && continue
-                    j = perm[i_start + kk]
-                    r = Float32(mr_v[j])
-                    if r > w_mr11; w_mr11 = r; end
-                    if r < b_mr5;  b_mr5 = r; mr5_idx = j; end
-                    if r < b_mr3;  b_mr3 = r; mr3_idx = j; end
-                    m = Float32(man_v[j])
-                    if m > w_man11; w_man11 = m; end
-                    if m < b_man5;  b_man5 = m; man5_idx = j; end
-                    g = Float32(gof_v[j])
-                    if g > b_gof5;  b_gof5 = g; gof5_idx = j; end
+                    b_mr3 = cur_mr;   mr3_idx = i
+                    b_gof5 = cur_gof; gof5_idx = i
+                    b_man5 = cur_man; man5_idx = i
+                    b_mr5  = cur_mr;  mr5_idx  = i
+                    w_mr11  = cur_mr
+                    w_man11 = cur_man
+
+                    # ── Inner ±1 (in 3-scan AND 5-scan AND 11-scan)
+                    for off in (-1, 1)
+                        kk = k + off
+                        (kk < 0 || kk > L-1) && continue
+                        j = perm[i_start + kk]
+                        r = Float32(mr_v[j])
+                        if r > w_mr11; w_mr11 = r; end
+                        if r < b_mr5;  b_mr5 = r; mr5_idx = j; end
+                        if r < b_mr3;  b_mr3 = r; mr3_idx = j; end
+                        m = Float32(man_v[j])
+                        if m > w_man11; w_man11 = m; end
+                        if m < b_man5;  b_man5 = m; man5_idx = j; end
+                        g = Float32(gof_v[j])
+                        if g > b_gof5;  b_gof5 = g; gof5_idx = j; end
+                    end
+
+                    # ── Middle ±2 (in 5-scan AND 11-scan, NOT 3-scan)
+                    for off in (-2, 2)
+                        kk = k + off
+                        (kk < 0 || kk > L-1) && continue
+                        j = perm[i_start + kk]
+                        r = Float32(mr_v[j])
+                        if r > w_mr11; w_mr11 = r; end
+                        if r < b_mr5;  b_mr5 = r; mr5_idx = j; end
+                        m = Float32(man_v[j])
+                        if m > w_man11; w_man11 = m; end
+                        if m < b_man5;  b_man5 = m; man5_idx = j; end
+                        g = Float32(gof_v[j])
+                        if g > b_gof5;  b_gof5 = g; gof5_idx = j; end
+                    end
+
+                    # ── Outer ±3, ±4, ±5 (in 11-scan ONLY)
+                    for off in (-5, -4, -3, 3, 4, 5)
+                        kk = k + off
+                        (kk < 0 || kk > L-1) && continue
+                        j = perm[i_start + kk]
+                        r = Float32(mr_v[j])
+                        if r > w_mr11; w_mr11 = r; end
+                        m = Float32(man_v[j])
+                        if m > w_man11; w_man11 = m; end
+                    end
+
+                    bmr3[i]   = b_mr3
+                    dmr3[i]   = abs(Float32(irt_v[mr3_idx]) - cur_irt)
+                    bgof5[i]  = b_gof5
+                    dgof5[i]  = abs(Float32(irt_v[gof5_idx]) - cur_irt)
+                    bman5[i]  = b_man5
+                    dman5[i]  = abs(Float32(irt_v[man5_idx]) - cur_irt)
+                    bmr5[i]   = b_mr5
+                    dmr5[i]   = abs(Float32(irt_v[mr5_idx]) - cur_irt)
+                    wmr11[i]  = w_mr11
+                    wman11[i] = w_man11
                 end
-
-                # ── Middle ±2 (in 5-scan AND 11-scan, NOT 3-scan):
-                # skip best_mr3 update.
-                for off in (-2, 2)
-                    kk = k + off
-                    (kk < 0 || kk > L-1) && continue
-                    j = perm[i_start + kk]
-                    r = Float32(mr_v[j])
-                    if r > w_mr11; w_mr11 = r; end
-                    if r < b_mr5;  b_mr5 = r; mr5_idx = j; end
-                    m = Float32(man_v[j])
-                    if m > w_man11; w_man11 = m; end
-                    if m < b_man5;  b_man5 = m; man5_idx = j; end
-                    g = Float32(gof_v[j])
-                    if g > b_gof5;  b_gof5 = g; gof5_idx = j; end
-                end
-
-                # ── Outer ±3, ±4, ±5 (in 11-scan ONLY):
-                # only worst_mr11 / worst_man11 trackers update.
-                # Don't even load gof.
-                for off in (-5, -4, -3, 3, 4, 5)
-                    kk = k + off
-                    (kk < 0 || kk > L-1) && continue
-                    j = perm[i_start + kk]
-                    r = Float32(mr_v[j])
-                    if r > w_mr11; w_mr11 = r; end
-                    m = Float32(man_v[j])
-                    if m > w_man11; w_man11 = m; end
-                end
-
-                bmr3[i]   = b_mr3
-                dmr3[i]   = abs(Float32(irt_v[mr3_idx]) - cur_irt)
-                bgof5[i]  = b_gof5
-                dgof5[i]  = abs(Float32(irt_v[gof5_idx]) - cur_irt)
-                bman5[i]  = b_man5
-                dman5[i]  = abs(Float32(irt_v[man5_idx]) - cur_irt)
-                bmr5[i]   = b_mr5
-                dmr5[i]   = abs(Float32(irt_v[mr5_idx]) - cur_irt)
-                wmr11[i]  = w_mr11
-                wman11[i] = w_man11
             end
-            i_start = i_end + 1
         end
     end
 
