@@ -96,10 +96,16 @@ function score_precursor_isotope_traces(
     #
     # This eliminates the Path-B leak (MBR features inflating non-candidate
     # scores in the qval distribution).
-    all_scores_p1, last_classifier_p1, info_p1 = train_psm_classifier_with_fallback(
-        best_psms; features=features, lgbm_hp=SCORING_LGBM_HP
+    all_scores_p1, infold_scores_p1, last_classifier_p1, info_p1 = train_psm_classifier_with_fallback(
+        best_psms; features=features, lgbm_hp=SCORING_LGBM_HP,
+        compute_infold = match_between_runs,
     )
     best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores_p1, 1f-6, 1f0 - 1f-4))
+    if match_between_runs && infold_scores_p1 !== nothing
+        # rtv3 (2026-05-13): in-fold Pass-1 score. The pair (OOF, in-fold)
+        # reveals memorization gap to the downstream MBR-FTR LightGBM.
+        best_psms[!, :trace_prob_infold] = Float32.(clamp.(infold_scores_p1, 1f-6, 1f0 - 1f-4))
+    end
     @user_info "Pass 1 (non-MBR) trained on $(length(info_p1.available_features)) features"
 
     last_classifier = last_classifier_p1
