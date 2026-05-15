@@ -263,7 +263,7 @@ const PRESCORE_FEATURES = [
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13 — cross-dataset test
     # showed Olsen +471 IDs / MTAC +649 IDs. Saves 15 rank-sorts per precursor.
     :frag_apex_dispersion_irt,
-    :n_correlated_fragments_90,
+    :n_correlated_fragments,
     :frag_corr_best_m0,
 
     # Batch E features (E7, E14, E6 M0 kept; E1/E2 pred_obs dropped via composite)
@@ -457,7 +457,7 @@ function add_ms1_features!(psms::DataFrame,
                             spectra,
                             search_context,
                             ms_file_idx::Integer;
-                            ms1_ppm_tol::Float32 = Float32(parse(Float64, get(ENV, "PIONEER_MS1_PPM_TOL", "10.0"))))
+                            ms1_ppm_tol::Float32 = Float32(parse(Float64, get(ENV, "PIONEER_MS1_PPM_TOL", "100.0"))))
     n = nrow(psms)
     psms[!, :ms1_m0_mass_err_ppm]   = zeros(Float32, n)
     psms[!, :ms1_m0_intensity]      = zeros(Float32, n)
@@ -693,7 +693,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     # spectral_contrast/scribe). Dropping them removes ~50 correlation calls + 1
     # sort + ~10 vector allocations per precursor.
     psms[!, :frag_apex_dispersion_irt]    = zeros(Float32, n)
-    psms[!, :n_correlated_fragments_90]   = zeros(UInt8,  n)
+    psms[!, :n_correlated_fragments]      = zeros(UInt8,  n)  # threshold 0.7
     psms[!, :frag_corr_best_m0]           = zeros(Float32, n)
     psms[!, :delta_frame_peak_center]     = zeros(Float32, n)
     n == 0 && return
@@ -804,15 +804,18 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
                 delta_frame = Float32(median_apex - (irt_lo + irt_hi) / 2f0)
             end
 
-            # Per-fragment weight correlation — feeds n_correlated_fragments_90.
+            # Per-fragment weight correlation — feeds n_correlated_fragments (>0.7).
+            # 2026-05-15: replaced n_correlated_fragments_90 (>0.9) — 0.7 threshold
+            # was ~11× more informative in ScoringSearch Pass-1 LGBM gain on
+            # 23-file Olsen.
             c_fw = Vector{Float32}(undef, 6)
             for r in 1:6
                 c_fw[r] = has_signal[r] ? _frag_pcor(F[r], W) : 0f0
             end
-            n_corr_90 = UInt8(0)
+            n_corr_70 = UInt8(0)
             for r in 1:6
                 has_signal[r] || continue
-                if c_fw[r] > 0.9f0; n_corr_90 += UInt8(1); end
+                if c_fw[r] > 0.7f0; n_corr_70 += UInt8(1); end
             end
 
             # DIA-NN-style best fragment: rank r with the highest mean correlation
@@ -848,7 +851,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             for k in 1:npts
                 i_orig = perm[i_start + k - 1]
                 psms.frag_apex_dispersion_irt[i_orig] = apex_disp
-                psms.n_correlated_fragments_90[i_orig] = n_corr_90
+                psms.n_correlated_fragments[i_orig]    = n_corr_70
                 psms.frag_corr_best_m0[i_orig]         = c_best_m0
                 psms.delta_frame_peak_center[i_orig]   = delta_frame
             end
