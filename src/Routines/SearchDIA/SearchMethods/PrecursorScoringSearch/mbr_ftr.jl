@@ -297,49 +297,61 @@ end
 # - drops :trace_prob_mbr (Pass 2 no longer exists in Batch F)
 # - uses the _true variants for the in-place MBR features (the _false copies
 #   are swapped in for the bottom half of the doubled training frame).
+# rtv3 (2026-05-13) + rtv4 (2026-05-14) — slim FTR feature set.
+# The pre-rtv3 list had ~50 features. The ~40 non-MBR features were
+# row-level (identical between top and bottom halves of the doubled
+# training frame), so they couldn't directly discriminate real-vs-
+# counterfactual. Empirically the FTR LGBM was using them for
+# interaction modeling. Dropping them gained +1,015 IDs (rtv3 doc)
+# and dropped Dennis FTR by 0.31 pp.
+#
+# rtv4 dropped `trace_prob_prepass` (OOF) too — the in-fold score
+# absorbs ~88% of the combined OOF+infold LGBM gain. The trace_prob_*
+# columns are still computed and used downstream (qval pipeline,
+# MBR top-K aggregation) — they just aren't exposed to the FTR LGBM
+# as features.
+#
+# Dead features dropped (gain ≈ 0 across all rtv3/rtv4 runs):
+#   - MBR_is_missing_true (the -1 sentinel on every other MBR feature
+#     already encodes missingness)
+#   - MBR_frag_top1_match_true (redundant with MBR_frag_rank_corr_true)
 const FTR_FEATURES_F_TRUE = Symbol[
-    :trace_prob_prepass,
-    :missed_cleavage, :Mox, :prec_mz, :sequence_length, :charge,
-    :irt_pred, :irt_error, :irt_diff,
-    :max_y_ions, :y_ions_sum, :longest_y, :y_count, :b_count,
-    :isotope_count, :total_ions,
-    :best_rank, :best_rank_iso, :topn, :topn_iso,
-    :gof, :max_fitted_manhattan_distance, :max_fitted_spectral_contrast,
-    :max_matched_residual, :max_unmatched_residual, :max_gof,
-    :fitted_spectral_contrast, :spectral_contrast,
-    :max_matched_ratio, :err_norm, :poisson, :weight,
-    :log2_intensity_explained, :tic, :smoothness,
-    :ms1_ms2_rt_diff,
-    :gof_ms1, :max_matched_residual_ms1, :max_unmatched_residual_ms1,
-    :fitted_spectral_contrast_ms1, :error_ms1, :m0_error_ms1,
-    :n_iso_ms1, :big_iso_ms1, :rt_max_intensity_ms1,
-    :rt_diff_max_intensity_ms1, :ms1_features_missing,
-    :percent_theoretical_ignored, :scribe, :max_scribe, :max_weight,
-    :fitted_hellinger, :n_scans,
-    # MBR _true variant — top half of doubled training frame.
-    :MBR_max_pair_prob_true, :MBR_log2_weight_ratio_true,
-    :MBR_log2_explained_ratio_true, :MBR_best_irt_diff_true, :MBR_is_missing_true,
-    # New (2026-05-12 evening): consensus + b/y features.
-    :MBR_top_n_median_score_true, :MBR_top_n_irt_diff_true, :MBR_log_by_diff_true,
-    # New (2026-05-12 night): fragment-pattern similarity (RV-coefficient analog).
-    :MBR_frag_pattern_cosine_true, :MBR_frag_pattern_scribe_true,
+    :trace_prob_infold,                            # rtv3: in-fold Pass-1 score
+    :MBR_max_pair_prob_true,
+    :MBR_log2_weight_ratio_true,
+    :MBR_log2_explained_ratio_true,
+    :MBR_best_irt_diff_true,
+    :MBR_top_n_median_score_true,
+    :MBR_top_n_irt_diff_true,
+    :MBR_log_by_diff_true,
+    :MBR_frag_pattern_cosine_true,
+    :MBR_frag_pattern_scribe_true,
+    # rtv1 (2026-05-13): literal donor-vs-recipient scan RT diff.
+    # Standalone A/B was negative — kept in slim FTR because it gets
+    # ~5,900 gain at rank #6 in rtv4 alongside trace_prob_infold.
+    # Don't drop without first restoring the in-fold score context.
+    :MBR_best_rt_diff_true,
+    # rtv2 (2026-05-13): Kendall τ on M0 fragment 6-vector.
+    :MBR_frag_rank_corr_true,
 ]
 
 # Same features but with the MBR columns swapped to _false. Used for the
 # bottom half of the doubled training frame. Each entry must mirror
 # FTR_FEATURES_F_TRUE position-for-position so the LGBM sees the same
-# semantic feature columns in the same order.
+# semantic feature columns in the same order. Row-level features
+# (trace_prob_infold) pass through the default `f` branch unchanged.
 const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_max_pair_prob_true        ? :MBR_max_pair_prob_false :
     f === :MBR_log2_weight_ratio_true    ? :MBR_log2_weight_ratio_false :
     f === :MBR_log2_explained_ratio_true ? :MBR_log2_explained_ratio_false :
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
-    f === :MBR_is_missing_true           ? :MBR_is_missing_false :
     f === :MBR_top_n_median_score_true   ? :MBR_top_n_median_score_false :
     f === :MBR_top_n_irt_diff_true       ? :MBR_top_n_irt_diff_false :
     f === :MBR_log_by_diff_true          ? :MBR_log_by_diff_false :
     f === :MBR_frag_pattern_cosine_true  ? :MBR_frag_pattern_cosine_false :
     f === :MBR_frag_pattern_scribe_true  ? :MBR_frag_pattern_scribe_false :
+    f === :MBR_best_rt_diff_true         ? :MBR_best_rt_diff_false :
+    f === :MBR_frag_rank_corr_true       ? :MBR_frag_rank_corr_false :
     f
     for f in FTR_FEATURES_F_TRUE
 ]
