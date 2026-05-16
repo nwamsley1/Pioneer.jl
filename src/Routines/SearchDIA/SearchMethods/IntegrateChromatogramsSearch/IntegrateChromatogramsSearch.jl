@@ -39,6 +39,24 @@ struct IntegrateChromatogramSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}  # Chromatogram data per file
 end
 
+function _resolve_chromatogram_trace_type(
+    params::PioneerParameters,
+    min_fraction_transmitted::Float32,
+)
+    trace_mode = params.optimization.chromatogram_integration.trace_mode
+
+    if trace_mode == "combined"
+        return CombineTraces(min_fraction_transmitted)
+    elseif trace_mode == "separate"
+        return SeperateTraces()
+    end
+
+    throw(ArgumentError(
+        "Invalid optimization.chromatogram_integration.trace_mode=$(repr(trace_mode)); " *
+        "expected \"combined\" or \"separate\"",
+    ))
+end
+
 """
 Parameters for chromatogram integration search.
 """
@@ -68,10 +86,11 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         # Extract relevant parameter groups
         search_params = params.search
 
-        # Hardcoded — formerly read from global.isotope_settings (removed from
-        # the public schema; values shipped at defaults in every config).
-        isotope_trace_type = SeperateTraces()
         min_fraction_transmitted = 0.25f0
+        isotope_trace_type = _resolve_chromatogram_trace_type(
+            params,
+            Float32(min_fraction_transmitted),
+        )
         prec_estimation = PartialPrecCapture()
 
         # max_rank hardcoded to typemax(UInt8); the library already enforces
@@ -196,16 +215,9 @@ function process_file!(
             getCenterMzs(spectra),
             getIsolationWidthMzs(spectra)
         )
-    end
-
-    if seperateTraces(params.isotope_tracetype)
-        fast_df_sort!(chromatograms, [:precursor_idx, :isotopes_captured, :rt])
     else
-        fast_df_sort!(chromatograms, [:precursor_idx, :rt])
-    end
-
-    # CombineTraces: compute fraction_transmitted AFTER sort (order-independent per-row calc)
-    if !seperateTraces(params.isotope_tracetype)
+        # Combined-trace integration needs the per-row transmission fraction, but
+        # must not group or sort points by isotope-capture state before integration.
         get_isotopes_captured!(
             chromatograms,
             getQuadTransmissionModel(search_context, ms_file_idx),
@@ -219,17 +231,28 @@ function process_file!(
             compute_isotope_set=false
         )
     end
+    sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
 
     # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)
     if nrow(chromatograms) > 0
+        psm_isotopes_captured = nothing
+        if seperateTraces(params.isotope_tracetype)
+            apply_quant_trace_selection!(
+                passing_psms,
+                select_quant_trace_by_transmission(chromatograms),
+            )
+            psm_isotopes_captured = passing_psms[!, :isotopes_captured]
+        end
         integrate_precursors(
             chromatograms,
+            params.isotope_tracetype,
             params.min_fraction_transmitted,
             passing_psms[!, :precursor_idx],
             passing_psms[!, :scan_idx],
             passing_psms[!, :peak_area],
             passing_psms[!, :new_best_scan],
             passing_psms[!, :points_integrated],
+            isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength
         )
     end

@@ -13,6 +13,9 @@
         "nce": 26
     },
     "optimization": {
+        "chromatogram_integration": {
+            "trace_mode": "combined"
+        },
         "machine_learning": {
             "max_psm_memory_mb": 2000,
             "pep_bin_size": 10

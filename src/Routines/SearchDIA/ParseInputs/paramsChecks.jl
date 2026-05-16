@@ -88,6 +88,16 @@ function checkParams(json_path::String)
     check_param(ml_params, "max_psm_memory_mb", Real)
     check_param(ml_params, "pep_bin_size", Integer)
 
+    check_param(opt_params, "chromatogram_integration", Dict)
+    chrom_params = opt_params["chromatogram_integration"]
+    check_param(chrom_params, "trace_mode", String)
+    if !(chrom_params["trace_mode"] in ("combined", "separate"))
+        throw(InvalidParametersError(
+            "Invalid parameter optimization.chromatogram_integration.trace_mode: expected \"combined\" or \"separate\"",
+            chrom_params,
+        ))
+    end
+
     # Validate protein scoring parameters
     protein_scoring = params["proteinScoring"]
     check_param(protein_scoring, "min_peptides", Integer)

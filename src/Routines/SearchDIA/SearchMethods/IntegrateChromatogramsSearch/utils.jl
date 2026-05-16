@@ -49,6 +49,39 @@ function build_chrom_index(prec_col::AbstractVector{UInt32}, n_rows::Int)
     return chrom_index, max_len
 end
 
+function build_chrom_index(chromatograms::DataFrame, ::CombineTraces)
+    return build_chrom_index(
+        chromatograms[!, :precursor_idx]::AbstractVector{UInt32},
+        nrow(chromatograms),
+    )
+end
+
+function build_chrom_index(chromatograms::DataFrame, ::SeperateTraces)
+    n_rows = nrow(chromatograms)
+    if n_rows == 0
+        return Dict{Tuple{UInt32, Tuple{Int8, Int8}}, UnitRange{Int}}(), 0
+    end
+
+    prec_col = chromatograms[!, :precursor_idx]::AbstractVector{UInt32}
+    iso_col = chromatograms[!, :isotopes_captured]::AbstractVector{Tuple{Int8, Int8}}
+    max_len = 0
+    chrom_index = Dict{Tuple{UInt32, Tuple{Int8, Int8}}, UnitRange{Int}}()
+    start_idx = 1
+    current_key = (prec_col[1], iso_col[1])
+    for row_idx in 2:n_rows
+        next_key = (prec_col[row_idx], iso_col[row_idx])
+        if next_key != current_key
+            chrom_index[current_key] = start_idx:(row_idx - 1)
+            max_len = max(max_len, row_idx - start_idx)
+            start_idx = row_idx
+            current_key = next_key
+        end
+    end
+    chrom_index[current_key] = start_idx:n_rows
+    max_len = max(max_len, n_rows - start_idx + 1)
+    return chrom_index, max_len
+end
+
 """
     find_nearest_scan(scan_indices::AbstractVector{UInt32}, target_scan::UInt32)
 
@@ -69,10 +102,78 @@ function find_nearest_scan(scan_indices::AbstractVector{UInt32}, target_scan::UI
     return nearest_idx
 end
 
+function sort_chromatograms_for_integration!(chromatograms::DataFrame, ::CombineTraces)
+    nrow(chromatograms) == 0 && return chromatograms
+    fast_df_sort!(chromatograms, [:precursor_idx, :rt])
+    return chromatograms
+end
+
+function sort_chromatograms_for_integration!(chromatograms::DataFrame, ::SeperateTraces)
+    nrow(chromatograms) == 0 && return chromatograms
+    fast_df_sort!(chromatograms, [:precursor_idx, :isotopes_captured, :rt])
+    return chromatograms
+end
+
+function sort_chromatograms_for_integration!(chromatograms::DataFrame)
+    return sort_chromatograms_for_integration!(chromatograms, CombineTraces(0.25f0))
+end
+
+function select_quant_trace_by_transmission(chromatograms::DataFrame)
+    prec_col = chromatograms[!, :precursor_idx]::AbstractVector{UInt32}
+    iso_col = chromatograms[!, :isotopes_captured]::AbstractVector{Tuple{Int8, Int8}}
+    fraction_col = chromatograms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
+    selected = Dict{UInt32, Tuple{Tuple{Int8, Int8}, Float32}}()
+
+    for i in eachindex(prec_col)
+        pid = prec_col[i]
+        iso = iso_col[i]
+        fraction = fraction_col[i]
+        if !haskey(selected, pid) || fraction > selected[pid][2] ||
+           (fraction == selected[pid][2] && iso < selected[pid][1])
+            selected[pid] = (iso, fraction)
+        end
+    end
+
+    return selected
+end
+
+function apply_quant_trace_selection!(psms::DataFrame, selected_quant_trace::Dict{UInt32, Tuple{Tuple{Int8, Int8}, Float32}})
+    prec_col = psms[!, :precursor_idx]::AbstractVector{UInt32}
+    iso_col = psms[!, :isotopes_captured]::AbstractVector{Tuple{Int8, Int8}}
+    fraction_col = psms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
+
+    for i in eachindex(prec_col)
+        selected = get(selected_quant_trace, prec_col[i], nothing)
+        selected === nothing && continue
+        iso_col[i] = selected[1]
+        fraction_col[i] = selected[2]
+    end
+
+    return psms
+end
+
+@inline function chromatogram_index_key(
+    ::CombineTraces,
+    precursor_idx::AbstractVector{UInt32},
+    isotopes_captured,
+    row_idx::Integer,
+)
+    return precursor_idx[row_idx]
+end
+
+@inline function chromatogram_index_key(
+    ::SeperateTraces,
+    precursor_idx::AbstractVector{UInt32},
+    isotopes_captured::AbstractVector{Tuple{Int8, Int8}},
+    row_idx::Integer,
+)
+    return (precursor_idx[row_idx], isotopes_captured[row_idx])
+end
+
 """
     integrate_precursors(chromatograms, min_fraction_transmitted, precursor_idx,
                          apex_scan_idx, peak_area, new_best_scan, points_integrated;
-                         λ=1.0f0)
+                         isotopes_captured=nothing, λ=1.0f0)
 
 Integrate chromatographic peaks for multiple precursors in parallel.
 
@@ -83,22 +184,23 @@ detection → trapezoidal integration). Results are written into the output vect
 `peak_area`, `new_best_scan`, and `points_integrated`.
 """
 function integrate_precursors(chromatograms::DataFrame,
+                             isotope_trace_type::IsotopeTraceType,
                              min_fraction_transmitted::Float32,
                              precursor_idx::AbstractVector{UInt32},
                              apex_scan_idx::AbstractVector{UInt32},
                              peak_area::AbstractVector{Float32},
                              new_best_scan::AbstractVector{UInt32},
                              points_integrated::AbstractVector{UInt32};
+                             isotopes_captured = nothing,
                              λ::Float32 = 1.0f0
                              )
     n_pad = Int64(0)
-    prec_col = chromatograms[!, :precursor_idx]::AbstractVector{UInt32}
     rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
     scan_idx_all = chromatograms[!, :scan_idx]::AbstractVector{UInt32}
     intensity_all = chromatograms[!, :intensity]::AbstractVector{Float32}
     fraction_all = chromatograms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
 
-    chrom_index, max_chrom_len = build_chrom_index(prec_col, nrow(chromatograms))
+    chrom_index, max_chrom_len = build_chrom_index(chromatograms, isotope_trace_type)
     N = max_chrom_len + (2*n_pad)
 
     # Partition work into chunks, then distribute chunks to exactly nthreads() tasks
@@ -120,13 +222,18 @@ function integrate_precursors(chromatograms::DataFrame,
         for chunk_idx in task_ranges[batch_id]
             chunk = all_chunks[chunk_idx]
             for i in chunk
-                prec_id = precursor_idx[i]
                 apex_scan = apex_scan_idx[i]
+                chrom_key = chromatogram_index_key(
+                    isotope_trace_type,
+                    precursor_idx,
+                    isotopes_captured,
+                    i,
+                )
 
-                if !haskey(chrom_index, prec_id)
+                if !haskey(chrom_index, chrom_key)
                     continue
                 end
-                chrom_range = chrom_index[prec_id]
+                chrom_range = chrom_index[chrom_key]
 
                 avg_cycle_time = (rt_all[last(chrom_range)] - rt_all[first(chrom_range)]) / length(chrom_range)
 
@@ -172,6 +279,28 @@ function integrate_precursors(chromatograms::DataFrame,
     end
 
     return nothing
+end
+
+function integrate_precursors(chromatograms::DataFrame,
+                             min_fraction_transmitted::Float32,
+                             precursor_idx::AbstractVector{UInt32},
+                             apex_scan_idx::AbstractVector{UInt32},
+                             peak_area::AbstractVector{Float32},
+                             new_best_scan::AbstractVector{UInt32},
+                             points_integrated::AbstractVector{UInt32};
+                             λ::Float32 = 1.0f0
+                             )
+    return integrate_precursors(
+        chromatograms,
+        CombineTraces(Float32(min_fraction_transmitted)),
+        min_fraction_transmitted,
+        precursor_idx,
+        apex_scan_idx,
+        peak_area,
+        new_best_scan,
+        points_integrated;
+        λ = λ,
+    )
 end
 
 #==========================================================
@@ -873,4 +1002,3 @@ function process_final_psms!(
     
     return nothing
 end
-
