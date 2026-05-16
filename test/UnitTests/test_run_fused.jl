@@ -20,6 +20,7 @@ const PartialPrecCapture     = Pioneer.PartialPrecCapture
 const SparseArrayFused       = Pioneer.SparseArrayFused
 const FusedScratch           = Pioneer.FusedScratch
 const MainUnscoredPSM     = Pioneer.MainUnscoredPSM
+const TuningUnscoredPSM      = Pioneer.TuningUnscoredPSM
 const DensePrecMap           = Pioneer.DensePrecMap
 const StandardFragmentLookup = Pioneer.StandardFragmentLookup
 const CompactFrag            = Pioneer.CompactFrag
@@ -233,6 +234,34 @@ end
         # Both peaks landed in the matched buffer (rows 1 and 2).
         rows_in_col = sort([fx.Hs.rowval[i] for i in 1:fx.Hs.n_vals])
         @test rows_in_col == UInt32[1, 2]
+    end
+
+    # ------------------------------------------------------------
+    @testset "grows tuning PSM accumulator before writing new columns" begin
+        n_precs = 10
+        frags = [(UInt32(pid), Float32(200 + pid), 1000.0f0, UInt8(0))
+                 for pid in 1:n_precs]
+        fx = make_fused_fixture(
+            n_precursors = n_precs,
+            prec_mzs = fill(500.0f0, n_precs),
+            prec_charges = fill(UInt8(2), n_precs),
+            prec_sulfur_counts = fill(UInt8(0), n_precs),
+            prec_irts = fill(50.0f0, n_precs),
+            frags = frags,
+            prec_frag_ranges = UInt64.(1:(n_precs + 1)),
+            peak_mz = Float32[200 + pid for pid in 1:n_precs],
+            peak_int = fill(1000.0f0, n_precs),
+            prec_range = 1:n_precs,
+        )
+        tuning_psms = [TuningUnscoredPSM{Float32}() for _ in 1:4]
+
+        n_match, n_miss = call_run_fused!(fx, unscored_psms = tuning_psms)
+
+        @test n_match == n_precs
+        @test n_miss == 0
+        @test fx.Hs.n == n_precs
+        @test length(tuning_psms) >= n_precs
+        @test [tuning_psms[i].precursor_idx for i in 1:n_precs] == UInt32.(1:n_precs)
     end
 
     # ------------------------------------------------------------

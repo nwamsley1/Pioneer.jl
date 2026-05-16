@@ -178,10 +178,33 @@ Per-match inline scoring hook, dispatched on `(kind, eltype(unscored_psms))`.
 - `FusedQuadEst` / `FusedRTIndexed`     → no-op (tuning reads `Hs + weights`
   after deconv; no PSM accumulation)
 """
+@inline function ensure_unscored_capacity!(
+        unscored::Vector{T}, col::Integer) where {T<:UnscoredPSM}
+    needed = Int(col)
+    needed <= length(unscored) && return nothing
+
+    old_len = length(unscored)
+    new_len = max(needed, old_len + 1000)
+    resize!(unscored, new_len)
+    default = T()
+    @inbounds for i in (old_len + 1):new_len
+        unscored[i] = default
+    end
+    return nothing
+end
+
+@inline function ensure_unscored_capacity!(
+        unscored::AbstractVector{<:UnscoredPSM}, col::Integer)
+    needed = Int(col)
+    needed <= length(unscored) || throw(BoundsError(unscored, needed))
+    return nothing
+end
+
 @inline function record_match!(::FusedStandard,
         unscored_psms::Vector{MainUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
         m_rank::Int64, prec_idx::UInt32, pred_int::Float32)
+    ensure_unscored_capacity!(unscored_psms, col)
     apply_main_scoring!(unscored_psms, col, frag, iso_idx,
                             intensity, ppm_err, m_rank, prec_idx, pred_int)
     return nothing
@@ -191,6 +214,7 @@ end
         unscored_psms::Vector{TuningUnscoredPSM{Float32}}, col::Int, frag,
         iso_idx::UInt8, intensity::Float32, ppm_err::Float32,
         m_rank::Int64, prec_idx::UInt32, ::Float32)
+    ensure_unscored_capacity!(unscored_psms, col)
     apply_tuning_scoring!(unscored_psms, col, frag, iso_idx,
                             intensity, ppm_err, m_rank, prec_idx)
     return nothing
