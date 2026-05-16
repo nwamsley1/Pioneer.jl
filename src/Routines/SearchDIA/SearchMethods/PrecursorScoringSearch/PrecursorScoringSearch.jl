@@ -288,54 +288,6 @@ function summarize_results!(
         global_prob_dict, target_dict =
             build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
 
-        # A1b: Optional ScoringSearch-level global pair competition (env-gated).
-        # PIONEER_SCORING_PAIR_COMPETITION=1 enables. Operates on the
-        # global_prob built from the experiment-wide LightGBM (same model
-        # across all precursors), unlike the MainSearch-level
-        # PIONEER_GLOBAL_PAIR_COMPETITION which combined scores from
-        # different per-file LightGBMs. For each (target, paired_decoy) where
-        # both are present, drops the lower-prob one before q-value
-        # computation; losers are removed from the dicts so they fail the
-        # downstream missing-global_qval filter automatically.
-        if get(ENV, "PIONEER_SCORING_PAIR_COMPETITION", "0") == "1"
-            partner_col = getPrecursors(getSpecLib(search_context)).data[:partner_precursor_idx]
-            losers = Set{UInt32}()
-            seen   = Set{Tuple{UInt32, UInt32}}()
-            n_pairs = 0; n_drop_t = 0; n_drop_d = 0
-            for (pid, p) in pairs(global_prob_dict)
-                ptr_raw = partner_col[Int(pid)]
-                partner = ismissing(ptr_raw) ? UInt32(0) : UInt32(ptr_raw)
-                (partner == 0 || partner == pid) && continue
-                haskey(global_prob_dict, partner) || continue
-                pair_key = (min(pid, partner), max(pid, partner))
-                pair_key in seen && continue
-                push!(seen, pair_key)
-                n_pairs += 1
-                ptr_p = global_prob_dict[partner]
-                is_t_me = get(target_dict, pid, true)
-                loser = if p < ptr_p
-                    pid
-                elseif p > ptr_p
-                    partner
-                else
-                    is_t_me ? partner : pid   # tie → drop decoy
-                end
-                push!(losers, loser)
-                if get(target_dict, loser, true)
-                    n_drop_t += 1
-                else
-                    n_drop_d += 1
-                end
-            end
-            for pid in losers
-                delete!(global_prob_dict, pid)
-                delete!(target_dict, pid)
-            end
-            @user_info "  ScoringSearch global pair competition: $n_pairs pairs both present " *
-                       "in experiment-wide global_prob; dropped $n_drop_t targets + $n_drop_d decoys " *
-                       "(downstream filter drops their PSMs via missing global_qval)"
-        end
-
         # A2: Compute global q-value dict from global_prob dict (NO file I/O)
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         results.precursor_global_qval_dict[] = global_qval_dict
