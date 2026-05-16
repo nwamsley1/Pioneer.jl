@@ -196,23 +196,193 @@ Without this fix, fresh-Julia runs reliably crashed inside
   Pass-1 (1,838 vs 168) and 8-15× in per-file MainSearch. IDs:
   precursor +0.12%, PG +1.09%.
 
-## 8. Follow-ups (not yet done)
+## 8. Empirical-k IntensityMassErrorModel
 
-1. **862 "all BitVec-fail" precursors** — which specific files lose them,
-   is it mass-error/iRT drift in those files, or a deterministic BitVec
-   LUT effect.
+The static `k = quantile(Normal(), 0.975) ≈ 1.96` used by the
+IntensityMassErrorModel was a Gaussian-coverage assumption. On the
+Olsen Exploris mass-error spread-envelope plots, the empirical coverage
+at k=1.96 was only ~86% (vs the theoretical 95%) — i.e., the residual
+tails are heavier than Gaussian and ~9% of legitimately-matched
+fragments fell outside Pioneer's declared tolerance.
+
+Commit `1b78f5af` replaces the static k with a per-file empirical
+fit: compute σᵢ = spread_spline(log₂ Iᵢ) · m/z-correction, then
+`k = quantile(|residualᵢ| / σᵢ, 0.95)` clamped to [1.96, 4.5].
+The plot's "% within k·σ boundary" then hits 95.0% by construction;
+fitted k clusters around 3.5–3.7 on Olsen (vs the theoretical 1.96).
+
+### Effect on the DIA-NN-only-in-23 / Pioneer-seen group
+
+Re-running the 3-way split (BitVec / PEP-fail / global-qval-rejected)
+on the empirical-k run:
+
+| Cause | Pre-empk | Empirical-k @ 95% | Δ |
+|---|---:|---:|---:|
+| BitVec / fragment-index dropped | 9,252 (26.3%) | 12,941 (38.7%) | +3,689 |
+| PEP-failed | 15,646 (44.6%) | **12,458 (37.3%)** | **−3,188 (−20.4%)** |
+| Global-qval rejected | 10,222 (29.1%) | **8,012 (24.0%)** | **−2,210 (−21.6%)** |
+| Total missing slots | 35,120 | 33,411 | −1,709 (−4.9%) |
+| Group size | 9,360 | **8,492** | **−868 precursors fully rescued** |
+
+PEP-fail and global-qval rejections (the two failure modes directly
+influenced by the IntensityMassErrorModel's effective tolerance) both
+dropped ~20%. 868 precursors moved from the "missing in 1-5 files"
+bucket into the all-23-files set. BitVec-fail rose in absolute count
+only as a composition effect — the easier cases got rescued, leaving
+the residual pool enriched for BitVec failures.
+
+### Aggregate ID impact (23-file Olsen Exploris, MBR on)
+
+- Precursors: 1,208,659 → **1,219,576** (+10,917, +0.90%)
+- Protein groups: 147,502 → **150,108** (+2,606, +1.77%)
+
+## 9. Empirical-k tuning — counterintuitive 98% regression
+
+Commit `82f6ac2b` tested moving the empirical-k target from 95% → 98%
+(plus widening the clamp to [1.96, 5.5]). Outcome was a dramatic
+regression on every axis:
+
+| | empk@95 | empk@98 | Δ |
+|---|---:|---:|---:|
+| Precursors | 1,219,576 | 1,169,030 | **−50,546 (−4.1%)** |
+| Protein groups | 150,108 | 146,409 | **−3,699 (−2.5%)** |
+| BitVec-fail slots | 12,941 | 24,086 | **+11,145 (+86%)** |
+
+Mechanism: the wider IntensityMassErrorModel tolerance is then used
+by `BitVecCalibration` to learn its score-cutoff LUT. With more decoy
+fragments matching at the wider tolerance, the LUT raises its score
+threshold to maintain target/decoy discrimination — and downstream
+that stricter LUT rejects more borderline precursors at the
+fragment-index stage. The "wider matcher" benefit (per-file PEP and
+global-qval drop) is overwhelmed by the "stricter BitVec" cost.
+
+Confirming the BitVec interaction via a sweep at empk@98 ×
+{BV=0.03, 0.02, 0.01}: loosening BitVec partially rescues empk@98
+(+36,962 prec from BV=0.03→0.01) but **still falls 13,584 prec short
+of empk@95+BV=0.03**, so the residual is direct LGBM-feature
+degradation from a noisier fragment-match window.
+
+Reverted in commit `b60f55c4`. Env vars `PIONEER_EMPK_QUANTILE` and
+`PIONEER_EMPK_CLAMP_HI` preserved for diagnostic overrides
+(commit `84755ea4`).
+
+### Key lesson
+
+Mass-error tolerance widening has **two opposing downstream effects**
+that need to be tuned jointly:
+
+1. Helps per-file LGBM (more real fragments matched → fewer PEP-fails
+   and fewer global-qval rejections).
+2. Hurts BitVec calibration (more decoy matches at wider tolerance →
+   stricter LUT cutoff → more BitVec-fails).
+
+These cancel optimally near the 95th percentile on Olsen Exploris.
+The right operating point is **`empk@95` (commit `b60f55c4` defaults)**.
+
+## 10. BitVec min-excess-rate
+
+Default `BITVEC_MIN_EXCESS_RATE` = 0.03 (commit `9273f250` /
+`b60f55c4` baseline). Briefly tested 0.02 (commit `cc859fdb`,
+superseded by `82f6ac2b`/`b60f55c4`):
+
+| | BV=0.03 | BV=0.02 |
+|---|---:|---:|
+| Precursors | 1,219,576 | 1,227,113 (+7,537, +0.62%) |
+| Protein groups | 150,108 | 149,139 (−969, −0.65%) |
+| BitVec-fail slots | 12,941 | 8,845 (−4,096, −32%) |
+
+0.02 trades −0.65% PGs for +0.62% precursors. Kept default at 0.03;
+override via `PIONEER_BITVEC_MIN_EXCESS_RATE`.
+
+## 11. Chromatogram integration sort-order fix (Dennis)
+
+Cherry-picked Dennis's `origin/codex/chromatogram-sort-fix` (commit
+`0bb7a04b`, byte-identical to upstream `6351d96f`). Background: the
+old code hard-coded `SeperateTraces()` and then sorted chromatograms
+`[:precursor_idx, :isotopes_captured, :rt]` but indexed
+`build_chrom_index` by `precursor_idx` alone — so `integrate_chrom`
+saw concatenated isotope traces with non-monotonic rt, producing
+unreliable `peak_area` outputs whenever a precursor had multiple
+isotope traces.
+
+Dennis's fix:
+- Adds `optimization.chromatogram_integration.trace_mode` config knob
+  (default `"combined"` in `defaultSearchParams.json`).
+- `sort_chromatograms_for_integration!` dispatches on trace type:
+  CombineTraces sorts `[:precursor_idx, :rt]` (rt monotone).
+- `build_chrom_index(::SeperateTraces)` now keys by
+  `(precursor_idx, isotopes_captured)` so each trace integrates
+  independently.
+- `select_quant_trace_by_transmission` / `apply_quant_trace_selection!`
+  pick the highest-transmission isotope trace per precursor for the
+  separate-trace path.
+
+### Impact on Olsen 23-file (with empk@95 + BV=0.03)
+
+| Config | Precursors | PGs | Pioneer raw peak_area CV |
+|---|---:|---:|---:|
+| Pre-fix (buggy SeperateTraces) | 1,219,576 | 150,108 | **32.1%** |
+| Chromfix `combined` (new default) | **1,223,274** | **150,196** | 31.5% |
+| Chromfix `separate` (explicit) | 1,220,824 | 150,023 | **31.3%** |
+
+The fix is correct and gives a marginal CV improvement (~0.8 pp), but
+the bulk of the Pioneer vs DIA-NN CV gap (~9 pp) is **not** explained
+by the sort-order bug. Plausible reasons:
+
+1. Most Olsen Exploris precursors have one dominant isotope trace, so
+   the multi-trace-concat case (where the bug bit hardest) was rare.
+2. The residual CV gap is structural — Whittaker–Henderson smoothing
+   parameters, peak-boundary detection thresholds, MaxLFQ normalization
+   choices. Those are separate, larger optimization targets.
+
+Default `combined` mode wins on IDs (+3,698 prec / +88 PG vs pre-fix)
+and ties on CV; `separate` mode wins marginally on CV at the cost of
+small ID counts. The new default is correct.
+
+## 12. Commit chain summary
+
+The session's net commits on `feature/mbr-batch-f`:
+
+| Commit | Change |
+|---|---|
+| `f8273334` | `compute_mbr_features_dual!` heap-corruption fix (Threads.maxthreadid) |
+| `9273f250` | n_correlated_fragments 0.9 → 0.7, MS1 default 10 → 100 ppm |
+| `02772723` | This investigation notes file (initial DIA-NN comparison) |
+| `1b78f5af` | Empirical-k IntensityMassErrorModel |
+| `cc859fdb` | BitVec default 0.03 → 0.02 *(superseded)* |
+| `82f6ac2b` | Empirical-k 95% → 98% experiment + BV revert *(reverted)* |
+| `b60f55c4` | Revert empirical-k 98% → 95% |
+| `84755ea4` | Diagnostic env vars `PIONEER_EMPK_QUANTILE` / `PIONEER_EMPK_CLAMP_HI` |
+| `0bb7a04b` | Cherry-pick Dennis's chromatogram-sort-fix |
+| this commit | Investigation notes update (empk, BV, chromfix sections) |
+
+Production-relevant settings as of this writing:
+
+- `PIONEER_MS1_PPM_TOL` default: **100** (was 10)
+- `n_correlated_fragments` threshold: **0.7** (was 0.9)
+- IntensityMassErrorModel k: **empirical @ 95th percentile**,
+  clamped to [1.96, 4.5]
+- `BITVEC_MIN_EXCESS_RATE` default: **0.03**
+- `chromatogram_integration.trace_mode` default: **`"combined"`**
+- `compute_mbr_features_dual!` thread-buffer sizing:
+  **`Threads.maxthreadid()`** (was `Threads.nthreads()`)
+
+## 13. Follow-ups (still open)
+
+1. **862 "all BitVec-fail" precursors** — which specific files lose
+   them, is it mass-error / iRT drift in those files, or a deterministic
+   BitVec LUT effect.
 2. **170 "per-file PEP ≤ 0.01 but global qval > 0.01" anomaly** — does
    the experiment-wide ScoringSearch LGBM systematically demote a subset
-   of per-file-confident precursors? Feature-importance comparison.
-3. **Feature-distribution proxy for the 15,646 PEP-failed candidates**
-   (gof / weight / matched_ratio etc. from pre_lgbm dump) to characterize
-   whether they're genuinely weak or borderline-LGBM calls.
-4. **Chromatogram integration bug** (Dennis): `fast_df_sort!` produces
-   non-monotonic rt within a precursor block when `SeperateTraces()` is
-   active (always, per `IntegrateChromatogramsSearch.jl:73`). Plausibly
-   the main driver of the Pioneer/DIA-NN CV gap.
+   of per-file-confident precursors?
+3. **Feature-distribution proxy for the PEP-failed candidates**
+   (gof / weight / matched_ratio from pre_lgbm dump) to characterize
+   whether they're genuinely weak or borderline LGBM calls.
+4. **Closing the Pioneer/DIA-NN CV gap further** — Dennis's sort fix
+   took us from 32.1% → 31.3%; the remaining 9 pp gap to DIA-NN's
+   ~22% likely lives in the WH smoothing parameters and/or MaxLFQ.
 
-## 9. Scripts (under /tmp; not checked in)
+## 14. Scripts (under /tmp; not checked in)
 
 - `/tmp/dianno_pioneer_overlap.jl` — initial 23-file overlap + CV.
 - `/tmp/diann_extra_histogram.jl` — histogram of the 9,402 group.
@@ -223,6 +393,8 @@ Without this fix, fresh-Julia runs reliably crashed inside
   missing files.
 - `/tmp/bitvec_vs_pep_split.jl` — three-way per-pair split using
   `pre_lgbm_psms_diag`.
-- `/tmp/bench_olsen_ms1ppm.jl`, `/tmp/bench_olsen_ncorr70.jl`,
-  `/tmp/bench_olsen_keep_temp.jl`, `/tmp/bench_olsen_dump_pre_lgbm.jl` —
-  Pioneer benchmark launch scripts.
+- `/tmp/diann_parquet/global_q_filter.jl` — DIA-NN long-form parquet
+  + Global.Q.Value filter test (no effect on 23-set).
+- `/tmp/bench_olsen_*.jl` — Pioneer benchmark launch scripts (ms1ppm
+  sweep, ncorr70, keep_temp, dump_pre_lgbm, empk variants, bv sweep,
+  chromfix, chromfix_sep).
