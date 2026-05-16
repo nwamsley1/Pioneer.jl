@@ -160,6 +160,34 @@ function build_global_qval_dict_from_scores(
     return qval_dict
 end
 
+"""
+    build_global_pep_dict_from_scores(score_dict, target_dict, fdr_scale) → Dict{UInt32, Float32}
+
+Compute global posterior error probabilities (local FDR) from a score dictionary
+without any file I/O. Parallel to `build_global_qval_dict_from_scores` but uses
+`get_PEP!` (PAVA-fit) instead of cumulative q-values.
+"""
+function build_global_pep_dict_from_scores(
+    score_dict::Dict{UInt32, Float32},
+    target_dict::Dict{UInt32, Bool},
+    fdr_scale::Float32
+)
+    n = length(score_dict)
+    pids = collect(keys(score_dict))
+    scores = Float32[score_dict[pid] for pid in pids]
+    targets = Bool[get(target_dict, pid, false) for pid in pids]
+
+    peps = Vector{Float32}(undef, n)
+    get_PEP!(scores, targets, peps; doSort=true, fdr_scale_factor=fdr_scale)
+
+    pep_dict = Dict{UInt32, Float32}()
+    sizehint!(pep_dict, n)
+    for i in 1:n
+        pep_dict[pids[i]] = peps[i]
+    end
+    return pep_dict
+end
+
 
 """
     write_score_sidecars(refs, columns; temp_prefix) → Vector{PSMFileReference}

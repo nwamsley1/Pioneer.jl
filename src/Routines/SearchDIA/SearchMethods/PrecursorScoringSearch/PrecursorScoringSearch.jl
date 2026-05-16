@@ -288,8 +288,9 @@ function summarize_results!(
         global_prob_dict, target_dict =
             build_precursor_global_prob_dicts(filtered_refs, sqrt_n_runs, n_precursors)
 
-        # A2: Compute global q-value dict from global_prob dict (NO file I/O)
+        # A2: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
+        global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         results.precursor_global_qval_dict[] = global_qval_dict
 
         # A3-A5: Sidecar lifecycle → q-value spline + PEP interpolation
@@ -317,16 +318,27 @@ function summarize_results!(
             return df
         end
 
+        # PIONEER_GLOBAL_FILTER_MODE = "qval" (default) | "pep" | "off"
+        # Controls the cross-run filter applied alongside the per-row qval.
+        #   "qval": filter on (:global_qval ≤ threshold) AND (:qval ≤ threshold)
+        #   "pep":  filter on (:global_pep  ≤ threshold) AND (:qval ≤ threshold)
+        #   "off":  filter only on (:qval ≤ threshold) — no cross-run check
+        global_filter_mode = lowercase(get(ENV, "PIONEER_GLOBAL_FILTER_MODE", "qval"))
+        qval_conditions = if global_filter_mode == "off"
+            [(:qval, params.q_value_threshold)]
+        elseif global_filter_mode == "pep"
+            [(:global_pep, params.q_value_threshold), (:qval, params.q_value_threshold)]
+        else  # "qval" or anything else → default behavior
+            [(:global_qval, params.q_value_threshold), (:qval, params.q_value_threshold)]
+        end
         combined_pipeline = TransformPipeline() |>
             add_dict_column(:global_prob, :precursor_idx, global_prob_dict) |>
             add_dict_column(:global_qval, :precursor_idx, global_qval_dict) |>
+            add_dict_column(:global_pep,  :precursor_idx, global_pep_dict) |>
             add_interpolated_column(:qval, :prec_prob, qval_spline) |>
             mbr_qval_bypass |>
             add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
-            filter_by_multiple_thresholds([
-                (:global_qval, params.q_value_threshold),
-                (:qval, params.q_value_threshold)
-            ])
+            filter_by_multiple_thresholds(qval_conditions)
 
         passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
     end
