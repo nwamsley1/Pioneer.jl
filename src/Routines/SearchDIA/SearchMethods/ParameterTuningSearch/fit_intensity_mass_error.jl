@@ -548,9 +548,15 @@ function fit_intensity_mass_error_model(
         end
     end
 
-    # Empirical k: fit k so the ±k·σ envelope covers ~98% of observed
-    # bias-corrected residuals. Per-file fit; clamped to [1.96, 5.5] to
+    # Empirical k: fit k so the ±k·σ envelope covers ~95% of observed
+    # bias-corrected residuals. Replaces the previous static k=1.96 (which
+    # only achieves 95% under a Gaussian assumption — Olsen Exploris fragments
+    # showed ~86% empirical coverage at k=1.96, evidence the residual tails
+    # are heavier than Gaussian). Per-file fit; clamped to [1.96, 4.5] to
     # avoid pathological blow-up on noisy files.
+    # 2026-05-15: 98% target was tested and dramatically regressed (−50k prec,
+    # −3.7k PG on 23-file Olsen) because BitVec LUT calibration trained on
+    # the wider window learns a stricter score cutoff. 95% is the sweet spot.
     laplace_to_gauss = log(2.0) / 0.6744897501960817
     σ_per_frag_mda = Vector{Float64}(undef, n)
     @inbounds for i in 1:n
@@ -560,8 +566,8 @@ function fit_intensity_mass_error_model(
         σ_per_frag_mda[i] = σ_base * mz_corr
     end
     normalized_residuals = abs.(full_residuals_mda) ./ σ_per_frag_mda
-    k_emp = Float32(quantile(normalized_residuals, 0.98))
-    k = clamp(k_emp, 1.96f0, 5.5f0)
+    k_emp = Float32(quantile(normalized_residuals, 0.95))
+    k = clamp(k_emp, 1.96f0, 4.5f0)
 
     # Conservative tolerance in Da = collection tolerance from the SimpleMassErrorModel.
     # SimpleMassErrorModel stores tolerance in ppm; convert to Da at max training m/z.
