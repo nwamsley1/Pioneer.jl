@@ -566,8 +566,12 @@ function fit_intensity_mass_error_model(
         σ_per_frag_mda[i] = σ_base * mz_corr
     end
     normalized_residuals = abs.(full_residuals_mda) ./ σ_per_frag_mda
-    k_emp = Float32(quantile(normalized_residuals, 0.95))
-    k = clamp(k_emp, 1.96f0, 4.5f0)
+    # PIONEER_EMPK_QUANTILE (default 0.95) and PIONEER_EMPK_CLAMP_HI
+    # (default 4.5) are diagnostic env-var overrides for the k fit.
+    _empk_q   = Float64(parse(Float64, get(ENV, "PIONEER_EMPK_QUANTILE", "0.95")))
+    _empk_hi  = Float32(parse(Float64, get(ENV, "PIONEER_EMPK_CLAMP_HI", "4.5")))
+    k_emp = Float32(quantile(normalized_residuals, _empk_q))
+    k = clamp(k_emp, 1.96f0, _empk_hi)
 
     # Conservative tolerance in Da = collection tolerance from the SimpleMassErrorModel.
     # SimpleMassErrorModel stores tolerance in ppm; convert to Da at max training m/z.
