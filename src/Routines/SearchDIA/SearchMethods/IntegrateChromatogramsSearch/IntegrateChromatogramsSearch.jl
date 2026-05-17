@@ -203,34 +203,20 @@ function process_file!(
     # config schema.
     #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
     #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
-    if seperateTraces(params.isotope_tracetype)
-        get_isotopes_captured!(
-            chromatograms,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            chromatograms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
-        )
-    else
-        # Combined-trace integration needs the per-row transmission fraction, but
-        # must not group or sort points by isotope-capture state before integration.
-        get_isotopes_captured!(
-            chromatograms,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            chromatograms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra);
-            compute_isotope_set=false
-        )
-    end
+    # Quantification needs both transmission and isotope-range identity so the
+    # per-run isotope-range allowlist can be applied before integration.
+    get_isotopes_captured!(
+        chromatograms,
+        getQuadTransmissionModel(search_context, ms_file_idx),
+        getSearchData(search_context),
+        chromatograms[!, :scan_idx],
+        getCharge(getPrecursors(getSpecLib(search_context))),
+        getMz(getPrecursors(getSpecLib(search_context))),
+        getSulfurCount(getPrecursors(getSpecLib(search_context))),
+        getCenterMzs(spectra),
+        getIsolationWidthMzs(spectra)
+    )
+    apply_quant_isotope_masks_to_chromatograms!(chromatograms, passing_psms)
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
 
     # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)

@@ -241,7 +241,7 @@ function train_psm_classifier_with_fallback(
 end
 
 """
-    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, timings)
+    train_lgbm_and_select_best(psms; features, pre_select_hook) -> (best_psms, scores, timings)
 
 Train LightGBM (with low-data probit fallback) on ALL PSMs (all scans) using
 the shared `train_psm_classifier_with_fallback` helper, then select the best
@@ -255,6 +255,7 @@ Returns:
 function train_lgbm_and_select_best(
     psms::DataFrame;
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
+    pre_select_hook = nothing,
 )
     t0 = time()
     # Per-precursor PSM count, broadcast to every row so MainSearch's per-file
@@ -277,6 +278,7 @@ function train_lgbm_and_select_best(
 
     # Add scores to psms for best-per-precursor selection
     psms[!, :lgbm_score] = Float32.(all_scores)
+    pre_select_hook !== nothing && pre_select_hook(psms)
 
     # Diagnostic dump: pre-reduction PSMs WITH lgbm_score
     if DIAG_DUMP_FILE_IDX[] != 0

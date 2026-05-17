@@ -52,6 +52,156 @@ end
 #############################################################################
 
 """
+    quant_isotope_range_mask(isotopes_captured) -> UInt32
+
+Encode one captured precursor-isotope range as a bit in a compact mask.
+Valid ranges are `(lo, hi)` with `0 <= lo <= hi <= MAX_PRECURSOR_ISOTOPE`.
+Invalid or empty ranges encode to zero.
+"""
+@inline function quant_isotope_range_mask(isotopes_captured::Tuple{Int8, Int8})::UInt32
+    lo = Int(first(isotopes_captured))
+    hi = Int(last(isotopes_captured))
+    (lo < 0 || hi < lo || hi > MAX_PRECURSOR_ISOTOPE) && return UInt32(0)
+
+    bit_idx = 0
+    if lo > 0
+        @inbounds for first_iso in 0:(lo - 1)
+            bit_idx += MAX_PRECURSOR_ISOTOPE - first_iso + 1
+        end
+    end
+    bit_idx += hi - lo
+    return UInt32(1) << bit_idx
+end
+
+@inline function quant_isotope_range_allowed(mask::UInt32, isotopes_captured::Tuple{Int8, Int8})::Bool
+    bit = quant_isotope_range_mask(isotopes_captured)
+    return bit != UInt32(0) && (mask & bit) != UInt32(0)
+end
+
+"""
+    add_quant_isotope_masks_from_scores!(psms, score_col, pep_threshold)
+
+For each precursor, build the quantification isotope-range allowlist from rows
+whose per-run model score passes the current MainSearch PEP threshold. The
+allowlist is stored as `:quant_isotope_mask` on every row for that precursor.
+"""
+function add_quant_isotope_masks_from_scores!(
+    psms::DataFrame,
+    score_col::Symbol,
+    pep_threshold::Float32,
+)
+    n = nrow(psms)
+    if n == 0
+        psms[!, :quant_isotope_mask] = UInt32[]
+        return psms
+    end
+
+    prec_col = psms[!, :precursor_idx]::AbstractVector{UInt32}
+    iso_col = psms[!, :isotopes_captured]::AbstractVector{Tuple{Int8, Int8}}
+
+    keep = trues(n)
+    if pep_threshold < 1.0f0
+        probs = Float32.(psms[!, score_col])
+        targets = Vector{Bool}(psms[!, :target])
+        peps = Vector{Float32}(undef, n)
+        get_PEP!(probs, targets, peps; doSort=true, fdr_scale_factor=1.0f0)
+        keep .= peps .<= pep_threshold
+    end
+
+    masks = Dict{UInt32, UInt32}()
+    @inbounds for i in 1:n
+        keep[i] || continue
+        bit = quant_isotope_range_mask(iso_col[i])
+        bit == UInt32(0) && continue
+        pid = prec_col[i]
+        masks[pid] = get(masks, pid, UInt32(0)) | bit
+    end
+
+    psms[!, :quant_isotope_mask] = UInt32[get(masks, pid, UInt32(0)) for pid in prec_col]
+    return psms
+end
+
+"""
+    apply_quant_isotope_masks_to_chromatograms!(chromatograms, passing_psms)
+
+Apply precursor-level quant isotope allowlists to chromatogram rows by removing
+disallowed isotope ranges before integration. Removing rows avoids leaving
+zero-transmission duplicate RT points in combined-trace chromatograms.
+If `passing_psms` lacks `:quant_isotope_mask`, this is a no-op for backwards
+compatibility with older intermediate files.
+"""
+function apply_quant_isotope_masks_to_chromatograms!(
+    chromatograms::DataFrame,
+    passing_psms::DataFrame,
+)
+    empty_summary = (
+        chrom_rows = nrow(chromatograms),
+        kept_rows = nrow(chromatograms),
+        psm_precursors = hasproperty(passing_psms, :precursor_idx) ?
+            length(Set(passing_psms[!, :precursor_idx])) : 0,
+        zero_mask_precursors = 0,
+        disallowed_rows = 0,
+        all_disallowed_precursors = 0,
+        partially_disallowed_precursors = 0,
+    )
+    hasproperty(passing_psms, :quant_isotope_mask) || return empty_summary
+    (nrow(chromatograms) == 0 || !hasproperty(chromatograms, :isotopes_captured)) &&
+        return empty_summary
+
+    psm_prec_col = passing_psms[!, :precursor_idx]::AbstractVector{UInt32}
+    psm_mask_col = passing_psms[!, :quant_isotope_mask]::AbstractVector{UInt32}
+    mask_by_pid = Dict{UInt32, UInt32}()
+    sizehint!(mask_by_pid, length(psm_prec_col))
+    @inbounds for i in eachindex(psm_prec_col)
+        mask_by_pid[psm_prec_col[i]] = psm_mask_col[i]
+    end
+
+    chrom_prec_col = chromatograms[!, :precursor_idx]::AbstractVector{UInt32}
+    chrom_iso_col = chromatograms[!, :isotopes_captured]::AbstractVector{Tuple{Int8, Int8}}
+    total_rows_by_pid = Dict{UInt32, Int}()
+    allowed_rows_by_pid = Dict{UInt32, Int}()
+    keep_rows = trues(nrow(chromatograms))
+    disallowed_rows = 0
+
+    @inbounds for i in eachindex(chrom_prec_col)
+        pid = chrom_prec_col[i]
+        total_rows_by_pid[pid] = get(total_rows_by_pid, pid, 0) + 1
+        mask = get(mask_by_pid, pid, UInt32(0))
+        if quant_isotope_range_allowed(mask, chrom_iso_col[i])
+            allowed_rows_by_pid[pid] = get(allowed_rows_by_pid, pid, 0) + 1
+        else
+            keep_rows[i] = false
+            disallowed_rows += 1
+        end
+    end
+
+    all_disallowed_precursors = 0
+    partially_disallowed_precursors = 0
+    for (pid, total_rows) in total_rows_by_pid
+        allowed_rows = get(allowed_rows_by_pid, pid, 0)
+        if allowed_rows == 0
+            all_disallowed_precursors += 1
+        elseif allowed_rows < total_rows
+            partially_disallowed_precursors += 1
+        end
+    end
+
+    if disallowed_rows > 0
+        deleteat!(chromatograms, findall(!, keep_rows))
+    end
+
+    return (
+        chrom_rows = length(keep_rows),
+        kept_rows = length(keep_rows) - disallowed_rows,
+        psm_precursors = length(mask_by_pid),
+        zero_mask_precursors = count(==(UInt32(0)), values(mask_by_pid)),
+        disallowed_rows = disallowed_rows,
+        all_disallowed_precursors = all_disallowed_precursors,
+        partially_disallowed_precursors = partially_disallowed_precursors,
+    )
+end
+
+"""
     get_isotopes_captured!(chroms, quad_transmission_model, search_data,
                            scan_idx, prec_charge, prec_mz, sulfur_count,
                            centerMz, isolationWidthMz;

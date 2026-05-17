@@ -81,6 +81,61 @@ end
     @test passing_psms.precursor_fraction_transmitted == Float32[0.82, 0.55]
 end
 
+@testset "quant isotope mask encodes isotope ranges" begin
+    mask = Pioneer.quant_isotope_range_mask((Int8(0), Int8(1))) |
+           Pioneer.quant_isotope_range_mask((Int8(1), Int8(2)))
+
+    @test Pioneer.quant_isotope_range_allowed(mask, (Int8(0), Int8(1)))
+    @test Pioneer.quant_isotope_range_allowed(mask, (Int8(1), Int8(2)))
+    @test !Pioneer.quant_isotope_range_allowed(mask, (Int8(0), Int8(2)))
+    @test !Pioneer.quant_isotope_range_allowed(mask, (Int8(-1), Int8(-1)))
+end
+
+@testset "quant isotope mask removes disallowed chromatogram rows" begin
+    chromatograms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10, 20],
+        isotopes_captured = [(Int8(0), Int8(1)), (Int8(1), Int8(2)),
+                             (Int8(0), Int8(1)), (Int8(1), Int8(2))],
+        precursor_fraction_transmitted = Float32[0.8, 0.7, 0.9, 0.6],
+    )
+    passing_psms = DataFrame(
+        precursor_idx = UInt32[10, 20],
+        quant_isotope_mask = UInt32[
+            Pioneer.quant_isotope_range_mask((Int8(0), Int8(1))),
+            UInt32(0),
+        ],
+    )
+
+    summary = Pioneer.apply_quant_isotope_masks_to_chromatograms!(chromatograms, passing_psms)
+
+    @test nrow(chromatograms) == 2
+    @test chromatograms.precursor_idx == UInt32[10, 10]
+    @test chromatograms.isotopes_captured == [(Int8(0), Int8(1)), (Int8(0), Int8(1))]
+    @test chromatograms.precursor_fraction_transmitted == Float32[0.8, 0.9]
+    @test summary.chrom_rows == 4
+    @test summary.kept_rows == 2
+    @test summary.disallowed_rows == 2
+    @test summary.zero_mask_precursors == 1
+    @test summary.all_disallowed_precursors == 1
+    @test summary.partially_disallowed_precursors == 1
+end
+
+@testset "quant isotope mask aggregates per precursor from scoring rows" begin
+    psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 20],
+        isotopes_captured = [(Int8(0), Int8(1)), (Int8(1), Int8(2)), (Int8(0), Int8(2))],
+        target = Bool[true, true, false],
+        lgbm_score = Float32[0.95, 0.85, 0.75],
+    )
+
+    Pioneer.add_quant_isotope_masks_from_scores!(psms, :lgbm_score, 1.0f0)
+
+    expected_10 = Pioneer.quant_isotope_range_mask((Int8(0), Int8(1))) |
+                  Pioneer.quant_isotope_range_mask((Int8(1), Int8(2)))
+    expected_20 = Pioneer.quant_isotope_range_mask((Int8(0), Int8(2)))
+    @test psms.quant_isotope_mask == UInt32[expected_10, expected_10, expected_20]
+end
+
 @testset "legacy chromatogram integration sort defaults to combined" begin
     chromatograms = DataFrame(
         precursor_idx = UInt32[10, 10, 10, 10, 11],

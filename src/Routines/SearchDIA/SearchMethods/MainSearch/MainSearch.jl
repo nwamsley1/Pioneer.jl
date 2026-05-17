@@ -152,6 +152,7 @@ function process_search_results!(
     t_start = time()
     psms = results.psms[]
     file_name = getParsedFileName(search_context, ms_file_idx)
+    pep_filter_thr = parse(Float32, get(ENV, "PIONEER_MAIN_PEP_FILTER_THR", "0.9"))
 
     # Compute only prescore features (skip columns recomputed in Phase 2)
     t_prepare = @elapsed prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra, prescore_only=true)
@@ -207,7 +208,25 @@ function process_search_results!(
     else
         Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     end
-    best_psms, scores, lgbm_timings = train_lgbm_and_select_best(psms)
+    add_quant_trace_gate! = function(scored_psms::DataFrame)
+        get_isotopes_captured!(
+            scored_psms,
+            getQuadTransmissionModel(search_context, ms_file_idx),
+            getSearchData(search_context),
+            scored_psms[!, :scan_idx],
+            getCharge(getPrecursors(getSpecLib(search_context))),
+            getMz(getPrecursors(getSpecLib(search_context))),
+            getSulfurCount(getPrecursors(getSpecLib(search_context))),
+            getCenterMzs(spectra),
+            getIsolationWidthMzs(spectra)
+        )
+        add_quant_isotope_masks_from_scores!(scored_psms, :lgbm_score, pep_filter_thr)
+        return nothing
+    end
+    best_psms, scores, lgbm_timings = train_lgbm_and_select_best(
+        psms;
+        pre_select_hook = add_quant_trace_gate!,
+    )
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm = time()
@@ -294,7 +313,10 @@ function process_search_results!(
                 add_ms1_features!(psms2, spectra, search_context, ms_file_idx)
 
                 # Re-train LGBM and re-select best per precursor on pass-2 PSMs
-                best_psms2, scores2, _ = train_lgbm_and_select_best(psms2)
+                best_psms2, scores2, _ = train_lgbm_and_select_best(
+                    psms2;
+                    pre_select_hook = add_quant_trace_gate!,
+                )
                 best_psms2[!, :lgbm_prob] = scores2
                 pass2_precs_n = nrow(best_psms2)
                 @user_info "  PEP-filter 2-pass (file_idx=$ms_file_idx): pass2 LGBM → " *
@@ -376,7 +398,6 @@ function process_search_results!(
     # gets one PEP value. Precursors with PEP > threshold never enter the
     # second_pass arrow files and therefore can't reach ScoringSearch.
     # ============================================================
-    pep_filter_thr = parse(Float32, get(ENV, "PIONEER_MAIN_PEP_FILTER_THR", "0.9"))
     if pep_filter_thr < 1.0f0 && nrow(best_psms) > 0
         probs_filt = Float32.(best_psms[!, :lgbm_prob])
         is_t_filt  = Vector{Bool}(best_psms[!, :target])
