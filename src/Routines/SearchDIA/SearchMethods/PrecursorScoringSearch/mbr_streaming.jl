@@ -1,35 +1,60 @@
-# MBR streaming pipeline — Phase 1: per-file MBR features as sidecars.
+# MBR streaming pipeline. Replaces an older in-memory chain that held a single
+# big best_psms DataFrame across MBR feature compute. We instead emit three
+# per-file sidecar Arrow files and merge them back into the main file at the
+# end (see score_psms.jl::score_precursor_isotope_traces for the orchestrator).
 #
-# Replaces the in-memory `best_psms → compute_mbr_features_dual! →
-# write_scored_psms_to_files!` rewrite chain with two streaming sweeps:
+# Three sidecar types per main file `<f>.arrow`:
+#   <f>.pass1_sidecar.arrow      Pass-1 LightGBM scores (trace_prob_prepass +
+#                                trace_prob_infold). Written first so best_psms
+#                                can be freed before the heavy MBR stage.
+#   <f>.mbr_sidecar.arrow        Per-row MBR_* features (the _true/_false donor
+#                                comparisons fed to the FTR LightGBM).
+#   <f>.recovery_sidecar.arrow   FTR controller output (mbr_recovered, ftr_qval,
+#                                ftr_pep, MBR_transfer_candidate).
 #
-#   Sweep 1: build_mbr_donor_dict_streaming(refs)
-#     - Streams per-file `Arrow.Table` mmap, projects 14 columns, builds a
-#       Dict{UInt32, Vector{_MBRDonorEntry}} with the top-2 donors per
-#       precursor_idx. Top-2 (not top-1) covers the same-file fallback in
-#       _donor_for (top-1 might be from the row's own file).
-#     - Memory: ~50k pids × 2 × 60 B ≈ ~6 MB on Olsen 23-file scale.
+# Two main-file sweeps drive MBR feature compute:
+#   Sweep 1 (build_mbr_donor_dict_streaming_with_pass1)
+#     Streams each (main + pass1 sidecar) pair to build the top-2 donor dict
+#     keyed by precursor_idx. Top-2 (not top-1) covers the same-file fallback
+#     in `_donor_for` — top-1 might be the recipient's own file.
+#     Memory: ~50k pids × 2 entries × ~40 B ≈ a few MB.
 #
-#   Sweep 2: compute_mbr_features_per_file_to_sidecar!(ref, donor_dict, ...)
-#     - Loads ONE file's PSMs at a time (~50k rows), computes 14 MBR_* columns
-#       using `donor_dict`, writes a per-file sidecar Arrow with
-#       (:precursor_idx, :scan_idx, MBR_*) in main-file row order.
-#     - Main file is never rewritten.
+#   Sweep 2 (compute_mbr_features_per_file_to_sidecar_with_pass1!)
+#     Loads ONE file's main + pass1 sidecar at a time, computes the MBR_*
+#     features using `donor_dict`, writes the per-file MBR sidecar.
+#     Main file is never rewritten during sweeps.
 #
-# The alignment invariant for sidecars: row N of the sidecar ↔ row N of the
-# main file (positional join). `:precursor_idx` and `:scan_idx` are written
-# into the sidecar redundantly so a downstream consumer can ASSERT alignment
-# at read time and fail loud if anything reordered between writes.
+# Alignment invariant: row N of every sidecar ↔ row N of the main file
+# (positional join). `:precursor_idx` and `:scan_idx` are written into each
+# sidecar redundantly and asserted equal at every read/merge, so any sort or
+# filter that breaks alignment fails loud rather than silently corrupting data.
 #
-# Activated via env var PIONEER_MBR_STREAMING=1. When unset, the existing
-# in-memory `compute_mbr_features_dual!` path is used.
+# merge_mbr_sidecars_into_main! at the end folds all three sidecars back into
+# the main file and deletes them, restoring the per-file Arrow as the single
+# source of truth for downstream stages.
+
+# A single cross-run donor entry: one row's score + the per-row donor
+# features we need to compute MBR features for a recipient row in
+# another file. Holds the bare minimum so the donor dict stays small
+# (each entry is ~40 bytes; ~50k pids × 2 ≈ a few MB).
+struct _MBRDonorEntry
+    trace_prob::Float32
+    weight::Float32
+    log2_intensity_explained::Float32
+    irt_residual::Float32  # irt_pred − irt_obs of the donor row
+    irt_obs::Float32       # raw observed iRT of the donor row
+    log_by_ratio::Float32  # log(b_int+1) − log(y_int+1) of the donor row
+    rt_obs::Float32        # literal scan RT (minutes) of the donor row
+    ms_file_idx::UInt32
+    is_decoy::Bool
+end
 
 const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
 
-# Columns required to materialise a `_MBRDonorEntry` from a row of the
-# per-file Arrow table.  Listed once so reader and consumer stay in sync.
-# Note: the dual-MBR variant hardcodes `is_decoy=false` on donor entries
-# (the field is unused downstream), so we don't read :is_decoy from the file.
+# Columns the donor dict reads from each (main + pass1 sidecar) pair.
+# Listed once so reader and consumer stay in sync. `is_decoy` is hardcoded
+# false on donor entries (the field is unused downstream), so we don't read
+# it from the file.
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0, :rt,
     :ms_file_idx)
@@ -46,199 +71,6 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
     :MBR_best_rt_diff_true,         :MBR_best_rt_diff_false,
 )
-
-# Build the top-2 donor entries per precursor_idx by streaming `refs`. Reads
-# only the donor columns from each file; never materialises the full
-# DataFrame.  Returns a Dict{UInt32, Vector{_MBRDonorEntry}}.
-function build_mbr_donor_dict_streaming(refs::Vector{<:Any})
-    K = 2  # top-2 covers the same-file fallback inside `_donor_for`
-    all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
-    for ref in refs
-        path = ref isa AbstractString ? ref : file_path(ref)
-        tbl = Arrow.Table(path)
-        n = length(tbl.precursor_idx)
-        n == 0 && continue
-        # Project the columns we need (mmap views — no copy).
-        pid_c    = tbl.precursor_idx
-        score_c  = tbl.trace_prob_prepass
-        w_c      = tbl.weight
-        l2ie_c   = tbl.log2_intensity_explained
-        irtp_c   = tbl.irt_pred
-        irto_c   = tbl.irt_obs
-        logby_c  = hasproperty(tbl, :log_by_ratio_m0) ? tbl.log_by_ratio_m0 : nothing
-        rt_c     = hasproperty(tbl, :rt) ? tbl.rt : nothing
-        fidx_c   = tbl.ms_file_idx
-        @inbounds for i in 1:n
-            pid = UInt32(pid_c[i])
-            e = _MBRDonorEntry(
-                Float32(score_c[i]), Float32(w_c[i]), Float32(l2ie_c[i]),
-                Float32(irtp_c[i] - irto_c[i]),                # irt_residual
-                Float32(irto_c[i]),
-                logby_c === nothing ? 0f0 : Float32(logby_c[i]),
-                rt_c    === nothing ? 0f0 : Float32(rt_c[i]),
-                UInt32(fidx_c[i]), false,    # is_decoy unused in dual variant
-            )
-            entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
-            # Streaming top-K insertion: keep up to K entries sorted by
-            # trace_prob desc.  Cheaper than push+sort+trim per row when K is
-            # small.
-            if length(entries) < K
-                push!(entries, e)
-                if length(entries) > 1 && entries[end-1].trace_prob < e.trace_prob
-                    # 2-element bubble: ensure descending
-                    entries[end-1], entries[end] = entries[end], entries[end-1]
-                end
-            elseif e.trace_prob > entries[end].trace_prob
-                # Replace the current 2nd-best
-                entries[end] = e
-                if entries[1].trace_prob < e.trace_prob
-                    entries[1], entries[end] = entries[end], entries[1]
-                end
-            end
-        end
-    end
-    return all_entries
-end
-
-# Compute the 14 MBR_* feature columns for ONE file by reading the file's
-# main Arrow row-by-row and looking up donors in `donor_dict`. Writes the
-# per-file sidecar (`<main>.mbr_sidecar.arrow`) and returns the path.
-#
-# `partner_col` is the spectral-library lookup
-# (UInt32(0) → no counterfactual). Must be indexed by precursor_idx.
-function compute_mbr_features_per_file_to_sidecar!(ref::Any,
-                                                    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-                                                    partner_col::AbstractVector)
-    main_path = ref isa AbstractString ? ref : file_path(ref)
-    tbl  = Arrow.Table(main_path)
-    n    = length(tbl.precursor_idx)
-    pid_v   = tbl.precursor_idx
-    scan_v  = tbl.scan_idx
-    file_v  = tbl.ms_file_idx
-    score_v = tbl.trace_prob_prepass
-    weight_v= tbl.weight
-    l2ie_v  = tbl.log2_intensity_explained
-    irtp_v  = tbl.irt_pred
-    irto_v  = tbl.irt_obs
-    logby_v = hasproperty(tbl, :log_by_ratio_m0) ? tbl.log_by_ratio_m0 : nothing
-    rt_v    = hasproperty(tbl, :rt) ? tbl.rt : nothing
-
-    out_max_t = fill(-1f0, n); out_max_f = fill(-1f0, n)
-    out_lw_t  = fill(-1f0, n); out_lw_f  = fill(-1f0, n)
-    out_le_t  = fill(-1f0, n); out_le_f  = fill(-1f0, n)
-    out_ir_t  = fill(-1f0, n); out_ir_f  = fill(-1f0, n)
-    out_miss_t = trues(n);     out_miss_f = trues(n)
-    out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
-    out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
-
-    has_logby = logby_v !== nothing
-    has_rt    = rt_v    !== nothing
-
-    @inline function _donor_for(pid::UInt32, my_file::UInt32)
-        entries = get(donor_dict, pid, nothing)
-        entries === nothing && return nothing
-        @inbounds for e in entries
-            e.ms_file_idx != my_file && return e
-        end
-        return nothing
-    end
-
-    @inbounds for i in 1:n
-        my_file = UInt32(file_v[i])
-        my_pid  = UInt32(pid_v[i])
-        my_pidx = Int(my_pid)
-        my_partner = my_pidx <= length(partner_col) ?
-                      (ismissing(partner_col[my_pidx]) ? UInt32(0) : UInt32(partner_col[my_pidx])) :
-                      UInt32(0)
-
-        # True donor (this precursor in another file)
-        donor_t = _donor_for(my_pid, my_file)
-        if donor_t !== nothing
-            out_max_t[i] = donor_t.trace_prob
-            if donor_t.weight > 0 && weight_v[i] > 0
-                out_lw_t[i] = log2(Float32(weight_v[i]) / donor_t.weight)
-            end
-            out_le_t[i] = Float32(l2ie_v[i]) - donor_t.log2_intensity_explained
-            out_ir_t[i] = abs(Float32(irtp_v[i] - irto_v[i]) - donor_t.irt_residual)
-            if has_logby
-                out_log_by_t[i] = Float32(logby_v[i]) - donor_t.log_by_ratio
-            end
-            if has_rt
-                out_rt_t[i] = abs(Float32(rt_v[i]) - donor_t.rt_obs)
-            end
-            out_miss_t[i] = false
-        end
-
-        # False donor (counterfactual partner precursor in any file ≠ mine)
-        if my_partner != UInt32(0)
-            donor_f = _donor_for(my_partner, my_file)
-            if donor_f !== nothing
-                out_max_f[i] = donor_f.trace_prob
-                if donor_f.weight > 0 && weight_v[i] > 0
-                    out_lw_f[i] = log2(Float32(weight_v[i]) / donor_f.weight)
-                end
-                out_le_f[i] = Float32(l2ie_v[i]) - donor_f.log2_intensity_explained
-                out_ir_f[i] = abs(Float32(irtp_v[i] - irto_v[i]) - donor_f.irt_residual)
-                if has_logby
-                    out_log_by_f[i] = Float32(logby_v[i]) - donor_f.log_by_ratio
-                end
-                if has_rt
-                    out_rt_f[i] = abs(Float32(rt_v[i]) - donor_f.rt_obs)
-                end
-                out_miss_f[i] = false
-            end
-        end
-    end
-
-    sidecar_path = main_path * MBR_SIDECAR_SUFFIX
-    sidecar_df = DataFrame(
-        precursor_idx                  = collect(UInt32.(pid_v)),
-        scan_idx                       = collect(UInt32.(scan_v)),
-        MBR_max_pair_prob_true         = out_max_t,
-        MBR_max_pair_prob_false        = out_max_f,
-        MBR_log2_weight_ratio_true     = out_lw_t,
-        MBR_log2_weight_ratio_false    = out_lw_f,
-        MBR_log2_explained_ratio_true  = out_le_t,
-        MBR_log2_explained_ratio_false = out_le_f,
-        MBR_best_irt_diff_true         = out_ir_t,
-        MBR_best_irt_diff_false        = out_ir_f,
-        MBR_is_missing_true            = out_miss_t,
-        MBR_is_missing_false           = out_miss_f,
-        MBR_log_by_diff_true           = out_log_by_t,
-        MBR_log_by_diff_false          = out_log_by_f,
-        MBR_best_rt_diff_true          = out_rt_t,
-        MBR_best_rt_diff_false         = out_rt_f,
-    )
-    writeArrow(sidecar_path, sidecar_df)
-    return sidecar_path
-end
-
-# Load a per-file MBR sidecar and verify alignment with the main file via
-# (:precursor_idx, :scan_idx). Returns a DataFrame with the MBR_* columns
-# only (the alignment keys are dropped after verification).
-function load_mbr_sidecar_aligned(main_path::AbstractString,
-                                   sidecar_path::AbstractString=main_path*MBR_SIDECAR_SUFFIX)
-    main = Arrow.Table(main_path)
-    side = Arrow.Table(sidecar_path)
-    n_main = length(main.precursor_idx)
-    n_side = length(side.precursor_idx)
-    n_main == n_side ||
-        error("MBR sidecar row-count mismatch: main=$n_main side=$n_side at $sidecar_path")
-    main_pid = main.precursor_idx; side_pid = side.precursor_idx
-    main_scn = main.scan_idx;      side_scn = side.scan_idx
-    @inbounds for i in 1:n_main
-        if main_pid[i] != side_pid[i] || main_scn[i] != side_scn[i]
-            error("MBR sidecar misaligned at row $i (precursor_idx/scan_idx mismatch) at $sidecar_path")
-        end
-    end
-    df = DataFrame()
-    for c in _MBR_SIDECAR_OUT_COLS
-        c === :precursor_idx && continue
-        c === :scan_idx      && continue
-        df[!, c] = collect(Tables.getcolumn(side, c))
-    end
-    return df
-end
 
 # Suffix conventions for the three sidecar types used by the streaming MBR
 # pipeline. All sidecars carry (:precursor_idx, :scan_idx) as alignment keys.
