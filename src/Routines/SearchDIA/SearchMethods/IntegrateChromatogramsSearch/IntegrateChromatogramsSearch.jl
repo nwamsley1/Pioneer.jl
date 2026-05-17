@@ -112,7 +112,15 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
             Float32(0.0),     # lambda (no regularization)
             NoNorm(),         # reg_type
-            PoissonMMSolver(),  # hardcoded: PMM is the production solver
+            HuberSolver(
+                300.0f0,      # delta (hardcoded until tuning is reintroduced)
+                0.0f0,        # lambda (no regularization)
+                Int64(50),    # max_iter_newton
+                Int64(100),   # max_iter_bisection
+                10.0f0,       # accuracy_newton
+                10.0f0,       # accuracy_bisection
+                NoNorm(),
+            ),
             DECONV_MAX_ITER,          # max_iter_outer
             DECONV_CONVERGENCE_TOL,   # max_diff
 

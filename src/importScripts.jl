@@ -151,6 +151,7 @@ function importScripts()
         [
             "solveOLS.jl",          # Non-negative OLS coordinate descent
             "solvePoissonMM.jl",    # Poisson MLE coordinate descent + dispatch
+            "solveHuber.jl",        # Robust Huber coordinate descent
         ]
     )
 

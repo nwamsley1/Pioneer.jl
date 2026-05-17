@@ -306,6 +306,29 @@ end
                 copy(μ), copy(y), Int64(50), 1f-5)
             @test all(isfinite, X)
         end
+
+        @testset "HuberSolver path restores robust deconvolution" begin
+            @test isdefined(Pioneer, :HuberSolver)
+            if isdefined(Pioneer, :HuberSolver)
+                HuberSolver = getproperty(Pioneer, :HuberSolver)
+                sa_huber = _make_sparse_fused(
+                    [(1,1,1.0), (1,2,1.0), (1,3,1.0)], 3, 1)
+                sa_huber.x[1] = 2.0f0
+                sa_huber.x[2] = 4.0f0
+                sa_huber.x[3] = 6.0f0
+
+                X = Float32[1.0]
+                converged, _ = solve_deconvolution!(
+                    HuberSolver(1.0f0, 0.0f0, Int64(50), Int64(100),
+                                1.0f-5, 1.0f-4, Pioneer.NoNorm()),
+                    sa_huber, copy(r), X, copy(colnorm2), copy(μ), copy(y),
+                    Int64(100), 1.0f-5)
+
+                @test converged
+                @test X[1] ≈ 4.0f0 atol=1.0f-2
+                @test X[1] ≥ 0.0f0
+            end
+        end
     end
 
 end

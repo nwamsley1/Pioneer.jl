@@ -136,6 +136,12 @@ end
     default_params = Pioneer.parse_pioneer_parameters(default_path)
     default_integration = Pioneer.IntegrateChromatogramSearchParameters(default_params)
     @test default_integration.isotope_tracetype isa Pioneer.CombineTraces
+    @test isdefined(Pioneer, :HuberSolver)
+    if isdefined(Pioneer, :HuberSolver)
+        HuberSolver = getproperty(Pioneer, :HuberSolver)
+        @test default_integration.deconvolution_solver isa HuberSolver
+        @test default_integration.deconvolution_solver.delta == 300.0f0
+    end
 
     separate_path = joinpath(tmp, "separate.json")
     _write_trace_mode_params(separate_path; trace_mode = "separate")
