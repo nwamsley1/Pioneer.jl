@@ -262,6 +262,7 @@ function importScripts()
             "model_config.jl",                 # Model configuration
             "mbr_pairing.jl",                  # MBR Phase 1: 1:1 pair regeneration with cloning
             "mbr_features.jl",                 # MBR Phase 2: donor tracking + per-row MBR features
+            "mbr_streaming.jl",                # MBR Phase 2 streaming variant: two-sweep + sidecar
             "mbr_ftr.jl",                      # MBR Phase 4: FTR controller on MBR-boosted score
             "score_psms.jl",                   # PSM scoring functions
             "scoring_interface.jl",            # Interface functions
