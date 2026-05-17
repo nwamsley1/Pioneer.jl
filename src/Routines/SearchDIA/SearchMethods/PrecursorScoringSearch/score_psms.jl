@@ -111,11 +111,49 @@ function score_precursor_isotope_traces(
     last_classifier = last_classifier_p1
     info            = info_p1
 
-    if match_between_runs
+    streaming_mbr = match_between_runs &&
+                    get(ENV, "PIONEER_MBR_STREAMING", "0") == "1"
+
+    if match_between_runs && !streaming_mbr
         # Batch F: compute dual MBR features (_true and _false donors).
         # No Pass 2 — the FTR LGBM learns the MBR signal directly from the
         # _true/_false split in apply_mbr_filter_paired!.
         compute_mbr_features_dual!(best_psms; score_col=:trace_prob_prepass)
+    elseif streaming_mbr
+        # Streaming MBR (Phase 1, env-gated). Pass-1 scores go to per-file
+        # sidecars; best_psms is freed before sweep-1 builds the donor dict.
+        # apply_mbr_filter_paired! later runs on a slim reconstructed
+        # DataFrame (~20 cols vs ~80). Recovery results land in per-file
+        # recovery sidecars; merge_mbr_sidecars_into_main! produces the
+        # final per-file output (matching write_scored_psms_to_files!).
+        @user_info "MBR Batch F (streaming): writing Pass-1 sidecars..."
+        write_pass1_score_sidecars!(best_psms, file_paths)
+        # Build pid→counterfactual_partner lookup (per-precursor) from
+        # the per-row :counterfactual_partner_pid column before discarding.
+        max_pid = UInt32(0)
+        @inbounds for p in best_psms.precursor_idx
+            (UInt32(p) > max_pid) && (max_pid = UInt32(p))
+        end
+        cf_partner_vec = zeros(UInt32, Int(max_pid))
+        @inbounds for i in 1:nrow(best_psms)
+            p = UInt32(best_psms.precursor_idx[i])
+            cf_partner_vec[Int(p)] = UInt32(best_psms.counterfactual_partner_pid[i])
+        end
+        best_psms = DataFrame()
+        GC.gc()
+        @user_info "MBR Batch F (streaming): building donor dict via sweep-1..."
+        donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
+        @user_info "  donor dict pids: $(length(donor_dict))"
+        @user_info "MBR Batch F (streaming): writing per-file MBR sidecars..."
+        for fpath in file_paths
+            compute_mbr_features_per_file_to_sidecar_with_pass1!(fpath, donor_dict, cf_partner_vec)
+        end
+        donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
+        cf_partner_vec = UInt32[]
+        GC.gc()
+        @user_info "MBR Batch F (streaming): loading slim FTR DataFrame..."
+        best_psms = load_ftr_slim_dataframe(file_paths)
+        @user_info "  slim FTR rows: $(nrow(best_psms))"
     else
         @user_info "match_between_runs=false: skipping MBR features and FTR controller"
     end
@@ -145,8 +183,17 @@ function score_precursor_isotope_traces(
         best_psms[!, :mbr_recovered] = falses(nrow(best_psms))
     end
 
-    # 8. Distribute scored PSMs back to the per-file Arrow files
-    write_scored_psms_to_files!(best_psms, file_paths)
+    # 8. Distribute scored PSMs back to the per-file Arrow files.
+    if streaming_mbr
+        @user_info "MBR Batch F (streaming): writing recovery sidecars..."
+        write_recovery_sidecars(best_psms, file_paths)
+        best_psms = DataFrame()
+        GC.gc()
+        @user_info "MBR Batch F (streaming): merging Pass-1+MBR+recovery sidecars..."
+        merge_mbr_sidecars_into_main!(file_paths)
+    else
+        write_scored_psms_to_files!(best_psms, file_paths)
+    end
 
     return nothing
 end
