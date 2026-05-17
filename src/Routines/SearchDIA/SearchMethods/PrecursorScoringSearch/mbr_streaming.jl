@@ -28,10 +28,12 @@ const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
 
 # Columns required to materialise a `_MBRDonorEntry` from a row of the
 # per-file Arrow table.  Listed once so reader and consumer stay in sync.
+# Note: the dual-MBR variant hardcodes `is_decoy=false` on donor entries
+# (the field is unused downstream), so we don't read :is_decoy from the file.
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0, :rt,
     :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
-    :ms_file_idx, :is_decoy)
+    :ms_file_idx)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
 # redundant with the main file (same positions) but kept as alignment
@@ -76,7 +78,6 @@ function build_mbr_donor_dict_streaming(refs::Vector{<:Any})
         f5_c     = tbl.frag5_int
         f6_c     = tbl.frag6_int
         fidx_c   = tbl.ms_file_idx
-        dec_c    = tbl.is_decoy
         @inbounds for i in 1:n
             pid = UInt32(pid_c[i])
             e = _MBRDonorEntry(
@@ -87,7 +88,7 @@ function build_mbr_donor_dict_streaming(refs::Vector{<:Any})
                 rt_c    === nothing ? 0f0 : Float32(rt_c[i]),
                 Float32(f1_c[i]), Float32(f2_c[i]), Float32(f3_c[i]),
                 Float32(f4_c[i]), Float32(f5_c[i]), Float32(f6_c[i]),
-                UInt32(fidx_c[i]), Bool(dec_c[i]),
+                UInt32(fidx_c[i]), false,    # is_decoy unused in dual variant
             )
             entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
             # Streaming top-K insertion: keep up to K entries sorted by
