@@ -222,21 +222,20 @@ function compute_mbr_features_dual!(
          zeros(Float32, nrow(psms)), zeros(Float32, nrow(psms)), zeros(Float32, nrow(psms)))
     n = nrow(psms)
 
-    # Top-K per precursor_idx for the consensus aggregates (median score,
-    # median irt_obs). K = ceil(sqrt(N_files)).
-    # N=1 → K=1; N=2 → K=2; N=5 → K=3; N=10 → K=4; N=20 → K=5; N=100 → K=10.
-    # PIONEER_MBR_DONOR_MODE = "topk" (default) | "top1" gates the experiment:
-    #   "topk": full K = ceil(sqrt(N_files)) donors, median aggregates over top-K
-    #   "top1": K = 2 (only enough for same-file fallback in _donor_for); the
-    #           "median" aggregates degenerate to the single best donor's value,
-    #           so MBR_top_n_median_score_*/MBR_top_n_irt_diff_* become
-    #           duplicates of MBR_max_pair_prob_* / a single-best irt_obs diff.
-    #           Tests whether top-K aggregation is worth the complexity.
-    donor_mode = lowercase(get(ENV, "PIONEER_MBR_DONOR_MODE", "topk"))
-    n_files = Int(maximum(file_v))
-    K = donor_mode == "top1" ? 2 :
-        max(1, ceil(Int, sqrt(Float32(n_files))))
-    # Collect all entries per pid, then trim to top-K by trace_prob descending.
+    # Top-2 per precursor_idx is enough for the same-file-fallback case in
+    # `_donor_for`: each (pid, file) PSM is unique after MainSearch's
+    # best-per-precursor selection + paircomp, so per pid the top-1 and top-2
+    # entries are guaranteed to be from different files. K=2 covers the rare
+    # case where the global best donor is from the row's own file.
+    #
+    # Earlier the code tracked top-K donors (K = ceil(sqrt(N_files))) and
+    # exported MBR_top_n_median_score_* / MBR_top_n_irt_diff_* features (median
+    # over the top-K). 2026-05-16 A/B (PIONEER_MBR_DONOR_MODE=topk vs top1) on
+    # Olsen 23-file + MTAC 6-file (with Astral entrap library) showed the
+    # top-K aggregation has no material effect: |ΔIDs|≤0.7%, ΔPGs marginally
+    # +0.06–0.25% in top-1's favor, entrapment EFDR MAE byte-identical.
+    # Median features removed; top-K aggregation collapsed to K=2.
+    K = 2
     all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
     sizehint!(all_entries, max(64, n ÷ 8))
     @inbounds for i in 1:n
@@ -248,33 +247,11 @@ function compute_mbr_features_dual!(
                            file_v[i], false)
         push!(get!(() -> _MBRDonorEntry[], all_entries, pid), e)
     end
-    # Sort each pid's entries by trace_prob desc, keep top-K.
+    # Sort each pid's entries by trace_prob desc, keep top-K (= 2).
     @inbounds for (_pid, entries) in all_entries
         sort!(entries; by = e -> -e.trace_prob)
         if length(entries) > K
             resize!(entries, K)
-        end
-    end
-
-    # Per-pid aggregates. In topk mode = median over top-K entries; in top1
-    # mode = the single best donor's score / irt_obs (no aggregation).
-    med_score_per_pid    = Dict{UInt32, Float32}()
-    med_irt_obs_per_pid  = Dict{UInt32, Float32}()
-    sizehint!(med_score_per_pid, length(all_entries))
-    sizehint!(med_irt_obs_per_pid, length(all_entries))
-    if donor_mode == "top1"
-        @inbounds for (pid, entries) in all_entries
-            isempty(entries) && continue
-            med_score_per_pid[pid]   = entries[1].trace_prob
-            med_irt_obs_per_pid[pid] = entries[1].irt_obs
-        end
-    else
-        @inbounds for (pid, entries) in all_entries
-            isempty(entries) && continue
-            sc = Float32[e.trace_prob for e in entries]
-            ir = Float32[e.irt_obs    for e in entries]
-            med_score_per_pid[pid]   = Float32(median(sc))
-            med_irt_obs_per_pid[pid] = Float32(median(ir))
         end
     end
 
@@ -295,9 +272,6 @@ function compute_mbr_features_dual!(
     out_le_t  = fill(-1f0, n); out_le_f  = fill(-1f0, n)
     out_ir_t  = fill(-1f0, n); out_ir_f  = fill(-1f0, n)
     out_miss_t = trues(n);     out_miss_f = trues(n)
-    # New features (2026-05-12 evening additions):
-    out_med_score_t = fill(-1f0, n); out_med_score_f = fill(-1f0, n)
-    out_top_irt_t   = fill(-1f0, n); out_top_irt_f   = fill(-1f0, n)
     out_log_by_t    = fill(-1f0, n); out_log_by_f    = fill(-1f0, n)
     # Fragment-pattern cosine + scribe (donor vs recipient observed frag-int 6-vector).
     # Re-incarnation of v0.6.6's MBR_rv_coefficient using fragment-intensity
@@ -375,17 +349,6 @@ function compute_mbr_features_dual!(
                                     frag_v[4][i], frag_v[5][i], frag_v[6][i])
             v_self_has_signal = (v_self_norm[1] + v_self_norm[2] + v_self_norm[3] +
                                   v_self_norm[4] + v_self_norm[5] + v_self_norm[6]) > 0f0
-            # Per-pid aggregates (file-independent; safe to read concurrently).
-            med_s_true = get(med_score_per_pid,   my_pid,     -1f0)
-            med_i_true = get(med_irt_obs_per_pid, my_pid,     irt_obs_v[i])
-            med_s_fls  = get(med_score_per_pid,   my_partner, -1f0)
-            med_i_fls  = get(med_irt_obs_per_pid, my_partner, irt_obs_v[i])
-            out_med_score_t[i] = med_s_true
-            out_med_score_f[i] = med_s_fls
-            if has_irt
-                out_top_irt_t[i] = abs(irt_obs_v[i] - med_i_true)
-                out_top_irt_f[i] = abs(irt_obs_v[i] - med_i_fls)
-            end
             # _true donor
             donor_t = _donor_for(my_pid, my_file)
             if donor_t !== nothing
@@ -463,11 +426,6 @@ function compute_mbr_features_dual!(
     psms[!, :MBR_best_irt_diff_false]        = out_ir_f
     psms[!, :MBR_is_missing_true]            = out_miss_t
     psms[!, :MBR_is_missing_false]           = out_miss_f
-    # New features (2026-05-12 evening additions)
-    psms[!, :MBR_top_n_median_score_true]    = out_med_score_t
-    psms[!, :MBR_top_n_median_score_false]   = out_med_score_f
-    psms[!, :MBR_top_n_irt_diff_true]        = out_top_irt_t
-    psms[!, :MBR_top_n_irt_diff_false]       = out_top_irt_f
     psms[!, :MBR_log_by_diff_true]           = out_log_by_t
     psms[!, :MBR_log_by_diff_false]          = out_log_by_f
     psms[!, :MBR_frag_pattern_cosine_true]   = out_frag_cos_t

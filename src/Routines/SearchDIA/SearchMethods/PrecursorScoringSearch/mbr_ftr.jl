@@ -321,8 +321,6 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_log2_weight_ratio_true,
     :MBR_log2_explained_ratio_true,
     :MBR_best_irt_diff_true,
-    :MBR_top_n_median_score_true,
-    :MBR_top_n_irt_diff_true,
     :MBR_log_by_diff_true,
     :MBR_frag_pattern_cosine_true,
     :MBR_frag_pattern_scribe_true,
@@ -334,6 +332,14 @@ const FTR_FEATURES_F_TRUE = Symbol[
     # rtv2 (2026-05-13): Kendall τ on M0 fragment 6-vector.
     :MBR_frag_rank_corr_true,
 ]
+# Dropped 2026-05-16:
+#   :MBR_top_n_median_score_true
+#   :MBR_top_n_irt_diff_true
+# A/B on Olsen 23-file + MTAC 6-file (top-K aggregation vs top-1 single best
+# donor) showed no material ID, PG, or EFDR-MAE change. The two median-over-
+# top-K features were degenerate noise; removing them simplifies
+# compute_mbr_features_dual! (no median Dict pass, K trimmed to 2 for the
+# same-file fallback only).
 
 # Same features but with the MBR columns swapped to _false. Used for the
 # bottom half of the doubled training frame. Each entry must mirror
@@ -345,8 +351,6 @@ const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_log2_weight_ratio_true    ? :MBR_log2_weight_ratio_false :
     f === :MBR_log2_explained_ratio_true ? :MBR_log2_explained_ratio_false :
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
-    f === :MBR_top_n_median_score_true   ? :MBR_top_n_median_score_false :
-    f === :MBR_top_n_irt_diff_true       ? :MBR_top_n_irt_diff_false :
     f === :MBR_log_by_diff_true          ? :MBR_log_by_diff_false :
     f === :MBR_frag_pattern_cosine_true  ? :MBR_frag_pattern_cosine_false :
     f === :MBR_frag_pattern_scribe_true  ? :MBR_frag_pattern_scribe_false :
