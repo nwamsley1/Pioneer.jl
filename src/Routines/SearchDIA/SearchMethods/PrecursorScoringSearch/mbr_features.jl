@@ -225,8 +225,17 @@ function compute_mbr_features_dual!(
     # Top-K per precursor_idx for the consensus aggregates (median score,
     # median irt_obs). K = ceil(sqrt(N_files)).
     # N=1 → K=1; N=2 → K=2; N=5 → K=3; N=10 → K=4; N=20 → K=5; N=100 → K=10.
-    n_files = length(Set(file_v))
-    K = max(1, ceil(Int, sqrt(Float32(n_files))))
+    # PIONEER_MBR_DONOR_MODE = "topk" (default) | "top1" gates the experiment:
+    #   "topk": full K = ceil(sqrt(N_files)) donors, median aggregates over top-K
+    #   "top1": K = 2 (only enough for same-file fallback in _donor_for); the
+    #           "median" aggregates degenerate to the single best donor's value,
+    #           so MBR_top_n_median_score_*/MBR_top_n_irt_diff_* become
+    #           duplicates of MBR_max_pair_prob_* / a single-best irt_obs diff.
+    #           Tests whether top-K aggregation is worth the complexity.
+    donor_mode = lowercase(get(ENV, "PIONEER_MBR_DONOR_MODE", "topk"))
+    n_files = Int(maximum(file_v))
+    K = donor_mode == "top1" ? 2 :
+        max(1, ceil(Int, sqrt(Float32(n_files))))
     # Collect all entries per pid, then trim to top-K by trace_prob descending.
     all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
     sizehint!(all_entries, max(64, n ÷ 8))
@@ -247,17 +256,26 @@ function compute_mbr_features_dual!(
         end
     end
 
-    # Per-pid aggregates over the top-K entries.
+    # Per-pid aggregates. In topk mode = median over top-K entries; in top1
+    # mode = the single best donor's score / irt_obs (no aggregation).
     med_score_per_pid    = Dict{UInt32, Float32}()
     med_irt_obs_per_pid  = Dict{UInt32, Float32}()
     sizehint!(med_score_per_pid, length(all_entries))
     sizehint!(med_irt_obs_per_pid, length(all_entries))
-    @inbounds for (pid, entries) in all_entries
-        isempty(entries) && continue
-        sc = Float32[e.trace_prob for e in entries]
-        ir = Float32[e.irt_obs    for e in entries]
-        med_score_per_pid[pid]   = Float32(median(sc))
-        med_irt_obs_per_pid[pid] = Float32(median(ir))
+    if donor_mode == "top1"
+        @inbounds for (pid, entries) in all_entries
+            isempty(entries) && continue
+            med_score_per_pid[pid]   = entries[1].trace_prob
+            med_irt_obs_per_pid[pid] = entries[1].irt_obs
+        end
+    else
+        @inbounds for (pid, entries) in all_entries
+            isempty(entries) && continue
+            sc = Float32[e.trace_prob for e in entries]
+            ir = Float32[e.irt_obs    for e in entries]
+            med_score_per_pid[pid]   = Float32(median(sc))
+            med_irt_obs_per_pid[pid] = Float32(median(ir))
+        end
     end
 
     # Helper: top-prepass donor for pid with file != my_file.
