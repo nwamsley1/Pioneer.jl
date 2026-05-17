@@ -90,7 +90,6 @@ function add_features!(psms::DataFrame,
     prec_charge = getCharge(precursors_lib)
     entrap_group_ids = getEntrapmentGroupId(precursors_lib)
     precursor_missed_cleavage = getMissedCleavages(precursors_lib)
-    precursor_pair_idxs = getPairIdx(precursors_lib)
     prec_length = getLength(precursors_lib)
     ###########################
     #Allocate new columns
@@ -112,7 +111,6 @@ function add_features!(psms::DataFrame,
     # Columns only needed for Phase 2 (full feature set)
     if !prescore_only
         irt_diff = zeros(Float32, N)
-        pair_idxs = zeros(UInt32, N)
         entrap_group_id = zeros(UInt8, N)
         adjusted_intensity_explained = zeros(Float16, N);
         prec_charges = zeros(UInt8, N)
@@ -185,7 +183,6 @@ function add_features!(psms::DataFrame,
                 TIC[i] = Float16(log2(tic[scan_idx[i]]))
                 adjusted_intensity_explained[i] = Float16(log2(TIC[i]) + log2_intensity_explained[i]);
                 prec_charges[i] = prec_charge[prec_idx]
-                pair_idxs[i] = extract_pair_idx(precursor_pair_idxs, prec_idx)
                 prec_mzs[i] = prec_mz[prec_idx];
             end
         end
@@ -208,7 +205,6 @@ function add_features!(psms::DataFrame,
         psms[!,:tic] = TIC
         psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
         psms[!,:charge] = prec_charges
-        psms[!,:pair_id] = pair_idxs
         psms[!,:prec_mz] = prec_mzs
         psms[!,:entrapment_group_id] = entrap_group_id
         psms[!,:ms_file_idx] .= ms_file_idx

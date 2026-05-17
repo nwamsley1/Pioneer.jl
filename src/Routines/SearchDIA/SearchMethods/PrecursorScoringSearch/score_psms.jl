@@ -63,10 +63,7 @@ function score_precursor_isotope_traces(
     n_psms = nrow(best_psms)
     @debug_l1 "PSM scoring: $n_psms PSMs loaded for experiment-wide LightGBM"
 
-    # 1b. MBR Phase 1: regenerate 1:1 target↔decoy :pair_id (see mbr_pairing.jl).
-    regenerate_pair_ids!(best_psms, precursors)
-
-    # 1c. MBR Batch F: build experiment-global counterfactual partner map.
+    # 1b. MBR Batch F: build experiment-global counterfactual partner map.
     # Adds :counterfactual_partner_pid (used downstream by the MBR streaming
     # pipeline to look up each row's _false donor).
     # iRT-NN variant: closest-pred-iRT opposite within (cv_fold × mz_decile).

@@ -32,7 +32,6 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         all_base_pep_ids = getBasePepId(precursors)::AbstractVector{UInt32}
         all_structural_mods = getStructuralMods(precursors)::AbstractVector{Union{Missing, String}}
         all_isotopic_mods = getIsotopicMods(precursors)::AbstractVector{Union{Missing, String}}
-        all_pair_ids = getPairIdx(precursors)
 
         precursor_idx = df.precursor_idx::AbstractVector{UInt32}
         n_rows = length(precursor_idx)
@@ -84,12 +83,6 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
             isotopic_mods[i] = coalesce(all_isotopic_mods[precursor_idx[i]], "")
         end
         df.isotopic_mods = isotopic_mods
-
-        pair_ids = Vector{UInt32}(undef, n_rows)
-        for i in 1:n_rows
-            pair_ids[i] = extract_pair_idx(all_pair_ids, precursor_idx[i])
-        end
-        df.pair_id = pair_ids
 
         return df
     end

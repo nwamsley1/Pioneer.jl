@@ -463,16 +463,14 @@ so the compiler specializes on concrete types, eliminating dynamic dispatch.
 function _compute_phase2_columns!(
         prec_idx_col::AbstractVector{UInt32},
         irt_obs_col::AbstractVector{Float32},
-        prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
+        prec_irt, prec_mz_arr, entrap_group_ids,
         irt_diff_col::Vector{Float32},
         prec_mz_col::Vector{Float32},
-        pair_id_col::Vector{UInt32},
         entrap_col::Vector{UInt8})
     @inbounds for i in eachindex(prec_idx_col)
         pid = prec_idx_col[i]
         irt_diff_col[i] = abs(irt_obs_col[i] - prec_irt[pid])
         prec_mz_col[i] = prec_mz_arr[pid]
-        pair_id_col[i] = extract_pair_idx(prec_pair_idxs, pid)
         entrap_col[i] = entrap_group_ids[pid]
     end
     return nothing
@@ -524,7 +522,6 @@ function summarize_results!(
     # Library lookups (shared across files)
     prec_irt = lib_irt
     prec_mz_arr = getMz(precursors)
-    prec_pair_idxs = getPairIdx(precursors)
     entrap_group_ids = getEntrapmentGroupId(precursors)
 
     n_processed_files = 0
@@ -574,16 +571,14 @@ function summarize_results!(
             N = nrow(tbl)
             irt_diff_col = Vector{Float32}(undef, N)
             prec_mz_col = Vector{Float32}(undef, N)
-            pair_id_col = Vector{UInt32}(undef, N)
             entrap_col = Vector{UInt8}(undef, N)
             _compute_phase2_columns!(
                 tbl[!, :precursor_idx], tbl[!, :irt_obs],
-                prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
-                irt_diff_col, prec_mz_col, pair_id_col, entrap_col
+                prec_irt, prec_mz_arr, entrap_group_ids,
+                irt_diff_col, prec_mz_col, entrap_col
             )
             tbl[!, :irt_diff] = irt_diff_col
             tbl[!, :prec_mz] = prec_mz_col
-            tbl[!, :pair_id] = pair_id_col
             tbl[!, :entrapment_group_id] = entrap_col
 
             sort!(tbl, :rt)
