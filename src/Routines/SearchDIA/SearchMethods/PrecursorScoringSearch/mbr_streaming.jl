@@ -32,7 +32,6 @@ const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
 # (the field is unused downstream), so we don't read :is_decoy from the file.
 const _MBR_DONOR_COLS = (:precursor_idx, :trace_prob_prepass, :weight,
     :log2_intensity_explained, :irt_pred, :irt_obs, :log_by_ratio_m0, :rt,
-    :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int,
     :ms_file_idx)
 
 # Columns the per-file MBR sidecar emits. precursor_idx + scan_idx are
@@ -45,10 +44,7 @@ const _MBR_SIDECAR_OUT_COLS = (:precursor_idx, :scan_idx,
     :MBR_best_irt_diff_true,        :MBR_best_irt_diff_false,
     :MBR_is_missing_true,           :MBR_is_missing_false,
     :MBR_log_by_diff_true,          :MBR_log_by_diff_false,
-    :MBR_frag_pattern_cosine_true,  :MBR_frag_pattern_cosine_false,
-    :MBR_frag_pattern_scribe_true,  :MBR_frag_pattern_scribe_false,
     :MBR_best_rt_diff_true,         :MBR_best_rt_diff_false,
-    :MBR_frag_rank_corr_true,       :MBR_frag_rank_corr_false,
 )
 
 # Build the top-2 donor entries per precursor_idx by streaming `refs`. Reads
@@ -71,12 +67,6 @@ function build_mbr_donor_dict_streaming(refs::Vector{<:Any})
         irto_c   = tbl.irt_obs
         logby_c  = hasproperty(tbl, :log_by_ratio_m0) ? tbl.log_by_ratio_m0 : nothing
         rt_c     = hasproperty(tbl, :rt) ? tbl.rt : nothing
-        f1_c     = tbl.frag1_int
-        f2_c     = tbl.frag2_int
-        f3_c     = tbl.frag3_int
-        f4_c     = tbl.frag4_int
-        f5_c     = tbl.frag5_int
-        f6_c     = tbl.frag6_int
         fidx_c   = tbl.ms_file_idx
         @inbounds for i in 1:n
             pid = UInt32(pid_c[i])
@@ -86,8 +76,6 @@ function build_mbr_donor_dict_streaming(refs::Vector{<:Any})
                 Float32(irto_c[i]),
                 logby_c === nothing ? 0f0 : Float32(logby_c[i]),
                 rt_c    === nothing ? 0f0 : Float32(rt_c[i]),
-                Float32(f1_c[i]), Float32(f2_c[i]), Float32(f3_c[i]),
-                Float32(f4_c[i]), Float32(f5_c[i]), Float32(f6_c[i]),
                 UInt32(fidx_c[i]), false,    # is_decoy unused in dual variant
             )
             entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
@@ -134,8 +122,6 @@ function compute_mbr_features_per_file_to_sidecar!(ref::Any,
     irto_v  = tbl.irt_obs
     logby_v = hasproperty(tbl, :log_by_ratio_m0) ? tbl.log_by_ratio_m0 : nothing
     rt_v    = hasproperty(tbl, :rt) ? tbl.rt : nothing
-    f1_v    = tbl.frag1_int; f2_v = tbl.frag2_int; f3_v = tbl.frag3_int
-    f4_v    = tbl.frag4_int; f5_v = tbl.frag5_int; f6_v = tbl.frag6_int
 
     out_max_t = fill(-1f0, n); out_max_f = fill(-1f0, n)
     out_lw_t  = fill(-1f0, n); out_lw_f  = fill(-1f0, n)
@@ -143,39 +129,11 @@ function compute_mbr_features_per_file_to_sidecar!(ref::Any,
     out_ir_t  = fill(-1f0, n); out_ir_f  = fill(-1f0, n)
     out_miss_t = trues(n);     out_miss_f = trues(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
-    out_frag_cos_t = fill(-1f0, n); out_frag_cos_f = fill(-1f0, n)
-    out_frag_scr_t = fill(-1f0, n); out_frag_scr_f = fill(-1f0, n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
-    out_frag_kt_t = fill(-2f0, n); out_frag_kt_f = fill(-2f0, n)
 
     has_logby = logby_v !== nothing
     has_rt    = rt_v    !== nothing
 
-    # Inline fragment-pattern helpers (kept here for streaming-path use).
-    @inline _norm_l1(a, b, c, d, e, f) = begin
-        s = a + b + c + d + e + f
-        s > 0f0 ? (a/s, b/s, c/s, d/s, e/s, f/s) : (0f0, 0f0, 0f0, 0f0, 0f0, 0f0)
-    end
-    @inline _cosine6(p::NTuple{6,Float32}, q::NTuple{6,Float32}) = begin
-        dot = p[1]*q[1]+p[2]*q[2]+p[3]*q[3]+p[4]*q[4]+p[5]*q[5]+p[6]*q[6]
-        np2 = p[1]^2+p[2]^2+p[3]^2+p[4]^2+p[5]^2+p[6]^2
-        nq2 = q[1]^2+q[2]^2+q[3]^2+q[4]^2+q[5]^2+q[6]^2
-        d = sqrt(np2*nq2); d > 0f0 ? Float32(dot/d) : 0f0
-    end
-    @inline _scribe6(p::NTuple{6,Float32}, q::NTuple{6,Float32}) = begin
-        ad = abs(p[1]-q[1])+abs(p[2]-q[2])+abs(p[3]-q[3])+abs(p[4]-q[4])+abs(p[5]-q[5])+abs(p[6]-q[6])
-        Float32(-log2(ad/2f0 + 1f-6))
-    end
-    @inline _kendall6(p::NTuple{6,Float32}, q::NTuple{6,Float32}) = begin
-        nc = 0; nd = 0
-        @inbounds for i in 1:5, j in (i+1):6
-            di = p[i] - p[j]; dj = q[i] - q[j]
-            si = di > 0f0 ? 1 : (di < 0f0 ? -1 : 0)
-            sj = dj > 0f0 ? 1 : (dj < 0f0 ? -1 : 0)
-            (si != 0 && sj != 0) && (si == sj ? (nc += 1) : (nd += 1))
-        end
-        nt = nc + nd; nt > 0 ? Float32((nc - nd) / nt) : -2f0
-    end
     @inline function _donor_for(pid::UInt32, my_file::UInt32)
         entries = get(donor_dict, pid, nothing)
         entries === nothing && return nothing
@@ -193,11 +151,6 @@ function compute_mbr_features_per_file_to_sidecar!(ref::Any,
                       (ismissing(partner_col[my_pidx]) ? UInt32(0) : UInt32(partner_col[my_pidx])) :
                       UInt32(0)
 
-        v_self_norm = _norm_l1(Float32(f1_v[i]), Float32(f2_v[i]), Float32(f3_v[i]),
-                               Float32(f4_v[i]), Float32(f5_v[i]), Float32(f6_v[i]))
-        v_self_has_signal = (v_self_norm[1]+v_self_norm[2]+v_self_norm[3]+
-                             v_self_norm[4]+v_self_norm[5]+v_self_norm[6]) > 0f0
-
         # True donor (this precursor in another file)
         donor_t = _donor_for(my_pid, my_file)
         if donor_t !== nothing
@@ -212,17 +165,6 @@ function compute_mbr_features_per_file_to_sidecar!(ref::Any,
             end
             if has_rt
                 out_rt_t[i] = abs(Float32(rt_v[i]) - donor_t.rt_obs)
-            end
-            if v_self_has_signal
-                v_donor_norm = _norm_l1(donor_t.frag1_int, donor_t.frag2_int, donor_t.frag3_int,
-                                         donor_t.frag4_int, donor_t.frag5_int, donor_t.frag6_int)
-                v_donor_has_signal = (v_donor_norm[1]+v_donor_norm[2]+v_donor_norm[3]+
-                                      v_donor_norm[4]+v_donor_norm[5]+v_donor_norm[6]) > 0f0
-                if v_donor_has_signal
-                    out_frag_cos_t[i] = _cosine6(v_self_norm, v_donor_norm)
-                    out_frag_scr_t[i] = _scribe6(v_self_norm, v_donor_norm)
-                    out_frag_kt_t[i]  = _kendall6(v_self_norm, v_donor_norm)
-                end
             end
             out_miss_t[i] = false
         end
@@ -242,17 +184,6 @@ function compute_mbr_features_per_file_to_sidecar!(ref::Any,
                 end
                 if has_rt
                     out_rt_f[i] = abs(Float32(rt_v[i]) - donor_f.rt_obs)
-                end
-                if v_self_has_signal
-                    v_donor_norm = _norm_l1(donor_f.frag1_int, donor_f.frag2_int, donor_f.frag3_int,
-                                             donor_f.frag4_int, donor_f.frag5_int, donor_f.frag6_int)
-                    v_donor_has_signal = (v_donor_norm[1]+v_donor_norm[2]+v_donor_norm[3]+
-                                          v_donor_norm[4]+v_donor_norm[5]+v_donor_norm[6]) > 0f0
-                    if v_donor_has_signal
-                        out_frag_cos_f[i] = _cosine6(v_self_norm, v_donor_norm)
-                        out_frag_scr_f[i] = _scribe6(v_self_norm, v_donor_norm)
-                        out_frag_kt_f[i]  = _kendall6(v_self_norm, v_donor_norm)
-                    end
                 end
                 out_miss_f[i] = false
             end
@@ -275,14 +206,8 @@ function compute_mbr_features_per_file_to_sidecar!(ref::Any,
         MBR_is_missing_false           = out_miss_f,
         MBR_log_by_diff_true           = out_log_by_t,
         MBR_log_by_diff_false          = out_log_by_f,
-        MBR_frag_pattern_cosine_true   = out_frag_cos_t,
-        MBR_frag_pattern_cosine_false  = out_frag_cos_f,
-        MBR_frag_pattern_scribe_true   = out_frag_scr_t,
-        MBR_frag_pattern_scribe_false  = out_frag_scr_f,
         MBR_best_rt_diff_true          = out_rt_t,
         MBR_best_rt_diff_false         = out_rt_f,
-        MBR_frag_rank_corr_true        = out_frag_kt_t,
-        MBR_frag_rank_corr_false       = out_frag_kt_f,
     )
     writeArrow(sidecar_path, sidecar_df)
     return sidecar_path
@@ -415,8 +340,6 @@ function build_mbr_donor_dict_streaming_with_pass1(refs::Vector{<:Any})
         irto_c  = main.irt_obs
         logby_c = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
         rt_c    = hasproperty(main, :rt)             ? main.rt             : nothing
-        f1_c    = main.frag1_int; f2_c = main.frag2_int; f3_c = main.frag3_int
-        f4_c    = main.frag4_int; f5_c = main.frag5_int; f6_c = main.frag6_int
         fidx_c  = main.ms_file_idx
         @inbounds for i in 1:n
             # Sanity-check alignment (cheap: one cmp per row)
@@ -429,8 +352,6 @@ function build_mbr_donor_dict_streaming_with_pass1(refs::Vector{<:Any})
                 Float32(irto_c[i]),
                 logby_c === nothing ? 0f0 : Float32(logby_c[i]),
                 rt_c    === nothing ? 0f0 : Float32(rt_c[i]),
-                Float32(f1_c[i]), Float32(f2_c[i]), Float32(f3_c[i]),
-                Float32(f4_c[i]), Float32(f5_c[i]), Float32(f6_c[i]),
                 UInt32(fidx_c[i]), false,
             )
             entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
@@ -474,8 +395,6 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(ref::Any,
     irto_v  = main.irt_obs
     logby_v = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
     rt_v    = hasproperty(main, :rt) ? main.rt : nothing
-    f1_v    = main.frag1_int; f2_v = main.frag2_int; f3_v = main.frag3_int
-    f4_v    = main.frag4_int; f5_v = main.frag5_int; f6_v = main.frag6_int
 
     @inbounds for i in 1:n
         (pid_v[i] == pass1.precursor_idx[i] && scan_v[i] == pass1.scan_idx[i]) ||
@@ -488,37 +407,10 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(ref::Any,
     out_ir_t  = fill(-1f0, n); out_ir_f  = fill(-1f0, n)
     out_miss_t = trues(n);     out_miss_f = trues(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
-    out_frag_cos_t = fill(-1f0, n); out_frag_cos_f = fill(-1f0, n)
-    out_frag_scr_t = fill(-1f0, n); out_frag_scr_f = fill(-1f0, n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
-    out_frag_kt_t = fill(-2f0, n); out_frag_kt_f = fill(-2f0, n)
     has_logby = logby_v !== nothing
     has_rt    = rt_v    !== nothing
 
-    @inline _norm_l1(a, b, c, d, e, f) = begin
-        s = a + b + c + d + e + f
-        s > 0f0 ? (a/s, b/s, c/s, d/s, e/s, f/s) : (0f0, 0f0, 0f0, 0f0, 0f0, 0f0)
-    end
-    @inline _cosine6(p::NTuple{6,Float32}, q::NTuple{6,Float32}) = begin
-        dot = p[1]*q[1]+p[2]*q[2]+p[3]*q[3]+p[4]*q[4]+p[5]*q[5]+p[6]*q[6]
-        np2 = p[1]^2+p[2]^2+p[3]^2+p[4]^2+p[5]^2+p[6]^2
-        nq2 = q[1]^2+q[2]^2+q[3]^2+q[4]^2+q[5]^2+q[6]^2
-        d = sqrt(np2*nq2); d > 0f0 ? Float32(dot/d) : 0f0
-    end
-    @inline _scribe6(p::NTuple{6,Float32}, q::NTuple{6,Float32}) = begin
-        ad = abs(p[1]-q[1])+abs(p[2]-q[2])+abs(p[3]-q[3])+abs(p[4]-q[4])+abs(p[5]-q[5])+abs(p[6]-q[6])
-        Float32(-log2(ad/2f0 + 1f-6))
-    end
-    @inline _kendall6(p::NTuple{6,Float32}, q::NTuple{6,Float32}) = begin
-        nc = 0; nd = 0
-        @inbounds for i in 1:5, j in (i+1):6
-            di = p[i] - p[j]; dj = q[i] - q[j]
-            si = di > 0f0 ? 1 : (di < 0f0 ? -1 : 0)
-            sj = dj > 0f0 ? 1 : (dj < 0f0 ? -1 : 0)
-            (si != 0 && sj != 0) && (si == sj ? (nc += 1) : (nd += 1))
-        end
-        nt = nc + nd; nt > 0 ? Float32((nc - nd) / nt) : -2f0
-    end
     @inline function _donor_for(pid::UInt32, my_file::UInt32)
         entries = get(donor_dict, pid, nothing)
         entries === nothing && return nothing
@@ -535,11 +427,6 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(ref::Any,
                       (ismissing(partner_col[Int(my_pid)]) ? UInt32(0) : UInt32(partner_col[Int(my_pid)])) :
                       UInt32(0)
 
-        v_self_norm = _norm_l1(Float32(f1_v[i]), Float32(f2_v[i]), Float32(f3_v[i]),
-                               Float32(f4_v[i]), Float32(f5_v[i]), Float32(f6_v[i]))
-        v_self_has_signal = (v_self_norm[1]+v_self_norm[2]+v_self_norm[3]+
-                             v_self_norm[4]+v_self_norm[5]+v_self_norm[6]) > 0f0
-
         donor_t = _donor_for(my_pid, my_file)
         if donor_t !== nothing
             out_max_t[i] = donor_t.trace_prob
@@ -550,17 +437,6 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(ref::Any,
             out_ir_t[i] = abs(Float32(irtp_v[i] - irto_v[i]) - donor_t.irt_residual)
             has_logby && (out_log_by_t[i] = Float32(logby_v[i]) - donor_t.log_by_ratio)
             has_rt    && (out_rt_t[i]     = abs(Float32(rt_v[i]) - donor_t.rt_obs))
-            if v_self_has_signal
-                v_donor_norm = _norm_l1(donor_t.frag1_int, donor_t.frag2_int, donor_t.frag3_int,
-                                         donor_t.frag4_int, donor_t.frag5_int, donor_t.frag6_int)
-                v_donor_has_signal = (v_donor_norm[1]+v_donor_norm[2]+v_donor_norm[3]+
-                                      v_donor_norm[4]+v_donor_norm[5]+v_donor_norm[6]) > 0f0
-                if v_donor_has_signal
-                    out_frag_cos_t[i] = _cosine6(v_self_norm, v_donor_norm)
-                    out_frag_scr_t[i] = _scribe6(v_self_norm, v_donor_norm)
-                    out_frag_kt_t[i]  = _kendall6(v_self_norm, v_donor_norm)
-                end
-            end
             out_miss_t[i] = false
         end
         if my_partner != UInt32(0)
@@ -574,17 +450,6 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(ref::Any,
                 out_ir_f[i] = abs(Float32(irtp_v[i] - irto_v[i]) - donor_f.irt_residual)
                 has_logby && (out_log_by_f[i] = Float32(logby_v[i]) - donor_f.log_by_ratio)
                 has_rt    && (out_rt_f[i]     = abs(Float32(rt_v[i]) - donor_f.rt_obs))
-                if v_self_has_signal
-                    v_donor_norm = _norm_l1(donor_f.frag1_int, donor_f.frag2_int, donor_f.frag3_int,
-                                             donor_f.frag4_int, donor_f.frag5_int, donor_f.frag6_int)
-                    v_donor_has_signal = (v_donor_norm[1]+v_donor_norm[2]+v_donor_norm[3]+
-                                          v_donor_norm[4]+v_donor_norm[5]+v_donor_norm[6]) > 0f0
-                    if v_donor_has_signal
-                        out_frag_cos_f[i] = _cosine6(v_self_norm, v_donor_norm)
-                        out_frag_scr_f[i] = _scribe6(v_self_norm, v_donor_norm)
-                        out_frag_kt_f[i]  = _kendall6(v_self_norm, v_donor_norm)
-                    end
-                end
                 out_miss_f[i] = false
             end
         end
@@ -606,14 +471,8 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(ref::Any,
         MBR_is_missing_false           = out_miss_f,
         MBR_log_by_diff_true           = out_log_by_t,
         MBR_log_by_diff_false          = out_log_by_f,
-        MBR_frag_pattern_cosine_true   = out_frag_cos_t,
-        MBR_frag_pattern_cosine_false  = out_frag_cos_f,
-        MBR_frag_pattern_scribe_true   = out_frag_scr_t,
-        MBR_frag_pattern_scribe_false  = out_frag_scr_f,
         MBR_best_rt_diff_true          = out_rt_t,
         MBR_best_rt_diff_false         = out_rt_f,
-        MBR_frag_rank_corr_true        = out_frag_kt_t,
-        MBR_frag_rank_corr_false       = out_frag_kt_f,
     )
     writeArrow(side_path, side_df)
     return side_path

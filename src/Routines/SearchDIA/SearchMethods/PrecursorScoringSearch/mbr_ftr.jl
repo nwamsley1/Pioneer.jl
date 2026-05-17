@@ -314,7 +314,8 @@ end
 # Dead features dropped (gain ≈ 0 across all rtv3/rtv4 runs):
 #   - MBR_is_missing_true (the -1 sentinel on every other MBR feature
 #     already encodes missingness)
-#   - MBR_frag_top1_match_true (redundant with MBR_frag_rank_corr_true)
+#   - MBR_frag_top1_match_true (was redundant with MBR_frag_rank_corr_true;
+#     both subsequently dropped along with the other M0 frag-6-vector features)
 const FTR_FEATURES_F_TRUE = Symbol[
     :trace_prob_infold,                            # rtv3: in-fold Pass-1 score
     :MBR_max_pair_prob_true,
@@ -322,24 +323,23 @@ const FTR_FEATURES_F_TRUE = Symbol[
     :MBR_log2_explained_ratio_true,
     :MBR_best_irt_diff_true,
     :MBR_log_by_diff_true,
-    :MBR_frag_pattern_cosine_true,
-    :MBR_frag_pattern_scribe_true,
     # rtv1 (2026-05-13): literal donor-vs-recipient scan RT diff.
     # Standalone A/B was negative — kept in slim FTR because it gets
     # ~5,900 gain at rank #6 in rtv4 alongside trace_prob_infold.
     # Don't drop without first restoring the in-fold score context.
     :MBR_best_rt_diff_true,
-    # rtv2 (2026-05-13): Kendall τ on M0 fragment 6-vector.
-    :MBR_frag_rank_corr_true,
 ]
 # Dropped 2026-05-16:
-#   :MBR_top_n_median_score_true
-#   :MBR_top_n_irt_diff_true
-# A/B on Olsen 23-file + MTAC 6-file (top-K aggregation vs top-1 single best
-# donor) showed no material ID, PG, or EFDR-MAE change. The two median-over-
-# top-K features were degenerate noise; removing them simplifies
-# compute_mbr_features_dual! (no median Dict pass, K trimmed to 2 for the
-# same-file fallback only).
+#   :MBR_top_n_median_score_true / :MBR_top_n_irt_diff_true
+#   A/B on Olsen 23-file + MTAC 6-file (top-K vs top-1 donor): no material ID,
+#   PG, or EFDR-MAE change. K trimmed to 2 for same-file fallback only.
+# Dropped 2026-05-17:
+#   :MBR_frag_pattern_cosine_true / :_scribe_true / :MBR_frag_rank_corr_true
+#   A/B on YeastMBR 40-file + HelaOnly 20-file: dropping the three M0 fragment
+#   6-vector features lowered Dennis FTR 2.59 % → 2.40 % and raised PGs +0.16 %,
+#   at a cost of −0.06 % precursor IDs / −2.1 % MBR recoveries (YeastMBR);
+#   HelaOnly pure-FTR 0.252 % → 0.242 %, PGs +0.33 %, IDs −0.65 %. Net quality
+#   win; donor entries no longer need frag1_int..frag6_int.
 
 # Same features but with the MBR columns swapped to _false. Used for the
 # bottom half of the doubled training frame. Each entry must mirror
@@ -352,10 +352,7 @@ const FTR_FEATURES_F_FALSE = Symbol[
     f === :MBR_log2_explained_ratio_true ? :MBR_log2_explained_ratio_false :
     f === :MBR_best_irt_diff_true        ? :MBR_best_irt_diff_false :
     f === :MBR_log_by_diff_true          ? :MBR_log_by_diff_false :
-    f === :MBR_frag_pattern_cosine_true  ? :MBR_frag_pattern_cosine_false :
-    f === :MBR_frag_pattern_scribe_true  ? :MBR_frag_pattern_scribe_false :
     f === :MBR_best_rt_diff_true         ? :MBR_best_rt_diff_false :
-    f === :MBR_frag_rank_corr_true       ? :MBR_frag_rank_corr_false :
     f
     for f in FTR_FEATURES_F_TRUE
 ]
@@ -437,17 +434,7 @@ function apply_mbr_filter_paired!(
     # Top half: real-MBR rows (FTR_FEATURES_F_TRUE values). Label = true.
     # Bottom half: same candidates with _false MBR values swapped in. Label = false.
     sub = psms[cand_idx, :]
-    # Env gate: drop the three fragment-pattern features (cosine6, scribe6,
-    # Kendall τ on M0 fragment 6-vector) to A/B-test their contribution.
-    drop_frag_pattern = get(ENV, "PIONEER_FTR_DROP_FRAG_PATTERN", "0") == "1"
-    base_true = drop_frag_pattern ?
-        filter(f -> !(f in (:MBR_frag_pattern_cosine_true,
-                            :MBR_frag_pattern_scribe_true,
-                            :MBR_frag_rank_corr_true)),
-               FTR_FEATURES_F_TRUE) :
-        FTR_FEATURES_F_TRUE
-    drop_frag_pattern && @user_info "FTR: PIONEER_FTR_DROP_FRAG_PATTERN=1 — dropping cosine6/scribe6/Kendall τ features"
-    available_true  = filter(f -> hasproperty(sub, f), base_true)
+    available_true  = filter(f -> hasproperty(sub, f), FTR_FEATURES_F_TRUE)
     # Position-aligned _false set (only matters that the MBR cols flip; non-MBR
     # cols are identical between TRUE and FALSE lists, so available_true tells
     # us which non-MBR cols actually exist).

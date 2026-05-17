@@ -70,9 +70,8 @@ const ADVANCED_FEATURE_SET = [
     :MBR_log2_explained_ratio_true,
     :MBR_best_irt_diff_true,
     :MBR_is_missing_true,
-    # rtv1 + rtv2 (2026-05-13)
+    # rtv1 (2026-05-13)
     :MBR_best_rt_diff_true,
-    :MBR_frag_rank_corr_true,
 ]
 
 """
