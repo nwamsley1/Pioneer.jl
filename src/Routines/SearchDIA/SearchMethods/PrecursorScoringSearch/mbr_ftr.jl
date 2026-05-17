@@ -437,7 +437,17 @@ function apply_mbr_filter_paired!(
     # Top half: real-MBR rows (FTR_FEATURES_F_TRUE values). Label = true.
     # Bottom half: same candidates with _false MBR values swapped in. Label = false.
     sub = psms[cand_idx, :]
-    available_true  = filter(f -> hasproperty(sub, f), FTR_FEATURES_F_TRUE)
+    # Env gate: drop the three fragment-pattern features (cosine6, scribe6,
+    # Kendall τ on M0 fragment 6-vector) to A/B-test their contribution.
+    drop_frag_pattern = get(ENV, "PIONEER_FTR_DROP_FRAG_PATTERN", "0") == "1"
+    base_true = drop_frag_pattern ?
+        filter(f -> !(f in (:MBR_frag_pattern_cosine_true,
+                            :MBR_frag_pattern_scribe_true,
+                            :MBR_frag_rank_corr_true)),
+               FTR_FEATURES_F_TRUE) :
+        FTR_FEATURES_F_TRUE
+    drop_frag_pattern && @user_info "FTR: PIONEER_FTR_DROP_FRAG_PATTERN=1 — dropping cosine6/scribe6/Kendall τ features"
+    available_true  = filter(f -> hasproperty(sub, f), base_true)
     # Position-aligned _false set (only matters that the MBR cols flip; non-MBR
     # cols are identical between TRUE and FALSE lists, so available_true tells
     # us which non-MBR cols actually exist).
