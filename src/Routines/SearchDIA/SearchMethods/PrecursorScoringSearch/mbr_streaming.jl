@@ -245,71 +245,107 @@ end
 const PASS1_SIDECAR_SUFFIX    = ".pass1_sidecar.arrow"
 const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
 
-# Distribute Pass-1 LightGBM scores (trace_prob_prepass, trace_prob_infold)
-# back to per-(file, fold) Pass-1 sidecars. best_psms is grouped by
-# (ms_file_idx, cv_fold) — within-group row order matches each main file's
-# row order because load_psms_for_lightgbm preserves Arrow.Table row order.
-function write_pass1_score_sidecars!(best_psms::DataFrame, file_paths::Vector{String})
-    # Build (ms_file_idx, cv_fold) → main path map by peeking at each file.
-    is_fold_split = any(p -> occursin("_fold", p), file_paths)
-    key_to_path = if is_fold_split
-        d = Dict{Tuple{UInt32, UInt8}, String}()
-        for fpath in file_paths
-            fold_match = match(r"_fold(\d)\.arrow$", fpath)
-            fold_match === nothing && continue
-            fold_num = parse(UInt8, fold_match.captures[1])
-            orig = Arrow.Table(fpath)
-            length(orig.ms_file_idx) == 0 && continue
-            d[(UInt32(first(orig.ms_file_idx)), fold_num)] = fpath
-        end
-        d
-    else
-        d = Dict{UInt32, String}()
-        for fpath in file_paths
-            orig = Arrow.Table(fpath)
-            length(orig.ms_file_idx) == 0 && continue
-            d[UInt32(first(orig.ms_file_idx))] = fpath
-        end
-        d
-    end
+# Slice [offset+1 .. offset+n] out of the four Pass-1 columns and write the
+# sidecar at `side_path`. Concrete `AbstractVector{T}` signatures force Julia
+# to specialise on the eltype (UInt32 / Float32 — see caller for the
+# rationale) and act as a schema guard. View-based, no per-column copies.
+#
+# `main_pid_first` / `main_scn_first` are the first-row pid/scan of the main
+# file we're slicing for; we assert they match best_psms[offset+1, :] so
+# producer/consumer drift fails loud.
+function _emit_pass1_sidecar!(
+    side_path::String,
+    pid_v::AbstractVector{UInt32},
+    scan_v::AbstractVector{UInt32},
+    score_v::AbstractVector{Float32},
+    infold_v::Union{AbstractVector{Float32}, Nothing},
+    main_pid::AbstractVector{UInt32},
+    main_scn::AbstractVector{UInt32},
+    offset::Int,
+    n::Int,
+    file_label::String,
+)
+    # Alignment guard at the slice boundary (first row's pid+scan vs main file).
+    (pid_v[offset + 1] == first(main_pid) &&
+     scan_v[offset + 1] == first(main_scn)) || error(
+        "write_pass1_score_sidecars!: row $(offset + 1) of best_psms " *
+        "misaligned with $file_label"
+    )
+    rng = (offset + 1):(offset + n)
+    side_df = DataFrame(
+        precursor_idx      = view(pid_v,   rng),
+        scan_idx           = view(scan_v,  rng),
+        trace_prob_prepass = view(score_v, rng),
+        # No infold column when match_between_runs is false (rare; keeps the
+        # sidecar schema constant so downstream readers don't branch).
+        trace_prob_infold  = infold_v === nothing ?
+                              fill(NaN32, n) :
+                              view(infold_v, rng),
+    )
+    writeArrow(side_path, side_df)
+    return nothing
+end
 
+# Distribute Pass-1 LightGBM scores (trace_prob_prepass, trace_prob_infold)
+# back to per-file Pass-1 sidecars.
+#
+# Invariant we rely on (no groupby needed): best_psms was built by
+# load_psms_for_lightgbm via `Arrow.Table(file_paths)` over the readdir-
+# sorted contents of second_pass_folder, then concatenated by
+# `Tables.columntable + DataFrame`. That preserves row order, so rows
+# 1..n1 belong to file 1, n1+1..n1+n2 belong to file 2, etc. (alphabetical
+# readdir order). We sort `file_paths` the same way to match that layout,
+# walk linearly with a cumulative offset, and slice via `view` — no
+# groupby, no per-column copies, no Type.(vector) allocations.
+#
+# Columns we read on best_psms are already in their target eltypes
+# (precursor_idx/scan_idx UInt32 from Arrow; trace_prob_prepass/_infold
+# Float32 from score_psms.jl), so no narrowing conversion is needed.
+# An alignment guard at every file boundary (first-row pid+scan_idx
+# against the main file) fails loud if the producer/consumer ever drift
+# apart (e.g. someone passes file_paths in a different order or filters
+# rows mid-pipeline).
+function write_pass1_score_sidecars!(best_psms::DataFrame, file_paths::Vector{String})
+    # Match load_psms_for_lightgbm's row order: readdir is alphabetical,
+    # so `sort(file_paths)` gives the same order without depending on the
+    # caller's convention.
+    sorted_paths = sort(file_paths)
+
+    # Pull DataFrame columns once and hand them to a typed helper. The helper's
+    # `AbstractVector{T}` signature triggers compiler specialisation on the
+    # concrete eltype and acts as a schema guard — bails immediately if a
+    # column type ever drifts. (Arrow.Primitive{UInt32, ...} and Vector{UInt32}
+    # both satisfy AbstractVector{UInt32}, so no copy is forced.)
+    pid_v      = best_psms.precursor_idx
+    scan_v     = best_psms.scan_idx
+    score_v    = best_psms.trace_prob_prepass
+    has_infold = hasproperty(best_psms, :trace_prob_infold)
+    infold_v   = has_infold ? best_psms.trace_prob_infold : nothing
+
+    n_total   = nrow(best_psms)
+    offset    = 0
     n_written = 0
-    if is_fold_split && hasproperty(best_psms, :cv_fold)
-        for (key, gpsms) in pairs(groupby(best_psms, [:ms_file_idx, :cv_fold]))
-            lookup_key = (UInt32(key[:ms_file_idx]), UInt8(key[:cv_fold]))
-            haskey(key_to_path, lookup_key) || continue
-            main_path = key_to_path[lookup_key]
-            side_path = main_path * PASS1_SIDECAR_SUFFIX
-            side_df = DataFrame(
-                precursor_idx       = collect(UInt32.(gpsms[!, :precursor_idx])),
-                scan_idx            = collect(UInt32.(gpsms[!, :scan_idx])),
-                trace_prob_prepass  = Float32.(gpsms[!, :trace_prob_prepass]),
-                trace_prob_infold   = hasproperty(gpsms, :trace_prob_infold) ?
-                                       Float32.(gpsms[!, :trace_prob_infold]) :
-                                       fill(NaN32, nrow(gpsms)),
-            )
-            writeArrow(side_path, side_df)
-            n_written += 1
-        end
-    else
-        for (key, gpsms) in pairs(groupby(best_psms, :ms_file_idx))
-            lookup_key = UInt32(key[:ms_file_idx])
-            haskey(key_to_path, lookup_key) || continue
-            main_path = key_to_path[lookup_key]
-            side_path = main_path * PASS1_SIDECAR_SUFFIX
-            side_df = DataFrame(
-                precursor_idx       = collect(UInt32.(gpsms[!, :precursor_idx])),
-                scan_idx            = collect(UInt32.(gpsms[!, :scan_idx])),
-                trace_prob_prepass  = Float32.(gpsms[!, :trace_prob_prepass]),
-                trace_prob_infold   = hasproperty(gpsms, :trace_prob_infold) ?
-                                       Float32.(gpsms[!, :trace_prob_infold]) :
-                                       fill(NaN32, nrow(gpsms)),
-            )
-            writeArrow(side_path, side_df)
-            n_written += 1
-        end
+    for fpath in sorted_paths
+        main = Arrow.Table(fpath)
+        n = length(main.precursor_idx)
+        n == 0 && continue
+        offset + n <= n_total || error(
+            "write_pass1_score_sidecars!: best_psms has $n_total rows but " *
+            "cumulative file row count exceeds it at $(basename(fpath)) " *
+            "(offset=$offset, this file n=$n). Likely best_psms / file_paths drift."
+        )
+        _emit_pass1_sidecar!(fpath * PASS1_SIDECAR_SUFFIX,
+                             pid_v, scan_v, score_v, infold_v,
+                             main.precursor_idx, main.scan_idx,
+                             offset, n, basename(fpath))
+        offset    += n
+        n_written += 1
     end
-    @user_info "  Wrote $n_written Pass-1 score sidecars"
+    offset == n_total || error(
+        "write_pass1_score_sidecars!: distributed $offset rows but best_psms has $n_total " *
+        "(some file_paths missing from second_pass_folder?)"
+    )
+    @user_info "  Wrote $n_written Pass-1 score sidecars (positional, no groupby)"
     return n_written
 end
 
