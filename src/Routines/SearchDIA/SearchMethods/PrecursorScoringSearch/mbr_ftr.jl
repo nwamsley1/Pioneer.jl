@@ -390,6 +390,7 @@ function apply_mbr_filter_paired!(
         psms[!, :mbr_recovered]          = falses(0)
         psms[!, :MBR_transfer_candidate] = falses(0)
         psms[!, :ftr_qval_true]          = Float32[]
+        psms[!, :ftr_pep_true]           = Float32[]
         return (n_candidates=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=0.0)
     end
 
@@ -427,6 +428,7 @@ function apply_mbr_filter_paired!(
         psms[!, :mbr_recovered]          = falses(n)
         psms[!, :MBR_transfer_candidate] = candidate_mask
         psms[!, :ftr_qval_true]          = fill(NaN32, n)
+        psms[!, :ftr_pep_true]           = fill(NaN32, n)
         return (n_candidates=0, threshold=Float32(Inf), n_recovered=0, elapsed_s=time()-t0)
     end
 
