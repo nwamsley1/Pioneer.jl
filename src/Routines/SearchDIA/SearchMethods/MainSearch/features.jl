@@ -102,15 +102,15 @@ function add_features!(psms::DataFrame,
     Mox = zeros(UInt8, N);
     sequence_length = zeros(UInt8, N);
 
-    # prec_mz and tic are in PRESCORE_FEATURES (per-file LGBM) and the
-    # ScoringSearch feature set, so they're allocated unconditionally.
+    # prec_mz is in PRESCORE_FEATURES (per-file LGBM) and the ScoringSearch
+    # feature set, so it's allocated unconditionally.
     prec_mzs = zeros(Float32, N)
-    TIC = zeros(Float16, N)
 
     # Columns only needed for Phase 2 (full feature set)
     if !prescore_only
         entrap_group_id = zeros(UInt8, N)
         prec_charges = zeros(UInt8, N)
+        TIC = zeros(Float16, N);
     end
 
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx]
@@ -156,10 +156,10 @@ function add_features!(psms::DataFrame,
             sequence_length[i] = prec_length[prec_idx]
 
             prec_mzs[i] = prec_mz[prec_idx]
-            TIC[i] = Float16(log2(tic[scan_idx[i]]))
 
             if !prescore_only
                 entrap_group_id[i] = entrap_group_ids[prec_idx]
+                TIC[i] = Float16(log2(tic[scan_idx[i]]))
                 prec_charges[i] = prec_charge[prec_idx]
             end
         end
@@ -173,9 +173,13 @@ function add_features!(psms::DataFrame,
     psms[!,:spectrum_peak_count] = spectrum_peak_count
     psms[!,:sequence_length] = sequence_length
     psms[!,:prec_mz] = prec_mzs
-    psms[!,:tic] = TIC
 
     if !prescore_only
+        # :tic is intentionally kept — historically tested with +4.2k IDs on
+        # MTAC_3P_Standard (commit 4287cee7) before being dropped from feature
+        # lists in the smart-composite reduction (143d6b87). Compute preserved
+        # for re-introduction without code surgery.
+        psms[!,:tic] = TIC
         psms[!,:charge] = prec_charges
         psms[!,:entrapment_group_id] = entrap_group_id
         psms[!,:ms_file_idx] .= ms_file_idx
@@ -243,10 +247,6 @@ const PRESCORE_FEATURES = [
     :irt_fwhm,
     :smoothness,
     :log2_intensity_explained, :longest_y,
-
-    # Re-added 2026-05-18 (A/B candidate): historically tested with measured
-    # individual lift; lost in the 92→66 smart-composite reduction (143d6b87).
-    :tic, :matched_ratio,
 
     # Neighborhood (windowed PSM-quality) family DROPPED 2026-05-18:
     # best_max_residual_3scan, best_gof_5scan, best_manhattan_5scan,
