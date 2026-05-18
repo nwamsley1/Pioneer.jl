@@ -22,10 +22,26 @@
 # The key knob is "effective lr_total = num_iterations * learning_rate":
 # configs at lr_total ~ 20 (200/0.10) win; lr_total ~ 10 (100/0.10) saturates
 # slightly below; lr_total < 10 with min_data=300/l1=l2=1 under-fits.
-const SHARED_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
-                        num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
-                        bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
-                        max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
+const _SHARED_LGBM_HP_BASE = (num_iterations=200, learning_rate=0.10, max_depth=8,
+                              num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
+                              bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
+                              max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
+
+# Env overrides for HP sweep without recompile:
+#   PIONEER_LGBM_ITERS, PIONEER_LGBM_LR, PIONEER_LGBM_MIN_DATA, PIONEER_LGBM_LEAVES
+# Default (no env set) preserves the baked-in values above. Evaluated at
+# call time (not module-load) so env changes between Julia sessions pick up
+# without invalidating the precompile cache.
+function current_shared_lgbm_hp()
+    hp = _SHARED_LGBM_HP_BASE
+    haskey(ENV, "PIONEER_LGBM_ITERS")    && (hp = merge(hp, (num_iterations    = parse(Int, ENV["PIONEER_LGBM_ITERS"]),)))
+    haskey(ENV, "PIONEER_LGBM_LR")       && (hp = merge(hp, (learning_rate     = parse(Float64, ENV["PIONEER_LGBM_LR"]),)))
+    haskey(ENV, "PIONEER_LGBM_MIN_DATA") && (hp = merge(hp, (min_data_in_leaf  = parse(Int, ENV["PIONEER_LGBM_MIN_DATA"]),)))
+    haskey(ENV, "PIONEER_LGBM_LEAVES")   && (hp = merge(hp, (num_leaves        = parse(Int, ENV["PIONEER_LGBM_LEAVES"]),)))
+    return hp
+end
+# Kept for back-compat — anything still referencing the const sees the base value.
+const SHARED_LGBM_HP = _SHARED_LGBM_HP_BASE
 
 # Per-experiment scoring LGBM hyperparams (used by PrecursorScoringSearch).
 # Same shape as SHARED_LGBM_HP but lower learning rate × more iterations:
@@ -73,7 +89,7 @@ Used by both `train_lgbm_and_select_best` (MainSearch) and
 function train_psm_classifier_with_fallback(
     psms::DataFrame;
     features::Vector{Symbol},
-    lgbm_hp = SHARED_LGBM_HP,
+    lgbm_hp = current_shared_lgbm_hp(),
     compute_infold::Bool = false,
 )
     targets_col = psms[!, :target]

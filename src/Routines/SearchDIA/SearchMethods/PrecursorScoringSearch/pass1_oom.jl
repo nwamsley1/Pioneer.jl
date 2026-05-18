@@ -216,7 +216,7 @@ function train_and_predict_pass1_oom!(
     file_paths::Vector{String};
     features::Vector{Symbol},
     compute_infold::Bool,
-    lgbm_hp::NamedTuple = SHARED_LGBM_HP,
+    lgbm_hp::NamedTuple = current_shared_lgbm_hp(),
     k_per_fold::Int = default_pass1_oom_k_per_fold(),
     rng::AbstractRNG = MersenneTwister(1776),
 )
