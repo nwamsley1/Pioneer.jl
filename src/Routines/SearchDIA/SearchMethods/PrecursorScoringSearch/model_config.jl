@@ -41,8 +41,7 @@ const ADVANCED_FEATURE_SET = [
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
     :ms1_m1_to_m0_ratio, :ms1_m1_to_m0_pred,
-    # frag3_int / frag4_int dropped 2026-05-18 (A/B test).
-    :frag1_int, :frag2_int,
+    :frag1_int, :frag2_int, :frag3_int, :frag4_int,
     # frag_corr_mean_pairwise (Spearman) dropped 2026-05-13.
     :frag_apex_dispersion_irt,
     :n_correlated_fragments,
