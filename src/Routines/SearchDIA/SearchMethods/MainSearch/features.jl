@@ -108,9 +108,8 @@ function add_features!(psms::DataFrame,
     lys_count = zeros(UInt8, N)
     arg_count = zeros(UInt8, N)
 
-    # irt_diff and prec_mz are in PRESCORE_FEATURES (per-file LGBM) and the
-    # ScoringSearch feature set, so they're allocated unconditionally.
-    irt_diff = zeros(Float32, N)
+    # prec_mz is in PRESCORE_FEATURES (per-file LGBM) and the ScoringSearch
+    # feature set, so it's allocated unconditionally.
     prec_mzs = zeros(Float32, N)
 
     # Columns only needed for Phase 2 (full feature set)
@@ -180,7 +179,6 @@ function add_features!(psms::DataFrame,
             spectrum_peak_count[i] = length(masses[scan_idx[i]])
             sequence_length[i] = prec_length[prec_idx]
 
-            irt_diff[i] = abs(irt_obs[i] - prec_irt[prec_idx])
             prec_mzs[i] = prec_mz[prec_idx]
 
             if !prescore_only
@@ -203,7 +201,6 @@ function add_features!(psms::DataFrame,
     psms[!,:arg_count] = arg_count
     psms[!,:spectrum_peak_count] = spectrum_peak_count
     psms[!,:sequence_length] = sequence_length
-    psms[!,:irt_diff] = irt_diff
     psms[!,:prec_mz] = prec_mzs
 
     if !prescore_only
@@ -272,7 +269,7 @@ const PRESCORE_FEATURES = [
     # Tier-2 drop-all-5 (2026-05-13) removed: rt_fwhm, num_scans, irt_pred,
     # best_rank_iso, total_ions_iso — individually each lost 176–1,143 IDs
     # but dropped together they're net-neutral (Olsen +138, MTAC −405).
-    :irt_diff, :prec_mz,
+    :prec_mz,
     :irt_fwhm,
     :smoothness,
     :log2_intensity_explained, :longest_y,
@@ -1133,7 +1130,7 @@ const LGBM_RECOVERY_FEATURES = [
     # Ion counts
     :y_count, :b_count, :isotope_count, :total_ions, :total_ions_iso,
     # RT
-    :irt_error, :irt_diff,
+    :irt_error,
     # Peptide properties
     :charge, :sequence_length, :missed_cleavage, :Mox, :prec_mz,
     # Other
@@ -1150,7 +1147,7 @@ Steps:
 1. add_search_columns! — RT, charge, target, cv_fold, err_norm, total_ions
 2. get_isotopes_captured! — precursor_fraction_transmitted (skipped for prescore)
 3. Filter by fraction_transmitted (skipped for prescore)
-4. add_features! — irt_error, irt_diff, tic, prec_mz, sequence_length, etc.
+4. add_features! — irt_error, tic, prec_mz, sequence_length, etc.
 """
 function prepare_psm_features!(
     psms::DataFrame,
@@ -1197,7 +1194,7 @@ function prepare_psm_features!(
         t3 = time()
     end
 
-    # 4. Add ML features (irt_error, irt_diff, tic, prec_mz, sequence_length, etc.)
+    # 4. Add ML features (irt_error, tic, prec_mz, sequence_length, etc.)
     add_features!(
         psms,
         search_context,

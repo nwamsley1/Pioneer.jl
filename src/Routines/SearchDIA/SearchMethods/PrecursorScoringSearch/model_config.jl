@@ -50,7 +50,7 @@ const ADVANCED_FEATURE_SET = [
     :delta_frame_peak_center,
     :log_by_ratio_m0,
     :n_scans,
-    :irt_diff, :prec_mz,
+    :prec_mz,
     :irt_fwhm,
     :smoothness,
     :log2_intensity_explained, :longest_y,

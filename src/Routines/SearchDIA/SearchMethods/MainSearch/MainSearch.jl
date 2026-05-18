@@ -463,14 +463,11 @@ so the compiler specializes on concrete types, eliminating dynamic dispatch.
 """
 function _compute_phase2_columns!(
         prec_idx_col::AbstractVector{UInt32},
-        irt_obs_col::AbstractVector{Float32},
-        prec_irt, prec_mz_arr, entrap_group_ids,
-        irt_diff_col::Vector{Float32},
+        prec_mz_arr, entrap_group_ids,
         prec_mz_col::Vector{Float32},
         entrap_col::Vector{UInt8})
     @inbounds for i in eachindex(prec_idx_col)
         pid = prec_idx_col[i]
-        irt_diff_col[i] = abs(irt_obs_col[i] - prec_irt[pid])
         prec_mz_col[i] = prec_mz_arr[pid]
         entrap_col[i] = entrap_group_ids[pid]
     end
@@ -570,15 +567,13 @@ function summarize_results!(
 
             # Add Phase 2 library-lookup columns (deferred from process_search_results!)
             N = nrow(tbl)
-            irt_diff_col = Vector{Float32}(undef, N)
             prec_mz_col = Vector{Float32}(undef, N)
             entrap_col = Vector{UInt8}(undef, N)
             _compute_phase2_columns!(
-                tbl[!, :precursor_idx], tbl[!, :irt_obs],
-                prec_irt, prec_mz_arr, entrap_group_ids,
-                irt_diff_col, prec_mz_col, entrap_col
+                tbl[!, :precursor_idx],
+                prec_mz_arr, entrap_group_ids,
+                prec_mz_col, entrap_col
             )
-            tbl[!, :irt_diff] = irt_diff_col
             tbl[!, :prec_mz] = prec_mz_col
             tbl[!, :entrapment_group_id] = entrap_col
 
