@@ -1103,21 +1103,11 @@ Scans with a single PSM get `weight_ratio_at_scan=1.0` and `weight_rank_at_scan=
 """
 function add_scan_competition_features!(psms::DataFrame)
     n = nrow(psms)
-    weight_ratio       = Vector{Float32}(undef, n)
-    weight_rank        = Vector{UInt16}(undef, n)
-    # New: ratio to the 2nd-best and 3rd-best competitor (∈ (0, 1] when present,
-    # else 1.0). For the apex PSM at a scan, ratio_to_2nd = max_w / w_2nd ≥ 1
-    # so we flip and report w_other / w_apex for symmetric interpretation
-    # (1.0 = strongly dominant; <1 = competing precursors exist).
-    weight_ratio_2nd   = Vector{Float32}(undef, n)
-    weight_ratio_3rd   = Vector{Float32}(undef, n)
-    n_competitors_50pct = Vector{UInt16}(undef, n)
+    weight_ratio = Vector{Float32}(undef, n)
+    weight_rank  = Vector{UInt16}(undef, n)
     if n == 0
-        psms[!, :weight_ratio_at_scan]   = weight_ratio
-        psms[!, :weight_rank_at_scan]    = weight_rank
-        psms[!, :weight_ratio_to_2nd_best] = weight_ratio_2nd
-        psms[!, :weight_ratio_to_3rd_best] = weight_ratio_3rd
-        psms[!, :n_competitors_50pct]    = n_competitors_50pct
+        psms[!, :weight_ratio_at_scan] = weight_ratio
+        psms[!, :weight_rank_at_scan]  = weight_rank
         return
     end
     scan = psms[!, :scan_idx]
@@ -1130,34 +1120,14 @@ function add_scan_competition_features!(psms::DataFrame)
         weights = Float32[Float32(w[i]) for i in idxs]
         max_w = maximum(weights)
         order = sortperm(weights, rev=true)
-        sorted_w = weights[order]   # descending
-        w2 = length(sorted_w) >= 2 ? sorted_w[2] : 0f0
-        w3 = length(sorted_w) >= 3 ? sorted_w[3] : 0f0
-        # Count competitors at this scan with weight ≥ 50% of apex
-        n_50 = UInt16(0)
-        if max_w > 0
-            half = 0.5f0 * max_w
-            for wt in weights
-                if wt >= half; n_50 += UInt16(1); end
-            end
-        end
         for (rank, j) in enumerate(order)
             i = idxs[j]
             weight_ratio[i] = max_w > 0 ? weights[j] / max_w : Float32(1)
             weight_rank[i]  = UInt16(min(rank, typemax(UInt16)))
-            # The "ratio to 2nd/3rd best" is computed from this PSM's perspective:
-            # for apex (rank=1) it's w_apex / w_2nd (or 1 if no 2nd); for others
-            # it's their weight / w_2nd (the runner-up's perspective).
-            weight_ratio_2nd[i] = w2 > 0 ? weights[j] / w2 : Float32(1)
-            weight_ratio_3rd[i] = w3 > 0 ? weights[j] / w3 : Float32(1)
-            n_competitors_50pct[i] = n_50
         end
     end
-    psms[!, :weight_ratio_at_scan]    = weight_ratio
-    psms[!, :weight_rank_at_scan]     = weight_rank
-    psms[!, :weight_ratio_to_2nd_best] = weight_ratio_2nd
-    psms[!, :weight_ratio_to_3rd_best] = weight_ratio_3rd
-    psms[!, :n_competitors_50pct]     = n_competitors_50pct
+    psms[!, :weight_ratio_at_scan] = weight_ratio
+    psms[!, :weight_rank_at_scan]  = weight_rank
     return
 end
 
