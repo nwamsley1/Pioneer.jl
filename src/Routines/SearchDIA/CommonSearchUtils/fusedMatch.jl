@@ -257,12 +257,6 @@ error accumulation.
     frag6_int = score.frag6_int
     top3_abs_ppm_err_sum = score.top3_abs_ppm_err_sum
     top3_ppm_err_count   = score.top3_ppm_err_count
-    frag1_pred = score.frag1_pred
-    frag2_pred = score.frag2_pred
-    frag3_pred = score.frag3_pred
-    frag4_pred = score.frag4_pred
-    frag5_pred = score.frag5_pred
-    frag6_pred = score.frag6_pred
     pred_int_sum_m0 = score.pred_int_sum_m0
 
     if iso_idx != UInt8(0)
@@ -296,14 +290,6 @@ error accumulation.
         if rank <= UInt8(3)
             top3_abs_ppm_err_sum += abs(ppm_err)
             top3_ppm_err_count   += UInt8(1)
-        end
-        # E1/E2: per-rank predicted-intensity capture (max across scans for M0)
-        if rank == UInt8(1);     frag1_pred = max(frag1_pred, pred_int)
-        elseif rank == UInt8(2); frag2_pred = max(frag2_pred, pred_int)
-        elseif rank == UInt8(3); frag3_pred = max(frag3_pred, pred_int)
-        elseif rank == UInt8(4); frag4_pred = max(frag4_pred, pred_int)
-        elseif rank == UInt8(5); frag5_pred = max(frag5_pred, pred_int)
-        elseif rank == UInt8(6); frag6_pred = max(frag6_pred, pred_int)
         end
         # E3: matched-fragment predicted-intensity sum (M0 only, all ranks)
         pred_int_sum_m0 += pred_int
@@ -346,7 +332,6 @@ error accumulation.
         error, matched_rank_mask,
         frag1_int, frag2_int, frag3_int, frag4_int, frag5_int, frag6_int,
         top3_abs_ppm_err_sum, top3_ppm_err_count,
-        frag1_pred, frag2_pred, frag3_pred, frag4_pred, frag5_pred, frag6_pred,
         pred_int_sum_m0,
         prec_idx, ms_file_idx)
     return nothing

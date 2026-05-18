@@ -115,17 +115,6 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     # ranks 1-3. Zero if no top-3 matches in this scan.
     top3_ms2_mass_error_mean::H
 
-    # E1/E2 (Batch E, 2026-05-12): per-rank post-NCE/iso-spline predicted
-    # intensity captures (max across scans for M0). Used by
-    # _add_fragment_chromatogram_features! to compute pred-vs-observed
-    # spectral_contrast and scribe.
-    frag1_pred::H
-    frag2_pred::H
-    frag3_pred::H
-    frag4_pred::H
-    frag5_pred::H
-    frag6_pred::H
-
     # E6 M0 (Batch E, 2026-05-12): log(b_int + 1) − log(y_int + 1). Real
     # peptides have characteristic b/y intensity ratios; chimeric hits don't.
     log_by_ratio_m0::L
@@ -236,13 +225,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             H(unscored_PSMs[i].top3_ppm_err_count > 0 ?
                 unscored_PSMs[i].top3_abs_ppm_err_sum / unscored_PSMs[i].top3_ppm_err_count :
                 zero(H)),
-
-            unscored_PSMs[i].frag1_pred,
-            unscored_PSMs[i].frag2_pred,
-            unscored_PSMs[i].frag3_pred,
-            unscored_PSMs[i].frag4_pred,
-            unscored_PSMs[i].frag5_pred,
-            unscored_PSMs[i].frag6_pred,
 
             L(log(Float32(unscored_PSMs[i].b_int) + 1f0) -
               log(Float32(unscored_PSMs[i].y_int) + 1f0)),
