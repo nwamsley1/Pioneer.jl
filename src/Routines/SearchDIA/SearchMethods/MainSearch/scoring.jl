@@ -20,16 +20,16 @@
 #   50  iter, lr=.20    3.5s   51,023   73,226   0.0101    Cheap mode, -2.7% IDs, 37x faster
 #   50  iter, lr=.10    3.4s   45,607   71,327   0.0100    Too-few iter for the regularization
 #
-# Updated 2026-05-18: 200/0.10 → 100/0.20 as part of the overnight HP +
-# feature-reduction sweep. Combined with dropping the 9 neighborhood
-# features (commit 888cb871), this gains IDs across all three datasets
-# while cutting MainSearch wall by ~9% on Astral (-60s, +0.47% IDs),
-# Exploris (-24s, +0.74% IDs), MTAC (-28s, +2.15% IDs). The lr_total
-# product stays at 20 (100 × 0.20), matching the "lr_total ~ 20 sweet
-# spot" empirically identified earlier; the higher lr with fewer iters
-# is cheaper per fit and the slimmer feature set (38 vs 47) lets the
-# model still converge to the same quality.
-const _SHARED_LGBM_HP_BASE = (num_iterations=100, learning_rate=0.20, max_depth=8,
+# Updated 2026-05-18 (round 2): 100/0.20 → 50/0.10 after the cheap-MainSearch
+# sweep on Astral / Exploris / MTAC (6 files each).
+# Per-file MainSearch LGBM at 50/0.10 (lr_total = 5) vs 100/0.20 (lr_total = 20):
+#   Astral:   -28s wall, -0.00% IDs, +0.18% PGs
+#   Exploris: -9s  wall, +0.41% IDs, +0.23% PGs
+#   MTAC:     -7s  wall, +1.28% IDs, +0.02% PGs
+# IDs neutral-to-positive on all three datasets; ScoringSearch's 200/0.10
+# recovers any quality lost in MainSearch (the per-file LGBM's job is just
+# best-scan selection + the PEP > 0.9 gate, not final scoring).
+const _SHARED_LGBM_HP_BASE = (num_iterations=50, learning_rate=0.10, max_depth=8,
                               num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
                               bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
                               max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
