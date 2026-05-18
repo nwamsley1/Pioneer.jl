@@ -58,18 +58,20 @@ function score_precursor_isotope_traces(
     ::Bool = false;                # force_oom (unused)
     match_between_runs::Bool = true,
 )
-    # 1. Load PSMs into memory
+    # 1a. MBR Batch F: build the experiment-global pid → counterfactual_partner
+    # map by streaming the per-file Arrow tables (no PSM DataFrame needed yet).
+    # Held as a Dict and only converted to a Vector right before the MBR
+    # streaming compute. iRT-NN variant: partner = closest-pred-iRT opposite
+    # within (cv_fold × mz_decile), with fold-wide and experiment-global
+    # fallbacks. See mbr_pairing.jl::build_counterfactual_partner_map.
+    cf_partner_dict = match_between_runs ?
+        build_counterfactual_partner_map(file_paths, precursors) :
+        Dict{UInt32, UInt32}()
+
+    # 1b. Load PSMs into memory for Pass-1 LightGBM training.
     best_psms = load_psms_for_lightgbm(second_pass_folder)
     n_psms = nrow(best_psms)
     @debug_l1 "PSM scoring: $n_psms PSMs loaded for experiment-wide LightGBM"
-
-    # 1b. MBR Batch F: build experiment-global counterfactual partner map.
-    # Adds :counterfactual_partner_pid (used downstream by the MBR streaming
-    # pipeline to look up each row's _false donor).
-    # iRT-NN variant: closest-pred-iRT opposite within (cv_fold × mz_decile).
-    if match_between_runs
-        regenerate_counterfactual_partners_irt_nn!(best_psms, precursors)
-    end
 
     # 2. Build the feature list (the _qbin variants in ADVANCED_FEATURE_SET are
     # commented out, so we don't need to compute quantile-binned features here).
@@ -125,24 +127,22 @@ function score_precursor_isotope_traces(
         @user_info "MBR Batch F: writing Pass-1 sidecars..."
         write_pass1_score_sidecars!(best_psms, file_paths)
 
-        # Per-pid counterfactual partner lookup. Built from best_psms's
-        # per-row :counterfactual_partner_pid column (each pid maps to one
-        # partner, so we collapse to a Vector indexed by pid).
-        max_pid = UInt32(0)
-        @inbounds for p in best_psms.precursor_idx
-            (UInt32(p) > max_pid) && (max_pid = UInt32(p))
-        end
-        cf_partner_vec = zeros(UInt32, Int(max_pid))
-        @inbounds for i in 1:nrow(best_psms)
-            p = UInt32(best_psms.precursor_idx[i])
-            cf_partner_vec[Int(p)] = UInt32(best_psms.counterfactual_partner_pid[i])
-        end
-
         # Free best_psms before the donor sweep — that's the memory win
         # over the old in-memory path that held best_psms across MBR
         # feature compute.
         best_psms = DataFrame()
         GC.gc()
+
+        # Collapse the partner Dict to a Vector indexed by pid for the
+        # MBR feature compute (one Vector index per inner-loop iteration
+        # beats a Dict lookup). Vector is bounded by the largest observed
+        # pid; usually a few MB.
+        max_pid = isempty(cf_partner_dict) ? UInt32(0) : maximum(keys(cf_partner_dict))
+        cf_partner_vec = zeros(UInt32, Int(max_pid))
+        for (pid, partner) in cf_partner_dict
+            cf_partner_vec[Int(pid)] = partner
+        end
+        cf_partner_dict = Dict{UInt32, UInt32}()  # drop the Dict; vec is authoritative
 
         @user_info "MBR Batch F: building donor dict via sweep-1..."
         donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
