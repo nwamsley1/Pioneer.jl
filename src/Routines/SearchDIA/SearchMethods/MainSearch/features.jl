@@ -664,37 +664,6 @@ rather than MS1 isotopes.
     d > 0 ? Float32(sxy/d) : 0f0
 end
 
-# n_correlated_fragments threshold mode.
-#   raw (default): count fragments with Pearson r > FRAG_R_CUT (legacy 0.7).
-#   tstat:         count fragments with t = r·√((n−2)/(1−r²)) > FRAG_T_CUT.
-# Threshold mode + values are env-gated for A/B sweeps:
-#   PIONEER_FRAG_NCORR_MODE  ∈ {"raw","tstat"}  default "raw"
-#   PIONEER_FRAG_RCUT        Float           default 0.7  (raw mode)
-#   PIONEER_FRAG_TCUT        Float           default 2.5  (tstat mode)
-# Evaluated at call time (per file) so the env can change between Julia
-# sessions without busting the precompile cache.
-_frag_ncorr_mode() = get(ENV, "PIONEER_FRAG_NCORR_MODE", "raw")
-_frag_rcut()       = parse(Float32, get(ENV, "PIONEER_FRAG_RCUT", "0.7"))
-_frag_tcut()       = parse(Float32, get(ENV, "PIONEER_FRAG_TCUT", "2.5"))
-
-# Returns true if the fragment-vs-weight Pearson `r` clears the active
-# threshold for the active mode. `npts` is the chromatogram length.
-@inline function _frag_corr_passes(r::Float32, npts::Int, mode::String,
-                                    rcut::Float32, tcut::Float32)
-    if mode == "tstat"
-        npts < 3 && return false
-        # r ≈ ±1 → t diverges; treat as pass for r > 0.
-        if r >= 0.999f0; return true; end
-        if r <= -0.999f0; return false; end
-        denom = 1f0 - r*r
-        denom <= 0f0 && return false
-        t = r * sqrt(Float32(npts - 2) / denom)
-        return t > tcut
-    else
-        return r > rcut
-    end
-end
-
 function _add_fragment_chromatogram_features!(psms::DataFrame)
     n = nrow(psms)
     # Only the 4 features actually consumed by PRESCORE_FEATURES / ADVANCED_FEATURE_SET
@@ -762,12 +731,6 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
         end
     end
 
-    # Snapshot env-gated n_correlated_fragments mode + thresholds once per call
-    # so the inner parallel loop sees plain locals (not env-dict reads per row).
-    ncorr_mode = _frag_ncorr_mode()
-    rcut       = _frag_rcut()
-    tcut       = _frag_tcut()
-
     # Parallel per-precursor walk. Each precursor writes to disjoint row indices
     # in the 4 output columns; all input arrays are read-only.
     Threads.@threads :static for p in 1:n_prec
@@ -823,12 +786,10 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
                 delta_frame = Float32(median_apex - (irt_lo + irt_hi) / 2f0)
             end
 
-            # Per-fragment weight correlation — feeds n_correlated_fragments.
-            # Two threshold modes (env-gated, evaluated per-call):
-            #   raw   (default, legacy): count fragments with r > 0.7.
-            #   tstat: count fragments with t = r·√((n−2)/(1−r²)) > T_CUT.
-            # The t-statistic mode normalizes by degrees of freedom so low-scan
-            # precursors aren't free-counted (Pearson at n=2,3 carries no info).
+            # Per-fragment weight correlation — feeds n_correlated_fragments (>0.7).
+            # 2026-05-15: replaced n_correlated_fragments_90 (>0.9) — 0.7 threshold
+            # was ~11× more informative in ScoringSearch Pass-1 LGBM gain on
+            # 23-file Olsen.
             c_fw = Vector{Float32}(undef, 6)
             for r in 1:6
                 c_fw[r] = has_signal[r] ? _frag_pcor(F[r], W) : 0f0
@@ -836,9 +797,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             n_corr_70 = UInt8(0)
             for r in 1:6
                 has_signal[r] || continue
-                if _frag_corr_passes(c_fw[r], npts, ncorr_mode, rcut, tcut)
-                    n_corr_70 += UInt8(1)
-                end
+                if c_fw[r] > 0.7f0; n_corr_70 += UInt8(1); end
             end
 
             # DIA-NN-style best fragment: rank r with the highest mean correlation
