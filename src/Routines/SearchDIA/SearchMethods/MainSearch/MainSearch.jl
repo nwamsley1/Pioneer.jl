@@ -168,9 +168,15 @@ function process_search_results!(
                           # worst_*_11scan, best_max_residual_3scan — were
                           # net-harmful on Astral/Exploris/MTAC per overnight
                           # sweep; dropped from PRESCORE_FEATURES & ADVANCED).
-    # add_apex_distance_feature! produces 19 features, none of which are used by
-    # the current PRESCORE_FEATURES / ADVANCED_FEATURE_SET. Skipped to save ~9s
-    # per file; function preserved for re-enable via PIONEER_DUMP_PRE_LGBM diag.
+    # add_apex_distance_feature! was deleted 2026-05-18 — all 19 columns it
+    # produced (irt_dist_to_weight_apex, relative_position, dist_to_relative_center,
+    # shape_m2/m1/0/p1/p2, weight_apex_relative_pos, weight_chrom_skewness/kurtosis,
+    # apex_to_edge_weight_ratio, n_above_hm_{left,right}_of_apex, hm_asymmetry,
+    # weight_chrom_gaussian_r2/sigma/apex_irt, gof_minus_max_gof_precursor,
+    # gof_fraction_of_total_precursor) were dead by grep across src/. Pass-1 was
+    # already skipping the call; Pass-2 silently dropped the columns via the
+    # hasproperty filter in the LGBM trainer. See 1afebf9d for historical
+    # individual-feature LGBM gains if a future campaign wants to resurrect.
     t_apex = 0.0
     t_ms1 = @elapsed add_ms1_features!(psms, spectra, search_context, ms_file_idx)
 
@@ -291,7 +297,6 @@ function process_search_results!(
                 # Re-do feature prep on pass-2 PSMs (same flow as pass-1)
                 prepare_psm_features!(psms2, params, search_context, ms_file_idx, spectra, prescore_only=true)
                 add_scan_competition_features!(psms2)
-                add_apex_distance_feature!(psms2)
                 add_ms1_features!(psms2, spectra, search_context, ms_file_idx)
 
                 # Re-train LGBM and re-select best per precursor on pass-2 PSMs
