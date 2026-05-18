@@ -163,7 +163,11 @@ function process_search_results!(
     end
 
     t_competition = @elapsed add_scan_competition_features!(psms)
-    t_neighborhood = @elapsed add_neighborhood_features!(psms)
+    t_neighborhood = 0.0  # neighborhood feature pass removed 2026-05-18 (all 9
+                          # consumers — best_*_5scan, irt_dist_best_*_5scan,
+                          # worst_*_11scan, best_max_residual_3scan — were
+                          # net-harmful on Astral/Exploris/MTAC per overnight
+                          # sweep; dropped from PRESCORE_FEATURES & ADVANCED).
     # add_apex_distance_feature! produces 19 features, none of which are used by
     # the current PRESCORE_FEATURES / ADVANCED_FEATURE_SET. Skipped to save ~9s
     # per file; function preserved for re-enable via PIONEER_DUMP_PRE_LGBM diag.
@@ -181,9 +185,7 @@ function process_search_results!(
                 :total_ions, :total_ions_iso, :y_count, :poisson, :err_norm,
                 :missed_cleavage, :Mox, :spectrum_peak_count, :sequence_length,
                 :weight_ratio_at_scan, :weight_rank_at_scan, :irt_error,
-                :best_gof_3scan, :best_manhattan_3scan, :best_max_residual_3scan,
-                :irt_dist_best_gof_3scan, :irt_dist_best_manhattan_3scan,
-                :irt_dist_best_max_residual_3scan, :irt_dist_to_weight_apex,
+                :irt_dist_to_weight_apex,
                 :ms1_m0_mass_err_ppm,
                 :ms1_corr_weight_m0, :ms1_corr_m0_m1,
                 :ms1_apex_offset_irt, :ms1_weight_apex_to_m0_apex_irt,
@@ -289,7 +291,6 @@ function process_search_results!(
                 # Re-do feature prep on pass-2 PSMs (same flow as pass-1)
                 prepare_psm_features!(psms2, params, search_context, ms_file_idx, spectra, prescore_only=true)
                 add_scan_competition_features!(psms2)
-                add_neighborhood_features!(psms2)
                 add_apex_distance_feature!(psms2)
                 add_ms1_features!(psms2, spectra, search_context, ms_file_idx)
 
