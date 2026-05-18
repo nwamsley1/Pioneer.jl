@@ -26,9 +26,6 @@ reads these into a `MainSearchScoredPSM` row.
 """
 struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     best_rank::UInt8 #Highest ranking predicted framgent that was observed
-    best_rank_iso::UInt8
-    topn::UInt8 #How many of the topN predicted fragments were observed.
-    topn_iso::UInt8
     longest_y::UInt8
     longest_b::UInt8
     longest_y_iso::UInt8
@@ -60,7 +57,7 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     ms_file_idx::UInt32
 end
 
-MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
+MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
 
 """
     TuningUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
@@ -73,9 +70,6 @@ since tuning code never reads them. Written by `apply_tuning_scoring!`.
 """
 struct TuningUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     best_rank::UInt8
-    best_rank_iso::UInt8
-    topn::UInt8
-    topn_iso::UInt8
     longest_y::UInt8
     longest_b::UInt8
     longest_y_iso::UInt8
@@ -92,4 +86,4 @@ struct TuningUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     ms_file_idx::UInt32
 end
 
-TuningUnscoredPSM{Float32}() = TuningUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
+TuningUnscoredPSM{Float32}() = TuningUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), UInt32(0), UInt32(0))

@@ -85,18 +85,14 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     max_matched_residual::L
     max_unmatched_residual::L
     fitted_manhattan_distance::L
-    percent_theoretical_ignored::L
     weight::H
 
     fitted_hellinger::L
 
-    # Rank/topn features carried from MainUnscoredPSM. Added 2026-05-11 so the
+    # Rank feature carried from MainUnscoredPSM. Added 2026-05-11 so the
     # experiment-wide LightGBM in PrecursorScoringSearch has the same rank
     # signal as the per-file LightGBM (previously dropped by Score!).
     best_rank::UInt8           # smallest M0 fragment rank that matched (lower is better)
-    best_rank_iso::UInt8       # same for isotope (M1+) fragments
-    topn::UInt8                # # of M0 fragments matched at rank ≤ m_rank
-    topn_iso::UInt8            # same for isotope fragments
 
     # Per-rank M0 fragment intensities (top 6, for chromatogram-correlation features)
     frag1_int::H
@@ -192,15 +188,11 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             spectral_scores[scores_idx].max_matched_residual,
             spectral_scores[scores_idx].max_unmatched_residual,
             spectral_scores[scores_idx].fitted_manhattan_distance,
-            spectral_scores[scores_idx].percent_theoretical_ignored,
             weight[scores_idx],
 
             spectral_scores[scores_idx].fitted_hellinger,
 
             unscored_PSMs[i].best_rank,
-            unscored_PSMs[i].best_rank_iso,
-            unscored_PSMs[i].topn,
-            unscored_PSMs[i].topn_iso,
 
             unscored_PSMs[i].frag1_int,
             unscored_PSMs[i].frag2_int,
@@ -254,7 +246,6 @@ struct TuningScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     max_matched_residual::L
     max_unmatched_residual::L
     fitted_manhattan_distance::L
-    percent_theoretical_ignored::L
     weight::H
 
     fitted_hellinger::L
@@ -319,7 +310,6 @@ function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
             spectral_scores[scores_idx].max_matched_residual,
             spectral_scores[scores_idx].max_unmatched_residual,
             spectral_scores[scores_idx].fitted_manhattan_distance,
-            spectral_scores[scores_idx].percent_theoretical_ignored,
             weight[scores_idx],
 
             spectral_scores[scores_idx].fitted_hellinger,

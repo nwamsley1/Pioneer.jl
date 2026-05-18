@@ -229,9 +229,6 @@ error accumulation.
     @inbounds score = unscored[col]
 
     best_rank            = score.best_rank
-    best_rank_iso        = score.best_rank_iso
-    topn                 = score.topn
-    topn_iso             = score.topn_iso
     longest_y            = score.longest_y
     longest_b            = score.longest_b
     longest_y_iso        = score.longest_y_iso
@@ -260,12 +257,6 @@ error accumulation.
 
     if iso_idx != UInt8(0)
         isotope_count += UInt8(1)
-        if rank < best_rank_iso
-            best_rank_iso = rank
-        end
-        if rank <= UInt8(m_rank)
-            topn_iso += UInt8(1)
-        end
         if isY(frag)
             y_count_iso += UInt8(1)
             if ion_pos > longest_y_iso
@@ -291,9 +282,6 @@ error accumulation.
         if rank < best_rank
             best_rank = rank
         end
-        if rank <= UInt8(m_rank)
-            topn += UInt8(1)
-        end
         if isB(frag)
             b_count += UInt8(1)
             b_int += intensity
@@ -316,8 +304,7 @@ error accumulation.
     error += abs(ppm_err)
 
     @inbounds unscored[col] = MainUnscoredPSM{Float32}(
-        best_rank, best_rank_iso,
-        min(topn, UInt8(255)), min(topn_iso, UInt8(255)),
+        best_rank,
         longest_y, longest_b, longest_y_iso,
         min(isotope_count, UInt8(255)),
         min(b_count, UInt8(255)), b_int,
@@ -352,9 +339,6 @@ update and `frag1..6_int` captures (those fields don't exist on
     @inbounds score = unscored[col]
 
     best_rank            = score.best_rank
-    best_rank_iso        = score.best_rank_iso
-    topn                 = score.topn
-    topn_iso             = score.topn_iso
     longest_y            = score.longest_y
     longest_b            = score.longest_b
     longest_y_iso        = score.longest_y_iso
@@ -374,12 +358,6 @@ update and `frag1..6_int` captures (those fields don't exist on
 
     if iso_idx != UInt8(0)
         isotope_count += UInt8(1)
-        if rank < best_rank_iso
-            best_rank_iso = rank
-        end
-        if rank <= UInt8(m_rank)
-            topn_iso += UInt8(1)
-        end
         if isY(frag)
             y_count_iso += UInt8(1)
             if ion_pos > longest_y_iso
@@ -389,9 +367,6 @@ update and `frag1..6_int` captures (those fields don't exist on
     else
         if rank < best_rank
             best_rank = rank
-        end
-        if rank <= UInt8(m_rank)
-            topn += UInt8(1)
         end
         if isB(frag)
             b_count += UInt8(1)
@@ -415,8 +390,7 @@ update and `frag1..6_int` captures (those fields don't exist on
     error += abs(ppm_err)
 
     @inbounds unscored[col] = TuningUnscoredPSM{Float32}(
-        best_rank, best_rank_iso,
-        min(topn, UInt8(255)), min(topn_iso, UInt8(255)),
+        best_rank,
         longest_y, longest_b, longest_y_iso,
         min(isotope_count, UInt8(255)),
         min(b_count, UInt8(255)), b_int,
