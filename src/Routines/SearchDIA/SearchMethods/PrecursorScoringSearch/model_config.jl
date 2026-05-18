@@ -54,6 +54,9 @@ const ADVANCED_FEATURE_SET = [
     :irt_fwhm,
     :smoothness,
     :log2_intensity_explained, :longest_y,
+    # Re-added 2026-05-18 (A/B candidate): :tic +4.2k IDs MTAC solo (4287cee7);
+    # :matched_ratio Batch E feature (c734e62a). Both dropped in 143d6b87.
+    :tic, :matched_ratio,
     # Tier-2 drop-all-5 (2026-05-13): rt_fwhm, num_scans, irt_pred,
     # best_rank_iso, total_ions_iso removed.
     # Tier-4 drop-top-10 (2026-05-14): max_matched_residual, lys_count,
