@@ -14,15 +14,22 @@
 #
 #   Config             wall    q<=.001  q<=.01   EFDR@.01  Notes
 #   3000 iter, lr=.007 130 s   52,600   75,236   0.0106    Reference (heavy)
-#   200 iter, lr=.10    9.6s   51,729   74,400   0.0100    Chosen (-1.1% IDs, 13.5x faster)
-#   100 iter, lr=.10    5.5s   51,099   73,235   0.0099    -2.7% IDs, 24x faster
+#   200 iter, lr=.10    9.6s   51,729   74,400   0.0100    Older default
+#   100 iter, lr=.20    ~5s    -        -        -         CURRENT (post 2026-05-18 sweep)
+#   100 iter, lr=.15    5.5s   51,099   73,235   0.0099    -2.7% IDs, 24x faster
 #   50  iter, lr=.20    3.5s   51,023   73,226   0.0101    Cheap mode, -2.7% IDs, 37x faster
 #   50  iter, lr=.10    3.4s   45,607   71,327   0.0100    Too-few iter for the regularization
 #
-# The key knob is "effective lr_total = num_iterations * learning_rate":
-# configs at lr_total ~ 20 (200/0.10) win; lr_total ~ 10 (100/0.10) saturates
-# slightly below; lr_total < 10 with min_data=300/l1=l2=1 under-fits.
-const _SHARED_LGBM_HP_BASE = (num_iterations=200, learning_rate=0.10, max_depth=8,
+# Updated 2026-05-18: 200/0.10 → 100/0.20 as part of the overnight HP +
+# feature-reduction sweep. Combined with dropping the 9 neighborhood
+# features (commit 888cb871), this gains IDs across all three datasets
+# while cutting MainSearch wall by ~9% on Astral (-60s, +0.47% IDs),
+# Exploris (-24s, +0.74% IDs), MTAC (-28s, +2.15% IDs). The lr_total
+# product stays at 20 (100 × 0.20), matching the "lr_total ~ 20 sweet
+# spot" empirically identified earlier; the higher lr with fewer iters
+# is cheaper per fit and the slimmer feature set (38 vs 47) lets the
+# model still converge to the same quality.
+const _SHARED_LGBM_HP_BASE = (num_iterations=100, learning_rate=0.20, max_depth=8,
                               num_leaves=63, min_data_in_leaf=300, feature_fraction=0.8,
                               bagging_fraction=0.8, bagging_freq=1, is_unbalance=false,
                               max_bin=255, lambda_l1=1.0, lambda_l2=1.0)
