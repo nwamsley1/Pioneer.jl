@@ -101,12 +101,6 @@ function add_features!(psms::DataFrame,
     spectrum_peak_count = zeros(Float16, N);
     Mox = zeros(UInt8, N);
     sequence_length = zeros(UInt8, N);
-    # Sequence composition counts. Histidine + proline known to influence
-    # ionization/fragmentation behavior. Lazy-populated like Mox.
-    his_count = zeros(UInt8, N)
-    pro_count = zeros(UInt8, N)
-    lys_count = zeros(UInt8, N)
-    arg_count = zeros(UInt8, N)
 
     # prec_mz is in PRESCORE_FEATURES (per-file LGBM) and the ScoringSearch
     # feature set, so it's allocated unconditionally.
@@ -115,7 +109,6 @@ function add_features!(psms::DataFrame,
     # Columns only needed for Phase 2 (full feature set)
     if !prescore_only
         entrap_group_id = zeros(UInt8, N)
-        adjusted_intensity_explained = zeros(Float16, N);
         prec_charges = zeros(UInt8, N)
         TIC = zeros(Float16, N);
     end
@@ -145,11 +138,6 @@ function add_features!(psms::DataFrame,
     n_lib = length(prec_irt)
     _mox_vals = Vector{UInt8}(undef, n_lib)
     _mox_computed = falses(n_lib)
-    _his_vals = Vector{UInt8}(undef, n_lib)
-    _pro_vals = Vector{UInt8}(undef, n_lib)
-    _lys_vals = Vector{UInt8}(undef, n_lib)
-    _arg_vals = Vector{UInt8}(undef, n_lib)
-    _aa_computed = falses(n_lib)
 
     parallel_foreach!(size(psms, 1)) do chunk
         for i in chunk
@@ -164,18 +152,6 @@ function add_features!(psms::DataFrame,
                 _mox_computed[prec_idx] = true
             end
             Mox[i] = _mox_vals[prec_idx]
-            if !_aa_computed[prec_idx]
-                seq = prec_sequence[prec_idx]
-                _his_vals[prec_idx] = _count_aa(seq, 'H')
-                _pro_vals[prec_idx] = _count_aa(seq, 'P')
-                _lys_vals[prec_idx] = _count_aa(seq, 'K')
-                _arg_vals[prec_idx] = _count_aa(seq, 'R')
-                _aa_computed[prec_idx] = true
-            end
-            his_count[i] = _his_vals[prec_idx]
-            pro_count[i] = _pro_vals[prec_idx]
-            lys_count[i] = _lys_vals[prec_idx]
-            arg_count[i] = _arg_vals[prec_idx]
             spectrum_peak_count[i] = length(masses[scan_idx[i]])
             sequence_length[i] = prec_length[prec_idx]
 
@@ -184,7 +160,6 @@ function add_features!(psms::DataFrame,
             if !prescore_only
                 entrap_group_id[i] = entrap_group_ids[prec_idx]
                 TIC[i] = Float16(log2(tic[scan_idx[i]]))
-                adjusted_intensity_explained[i] = Float16(log2(TIC[i]) + log2_intensity_explained[i]);
                 prec_charges[i] = prec_charge[prec_idx]
             end
         end
@@ -195,17 +170,16 @@ function add_features!(psms::DataFrame,
     psms[!,:irt_error] = irt_error
     psms[!,:missed_cleavage] = missed_cleavage
     psms[!,:Mox] = Mox
-    psms[!,:his_count] = his_count
-    psms[!,:pro_count] = pro_count
-    psms[!,:lys_count] = lys_count
-    psms[!,:arg_count] = arg_count
     psms[!,:spectrum_peak_count] = spectrum_peak_count
     psms[!,:sequence_length] = sequence_length
     psms[!,:prec_mz] = prec_mzs
 
     if !prescore_only
+        # :tic is intentionally kept — historically tested with +4.2k IDs on
+        # MTAC_3P_Standard (commit 4287cee7) before being dropped from feature
+        # lists in the smart-composite reduction (143d6b87). Compute preserved
+        # for re-introduction without code surgery.
         psms[!,:tic] = TIC
-        psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
         psms[!,:charge] = prec_charges
         psms[!,:entrapment_group_id] = entrap_group_id
         psms[!,:ms_file_idx] .= ms_file_idx
@@ -882,22 +856,19 @@ function add_scan_competition_features!(psms::DataFrame)
     return
 end
 
-# Full feature set used in Phase 2 (ScoringSearch gets these via fold Arrow files)
-const LGBM_RECOVERY_FEATURES = [
-    # Core spectral quality
-    :fitted_manhattan_distance, :max_matched_residual, :gof,
-    :max_unmatched_residual, :poisson, :spectral_contrast, :err_norm,
-    # Scores / weights
-    :scribe, :weight, :log2_intensity_explained,
-    # Ion counts
-    :y_count, :b_count, :isotope_count, :total_ions, :total_ions_iso,
-    # RT
-    :irt_error,
-    # Peptide properties
-    :charge, :sequence_length, :missed_cleavage, :Mox, :prec_mz,
-    # Other
-    :tic, :best_rank, :matched_ratio, :spectrum_peak_count,
-]
+# LGBM_RECOVERY_FEATURES const removed 2026-05-18 — it was a stale legacy
+# list (23 entries) that claimed to be "the full Phase-2 feature set" but
+# was never referenced anywhere. The active feature lists are
+# PRESCORE_FEATURES (above) and ADVANCED_FEATURE_SET in
+# PrecursorScoringSearch/model_config.jl.
+#
+# Computed-but-currently-unwired columns retained for potential
+# re-introduction (have tested individual lift in past A/B):
+#   :tic           — Float16, log2(spectrum_tic). +4.2k IDs on
+#                    MTAC_3P_Standard solo (commit 4287cee7), dropped
+#                    in smart-composite reduction 143d6b87.
+#   :matched_ratio — Float16, log2((b+y+1)/(pred_int_sum_m0+1)). Batch E
+#                    feature (c734e62a); dropped during 143d6b87.
 
 """
     prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra; prescore_only=false)
