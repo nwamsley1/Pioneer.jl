@@ -75,30 +75,6 @@ const ADVANCED_FEATURE_SET = [
 ]
 
 """
-    apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
-
-Remove MS1 features from `features` in-place when `ms1_scoring=false`.
-This prevents using MS1 features when they would have zero variance.
-
-# Returns
-The mutated feature vector (for chaining).
-"""
-function apply_ms1_filtering!(features::Vector{Symbol}, ms1_scoring::Bool)
-    if !ms1_scoring
-        # Live MS1 features (populated by add_ms1_features! and the per-precursor
-        # MS1 chromatogram pass). Updated 2026-05-11 to match the live set in
-        # ADVANCED_FEATURE_SET (the previous *_ms1 names were dead).
-        ms1_features = Set([
-            :ms1_m0_intensity, :ms1_m1_intensity, :ms1_m0_mass_err_ppm,
-            :ms1_corr_weight_m0,
-            :ms1_weight_apex_to_m0_apex_irt,
-        ])
-        filter!(f -> !(f in ms1_features), features)
-    end
-    return features
-end
-
-"""
     apply_feature_blacklist!(features::Vector{Symbol})
 
 Remove features named in env var `PIONEER_FEATURE_BLACKLIST` (comma-separated
@@ -124,32 +100,3 @@ function apply_feature_blacklist!(features::Vector{Symbol})
     return features
 end
 
-"""
-    apply_feature_includes!(features::Vector{Symbol})
-
-Append features named in env var `PIONEER_FEATURE_INCLUDE` (comma-separated)
-to the feature list (idempotent — duplicates are ignored). Used to test
-adding ADVANCED_FEATURE_SET-only features into MainSearch PRESCORE_FEATURES
-without code edits.
-"""
-function apply_feature_includes!(features::Vector{Symbol})
-    incl_str = get(ENV, "PIONEER_FEATURE_INCLUDE", "")
-    isempty(incl_str) && return features
-    existing = Set(features)
-    added = 0
-    for raw in split(incl_str, ',')
-        s = strip(raw)
-        isempty(s) && continue
-        s = startswith(s, ":") ? s[2:end] : s
-        sym = Symbol(s)
-        if !(sym in existing)
-            push!(features, sym)
-            push!(existing, sym)
-            added += 1
-        end
-    end
-    if added > 0
-        @user_info "  PIONEER_FEATURE_INCLUDE added $added features; $(length(features)) total"
-    end
-    return features
-end

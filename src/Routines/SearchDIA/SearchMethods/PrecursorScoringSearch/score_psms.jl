@@ -25,7 +25,7 @@ and the low-data probit fallback.
 """
     score_precursor_isotope_traces(second_pass_folder, file_paths, precursors,
                                     max_psms_in_memory, q_value_threshold,
-                                    ms1_scoring, force_oom)
+                                    force_oom; match_between_runs=true)
 
 Score PSMs experiment-wide with the same LightGBM classifier the per-file
 MainSearch uses (`SHARED_LGBM_HP` in `MainSearch/scoring.jl`). Loads PSMs
@@ -42,7 +42,6 @@ to the per-file Arrow files.
   currently unused (in-memory always; per-fold sub-sampling inside the
   shared helper handles large datasets).
 - `q_value_threshold`: Surfaced for backward compatibility; currently unused.
-- `ms1_scoring`: When `false`, drops MS1 features from the feature set.
 - `force_oom`: Surfaced for backward compatibility; ignored.
 
 # Returns
@@ -54,7 +53,6 @@ function score_precursor_isotope_traces(
     precursors::LibraryPrecursors,
     ::Int64,                       # max_psms_in_memory (unused)
     ::Float32 = 0.01f0,            # q_value_threshold (unused)
-    ms1_scoring::Bool = true,
     ::Bool = false;                # force_oom (unused)
     match_between_runs::Bool = true,
 )
@@ -76,8 +74,6 @@ function score_precursor_isotope_traces(
     # 2. Build the feature list (the _qbin variants in ADVANCED_FEATURE_SET are
     # commented out, so we don't need to compute quantile-binned features here).
     features = copy(ADVANCED_FEATURE_SET)
-    apply_ms1_filtering!(features, ms1_scoring)
-    apply_feature_includes!(features)
     apply_feature_blacklist!(features)
 
     # 3. Add columns the helper / downstream code may inspect

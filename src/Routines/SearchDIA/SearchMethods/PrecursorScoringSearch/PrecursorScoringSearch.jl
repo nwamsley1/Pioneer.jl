@@ -67,12 +67,6 @@ struct PrecursorScoringSearchParameters <: SearchParameters
 
     q_value_threshold::Float32
 
-    # MS1 scoring is hardcoded on. The knob was previously surfaced as
-    # global.ms1_scoring but never set to false in any shipping config —
-    # the only effect of toggling it was to filter MS1 features out of
-    # the LightGBM feature set, which kept the keep-as-true default.
-    ms1_scoring::Bool
-
     # When false, skip MBR feature computation, the MBR-boosted second pass,
     # the FTR controller, and the qval bypass. Driven by global.match_between_runs.
     match_between_runs::Bool
@@ -88,8 +82,6 @@ struct PrecursorScoringSearchParameters <: SearchParameters
             Float64(ml_params.max_psm_memory_mb),
             Int64(ml_params.pep_bin_size),
             _resolve_q_value_threshold(global_params),
-
-            true,                                                 # ms1_scoring (hardcoded)
             mbr,
         )
     end
@@ -210,7 +202,6 @@ function summarize_results!(
             getPrecursors(getSpecLib(search_context)),
             max_psms,
             params.q_value_threshold,
-            params.ms1_scoring,
             FORCE_OOM;
             match_between_runs = params.match_between_runs,
         )
