@@ -101,6 +101,8 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     frag4_int::H
     frag5_int::H
     frag6_int::H
+    frag7_int::H
+    frag8_int::H
 
     # E7 (Batch E, 2026-05-12): mean |ppm_err| over matched M0 fragments at
     # ranks 1-3. Zero if no top-3 matches in this scan.
@@ -200,6 +202,8 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             unscored_PSMs[i].frag4_int,
             unscored_PSMs[i].frag5_int,
             unscored_PSMs[i].frag6_int,
+            unscored_PSMs[i].frag7_int,
+            unscored_PSMs[i].frag8_int,
 
             H(unscored_PSMs[i].top3_ppm_err_count > 0 ?
                 unscored_PSMs[i].top3_abs_ppm_err_sum / unscored_PSMs[i].top3_ppm_err_count :

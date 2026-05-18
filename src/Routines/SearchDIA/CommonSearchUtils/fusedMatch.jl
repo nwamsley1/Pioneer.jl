@@ -251,6 +251,8 @@ error accumulation.
     frag4_int = score.frag4_int
     frag5_int = score.frag5_int
     frag6_int = score.frag6_int
+    frag7_int = score.frag7_int
+    frag8_int = score.frag8_int
     top3_abs_ppm_err_sum = score.top3_abs_ppm_err_sum
     top3_ppm_err_count   = score.top3_ppm_err_count
     pred_int_sum_m0 = score.pred_int_sum_m0
@@ -264,13 +266,15 @@ error accumulation.
             end
         end
     else
-        # Per-rank intensity capture (top-6 M0 fragments) for chromatogram features
+        # Per-rank intensity capture (top-8 M0 fragments) for chromatogram features
         if rank == UInt8(1);     frag1_int += intensity
         elseif rank == UInt8(2); frag2_int += intensity
         elseif rank == UInt8(3); frag3_int += intensity
         elseif rank == UInt8(4); frag4_int += intensity
         elseif rank == UInt8(5); frag5_int += intensity
         elseif rank == UInt8(6); frag6_int += intensity
+        elseif rank == UInt8(7); frag7_int += intensity
+        elseif rank == UInt8(8); frag8_int += intensity
         end
         # E7: top-3 M0 fragment ppm-error capture
         if rank <= UInt8(3)
@@ -313,6 +317,7 @@ error accumulation.
         p_count, non_cannonical_count,
         error,
         frag1_int, frag2_int, frag3_int, frag4_int, frag5_int, frag6_int,
+        frag7_int, frag8_int,
         top3_abs_ppm_err_sum, top3_ppm_err_count,
         pred_int_sum_m0,
         prec_idx, ms_file_idx)

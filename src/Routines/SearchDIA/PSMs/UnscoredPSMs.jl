@@ -38,13 +38,15 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     p_count::UInt8
     non_cannonical_count::UInt8
     error::T
-    # Per-rank M0 fragment intensities (rank 1-6); for fragment-correlation features
+    # Per-rank M0 fragment intensities (rank 1-8); for fragment-correlation features
     frag1_int::T
     frag2_int::T
     frag3_int::T
     frag4_int::T
     frag5_int::T
     frag6_int::T
+    frag7_int::T
+    frag8_int::T
     # E7 (Batch E, 2026-05-12): top-3 fragment ppm-error capture. Accumulates
     # |ppm_err| for M0 matches at ranks 1-3 only; mean computed in Score!.
     top3_abs_ppm_err_sum::T
@@ -57,7 +59,7 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     ms_file_idx::UInt32
 end
 
-MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
+MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
 
 """
     TuningUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}

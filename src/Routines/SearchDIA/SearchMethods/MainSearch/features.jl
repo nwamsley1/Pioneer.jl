@@ -655,7 +655,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
-                                        :frag4_int, :frag5_int, :frag6_int, :weight, :irt_obs))
+                                        :frag4_int, :frag5_int, :frag6_int,
+                                        :frag7_int, :frag8_int, :weight, :irt_obs))
         @debug_l1 "_add_fragment_chromatogram_features!: missing required columns, skipping"
         return
     end
@@ -664,7 +665,8 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     weight = psms.weight
     irt    = psms.irt_obs
     f      = (psms.frag1_int, psms.frag2_int, psms.frag3_int,
-              psms.frag4_int, psms.frag5_int, psms.frag6_int)
+              psms.frag4_int, psms.frag5_int, psms.frag6_int,
+              psms.frag7_int, psms.frag8_int)
     has_m0 = hasproperty(psms, :ms1_m0_intensity)
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
 
@@ -714,9 +716,9 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             npts    = i_end - i_start + 1
             npts < 2 && continue
 
-            # Extract chromatograms for the 6 fragments + weight + iRT
-            F = Vector{Vector{Float32}}(undef, 6)
-            for r in 1:6
+            # Extract chromatograms for the 8 fragments + weight + iRT
+            F = Vector{Vector{Float32}}(undef, 8)
+            for r in 1:8
                 v = Vector{Float32}(undef, npts)
                 for k in 1:npts
                     v[k] = Float32(f[r][perm[i_start + k - 1]])
@@ -731,11 +733,11 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
                 IRT[k] = Float32(irt[i_orig])
             end
 
-            has_signal = ntuple(r -> maximum(F[r]) > 0, 6)
+            has_signal = ntuple(r -> maximum(F[r]) > 0, 8)
 
             # Apex dispersion across fragments with signal (also feeds delta_frame).
             apex_irts = Float32[]
-            for r in 1:6
+            for r in 1:8
                 has_signal[r] || continue
                 ai = 1; vmax = F[r][1]
                 for k in 2:npts; if F[r][k] > vmax; vmax = F[r][k]; ai = k; end; end
@@ -764,25 +766,25 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
             # 2026-05-15: replaced n_correlated_fragments_90 (>0.9) — 0.7 threshold
             # was ~11× more informative in ScoringSearch Pass-1 LGBM gain on
             # 23-file Olsen.
-            c_fw = Vector{Float32}(undef, 6)
-            for r in 1:6
+            c_fw = Vector{Float32}(undef, 8)
+            for r in 1:8
                 c_fw[r] = has_signal[r] ? _frag_pcor(F[r], W) : 0f0
             end
             n_corr_70 = UInt8(0)
-            for r in 1:6
+            for r in 1:8
                 has_signal[r] || continue
                 if c_fw[r] > 0.7f0; n_corr_70 += UInt8(1); end
             end
 
             # DIA-NN-style best fragment: rank r with the highest mean correlation
-            # to the other top-6 fragments. 30 Pearson calls per precursor.
+            # to the other top-8 fragments. 56 Pearson calls per precursor.
             # Anchors frag_corr_best_m0 = Pearson(best_frag, MS1 m0 chrom).
             best_r = 0
             best_consensus = typemin(Float32)
-            for r in 1:6
+            for r in 1:8
                 has_signal[r] || continue
                 consensus = 0f0; npairs = 0
-                for r2 in 1:6
+                for r2 in 1:8
                     (r2 == r || !has_signal[r2]) && continue
                     consensus += _frag_pcor(F[r], F[r2]); npairs += 1
                 end
