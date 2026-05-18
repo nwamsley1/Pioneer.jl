@@ -56,112 +56,131 @@ function score_precursor_isotope_traces(
     ::Bool = false;                # force_oom (unused)
     match_between_runs::Bool = true,
 )
-    # 1a. MBR Batch F: build the experiment-global pid → counterfactual_partner
-    # map by streaming the per-file Arrow tables (no PSM DataFrame needed yet).
-    # Held as a Dict and only converted to a Vector right before the MBR
-    # streaming compute. iRT-NN variant: partner = closest-pred-iRT opposite
-    # within (cv_fold × mz_decile), with fold-wide and experiment-global
-    # fallbacks. See mbr_pairing.jl::build_counterfactual_partner_map.
-    cf_partner_dict = match_between_runs ?
-        build_counterfactual_partner_map(file_paths, precursors) :
-        Dict{UInt32, UInt32}()
+    # MBR-on streams everything (counterfactual map, Pass-1 train/predict,
+    # MBR features, FTR recovery) — best_psms is never materialised as the
+    # full concatenated DataFrame. MBR-off keeps the legacy in-memory path.
+    if match_between_runs
+        return _score_precursor_isotope_traces_mbr(file_paths, precursors)
+    else
+        return _score_precursor_isotope_traces_no_mbr(
+            second_pass_folder, file_paths, precursors,
+        )
+    end
+end
 
-    # 1b. Load PSMs into memory for Pass-1 LightGBM training.
-    best_psms = load_psms_for_lightgbm(second_pass_folder)
-    n_psms = nrow(best_psms)
-    @debug_l1 "PSM scoring: $n_psms PSMs loaded for experiment-wide LightGBM"
+# Streaming MBR-on path. Walks the per-file Arrow tables for everything;
+# the only DataFrame ever materialised is the slim FTR table (10 cols)
+# reconstructed from sidecars right before the FTR controller runs.
+function _score_precursor_isotope_traces_mbr(
+    file_paths::Vector{String}, precursors::LibraryPrecursors,
+)
+    # 1. pid → counterfactual_partner_pid map (streaming over Arrow tables).
+    cf_partner_dict = build_counterfactual_partner_map(file_paths, precursors)
 
-    # 2. Build the feature list (the _qbin variants in ADVANCED_FEATURE_SET are
-    # commented out, so we don't need to compute quantile-binned features here).
+    # 2. Feature list. _qbin variants in ADVANCED_FEATURE_SET are commented
+    # out, so no quantile-binned features need pre-computing.
     features = copy(ADVANCED_FEATURE_SET)
     apply_feature_blacklist!(features)
 
-    # 3. Add columns the helper / downstream code may inspect
+    # 3. Pass-1 LightGBM: reservoir-sample → train both folds → predict each
+    # file and write its .pass1_sidecar.arrow. See pass1_oom.jl.
+    pass1 = train_and_predict_pass1_oom!(
+        file_paths;
+        features        = features,
+        compute_infold  = true,                # MBR-FTR consumes trace_prob_infold
+        lgbm_hp         = SCORING_LGBM_HP,
+    )
+
+    # 4. Pass-1 feature importance (last_classifier is whichever fold's
+    # booster the OOM trainer kept — only used for the diagnostic dump).
+    if pass1.last_classifier !== nothing
+        lgbm_model = LightGBMModel(pass1.last_classifier, pass1.available_features, nothing)
+        imp = importance(lgbm_model)
+        if imp !== nothing
+            sorted_imp = sort(imp, by = x -> -x[2])
+            lines = ["ScoringSearch Pass-1 LGBM feature gains (all $(length(sorted_imp))):"]
+            for (fname, gain) in sorted_imp
+                push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
+            end
+            @user_info join(lines, "\n")
+        end
+    end
+
+    # 5. Collapse the partner Dict to a pid-indexed Vector. The MBR feature
+    # compute does a Vector index per inner-loop iteration; that's cheaper
+    # than a Dict.get and the Vector is bounded by max observed pid (few MB).
+    max_pid = isempty(cf_partner_dict) ? UInt32(0) : maximum(keys(cf_partner_dict))
+    cf_partner_vec = zeros(UInt32, Int(max_pid))
+    for (pid, partner) in cf_partner_dict
+        cf_partner_vec[Int(pid)] = partner
+    end
+    cf_partner_dict = Dict{UInt32, UInt32}()
+
+    # 6. MBR donor dict (sweep-1) → per-file MBR sidecars (sweep-2).
+    @user_info "MBR Batch F: building donor dict via sweep-1..."
+    donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
+    @user_info "  donor dict pids: $(length(donor_dict))"
+
+    @user_info "MBR Batch F: writing per-file MBR sidecars..."
+    for fpath in file_paths
+        compute_mbr_features_per_file_to_sidecar_with_pass1!(fpath, donor_dict, cf_partner_vec)
+    end
+
+    donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
+    cf_partner_vec = UInt32[]
+    GC.gc()
+
+    # 7. Slim FTR DataFrame (~10 cols) reconstituted from main + sidecars,
+    # only as wide as the FTR controller needs.
+    @user_info "MBR Batch F: loading slim FTR DataFrame..."
+    psms = load_ftr_slim_dataframe(file_paths)
+    @user_info "  slim FTR rows: $(nrow(psms))"
+
+    # 8. `trace_prob` (downstream qval pipeline) = Pass-1 OOF score.
+    psms[!, :trace_prob] = psms[!, :trace_prob_prepass]
+
+    # 9. Paired-counterfactual FTR.
+    apply_mbr_filter_paired!(psms; alpha = 0.01f0, q_thresh = 0.01f0)
+
+    # 10. Recovery sidecars + final merge — folds (Pass-1 + MBR + recovery)
+    # back into each main file in one pass.
+    @user_info "MBR Batch F: writing recovery sidecars..."
+    write_recovery_sidecars(psms, file_paths)
+    psms = DataFrame()
+    GC.gc()
+    @user_info "MBR Batch F: merging Pass-1+MBR+recovery sidecars..."
+    merge_mbr_sidecars_into_main!(file_paths)
+
+    return nothing
+end
+
+# Legacy in-memory path used only when match_between_runs = false. Kept for
+# small / non-MBR runs where the full best_psms easily fits in memory.
+function _score_precursor_isotope_traces_no_mbr(
+    second_pass_folder::String,
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors,
+)
+    best_psms = load_psms_for_lightgbm(second_pass_folder)
+    n_psms = nrow(best_psms)
+    @debug_l1 "PSM scoring (no MBR): $n_psms PSMs loaded for in-memory LightGBM"
+
+    features = copy(ADVANCED_FEATURE_SET)
+    apply_feature_blacklist!(features)
+
     best_psms[!, :accession_numbers] = [getAccessionNumbers(precursors)[pid]
                                        for pid in best_psms[!, :precursor_idx]]
     best_psms[!, :decoy] = best_psms[!, :target] .== false
 
-    # ── MBR Phase 2 — first pass + donor features + second pass ──
-    # Architecture (Phase 5b refactor):
-    #   * :trace_prob (downstream qval pipeline) = NON-MBR score (pass 1)
-    #   * :trace_prob_mbr = MBR-boosted score (pass 2) — used ONLY by FTR
-    #     controller to evaluate transfer-candidate recovery.
-    #   * Recovered candidates get :mbr_recovered = true and bypass the
-    #     downstream qval gate, but their :trace_prob (non-MBR) remains
-    #     untouched for downstream weighting / aggregation.
-    #
-    # This eliminates the Path-B leak (MBR features inflating non-candidate
-    # scores in the qval distribution).
-    all_scores_p1, infold_scores_p1, last_classifier_p1, info_p1 = train_psm_classifier_with_fallback(
-        best_psms; features=features, lgbm_hp=SCORING_LGBM_HP,
-        compute_infold = match_between_runs,
+    all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
+        best_psms; features = features, lgbm_hp = SCORING_LGBM_HP,
+        compute_infold = false,
     )
-    best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores_p1, 1f-6, 1f0 - 1f-4))
-    if match_between_runs && infold_scores_p1 !== nothing
-        # rtv3 (2026-05-13): in-fold Pass-1 score. The pair (OOF, in-fold)
-        # reveals memorization gap to the downstream MBR-FTR LightGBM.
-        best_psms[!, :trace_prob_infold] = Float32.(clamp.(infold_scores_p1, 1f-6, 1f0 - 1f-4))
-    end
-    @user_info "Pass 1 (non-MBR) trained on $(length(info_p1.available_features)) features"
+    best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
+    best_psms[!, :trace_prob]         = best_psms[!, :trace_prob_prepass]
+    best_psms[!, :mbr_recovered]      = falses(nrow(best_psms))
+    @user_info "Pass-1 (no MBR) trained on $(length(info.available_features)) features"
 
-    last_classifier = last_classifier_p1
-    info            = info_p1
-
-    if match_between_runs
-        # MBR Batch F (streaming). Two sweeps over the per-file Arrow data:
-        #   1. write_pass1_score_sidecars! distributes Pass-1 scores back to
-        #      per-file sidecars so we can free best_psms before the heavy
-        #      MBR feature stage.
-        #   2. build_mbr_donor_dict_streaming_with_pass1 reads the per-file
-        #      main + Pass-1 sidecars to build a top-2 donor dict per pid.
-        #   3. compute_mbr_features_per_file_to_sidecar_with_pass1! writes
-        #      one MBR sidecar per file using that donor dict.
-        # apply_mbr_filter_paired! then runs on a slim reconstructed DataFrame
-        # (~20 cols vs ~80). Recovery results land in per-file recovery
-        # sidecars; merge_mbr_sidecars_into_main! produces the final per-file
-        # output.
-        @user_info "MBR Batch F: writing Pass-1 sidecars..."
-        write_pass1_score_sidecars!(best_psms, file_paths)
-
-        # Free best_psms before the donor sweep — that's the memory win
-        # over the old in-memory path that held best_psms across MBR
-        # feature compute.
-        best_psms = DataFrame()
-        GC.gc()
-
-        # Collapse the partner Dict to a Vector indexed by pid for the
-        # MBR feature compute (one Vector index per inner-loop iteration
-        # beats a Dict lookup). Vector is bounded by the largest observed
-        # pid; usually a few MB.
-        max_pid = isempty(cf_partner_dict) ? UInt32(0) : maximum(keys(cf_partner_dict))
-        cf_partner_vec = zeros(UInt32, Int(max_pid))
-        for (pid, partner) in cf_partner_dict
-            cf_partner_vec[Int(pid)] = partner
-        end
-        cf_partner_dict = Dict{UInt32, UInt32}()  # drop the Dict; vec is authoritative
-
-        @user_info "MBR Batch F: building donor dict via sweep-1..."
-        donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
-        @user_info "  donor dict pids: $(length(donor_dict))"
-
-        @user_info "MBR Batch F: writing per-file MBR sidecars..."
-        for fpath in file_paths
-            compute_mbr_features_per_file_to_sidecar_with_pass1!(fpath, donor_dict, cf_partner_vec)
-        end
-
-        # Drop sweep-1 state before reconstituting the slim FTR DataFrame.
-        donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
-        cf_partner_vec = UInt32[]
-        GC.gc()
-
-        @user_info "MBR Batch F: loading slim FTR DataFrame..."
-        best_psms = load_ftr_slim_dataframe(file_paths)
-        @user_info "  slim FTR rows: $(nrow(best_psms))"
-    else
-        @user_info "match_between_runs=false: skipping MBR features and FTR controller"
-    end
-
-    # Log Pass-1 feature importances (the only pass in Batch F).
     if last_classifier !== nothing
         lgbm_model = LightGBMModel(last_classifier, info.available_features, nothing)
         imp = importance(lgbm_model)
@@ -175,33 +194,7 @@ function score_precursor_isotope_traces(
         end
     end
 
-    # :trace_prob = NON-MBR pass-1 score. Drives the qval pipeline downstream.
-    best_psms[!, :trace_prob] = best_psms[!, :trace_prob_prepass]
-
-    if match_between_runs
-        # Batch F: paired-counterfactual FTR with q-value threshold.
-        apply_mbr_filter_paired!(best_psms; alpha=0.01f0, q_thresh=0.01f0)
-    else
-        # No MBR: ensure downstream code finds the column but never bypasses qval.
-        best_psms[!, :mbr_recovered] = falses(nrow(best_psms))
-    end
-
-    # 8. Distribute scored PSMs back to the per-file Arrow files.
-    if match_between_runs
-        # MBR on: the FTR's recovery columns land in per-file recovery sidecars,
-        # then merge_mbr_sidecars_into_main! folds (Pass-1 + MBR + recovery)
-        # sidecars back into each main file in one pass.
-        @user_info "MBR Batch F: writing recovery sidecars..."
-        write_recovery_sidecars(best_psms, file_paths)
-        best_psms = DataFrame()
-        GC.gc()
-        @user_info "MBR Batch F: merging Pass-1+MBR+recovery sidecars..."
-        merge_mbr_sidecars_into_main!(file_paths)
-    else
-        # MBR off: no sidecars exist; do the classic in-memory writeback.
-        write_scored_psms_to_files!(best_psms, file_paths)
-    end
-
+    write_scored_psms_to_files!(best_psms, file_paths)
     return nothing
 end
 
