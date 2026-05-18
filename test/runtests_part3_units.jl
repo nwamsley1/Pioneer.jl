@@ -36,6 +36,8 @@ include("./UnitTests/test_run_fused.jl")
 include("./UnitTests/test_sort_detailed_fragments.jl")
 include("./UnitTests/test_feature_finiteness.jl")
 include("./UnitTests/test_chromatogram_integration_trace_order.jl")
+include("./UnitTests/test_debug_chromatogram_integration_plots.jl")
+include("./UnitTests/test_huber_tuning_global.jl")
 
 # FileOperations focused tests
 include("./utils/FileOperations/io/test_arrow_operations_basic.jl")

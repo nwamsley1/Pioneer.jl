@@ -258,6 +258,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     ms1_mass_error_model::Dict{Int64, AbstractMassErrorModel}
     #rt_to_irt_model::Dict{Int64, RtConversionModel}
     nce_model::Dict{Int64, NceModel}
+    huber_delta::Base.Ref{Float32}
     deconvolution_stop_tolerance::Base.Ref{Float32}
     # Results and paths
     irt_rt_map::Dict{Int64, RtConversionModel}
@@ -309,7 +310,9 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, QuadTransmissionModel}(),
             Dict{Int64, AbstractMassErrorModel}(),
             Dict{Int64, AbstractMassErrorModel}(),
-            Dict{Int64, NceModel}(), 10.0f0,
+            Dict{Int64, NceModel}(),
+            Ref(300.0f0),
+            10.0f0,
             Dict{Int64, RtConversionModel}(), 
             Dict{Int64, RtConversionModel}(), 
             Ref{Dictionary}(), 
@@ -478,6 +481,7 @@ getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
 getRtTolerances(s::SearchContext) = s.rt_tolerances
 getRtTolerance(s::SearchContext, ms_file_idx::Int64) = s.rt_tolerances[ms_file_idx]
+getHuberDelta(s::SearchContext) = s.huber_delta[]
 # Use library iRT array directly — O(1) indexing, no Dict overhead
 getPredIrt(s::SearchContext) = getIrt(getPrecursors(getSpecLib(s)))
 getPredIrt(s::SearchContext, prec_idx::Int64) = getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
@@ -585,6 +589,7 @@ function setPrecursorDict!(s::SearchContext, dict::Dictionary{UInt32, @NamedTupl
     s.precursor_dict[] = dict
 end
 setRtIndexPaths!(s::SearchContext, paths::Vector{String}) = (s.rt_index_paths[] = paths)
+setHuberDelta!(s::SearchContext, delta::Float32) = (s.huber_delta[] = delta)
 function setIrtErrors!(s::SearchContext, errs::Dictionary{Int64, Float32})
     for (k,v) in pairs(errs)
         s.irt_errors[k] = v

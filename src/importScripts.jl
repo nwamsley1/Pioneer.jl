@@ -309,6 +309,7 @@ function importScripts()
     for (root, dirs, files) in walkdir(search_methods_dir)
         root_basename = basename(root)
         if root_basename == "ParameterTuningSearch" || root_basename == "PrecursorScoringSearch" ||
+           root_basename == "HuberTuningSearch" ||
            root_basename == "ProteinInferenceSearch" || root_basename == "ProteinScoringSearch" ||
            occursin("MainSearch", root)
             continue
@@ -319,6 +320,16 @@ function importScripts()
             end
         end
     end
+
+    # Huber calibration depends on the chromatogram-integration fused RT-window
+    # utilities, so load it after the remaining SearchMethods pass above.
+    include_files!(
+        joinpath(search_methods_dir, "HuberTuningSearch"),
+        [
+            "HuberTuningSearch.jl",
+            "utils.jl"
+        ]
+    )
     
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))
 

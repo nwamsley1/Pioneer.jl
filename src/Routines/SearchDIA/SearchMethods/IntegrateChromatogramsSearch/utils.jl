@@ -118,6 +118,116 @@ function sort_chromatograms_for_integration!(chromatograms::DataFrame)
     return sort_chromatograms_for_integration!(chromatograms, CombineTraces(0.25f0))
 end
 
+const DEBUG_CHROM_TARGET_PRECURSOR_IDXS = Ref{Set{UInt32}}(
+    Set(UInt32[370714, 1197075, 1047223, 591443, 909488])
+)
+const DEBUG_CHROM_TARGET_PRECURSOR_IDX = DEBUG_CHROM_TARGET_PRECURSOR_IDXS
+
+@inline function debug_should_plot_chromatogram(precursor_idx::Integer)
+    return DEBUG_CONSOLE_LEVEL[] >= 1 &&
+        UInt32(precursor_idx) in DEBUG_CHROM_TARGET_PRECURSOR_IDXS[]
+end
+
+function debug_sanitize_chromatogram_filename(value::AbstractString)
+    safe = replace(String(value), r"[^A-Za-z0-9]+" => "_")
+    safe = replace(safe, r"^_+|_+$" => "")
+    return isempty(safe) ? "run" : safe
+end
+
+function debug_chromatogram_plot_path(
+    output_root::AbstractString,
+    ms_file_idx::Integer,
+    file_name::AbstractString,
+    precursor_idx::Integer,
+    row_idx::Integer,
+)
+    safe_name = debug_sanitize_chromatogram_filename(file_name)
+    return joinpath(
+        String(output_root),
+        "qc_plots",
+        "chromatogram_integration_debug",
+        "precursor_$(UInt32(precursor_idx))_file_$(Int(ms_file_idx))_$(safe_name)_row_$(Int(row_idx)).png",
+    )
+end
+
+function debug_write_target_chromatogram_plots(
+    chromatograms::DataFrame,
+    passing_psms::DataFrame,
+    min_fraction_transmitted::Float32,
+    λ::Float32,
+    output_root::AbstractString,
+    ms_file_idx::Integer,
+    file_name::AbstractString,
+)
+    DEBUG_CONSOLE_LEVEL[] >= 1 || return nothing
+
+    target_precursor_idxs = DEBUG_CHROM_TARGET_PRECURSOR_IDXS[]
+    isempty(target_precursor_idxs) && return nothing
+    target_rows = findall(
+        row -> UInt32(passing_psms[row, :precursor_idx]) in target_precursor_idxs,
+        axes(passing_psms, 1),
+    )
+    isempty(target_rows) && return nothing
+
+    if nrow(chromatograms) == 0
+        debug_l1("chromatogram_debug_plot precursor_idxs=$(collect(target_precursor_idxs)) " *
+                 "ms_file_idx=$(ms_file_idx) skipped=true reason=no_chromatograms")
+        return nothing
+    end
+
+    prec_col = chromatograms[!, :precursor_idx]::AbstractVector{UInt32}
+    rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
+    scan_idx_all = chromatograms[!, :scan_idx]::AbstractVector{UInt32}
+    intensity_all = chromatograms[!, :intensity]::AbstractVector{Float32}
+    fraction_all = chromatograms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
+
+    for row_idx in target_rows
+        target_precursor_idx = UInt32(passing_psms[row_idx, :precursor_idx])
+        chrom_rows = findall(==(target_precursor_idx), prec_col)
+        if isempty(chrom_rows)
+            debug_l1("chromatogram_debug_plot precursor_idx=$(target_precursor_idx) " *
+                     "ms_file_idx=$(ms_file_idx) skipped=true reason=target_chromatogram_missing")
+            continue
+        end
+
+        ordered_rows = chrom_rows[sortperm(@view(rt_all[chrom_rows]))]
+        N = length(ordered_rows)
+        N <= 0 && continue
+        avg_cycle_time = N < 2 ? 1.0f0 : (rt_all[last(ordered_rows)] - rt_all[first(ordered_rows)]) / N
+        target_scan = hasproperty(passing_psms, :scan_idx) ?
+            UInt32(passing_psms[row_idx, :scan_idx]) :
+            scan_idx_all[ordered_rows[argmax(@view(intensity_all[ordered_rows]))]]
+        apex_scan = find_nearest_scan(scan_idx_all[ordered_rows], target_scan)
+        plot_path = debug_chromatogram_plot_path(
+            output_root,
+            ms_file_idx,
+            file_name,
+            target_precursor_idx,
+            row_idx,
+        )
+        plot_title = "file $(Int(ms_file_idx)) $(file_name) precursor $(target_precursor_idx)"
+
+        ws = WHWorkspace(N)
+        state = Chromatogram(zeros(Float32, N), zeros(Float32, N), 0)
+        integrate_chrom(
+            rt_all[ordered_rows],
+            scan_idx_all[ordered_rows],
+            intensity_all[ordered_rows],
+            fraction_all[ordered_rows],
+            apex_scan,
+            ws,
+            state,
+            avg_cycle_time,
+            λ,
+            min_fraction_transmitted = min_fraction_transmitted,
+            debug_plot_path = plot_path,
+            debug_plot_title = plot_title,
+        )
+    end
+
+    return nothing
+end
+
 function select_quant_trace_by_transmission(chromatograms::DataFrame)
     prec_col = chromatograms[!, :precursor_idx]::AbstractVector{UInt32}
     iso_col = chromatograms[!, :isotopes_captured]::AbstractVector{Tuple{Int8, Int8}}
@@ -625,7 +735,7 @@ function build_chromatograms(
             initialize_weights!(id_to_col, weights, precursor_weights)
 
             solve_deconvolution!(
-                params.deconvolution_solver,
+                calibrated_chromatogram_deconvolution_solver(search_context, params.deconvolution_solver),
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
                 params.max_iter_outer, params.max_diff)
@@ -852,7 +962,7 @@ function build_chromatograms(
 
             # Solve deconvolution
             solve_deconvolution!(
-                params.deconvolution_solver,
+                calibrated_chromatogram_deconvolution_solver(search_context, params.deconvolution_solver),
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
                 params.max_iter_outer, params.max_diff

@@ -233,11 +233,16 @@ function SearchDIA(params_path::String)
             ("BitVec Calibration", BitVecCalibrationSearch()),
             ("Main Search", MainSearch()),
             ("Precursor Scoring", PrecursorScoringSearch()),
+        ]
+        if get(params.optimization.chromatogram_integration, :deconvolution_solver, "huber") == "huber"
+            push!(searches, ("Huber Calibration", HuberTuningSearch()))
+        end
+        append!(searches, [
             ("Chromatogram Integration", IntegrateChromatogramSearch()),
             ("Protein Inference", ProteinInferenceSearch()),
             ("Protein Scoring", ProteinScoringSearch()),
             ("Quantification & Output", MaxLFQSearch())
-        ]
+        ])
 
         # Execute each search phase and record timing + peak RSS delta
         rss_deltas = Dict{String, Float64}()
@@ -301,7 +306,7 @@ function print_performance_report(timings, ms_table_paths, search_context, rss_d
     execution_order = [
         "Parameter Loading", "Spectral Library Loading", "Search Context Initialization",
         "Parameter Tuning", "Quadrupole Tuning", "BitVec Calibration",
-        "Main Search", "Precursor Scoring", "Chromatogram Integration",
+        "Main Search", "Precursor Scoring", "Huber Calibration", "Chromatogram Integration",
         "Protein Inference", "Protein Scoring", "Quantification & Output",
     ]
     seen = Set{String}()

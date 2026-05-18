@@ -57,6 +57,59 @@ function _resolve_chromatogram_trace_type(
     ))
 end
 
+function default_chromatogram_integration_huber_solver()
+    return HuberSolver(
+        300.0f0,      # delta (hardcoded until tuning is reintroduced)
+        0.0f0,        # lambda (no regularization)
+        Int64(50),    # max_iter_newton
+        Int64(100),   # max_iter_bisection
+        10.0f0,       # accuracy_newton
+        10.0f0,       # accuracy_bisection
+        NoNorm(),
+    )
+end
+
+function _resolve_chromatogram_deconvolution_solver(params::PioneerParameters)
+    solver_name = get(
+        params.optimization.chromatogram_integration,
+        :deconvolution_solver,
+        "huber",
+    )
+
+    if solver_name == "huber"
+        return default_chromatogram_integration_huber_solver()
+    elseif solver_name == "pmm"
+        return PoissonMMSolver()
+    end
+
+    throw(ArgumentError(
+        "Invalid optimization.chromatogram_integration.deconvolution_solver=$(repr(solver_name)); " *
+        "expected \"huber\" or \"pmm\".",
+    ))
+end
+
+with_chromatogram_huber_delta(solver::HuberSolver, delta::Float32) = with_huber_delta(solver, delta)
+with_chromatogram_huber_delta(solver::DeconvolutionSolver, ::Float32) = solver
+
+function calibrated_chromatogram_deconvolution_solver(
+    search_context::SearchContext,
+    solver::DeconvolutionSolver,
+)
+    return with_chromatogram_huber_delta(solver, getHuberDelta(search_context))
+end
+
+function chromatogram_integration_solver_label(solver::HuberSolver)
+    return "HuberSolver(delta=$(Float64(solver.delta)))"
+end
+
+function chromatogram_integration_solver_label(::PoissonMMSolver)
+    return "PoissonMMSolver"
+end
+
+function chromatogram_integration_solver_label(solver::DeconvolutionSolver)
+    return string(nameof(typeof(solver)))
+end
+
 """
 Parameters for chromatogram integration search.
 """
@@ -112,15 +165,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
             Float32(0.0),     # lambda (no regularization)
             NoNorm(),         # reg_type
-            HuberSolver(
-                300.0f0,      # delta (hardcoded until tuning is reintroduced)
-                0.0f0,        # lambda (no regularization)
-                Int64(50),    # max_iter_newton
-                Int64(100),   # max_iter_bisection
-                10.0f0,       # accuracy_newton
-                10.0f0,       # accuracy_bisection
-                NoNorm(),
-            ),
+            _resolve_chromatogram_deconvolution_solver(params),
             DECONV_MAX_ITER,          # max_iter_outer
             DECONV_CONVERGENCE_TOL,   # max_diff
 
@@ -188,6 +233,10 @@ function process_file!(
     passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
     passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
     passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
+
+    @debug_l1 "Chromatogram integration solver for file $ms_file_idx: " *
+              "$(chromatogram_integration_solver_label(calibrated_chromatogram_deconvolution_solver(search_context, params.deconvolution_solver)))"
+
     # Extract chromatograms for all passing PSMs
     chromatograms = extract_chromatograms(
         spectra,
@@ -240,6 +289,16 @@ function process_file!(
         )
     end
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
+
+    debug_write_target_chromatogram_plots(
+        chromatograms,
+        passing_psms,
+        params.min_fraction_transmitted,
+        params.wh_smoothing_strength,
+        getDataOutDir(search_context),
+        ms_file_idx,
+        getFileIdToName(getMSData(search_context), ms_file_idx),
+    )
 
     # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)
     if nrow(chromatograms) > 0

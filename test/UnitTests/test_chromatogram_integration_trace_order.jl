@@ -106,12 +106,16 @@ end
     ]
 end
 
-function _write_trace_mode_params(path::AbstractString; trace_mode = nothing)
-    trace_mode_json = trace_mode === nothing ? "" : """
+function _write_trace_mode_params(path::AbstractString; trace_mode = nothing, deconvolution_solver = nothing)
+    chrom_fields = String[]
+    trace_mode !== nothing && push!(chrom_fields, "\"trace_mode\": \"$(trace_mode)\"")
+    deconvolution_solver !== nothing && push!(chrom_fields, "\"deconvolution_solver\": \"$(deconvolution_solver)\"")
+
+    trace_mode_json = isempty(chrom_fields) ? "" : """
         ,
         "optimization": {
             "chromatogram_integration": {
-                "trace_mode": "$(trace_mode)"
+                $(join(chrom_fields, ",\n                "))
             }
         }
     """
@@ -141,7 +145,19 @@ end
         HuberSolver = getproperty(Pioneer, :HuberSolver)
         @test default_integration.deconvolution_solver isa HuberSolver
         @test default_integration.deconvolution_solver.delta == 300.0f0
+        @test Pioneer.chromatogram_integration_solver_label(default_integration.deconvolution_solver) ==
+            "HuberSolver(delta=300.0)"
     end
+
+    pmm_path = joinpath(tmp, "pmm.json")
+    _write_trace_mode_params(pmm_path; deconvolution_solver = "pmm")
+    checked_pmm = Pioneer.checkParams(pmm_path)
+    @test checked_pmm["optimization"]["chromatogram_integration"]["deconvolution_solver"] == "pmm"
+    pmm_params = Pioneer.parse_pioneer_parameters(pmm_path)
+    pmm_integration = Pioneer.IntegrateChromatogramSearchParameters(pmm_params)
+    @test pmm_integration.deconvolution_solver isa Pioneer.PoissonMMSolver
+    @test Pioneer.chromatogram_integration_solver_label(pmm_integration.deconvolution_solver) ==
+        "PoissonMMSolver"
 
     separate_path = joinpath(tmp, "separate.json")
     _write_trace_mode_params(separate_path; trace_mode = "separate")
