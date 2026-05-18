@@ -90,11 +90,6 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     fitted_hellinger::L
 
-    # M0 (mono) library-rank match indicators (set per-PSM by Score!)
-    rank1_matched::UInt8        # 1 if M0 rank-1 fragment matched, 0 otherwise
-    top3_matched::UInt8         # number of M0 ranks 1-3 matched (0..3)
-    top5_matched::UInt8         # number of M0 ranks 1-5 matched (0..5)
-
     # Rank/topn features carried from MainUnscoredPSM. Added 2026-05-11 so the
     # experiment-wide LightGBM in PrecursorScoringSearch has the same rank
     # signal as the per-file LightGBM (previously dropped by Score!).
@@ -183,12 +178,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
         total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
         total_ions_iso = Int64(unscored_PSMs[i].isotope_count)
 
-        # Decode matched library ranks from the bitmask (M0 fragments only)
-        mask = unscored_PSMs[i].matched_rank_mask
-        rank1_matched = (mask & UInt8(0b1)) != 0 ? UInt8(1) : UInt8(0)
-        top3_matched  = UInt8(count_ones(mask & UInt8(0b111)))
-        top5_matched  = UInt8(count_ones(mask & UInt8(0b11111)))
-
         scored_psms[start_idx + i - skipped] = MainSearchScoredPSM(
             unscored_PSMs[i].longest_y,
             unscored_PSMs[i].b_count,
@@ -207,8 +196,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
             weight[scores_idx],
 
             spectral_scores[scores_idx].fitted_hellinger,
-
-            rank1_matched, top3_matched, top5_matched,
 
             unscored_PSMs[i].best_rank,
             unscored_PSMs[i].best_rank_iso,

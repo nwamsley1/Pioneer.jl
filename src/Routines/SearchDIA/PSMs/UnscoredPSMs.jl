@@ -41,7 +41,6 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     p_count::UInt8
     non_cannonical_count::UInt8
     error::T
-    matched_rank_mask::UInt8   # bit i = matched M0 fragment of rank (i+1); bits 0..7 → ranks 1..8
     # Per-rank M0 fragment intensities (rank 1-6); for fragment-correlation features
     frag1_int::T
     frag2_int::T
@@ -61,7 +60,7 @@ struct MainUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     ms_file_idx::UInt32
 end
 
-MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
+MainUnscoredPSM{Float32}() = MainUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), Float32(0), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
 
 """
     TuningUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}

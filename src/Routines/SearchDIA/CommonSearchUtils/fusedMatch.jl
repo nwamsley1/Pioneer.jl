@@ -248,7 +248,6 @@ error accumulation.
 
     rank    = getRank(frag)
     ion_pos = getIonPosition(frag)
-    matched_rank_mask = score.matched_rank_mask
     frag1_int = score.frag1_int
     frag2_int = score.frag2_int
     frag3_int = score.frag3_int
@@ -274,10 +273,6 @@ error accumulation.
             end
         end
     else
-        # M0 fragment match: set bit (rank-1) in mask (bits 0..7 → ranks 1..8)
-        if rank >= UInt8(1) && rank <= UInt8(8)
-            matched_rank_mask |= (UInt8(1) << (rank - UInt8(1)))
-        end
         # Per-rank intensity capture (top-6 M0 fragments) for chromatogram features
         if rank == UInt8(1);     frag1_int += intensity
         elseif rank == UInt8(2); frag2_int += intensity
@@ -329,7 +324,7 @@ error accumulation.
         min(y_count, UInt8(255)), y_int,
         min(y_count_iso, UInt8(255)),
         p_count, non_cannonical_count,
-        error, matched_rank_mask,
+        error,
         frag1_int, frag2_int, frag3_int, frag4_int, frag5_int, frag6_int,
         top3_abs_ppm_err_sum, top3_ppm_err_count,
         pred_int_sum_m0,
