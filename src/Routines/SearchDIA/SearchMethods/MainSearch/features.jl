@@ -108,13 +108,16 @@ function add_features!(psms::DataFrame,
     lys_count = zeros(UInt8, N)
     arg_count = zeros(UInt8, N)
 
+    # irt_diff and prec_mz are in PRESCORE_FEATURES (per-file LGBM) and the
+    # ScoringSearch feature set, so they're allocated unconditionally.
+    irt_diff = zeros(Float32, N)
+    prec_mzs = zeros(Float32, N)
+
     # Columns only needed for Phase 2 (full feature set)
     if !prescore_only
-        irt_diff = zeros(Float32, N)
         entrap_group_id = zeros(UInt8, N)
         adjusted_intensity_explained = zeros(Float16, N);
         prec_charges = zeros(UInt8, N)
-        prec_mzs = zeros(Float32, N);
         TIC = zeros(Float16, N);
     end
 
@@ -177,13 +180,14 @@ function add_features!(psms::DataFrame,
             spectrum_peak_count[i] = length(masses[scan_idx[i]])
             sequence_length[i] = prec_length[prec_idx]
 
+            irt_diff[i] = abs(irt_obs[i] - prec_irt[prec_idx])
+            prec_mzs[i] = prec_mz[prec_idx]
+
             if !prescore_only
                 entrap_group_id[i] = entrap_group_ids[prec_idx]
-                irt_diff[i] = abs(irt_obs[i] - prec_irt[prec_idx])
                 TIC[i] = Float16(log2(tic[scan_idx[i]]))
                 adjusted_intensity_explained[i] = Float16(log2(TIC[i]) + log2_intensity_explained[i]);
                 prec_charges[i] = prec_charge[prec_idx]
-                prec_mzs[i] = prec_mz[prec_idx];
             end
         end
     end
@@ -199,13 +203,13 @@ function add_features!(psms::DataFrame,
     psms[!,:arg_count] = arg_count
     psms[!,:spectrum_peak_count] = spectrum_peak_count
     psms[!,:sequence_length] = sequence_length
+    psms[!,:irt_diff] = irt_diff
+    psms[!,:prec_mz] = prec_mzs
 
     if !prescore_only
-        psms[!,:irt_diff] = irt_diff
         psms[!,:tic] = TIC
         psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
         psms[!,:charge] = prec_charges
-        psms[!,:prec_mz] = prec_mzs
         psms[!,:entrapment_group_id] = entrap_group_id
         psms[!,:ms_file_idx] .= ms_file_idx
     end
