@@ -63,6 +63,21 @@ const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
 
 # Per-fold training cap; folds larger than this are random-subsampled.
 const SHARED_LGBM_MAX_TRAIN = 250_000
+
+# Adaptive HP selection trigger. When the per-file PSM count is below this
+# threshold, training is cheap enough to compare 2-3 LightGBM HP configs of
+# differing complexity and pick the best by OOF target count at 1% FDR.
+# Above the threshold we trust the single default HP — bigger datasets give
+# the complex model enough data to win.
+const ADAPTIVE_HP_THRESHOLD = 50_000
+
+# Adaptive HP candidates (used when n_psms < ADAPTIVE_HP_THRESHOLD).
+# All inherit env-overridable defaults from current_shared_lgbm_hp() and
+# only override min_data_in_leaf and num_leaves.
+const ADAPTIVE_HP_OVERRIDES = (
+    medium = (min_data_in_leaf = 50, num_leaves = 31),
+    simple = (min_data_in_leaf = 20, num_leaves = 15),
+)
 # Low-data threshold per fold: below this we CV-select between LightGBM and probit.
 const SHARED_LGBM_LOW_DATA_THRESHOLD = 10_000
 
@@ -137,7 +152,8 @@ function train_psm_classifier_with_fallback(
     # iteration (rtv3: "memorization gap" — pairing OOF + in-fold scores lets
     # the downstream MBR-FTR LGBM see how overconfident the Pass-1 model is on
     # rows it was trained on, which is independent of the OOF probability).
-    function _lgbm_cv()
+    function _lgbm_cv(hp_overrides::NamedTuple = NamedTuple())
+        hp_eff = isempty(hp_overrides) ? lgbm_hp : merge(lgbm_hp, hp_overrides)
         fold_scores  = Vector{Vector{Float64}}(undef, 2)
         infold_scores = compute_infold ? Vector{Vector{Float64}}(undef, 2) : nothing
         last_cls = nothing
@@ -154,7 +170,7 @@ function train_psm_classifier_with_fallback(
                     infold_scores[fi] = fill(y_lbl[1] == 0 ? 0.0 : 1.0, length(train_idx))
                 end
             else
-                cls = build_lightgbm_classifier(; lgbm_hp...)
+                cls = build_lightgbm_classifier(; hp_eff...)
                 tf = time(); LightGBM.fit!(cls, X_tr, y_lbl; verbosity = -1); t_fit += time() - tf
                 ts2 = time(); X_te = X_all[test_idx, :]; t_slice += time() - ts2
                 tp = time(); raw = LightGBM.predict(cls, X_te); t_predict += time() - tp
@@ -216,48 +232,75 @@ function train_psm_classifier_with_fallback(
 
     @debug_l1 "  LightGBM CV: fold0=$(length(idx0)) fold1=$(length(idx1)) PSMs; train $(length.(sub_positions))"
 
+    # Always run the default-HP LGBM (single source of truth for big datasets
+    # and the safest fallback for small ones).
     lgbm_scores, lgbm_infold_scores, last_classifier, lgbm_timings = _lgbm_cv()
     @debug_l1 "  LightGBM timings: slice=$(round(lgbm_timings.slice, digits=2))s fit=$(round(lgbm_timings.fit, digits=2))s predict=$(round(lgbm_timings.predict, digits=2))s"
 
-    info_winner = "lgbm"
-    info_n_lgbm = -1
+    # Helper to score a candidate by OOF targets at q≤0.01 across both folds.
+    _oof_count(fs) = _fold_oof_psms_at_1pct(targets_col[idx0], fs[1]) +
+                     _fold_oof_psms_at_1pct(targets_col[idx1], fs[2])
+
+    # Adaptive model selection: when n_total < ADAPTIVE_HP_THRESHOLD, the
+    # training cost is small enough to try a few LightGBM HP variants of
+    # differing complexity (medium = min_data=50/num_leaves=31, simple =
+    # min_data=20/num_leaves=15). Below LOW_DATA_THRESHOLD per fold, probit
+    # also joins the competition. Winner = highest OOF target count at 1% FDR.
+    adaptive = n_total < ADAPTIVE_HP_THRESHOLD
+    n_lgbm_default = _oof_count(lgbm_scores)
+    candidates = [(name="lgbm_default", scores=lgbm_scores, infold=lgbm_infold_scores,
+                   last=last_classifier, oof=n_lgbm_default)]
+
+    if adaptive
+        for (variant_name, hp_over) in pairs(ADAPTIVE_HP_OVERRIDES)
+            sc, infold, lc, _ = _lgbm_cv(hp_over)
+            push!(candidates, (name="lgbm_$(variant_name)", scores=sc, infold=infold,
+                               last=lc, oof=_oof_count(sc)))
+        end
+    end
+
     info_n_probit = -1
     if low_data
         probit_scores, probit_infold_scores = _probit_cv()
-        n_lgbm   = _fold_oof_psms_at_1pct(targets_col[idx0], lgbm_scores[1])   + _fold_oof_psms_at_1pct(targets_col[idx1], lgbm_scores[2])
-        n_probit = _fold_oof_psms_at_1pct(targets_col[idx0], probit_scores[1]) + _fold_oof_psms_at_1pct(targets_col[idx1], probit_scores[2])
-        winner = n_lgbm >= n_probit ? "lgbm" : "probit"
-        @debug_l1 "  Low-data CV selection (min fold=$min_fold_size < $LOW_DATA_THRESHOLD): lgbm=$n_lgbm probit=$n_probit → $winner"
-        chosen        = n_lgbm >= n_probit ? lgbm_scores       : probit_scores
-        chosen_infold = n_lgbm >= n_probit ? lgbm_infold_scores : probit_infold_scores
-        all_scores[idx0] .= chosen[1]
-        all_scores[idx1] .= chosen[2]
-        if compute_infold
-            # fold_pairs[1] trained on idx1 → infold for idx1; analogously for [2]
-            infold_all[idx1] .= chosen_infold[1]
-            infold_all[idx0] .= chosen_infold[2]
-        end
-        info_winner = winner
-        info_n_lgbm = n_lgbm
+        n_probit = _oof_count(probit_scores)
         info_n_probit = n_probit
-    else
-        all_scores[idx0] .= lgbm_scores[1]
-        all_scores[idx1] .= lgbm_scores[2]
-        if compute_infold
-            infold_all[idx1] .= lgbm_infold_scores[1]
-            infold_all[idx0] .= lgbm_infold_scores[2]
-        end
+        push!(candidates, (name="probit", scores=probit_scores, infold=probit_infold_scores,
+                           last=nothing, oof=n_probit))
     end
+
+    # Pick winner by OOF target count.
+    best_idx = argmax([c.oof for c in candidates])
+    winner = candidates[best_idx]
+    info_winner = winner.name
+    info_n_lgbm = n_lgbm_default
+
+    if length(candidates) > 1
+        compete_str = join(["$(c.name)=$(c.oof)" for c in candidates], " ")
+        @debug_l1 "  Model selection (n=$n_total adaptive=$adaptive low_data=$low_data): $compete_str → $info_winner"
+    end
+
+    all_scores[idx0] .= winner.scores[1]
+    all_scores[idx1] .= winner.scores[2]
+    if compute_infold && winner.infold !== nothing
+        infold_all[idx1] .= winner.infold[1]
+        infold_all[idx0] .= winner.infold[2]
+    end
+    # Replace last_classifier with the winner's so importance() reflects the
+    # chosen model (mostly cosmetic for diagnostics — only LGBM winners populate
+    # this; probit winners keep nothing).
+    last_classifier = winner.last
 
     info = (
         slice = lgbm_timings.slice,
         fit = lgbm_timings.fit,
         predict = lgbm_timings.predict,
         low_data = low_data,
+        adaptive = adaptive,
         lgbm_psms_at_1pct = info_n_lgbm,
         probit_psms_at_1pct = info_n_probit,
         winner = info_winner,
         available_features = available_features,
+        candidate_oof = Dict(c.name => c.oof for c in candidates),
     )
     return all_scores, infold_all, last_classifier, info
 end
@@ -290,6 +333,13 @@ function train_lgbm_and_select_best(
     end
     all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(psms; features=features)
     t_train_cv = time()
+
+    # Surface the adaptive model selection result so we can see per-file picks
+    # in the log without grepping debug_l1.
+    if hasproperty(info, :adaptive) && info.adaptive
+        oof_str = join(["$k=$v" for (k,v) in sort(collect(info.candidate_oof))], " ")
+        @user_info "  Adaptive model selection (n=$(nrow(psms))): $oof_str → $(info.winner)"
+    end
 
     model = if last_classifier !== nothing
         LightGBMModel(last_classifier, info.available_features, nothing)
