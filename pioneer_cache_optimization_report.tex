@@ -1,0 +1,584 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=0.85in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{hyperref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\setlength{\parskip}{0.55em}
+\setlength{\parindent}{0pt}
+
+\title{Cache-Oriented Performance Opportunities in Pioneer.jl}
+\author{Prepared for Pioneer.jl development}
+\date{May 18, 2026}
+
+\begin{document}
+\maketitle
+
+\section*{Context}
+
+This note maps the main lessons from Algorithmica's ``RAM \& CPU Caches''
+chapter to the current Pioneer.jl codebase. The relevant cache concepts are:
+bandwidth vs. latency, cache-line traffic, memory-level parallelism, hardware
+prefetching, structure layout, cache associativity, TLB/page behavior, and
+AoS-vs-SoA layout.
+
+Pioneer already uses several of these ideas in its performance-critical code:
+compact fragment records, struct-of-arrays fragment-bin metadata, partition-local
+\path{UInt16} precursor IDs, partition-major traversal, fused match/build loops,
+and packed metadata in the fused sparse matrix. The best opportunities now are
+not broad rewrites. They are targeted reductions in avoidable memory traffic,
+temporary allocation, and pointer chasing.
+
+\section*{Priority Summary}
+
+\begin{itemize}
+  \item \textbf{Precompute top-N intensity thresholds once per scan.}
+        Low risk. Removes repeated scans and partial sorts when one scan
+        overlaps multiple fragment-index partitions.
+  \item \textbf{Avoid per-scan candidate allocation in fused search.}
+        Low risk. Removes hot-loop allocation and copy work while preserving the
+        existing algorithm.
+  \item \textbf{Repack PSM accumulator structs.}
+        Medium risk. Hot records are currently about 72 bytes, just over one
+        64-byte cache line. Better packing can reduce cache-line pressure.
+  \item \textbf{Benchmark dense or generation-stamped precursor maps.}
+        Medium risk. Current \path{Dict}-backed maps avoid large per-thread
+        arrays but introduce pointer chasing in scan scoring.
+  \item \textbf{Specialize simple mass-error peak matching.}
+        Medium risk. The general path loads three peak-window arrays; simple
+        models may need fewer streams.
+  \item \textbf{Use fixed-size isotope scratch storage.}
+        Medium risk. Tiny vector scratch is repeatedly filled and read inside
+        the fragment inner loop.
+\end{itemize}
+
+\section{Precompute Top-N Intensity Thresholds Once Per Scan}
+
+\subsection*{Where}
+
+The partitioned fragment-index search computes an optional top-N peak intensity
+threshold inside \path{_run_thread}:
+
+\begin{itemize}
+  \item \path{src/structs/SpectralLibrary/PartitionedFragmentIndex/search.jl:519}
+  \item threshold extraction around \path{search.jl:552}
+  \item \path{partialsort!} call around \path{search.jl:559}
+\end{itemize}
+
+This sits inside the partition-major loop. A single scan can be relevant to
+more than one precursor-m/z partition. When that happens, its intensity array is
+visited and partially sorted once per relevant partition.
+
+\subsection*{Cache concept}
+
+This is a cache-line bandwidth issue. The intensity array is contiguous and
+therefore friendly to hardware prefetching, but repeatedly rereading it still
+consumes memory bandwidth and displaces other hot data. The \path{partialsort!}
+also mutates a per-thread scratch buffer and can touch a substantial fraction of
+the scan's peak intensities.
+
+\subsection*{Implementation sketch}
+
+Move the threshold calculation into the existing per-scan precompute phase in
+\path{searchFragmentIndexPartitionMajorHinted}. The function already computes:
+
+\begin{itemize}
+  \item scan iRT lower/upper bounds,
+  \item scan precursor m/z bounds,
+  \item scan center iRT.
+\end{itemize}
+
+Add a \path{Vector{Float32}} named something like \path{scan_intensity_thresholds}.
+If \path{max_peaks == 0}, fill it with \path{0.0f0}. Otherwise, compute the
+threshold once per \path{all_scan_idxs} entry before the partition-major
+parallel loop. Then pass this vector into \path{_run_thread} and read:
+
+\begin{verbatim}
+intensity_threshold = scan_intensity_thresholds[si]
+\end{verbatim}
+
+inside the scan loop.
+
+\subsection*{Expected benefit}
+
+The win should scale with:
+
+\begin{itemize}
+  \item the number of scans that overlap multiple partitions,
+  \item the number of peaks per scan,
+  \item the number of active threads,
+  \item whether \path{max_peaks > 0}.
+\end{itemize}
+
+This should reduce both runtime and transient memory traffic during wide scout
+or other top-N filtered index searches. The behavior should be exactly
+equivalent if the threshold definition is preserved.
+
+\subsection*{Risks}
+
+The main risk is memory overhead for storing one threshold per scan, which is
+small. A secondary risk is moving work from per-thread scratch into a shared
+precompute stage. That should be fine because each scan threshold is independent.
+
+\subsection*{Benchmark}
+
+Use a representative file and compare:
+
+\begin{itemize}
+  \item total time in \path{searchFragmentIndexPartitionMajorHinted},
+  \item allocations,
+  \item number of threshold computations, if instrumented,
+  \item candidate count equality.
+\end{itemize}
+
+The candidate output should be bit-identical because only redundant threshold
+calculation is removed.
+
+\section{Avoid Per-Scan Candidate Allocation in Fused Search}
+
+\subsection*{Where}
+
+In the fused scan path:
+
+\begin{itemize}
+  \item \path{src/Routines/SearchDIA/process_scans_fused.jl:21}
+  \item \path{collect(Int64, prec_range)} around \path{process_scans_fused.jl:146}
+  \item optional target/decoy split buffers around \path{process_scans_fused.jl:134}
+\end{itemize}
+
+The normal non-split path materializes a fresh \path{Vector{Int64}} from
+\path{prec_range} before calling \path{run_fused!}. But \path{run_fused!} already
+accepts an \path{AbstractVector{Int64}} for \path{prec_range}, and the loop body
+does not require ownership of the candidate index list.
+
+\subsection*{Cache concept}
+
+This combines bandwidth and allocation overhead. Allocating and filling a vector
+per scan turns an already available range into fresh memory traffic. It also adds
+pressure on Julia's allocator and garbage collector.
+
+\subsection*{Implementation sketch}
+
+There are two practical routes:
+
+\begin{enumerate}
+  \item Broaden \path{run_fused!}'s \path{prec_range} type to accept
+        \path{AbstractUnitRange{<:Integer}} or simply remove the concrete
+        \path{AbstractVector{Int64}} restriction.
+  \item Call \path{_run_subset!(prec_range)} directly in the non-split branch.
+\end{enumerate}
+
+For the split branch, keep two reusable buffers on the per-thread search context
+or fused scratch object, for example \path{target_idx_scratch} and
+\path{decoy_idx_scratch}. Use \path{empty!} between scans. That keeps the split
+feature allocation-free after warmup.
+
+\subsection*{Expected benefit}
+
+This is likely a small but reliable win. It should show up most clearly in
+files with many MS2 scans and modest candidate counts where allocation overhead
+is not drowned out by deconvolution time.
+
+\subsection*{Risks}
+
+Low. The non-split path should preserve behavior exactly. For split mode, the
+main risk is accidentally retaining stale entries if buffers are not cleared.
+That is easy to test.
+
+\subsection*{Benchmark}
+
+Run the current unit tests around fused scanning, then compare allocation counts
+for a representative search with:
+
+\begin{verbatim}
+@time
+@allocated
+\end{verbatim}
+
+or the existing profiling hooks. Confirm identical PSM output for a fixed input.
+
+\section{Repack PSM Accumulator and Output Structs}
+
+\subsection*{Where}
+
+The hot PSM records are:
+
+\begin{itemize}
+  \item \path{MainUnscoredPSM{Float32}} in \path{src/Routines/SearchDIA/PSMs/UnscoredPSMs.jl:27}
+  \item \path{TuningUnscoredPSM{Float32}} in the same file
+  \item \path{MainSearchScoredPSM{Float32,Float16}} in \path{src/Routines/SearchDIA/PSMs/ScoredPSMs.jl:70}
+  \item \path{TuningScoredPSM{Float32,Float16}} in the same file
+\end{itemize}
+
+A quick size check showed:
+
+\begin{itemize}
+  \item \path{MainUnscoredPSM{Float32}}: 72 bytes,
+  \item \path{TuningUnscoredPSM{Float32}}: 36 bytes,
+  \item \path{MainSearchScoredPSM{Float32,Float16}}: 72 bytes,
+  \item \path{TuningScoredPSM{Float32,Float16}}: 40 bytes.
+\end{itemize}
+
+The two main-search structs cross the 64-byte cache-line boundary.
+
+\subsection*{Cache concept}
+
+CPU caches move data in cache lines, commonly 64 bytes. A 72-byte record often
+requires two cache lines when accessed in an array, even if the code only needs
+part of the record. That increases bandwidth use and lowers effective cache
+capacity.
+
+\subsection*{Implementation sketch}
+
+First, reorder fields to group by alignment:
+
+\begin{itemize}
+  \item all \path{Float32} fields together,
+  \item all \path{Float16} fields together,
+  \item all \path{UInt32} fields together,
+  \item all \path{UInt8} fields together.
+\end{itemize}
+
+Then consider packing low-cardinality counters:
+
+\begin{itemize}
+  \item several \path{UInt8} counts can be packed into one \path{UInt32},
+  \item boolean/rank flags can be packed into bit fields represented by
+        \path{UInt16} or \path{UInt32},
+  \item top-rank intensities should stay as separate \path{Float32} fields if
+        downstream code reads them directly.
+\end{itemize}
+
+This should be done with constructors and accessor functions so the scoring code
+does not become unreadable. The current \path{CompactFrag} design is a good local
+pattern: it packs metadata but keeps inline getters.
+
+\subsection*{Expected benefit}
+
+If \path{MainUnscoredPSM} can be brought to 64 bytes or less, updates in
+\path{apply_main_scoring!} and reads in \path{Score!} should touch fewer cache
+lines. If \path{MainSearchScoredPSM} can also be reduced, output construction
+and later ML feature-table conversion may benefit.
+
+\subsection*{Risks}
+
+This is riskier than the first two ideas because these structs are part of
+internal data contracts. Field order changes can affect Arrow output if any code
+relies on Tables.jl's struct field order. Packing also adds getter/setter logic,
+which can make code harder to maintain.
+
+The safe path is:
+
+\begin{enumerate}
+  \item add size tests using \path{sizeof},
+  \item preserve public column names in output conversion,
+  \item benchmark before and after,
+  \item avoid packing fields that are read constantly unless the getter inlines
+        cleanly.
+\end{enumerate}
+
+\subsection*{Benchmark}
+
+Benchmark:
+
+\begin{itemize}
+  \item fused scan runtime,
+  \item \path{Score!} runtime,
+  \item PSM output equality,
+  \item \path{sizeof} for each struct,
+  \item allocations and compilation impact.
+\end{itemize}
+
+\section{Benchmark Dense or Generation-Stamped Precursor Maps}
+
+\subsection*{Where}
+
+The scan-local precursor map abstraction is in:
+
+\begin{itemize}
+  \item \path{src/structs/PrecursorMap.jl}
+  \item dense backend around \path{PrecursorMap.jl:57}
+  \item sparse \path{Dict}-backed backend around \path{PrecursorMap.jl:159}
+  \item current search context field \path{id_to_col::SparsePrecMap{UInt16}}
+        in \path{src/Routines/SearchDIA/SearchMethods/SearchTypes.jl:196}
+\end{itemize}
+
+\subsection*{Cache concept}
+
+Julia \path{Dict} lookup is flexible and memory-efficient for sparse active
+sets, but it involves hashing and indirect memory access. That can introduce
+pointer chasing, which is exactly the kind of access pattern that defeats memory
+prefetching and exposes memory latency.
+
+A dense vector indexed by precursor ID has excellent locality for each lookup,
+but it can be large per thread. The repo comments already note that a fully
+dense map can cost substantial memory on large libraries.
+
+\subsection*{Implementation sketch}
+
+Benchmark three variants behind the existing \path{AbstractPrecursorMap}
+interface:
+
+\begin{enumerate}
+  \item current \path{SparsePrecMap};
+  \item existing \path{DensePrecMap};
+  \item generation-stamped dense map.
+\end{enumerate}
+
+A generation-stamped dense map would store:
+
+\begin{itemize}
+  \item \path{vals::Vector{V}},
+  \item \path{stamp::Vector{UInt16}} or \path{Vector{UInt32}},
+  \item current generation counter,
+  \item active key list.
+\end{itemize}
+
+Reset becomes:
+
+\begin{verbatim}
+generation += 1
+n_active = 0
+\end{verbatim}
+
+Instead of zeroing active entries. A key is present if its stamp equals the
+current generation. This is useful when the dense vector is acceptable but reset
+or active tracking should be cheap.
+
+\subsection*{Expected benefit}
+
+This could speed up:
+
+\begin{itemize}
+  \item \path{id_to_col[precursor_idx]} in \path{Score!},
+  \item \path{id_to_col[match_column_id(...)] = this_col} in \path{run_fused!},
+  \item warm-start weight transfer in deconvolution utilities.
+\end{itemize}
+
+The expected benefit is workload-dependent. For very large libraries and many
+threads, the dense memory footprint may hurt more than it helps. For moderate
+libraries or machines with enough memory, it may remove a latency-heavy hash
+lookup from hot paths.
+
+\subsection*{Risks}
+
+The main risk is per-thread memory growth and lower effective cache capacity.
+This is exactly the tradeoff highlighted by the cache chapter: a theoretically
+faster direct lookup can become slower if it forces a much larger working set.
+
+\subsection*{Benchmark}
+
+Make backend selection configurable by an environment variable or parameter,
+then compare:
+
+\begin{itemize}
+  \item fused search runtime,
+  \item max resident memory,
+  \item GC time,
+  \item output equality.
+\end{itemize}
+
+The result should be interpreted by library size and thread count, not as a
+single universal winner.
+
+\section{Specialize Simple Mass-Error Peak Matching}
+
+\subsection*{Where}
+
+The fused path precomputes peak matching windows in:
+
+\begin{itemize}
+  \item \path{prepare_scan_peaks!} at \path{src/Routines/SearchDIA/CommonSearchUtils/fusedMatch.jl:417}
+  \item SIMD matching in \path{scan_for_nearest_in_window} at \path{fusedMatch.jl:476}
+\end{itemize}
+
+The current general path stores and scans three contiguous arrays:
+
+\begin{itemize}
+  \item corrected peak m/z,
+  \item lower observable bound,
+  \item upper observable bound.
+\end{itemize}
+
+This is a good SoA design for the general intensity-aware mass-error model.
+
+\subsection*{Cache concept}
+
+SoA helps SIMD because each vector load reads one field across adjacent peaks.
+But every extra array is another memory stream. The current matching loop can
+load three 32-byte vectors for every eight peaks. If a simpler mass-error model
+does not need precomputed per-peak bounds, one or two of those streams may be
+avoidable.
+
+\subsection*{Implementation sketch}
+
+Keep the general path unchanged. Add a specialized method for simple mass-error
+models where the tolerance can be computed directly from the theoretical m/z or
+corrected m/z without reading \path{obs_low} and \path{obs_high}.
+
+For example:
+
+\begin{itemize}
+  \item for a fixed ppm model, search by corrected m/z and compare absolute
+        error to \path{iso_mz * ppm * 1e-6};
+  \item for a constant Da model, compare absolute error to the constant bound;
+  \item keep the intensity-aware model on the existing three-array path.
+\end{itemize}
+
+This would be multiple dispatch on the concrete mass-error model type, not a
+runtime branch inside the hottest loop.
+
+\subsection*{Expected benefit}
+
+For simple models, this can reduce peak-window scanning bandwidth by up to two
+array streams. It may also reduce the per-scan precompute work in
+\path{prepare_scan_peaks!}. The effect should be largest on scans with many
+peaks and many candidate fragment isotope windows.
+
+\subsection*{Risks}
+
+The semantic risk is high if the specialized path does not exactly match the
+mass-error model's intended acceptance window. The current code explicitly
+preserves intensity-dependent bias and tolerance. That behavior must stay
+untouched for those models.
+
+The implementation should therefore start with a very narrow specialization for
+one simple model and an equivalence test against the current path.
+
+\subsection*{Benchmark}
+
+For a fixed simple model:
+
+\begin{itemize}
+  \item compare matched peak indices and ppm errors against the current path,
+  \item measure fused matching time,
+  \item inspect allocation and cache behavior if hardware counters are available.
+\end{itemize}
+
+\section{Use Fixed-Size Isotope Scratch Storage}
+
+\subsection*{Where}
+
+Fragment isotope intensities are computed in:
+
+\begin{itemize}
+  \item \path{src/Routines/SearchDIA/CommonSearchUtils/getFragIsotopes.jl:17}
+  \item called inside \path{run_fused!} around \path{src/Routines/SearchDIA/CommonSearchUtils/fusedMatch.jl:818}
+\end{itemize}
+
+The search context currently stores \path{isotopes::Vector{Float32}} and
+\path{precursor_transmission::Vector{Float32}}.
+
+\subsection*{Cache concept}
+
+The isotope buffers are tiny, but they sit in the innermost fragment loop. The
+current code repeatedly fills and reads a heap-allocated vector. That is not a
+large memory object, but the operation is frequent. Fixed-size storage can keep
+more of the state in registers or stack-like local storage, improving locality
+and reducing bounds checks when the compiler can see the size.
+
+\subsection*{Implementation sketch}
+
+There are two levels of aggressiveness:
+
+\begin{enumerate}
+  \item Replace \path{fill!(frag_isotopes, 0)} with loops only over the active
+        isotope range where safe. This is the conservative option.
+  \item Introduce a fixed-size representation for the common maximum isotope
+        count, for example an \path{NTuple} or \path{MVector} style buffer if
+        StaticArrays is already acceptable in the hot path.
+\end{enumerate}
+
+The second route needs care. StaticArrays can help for tiny fixed-size data, but
+using them incorrectly can increase register pressure or compilation time.
+
+\subsection*{Expected benefit}
+
+This is likely a small inner-loop win rather than a large algorithmic gain. It
+may matter because \path{getFragIsotopes!} is called for every candidate
+fragment that passes rank filters.
+
+\subsection*{Risks}
+
+The main risk is increasing code complexity in a numerically sensitive area.
+Another risk is creating too many method specializations if isotope count
+becomes a type parameter across search kinds.
+
+\subsection*{Benchmark}
+
+Microbenchmark \path{getFragIsotopes!} for common fragment and precursor cases,
+then benchmark full fused search. Require bitwise or near-bitwise equality for
+isotope intensities and PSM results.
+
+\section*{General Benchmarking Plan}
+
+For each candidate, use a two-layer benchmark:
+
+\begin{enumerate}
+  \item A focused microbenchmark for the changed function.
+  \item An end-to-end representative search file.
+\end{enumerate}
+
+Track:
+
+\begin{itemize}
+  \item wall time,
+  \item allocations,
+  \item output equality or accepted numerical tolerance,
+  \item resident memory,
+  \item number of candidates, matches, misses, and PSMs.
+\end{itemize}
+
+If available, hardware counters would be ideal for the cache-specific claims:
+L1/L2/L3 misses, LLC load misses, branch misses, and cycles. Without counters,
+allocation counts and stable end-to-end timing are still enough to decide
+whether a change is worth keeping.
+
+\section*{Suggested Order of Work}
+
+\begin{enumerate}
+  \item Implement top-N threshold precompute. It is low risk and likely
+        measurable.
+  \item Remove fused per-scan candidate allocation. This is straightforward and
+        should reduce allocation noise.
+  \item Add a backend switch for precursor maps and benchmark sparse vs. dense
+        vs. generation-stamped dense.
+  \item Repack PSM structs only after the first two changes are measured.
+  \item Try simple-model peak matching specialization if profiling shows peak
+        matching remains dominant.
+  \item Try fixed-size isotope scratch last, because it is the most inner-loop
+        specific and easiest to overfit.
+\end{enumerate}
+
+\section*{References}
+
+\begin{itemize}
+  \item Algorithmica, RAM \& CPU Caches:
+        \url{https://en.algorithmica.org/hpc/cpu-cache/}
+  \item Memory bandwidth:
+        \url{https://en.algorithmica.org/hpc/cpu-cache/bandwidth/}
+  \item Memory latency:
+        \url{https://en.algorithmica.org/hpc/cpu-cache/latency/}
+  \item Cache lines:
+        \url{https://en.algorithmica.org/hpc/cpu-cache/cache-lines/}
+  \item Memory-level parallelism and prefetching:
+        \url{https://en.algorithmica.org/hpc/cpu-cache/mlp/},
+        \url{https://en.algorithmica.org/hpc/cpu-cache/prefetching/}
+  \item Alignment, associativity, paging, and AoS/SoA:
+        \url{https://en.algorithmica.org/hpc/cpu-cache/alignment/},
+        \url{https://en.algorithmica.org/hpc/cpu-cache/associativity/},
+        \url{https://en.algorithmica.org/hpc/cpu-cache/paging/},
+        \url{https://en.algorithmica.org/hpc/cpu-cache/aos-soa/}
+\end{itemize}
+
+\end{document}

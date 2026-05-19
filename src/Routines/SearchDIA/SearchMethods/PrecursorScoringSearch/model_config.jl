@@ -32,8 +32,10 @@ classifier definition. This file is just the feature list + an MS1 filter.
 # `vcat(collect(PRESCORE_FEATURES), …)` evaluated at const time.
 const ADVANCED_FEATURE_SET = [
     # ── PRESCORE_FEATURES (50 features, kept in sync manually) ──
-    :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
-    :total_ions, :missed_cleavage, :y_count, :weight, :gof,
+    # Poisson decomp (2026-05-18): :poisson replaced by raw inputs.
+    :fitted_manhattan_distance, :irt_error, :err_norm,
+    :total_ions, :total_ions_iso, :expected_matches,
+    :missed_cleavage, :y_count, :weight, :gof,
     :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
     :weight_ratio_at_scan, :weight_rank_at_scan,

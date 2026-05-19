@@ -1,11 +1,11 @@
 {
     "comment_output": "=== Output library path ===",
-    "library_path": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_var_mods/max_4_mods/output/var_mods_4",
+    "library_path": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_var_mods/max_4_mods/output/var_mods_4",
     "comment_calibration": "=== Convert a representative RAW file to Arrow format and provide its path here ===",
     "calibration_raw_file": "",
     "comment_fasta": "=== FASTA files ===",
     "fasta_paths": [
-        "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
+        "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
     ],
     "fasta_names": [
         "MINIMAL_PROTEIN"
@@ -75,7 +75,6 @@
         "frag_mz_max": 2000.0,
         "prec_mz_min": 0.0,
         "prec_mz_max": 5000.0,
-        "instrument_type": "NONE",
         "prediction_model": "altimeter",
         "max_frag_rank": 50,
         "length_to_frag_count_multiple": 2.0

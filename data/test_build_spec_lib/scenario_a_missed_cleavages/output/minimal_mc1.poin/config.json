@@ -21,24 +21,21 @@
     "prediction_model": "altimeter",
     "prec_mz_min": 0.0,
     "prec_mz_max": 5000.0,
-    "instrument_type": "NONE",
     "frag_mz_min": 150.0,
     "frag_mz_max": 2000.0
   },
-  "_lib_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc1.poin",
+  "_lib_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc1.poin",
   "fasta_names": [
     "MINIMAL_PROTEIN"
   ],
   "match_lib_build_batch": 100000,
   "comment_processing": "=== Processing settings ===",
   "comment_output": "=== Output library path ===",
-  "library_path": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc1",
+  "library_path": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_a_missed_cleavages/output/minimal_mc1",
   "_lib_name": "minimal_mc1",
   "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
   "nce_params": {
-    "nce": 26.0,
-    "dynamic_nce": true,
-    "default_charge": 2
+    "nce": 26.0
   },
   "comment_calibration": "=== Convert a representative RAW file to Arrow format and provide its path here ===",
   "fasta_header_regex_organisms": [
@@ -48,7 +45,7 @@
   "comment_digestion": "=== Protein digestion parameters ===",
   "max_koina_requests": 12,
   "fasta_paths": [
-    "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
+    "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
   ],
   "fasta_header_regex_accessions": [
     "^>(\\S+)"

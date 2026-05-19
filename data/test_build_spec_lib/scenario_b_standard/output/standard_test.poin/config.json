@@ -21,24 +21,21 @@
     "prediction_model": "altimeter",
     "prec_mz_min": 390.0,
     "prec_mz_max": 1010.0,
-    "instrument_type": "NONE",
     "frag_mz_min": 150.0,
     "frag_mz_max": 2000.0
   },
-  "_lib_dir": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_b_standard/output/standard_test.poin",
+  "_lib_dir": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_b_standard/output/standard_test.poin",
   "fasta_names": [
     "SINGLE_PROTEIN"
   ],
   "match_lib_build_batch": 100000,
   "comment_processing": "=== Processing settings ===",
   "comment_output": "=== Output library path ===",
-  "library_path": "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_b_standard/output/standard_test",
+  "library_path": "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_build_spec_lib/scenario_b_standard/output/standard_test",
   "_lib_name": "standard_test",
   "comment_fasta_regex": "=== FASTA header parsing (defaults work for UniProt format) ===",
   "nce_params": {
-    "nce": 26.0,
-    "dynamic_nce": true,
-    "default_charge": 2
+    "nce": 26.0
   },
   "comment_calibration": "=== Convert a representative RAW file to Arrow format and provide its path here ===",
   "fasta_header_regex_organisms": [
@@ -48,7 +45,7 @@
   "comment_digestion": "=== Protein digestion parameters ===",
   "max_koina_requests": 12,
   "fasta_paths": [
-    "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/single_protein.fasta"
+    "/Users/nathanwamsley/Projects/EntrapmentTests/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/single_protein.fasta"
   ],
   "fasta_header_regex_accessions": [
     "^>(\\S+)"
