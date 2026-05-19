@@ -64,6 +64,13 @@ const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
 # Per-fold training cap; folds larger than this are random-subsampled.
 const SHARED_LGBM_MAX_TRAIN = 250_000
 
+# Env-overridable. Set PIONEER_LGBM_MAX_TRAIN=1_000_000 (or any integer) to
+# raise/lower the per-fold subsample cap without recompile. Used by both the
+# in-memory MainSearch per-file LGBM (scoring.jl) and the ScoringSearch
+# experiment-wide OOM trainer (pass1_oom.jl), so a sweep affects both stages.
+current_lgbm_max_train() = parse(Int, get(ENV, "PIONEER_LGBM_MAX_TRAIN",
+                                           string(SHARED_LGBM_MAX_TRAIN)))
+
 # Adaptive HP selection trigger. After running the default LGBM, if its OOF
 # target count at q≤0.01 (summed across folds) is below this threshold, the
 # dataset is small enough that competing HP variants of differing complexity
@@ -136,7 +143,7 @@ function train_psm_classifier_with_fallback(
     all_scores = Vector{Float64}(undef, n_total)
     infold_all = compute_infold ? Vector{Float64}(undef, n_total) : nothing
 
-    MAX_TRAIN = SHARED_LGBM_MAX_TRAIN
+    MAX_TRAIN = current_lgbm_max_train()
     LOW_DATA_THRESHOLD = SHARED_LGBM_LOW_DATA_THRESHOLD
 
     # Fold order: (train_idx, test_idx)
@@ -235,12 +242,15 @@ function train_psm_classifier_with_fallback(
         count(i -> qvals[i] <= Float16(0.01) && y_fold[i], eachindex(qvals))
     end
 
-    @debug_l1 "  LightGBM CV: fold0=$(length(idx0)) fold1=$(length(idx1)) PSMs; train $(length.(sub_positions))"
+    @user_info "  LightGBM CV: fold0=$(length(idx0)) fold1=$(length(idx1)) PSMs; " *
+               "train=$(length.(sub_positions))  MAX_TRAIN=$MAX_TRAIN"
 
     # Always run the default-HP LGBM (single source of truth for big datasets
     # and the safest fallback for small ones).
     lgbm_scores, lgbm_infold_scores, last_classifier, lgbm_timings = _lgbm_cv()
-    @debug_l1 "  LightGBM timings: slice=$(round(lgbm_timings.slice, digits=2))s fit=$(round(lgbm_timings.fit, digits=2))s predict=$(round(lgbm_timings.predict, digits=2))s"
+    @user_info "  LightGBM timings: slice=$(round(lgbm_timings.slice, digits=2))s " *
+               "fit=$(round(lgbm_timings.fit, digits=2))s " *
+               "predict=$(round(lgbm_timings.predict, digits=2))s"
 
     # Helper to score a candidate by OOF targets at q≤0.01 across both folds.
     _oof_count(fs) = _fold_oof_psms_at_1pct(targets_col[idx0], fs[1]) +
