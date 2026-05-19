@@ -280,9 +280,13 @@ end
 # Per-chunk worker. Each task processes its row range with a thread-local
 # MS1-spectrum cache so the (getMzArray, getIntensityArray) lookups amortize
 # across consecutive PSMs that share the same nearest MS1 scan.
+#
+# `scan_to_ms1` is a precomputed mapping (scan_id → nearest MS1 scan id),
+# built once in the caller. This eliminates the per-PSM
+# `getRetentionTime` + `searchsortedfirst` work.
 function _ms1_lookup_chunk!(psms, spectra,
                              prec_mzs, prec_charges, prec_sulfurs, iso_splines,
-                             ms1_scan_idxs, ms1_scan_rts,
+                             scan_to_ms1::Vector{Int32},
                              ms1_ppm_tol::Float32, NEUTRON::Float32,
                              chunk_start::Int, chunk_end::Int)
     # Per-task scratch buffers; reused (resize-only) across cache misses
@@ -292,19 +296,7 @@ function _ms1_lookup_chunk!(psms, spectra,
     cached_ms1_idx::Int = -1   # force first miss
 
     @inbounds for i in chunk_start:chunk_end
-        scan_idx = Int(psms.scan_idx[i])
-        scan_rt  = Float32(getRetentionTime(spectra, scan_idx))
-
-        pos = searchsortedfirst(ms1_scan_rts, scan_rt)
-        ms1_idx = if pos == 1
-            ms1_scan_idxs[1]
-        elseif pos > length(ms1_scan_rts)
-            ms1_scan_idxs[end]
-        else
-            d_after  = abs(ms1_scan_rts[pos]   - scan_rt)
-            d_before = abs(ms1_scan_rts[pos-1] - scan_rt)
-            d_before <= d_after ? ms1_scan_idxs[pos-1] : ms1_scan_idxs[pos]
-        end
+        ms1_idx = Int(scan_to_ms1[Int(psms.scan_idx[i])])
 
         if ms1_idx != cached_ms1_idx
             cached_ms1_idx = ms1_idx
@@ -394,6 +386,25 @@ function add_ms1_lookup_features!(psms::DataFrame,
         return
     end
 
+    # 1b. Precompute `scan_to_ms1[scan_id]` = nearest MS1 scan id, once per
+    # file. Replaces a per-PSM `getRetentionTime` + `searchsortedfirst` (was
+    # ~1-1.5 s/file on Astral) with a single array indexing per PSM.
+    n_ms1 = length(ms1_scan_rts)
+    scan_to_ms1 = Vector{Int32}(undef, n_scans)
+    @inbounds for s in 1:n_scans
+        scan_rt = Float32(getRetentionTime(spectra, s))
+        pos = searchsortedfirst(ms1_scan_rts, scan_rt)
+        scan_to_ms1[s] = if pos == 1
+            Int32(ms1_scan_idxs[1])
+        elseif pos > n_ms1
+            Int32(ms1_scan_idxs[end])
+        else
+            d_after  = abs(ms1_scan_rts[pos]   - scan_rt)
+            d_before = abs(ms1_scan_rts[pos-1] - scan_rt)
+            d_before <= d_after ? Int32(ms1_scan_idxs[pos-1]) : Int32(ms1_scan_idxs[pos])
+        end
+    end
+
     # 2. Per-precursor info
     precursors = getPrecursors(getSpecLib(search_context))
     prec_mzs       = getMz(precursors)
@@ -417,7 +428,7 @@ function add_ms1_lookup_features!(psms::DataFrame,
         Threads.@spawn _ms1_lookup_chunk!(
             psms, spectra,
             prec_mzs, prec_charges, prec_sulfurs, iso_splines,
-            ms1_scan_idxs, ms1_scan_rts,
+            scan_to_ms1,
             ms1_ppm_tol, NEUTRON,
             chunk_start, chunk_end
         )
