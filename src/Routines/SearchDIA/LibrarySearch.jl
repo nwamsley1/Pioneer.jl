@@ -48,7 +48,6 @@ function library_search(
     scan_indices::Union{Nothing, AbstractVector{<:Integer}} = nothing,
     fragment_index = nothing,
     max_peaks::Int = 0,
-    allowed_precursors::Union{Nothing, Set{UInt32}} = nothing,
 ) where {P<:FragmentIndexSearchParameters}
 
     # --- 1. Extract per-file models and library data ---
@@ -176,14 +175,6 @@ function library_search(
               "($(round(100*(1 - length(precursors_passed)/max(1,n_before)), digits=1))% removed)"
     end
 
-    # --- 2b'. Allowlist filter (for 2-pass refinement) ---
-    if allowed_precursors !== nothing
-        n_before = length(precursors_passed)
-        precursors_passed = filter_by_allowlist!(
-            scan_to_prec_idx, precursors_passed, allowed_precursors)
-        @user_info "  library_search: allowlist filter $(n_before) → $(length(precursors_passed)) (precursor,scan) candidates ($(length(allowed_precursors)) precursors allowed)"
-    end
-
     # --- 2c. Build precursor index ---
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
 
@@ -225,9 +216,9 @@ function library_search(
     t_vcat = time() - t_post_start
 
     if params isa MainSearchParameters
-        @debug_l1 "  library_search: frag_index=$(round(t_frag, digits=2))s, " *
-                   "deconv=$(round(t_deconv, digits=2))s, " *
-                   "vcat=$(round(t_vcat, digits=2))s, " *
+        @user_info "  library_search breakdown: frag_index=$(round(t_frag, digits=2))s  " *
+                   "deconv=$(round(t_deconv, digits=2))s  " *
+                   "vcat=$(round(t_vcat, digits=2))s  " *
                    "candidates=$(length(get_precursors(prec_index)))"
     end
 
@@ -266,36 +257,6 @@ function filter_low_scan_candidates!(
         for i in range
             pid = precursors_passed[i]
             if get(scan_counts, pid, 0) >= min_scan_count
-                push!(new_passed, pid)
-            end
-        end
-        scan_to_prec_idx[scan_idx] = length(new_passed) >= start ?
-            (start:length(new_passed)) : missing
-    end
-    return new_passed
-end
-
-"""
-    filter_by_allowlist!(scan_to_prec_idx, precursors_passed, allowed_set)
-
-Keep only fragment-index candidates whose `precursor_idx` is in `allowed_set`.
-Modifies `scan_to_prec_idx` in-place and returns a new `precursors_passed` vector.
-Used by MainSearch's optional 2-pass PEP-filter refinement.
-"""
-function filter_by_allowlist!(
-    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-    precursors_passed::Vector{UInt32},
-    allowed_set::Set{UInt32}
-)
-    new_passed = UInt32[]
-    sizehint!(new_passed, length(precursors_passed))
-    for scan_idx in eachindex(scan_to_prec_idx)
-        range = scan_to_prec_idx[scan_idx]
-        ismissing(range) && continue
-        start = length(new_passed) + 1
-        for i in range
-            pid = precursors_passed[i]
-            if pid in allowed_set
                 push!(new_passed, pid)
             end
         end
