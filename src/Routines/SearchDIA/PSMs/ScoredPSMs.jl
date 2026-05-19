@@ -114,11 +114,6 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     # Completeness-of-match — observed vs predicted matched intensity.
     matched_ratio::L
 
-    # Poisson-decomp candidate (2026-05-18): nmatches/(nmatches+nmisses) at this scan.
-    # Same value across all PSMs at the same scan; the per-scan input that today's
-    # :poisson feature uses as λ before applying log(λ^k · e^-λ) − log(k!).
-    expected_matches::L
-
     #Non-scores/Labels
     precursor_idx::UInt32
     ms_file_idx::UInt32
@@ -215,8 +210,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
 
             L(log2((Float32(unscored_PSMs[i].b_int) + Float32(unscored_PSMs[i].y_int) + 1f0) /
                    (Float32(unscored_PSMs[i].pred_int_sum_m0) + 1f0))),
-
-            L(expected_matches),
 
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(cycle_idx),

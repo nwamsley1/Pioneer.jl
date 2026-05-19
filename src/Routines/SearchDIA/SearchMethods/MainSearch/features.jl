@@ -205,13 +205,8 @@ const PRESCORE_FEATURES = [
     # ====================================================================
 
     # Core PSM / sequence metrics
-    # Poisson decomp (2026-05-18): :poisson replaced by raw inputs
-    # (:total_ions, :total_ions_iso, :expected_matches). Lets the LGBM learn
-    # the relation `getPoisson(λ=expected_matches, k=total_ions+total_ions_iso)`
-    # from raw features instead of the engineered scalar.
-    :fitted_manhattan_distance, :irt_error, :err_norm,
-    :total_ions, :total_ions_iso, :expected_matches,
-    :missed_cleavage, :y_count, :weight, :gof,
+    :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
+    :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
 
