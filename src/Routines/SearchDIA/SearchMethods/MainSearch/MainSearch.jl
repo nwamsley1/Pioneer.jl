@@ -300,54 +300,11 @@ function process_search_results!(
 
     # ============================================================
     # PAIR COMPETITION (default ON; disable with PIONEER_PAIR_COMPETITION=0)
-    # For each (precursor, partner_decoy) pair where both rows are present
-    # in best_psms, drop the lower-scoring partner. Operates on lgbm_prob
-    # (post-pass-2 if 2-pass enabled, else pass-1). Equivalent to 1-vs-1
-    # target-decoy competition before q-value computation.
-    #
-    # Empirically (Olsen Exploris one-file, non-entrap library): +2,556 q≤.001,
-    # +1,131 q≤.01, +89 protein groups vs single-pass without paircomp.
+    # See `apply_pair_competition!` in scoring.jl.
     # ============================================================
     if get(ENV, "PIONEER_PAIR_COMPETITION", "1") != "0"
-        precursors = getPrecursors(getSpecLib(search_context))
-        partner_col = precursors.data[:partner_precursor_idx]
         n0 = nrow(best_psms)
-        # Build score + row-index lookup keyed by precursor_idx (file is fixed)
-        score_by_pid = Dict{UInt32, Float32}()
-        row_by_pid   = Dict{UInt32, Int}()
-        for i in 1:n0
-            pid = UInt32(best_psms.precursor_idx[i])
-            score_by_pid[pid] = Float32(best_psms.lgbm_prob[i])
-            row_by_pid[pid]   = i
-        end
-        keep_mask = trues(n0)
-        seen = Set{Tuple{UInt32, UInt32}}()
-        n_dropped_t = 0; n_dropped_d = 0; n_pairs = 0
-        for i in 1:n0
-            pid = UInt32(best_psms.precursor_idx[i])
-            ptr_raw = partner_col[Int(pid)]
-            partner = ismissing(ptr_raw) ? UInt32(0) : UInt32(ptr_raw)
-            (partner == 0 || partner == pid) && continue
-            haskey(score_by_pid, partner) || continue
-            pair_key = (min(pid, partner), max(pid, partner))
-            pair_key in seen && continue
-            push!(seen, pair_key)
-            my_score = score_by_pid[pid]
-            ptr_score = score_by_pid[partner]
-            # Drop the lower one. Ties: drop the decoy (target wins).
-            loser = if my_score < ptr_score
-                pid
-            elseif my_score > ptr_score
-                partner
-            else
-                best_psms.target[i] ? partner : pid
-            end
-            j = row_by_pid[loser]
-            keep_mask[j] = false
-            n_pairs += 1
-            if best_psms.target[j]; n_dropped_t += 1; else; n_dropped_d += 1; end
-        end
-        deleteat!(best_psms, .!keep_mask)
+        n_pairs, n_dropped_t, n_dropped_d = apply_pair_competition!(best_psms, search_context)
         @user_info "  Pair competition (file_idx=$ms_file_idx, $file_name): " *
                    "$n_pairs pairs found; dropped $n_dropped_t targets + $n_dropped_d decoys " *
                    "($(n0) → $(nrow(best_psms)) best-per-precursor PSMs)"
