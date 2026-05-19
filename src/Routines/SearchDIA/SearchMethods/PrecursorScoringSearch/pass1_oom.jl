@@ -28,7 +28,7 @@ using Random
 # equivalent. Resolved at call time (SHARED_LGBM_MAX_TRAIN isn't bound at
 # parse time — MainSearch/scoring.jl loads AFTER this file in
 # importScripts.jl).
-default_pass1_oom_k_per_fold() = current_lgbm_max_train()
+default_pass1_oom_k_per_fold() = current_scoring_lgbm_max_train()
 
 # Pass 1: count rows per cv_fold across all files. Returns (n_fold0, n_fold1).
 function _count_psm_rows_by_fold(file_paths::Vector{String})

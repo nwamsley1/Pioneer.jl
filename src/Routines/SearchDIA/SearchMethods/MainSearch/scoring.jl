@@ -64,12 +64,33 @@ const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
 # Per-fold training cap; folds larger than this are random-subsampled.
 const SHARED_LGBM_MAX_TRAIN = 250_000
 
-# Env-overridable. Set PIONEER_LGBM_MAX_TRAIN=1_000_000 (or any integer) to
-# raise/lower the per-fold subsample cap without recompile. Used by both the
-# in-memory MainSearch per-file LGBM (scoring.jl) and the ScoringSearch
-# experiment-wide OOM trainer (pass1_oom.jl), so a sweep affects both stages.
-current_lgbm_max_train() = parse(Int, get(ENV, "PIONEER_LGBM_MAX_TRAIN",
-                                           string(SHARED_LGBM_MAX_TRAIN)))
+# Per-stage per-fold subsample caps.
+#
+# MainSearch per-file LGBM: its job is best-per-precursor selection + the PEP
+# > 0.9 gate. Coarse classification — 250k subsample is enough.
+#
+# ScoringSearch experiment-wide LGBM: this is the final classifier driving
+# target/decoy discrimination at q≤0.01. The 2026-05-19 sweep showed +0.88%
+# IDs on Exploris and +1.47% on MTAC when bumping 250k → 1M; gains plateau
+# around 1M-2M. Default raised to 1M.
+#
+# Env precedence:
+#   PIONEER_MAIN_LGBM_MAX_TRAIN     — overrides MainSearch only
+#   PIONEER_SCORING_LGBM_MAX_TRAIN  — overrides ScoringSearch only
+#   PIONEER_LGBM_MAX_TRAIN          — legacy single knob; sets both
+const MAIN_LGBM_MAX_TRAIN_DEFAULT    = 250_000
+const SCORING_LGBM_MAX_TRAIN_DEFAULT = 2_500_000
+
+current_main_lgbm_max_train() = parse(Int,
+    get(ENV, "PIONEER_MAIN_LGBM_MAX_TRAIN",
+        get(ENV, "PIONEER_LGBM_MAX_TRAIN", string(MAIN_LGBM_MAX_TRAIN_DEFAULT))))
+
+current_scoring_lgbm_max_train() = parse(Int,
+    get(ENV, "PIONEER_SCORING_LGBM_MAX_TRAIN",
+        get(ENV, "PIONEER_LGBM_MAX_TRAIN", string(SCORING_LGBM_MAX_TRAIN_DEFAULT))))
+
+# Back-compat alias for any external code that still calls the old name.
+current_lgbm_max_train() = current_main_lgbm_max_train()
 
 # Adaptive HP selection trigger. After running the default LGBM, if its OOF
 # target count at q≤0.01 (summed across folds) is below this threshold, the
@@ -125,6 +146,7 @@ function train_psm_classifier_with_fallback(
     features::Vector{Symbol},
     lgbm_hp = current_shared_lgbm_hp(),
     compute_infold::Bool = false,
+    max_train::Int = current_main_lgbm_max_train(),
 )
     targets_col = psms[!, :target]
     n_total = nrow(psms)
@@ -143,7 +165,7 @@ function train_psm_classifier_with_fallback(
     all_scores = Vector{Float64}(undef, n_total)
     infold_all = compute_infold ? Vector{Float64}(undef, n_total) : nothing
 
-    MAX_TRAIN = current_lgbm_max_train()
+    MAX_TRAIN = max_train
     LOW_DATA_THRESHOLD = SHARED_LGBM_LOW_DATA_THRESHOLD
 
     # Fold order: (train_idx, test_idx)

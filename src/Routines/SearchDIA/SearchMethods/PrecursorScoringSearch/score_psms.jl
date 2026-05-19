@@ -175,6 +175,7 @@ function _score_precursor_isotope_traces_no_mbr(
     all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
         best_psms; features = features, lgbm_hp = SCORING_LGBM_HP,
         compute_infold = false,
+        max_train = current_scoring_lgbm_max_train(),
     )
     best_psms[!, :trace_prob_prepass] = Float32.(clamp.(all_scores, 1f-6, 1f0 - 1f-4))
     best_psms[!, :trace_prob]         = best_psms[!, :trace_prob_prepass]
