@@ -115,6 +115,34 @@ Core Processing Methods
 ==========================================================#
 
 """
+    permute_psms_by_precursor_idx!(psms::DataFrame) -> DataFrame
+
+Sort `psms` in place by `:precursor_idx` using a hand-rolled column-wise
+`Base.permute!` over each column. ~4× faster than `DataFrames.sort!(psms,
+:precursor_idx)` on the post-deconv DataFrame shape (~14M rows × 27 cols)
+because DataFrames.sort! allocates a fresh array per column instead of
+doing the in-place cycle permute (measured 2026-05-19).
+
+Establishes the sorted-by-precursor invariant that downstream passes
+(`_build_precursor_groups`, feature passes, `select_best_per_precursor!`)
+can take advantage of to skip their own sortperm.
+"""
+function permute_psms_by_precursor_idx!(psms::DataFrame)
+    n = nrow(psms)
+    n == 0 && return psms
+    perm = sortperm(psms[!, :precursor_idx]::Vector{UInt32})
+    # `Base.permute!` destroys its perm argument (uses negation as visited
+    # sentinel), so each column needs a fresh copy. Single scratch vector
+    # reused across columns.
+    p_scratch = similar(perm)
+    for col in eachcol(psms)
+        copyto!(p_scratch, perm)
+        Base.permute!(col, p_scratch)
+    end
+    return psms
+end
+
+"""
 Process a single file: load fragment index matches and deconvolve with prescore settings.
 """
 function process_file!(
@@ -129,11 +157,41 @@ function process_file!(
     file_name = getParsedFileName(search_context, ms_file_idx)
 
     psms = library_search(spectra, search_context, params, ms_file_idx)
-    results.psms[] = psms
     t_lib_search = time() - t_file_start
 
+    # IMPORTANT: the next two steps depend on the deconv output being
+    # contiguous-by-:scan_idx — all PSMs sharing a scan_idx form one
+    # contiguous run. This is the natural emit order from the per-thread
+    # `for scan_idx in scan_range` loop in process_scans_fused.jl:67
+    # (threads are scan-disjoint, so no cross-thread interleaving).
+    # Verified empirically 2026-05-19 on 3-file Astral: all scans
+    # contiguous across ~48M PSMs / 758k unique scans.
+
+    # Per-scan competition (weight_ratio_at_scan, weight_rank_at_scan).
+    # Done BEFORE the precursor sort so it can exploit the
+    # contiguous-by-scan invariant: linear sweep for run boundaries
+    # + threaded per-run rank/ratio. ~4× faster than the previous
+    # Dict-based version (measured 2026-05-19).
+    t_scan_comp = @elapsed add_scan_competition_features!(psms)
+
+    # Sort the deconv-output DataFrame by :precursor_idx once. Downstream
+    # passes (chrom features, best-per-precursor) can then fast-path their
+    # group-build (no second sortperm), and the data layout is friendlier
+    # for any per-precursor parallelism. We use a hand-rolled in-place
+    # column permute rather than `sort!(df, :col)` because DataFrames.sort!
+    # is ~4× slower on this shape (measured 2026-05-19).
+    # Env gate PIONEER_NO_UPSTREAM_SORT=1 skips the sort for A/B testing.
+    t_sort = if get(ENV, "PIONEER_NO_UPSTREAM_SORT", "0") == "1"
+        0.0
+    else
+        @elapsed permute_psms_by_precursor_idx!(psms)
+    end
+    results.psms[] = psms
+
     @user_info "  MainSearch process_file! (file_idx=$ms_file_idx, $file_name): " *
-               "$(nrow(psms)) PSMs from deconv; library_search elapsed: $(round(t_lib_search, digits=2))s"
+               "$(nrow(psms)) PSMs from deconv; library_search elapsed: $(round(t_lib_search, digits=2))s  " *
+               "scan_comp=$(round(t_scan_comp * 1000, digits=0))ms  " *
+               "sort=$(round(t_sort * 1000, digits=0))ms  n_cols=$(ncol(psms))"
 
     return results
 end
@@ -153,8 +211,8 @@ function process_search_results!(
     psms = results.psms[]
     file_name = getParsedFileName(search_context, ms_file_idx)
 
-    # Compute only prescore features (skip columns recomputed in Phase 2)
-    t_prepare = @elapsed prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra, prescore_only=true)
+    # Compute prescore features
+    t_prepare = @elapsed prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
     t_features = time()
 
     if nrow(psms) == 0
@@ -162,7 +220,11 @@ function process_search_results!(
         return nothing
     end
 
-    t_competition = @elapsed add_scan_competition_features!(psms)
+    # add_scan_competition_features! moved upstream to process_file! (before
+    # the precursor-idx sort) so it can exploit the contiguous-by-scan
+    # invariant from the deconv output. Was ~3s/file in this position;
+    # now ~0.5s/file in process_file!.
+    t_competition = 0.0
     t_neighborhood = 0.0  # neighborhood feature pass removed 2026-05-18 (all 9
                           # consumers — best_*_5scan, irt_dist_best_*_5scan,
                           # worst_*_11scan, best_max_residual_3scan — were

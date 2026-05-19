@@ -443,9 +443,12 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     irt_obs = has_irt ? psms[!, :irt_obs]::Vector{Float32} : nothing
     rt_vals = has_rt ? psms[!, :rt]::Vector{Float32} : nothing
     weights = (has_irt && has_weight) ? psms[!, :weight]::Vector{Float32} : nothing
-    # Per-scan columns used for max-across-scans aggregation features.
-    gof_vec  = hasproperty(psms, :gof) ? psms[!, :gof] : nothing
-    fmd_vec  = hasproperty(psms, :fitted_manhattan_distance) ? psms[!, :fitted_manhattan_distance] : nothing
+    # Type-assert the Float16 scoring columns. Without `::Vector{Float16}`
+    # the DataFrame accessor returns an abstract type, which forces dynamic
+    # dispatch inside the sub-pass-1 hot loop and costs ~3.5s/file on
+    # Astral. Identified 2026-05-19.
+    gof_vec  = hasproperty(psms, :gof) ? (psms[!, :gof]::Vector{Float16}) : nothing
+    fmd_vec  = hasproperty(psms, :fitted_manhattan_distance) ? (psms[!, :fitted_manhattan_distance]::Vector{Float16}) : nothing
     n = nrow(psms)
 
     # sortperm groups PSMs by precursor_idx for contiguous processing

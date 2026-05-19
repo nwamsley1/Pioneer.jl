@@ -1,189 +1,125 @@
 # PSM feature computation for MainSearch.
 #
-# Functions that add feature columns to PSM DataFrames for LightGBM scoring.
+# `add_psm_features!` is a single parallel pass that adds every per-PSM
+# feature column consumed by the per-file LightGBM. Merged 2026-05-19 from
+# two separate passes (`add_search_columns!` + `add_features!`) — same total
+# work, but one parallel_foreach! task spawn / join instead of two and one
+# cache-warm read of `precursor_idx` / `scan_idx` per row instead of two.
+
+@inline _count_mox(seq::AbstractString) = UInt8(count("Unimod:35", seq))
+@inline _count_mox(::Missing)            = zero(UInt8)
 
 """
-    add_search_columns!(psms::DataFrame, scan_retention_time, prec_charge, prec_is_decoy, precursors; prescore_only=false)
+    add_psm_features!(psms, search_context, spectra, ms_file_idx)
 
-Add essential columns to PSM DataFrame for search analysis.
+Single parallel pass that allocates and fills every per-PSM feature column
+needed by the per-file LightGBM. Reads the deconv-emit columns
+(:precursor_idx, :scan_idx, :error, :total_ions) and produces:
 
-# Added Columns
-- Retention time
-- Charge state
-- Target/decoy status
-- Ion counts
-- Error metrics
-- CV fold assignments
+- `:decoy`, `:target`, `:cv_fold`, `:charge`, `:charge2`
+- `:rt`, `:err_norm`
+- `:irt_obs`, `:irt_pred`, `:irt_error`
+- `:missed_cleavage`, `:Mox`, `:sequence_length`, `:prec_mz`
+- `:spectrum_peak_count`
+
+Mox is computed lazily once per precursor via a length-`n_library` cache;
+the count race is benign (same value written from any thread).
 """
-function add_search_columns!(psms::DataFrame,
-                        scan_retention_time::AbstractVector{Float32},
-                        prec_charge::AbstractVector{UInt8},
-                        prec_is_decoy::AbstractVector{Bool},
-                        precursors::LibraryPrecursors;
-                        prescore_only::Bool=false
-)
-    # Allocate new columns
+function add_psm_features!(psms::DataFrame,
+                           search_context::SearchContext,
+                           spectra::MassSpecData,
+                           ms_file_idx::Integer)
+    precursors_lib   = getPrecursors(getSpecLib(search_context))
+    prec_is_decoy    = getIsDecoy(precursors_lib)
+    prec_charge      = getCharge(precursors_lib)
+    prec_mz          = getMz(precursors_lib)
+    prec_irt         = getIrt(precursors_lib)
+    prec_length      = getLength(precursors_lib)
+    structural_mods  = getStructuralMods(precursors_lib)
+    prec_missed_clv  = getMissedCleavages(precursors_lib)
+    scan_rts         = getRetentionTimes(spectra)
+    masses           = getMzArrays(spectra)
+    rt_to_irt        = getRtIrtModel(search_context, ms_file_idx)
 
-    N = size(psms, 1);
-    decoys = zeros(Bool, N);
-    rt = zeros(Float32, N);
-    total_ions::Vector{UInt16} = psms[!,:total_ions]
-    err_norm = zeros(Float16, N);
-    targets = zeros(Bool, N);
-    prec_charges = zeros(UInt8, N);
-    cv_fold = zeros(UInt8, N);
-    scan_idxs::Vector{UInt32} = psms[!,:scan_idx]
-    prec_idxs::Vector{UInt32} = psms[!,:precursor_idx]
-    error::Vector{Float32} = psms[!,:error]
+    N = nrow(psms)
 
-    parallel_foreach!(size(psms, 1)) do chunk
-        for i in chunk
+    # Inputs — type-asserted so the closure captures concrete Vector{T}.
+    prec_idxs::Vector{UInt32}  = psms[!, :precursor_idx]
+    scan_idxs::Vector{UInt32}  = psms[!, :scan_idx]
+    error::Vector{Float32}     = psms[!, :error]
+    total_ions::Vector{UInt16} = psms[!, :total_ions]
+
+    # Allocate every output column up-front (so the closure writes typed buffers).
+    decoys              = zeros(Bool,    N)
+    targets             = zeros(Bool,    N)
+    rt                  = zeros(Float32, N)
+    err_norm            = zeros(Float16, N)
+    prec_charges        = zeros(UInt8,   N)
+    cv_fold             = zeros(UInt8,   N)
+    irt_obs             = zeros(Float32, N)
+    irt_pred            = zeros(Float32, N)
+    irt_error           = zeros(Float32, N)
+    missed_cleavage     = zeros(UInt8,   N)
+    Mox                 = zeros(UInt8,   N)
+    spectrum_peak_count = zeros(Float16, N)
+    sequence_length     = zeros(UInt8,   N)
+    prec_mzs            = zeros(Float32, N)
+
+    # Per-precursor Mox cache (lazy; benign race).
+    n_lib = length(prec_irt)
+    _mox_vals     = Vector{UInt8}(undef, n_lib)
+    _mox_computed = falses(n_lib)
+
+    parallel_foreach!(N) do chunk
+        @inbounds for i in chunk
             prec_idx = prec_idxs[i]
             scan_idx = scan_idxs[i]
 
-            decoys[i] = prec_is_decoy[prec_idx];
-            targets[i] = decoys[i] == false
-            rt[i] = Float32(scan_retention_time[scan_idx]);
-            prec_charges[i] = prec_charge[prec_idx];
-            err_norm[i] = Float16(min((2^min(error[i], 15f0))/max(total_ions[i], one(UInt16)), Float32(6e4)))
-            cv_fold[i] = getCvFold(precursors, prec_idx)
-        end
-    end
-    psms[!,:decoy] = decoys
-    psms[!,:rt] = rt
-    psms[!,:err_norm] = err_norm
-    psms[!,:target] = targets
-    psms[!,:charge] = prec_charges
-    psms[!,:cv_fold] = cv_fold
-    psms[!,:charge2] = Vector{UInt8}(psms[!, :charge] .== 2)
-    if !prescore_only
-        sort!(psms,:rt); #Sorting before grouping is critical.
-    end
-    return nothing
-end
+            # Search-column work.
+            is_decoy = prec_is_decoy[prec_idx]
+            decoys[i]       = is_decoy
+            targets[i]      = !is_decoy
+            scan_rt_i       = Float32(scan_rts[scan_idx])
+            rt[i]           = scan_rt_i
+            prec_charges[i] = prec_charge[prec_idx]
+            err_norm[i]     = Float16(min((2^min(error[i], 15f0)) / max(total_ions[i], one(UInt16)), Float32(6e4)))
+            cv_fold[i]      = getCvFold(precursors_lib, prec_idx)
 
-"""
-    add_features!(psms::DataFrame, search_context::SearchContext, tic, masses, ms_file_idx, rt_to_irt_interp; prescore_only=false)
+            # Feature work (uses scan_rt_i instead of re-reading rt[i]).
+            irt_obs_i        = rt_to_irt(scan_rt_i)
+            irt_pred_i       = prec_irt[prec_idx]
+            irt_obs[i]       = irt_obs_i
+            irt_pred[i]      = irt_pred_i
+            irt_error[i]     = abs(irt_obs_i - irt_pred_i)
+            missed_cleavage[i]     = prec_missed_clv[prec_idx]
+            sequence_length[i]     = prec_length[prec_idx]
+            prec_mzs[i]            = prec_mz[prec_idx]
+            spectrum_peak_count[i] = length(masses[scan_idx])
 
-Add feature columns to PSMs for scoring and analysis.
-
-# Added Features
-- RT and iRT metrics
-- Sequence properties
-- Intensity metrics
-- Spectrum characteristics
-"""
-function add_features!(psms::DataFrame,
-                        search_context::SearchContext,
-                                    tic::AbstractVector{Float32},
-                                    masses::AbstractArray,
-                                    ms_file_idx::Integer,
-                                    rt_to_irt_interp::RtConversionModel;
-                                    prescore_only::Bool=false
-                                    )
-
-    precursors_lib = getPrecursors(getSpecLib(search_context))
-    structural_mods = getStructuralMods(precursors_lib)
-    prec_sequence = getSequence(precursors_lib)
-    prec_mz = getMz(precursors_lib)
-    prec_irt = getIrt(precursors_lib)
-    prec_charge = getCharge(precursors_lib)
-    entrap_group_ids = getEntrapmentGroupId(precursors_lib)
-    precursor_missed_cleavage = getMissedCleavages(precursors_lib)
-    prec_length = getLength(precursors_lib)
-    ###########################
-    #Allocate new columns
-    N = size(psms, 1)
-    irt_obs = zeros(Float32, N)
-    irt_pred = zeros(Float32, N)
-    irt_error = zeros(Float32, N)
-    missed_cleavage = zeros(UInt8, N);
-    spectrum_peak_count = zeros(Float16, N);
-    Mox = zeros(UInt8, N);
-    sequence_length = zeros(UInt8, N);
-
-    # prec_mz is in PRESCORE_FEATURES (per-file LGBM) and the ScoringSearch
-    # feature set, so it's allocated unconditionally.
-    prec_mzs = zeros(Float32, N)
-
-    # Columns only needed for Phase 2 (full feature set)
-    if !prescore_only
-        entrap_group_id = zeros(UInt8, N)
-        prec_charges = zeros(UInt8, N)
-        TIC = zeros(Float16, N);
-    end
-
-    precursor_idx::Vector{UInt32} = psms[!,:precursor_idx]
-    scan_idx::Vector{UInt32} = psms[!,:scan_idx]
-    rt::Vector{Float32} = psms[!,:rt]
-    log2_intensity_explained = psms[!,:log2_intensity_explained]::Vector{Float16}
-
-    function countMOX(seq::String)
-        return UInt8(count("Unimod:35", seq))
-    end
-
-    function countMOX(seq::Missing)
-        return zero(UInt8)
-    end
-
-    function _count_aa(seq::AbstractString, aa::Char)
-        c = 0
-        for ch in seq
-            if ch == aa; c += 1; end
-        end
-        return UInt8(min(c, 255))
-    end
-
-    # Lazy-populate per-precursor caches: Vector-backed for O(1) lookup.
-    n_lib = length(prec_irt)
-    _mox_vals = Vector{UInt8}(undef, n_lib)
-    _mox_computed = falses(n_lib)
-
-    parallel_foreach!(size(psms, 1)) do chunk
-        for i in chunk
-            prec_idx = precursor_idx[i]
-            irt_obs[i] = rt_to_irt_interp(rt[i])
-            irt_pred[i] = prec_irt[prec_idx]
-            irt_error[i] = abs(irt_obs[i] - irt_pred[i])
-            missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
-            # Lazy Mox: compute once per precursor (benign race — same value)
+            # Lazy per-precursor Mox.
             if !_mox_computed[prec_idx]
-                _mox_vals[prec_idx] = countMOX(structural_mods[prec_idx])
+                _mox_vals[prec_idx]     = _count_mox(structural_mods[prec_idx])
                 _mox_computed[prec_idx] = true
             end
             Mox[i] = _mox_vals[prec_idx]
-            spectrum_peak_count[i] = length(masses[scan_idx[i]])
-            sequence_length[i] = prec_length[prec_idx]
-
-            prec_mzs[i] = prec_mz[prec_idx]
-
-            if !prescore_only
-                entrap_group_id[i] = entrap_group_ids[prec_idx]
-                TIC[i] = Float16(log2(tic[scan_idx[i]]))
-                prec_charges[i] = prec_charge[prec_idx]
-            end
         end
     end
 
-    psms[!,:irt_obs] = irt_obs
-    psms[!,:irt_pred] = irt_pred
-    psms[!,:irt_error] = irt_error
-    psms[!,:missed_cleavage] = missed_cleavage
-    psms[!,:Mox] = Mox
-    psms[!,:spectrum_peak_count] = spectrum_peak_count
-    psms[!,:sequence_length] = sequence_length
-    psms[!,:prec_mz] = prec_mzs
-
-    if !prescore_only
-        # :tic is intentionally kept — historically tested with +4.2k IDs on
-        # MTAC_3P_Standard (commit 4287cee7) before being dropped from feature
-        # lists in the smart-composite reduction (143d6b87). Compute preserved
-        # for re-introduction without code surgery.
-        psms[!,:tic] = TIC
-        psms[!,:charge] = prec_charges
-        psms[!,:entrapment_group_id] = entrap_group_id
-        psms[!,:ms_file_idx] .= ms_file_idx
-    end
+    psms[!, :decoy]               = decoys
+    psms[!, :target]              = targets
+    psms[!, :rt]                  = rt
+    psms[!, :err_norm]            = err_norm
+    psms[!, :charge]              = prec_charges
+    psms[!, :cv_fold]             = cv_fold
+    psms[!, :charge2]             = Vector{UInt8}(prec_charges .== 2)
+    psms[!, :irt_obs]             = irt_obs
+    psms[!, :irt_pred]            = irt_pred
+    psms[!, :irt_error]           = irt_error
+    psms[!, :missed_cleavage]     = missed_cleavage
+    psms[!, :Mox]                 = Mox
+    psms[!, :spectrum_peak_count] = spectrum_peak_count
+    psms[!, :sequence_length]     = sequence_length
+    psms[!, :prec_mz]             = prec_mzs
     return nothing
 end
 
@@ -613,6 +549,36 @@ function _build_precursor_groups(prec_col::AbstractVector)
     if n == 0
         return Vector{Int}(), Vector{UInt32}(), Vector{UInt32}()
     end
+
+    # Fast path: input already sorted by precursor_idx (the post-2026-05-19
+    # MainSearch invariant, set by permute_psms_by_precursor_idx! in
+    # process_file!). Skip the sortperm; perm is the identity permutation
+    # and we enumerate boundaries in a single sequential scan.
+    if issorted(prec_col)
+        perm = collect(1:n)
+        n_prec = 1
+        @inbounds for i in 2:n
+            if prec_col[i] != prec_col[i-1]
+                n_prec += 1
+            end
+        end
+        starts = Vector{UInt32}(undef, n_prec)
+        ends   = Vector{UInt32}(undef, n_prec)
+        @inbounds let p = 1
+            starts[1] = UInt32(1)
+            for i in 2:n
+                if prec_col[i] != prec_col[i-1]
+                    ends[p] = UInt32(i - 1)
+                    p += 1
+                    starts[p] = UInt32(i)
+                end
+            end
+            ends[n_prec] = UInt32(n)
+        end
+        return perm, starts, ends
+    end
+
+    # Slow path (input not sorted): full sortperm + boundary enumeration.
     pkeys = Vector{UInt32}(undef, n)
     @inbounds for i in 1:n
         pkeys[i] = UInt32(prec_col[i])
@@ -822,6 +788,15 @@ Add per-scan competition features:
 - `weight_rank_at_scan`: rank (1 = highest) of this PSM's weight at its scan
 
 Scans with a single PSM get `weight_ratio_at_scan=1.0` and `weight_rank_at_scan=1`.
+
+**PRECONDITION**: assumes `psms` is **contiguous-by-:scan_idx** — all rows
+sharing a scan_idx form one contiguous block. This is the natural ordering
+of the deconv output (see process_scans_fused.jl per-scan emit loop). Call
+this BEFORE any sort that reorders rows (e.g. `permute_psms_by_precursor_idx!`).
+
+This invariant lets us replace the Dict-of-vectors grouping (~7s/8 files)
+with a single linear sweep for run boundaries, and lets the per-run loop
+parallelize trivially over disjoint contiguous row ranges.
 """
 function add_scan_competition_features!(psms::DataFrame)
     n = nrow(psms)
@@ -832,24 +807,66 @@ function add_scan_competition_features!(psms::DataFrame)
         psms[!, :weight_rank_at_scan]  = weight_rank
         return
     end
-    scan = psms[!, :scan_idx]
-    w    = psms[!, :weight]
-    by_scan = Dict{eltype(scan), Vector{Int}}()
-    @inbounds for i in 1:n
-        push!(get!(() -> Int[], by_scan, scan[i]), i)
+
+    scan::Vector{UInt32}  = psms[!, :scan_idx]
+    w::Vector{Float32}    = psms[!, :weight]
+
+    # 1. Sweep for contiguous-run boundaries (O(n), single pass).
+    t_runs = @elapsed begin
+        starts = Int[1]
+        sizehint!(starts, n ÷ 4)
+        @inbounds for i in 2:n
+            if scan[i] != scan[i-1]
+                push!(starts, i)
+            end
+        end
+        n_runs = length(starts)
+        # Append sentinel so run k covers starts[k]:(starts[k+1]-1).
+        push!(starts, n + 1)
     end
-    @inbounds for (_, idxs) in by_scan
-        weights = Float32[Float32(w[i]) for i in idxs]
-        max_w = maximum(weights)
-        order = sortperm(weights, rev=true)
-        for (rank, j) in enumerate(order)
-            i = idxs[j]
-            weight_ratio[i] = max_w > 0 ? weights[j] / max_w : Float32(1)
-            weight_rank[i]  = UInt16(min(rank, typemax(UInt16)))
+
+    # 2. Per-run rank/ratio. Each run writes disjoint output rows, so
+    #    threading is contention-free. Use a thread-local sortperm buffer.
+    t_loop = @elapsed parallel_foreach!(n_runs) do chunk
+        @inbounds begin
+            buf_w   = Float32[]
+            buf_ord = Int[]
+            for r in chunk
+                s = starts[r]
+                e = starts[r+1] - 1
+                len = e - s + 1
+                if len == 1
+                    weight_ratio[s] = 1f0
+                    weight_rank[s]  = UInt16(1)
+                    continue
+                end
+                resize!(buf_w,   len)
+                resize!(buf_ord, len)
+                max_w = 0f0
+                for k in 1:len
+                    wk = w[s + k - 1]
+                    buf_w[k]   = wk
+                    buf_ord[k] = k
+                    if wk > max_w
+                        max_w = wk
+                    end
+                end
+                # sortperm descending by buf_w (closure-key is fine for small len).
+                sort!(view(buf_ord, 1:len), by = k -> -buf_w[k])
+                for rank in 1:len
+                    k = buf_ord[rank]
+                    row = s + k - 1
+                    weight_ratio[row] = max_w > 0 ? buf_w[k] / max_w : 1f0
+                    weight_rank[row]  = UInt16(min(rank, typemax(UInt16)))
+                end
+            end
         end
     end
+
     psms[!, :weight_ratio_at_scan] = weight_ratio
     psms[!, :weight_rank_at_scan]  = weight_rank
+    @user_info "  scan_competition (n_psms=$n n_scans=$n_runs): " *
+               "runs=$(round(t_runs*1000, digits=0))ms  per_run_loop=$(round(t_loop*1000, digits=0))ms"
     return
 end
 
@@ -868,76 +885,29 @@ end
 #                    feature (c734e62a); dropped during 143d6b87.
 
 """
-    prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra; prescore_only=false)
+    prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
 
-Reusable feature computation pipeline for PSMs. Called in both
-prescore (per-file) and full feature computation modes.
+Per-file PSM feature computation pipeline. Adds every prescore feature
+column consumed by the per-file LightGBM in MainSearch via a single
+parallel pass.
 
-Steps:
-1. add_search_columns! — RT, charge, target, cv_fold, err_norm, total_ions
-2. get_isotopes_captured! — precursor_fraction_transmitted (skipped for prescore)
-3. Filter by fraction_transmitted (skipped for prescore)
-4. add_features! — irt_error, tic, prec_mz, sequence_length, etc.
+The historical two-pass form (`add_search_columns!` + `add_features!`)
+and the optional `prescore_only=false` isotope-capture-and-filter path
+were collapsed 2026-05-19. The isotope-capture work now runs only later
+in MainSearch's `phase2`, on the much smaller best-per-precursor frame
+(~400k rows). Measurement showed pre-filter saved <1% of rows and cost
+more than it saved due to an extra sort.
 """
 function prepare_psm_features!(
     psms::DataFrame,
     params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    spectra::MassSpecData;
-    prescore_only::Bool=false
+    spectra::MassSpecData,
 ) where {P<:MainSearchParameters}
     t0 = time()
-
-    # 1. Add basic search columns (RT, charge, target/decoy status, cv_fold)
-    add_search_columns!(psms,
-        getRetentionTimes(spectra),
-        getCharge(getPrecursors(getSpecLib(search_context))),
-        getIsDecoy(getPrecursors(getSpecLib(search_context))),
-        getPrecursors(getSpecLib(search_context));
-        prescore_only=prescore_only
-    )
-    t1 = time()
-
-    if prescore_only
-        # Skip isotope computation and fraction_transmitted filter for prescore path
-        t2 = t1
-        t3 = t1
-    else
-        # 2. Determine which precursor isotopes are captured in each scan's isolation window
-        get_isotopes_captured!(
-            psms,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            psms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
-        )
-        t2 = time()
-
-        # 3. Filter by fraction_transmitted
-        to_remove = findall(psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
-        deleteat!(psms, to_remove)
-        t3 = time()
-    end
-
-    # 4. Add ML features (irt_error, tic, prec_mz, sequence_length, etc.)
-    add_features!(
-        psms,
-        search_context,
-        getTICs(spectra),
-        getMzArrays(spectra),
-        ms_file_idx,
-        getRtIrtModel(search_context, ms_file_idx);
-        prescore_only=prescore_only
-    )
-    t4 = time()
-
+    add_psm_features!(psms, search_context, spectra, ms_file_idx)
     r = s -> round(s, digits=3)
-    @debug_l2 "  prepare_psm_features! ($(nrow(psms)) PSMs): $(r(t4-t0))s"
-
+    @debug_l2 "  prepare_psm_features! ($(nrow(psms)) PSMs): $(r(time()-t0))s"
     return psms
 end
