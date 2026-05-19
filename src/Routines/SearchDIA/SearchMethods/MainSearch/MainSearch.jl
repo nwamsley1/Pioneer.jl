@@ -174,6 +174,16 @@ function process_file!(
     # Dict-based version (measured 2026-05-19).
     t_scan_comp = @elapsed add_scan_competition_features!(psms)
 
+    # MS1 lookup features (ms1_m0_intensity, ms1_m1_intensity,
+    # ms1_m0_mass_err_ppm, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred). Done
+    # BEFORE the precursor sort so that consecutive rows within a per-chunk
+    # task share scan_idx, which lets the per-task MS1-spectrum cache hit
+    # ~once per unique scan in the chunk instead of being thrashed by
+    # precursor-sorted input. The per-precursor chromatogram-feature passes
+    # (ms1_corr_*, frag_*) run later in process_search_results! after the
+    # precursor sort, since they group by :precursor_idx.
+    t_ms1 = @elapsed add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
+
     # Sort the deconv-output DataFrame by :precursor_idx once. Downstream
     # passes (chrom features, best-per-precursor) can then fast-path their
     # group-build (no second sortperm), and the data layout is friendlier
@@ -191,6 +201,7 @@ function process_file!(
     @user_info "  MainSearch process_file! (file_idx=$ms_file_idx, $file_name): " *
                "$(nrow(psms)) PSMs from deconv; library_search elapsed: $(round(t_lib_search, digits=2))s  " *
                "scan_comp=$(round(t_scan_comp * 1000, digits=0))ms  " *
+               "ms1=$(round(t_ms1, digits=2))s  " *
                "sort=$(round(t_sort * 1000, digits=0))ms  n_cols=$(ncol(psms))"
 
     return results
@@ -240,7 +251,10 @@ function process_search_results!(
     # hasproperty filter in the LGBM trainer. See 1afebf9d for historical
     # individual-feature LGBM gains if a future campaign wants to resurrect.
     t_apex = 0.0
-    t_ms1 = @elapsed add_ms1_features!(psms, spectra, search_context, ms_file_idx)
+    # MS1 spectrum lookup moved upstream to process_file! (before precursor
+    # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
+    # Only the precursor-grouped chromatogram features still run here.
+    t_ms1 = @elapsed add_chromatogram_features!(psms)
 
     # Pre-LGBM diagnostic dump (independent of post-LGBM dump). Captures
     # PSMs *before* LGBM training so single-class runs (target-only or

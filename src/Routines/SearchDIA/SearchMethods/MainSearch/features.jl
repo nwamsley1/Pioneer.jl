@@ -346,7 +346,27 @@ function _ms1_lookup_chunk!(psms, spectra,
     return
 end
 
-function add_ms1_features!(psms::DataFrame,
+"""
+    add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
+
+Per-PSM MS1 spectrum lookup. Populates:
+- `:ms1_m0_intensity`
+- `:ms1_m1_intensity`
+- `:ms1_m0_mass_err_ppm`
+- `:ms1_m1_to_m0_ratio`
+- `:ms1_m1_to_m0_pred`
+
+For each PSM: finds the nearest MS1 scan by RT, extracts M0/M1 intensities
+within a ppm tolerance window around the predicted precursor m/z, and
+computes the observed/predicted M1:M0 ratio.
+
+**PRECONDITION (perf-only)**: the per-task MS1-spectrum cache hits ~once
+per unique `scan_idx` in each chunk, so this is dramatically faster when
+the input PSMs are contiguous-by-:scan_idx — the natural ordering of the
+deconv output. Call BEFORE `permute_psms_by_precursor_idx!`. (Correctness
+is unchanged either way; the cache just thrashes when precursor-sorted.)
+"""
+function add_ms1_lookup_features!(psms::DataFrame,
                             spectra,
                             search_context,
                             ms_file_idx::Integer;
@@ -370,7 +390,7 @@ function add_ms1_features!(psms::DataFrame,
         end
     end
     if isempty(ms1_scan_idxs)
-        @debug_l1 "add_ms1_features!: no MS1 scans found, features all zero"
+        @debug_l1 "add_ms1_lookup_features!: no MS1 scans found, features all zero"
         return
     end
 
@@ -385,8 +405,9 @@ function add_ms1_features!(psms::DataFrame,
 
     # Parallel per-PSM lookup. Each PSM writes to disjoint indices in the output
     # columns (ms1_m0_intensity[i], etc.) so no synchronization needed. We use
-    # Threads.@spawn per chunk so each task keeps its own ms1-spectrum cache
-    # (consecutive PSMs in a chunk often map to the same nearest MS1 scan).
+    # Threads.@spawn per chunk so each task keeps its own ms1-spectrum cache.
+    # When input is contiguous-by-scan, the cache hits ~once per unique scan
+    # in each chunk; when input is precursor-sorted the cache thrashes.
     nt = Threads.nthreads()
     chunk_size = max(1, cld(n, nt))
     @sync for t in 1:nt
@@ -401,21 +422,35 @@ function add_ms1_features!(psms::DataFrame,
             chunk_start, chunk_end
         )
     end
+    return
+end
 
-    # Build precursor grouping (perm + starts/ends) once; reuse across B1+B2.
-    # Saves one sortperm + boundary-enum pass per file.
+"""
+    add_chromatogram_features!(psms)
+
+Per-precursor chromatogram-feature passes (MS1 + MS2-fragment). Calls
+`_add_ms1_chromatogram_features!` (uses :ms1_m0_intensity, :ms1_m1_intensity)
+and `_add_fragment_chromatogram_features!` (uses :frag1..6_int) over the
+shared per-precursor group structure built once via `_build_precursor_groups`.
+
+**PRECONDITION**: requires psms to be sorted by :precursor_idx (the
+`_build_precursor_groups` fast path), AND requires
+`add_ms1_lookup_features!` to have already populated the :ms1_m0_intensity
+/ :ms1_m1_intensity columns.
+"""
+function add_chromatogram_features!(psms::DataFrame)
+    n = nrow(psms)
+    n == 0 && return
+    # Build precursor grouping (perm + starts/ends) once; reuse across both passes.
     t_groups = @elapsed groups = hasproperty(psms, :precursor_idx) ?
         _build_precursor_groups(psms.precursor_idx) :
         nothing
-    # B1: per-precursor MS1 chromatogram features
     t_ms1_chrom = @elapsed _add_ms1_chromatogram_features!(psms; groups=groups)
-    # B2: per-precursor MS2-fragment chromatogram features (uses frag1..6_int captured by Score!)
     t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(psms; groups=groups)
-    @user_info "  chrom-feature passes (file_idx=$ms_file_idx): " *
+    @user_info "  chrom-feature passes (n_psms=$n): " *
                "groups=$(round(t_groups, digits=2))s  " *
                "ms1_chrom=$(round(t_ms1_chrom, digits=2))s  " *
-               "frag_chrom=$(round(t_frag_chrom, digits=2))s  " *
-               "(n_psms=$(nrow(psms)))"
+               "frag_chrom=$(round(t_frag_chrom, digits=2))s"
     return
 end
 
