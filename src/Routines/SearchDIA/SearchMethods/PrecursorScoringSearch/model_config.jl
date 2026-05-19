@@ -23,15 +23,27 @@ live in MainSearch/scoring.jl (`SHARED_LGBM_HP`,
 classifier definition. This file is just the feature list + an MS1 filter.
 ==========================================================#
 
-# ADVANCED_FEATURE_SET = PRESCORE_FEATURES (the smart-composite reduced set)
-# + 5 MBR features that are computed AFTER MainSearch's Pass 1 prepass
-# and are therefore only available to the experiment-wide LightGBM here.
-# By construction, the two LGBMs are trained on the same features apart
-# from those 5 MBR-specific signals that depend on cross-run pooling.
-# Listed as a literal here because Julia precompile struggled with
-# `vcat(collect(PRESCORE_FEATURES), …)` evaluated at const time.
+# ADVANCED_FEATURE_SET drives the ScoringSearch Pass-1 LGBM
+# (in score_psms.jl::_score_precursor_isotope_traces_{mbr,no_mbr}).
+#
+# Important: the MBR features (MBR_max_pair_prob_true, etc.) are NOT in
+# this list. They are computed AFTER Pass-1 LGBM trains (see steps 5-6
+# in _score_precursor_isotope_traces_mbr), so they wouldn't exist on the
+# DataFrame at Pass-1 training time anyway. MBR features are consumed
+# only by the FTR controller (mbr_ftr.jl::FTR_FEATURES_F_TRUE), which is
+# a separate LGBM trained later in the pipeline.
+#
+# Pre-2026-05-19 this list redundantly included the 6 MBR features —
+# they were always silently filtered out by the hasproperty guard in
+# pass1_oom.jl. Removed to make the design intent explicit.
+#
+# Conceptually ADVANCED_FEATURE_SET == PRESCORE_FEATURES at training
+# time (modulo a few per-precursor aggregate features like :smoothness
+# and :irt_fwhm that exist on best-per-precursor rows but not per-scan
+# rows). Lists kept separate due to load-order constraint in
+# importScripts.jl — PrecursorScoringSearch loads before MainSearch.
 const ADVANCED_FEATURE_SET = [
-    # ── PRESCORE_FEATURES (50 features, kept in sync manually) ──
+    # Kept in sync manually with PRESCORE_FEATURES (MainSearch/features.jl).
     :fitted_manhattan_distance, :irt_error, :poisson, :err_norm,
     :total_ions, :missed_cleavage, :y_count, :weight, :gof,
     :Mox, :spectrum_peak_count, :sequence_length,
@@ -60,14 +72,6 @@ const ADVANCED_FEATURE_SET = [
     # frag_corr_min_pairwise, ms1_corr_weight_m0, irt_dist_to_weight_apex,
     # best_rank, ms1_envelope_dev_log2, n_above_hm, topn, topn_iso removed —
     # 8-file Olsen: −476 IDs (−0.11%), +203 PGs (+0.39%), pf −864 (−0.24%).
-    # ── MBR features (only available post-MainSearch) ──
-    :MBR_max_pair_prob_true,
-    :MBR_log2_weight_ratio_true,
-    :MBR_log2_explained_ratio_true,
-    :MBR_best_irt_diff_true,
-    :MBR_is_missing_true,
-    # rtv1 (2026-05-13)
-    :MBR_best_rt_diff_true,
 ]
 
 """
