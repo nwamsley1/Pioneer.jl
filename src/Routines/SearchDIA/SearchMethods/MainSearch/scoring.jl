@@ -64,12 +64,17 @@ const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
 # Per-fold training cap; folds larger than this are random-subsampled.
 const SHARED_LGBM_MAX_TRAIN = 250_000
 
-# Adaptive HP selection trigger. When the per-file PSM count is below this
-# threshold, training is cheap enough to compare 2-3 LightGBM HP configs of
-# differing complexity and pick the best by OOF target count at 1% FDR.
-# Above the threshold we trust the single default HP — bigger datasets give
-# the complex model enough data to win.
-const ADAPTIVE_HP_THRESHOLD = 50_000
+# Adaptive HP selection trigger. After running the default LGBM, if its OOF
+# target count at q≤0.01 (summed across folds) is below this threshold, the
+# dataset is small enough that competing HP variants of differing complexity
+# is cheap and worth trying. Above the threshold the default already has
+# plenty of signal to dominate.
+#
+# Per-file PSM counts are typically 500k-6M even for SCP, so a row-count
+# trigger doesn't discriminate small from large. The OOF target count is
+# the real "did the default find enough signal" signal — and it's already
+# computed for the probit-vs-LGBM low-data fallback.
+const ADAPTIVE_HP_TARGET_THRESHOLD = 5_000
 
 # Adaptive HP candidates (used when n_psms < ADAPTIVE_HP_THRESHOLD).
 # All inherit env-overridable defaults from current_shared_lgbm_hp() and
@@ -241,13 +246,14 @@ function train_psm_classifier_with_fallback(
     _oof_count(fs) = _fold_oof_psms_at_1pct(targets_col[idx0], fs[1]) +
                      _fold_oof_psms_at_1pct(targets_col[idx1], fs[2])
 
-    # Adaptive model selection: when n_total < ADAPTIVE_HP_THRESHOLD, the
-    # training cost is small enough to try a few LightGBM HP variants of
-    # differing complexity (medium = min_data=50/num_leaves=31, simple =
-    # min_data=20/num_leaves=15). Below LOW_DATA_THRESHOLD per fold, probit
-    # also joins the competition. Winner = highest OOF target count at 1% FDR.
-    adaptive = n_total < ADAPTIVE_HP_THRESHOLD
+    # Adaptive model selection: if the default LGBM's OOF target count at q≤0.01
+    # is below ADAPTIVE_HP_TARGET_THRESHOLD, the dataset is small enough that
+    # competing alternative HP configs (medium=md50/leaves31, simple=md20/leaves15)
+    # might learn better despite the default's complexity advantage on bigger
+    # data. Below LOW_DATA_THRESHOLD per fold, probit also joins the competition.
+    # Winner = highest OOF target count at 1% FDR.
     n_lgbm_default = _oof_count(lgbm_scores)
+    adaptive = n_lgbm_default < ADAPTIVE_HP_TARGET_THRESHOLD
     candidates = [(name="lgbm_default", scores=lgbm_scores, infold=lgbm_infold_scores,
                    last=last_classifier, oof=n_lgbm_default)]
 
