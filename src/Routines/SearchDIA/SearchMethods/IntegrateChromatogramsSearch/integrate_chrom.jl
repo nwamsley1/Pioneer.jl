@@ -17,9 +17,6 @@
 
 const BOUNDARY_CANDIDATE_CATEGORY_LABELS = (
     "fallback",
-    "fw_60pct",
-    "fw_70pct",
-    "fw_80pct",
     "valley_combination",
 )
 const BOUNDARY_OUTSIDE_FEATURE_SCAN_WINDOW = 4
@@ -496,46 +493,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         return nothing
     end
 
-    function addThresholdFullWidthCandidates!(
-        candidates::Vector,
-        seen::Set{Tuple{Int,Int}},
-        u::Vector{Float32},
-        N::Int,
-        apex_scan::Int,
-        n_pad::Int,
-    )
-        apex_padded = apex_scan + n_pad
-        apex_height = u[apex_padded]
-        if apex_height <= 0.0f0 || isnan(apex_height)
-            return nothing
-        end
-
-        for (height_fraction, category) in zip(
-            (0.6f0, 0.7f0, 0.8f0),
-            ("fw_60pct", "fw_70pct", "fw_80pct"),
-        )
-            threshold = height_fraction * apex_height
-            fw_start = apex_scan
-            fw_stop = apex_scan
-            @inbounds while fw_start > 1 && u[fw_start - 1 + n_pad] >= threshold
-                fw_start -= 1
-            end
-            @inbounds while fw_stop < N && u[fw_stop + 1 + n_pad] >= threshold
-                fw_stop += 1
-            end
-
-            fw_start = fw_start > 1 ? fw_start - 1 : fw_start
-            fw_stop = fw_stop < N ? fw_stop + 1 : fw_stop
-            pushBoundaryCandidate!(
-                candidates, seen,
-                fw_start,
-                fw_stop,
-                apex_scan, N, category,
-            )
-        end
-        return nothing
-    end
-
     function isLocalMinimumEndpoint(
         u::Vector{Float32},
         idx::Int,
@@ -639,7 +596,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
             N,
             "fallback",
         )
-        addThresholdFullWidthCandidates!(candidates, seen, u, N, apex_scan, n_pad)
         addValleyCombinationCandidates!(candidates, seen, u, 1:N, N, apex_scan, n_pad)
 
         return candidates
@@ -825,7 +781,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                 endpoint_height_fraction = 1.0f0,
                 peak_prominence_score = 0.0f0,
                 endpoint_valley_score = 0.0f0,
-                apex_containment_score = 0.0f0,
                 log2_smoothed_apex_weight = log2_smoothed_apex_weight,
                 secondary_peak_penalty = 1.0f0,
                 asymmetry_penalty = 1.0f0,
@@ -857,12 +812,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         left_valley = 1.0f0 - min(1.0f0, max(0.0f0, left_val - left_local_min) / apex_height)
         right_valley = 1.0f0 - min(1.0f0, max(0.0f0, right_val - right_local_min) / apex_height)
         endpoint_valley_score = (left_valley + right_valley) / 2.0f0
-
-        max_in_range = 0.0f0
-        @inbounds for i in scan_range
-            max_in_range = max(max_in_range, u[i + n_pad])
-        end
-        apex_containment_score = apex_height / max(max_in_range, eps(Float32))
 
         secondary_peak_penalty = secondaryPeakPenalty(u, scan_range, apex_scan, n_pad, apex_height)
         left_excluded_signal_fraction, left_boundary_recovery_fraction, left_outside_peak_fraction =
@@ -908,7 +857,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
             endpoint_height_fraction = endpoint_height_fraction,
             peak_prominence_score = peak_prominence_score,
             endpoint_valley_score = endpoint_valley_score,
-            apex_containment_score = apex_containment_score,
             log2_smoothed_apex_weight = log2_smoothed_apex_weight,
             secondary_peak_penalty = secondary_peak_penalty,
             asymmetry_penalty = asymmetry_penalty,

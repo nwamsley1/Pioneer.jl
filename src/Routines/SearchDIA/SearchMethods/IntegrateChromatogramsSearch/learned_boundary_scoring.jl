@@ -11,7 +11,6 @@ const BOUNDARY_CANDIDATE_FEATURES = Symbol[
     :endpoint_height_fraction,
     :peak_prominence_score,
     :endpoint_valley_score,
-    :apex_containment_score,
     :log2_smoothed_apex_weight,
     :secondary_peak_penalty,
     :asymmetry_penalty,

@@ -251,25 +251,20 @@ end
         for row in eachrow(candidates)
     )
 
-    @test candidate_ranges == Set([(1, 11), (2, 10), (3, 9), (4, 8), (5, 7)])
+    @test candidate_ranges == Set([(1, 11), (2, 10)])
     @test nrow(candidates) == length(candidate_ranges)
     @test count(candidates.is_fallback) == 1
     @test :candidate_category in propertynames(candidates)
     @test all(candidates.candidate_category .∈ Ref(Set([
         "fallback",
-        "fw_60pct",
-        "fw_70pct",
-        "fw_80pct",
         "valley_combination",
     ])))
+    @test !any(startswith.(candidates.candidate_category, "fw_"))
     category_by_range = Dict(
         (Int(row.candidate_start_idx), Int(row.candidate_stop_idx)) => row.candidate_category
         for row in eachrow(candidates)
     )
     @test category_by_range[(2, 10)] == "fallback"
-    @test category_by_range[(3, 9)] == "fw_60pct"
-    @test category_by_range[(4, 8)] == "fw_70pct"
-    @test category_by_range[(5, 7)] == "fw_80pct"
     @test category_by_range[(1, 11)] == "valley_combination"
 
     deltas_by_range = Dict(
@@ -279,7 +274,8 @@ end
         )
         for row in eachrow(candidates)
     )
-    @test deltas_by_range[(5, 7)] == (4.0f0, -4.0f0)
+    @test deltas_by_range[(1, 11)] == (0.0f0, 0.0f0)
+    @test deltas_by_range[(2, 10)] == (1.0f0, -1.0f0)
 end
 
 @testset "recovered outside peak contributes valley combination candidates" begin
@@ -656,8 +652,8 @@ end
         :,
     ])
     wide = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(3)) .&
-        (candidates.candidate_stop_idx .== UInt16(10)),
+        (candidates.candidate_start_idx .== UInt16(1)) .&
+        (candidates.candidate_stop_idx .== UInt16(11)),
         :,
     ])
 
@@ -677,20 +673,14 @@ end
     selected = DataFrame(
         candidate_category = [
             "fallback",
-            "fw_60pct",
-            "fw_60pct",
-            "fw_70pct",
-            "fw_80pct",
+            "fallback",
             "valley_combination",
         ],
     )
 
     lines = Pioneer.boundary_candidate_category_tally_lines(selected)
-    @test first(lines) == "Learned chromatogram boundary selected candidate categories (total 6):"
-    @test any(occursin("fallback", line) && occursin("1", line) for line in lines)
-    @test any(occursin("fw_60pct", line) && occursin("2", line) for line in lines)
-    @test any(occursin("fw_70pct", line) && occursin("1", line) for line in lines)
-    @test any(occursin("fw_80pct", line) && occursin("1", line) for line in lines)
+    @test first(lines) == "Learned chromatogram boundary selected candidate categories (total 3):"
+    @test any(occursin("fallback", line) && occursin("2", line) for line in lines)
     @test any(occursin("valley_combination", line) && occursin("1", line) for line in lines)
 
     old_level = Pioneer.DEBUG_CONSOLE_LEVEL[]
@@ -726,7 +716,7 @@ end
     candidates = DataFrame(
         boundary_group_id = UInt64[1, 1, 2, 2],
         candidate_index = UInt16[1, 2, 1, 2],
-        candidate_category = ["fallback", "fw_60pct", "fallback", "fw_60pct"],
+        candidate_category = ["fallback", "valley_combination", "fallback", "valley_combination"],
         is_fallback = Bool[true, false, true, false],
         quant_trace_selected = Bool[true, true, false, false],
     )
@@ -1002,8 +992,8 @@ end
 
     candidates = DataFrame(candidate_data[])
     wide = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(3)) .&
-        (candidates.candidate_stop_idx .== UInt16(10)),
+        (candidates.candidate_start_idx .== UInt16(1)) .&
+        (candidates.candidate_stop_idx .== UInt16(11)),
         :,
     ])
 
