@@ -207,7 +207,10 @@ function process_search_results!(
     else
         Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     end
-    best_psms, scores, lgbm_timings = train_lgbm_and_select_best(psms)
+    best_psms, scores, lgbm_timings = train_lgbm_and_select_best(
+        psms;
+        integration_q_value_threshold = params.integration_q_value_threshold,
+    )
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm = time()
@@ -294,7 +297,10 @@ function process_search_results!(
                 add_ms1_features!(psms2, spectra, search_context, ms_file_idx)
 
                 # Re-train LGBM and re-select best per precursor on pass-2 PSMs
-                best_psms2, scores2, _ = train_lgbm_and_select_best(psms2)
+                best_psms2, scores2, _ = train_lgbm_and_select_best(
+                    psms2;
+                    integration_q_value_threshold = params.integration_q_value_threshold,
+                )
                 best_psms2[!, :lgbm_prob] = scores2
                 pass2_precs_n = nrow(best_psms2)
                 @user_info "  PEP-filter 2-pass (file_idx=$ms_file_idx): pass2 LGBM → " *

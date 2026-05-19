@@ -15,6 +15,16 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+const BOUNDARY_CANDIDATE_CATEGORY_LABELS = (
+    "fallback",
+    "fw_60pct",
+    "fw_70pct",
+    "fw_80pct",
+    "valley_combination",
+)
+const BOUNDARY_OUTSIDE_FEATURE_SCAN_WINDOW = 4
+const MAX_BOUNDARY_VALLEY_ENDPOINTS_PER_SIDE = 3
+
 """
     mutable struct Chromatogram{T<:Real, J<:Integer}
         t::Vector{T}
@@ -60,6 +70,7 @@ function debug_save_chromatogram_integration_plot(
     min_fraction_transmitted::Float32,
     status::AbstractString,
     title::AbstractString,
+    mainsearch_evidence_range::Union{Nothing,UnitRange{Int}} = nothing,
 )
     isempty(plot_path) && return nothing
     isempty(rt_col) && return nothing
@@ -111,6 +122,19 @@ function debug_save_chromatogram_integration_plot(
             ls = :dot,
             label = "bounds",
         )
+        if mainsearch_evidence_range !== nothing
+            evidence_range = max(first(mainsearch_evidence_range), 1):min(last(mainsearch_evidence_range), length(rt_vals))
+            if !isempty(evidence_range)
+                Plots.vline!(
+                    p_signal,
+                    unique([rt_vals[first(evidence_range)], rt_vals[last(evidence_range)]]),
+                    color = :green,
+                    lw = 1.2,
+                    ls = :dashdot,
+                    label = "main search q interval",
+                )
+            end
+        end
 
         p_fraction = Plots.plot(
             rt_vals,
@@ -191,7 +215,13 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                                 isplot::Bool = false,
                                 debug_plot_path::Union{Nothing, AbstractString} = nothing,
                                 debug_plot_title::AbstractString = "",
-                                debug_plot_data::Union{Nothing, Base.RefValue} = nothing)
+                                debug_plot_data::Union{Nothing, Base.RefValue} = nothing,
+                                mainsearch_1pct_start_scan::UInt32 = UInt32(0),
+                                mainsearch_1pct_stop_scan::UInt32 = UInt32(0),
+                                rt_to_irt_model::RtConversionModel = IdentityModel(),
+                                forced_boundary_start_scan::UInt32 = UInt32(0),
+                                forced_boundary_stop_scan::UInt32 = UInt32(0),
+                                boundary_candidate_data::Union{Nothing, Base.RefValue} = nothing)
 
     m = length(rt_col)
 
@@ -412,6 +442,513 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         return start_mid:stop_mid
     end
 
+    function ensureMinimumScanRange(scan_range::UnitRange{Int}, apex_scan::Int, N::Int; min_points::Int = 3)
+        N <= 0 && return scan_range
+        target_points = min(min_points, N)
+        start = clamp(first(scan_range), 1, N)
+        stop = clamp(last(scan_range), 1, N)
+        start, stop = minmax(start, stop)
+
+        if apex_scan < start
+            start = apex_scan
+        elseif apex_scan > stop
+            stop = apex_scan
+        end
+        start = clamp(start, 1, N)
+        stop = clamp(stop, 1, N)
+
+        while stop - start + 1 < target_points
+            left_span = apex_scan - start
+            right_span = stop - apex_scan
+            if start > 1 && (left_span <= right_span || stop == N)
+                start -= 1
+            elseif stop < N
+                stop += 1
+            elseif start > 1
+                start -= 1
+            else
+                break
+            end
+        end
+
+        return start:stop
+    end
+
+    function pushBoundaryCandidate!(
+        candidates::Vector,
+        seen::Set{Tuple{Int,Int}},
+        start::Int,
+        stop::Int,
+        apex_scan::Int,
+        N::Int,
+        category::AbstractString,
+    )
+        start = clamp(start, 1, N)
+        stop = clamp(stop, 1, N)
+        start <= stop || return nothing
+        start <= apex_scan <= stop || return nothing
+        scan_range = ensureMinimumScanRange(start:stop, apex_scan, N)
+        key = (first(scan_range), last(scan_range))
+        if key ∉ seen
+            push!(seen, key)
+            push!(candidates, (scan_range = scan_range, category = String(category)))
+        end
+        return nothing
+    end
+
+    function addThresholdFullWidthCandidates!(
+        candidates::Vector,
+        seen::Set{Tuple{Int,Int}},
+        u::Vector{Float32},
+        N::Int,
+        apex_scan::Int,
+        n_pad::Int,
+    )
+        apex_padded = apex_scan + n_pad
+        apex_height = u[apex_padded]
+        if apex_height <= 0.0f0 || isnan(apex_height)
+            return nothing
+        end
+
+        for (height_fraction, category) in zip(
+            (0.6f0, 0.7f0, 0.8f0),
+            ("fw_60pct", "fw_70pct", "fw_80pct"),
+        )
+            threshold = height_fraction * apex_height
+            fw_start = apex_scan
+            fw_stop = apex_scan
+            @inbounds while fw_start > 1 && u[fw_start - 1 + n_pad] >= threshold
+                fw_start -= 1
+            end
+            @inbounds while fw_stop < N && u[fw_stop + 1 + n_pad] >= threshold
+                fw_stop += 1
+            end
+
+            fw_start = fw_start > 1 ? fw_start - 1 : fw_start
+            fw_stop = fw_stop < N ? fw_stop + 1 : fw_stop
+            pushBoundaryCandidate!(
+                candidates, seen,
+                fw_start,
+                fw_stop,
+                apex_scan, N, category,
+            )
+        end
+        return nothing
+    end
+
+    function isLocalMinimumEndpoint(
+        u::Vector{Float32},
+        idx::Int,
+        N::Int,
+        n_pad::Int,
+    )
+        padded_idx = idx + n_pad
+        val = u[padded_idx]
+        left_ok = idx == 1 || val <= u[padded_idx - 1]
+        right_ok = idx == N || val <= u[padded_idx + 1]
+        return left_ok && right_ok
+    end
+
+    function collectValleyEndpoints(
+        u::Vector{Float32},
+        scan_range::UnitRange{Int},
+        apex_scan::Int,
+        N::Int,
+        n_pad::Int;
+        left_side::Bool,
+    )
+        valleys = Int[]
+        start = left_side ? first(scan_range) : max(apex_scan + 1, first(scan_range))
+        stop = left_side ? min(apex_scan - 1, last(scan_range)) : last(scan_range)
+        start <= stop || return valleys
+
+        if left_side
+            for i in stop:-1:start
+                if isLocalMinimumEndpoint(u, i, N, n_pad)
+                    push!(valleys, i)
+                    length(valleys) >= MAX_BOUNDARY_VALLEY_ENDPOINTS_PER_SIDE && break
+                end
+            end
+        else
+            for i in start:stop
+                if isLocalMinimumEndpoint(u, i, N, n_pad)
+                    push!(valleys, i)
+                    length(valleys) >= MAX_BOUNDARY_VALLEY_ENDPOINTS_PER_SIDE && break
+                end
+            end
+        end
+        return valleys
+    end
+
+    function addValleyCombinationCandidates!(
+        candidates::Vector,
+        seen::Set{Tuple{Int,Int}},
+        u::Vector{Float32},
+        current_range::UnitRange{Int},
+        N::Int,
+        apex_scan::Int,
+        n_pad::Int,
+    )
+        left_valleys = collectValleyEndpoints(
+            u,
+            current_range,
+            apex_scan,
+            N,
+            n_pad;
+            left_side = true,
+        )
+        right_valleys = collectValleyEndpoints(
+            u,
+            current_range,
+            apex_scan,
+            N,
+            n_pad;
+            left_side = false,
+        )
+
+        for left in left_valleys, right in right_valleys
+            pushBoundaryCandidate!(
+                candidates,
+                seen,
+                left,
+                right,
+                apex_scan,
+                N,
+                "valley_combination",
+            )
+        end
+        return nothing
+    end
+
+    function generateBoundaryCandidates(
+        current_range::UnitRange{Int},
+        u::Vector{Float32},
+        N::Int,
+        apex_scan::Int,
+        n_pad::Int,
+    )
+        candidates = NamedTuple{(:scan_range, :category), Tuple{UnitRange{Int}, String}}[]
+        seen = Set{Tuple{Int,Int}}()
+
+        pushBoundaryCandidate!(
+            candidates,
+            seen,
+            first(current_range),
+            last(current_range),
+            apex_scan,
+            N,
+            "fallback",
+        )
+        addThresholdFullWidthCandidates!(candidates, seen, u, N, apex_scan, n_pad)
+        addValleyCombinationCandidates!(candidates, seen, u, 1:N, N, apex_scan, n_pad)
+
+        return candidates
+    end
+
+    function localMinimumNear(u::Vector{Float32}, idx::Int, n_pad::Int, N::Int; radius::Int = 1)
+        start = max(idx - radius, 1) + n_pad
+        stop = min(idx + radius, N) + n_pad
+        local_min = typemax(Float32)
+        @inbounds for i in start:stop
+            local_min = min(local_min, u[i])
+        end
+        return local_min
+    end
+
+    function secondaryPeakPenalty(u::Vector{Float32}, scan_range::UnitRange{Int}, apex_scan::Int, n_pad::Int, apex_height::Float32)
+        penalty = 0.0f0
+
+        min_seen = apex_height
+        @inbounds for i in (apex_scan - 1):-1:first(scan_range)
+            val = u[i + n_pad]
+            if val > min_seen
+                penalty = max(penalty, (val - min_seen) / apex_height)
+            else
+                min_seen = val
+            end
+        end
+
+        min_seen = apex_height
+        @inbounds for i in (apex_scan + 1):last(scan_range)
+            val = u[i + n_pad]
+            if val > min_seen
+                penalty = max(penalty, (val - min_seen) / apex_height)
+            else
+                min_seen = val
+            end
+        end
+
+        return penalty
+    end
+
+    function outsideBoundarySignalFeatures(
+        u::Vector{Float32},
+        scan_range::UnitRange{Int},
+        N::Int,
+        n_pad::Int,
+        apex_height::Float32;
+        left_side::Bool,
+        window::Int = BOUNDARY_OUTSIDE_FEATURE_SCAN_WINDOW,
+    )
+        if left_side
+            stop = first(scan_range) - 1
+            start = max(1, stop - window + 1)
+            boundary_idx = first(scan_range)
+        else
+            start = last(scan_range) + 1
+            stop = min(N, start + window - 1)
+            boundary_idx = last(scan_range)
+        end
+        start <= stop || return (0.0f0, 0.0f0, 0.0f0)
+
+        signal_sum = 0.0f0
+        outside_peak = 0.0f0
+        n = 0
+        @inbounds for i in start:stop
+            val = max(0.0f0, u[i + n_pad])
+            signal_sum += val
+            outside_peak = max(outside_peak, val)
+            n += 1
+        end
+
+        boundary_val = max(0.0f0, u[boundary_idx + n_pad])
+        excluded_signal_fraction = signal_sum / (apex_height * Float32(n))
+        boundary_recovery_fraction = max(0.0f0, outside_peak - boundary_val) / apex_height
+        outside_peak_fraction = outside_peak / apex_height
+        return (
+            excluded_signal_fraction,
+            boundary_recovery_fraction,
+            outside_peak_fraction,
+        )
+    end
+
+    function internalDipRecoveryScore(
+        u::Vector{Float32},
+        scan_range::UnitRange{Int},
+        apex_scan::Int,
+        n_pad::Int,
+        apex_height::Float32,
+    )
+        score = 0.0f0
+
+        min_seen = apex_height
+        min_idx = apex_scan
+        @inbounds for i in (apex_scan - 1):-1:first(scan_range)
+            val = max(0.0f0, u[i + n_pad])
+            if val < min_seen
+                min_seen = val
+                min_idx = i
+            else
+                distance = max(indexIrtDistance(i, min_idx), eps(Float32))
+                score = max(score, (val - min_seen) / (apex_height * sqrt(distance)))
+            end
+        end
+
+        min_seen = apex_height
+        min_idx = apex_scan
+        @inbounds for i in (apex_scan + 1):last(scan_range)
+            val = max(0.0f0, u[i + n_pad])
+            if val < min_seen
+                min_seen = val
+                min_idx = i
+            else
+                distance = max(indexIrtDistance(i, min_idx), eps(Float32))
+                score = max(score, (val - min_seen) / (apex_height * sqrt(distance)))
+            end
+        end
+
+        return score
+    end
+
+    function mainsearchEvidenceExclusionPenalty(
+        scan_range::UnitRange{Int},
+        mainsearch_evidence_range::Union{Nothing,UnitRange{Int}},
+    )
+        mainsearch_evidence_range === nothing && return 0.0f0
+        evidence_width = candidateWidthIrt(mainsearch_evidence_range)
+        if evidence_width <= eps(Float32)
+            evidence_idx = first(mainsearch_evidence_range)
+            return first(scan_range) <= evidence_idx <= last(scan_range) ? 0.0f0 : 1.0f0
+        end
+        overlap_start = max(first(scan_range), first(mainsearch_evidence_range))
+        overlap_stop = min(last(scan_range), last(mainsearch_evidence_range))
+        overlap_width = overlap_start <= overlap_stop ?
+            candidateWidthIrt(overlap_start:overlap_stop) :
+            0.0f0
+        return clamp(1.0f0 - overlap_width / evidence_width, 0.0f0, 1.0f0)
+    end
+
+    function mainsearchEvidenceBoundDeltas(
+        scan_range::UnitRange{Int},
+        mainsearch_evidence_range::Union{Nothing,UnitRange{Int}},
+    )
+        mainsearch_evidence_range === nothing && return (0.0f0, 0.0f0)
+        return (
+            indexIrt(first(scan_range)) - indexIrt(first(mainsearch_evidence_range)),
+            indexIrt(last(scan_range)) - indexIrt(last(mainsearch_evidence_range)),
+        )
+    end
+
+    function indexIrt(idx::Int)
+        irt = Float32(rt_to_irt_model(rt_col[idx]))
+        return isfinite(irt) ? irt : 0.0f0
+    end
+
+    function indexIrtDistance(left_idx::Int, right_idx::Int)
+        return abs(indexIrt(right_idx) - indexIrt(left_idx))
+    end
+
+    function candidateWidthIrt(scan_range::UnitRange{Int})
+        width = indexIrtDistance(first(scan_range), last(scan_range))
+        return isfinite(width) ? width : 0.0f0
+    end
+
+    function boundaryCandidateFeatures(
+        scan_range::UnitRange{Int},
+        u::Vector{Float32},
+        N::Int,
+        apex_scan::Int,
+        n_pad::Int,
+        mainsearch_evidence_range::Union{Nothing,UnitRange{Int}},
+        fallback_range::UnitRange{Int},
+    )
+        apex_height = u[apex_scan + n_pad]
+        log2_smoothed_apex_weight = isfinite(apex_height) && apex_height > 0.0f0 ?
+            log2(apex_height) : 0.0f0
+        if apex_height <= 0.0f0 || isnan(apex_height)
+            mainsearch_left_bound_delta, mainsearch_right_bound_delta = mainsearchEvidenceBoundDeltas(
+                scan_range,
+                mainsearch_evidence_range,
+            )
+            return (
+                candidate_width = candidateWidthIrt(scan_range),
+                endpoint_height_fraction = 1.0f0,
+                peak_prominence_score = 0.0f0,
+                endpoint_valley_score = 0.0f0,
+                apex_containment_score = 0.0f0,
+                log2_smoothed_apex_weight = log2_smoothed_apex_weight,
+                secondary_peak_penalty = 1.0f0,
+                asymmetry_penalty = 1.0f0,
+                left_excluded_signal_fraction = 0.0f0,
+                right_excluded_signal_fraction = 0.0f0,
+                left_boundary_recovery_fraction = 0.0f0,
+                right_boundary_recovery_fraction = 0.0f0,
+                left_outside_peak_fraction = 0.0f0,
+                right_outside_peak_fraction = 0.0f0,
+                internal_dip_recovery_score = 0.0f0,
+                mainsearch_exclusion_penalty = mainsearchEvidenceExclusionPenalty(scan_range, mainsearch_evidence_range),
+                mainsearch_left_bound_delta = mainsearch_left_bound_delta,
+                mainsearch_right_bound_delta = mainsearch_right_bound_delta,
+            )
+        end
+
+        left = first(scan_range)
+        right = last(scan_range)
+        width = candidateWidthIrt(scan_range)
+        left_val = max(0.0f0, u[left + n_pad])
+        right_val = max(0.0f0, u[right + n_pad])
+
+        endpoint_height_fraction = (left_val + right_val) / (2.0f0 * apex_height)
+        peak_prominence_fraction = (apex_height - max(left_val, right_val)) / apex_height
+        peak_prominence_score = peak_prominence_fraction / sqrt(max(width, eps(Float32)))
+
+        left_local_min = localMinimumNear(u, left, n_pad, N)
+        right_local_min = localMinimumNear(u, right, n_pad, N)
+        left_valley = 1.0f0 - min(1.0f0, max(0.0f0, left_val - left_local_min) / apex_height)
+        right_valley = 1.0f0 - min(1.0f0, max(0.0f0, right_val - right_local_min) / apex_height)
+        endpoint_valley_score = (left_valley + right_valley) / 2.0f0
+
+        max_in_range = 0.0f0
+        @inbounds for i in scan_range
+            max_in_range = max(max_in_range, u[i + n_pad])
+        end
+        apex_containment_score = apex_height / max(max_in_range, eps(Float32))
+
+        secondary_peak_penalty = secondaryPeakPenalty(u, scan_range, apex_scan, n_pad, apex_height)
+        left_excluded_signal_fraction, left_boundary_recovery_fraction, left_outside_peak_fraction =
+            outsideBoundarySignalFeatures(
+                u,
+                scan_range,
+                N,
+                n_pad,
+                apex_height;
+                left_side = true,
+            )
+        right_excluded_signal_fraction, right_boundary_recovery_fraction, right_outside_peak_fraction =
+            outsideBoundarySignalFeatures(
+                u,
+                scan_range,
+                N,
+                n_pad,
+                apex_height;
+                left_side = false,
+            )
+        internal_dip_recovery_score = internalDipRecoveryScore(
+            u,
+            scan_range,
+            apex_scan,
+            n_pad,
+            apex_height,
+        )
+
+        left_span = indexIrtDistance(left, apex_scan)
+        right_span = indexIrtDistance(apex_scan, right)
+        asymmetry_penalty = abs(left_span - right_span) / max(left_span + right_span, eps(Float32))
+        mainsearch_exclusion_penalty = mainsearchEvidenceExclusionPenalty(
+            scan_range,
+            mainsearch_evidence_range,
+        )
+        mainsearch_left_bound_delta, mainsearch_right_bound_delta = mainsearchEvidenceBoundDeltas(
+            scan_range,
+            mainsearch_evidence_range,
+        )
+
+        return (
+            candidate_width = width,
+            endpoint_height_fraction = endpoint_height_fraction,
+            peak_prominence_score = peak_prominence_score,
+            endpoint_valley_score = endpoint_valley_score,
+            apex_containment_score = apex_containment_score,
+            log2_smoothed_apex_weight = log2_smoothed_apex_weight,
+            secondary_peak_penalty = secondary_peak_penalty,
+            asymmetry_penalty = asymmetry_penalty,
+            left_excluded_signal_fraction = left_excluded_signal_fraction,
+            right_excluded_signal_fraction = right_excluded_signal_fraction,
+            left_boundary_recovery_fraction = left_boundary_recovery_fraction,
+            right_boundary_recovery_fraction = right_boundary_recovery_fraction,
+            left_outside_peak_fraction = left_outside_peak_fraction,
+            right_outside_peak_fraction = right_outside_peak_fraction,
+            internal_dip_recovery_score = internal_dip_recovery_score,
+            mainsearch_exclusion_penalty = mainsearch_exclusion_penalty,
+            mainsearch_left_bound_delta = mainsearch_left_bound_delta,
+            mainsearch_right_bound_delta = mainsearch_right_bound_delta,
+        )
+    end
+
+    function getMainsearchEvidenceRange(
+        scan_idx_col::AbstractVector{<:Integer},
+        start_scan::UInt32,
+        stop_scan::UInt32,
+    )
+        (start_scan == 0 || stop_scan == 0) && return nothing
+        start_idx = find_nearest_scan(scan_idx_col, start_scan)
+        stop_idx = find_nearest_scan(scan_idx_col, stop_scan)
+        start_idx, stop_idx = minmax(start_idx, stop_idx)
+        return start_idx:stop_idx
+    end
+
+    function getForcedBoundaryRange(
+        scan_idx_col::AbstractVector{<:Integer},
+        start_scan::UInt32,
+        stop_scan::UInt32,
+    )
+        (start_scan == 0 || stop_scan == 0) && return nothing
+        start_idx = find_nearest_scan(scan_idx_col, start_scan)
+        stop_idx = find_nearest_scan(scan_idx_col, stop_scan)
+        start_idx, stop_idx = minmax(start_idx, stop_idx)
+        return start_idx:stop_idx
+    end
+
 
     function fillState!(state::Chromatogram,
                         u::Vector{Float32},
@@ -491,8 +1028,17 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
 
         slope = (rmin - lmin) / dx
 
-        # Subtract interpolated baseline
+        baseline_start = min(li, ri)
+        baseline_stop = max(li, ri)
+
+        # Subtract interpolated baseline only between the baseline anchors.
+        # Points outside those anchors are beyond the local valleys and should
+        # not be amplified by line extrapolation.
         @inbounds @fastmath for i in scan_start:scan_stop
+            if i < baseline_start || i > baseline_stop
+                u[i] = 0.0f0
+                continue
+            end
             xi = x[i]
             baseline = lmin + (xi - x_left) * slope
             u[i] = max(0, u[i] - baseline)
@@ -521,6 +1067,89 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         end
     end
 
+    function integrateCandidateRange(
+        scan_range::UnitRange{Int},
+        smoothed::Vector{Float32},
+        n_active::Int,
+    )
+        candidate_u = copy(@view smoothed[1:n_active])
+        subtractBaseline!(
+            x,
+            candidate_u,
+            apex_scan,
+            scan_range,
+            n_pad,
+        )
+
+        apex_val = candidate_u[apex_scan + n_pad]
+        if apex_val <= 0.0f0 || isnan(apex_val)
+            return 0.0f0, UInt32(scan_idx_col[apex_scan]), UInt32(0)
+        end
+
+        candidate_state = Chromatogram(zeros(Float32, m), zeros(Float32, m), 0)
+        norm_factor, _, rt_norm, _ = fillState!(
+            candidate_state,
+            candidate_u,
+            rt_col,
+            first(scan_range),
+            last(scan_range),
+            apex_scan,
+            n_pad,
+        )
+        raw_trap = integrateTrapezoidal(candidate_state, avg_cycle_time)
+        area = Float32(rt_norm * norm_factor * raw_trap)
+        if isnan(area) || area < 0.0f0
+            area = 0.0f0
+        end
+
+        min_abundance = 0.1f0 * norm_factor
+        scan_start = first(scan_range) + n_pad
+        scan_stop = last(scan_range) + n_pad
+        points = count(i -> candidate_u[i] >= min_abundance, scan_start:scan_stop)
+        return area, UInt32(scan_idx_col[apex_scan]), UInt32(points)
+    end
+
+    function collectBoundaryCandidateData(
+        candidates::Vector,
+        fallback_range::UnitRange{Int},
+        smoothed::Vector{Float32},
+        n_active::Int,
+        mainsearch_evidence_range::Union{Nothing,UnitRange{Int}},
+    )
+        rows = NamedTuple[]
+        sizehint!(rows, length(candidates))
+
+        for (candidate_index, candidate) in enumerate(candidates)
+            scan_range = candidate.scan_range
+            features = boundaryCandidateFeatures(
+                scan_range,
+                smoothed,
+                m,
+                apex_scan,
+                n_pad,
+                mainsearch_evidence_range,
+                fallback_range,
+            )
+            area, best_scan, points = integrateCandidateRange(scan_range, smoothed, n_active)
+            push!(rows, (;
+                candidate_index = UInt16(candidate_index),
+                candidate_start_idx = UInt16(first(scan_range)),
+                candidate_stop_idx = UInt16(last(scan_range)),
+                candidate_start_scan = UInt32(scan_idx_col[first(scan_range)]),
+                candidate_stop_scan = UInt32(scan_idx_col[last(scan_range)]),
+                candidate_category = candidate.category,
+                peak_area = Float32(area),
+                new_best_scan = UInt32(best_scan),
+                points_integrated = UInt32(points),
+                is_fallback = first(scan_range) == first(fallback_range) &&
+                    last(scan_range) == last(fallback_range),
+                features...
+            ))
+        end
+
+        return rows
+    end
+
     #Whittaker Henderson Smoothing — result written into ws.z
     WHSmooth!(ws, intensity_col, fraction_col, rt_col, m, n_pad, min_fraction_transmitted, λ)
 
@@ -540,6 +1169,12 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         n_active
     ), 1, m)
 
+    mainsearch_evidence_range = getMainsearchEvidenceRange(
+        scan_idx_col,
+        mainsearch_1pct_start_scan,
+        mainsearch_1pct_stop_scan,
+    )
+
     #Integration boundaries based on smoothed second derivative
     scan_range = getIntegrationBounds!(
         u2,
@@ -548,6 +1183,30 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         apex_scan,
         n_pad
     )
+    fallback_scan_range = ensureMinimumScanRange(scan_range, apex_scan, m)
+    forced_boundary_range = getForcedBoundaryRange(
+        scan_idx_col,
+        forced_boundary_start_scan,
+        forced_boundary_stop_scan,
+    )
+    if boundary_candidate_data !== nothing
+        candidates = generateBoundaryCandidates(
+            fallback_scan_range,
+            z,
+            m,
+            apex_scan,
+            n_pad,
+        )
+        boundary_candidate_data[] = collectBoundaryCandidateData(
+            candidates,
+            fallback_scan_range,
+            z,
+            n_active,
+            mainsearch_evidence_range,
+        )
+    end
+    scan_range = forced_boundary_range === nothing ? fallback_scan_range : forced_boundary_range
+    scan_range = ensureMinimumScanRange(scan_range, apex_scan, m)
 
     debug_enabled = debug_plot_path !== nothing || debug_plot_data !== nothing
     wh_smoothed_debug = debug_enabled ? copy(@view z[(n_pad + 1):(n_pad + m)]) : Float32[]
@@ -575,6 +1234,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                 peak_area = 0.0f0,
                 points_integrated = UInt32(0),
                 status = status,
+                mainsearch_evidence_range = mainsearch_evidence_range,
             ))
             if debug_plot_path !== nothing
                 debug_save_chromatogram_integration_plot(
@@ -592,6 +1252,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                     min_fraction_transmitted,
                     status,
                     debug_plot_title,
+                    mainsearch_evidence_range,
                 )
             end
         end
@@ -649,6 +1310,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
             peak_area = trapezoid_area,
             points_integrated = UInt32(num_points_integrated),
             status = status,
+            mainsearch_evidence_range = mainsearch_evidence_range,
         ))
         if debug_plot_path !== nothing
             debug_save_chromatogram_integration_plot(
@@ -666,6 +1328,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                 min_fraction_transmitted,
                 status,
                 debug_plot_title,
+                mainsearch_evidence_range,
             )
         end
     end
@@ -685,7 +1348,13 @@ function integrate_chrom(chrom::SubDataFrame,
                                 isplot::Bool = false,
                                 debug_plot_path::Union{Nothing, AbstractString} = nothing,
                                 debug_plot_title::AbstractString = "",
-                                debug_plot_data::Union{Nothing, Base.RefValue} = nothing)
+                                debug_plot_data::Union{Nothing, Base.RefValue} = nothing,
+                                mainsearch_1pct_start_scan::UInt32 = UInt32(0),
+                                mainsearch_1pct_stop_scan::UInt32 = UInt32(0),
+                                rt_to_irt_model::RtConversionModel = IdentityModel(),
+                                forced_boundary_start_scan::UInt32 = UInt32(0),
+                                forced_boundary_stop_scan::UInt32 = UInt32(0),
+                                boundary_candidate_data::Union{Nothing, Base.RefValue} = nothing)
     return integrate_chrom(
         chrom[!, :rt],
         chrom[!, :scan_idx],
@@ -702,5 +1371,11 @@ function integrate_chrom(chrom::SubDataFrame,
         debug_plot_path = debug_plot_path,
         debug_plot_title = debug_plot_title,
         debug_plot_data = debug_plot_data,
+        mainsearch_1pct_start_scan = mainsearch_1pct_start_scan,
+        mainsearch_1pct_stop_scan = mainsearch_1pct_stop_scan,
+        rt_to_irt_model = rt_to_irt_model,
+        forced_boundary_start_scan = forced_boundary_start_scan,
+        forced_boundary_stop_scan = forced_boundary_stop_scan,
+        boundary_candidate_data = boundary_candidate_data,
     )
 end

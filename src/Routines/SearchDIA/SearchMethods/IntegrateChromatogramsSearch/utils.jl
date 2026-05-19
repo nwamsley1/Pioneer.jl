@@ -89,7 +89,7 @@ Return the 1-based position within `scan_indices` whose value is closest to
 `target_scan`. Used to map the PSM's apex scan index (global scan number) into
 the local chromatogram coordinate after trimming zero-intensity edges.
 """
-function find_nearest_scan(scan_indices::AbstractVector{UInt32}, target_scan::UInt32)
+function find_nearest_scan(scan_indices::AbstractVector{<:Integer}, target_scan::Integer)
     nearest_idx = 1
     min_diff = typemax(Int64)
     for j in eachindex(scan_indices)
@@ -139,14 +139,13 @@ function debug_chromatogram_plot_path(
     ms_file_idx::Integer,
     file_name::AbstractString,
     precursor_idx::Integer,
-    row_idx::Integer,
 )
     safe_name = debug_sanitize_chromatogram_filename(file_name)
     return joinpath(
         String(output_root),
         "qc_plots",
         "chromatogram_integration_debug",
-        "precursor_$(UInt32(precursor_idx))_file_$(Int(ms_file_idx))_$(safe_name)_row_$(Int(row_idx)).png",
+        "precursor_$(UInt32(precursor_idx))_file_$(Int(ms_file_idx))_$(safe_name).png",
     )
 end
 
@@ -158,6 +157,9 @@ function debug_write_target_chromatogram_plots(
     output_root::AbstractString,
     ms_file_idx::Integer,
     file_name::AbstractString,
+    ;
+    selected_boundary_candidates::Union{Nothing,AbstractDataFrame} = nothing,
+    debug_plot_data_by_precursor::Union{Nothing,AbstractDict} = nothing,
 )
     DEBUG_CONSOLE_LEVEL[] >= 1 || return nothing
 
@@ -180,6 +182,21 @@ function debug_write_target_chromatogram_plots(
     scan_idx_all = chromatograms[!, :scan_idx]::AbstractVector{UInt32}
     intensity_all = chromatograms[!, :intensity]::AbstractVector{Float32}
     fraction_all = chromatograms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
+    selected_bounds = Dict{UInt32, Tuple{UInt32, UInt32}}()
+    if selected_boundary_candidates !== nothing && nrow(selected_boundary_candidates) > 0
+        selected_cols = propertynames(selected_boundary_candidates)
+        if :candidate_start_scan in selected_cols && :candidate_stop_scan in selected_cols
+            for row in eachrow(selected_boundary_candidates)
+                if (:ms_file_idx in selected_cols) && Int(row.ms_file_idx) != Int(ms_file_idx)
+                    continue
+                end
+                selected_bounds[UInt32(row.precursor_idx)] = (
+                    UInt32(row.candidate_start_scan),
+                    UInt32(row.candidate_stop_scan),
+                )
+            end
+        end
+    end
 
     for row_idx in target_rows
         target_precursor_idx = UInt32(passing_psms[row_idx, :precursor_idx])
@@ -203,9 +220,12 @@ function debug_write_target_chromatogram_plots(
             ms_file_idx,
             file_name,
             target_precursor_idx,
-            row_idx,
         )
         plot_title = "file $(Int(ms_file_idx)) $(file_name) precursor $(target_precursor_idx)"
+        selected_bound = get(selected_bounds, target_precursor_idx, nothing)
+        forced_start_scan = selected_bound === nothing ? UInt32(0) : first(selected_bound)
+        forced_stop_scan = selected_bound === nothing ? UInt32(0) : last(selected_bound)
+        plot_data_ref = debug_plot_data_by_precursor === nothing ? nothing : Ref{Any}(nothing)
 
         ws = WHWorkspace(N)
         state = Chromatogram(zeros(Float32, N), zeros(Float32, N), 0)
@@ -222,7 +242,19 @@ function debug_write_target_chromatogram_plots(
             min_fraction_transmitted = min_fraction_transmitted,
             debug_plot_path = plot_path,
             debug_plot_title = plot_title,
+            debug_plot_data = plot_data_ref,
+            mainsearch_1pct_start_scan = hasproperty(passing_psms, :mainsearch_1pct_start_scan) ?
+                UInt32(passing_psms[row_idx, :mainsearch_1pct_start_scan]) :
+                UInt32(0),
+            mainsearch_1pct_stop_scan = hasproperty(passing_psms, :mainsearch_1pct_stop_scan) ?
+                UInt32(passing_psms[row_idx, :mainsearch_1pct_stop_scan]) :
+                UInt32(0),
+            forced_boundary_start_scan = forced_start_scan,
+            forced_boundary_stop_scan = forced_stop_scan,
         )
+        if debug_plot_data_by_precursor !== nothing
+            debug_plot_data_by_precursor[target_precursor_idx] = plot_data_ref[]
+        end
     end
 
     return nothing
@@ -302,7 +334,11 @@ function integrate_precursors(chromatograms::DataFrame,
                              new_best_scan::AbstractVector{UInt32},
                              points_integrated::AbstractVector{UInt32};
                              isotopes_captured = nothing,
-                             λ::Float32 = 1.0f0
+                             λ::Float32 = 1.0f0,
+                             mainsearch_1pct_start_scan::Union{Nothing,AbstractVector{<:Integer}} = nothing,
+                             mainsearch_1pct_stop_scan::Union{Nothing,AbstractVector{<:Integer}} = nothing,
+                             rt_to_irt_model::RtConversionModel = IdentityModel(),
+                             boundary_candidate_data::Union{Nothing,AbstractVector} = nothing
                              )
     n_pad = Int64(0)
     rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
@@ -357,6 +393,7 @@ function integrate_precursors(chromatograms::DataFrame,
                     @view(scan_idx_all[chrom_range]), apex_scan
                 )
 
+                candidate_ref = boundary_candidate_data === nothing ? nothing : Ref{Any}(nothing)
                 peak_area[i], new_best_scan[i], points_integrated[i] = integrate_chrom(
                     @view(rt_all[chrom_range]),
                     @view(scan_idx_all[chrom_range]),
@@ -368,8 +405,19 @@ function integrate_precursors(chromatograms::DataFrame,
                     avg_cycle_time,
                     λ,
                     min_fraction_transmitted = min_fraction_transmitted,
-                    n_pad = n_pad
+                    n_pad = n_pad,
+                    mainsearch_1pct_start_scan = mainsearch_1pct_start_scan === nothing ?
+                        UInt32(0) :
+                        UInt32(mainsearch_1pct_start_scan[i]),
+                    mainsearch_1pct_stop_scan = mainsearch_1pct_stop_scan === nothing ?
+                        UInt32(0) :
+                        UInt32(mainsearch_1pct_stop_scan[i]),
+                    rt_to_irt_model = rt_to_irt_model,
+                    boundary_candidate_data = candidate_ref,
                 )
+                if boundary_candidate_data !== nothing
+                    boundary_candidate_data[i] = candidate_ref[]
+                end
                 reset!(state)
             end
         end
@@ -398,7 +446,11 @@ function integrate_precursors(chromatograms::DataFrame,
                              peak_area::AbstractVector{Float32},
                              new_best_scan::AbstractVector{UInt32},
                              points_integrated::AbstractVector{UInt32};
-                             λ::Float32 = 1.0f0
+                             λ::Float32 = 1.0f0,
+                             mainsearch_1pct_start_scan::Union{Nothing,AbstractVector{<:Integer}} = nothing,
+                             mainsearch_1pct_stop_scan::Union{Nothing,AbstractVector{<:Integer}} = nothing,
+                             rt_to_irt_model::RtConversionModel = IdentityModel(),
+                             boundary_candidate_data::Union{Nothing,AbstractVector} = nothing
                              )
     return integrate_precursors(
         chromatograms,
@@ -410,6 +462,10 @@ function integrate_precursors(chromatograms::DataFrame,
         new_best_scan,
         points_integrated;
         λ = λ,
+        mainsearch_1pct_start_scan = mainsearch_1pct_start_scan,
+        mainsearch_1pct_stop_scan = mainsearch_1pct_stop_scan,
+        rt_to_irt_model = rt_to_irt_model,
+        boundary_candidate_data = boundary_candidate_data,
     )
 end
 

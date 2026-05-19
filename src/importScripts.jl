@@ -305,6 +305,14 @@ function importScripts()
     # Fused variant for MainSearch (loaded after process_scans.jl — uses its dispatch helpers)
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "process_scans_fused.jl"))
 
+    # Chromatogram integration (explicit order so new files are precompile-tracked)
+    include_files!(joinpath(search_methods_dir, "IntegrateChromatogramsSearch"), [
+        "integrate_chrom.jl",
+        "learned_boundary_scoring.jl",
+        "IntegrateChromatogramsSearch.jl",
+        "utils.jl"
+    ])
+
     # Include remaining SearchMethods files (excluding explicitly loaded directories)
     for (root, dirs, files) in walkdir(search_methods_dir)
         root_basename = basename(root)
