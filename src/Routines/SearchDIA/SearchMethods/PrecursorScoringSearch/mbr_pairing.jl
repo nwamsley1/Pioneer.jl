@@ -18,6 +18,19 @@
 using Random
 using Statistics
 
+@inline function _predicted_irt_for_pairing(
+    irt_col::Union{Nothing, AbstractVector},
+    row_idx::Integer,
+    library_irts,
+    precursor_idx::UInt32,
+)
+    if irt_col !== nothing
+        value = irt_col[row_idx]
+        !ismissing(value) && return Float32(value)
+    end
+    return Float32(library_irts[precursor_idx])
+end
+
 """
     regenerate_pair_ids!(psms::DataFrame, precursors::LibraryPrecursors;
                          rng_seed::Int=1776) -> NamedTuple
@@ -53,6 +66,7 @@ function regenerate_pair_ids!(
 
     prec_mz_full  = getMz(precursors)
     prec_irt_full = getIrt(precursors)
+    irt_col = hasproperty(psms, :irt_pred) ? psms[!, :irt_pred] : nothing
 
     @inbounds for i in eachindex(prec_idx_col)
         pid = prec_idx_col[i]
@@ -63,7 +77,7 @@ function regenerate_pair_ids!(
         push!(plist_pids, pid)
         push!(plist_target, target_col_psm[i])
         push!(plist_mz, prec_mz_full[pid])
-        push!(plist_irt, prec_irt_full[pid])
+        push!(plist_irt, _predicted_irt_for_pairing(irt_col, i, prec_irt_full, pid))
         push!(plist_fold, UInt8(cv_fold_psm[i]))
     end
     n_precs = length(plist_pids)
@@ -235,6 +249,7 @@ function regenerate_counterfactual_partners!(
 
     prec_mz_full  = getMz(precursors)
     prec_irt_full = getIrt(precursors)
+    irt_col = hasproperty(psms, :irt_pred) ? psms[!, :irt_pred] : nothing
 
     seen = Set{UInt32}()
     plist_pids   = UInt32[]
@@ -249,7 +264,7 @@ function regenerate_counterfactual_partners!(
         push!(plist_pids, pid)
         push!(plist_target, target_col[i])
         push!(plist_mz, prec_mz_full[pid])
-        push!(plist_irt, prec_irt_full[pid])
+        push!(plist_irt, _predicted_irt_for_pairing(irt_col, i, prec_irt_full, pid))
         push!(plist_fold, UInt8(cv_fold_col[i]))
     end
     n_precs = length(plist_pids)
@@ -421,6 +436,7 @@ function regenerate_counterfactual_partners_irt_nn!(
 
     prec_mz_full  = getMz(precursors)
     prec_irt_full = getIrt(precursors)
+    irt_col = hasproperty(psms, :irt_pred) ? psms[!, :irt_pred] : nothing
 
     seen = Set{UInt32}()
     plist_pids   = UInt32[]
@@ -435,7 +451,7 @@ function regenerate_counterfactual_partners_irt_nn!(
         push!(plist_pids, pid)
         push!(plist_target, target_col[i])
         push!(plist_mz, prec_mz_full[pid])
-        push!(plist_irt, prec_irt_full[pid])
+        push!(plist_irt, _predicted_irt_for_pairing(irt_col, i, prec_irt_full, pid))
         push!(plist_fold, UInt8(cv_fold_col[i]))
     end
     n_precs = length(plist_pids)

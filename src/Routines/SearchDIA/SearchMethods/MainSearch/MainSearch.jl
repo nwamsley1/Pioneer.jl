@@ -215,6 +215,71 @@ function process_search_results!(
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm = time()
 
+    # Refine predicted iRTs from the initial per-run model, refresh features
+    # that consume :irt_pred, then train a second per-run LGBM where positives
+    # are restricted to the same high-confidence target precursors that would
+    # pass the prescore q-value gate into downstream analysis.
+    precursors = getPrecursors(getSpecLib(search_context))
+    irt_refinement = MainSearchIrtRefinement(
+        precursors;
+        q_value_threshold = PRESCORE_QVALUE_THRESHOLD,
+        min_precursors = parse(Int, get(ENV, "PIONEER_MAIN_IRT_MIN_PRECURSORS", "30")),
+    )
+    irt_refinement_result = refine_mainsearch_irt_predictions!(
+        psms,
+        best_psms,
+        scores,
+        irt_refinement,
+    )
+    refined_training_target_set = Set{UInt32}()
+    if irt_refinement_result.refined
+        refined_training_target_set = Set{UInt32}(irt_refinement_result.training_target_precursors)
+        label_col = :mainsearch_refined_training_target
+        psms[!, label_col] = Bool[
+            Bool(psms.target[i]) && (UInt32(psms.precursor_idx[i]) in refined_training_target_set)
+            for i in 1:nrow(psms)
+        ]
+        refined_training_mask = _mainsearch_refined_lgbm_training_mask(psms, refined_training_target_set)
+        n_refined_targets = count(psms[!, label_col] .& refined_training_mask)
+        n_refined_negatives = count((.!psms[!, label_col]) .& refined_training_mask)
+        n_refined_excluded_targets = count(Bool(psms.target[i]) && !refined_training_mask[i] for i in 1:nrow(psms))
+        if n_refined_targets > 0 && n_refined_negatives > 0
+            best_psms2, scores2, lgbm_timings2 = train_lgbm_and_select_best(
+                psms;
+                integration_q_value_threshold = params.integration_q_value_threshold,
+                training_label_col = label_col,
+                training_row_mask = refined_training_mask,
+            )
+            if hasproperty(best_psms2, label_col)
+                select!(best_psms2, Not(label_col))
+            end
+            select!(psms, Not(label_col))
+            best_psms = best_psms2
+            scores = scores2
+            best_psms[!, :lgbm_prob] = scores
+            lgbm_timings = (
+                matrix = lgbm_timings.matrix + lgbm_timings2.matrix,
+                train_cv = lgbm_timings.train_cv + lgbm_timings2.train_cv,
+                best = lgbm_timings.best + lgbm_timings2.best,
+            )
+            @user_info "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
+                       "$(length(refined_training_target_set)) high-confidence target precursors; " *
+                       "second LGBM positives=$n_refined_targets negatives=$n_refined_negatives " *
+                       "excluded_low_conf_targets=$n_refined_excluded_targets"
+            _summarize_psm_counts(best_psms, "after refined-iRT LGBM", ms_file_idx, file_name)
+        else
+            select!(psms, Not(label_col))
+            @user_info "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
+                       "skipping second LGBM due to one-class refinement labels " *
+                       "(positives=$n_refined_targets negatives=$n_refined_negatives)"
+        end
+    else
+        @user_info "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
+                   "skipped; $(length(irt_refinement_result.training_target_precursors)) " *
+                   "high-confidence target precursors available " *
+                   "(need $(irt_refinement.min_precursors))"
+    end
+
     # ============================================================
     # OPTIONAL 2-PASS REFINEMENT (gated by PIONEER_PEP_FILTER_REDECONV)
     #
@@ -291,16 +356,49 @@ function process_search_results!(
             if nrow(psms2) > 0
                 # Re-do feature prep on pass-2 PSMs (same flow as pass-1)
                 prepare_psm_features!(psms2, params, search_context, ms_file_idx, spectra, prescore_only=true)
+                if irt_refinement_result.refined && irt_refinement_result.model !== nothing
+                    apply_mainsearch_irt_refinement_model!(
+                        psms2,
+                        irt_refinement,
+                        irt_refinement_result.model,
+                    )
+                end
                 add_scan_competition_features!(psms2)
                 add_neighborhood_features!(psms2)
                 add_apex_distance_feature!(psms2)
                 add_ms1_features!(psms2, spectra, search_context, ms_file_idx)
 
                 # Re-train LGBM and re-select best per precursor on pass-2 PSMs
+                pass2_label_col = :target
+                pass2_training_mask = nothing
+                refined_pass2_label_col = :mainsearch_refined_training_target
+                if irt_refinement_result.refined && !isempty(refined_training_target_set)
+                    psms2[!, refined_pass2_label_col] = Bool[
+                        Bool(psms2.target[i]) && (UInt32(psms2.precursor_idx[i]) in refined_training_target_set)
+                        for i in 1:nrow(psms2)
+                    ]
+                    refined_pass2_training_mask = _mainsearch_refined_lgbm_training_mask(psms2, refined_training_target_set)
+                    n_pass2_refined_targets = count(psms2[!, refined_pass2_label_col] .& refined_pass2_training_mask)
+                    n_pass2_refined_negatives = count((.!psms2[!, refined_pass2_label_col]) .& refined_pass2_training_mask)
+                    if n_pass2_refined_targets > 0 && n_pass2_refined_negatives > 0
+                        pass2_label_col = refined_pass2_label_col
+                        pass2_training_mask = refined_pass2_training_mask
+                    else
+                        select!(psms2, Not(refined_pass2_label_col))
+                    end
+                end
                 best_psms2, scores2, _ = train_lgbm_and_select_best(
                     psms2;
                     integration_q_value_threshold = params.integration_q_value_threshold,
+                    training_label_col = pass2_label_col,
+                    training_row_mask = pass2_training_mask,
                 )
+                if hasproperty(best_psms2, refined_pass2_label_col)
+                    select!(best_psms2, Not(refined_pass2_label_col))
+                end
+                if hasproperty(psms2, refined_pass2_label_col)
+                    select!(psms2, Not(refined_pass2_label_col))
+                end
                 best_psms2[!, :lgbm_prob] = scores2
                 pass2_precs_n = nrow(best_psms2)
                 @user_info "  PEP-filter 2-pass (file_idx=$ms_file_idx): pass2 LGBM → " *
@@ -329,7 +427,6 @@ function process_search_results!(
     # +1,131 q≤.01, +89 protein groups vs single-pass without paircomp.
     # ============================================================
     if get(ENV, "PIONEER_PAIR_COMPETITION", "1") != "0"
-        precursors = getPrecursors(getSpecLib(search_context))
         partner_col = precursors.data[:partner_precursor_idx]
         n0 = nrow(best_psms)
         # Build score + row-index lookup keyed by precursor_idx (file is fixed)
@@ -469,6 +566,7 @@ so the compiler specializes on concrete types, eliminating dynamic dispatch.
 function _compute_phase2_columns!(
         prec_idx_col::AbstractVector{UInt32},
         irt_obs_col::AbstractVector{Float32},
+        irt_pred_col::AbstractVector{Float32},
         prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
         irt_diff_col::Vector{Float32},
         prec_mz_col::Vector{Float32},
@@ -476,7 +574,7 @@ function _compute_phase2_columns!(
         entrap_col::Vector{UInt8})
     @inbounds for i in eachindex(prec_idx_col)
         pid = prec_idx_col[i]
-        irt_diff_col[i] = abs(irt_obs_col[i] - prec_irt[pid])
+        irt_diff_col[i] = abs(irt_obs_col[i] - irt_pred_col[i])
         prec_mz_col[i] = prec_mz_arr[pid]
         pair_id_col[i] = extract_pair_idx(prec_pair_idxs, pid)
         entrap_col[i] = entrap_group_ids[pid]
@@ -654,7 +752,7 @@ function summarize_results!(
             pair_id_col = Vector{UInt32}(undef, N)
             entrap_col = Vector{UInt8}(undef, N)
             _compute_phase2_columns!(
-                tbl[!, :precursor_idx], tbl[!, :irt_obs],
+                tbl[!, :precursor_idx], tbl[!, :irt_obs], tbl[!, :irt_pred],
                 prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
                 irt_diff_col, prec_mz_col, pair_id_col, entrap_col
             )
