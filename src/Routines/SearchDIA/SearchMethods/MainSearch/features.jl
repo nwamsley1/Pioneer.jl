@@ -466,11 +466,17 @@ function add_ms1_features!(psms::DataFrame,
         )
     end
 
+    # Build precursor grouping (perm + starts/ends) once; reuse across B1+B2.
+    # Saves one sortperm + boundary-enum pass per file.
+    t_groups = @elapsed groups = hasproperty(psms, :precursor_idx) ?
+        _build_precursor_groups(psms.precursor_idx) :
+        nothing
     # B1: per-precursor MS1 chromatogram features
-    t_ms1_chrom = @elapsed _add_ms1_chromatogram_features!(psms)
+    t_ms1_chrom = @elapsed _add_ms1_chromatogram_features!(psms; groups=groups)
     # B2: per-precursor MS2-fragment chromatogram features (uses frag1..6_int captured by Score!)
-    t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(psms)
+    t_frag_chrom = @elapsed _add_fragment_chromatogram_features!(psms; groups=groups)
     @user_info "  chrom-feature passes (file_idx=$ms_file_idx): " *
+               "groups=$(round(t_groups, digits=2))s  " *
                "ms1_chrom=$(round(t_ms1_chrom, digits=2))s  " *
                "frag_chrom=$(round(t_frag_chrom, digits=2))s  " *
                "(n_psms=$(nrow(psms)))"
@@ -494,7 +500,8 @@ populated by the deconv pipeline + Phase 1 MS1 lookup. Adds:
 - `ms1_weight_apex_to_m0_apex_irt` — |arg-irt-max(weight) − arg-irt-max(M0)|;
   agreement between MS2 and MS1 apex location. Real: 0; chimeric: large.
 """
-function _add_ms1_chromatogram_features!(psms::DataFrame)
+function _add_ms1_chromatogram_features!(psms::DataFrame;
+        groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing)
     n = nrow(psms)
     psms[!, :ms1_corr_weight_m0]            = zeros(Float32, n)
     psms[!, :ms1_corr_m0_m1]                = zeros(Float32, n)
@@ -515,39 +522,12 @@ function _add_ms1_chromatogram_features!(psms::DataFrame)
     w    = psms.weight
     irt  = psms.irt_obs
 
-    # Single sortperm on precursor_idx + UInt32 boundary enumeration —
-    # mirrors the neighborhood / frag_chrom parallelization pattern.
-    pkeys = Vector{UInt32}(undef, n)
-    @inbounds for i in 1:n
-        pkeys[i] = UInt32(prec[i])
-    end
-    perm = sortperm(pkeys)
-
-    n_prec = 0
-    @inbounds let i = 1
-        while i <= n
-            n_prec += 1
-            cur = pkeys[perm[i]]
-            while i < n && pkeys[perm[i+1]] == cur
-                i += 1
-            end
-            i += 1
-        end
-    end
-    starts = Vector{UInt32}(undef, n_prec)
-    ends   = Vector{UInt32}(undef, n_prec)
-    @inbounds let i = 1, p = 0
-        while i <= n
-            p += 1
-            starts[p] = UInt32(i)
-            cur = pkeys[perm[i]]
-            while i < n && pkeys[perm[i+1]] == cur
-                i += 1
-            end
-            ends[p] = UInt32(i)
-            i += 1
-        end
-    end
+    # Reuse the shared precursor grouping (perm + starts/ends) if the caller
+    # has already computed it; otherwise build it locally.
+    perm, starts, ends = groups === nothing ?
+        _build_precursor_groups(prec) :
+        groups
+    n_prec = length(starts)
 
     Threads.@threads :static for p in 1:n_prec
         @inbounds begin
@@ -623,6 +603,51 @@ MS1Corr — co-elution of multiple ions of the same precursor is the strongest
 discriminative signal in DIA, only here we exploit it among MS2 fragments
 rather than MS1 isotopes.
 """
+# Group rows by :precursor_idx via a single sortperm + boundary enumeration.
+# Returns (perm, starts, ends) all UInt32-keyed so downstream code can iterate
+# `for p in 1:length(starts)` over contiguous per-precursor row ranges.
+# Both _add_ms1_chromatogram_features! and _add_fragment_chromatogram_features!
+# need this; computing once in prepare_psm_features! and passing the result
+# saves one sortperm pass per file (HIGH-confidence cleanup, IDs unchanged).
+function _build_precursor_groups(prec_col::AbstractVector)
+    n = length(prec_col)
+    if n == 0
+        return Vector{Int}(), Vector{UInt32}(), Vector{UInt32}()
+    end
+    pkeys = Vector{UInt32}(undef, n)
+    @inbounds for i in 1:n
+        pkeys[i] = UInt32(prec_col[i])
+    end
+    perm = sortperm(pkeys)
+
+    n_prec = 0
+    @inbounds let i = 1
+        while i <= n
+            n_prec += 1
+            cur = pkeys[perm[i]]
+            while i < n && pkeys[perm[i+1]] == cur
+                i += 1
+            end
+            i += 1
+        end
+    end
+    starts = Vector{UInt32}(undef, n_prec)
+    ends   = Vector{UInt32}(undef, n_prec)
+    @inbounds let i = 1, p = 0
+        while i <= n
+            p += 1
+            starts[p] = UInt32(i)
+            cur = pkeys[perm[i]]
+            while i < n && pkeys[perm[i+1]] == cur
+                i += 1
+            end
+            ends[p] = UInt32(i)
+            i += 1
+        end
+    end
+    return perm, starts, ends
+end
+
 # Pearson correlation helper (Float32-ized, returns 0 on zero variance).
 # Top-level (not closure) so the compiler specializes without boxing.
 @inline function _frag_pcor(x::Vector{Float32}, y::Vector{Float32})
@@ -638,7 +663,8 @@ rather than MS1 isotopes.
     d > 0 ? Float32(sxy/d) : 0f0
 end
 
-function _add_fragment_chromatogram_features!(psms::DataFrame)
+function _add_fragment_chromatogram_features!(psms::DataFrame;
+        groups::Union{Nothing,Tuple{Vector{Int},Vector{UInt32},Vector{UInt32}}} = nothing)
     n = nrow(psms)
     # Only the 4 features actually consumed by PRESCORE_FEATURES / ADVANCED_FEATURE_SET
     # are computed and written. Earlier versions emitted 15 more outputs
@@ -668,42 +694,14 @@ function _add_fragment_chromatogram_features!(psms::DataFrame)
     has_m0 = hasproperty(psms, :ms1_m0_intensity)
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
 
-    # Single sortperm on precursor_idx (UInt32 key) — replaces the Dict + per-
-    # precursor Vector{Int} bucketing. Per-precursor row order within the run
-    # does not affect any of the 4 output features (correlations + apex stats
-    # are order-independent).
-    pkeys = Vector{UInt32}(undef, n)
-    @inbounds for i in 1:n
-        pkeys[i] = UInt32(prec[i])
-    end
-    perm = sortperm(pkeys)
-
-    # Enumerate precursor-run boundaries: count, then exact-size UInt32 fill.
-    n_prec = 0
-    @inbounds let i = 1
-        while i <= n
-            n_prec += 1
-            cur = pkeys[perm[i]]
-            while i < n && pkeys[perm[i+1]] == cur
-                i += 1
-            end
-            i += 1
-        end
-    end
-    starts = Vector{UInt32}(undef, n_prec)
-    ends   = Vector{UInt32}(undef, n_prec)
-    @inbounds let i = 1, p = 0
-        while i <= n
-            p += 1
-            starts[p] = UInt32(i)
-            cur = pkeys[perm[i]]
-            while i < n && pkeys[perm[i+1]] == cur
-                i += 1
-            end
-            ends[p] = UInt32(i)
-            i += 1
-        end
-    end
+    # Reuse the shared precursor grouping (perm + starts/ends) if the caller
+    # has already computed it; otherwise build it locally. Per-precursor row
+    # order within the run does not affect any of the 4 output features
+    # (correlations + apex stats are order-independent).
+    perm, starts, ends = groups === nothing ?
+        _build_precursor_groups(prec) :
+        groups
+    n_prec = length(starts)
 
     # Parallel per-precursor walk. Each precursor writes to disjoint row indices
     # in the 4 output columns; all input arrays are read-only.
