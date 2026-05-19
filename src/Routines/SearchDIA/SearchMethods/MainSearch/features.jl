@@ -403,7 +403,8 @@ function _ms1_lookup_chunk!(psms, spectra,
             pred_ratio = Float32(p1 / p0)
             psms.ms1_m1_to_m0_ratio[i]    = Float32(obs_ratio)
             psms.ms1_m1_to_m0_pred[i]     = pred_ratio
-            psms.ms1_envelope_dev_log2[i] = log2(max(obs_ratio, 1f-6) / max(pred_ratio, 1f-6))
+            # ms1_envelope_dev_log2 = log2(obs_ratio / pred_ratio) was dropped
+            # in 143d6b87 (smart-composite reduction); compute deleted 2026-05-19.
         end
     end
     return
@@ -420,7 +421,6 @@ function add_ms1_features!(psms::DataFrame,
     psms[!, :ms1_m1_intensity]      = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_ratio]     = zeros(Float32, n)
     psms[!, :ms1_m1_to_m0_pred]      = zeros(Float32, n)
-    psms[!, :ms1_envelope_dev_log2]  = zeros(Float32, n)
     n == 0 && return
 
     # 1. Build MS1 scan index (sorted by RT) for fast nearest-MS1 lookup
@@ -505,7 +505,6 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
     n = nrow(psms)
     psms[!, :ms1_corr_weight_m0]            = zeros(Float32, n)
     psms[!, :ms1_corr_m0_m1]                = zeros(Float32, n)
-    psms[!, :ms1_corr_weight_m1]            = zeros(Float32, n)
     psms[!, :ms1_apex_offset_irt]           = zeros(Float32, n)
     psms[!, :ms1_weight_apex_to_m0_apex_irt]= zeros(Float32, n)
     n == 0 && return
@@ -549,11 +548,12 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
                 v_irt[k] = Float32(irt[i_orig])
             end
 
-            # Three Pearson correlations (uses the same top-level _frag_pcor
-            # helper defined for the fragment-chromatogram path).
+            # Two Pearson correlations (uses the same top-level _frag_pcor
+            # helper defined for the fragment-chromatogram path). The third
+            # variant (c_wm1 = weight-vs-M1) was dropped 2026-05-19 — never
+            # in any feature list since 143d6b87.
             c_wm0 = _frag_pcor(v_w,  v_m0)
             c_m01 = _frag_pcor(v_m0, v_m1)
-            c_wm1 = _frag_pcor(v_w,  v_m1)
 
             # Apex of M0 and weight (arg-max). First-occurrence on ties.
             ai_m0 = 1; vmax_m0 = v_m0[1]
@@ -571,7 +571,6 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
                 i_orig = perm[i_start + k - 1]
                 psms.ms1_corr_weight_m0[i_orig]             = c_wm0
                 psms.ms1_corr_m0_m1[i_orig]                 = c_m01
-                psms.ms1_corr_weight_m1[i_orig]             = c_wm1
                 psms.ms1_apex_offset_irt[i_orig]            = abs(v_irt[k] - irt_apex_m0)
                 psms.ms1_weight_apex_to_m0_apex_irt[i_orig] = weight_apex_to_m0
             end
