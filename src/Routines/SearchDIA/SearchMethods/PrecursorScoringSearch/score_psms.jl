@@ -121,9 +121,15 @@ function _score_precursor_isotope_traces_mbr(
     donor_dict = build_mbr_donor_dict_streaming_with_pass1(file_paths)
     @user_info "  donor dict pids: $(length(donor_dict))"
 
+    # Parallelize the per-file MBR feature compute + sidecar write across
+    # files. donor_dict and cf_partner_vec are read-only across this loop
+    # (built before, not mutated by the per-file function), and each file
+    # reads/writes a disjoint path. Mirrors the Pass-3 sidecar threading.
     @user_info "MBR Batch F: writing per-file MBR sidecars..."
-    for fpath in file_paths
-        compute_mbr_features_per_file_to_sidecar_with_pass1!(fpath, donor_dict, cf_partner_vec)
+    parallel_foreach!(length(file_paths)) do chunk
+        for f_idx in chunk
+            compute_mbr_features_per_file_to_sidecar_with_pass1!(file_paths[f_idx], donor_dict, cf_partner_vec)
+        end
     end
 
     donor_dict = Dict{UInt32, Vector{_MBRDonorEntry}}()
