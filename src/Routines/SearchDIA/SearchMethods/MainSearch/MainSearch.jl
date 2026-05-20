@@ -100,10 +100,14 @@ Interface Implementation
 get_parameters(::MainSearch, params::Any) = MainSearchParameters(params)
 
 function init_search_results(::MainSearch, params::P, search_context::SearchContext) where {P<:MainSearchParameters}
+    # Single MainSearch PSM directory for the whole pipeline. process_search_results!
+    # writes per-fold files here; summarize_results! Step 2 overwrites them in
+    # place with the filter+enrichment that used to land in a separate
+    # second_pass_psms/ directory. PrecursorScoringSearch then loads from the same
+    # directory, merges fold0+fold1 into a single per-file Arrow (also in this
+    # directory), and folds MBR sidecars back in place.
     main_search_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "main_search_psms")
     mkpath(main_search_psms_dir)
-    second_pass_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
-    mkpath(second_pass_psms_dir)
 
     # One-shot sortedness check (cheaper than per-thread/per-scan asserts;
     # fails fast with an actionable error if the library is rank-sorted
@@ -486,9 +490,13 @@ function summarize_results!(
 
     store_results!(search_context, MainSearch, (passing_precs=passing_precs,))
 
-    # Step 2: Load main_search_psms, filter to passing precursors, add deferred columns, write fold-split second_pass_psms
+    # Step 2: Load main_search_psms fold-split files, filter to passing precursors,
+    # add deferred columns, OVERWRITE each fold file in place via writeArrow.
+    # The fold-split layout is preserved here because PrecursorScoringSearch's
+    # Pass-1 LGBM CV needs to load one fold's rows at a time. PrecursorScoring
+    # later merges fold0+fold1 into a single per-file Arrow (also in
+    # main_search_psms_dir) once LGBM training is done.
     t2_start = time()
-    second_pass_dir = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
 
     # Library lookups (shared across files)
     prec_irt = lib_irt
@@ -502,7 +510,7 @@ function summarize_results!(
     for ms_file_idx in 1:n_files
         file_name = getParsedFileName(ms_data, ms_file_idx)
 
-        base_path = joinpath(second_pass_dir, file_name)
+        base_path = joinpath(main_search_psms_dir, file_name)
 
         file_has_data = false
         n_before_file = 0
@@ -511,14 +519,15 @@ function summarize_results!(
         for fold in UInt8[0, 1]
             passing = fold == 0 ? passing_fold0 : passing_fold1
             psm_path = joinpath(main_search_psms_dir, "$(file_name)_fold$(fold).arrow")
-            fold_out_path = "$(base_path)_fold$(fold).arrow"
 
             if !isfile(psm_path)
-                isfile(fold_out_path) && rm(fold_out_path)
                 continue
             end
 
-            # Load this fold's main search PSMs
+            # Load this fold's main search PSMs into in-memory DataFrame
+            # (Tables.columntable + DataFrame materializes columns off the
+            # Arrow mmap so the subsequent in-place writeArrow is safe on
+            # Windows — same pattern as ArrowOperations.jl:68).
             tbl = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
             n_before = nrow(tbl)
             n_before_file += n_before
@@ -534,7 +543,8 @@ function summarize_results!(
             n_kept_precs += n_after
 
             if n_after == 0
-                isfile(fold_out_path) && rm(fold_out_path)
+                # Drop the on-disk file so downstream code skips this fold.
+                safeRm(psm_path, nothing)
                 continue
             end
 
@@ -554,7 +564,9 @@ function summarize_results!(
             initialize_prob_group_features!(tbl)
             dropVectorColumns!(tbl)
 
-            writeArrow(fold_out_path, tbl)
+            # Overwrite the same fold file in place. writeArrow handles the
+            # tempname → move dance internally for Windows safety.
+            writeArrow(psm_path, tbl)
             file_has_data = true
         end
 

@@ -163,9 +163,12 @@ function summarize_results!(
     search_context::SearchContext
 )
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
-    
-    # Set up output folders
-    second_pass_folder = joinpath(temp_folder, "second_pass_psms")
+
+    # Set up output folders. PSM intermediates all live in `main_search_psms/`
+    # since 2026-05-20 — MainSearch writes fold-split files there,
+    # PrecursorScoring reads/merges/MBR-folds in place, and only the
+    # post-FDR `passing_psms/` is a separate (and strictly smaller) output.
+    main_search_psms_folder = joinpath(temp_folder, "main_search_psms")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
     !isdir(passing_psms_folder) && mkdir(passing_psms_folder)
 
@@ -197,7 +200,7 @@ function summarize_results!(
         max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
         @debug_l1 "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
         score_precursor_isotope_traces(
-            second_pass_folder,
+            main_search_psms_folder,
             valid_fold_paths,
             getPrecursors(getSpecLib(search_context)),
             max_psms,
