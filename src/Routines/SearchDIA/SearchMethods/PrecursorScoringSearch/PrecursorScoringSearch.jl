@@ -337,6 +337,16 @@ function summarize_results!(
         passing_refs = apply_pipeline_batch(filtered_refs, combined_pipeline, passing_psms_folder)
     end
 
+    # After Step 5-10, the merged main_search_psms files are no longer read by
+    # any downstream code (IntegrateChroms/MaxLFQ read passing_psms only). Free
+    # them mid-pipeline so they don't carry ~120 MB/file of dead data through
+    # the rest of the run. Release mmap handles via GC before safeRm (Windows).
+    filtered_refs = nothing
+    GC.gc(false)
+    for fpath in merged_psm_paths
+        isfile(fpath) && safeRm(fpath, nothing)
+    end
+
     # Step 11: Re-calculate q-values using filtered data (sidecar-based)
     step11_time = @elapsed begin
         # Sidecar lifecycle for new spline (on filtered data)
