@@ -210,18 +210,46 @@ the same row order.
 function apply_sortperm!(ref::FileReference, perm::AbstractVector{<:Integer};
                          mark_sort_keys::Tuple{Vararg{Symbol}}=())
     validate_exists(ref)
-    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-    n = nrow(df)
-    length(perm) == n ||
-        error("perm length $(length(perm)) ≠ file row count $n for $(file_path(ref))")
-    df_sorted = df[perm, :]
-    writeArrow(file_path(ref), df_sorted)
+    _permute_arrow_file_inplace!(file_path(ref), perm)
     if !isempty(mark_sort_keys)
         mark_sorted!(ref, mark_sort_keys...)
     else
         ref.sorted_by = ()
     end
     return ref
+end
+
+"""
+    apply_sortperm!(ref::PSMFileReference, perm; mark_sort_keys=()) -> PSMFileReference
+
+PSM-specialization: permutes the main file AND every registered sidecar in
+lockstep. The row-aligned invariant between main and sidecars is preserved.
+"""
+function apply_sortperm!(ref::PSMFileReference, perm::AbstractVector{<:Integer};
+                         mark_sort_keys::Tuple{Vararg{Symbol}}=())
+    validate_exists(ref)
+    _permute_arrow_file_inplace!(file_path(ref), perm)
+    for s in ref.sidecars
+        _permute_arrow_file_inplace!(s.path, perm)
+    end
+    if !isempty(mark_sort_keys)
+        mark_sorted!(ref, mark_sort_keys...)
+    else
+        ref.sorted_by = ()
+    end
+    return ref
+end
+
+# Internal: permute every column of an Arrow file in place. Used by the
+# FileReference and PSMFileReference apply_sortperm! methods.
+function _permute_arrow_file_inplace!(path::String, perm::AbstractVector{<:Integer})
+    df = DataFrame(Tables.columntable(Arrow.Table(path)))
+    n = nrow(df)
+    length(perm) == n ||
+        error("perm length $(length(perm)) ≠ file row count $n for $path")
+    df_sorted = df[perm, :]
+    writeArrow(path, df_sorted)
+    return path
 end
 
 """
