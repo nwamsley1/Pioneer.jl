@@ -59,22 +59,31 @@ function _resolve_available_features(file_paths::Vector{String}, requested::Vect
     return Symbol[]
 end
 
-# Pass 2: reservoir-sample up to k rows for the given cv_fold into a
-# preallocated feature matrix + target vector. Single linear scan of the
-# files; feature gather is skipped for rows that the reservoir rejects.
-function _reservoir_sample_fold(
+# Pass 2: single-pass reservoir-sample both folds simultaneously.
+# Walks each file ONCE (vs the previous two-pass version that walked every
+# file twice — once per fold), routing each row to its fold-specific
+# reservoir based on `cv_fold`. When `k_per_fold >= n_avail_in_fold` (the
+# default regime — k_per_fold = 2.5M, typical n_avail = 0.5-2M), every
+# row is accepted, no random draws happen, and the function is purely an
+# I/O + feature-gather pass. When `k_per_fold < n_avail_in_fold`, standard
+# reservoir replace-with-prob k/seen kicks in for that fold.
+function _sample_both_folds(
     file_paths::Vector{String},
     features::Vector{Symbol},
-    target_fold::UInt8,
-    k::Int,
-    n_avail_in_fold::Int,
+    k_per_fold::Int,
+    n0::Int,
+    n1::Int,
     rng::AbstractRNG,
 )
     nfeat = length(features)
-    k_actual = min(k, n_avail_in_fold)
-    X = Matrix{Float32}(undef, k_actual, nfeat)
-    y = Vector{Bool}(undef, k_actual)
-    seen = 0  # in-fold row counter (reservoir index space)
+    k0 = min(n0, k_per_fold)
+    k1 = min(n1, k_per_fold)
+    X0 = Matrix{Float32}(undef, k0, nfeat)
+    X1 = Matrix{Float32}(undef, k1, nfeat)
+    y0 = Vector{Bool}(undef, k0)
+    y1 = Vector{Bool}(undef, k1)
+    seen0 = 0
+    seen1 = 0
 
     for fpath in file_paths
         tbl = Arrow.Table(fpath)
@@ -85,25 +94,39 @@ function _reservoir_sample_fold(
         feat_cols = ntuple(j -> getproperty(tbl, features[j]), nfeat)
 
         @inbounds for i in 1:n
-            UInt8(fold_c[i]) == target_fold || continue
-            seen += 1
-            if seen <= k_actual
-                # Reservoir fill phase: always accept.
-                pos = seen
-            else
-                # Replace phase: replace at random position with prob k/seen.
-                draw = rand(rng, 1:seen)
-                draw > k_actual && continue
-                pos = draw
+            f = UInt8(fold_c[i])
+            if f == UInt8(0)
+                seen0 += 1
+                pos = if seen0 <= k0
+                    seen0
+                else
+                    draw = rand(rng, 1:seen0)
+                    draw > k0 && continue
+                    draw
+                end
+                for j in 1:nfeat
+                    X0[pos, j] = Float32(feat_cols[j][i])
+                end
+                y0[pos] = Bool(target_c[i])
+            elseif f == UInt8(1)
+                seen1 += 1
+                pos = if seen1 <= k1
+                    seen1
+                else
+                    draw = rand(rng, 1:seen1)
+                    draw > k1 && continue
+                    draw
+                end
+                for j in 1:nfeat
+                    X1[pos, j] = Float32(feat_cols[j][i])
+                end
+                y1[pos] = Bool(target_c[i])
             end
-            for j in 1:nfeat
-                X[pos, j] = Float32(feat_cols[j][i])
-            end
-            y[pos] = Bool(target_c[i])
         end
     end
-    @assert seen == n_avail_in_fold "Reservoir saw $seen rows but Pass 1 counted $n_avail_in_fold for fold=$target_fold"
-    return X, y
+    @assert seen0 == n0 "Sampler saw $seen0 rows for fold=0 but Pass-1 metadata counted $n0"
+    @assert seen1 == n1 "Sampler saw $seen1 rows for fold=1 but Pass-1 metadata counted $n1"
+    return X0, y0, X1, y1
 end
 
 # Fit a LightGBM classifier on the sampled (X, y). Returns the booster.
@@ -242,10 +265,11 @@ function train_and_predict_pass1_oom!(
     @user_info "  sampling: k_per_fold=$k_per_fold → sample_fold0=$k0  sample_fold1=$k1"
     @user_info "  features in use: $(length(available)) / $(length(features))"
 
-    # Pass 2: reservoir sample + train.
+    # Pass 2: single-pass sampler walks each file once, routing rows to the
+    # appropriate per-fold reservoir. Halves the file I/O of the previous
+    # two-pass version where each file was opened/scanned once per fold.
     t_sample_start = time()
-    X0, y0 = _reservoir_sample_fold(file_paths, available, UInt8(0), k_per_fold, n0, rng)
-    X1, y1 = _reservoir_sample_fold(file_paths, available, UInt8(1), k_per_fold, n1, rng)
+    X0, y0, X1, y1 = _sample_both_folds(file_paths, available, k_per_fold, n0, n1, rng)
     t_sample = time() - t_sample_start
 
     t_fit_start = time()
