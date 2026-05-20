@@ -338,14 +338,10 @@ function summarize_results!(
     end
 
     # After Step 5-10, the merged main_search_psms files are no longer read by
-    # any downstream code (IntegrateChroms/MaxLFQ read passing_psms only). Free
-    # them mid-pipeline so they don't carry ~120 MB/file of dead data through
-    # the rest of the run. Release mmap handles via GC before safeRm (Windows).
-    filtered_refs = nothing
-    GC.gc(false)
-    for fpath in merged_psm_paths
-        isfile(fpath) && safeRm(fpath, nothing)
-    end
+    # any downstream code (IntegrateChroms/MaxLFQ read passing_psms only). The
+    # mid-pipeline cleanup that frees ~120 MB/file is temporarily disabled to
+    # keep these files available for diagnostic inspection. Re-enable once the
+    # main_search_psms column set has been pruned to a minimal/diagnostic schema.
 
     # Step 11: Re-calculate q-values using filtered data (sidecar-based)
     step11_time = @elapsed begin

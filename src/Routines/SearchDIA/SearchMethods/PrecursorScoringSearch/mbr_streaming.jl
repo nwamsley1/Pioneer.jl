@@ -566,11 +566,10 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
         df[!, :trace_prob_infold]  = collect(Float32.(pass1.trace_prob_infold))
         # trace_prob = NON-MBR pass-1 score (same as in-memory path line 138).
         df[!, :trace_prob] = df[!, :trace_prob_prepass]
-        for c in _MBR_SIDECAR_OUT_COLS
-            c === :precursor_idx && continue
-            c === :scan_idx      && continue
-            df[!, c] = collect(Tables.getcolumn(mbr, c))
-        end
+        # MBR_* dense input features in `mbr` sidecar were consumed by
+        # `apply_mbr_filter_paired!` in-memory (score_psms.jl:149) and are not
+        # read by Step 5-10 or anything downstream — skip baking them into the
+        # main file. Only the FTR outputs below get persisted.
         df[!, :mbr_recovered]          = collect(Bool.(rec.mbr_recovered))
         df[!, :MBR_transfer_candidate] = collect(Bool.(rec.MBR_transfer_candidate))
         df[!, :ftr_qval_true]          = collect(Float32.(rec.ftr_qval_true))
