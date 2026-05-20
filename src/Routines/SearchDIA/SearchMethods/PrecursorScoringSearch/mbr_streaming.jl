@@ -559,29 +559,30 @@ function merge_mbr_sidecars_into_main!(file_paths::Vector{String}; cleanup::Bool
                 error("Sidecar misaligned at row $i of $path")
         end
 
-        df = DataFrame(main)
-        # decoy mirror of target (added in in-memory path for downstream consumers)
-        df[!, :decoy] = .!Bool.(df.target)
-        df[!, :trace_prob_prepass] = collect(Float32.(pass1.trace_prob_prepass))
-        df[!, :trace_prob_infold]  = collect(Float32.(pass1.trace_prob_infold))
-        # trace_prob = NON-MBR pass-1 score (same as in-memory path line 138).
-        df[!, :trace_prob] = df[!, :trace_prob_prepass]
-        # MBR_* dense input features in `mbr` sidecar were consumed by
-        # `apply_mbr_filter_paired!` in-memory (score_psms.jl:149) and are not
-        # read by Step 5-10 or anything downstream — skip baking them into the
-        # main file. Only the FTR outputs below get persisted.
-        df[!, :mbr_recovered]          = collect(Bool.(rec.mbr_recovered))
-        df[!, :MBR_transfer_candidate] = collect(Bool.(rec.MBR_transfer_candidate))
-        df[!, :ftr_qval_true]          = collect(Float32.(rec.ftr_qval_true))
-        df[!, :ftr_pep_true]           = collect(Float32.(rec.ftr_pep_true))
+        # Write the FTR/Pass-1 outputs as a single narrow sidecar tagged
+        # "mbr_outputs" rather than rewriting the main file. Downstream
+        # PSMFileReference construction auto-discovers and joins it.
+        # Note: :decoy is already populated by MainSearch (features.jl:108)
+        # — including it here would trigger the auto-discovery collision
+        # check and reject the entire sidecar.
+        side_df = DataFrame()
+        side_df[!, :trace_prob_prepass]   = collect(Float32.(pass1.trace_prob_prepass))
+        side_df[!, :trace_prob_infold]    = collect(Float32.(pass1.trace_prob_infold))
+        side_df[!, :trace_prob]           = side_df[!, :trace_prob_prepass]
+        side_df[!, :mbr_recovered]        = collect(Bool.(rec.mbr_recovered))
+        side_df[!, :MBR_transfer_candidate] = collect(Bool.(rec.MBR_transfer_candidate))
+        side_df[!, :ftr_qval_true]        = collect(Float32.(rec.ftr_qval_true))
+        side_df[!, :ftr_pep_true]         = collect(Float32.(rec.ftr_pep_true))
 
-        writeArrow(path, df)
+        new_sidecar_path = path * ".mbr_outputs.sidecar.arrow"
+        writeArrow(new_sidecar_path, side_df)
+
         if cleanup
             rm(pass1_path); rm(mbr_path); rm(rec_path)
         end
         n_merged += 1
     end
-    @user_info "  Merged $n_merged files (Pass-1 + MBR + recovery sidecars)"
+    @user_info "  Wrote $n_merged consolidated mbr_outputs sidecars"
     return n_merged
 end
 

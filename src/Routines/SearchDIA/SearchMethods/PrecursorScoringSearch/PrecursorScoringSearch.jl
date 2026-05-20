@@ -221,14 +221,26 @@ function summarize_results!(
         fold1_path = "$(base_path)_fold1.arrow"
         merged_path = "$(base_path).arrow"
 
-        # Collect data from both folds
+        # Collect data from both folds via PSMFileReference so the
+        # auto-discovered mbr_outputs sidecars (written by
+        # merge_mbr_sidecars_into_main!) are joined in. MainSearch
+        # initialized :trace_prob to zero in the fold files; the sidecar
+        # provides the real Pass-1 OOF score in :trace_prob_prepass, so we
+        # set :trace_prob = :trace_prob_prepass here (matching the legacy
+        # merge_mbr_sidecars_into_main! semantics).
         fold_dfs = DataFrame[]
-        if isfile(fold0_path)
-            push!(fold_dfs, DataFrame(Arrow.Table(fold0_path)))
+        fold_refs = PSMFileReference[]
+        function _load_fold(path)
+            ref = PSMFileReference(path)
+            push!(fold_refs, ref)
+            df = load_with_sidecars(ref)
+            if hasproperty(df, :trace_prob_prepass)
+                df[!, :trace_prob] = df[!, :trace_prob_prepass]
+            end
+            return df
         end
-        if isfile(fold1_path)
-            push!(fold_dfs, DataFrame(Arrow.Table(fold1_path)))
-        end
+        isfile(fold0_path) && push!(fold_dfs, _load_fold(fold0_path))
+        isfile(fold1_path) && push!(fold_dfs, _load_fold(fold1_path))
 
         if !isempty(fold_dfs)
             # Merge and write combined file
@@ -239,9 +251,14 @@ function summarize_results!(
             # Update search context with merged path
             setSecondPassPsms!(getMSData(search_context), idx, merged_path)
 
-            # Collect fold file paths for batch deletion after loop
-            isfile(fold0_path) && push!(fold_paths_to_delete, fold0_path)
-            isfile(fold1_path) && push!(fold_paths_to_delete, fold1_path)
+            # Collect fold file paths and their sidecars for batch deletion
+            for ref in fold_refs
+                fp = file_path(ref)
+                isfile(fp) && push!(fold_paths_to_delete, fp)
+                for s in ref.sidecars
+                    isfile(s.path) && push!(fold_paths_to_delete, s.path)
+                end
+            end
         end
     end
 

@@ -120,11 +120,14 @@ function _discover_sidecars_from_disk!(ref::PSMFileReference)
             side_cols = Symbol.(Tables.columnnames(tbl))
             n = isempty(side_cols) ? 0 : length(Tables.getcolumn(tbl, 1))
             n == ref.row_count || continue
-            # Skip cols that already exist in main or another sidecar
-            already = filter(c -> has_column(ref.schema, c) ||
-                             any(s -> c in s.cols, ref.sidecars), side_cols)
-            isempty(already) || continue
-            push!(ref.sidecars, Sidecar(side_path, collect(side_cols)))
+            # Filter out cols that already exist in main or another sidecar.
+            # Discovery is opportunistic — colliding cols are just skipped
+            # (the file may legitimately exist with extra cols we already
+            # have). Only register the non-colliding ones.
+            keep_cols = Symbol[c for c in side_cols if !has_column(ref.schema, c) &&
+                               !any(s -> c in s.cols, ref.sidecars)]
+            isempty(keep_cols) && continue
+            push!(ref.sidecars, Sidecar(side_path, keep_cols))
         catch
             # Skip unreadable / malformed sidecar candidates
             continue
