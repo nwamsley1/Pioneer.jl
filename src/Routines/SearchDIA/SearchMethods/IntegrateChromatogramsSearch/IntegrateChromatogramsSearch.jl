@@ -174,7 +174,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         learned_boundary_max_train_groups = Int64(get(
             chrom_params,
             :learned_boundary_max_train_groups,
-            10_000,
+            20_000,
         ))
         learned_boundary_min_positive = Int64(get(
             chrom_params,
@@ -557,25 +557,22 @@ function summarize_results!(
         return nothing
     end
 
-    label_boundary_candidate_targets!(
-        training_candidates;
-        min_crossrun_refs = params.learned_boundary_min_crossrun_refs,
-    )
-    model = train_boundary_candidate_model(
+    models = train_boundary_candidate_models_by_cv_fold(
         training_candidates;
         max_groups = params.learned_boundary_max_train_groups,
         min_positive = params.learned_boundary_min_positive,
         min_negative = params.learned_boundary_min_negative,
+        min_crossrun_refs = params.learned_boundary_min_crossrun_refs,
         rng = Random.MersenneTwister(1776),
     )
 
-    if model === nothing
-        @user_warn "Learned chromatogram boundary model skipped: insufficient labeled candidate diversity; keeping second-derivative bounds."
+    if isempty(models) || all(isnothing, values(models))
+        @user_warn "Learned chromatogram boundary models skipped: insufficient labeled candidate diversity; keeping second-derivative bounds."
         return nothing
     end
 
-    log_boundary_model_feature_importances(model)
-    selected = select_boundary_candidate_rows(candidates, model)
+    log_boundary_cv_model_feature_importances(models)
+    selected = select_boundary_candidate_rows_crossfold(candidates, models)
     log_boundary_candidate_category_tally(selected)
     if DEBUG_CONSOLE_LEVEL[] >= 1
         debug_candidates = copy(candidates)
@@ -583,9 +580,8 @@ function summarize_results!(
             debug_candidates;
             min_crossrun_refs = params.learned_boundary_min_crossrun_refs,
         )
-        debug_quant_candidates = quant_boundary_candidate_rows(debug_candidates)
-        score_boundary_candidates!(debug_quant_candidates, model)
-        log_boundary_candidate_debug(debug_quant_candidates, selected)
+        score_boundary_candidates_crossfold!(debug_candidates, models)
+        log_boundary_candidate_debug(debug_candidates, selected)
     end
     updated = apply_selected_boundary_candidates!(selected, search_context)
     debug_write_selected_boundary_chromatogram_plots(selected, params, search_context)

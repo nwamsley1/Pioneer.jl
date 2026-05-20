@@ -98,17 +98,6 @@ function _unique_sorted_precursor_ids(precursor_idx::AbstractVector)
     return precursor_ids
 end
 
-function _mainsearch_refined_lgbm_training_mask(
-    psms::DataFrame,
-    high_confidence_target_precursors::Set{UInt32},
-)
-    return Bool[
-        !Bool(psms.target[i]) ||
-        (UInt32(psms.precursor_idx[i]) in high_confidence_target_precursors)
-        for i in 1:nrow(psms)
-    ]
-end
-
 function _passing_precursor_targets(
     precursor_idx::AbstractVector,
     targets::AbstractVector{Bool},

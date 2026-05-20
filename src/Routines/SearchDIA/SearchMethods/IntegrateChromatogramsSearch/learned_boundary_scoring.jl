@@ -10,10 +10,11 @@ const BOUNDARY_CANDIDATE_FEATURES = Symbol[
     :candidate_width,
     :endpoint_height_fraction,
     :peak_prominence_score,
-    :endpoint_valley_score,
     :log2_smoothed_apex_weight,
-    :secondary_peak_penalty,
     :asymmetry_penalty,
+    :irt_asymmetry_delta,
+    :baseline_internal_trough_score,
+    :baseline_internal_trough_log2_ratio,
     :left_excluded_signal_fraction,
     :right_excluded_signal_fraction,
     :left_boundary_recovery_fraction,
@@ -21,11 +22,21 @@ const BOUNDARY_CANDIDATE_FEATURES = Symbol[
     :left_outside_peak_fraction,
     :right_outside_peak_fraction,
     :internal_dip_recovery_score,
-    :mainsearch_exclusion_penalty,
+    :left_edge_valley_log2_ratio,
+    :right_edge_valley_log2_ratio,
+    :included_nonapex_max_log2_ratio,
+    :included_nonapex_max_irt_distance,
     :mainsearch_left_bound_delta,
     :mainsearch_right_bound_delta,
 ]
 const BOUNDARY_RANKING_MAX_LABEL = 30
+const DEBUG_BOUNDARY_CANDIDATE_TARGETS = Ref{Set{Tuple{UInt32,UInt16}}}(
+    Set([
+        (UInt32(370714), UInt16(1)),
+        (UInt32(909488), UInt16(3)),
+        (UInt32(1047223), UInt16(3)),
+    ])
+)
 
 @inline function _boundary_log_area(area)
     area_f = Float32(area)
@@ -506,7 +517,7 @@ fallback.
 function train_boundary_candidate_model(
     candidates::DataFrame;
     features::Vector{Symbol} = BOUNDARY_CANDIDATE_FEATURES,
-    max_groups::Integer = 10_000,
+    max_groups::Integer = 20_000,
     min_positive::Integer = 25,
     min_negative::Integer = 25,
     rng::AbstractRNG = Random.default_rng(),
@@ -543,6 +554,73 @@ function train_boundary_candidate_model(
     return LightGBMModel(model, available, nothing)
 end
 
+function boundary_cv_folds(candidates::AbstractDataFrame)
+    return sort(unique(UInt8.(candidates[!, :cv_fold])))
+end
+
+function boundary_training_candidates_for_cv_fold(
+    candidates::AbstractDataFrame,
+    heldout_fold::UInt8,
+)
+    mask = UInt8.(candidates[!, :cv_fold]) .!= heldout_fold
+    return candidates[mask, :]
+end
+
+function train_boundary_candidate_model_for_cv_fold(
+    candidates::DataFrame,
+    heldout_fold::UInt8;
+    features::Vector{Symbol} = BOUNDARY_CANDIDATE_FEATURES,
+    max_groups::Integer = 20_000,
+    min_positive::Integer = 25,
+    min_negative::Integer = 25,
+    min_crossrun_refs::Integer = 2,
+    rng::AbstractRNG = Random.default_rng(),
+)
+    training = DataFrame(boundary_training_candidates_for_cv_fold(candidates, heldout_fold))
+    nrow(training) == 0 && return nothing
+    if !hasproperty(training, :boundary_candidate_target) ||
+       !hasproperty(training, :boundary_training_loss)
+        label_boundary_candidate_targets!(
+            training;
+            min_crossrun_refs = min_crossrun_refs,
+        )
+    end
+
+    return train_boundary_candidate_model(
+        training;
+        features = features,
+        max_groups = max_groups,
+        min_positive = min_positive,
+        min_negative = min_negative,
+        rng = rng,
+    )
+end
+
+function train_boundary_candidate_models_by_cv_fold(
+    candidates::DataFrame;
+    features::Vector{Symbol} = BOUNDARY_CANDIDATE_FEATURES,
+    max_groups::Integer = 20_000,
+    min_positive::Integer = 25,
+    min_negative::Integer = 25,
+    min_crossrun_refs::Integer = 2,
+    rng::AbstractRNG = Random.default_rng(),
+)
+    models = Dict{UInt8, Union{LightGBMModel, Nothing}}()
+    for heldout_fold in boundary_cv_folds(candidates)
+        models[heldout_fold] = train_boundary_candidate_model_for_cv_fold(
+            candidates,
+            heldout_fold;
+            features = features,
+            max_groups = max_groups,
+            min_positive = min_positive,
+            min_negative = min_negative,
+            min_crossrun_refs = min_crossrun_refs,
+            rng = rng,
+        )
+    end
+    return models
+end
+
 function score_boundary_candidates!(
     candidates::DataFrame,
     model::Union{LightGBMModel, Nothing};
@@ -565,6 +643,26 @@ function score_boundary_candidates!(
     return candidates
 end
 
+function score_boundary_candidates_crossfold!(
+    candidates::DataFrame,
+    models::AbstractDict{UInt8, <:Union{LightGBMModel, Nothing}};
+    score_col::Symbol = :boundary_model_score,
+)
+    candidates[!, score_col] = zeros(Float32, nrow(candidates))
+    for cv_fold in boundary_cv_folds(candidates)
+        rows = findall(==(cv_fold), UInt8.(candidates[!, :cv_fold]))
+        isempty(rows) && continue
+        fold_candidates = candidates[rows, :]
+        score_boundary_candidates!(
+            fold_candidates,
+            get(models, cv_fold, nothing);
+            score_col = score_col,
+        )
+        candidates[rows, score_col] = fold_candidates[!, score_col]
+    end
+    return candidates
+end
+
 function boundary_model_feature_importance_lines(importances)
     sorted_imp = sort(collect(importances), by = x -> -x[2])
     lines = ["Learned chromatogram boundary LGBM feature gains (all $(length(sorted_imp))):"]
@@ -584,6 +682,24 @@ function log_boundary_model_feature_importances(model::LightGBMModel)
     imp = importance(model)
     imp === nothing && return nothing
     log_boundary_model_feature_importances(imp)
+    return nothing
+end
+
+function log_boundary_cv_model_feature_importances(
+    models::AbstractDict{UInt8, <:Union{LightGBMModel, Nothing}},
+)
+    for fold in sort(collect(keys(models)))
+        model = models[fold]
+        if model === nothing
+            @debug_l1 "Learned chromatogram boundary LGBM feature gains fold=$(fold): skipped=true reason=insufficient_training_data"
+            continue
+        end
+        imp = importance(model)
+        imp === nothing && continue
+        lines = boundary_model_feature_importance_lines(imp)
+        lines[1] = lines[1] * " fold=$(fold)"
+        @debug_l1 join(lines, "\n")
+    end
     return nothing
 end
 
@@ -701,11 +817,20 @@ function boundary_candidate_debug_lines(
             "crossrun_loss=$(_boundary_debug_value(candidates, row, :boundary_crossrun_loss))",
             "isotope_loss=$(_boundary_debug_value(candidates, row, :boundary_isotope_loss))",
             "fallback=$(_boundary_debug_value(candidates, row, :is_fallback))",
+            "quant_trace_selected=$(_boundary_debug_value(candidates, row, :quant_trace_selected))",
+            "isotope_key=$(_boundary_debug_value(candidates, row, :isotope_key))",
             "width=$(_boundary_debug_value(candidates, row, :candidate_width))",
             "endpoint_valley=$(_boundary_debug_value(candidates, row, :endpoint_valley_score))",
             "endpoint_height=$(_boundary_debug_value(candidates, row, :endpoint_height_fraction))",
             "secondary_peak=$(_boundary_debug_value(candidates, row, :secondary_peak_penalty))",
+            "irt_asymmetry=$(_boundary_debug_value(candidates, row, :irt_asymmetry_delta))",
+            "baseline_disconnect=$(_boundary_debug_value(candidates, row, :baseline_disconnected_signal_fraction))",
+            "baseline_nonapex_lobe=$(_boundary_debug_value(candidates, row, :baseline_largest_nonapex_lobe_log2_ratio))",
+            "baseline_trough=$(_boundary_debug_value(candidates, row, :baseline_internal_trough_score)):$(_boundary_debug_value(candidates, row, :baseline_internal_trough_log2_ratio))",
             "dip_recovery=$(_boundary_debug_value(candidates, row, :internal_dip_recovery_score))",
+            "edge_valley_ratio=$(_boundary_debug_value(candidates, row, :left_edge_valley_log2_ratio)):$(_boundary_debug_value(candidates, row, :right_edge_valley_log2_ratio))",
+            "included_nonapex=$(_boundary_debug_value(candidates, row, :included_nonapex_max_log2_ratio))",
+            "included_nonapex_irt=$(_boundary_debug_value(candidates, row, :included_nonapex_max_irt_distance))",
             "right_excluded=$(_boundary_debug_value(candidates, row, :right_excluded_signal_fraction))",
             "right_recovery=$(_boundary_debug_value(candidates, row, :right_boundary_recovery_fraction))",
             "right_outside_peak=$(_boundary_debug_value(candidates, row, :right_outside_peak_fraction))",
@@ -719,17 +844,25 @@ end
 function log_boundary_candidate_debug(
     candidates::AbstractDataFrame,
     selected_candidates::AbstractDataFrame;
-    target_precursor_idx::UInt32 = UInt32(370714),
-    target_ms_file_idx::UInt16 = UInt16(1),
+    target_precursor_idx::Union{Nothing,UInt32} = nothing,
+    target_ms_file_idx::Union{Nothing,UInt16} = nothing,
 )
     DEBUG_CONSOLE_LEVEL[] >= 1 || return nothing
-    lines = boundary_candidate_debug_lines(
-        candidates,
-        selected_candidates;
-        target_precursor_idx = target_precursor_idx,
-        target_ms_file_idx = target_ms_file_idx,
-    )
-    @debug_l1 join(lines, "\n")
+    targets = if target_precursor_idx !== nothing && target_ms_file_idx !== nothing
+        [(target_precursor_idx, target_ms_file_idx)]
+    else
+        sort!(collect(DEBUG_BOUNDARY_CANDIDATE_TARGETS[]))
+    end
+
+    for (precursor_idx, ms_file_idx) in targets
+        lines = boundary_candidate_debug_lines(
+            candidates,
+            selected_candidates;
+            target_precursor_idx = precursor_idx,
+            target_ms_file_idx = ms_file_idx,
+        )
+        @debug_l1 join(lines, "\n")
+    end
     return nothing
 end
 
@@ -767,12 +900,38 @@ function select_boundary_candidate_rows(
     return scored[selected_rows, :]
 end
 
+function select_boundary_candidate_rows_crossfold(
+    candidates::DataFrame,
+    models::AbstractDict{UInt8, <:Union{LightGBMModel, Nothing}};
+)
+    selection_candidates = quant_boundary_candidate_rows(candidates)
+    nrow(selection_candidates) == 0 && return copy(selection_candidates)
+
+    selected_by_fold = DataFrame[]
+    for cv_fold in boundary_cv_folds(selection_candidates)
+        rows = findall(==(cv_fold), UInt8.(selection_candidates[!, :cv_fold]))
+        isempty(rows) && continue
+        fold_candidates = DataFrame(selection_candidates[rows, :])
+        push!(
+            selected_by_fold,
+            select_boundary_candidate_rows(
+                fold_candidates,
+                get(models, cv_fold, nothing),
+            ),
+        )
+    end
+
+    isempty(selected_by_fold) && return selection_candidates[1:0, :]
+    return reduce(vcat, selected_by_fold; cols = :union)
+end
+
 function append_boundary_candidate_rows!(
     rows::Vector{NamedTuple},
     candidates,
     boundary_group_id::UInt64,
     ms_file_idx::Integer,
     precursor_idx::UInt32,
+    cv_fold::UInt8,
     protein_key,
     sequence_key,
     isotope_key,
@@ -786,6 +945,7 @@ function append_boundary_candidate_rows!(
             boundary_group_id = boundary_group_id,
             ms_file_idx = UInt16(ms_file_idx),
             precursor_idx = precursor_idx,
+            cv_fold = cv_fold,
             protein_key = protein_key,
             sequence_key = sequence_key,
             isotope_key = isotope_key,
@@ -818,6 +978,7 @@ function boundary_candidate_table(
         boundary_group_id = (UInt64(ms_file_idx) << 32) | UInt64(i)
         protein_key = getAccessionNumbers(precursors)[pid]
         sequence_key = getSequence(precursors)[pid]
+        cv_fold = getCvFold(precursors, pid)
         isotope_key = has_isotope_key ? psms[i, :isotopes_captured] : (Int8(0), Int8(0))
         target = has_target ? Bool(psms[i, :target]) : true
 
@@ -827,6 +988,7 @@ function boundary_candidate_table(
             boundary_group_id,
             ms_file_idx,
             pid,
+            cv_fold,
             protein_key,
             sequence_key,
             isotope_key,
@@ -962,6 +1124,7 @@ function collect_isotope_boundary_candidate_rows(
             boundary_group_id,
             ms_file_idx,
             pid,
+            getCvFold(precursors, pid),
             getAccessionNumbers(precursors)[pid],
             getSequence(precursors)[pid],
             isotope_key,

@@ -76,22 +76,9 @@ function train_psm_classifier_with_fallback(
     features::Vector{Symbol},
     lgbm_hp = SHARED_LGBM_HP,
     compute_infold::Bool = false,
-    label_col::Symbol = :target,
-    training_row_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
 )
-    if compute_infold && training_row_mask !== nothing
-        throw(ArgumentError("training_row_mask is not supported with compute_infold=true"))
-    end
-
-    targets_col = psms[!, label_col]
+    targets_col = psms[!, :target]
     n_total = nrow(psms)
-    trainable_mask = if training_row_mask === nothing
-        trues(n_total)
-    else
-        length(training_row_mask) == n_total ||
-            throw(ArgumentError("training_row_mask length must match number of PSM rows"))
-        collect(Bool, training_row_mask)
-    end
 
     # Filter to available features
     apply_feature_includes!(features)
@@ -105,8 +92,6 @@ function train_psm_classifier_with_fallback(
     cv_fold = psms[!, :cv_fold]
     idx0 = findall(cv_fold .== 0)
     idx1 = findall(cv_fold .== 1)
-    train_idx0 = findall((cv_fold .== 0) .& trainable_mask)
-    train_idx1 = findall((cv_fold .== 1) .& trainable_mask)
     all_scores = Vector{Float64}(undef, n_total)
     infold_all = compute_infold ? Vector{Float64}(undef, n_total) : nothing
 
@@ -118,11 +103,11 @@ function train_psm_classifier_with_fallback(
     #                                 in-fold for idx1.
     #   fold_pairs[2] = (idx0, idx1): trained on cv_fold==0, OOF for idx1,
     #                                 in-fold for idx0.
-    fold_pairs = [(train_idx1, idx0), (train_idx0, idx1)]
+    fold_pairs = [(idx1, idx0), (idx0, idx1)]
 
     _sample_pos(n_avail) = n_avail > MAX_TRAIN ? randperm(n_avail)[1:MAX_TRAIN] : collect(1:n_avail)
     sub_positions = [_sample_pos(length(tr)) for (tr, _) in fold_pairs]
-    min_fold_size = min(length(train_idx0), length(train_idx1))
+    min_fold_size = min(length(idx0), length(idx1))
     low_data = min_fold_size < LOW_DATA_THRESHOLD
 
     # LightGBM CV. Slices train/test matrices on demand (transient peak) to avoid
@@ -272,8 +257,6 @@ function train_lgbm_and_select_best(
     psms::DataFrame;
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
     integration_q_value_threshold::Float32 = MAINSEARCH_INTEGRATION_QVALUE_THRESHOLD,
-    training_label_col::Symbol = :target,
-    training_row_mask::Union{Nothing, AbstractVector{Bool}} = nothing,
 )
     t0 = time()
     # Per-precursor PSM count, broadcast to every row so MainSearch's per-file
@@ -285,12 +268,7 @@ function train_lgbm_and_select_best(
         end
         psms[!, :n_scans] = UInt32[counts[pid] for pid in psms[!, :precursor_idx]]
     end
-    all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
-        psms;
-        features = features,
-        label_col = training_label_col,
-        training_row_mask = training_row_mask,
-    )
+    all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(psms; features=features)
     t_train_cv = time()
 
     model = if last_classifier !== nothing

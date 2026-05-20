@@ -3,7 +3,6 @@ using DataFrames
 using Pioneer
 
 using Pioneer: MainSearchIrtCorrectionModel, MainSearchIrtRefinement, _compute_phase2_columns!
-using Pioneer: _mainsearch_refined_lgbm_training_mask
 using Pioneer: _passing_precursor_targets, refine_mainsearch_irt_predictions!
 
 struct MainSearchMockPrecursors <: Pioneer.LibraryPrecursors
@@ -124,17 +123,6 @@ Pioneer.getIrt(p::MainSearchMockPrecursors) = p.irt
         @test prec_mz_col == Float32[401.0, 402.0]
         @test pair_id_col == UInt32[101, 102]
         @test entrap_col == UInt8[0, 1]
-    end
-
-    @testset "second LGBM trains on high-confidence targets and all decoys" begin
-        psms = DataFrame(
-            target = Bool[true, true, false, false],
-            precursor_idx = UInt32[1, 2, 3, 4],
-        )
-
-        mask = _mainsearch_refined_lgbm_training_mask(psms, Set(UInt32[1]))
-
-        @test mask == Bool[true, false, true, true]
     end
 
     @testset "MBR nearest-neighbor pairing uses refined iRT column" begin

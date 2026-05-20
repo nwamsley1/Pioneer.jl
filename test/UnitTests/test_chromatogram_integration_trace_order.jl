@@ -152,6 +152,7 @@ end
     @test default_integration.isotope_tracetype isa Pioneer.CombineTraces
     @test default_integration.boundary_selection_method == "learned"
     @test !hasproperty(default_integration, :use_boundary_candidate_scoring)
+    @test default_integration.learned_boundary_max_train_groups == 20_000
     @test default_integration.learned_boundary_max_isotope_trace_groups_per_file == 2000
     @test isdefined(Pioneer, :HuberSolver)
     if isdefined(Pioneer, :HuberSolver)

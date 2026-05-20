@@ -716,6 +716,72 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         return score
     end
 
+    function edgeValleyLog2Ratio(
+        u::Vector{Float32},
+        edge_idx::Int,
+        apex_scan::Int,
+        N::Int,
+        n_pad::Int,
+        apex_height::Float32;
+        left_side::Bool,
+    )
+        apex_height <= 0.0f0 && return 0.0f0
+
+        start = left_side ? edge_idx + 1 : apex_scan + 1
+        stop = left_side ? apex_scan - 1 : edge_idx - 1
+        start <= stop || return 0.0f0
+
+        internal_valley = typemax(Float32)
+        found_internal_valley = false
+        @inbounds for i in start:stop
+            if isLocalMinimumEndpoint(u, i, N, n_pad)
+                internal_valley = min(internal_valley, max(0.0f0, u[i + n_pad]))
+                found_internal_valley = true
+            end
+        end
+        found_internal_valley || return 0.0f0
+
+        edge_fraction = max(0.0f0, u[edge_idx + n_pad]) / apex_height
+        internal_fraction = internal_valley / apex_height
+        floor_fraction = 1.0f-6
+        ratio = log2((edge_fraction + floor_fraction) / (internal_fraction + floor_fraction))
+        return isfinite(ratio) ? Float32(ratio) : 0.0f0
+    end
+
+    function includedNonApexMaxFeatures(
+        u::Vector{Float32},
+        scan_range::UnitRange{Int},
+        apex_scan::Int,
+        n_pad::Int,
+        apex_height::Float32,
+    )
+        apex_height <= 0.0f0 && return (0.0f0, 0.0f0)
+
+        max_nonapex = 0.0f0
+        max_idx = apex_scan
+        found_nonapex = false
+        @inbounds for i in scan_range
+            i == apex_scan && continue
+            val = max(0.0f0, u[i + n_pad])
+            val <= 0.0f0 && continue
+            distance = indexIrtDistance(apex_scan, i)
+            if !found_nonapex ||
+                    val > max_nonapex * (1.0f0 + 1.0f-6) ||
+                    (abs(val - max_nonapex) <= max(max_nonapex, eps(Float32)) * 1.0f-6 &&
+                        distance < indexIrtDistance(apex_scan, max_idx))
+                max_nonapex = val
+                max_idx = i
+                found_nonapex = true
+            end
+        end
+        found_nonapex || return (0.0f0, 0.0f0)
+
+        floor_fraction = 1.0f-6
+        ratio = log2(max(max_nonapex / apex_height, floor_fraction))
+        log2_ratio = isfinite(ratio) ? Float32(ratio) : 0.0f0
+        return (log2_ratio, indexIrtDistance(apex_scan, max_idx))
+    end
+
     function mainsearchEvidenceExclusionPenalty(
         scan_range::UnitRange{Int},
         mainsearch_evidence_range::Union{Nothing,UnitRange{Int}},
@@ -759,9 +825,185 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         return isfinite(width) ? width : 0.0f0
     end
 
+    function irtAsymmetryDelta(scan_range::UnitRange{Int}, apex_idx::Int)
+        left_span = indexIrt(apex_idx) - indexIrt(first(scan_range))
+        right_span = indexIrt(last(scan_range)) - indexIrt(apex_idx)
+        delta = right_span - left_span
+        return isfinite(delta) ? Float32(delta) : 0.0f0
+    end
+
+    function positiveSmoothedAreaIrt(
+        u::Vector{Float32},
+        start_idx::Int,
+        stop_idx::Int,
+        n_pad::Int,
+    )
+        start_idx >= stop_idx && return 0.0f0
+
+        area = 0.0f0
+        @inbounds for i in start_idx:(stop_idx - 1)
+            left_val = max(0.0f0, u[i + n_pad])
+            right_val = max(0.0f0, u[i + 1 + n_pad])
+            area += 0.5f0 * (left_val + right_val) * indexIrtDistance(i, i + 1)
+        end
+        return area
+    end
+
+    function areaAsymmetryPenalty(
+        u::Vector{Float32},
+        scan_range::UnitRange{Int},
+        apex_scan::Int,
+        n_pad::Int,
+    )
+        left_area = positiveSmoothedAreaIrt(u, first(scan_range), apex_scan, n_pad)
+        right_area = positiveSmoothedAreaIrt(u, apex_scan, last(scan_range), n_pad)
+        ratio = log2(max(right_area, eps(Float32)) / max(left_area, eps(Float32)))
+        return isfinite(ratio) ? Float32(ratio) : 0.0f0
+    end
+
+    function residualLobeAreaIrt(
+        residual_u::Vector{Float32},
+        lobe_start::Int,
+        lobe_stop::Int,
+        scan_range::UnitRange{Int},
+        n_pad::Int,
+    )
+        lobe_start > lobe_stop && return 0.0f0
+
+        area = 0.0f0
+        if lobe_start == lobe_stop
+            left_width = lobe_start > first(scan_range) ?
+                indexIrtDistance(lobe_start - 1, lobe_start) :
+                0.0f0
+            right_width = lobe_stop < last(scan_range) ?
+                indexIrtDistance(lobe_stop, lobe_stop + 1) :
+                0.0f0
+            width = max(0.5f0 * (left_width + right_width), eps(Float32))
+            return max(0.0f0, residual_u[lobe_start + n_pad]) * width
+        end
+
+        @inbounds for i in lobe_start:(lobe_stop - 1)
+            left_val = max(0.0f0, residual_u[i + n_pad])
+            right_val = max(0.0f0, residual_u[i + 1 + n_pad])
+            area += 0.5f0 * (left_val + right_val) * indexIrtDistance(i, i + 1)
+        end
+        if lobe_start > first(scan_range)
+            area += 0.5f0 *
+                max(0.0f0, residual_u[lobe_start + n_pad]) *
+                indexIrtDistance(lobe_start - 1, lobe_start)
+        end
+        if lobe_stop < last(scan_range)
+            area += 0.5f0 *
+                max(0.0f0, residual_u[lobe_stop + n_pad]) *
+                indexIrtDistance(lobe_stop, lobe_stop + 1)
+        end
+        return area
+    end
+
+    function baselineDisconnectedLobeFeatures(
+        residual_u::Vector{Float32},
+        scan_range::UnitRange{Int},
+        apex_scan::Int,
+        n_pad::Int,
+        apex_height::Float32,
+    )
+        threshold = max(eps(Float32), 1.0f-6 * max(apex_height, 0.0f0))
+        total_positive_area = 0.0f0
+        nonapex_area = 0.0f0
+        apex_lobe_area = 0.0f0
+        largest_nonapex_area = 0.0f0
+
+        i = first(scan_range)
+        while i <= last(scan_range)
+            if residual_u[i + n_pad] <= threshold
+                i += 1
+                continue
+            end
+
+            lobe_start = i
+            while i <= last(scan_range) && residual_u[i + n_pad] > threshold
+                i += 1
+            end
+            lobe_stop = i - 1
+            lobe_area = residualLobeAreaIrt(
+                residual_u,
+                lobe_start,
+                lobe_stop,
+                scan_range,
+                n_pad,
+            )
+            total_positive_area += lobe_area
+            if lobe_start <= apex_scan <= lobe_stop
+                apex_lobe_area += lobe_area
+            else
+                nonapex_area += lobe_area
+                largest_nonapex_area = max(largest_nonapex_area, lobe_area)
+            end
+        end
+
+        if total_positive_area <= eps(Float32)
+            return (0.0f0, -10.0f0)
+        end
+
+        disconnected_fraction = Float32(nonapex_area / total_positive_area)
+        if largest_nonapex_area <= eps(Float32) || apex_lobe_area <= eps(Float32)
+            return (disconnected_fraction, -10.0f0)
+        end
+        ratio = log2(largest_nonapex_area / apex_lobe_area)
+        return (
+            disconnected_fraction,
+            isfinite(ratio) ? Float32(clamp(ratio, -10.0f0, 10.0f0)) : -10.0f0,
+        )
+    end
+
+    function baselineInternalTroughFeatures(
+        residual_u::Vector{Float32},
+        scan_range::UnitRange{Int},
+        n_pad::Int,
+        apex_height::Float32,
+    )
+        first(scan_range) + 1 <= last(scan_range) - 1 || return (0.0f0, 0.0f0)
+
+        candidate_peak = 0.0f0
+        @inbounds for i in scan_range
+            candidate_peak = max(candidate_peak, max(0.0f0, residual_u[i + n_pad]))
+        end
+        floor_value = max(eps(Float32), 1.0f-6 * max(apex_height, candidate_peak, 0.0f0))
+        candidate_peak > floor_value || return (0.0f0, 0.0f0)
+
+        best_score = 0.0f0
+        best_log2_ratio = 0.0f0
+        @inbounds for i in (first(scan_range) + 1):(last(scan_range) - 1)
+            left_peak = 0.0f0
+            for j in first(scan_range):(i - 1)
+                left_peak = max(left_peak, max(0.0f0, residual_u[j + n_pad]))
+            end
+
+            right_peak = 0.0f0
+            for j in (i + 1):last(scan_range)
+                right_peak = max(right_peak, max(0.0f0, residual_u[j + n_pad]))
+            end
+
+            support = min(left_peak, right_peak)
+            support > floor_value || continue
+            trough = max(0.0f0, residual_u[i + n_pad])
+            depth_fraction = max(0.0f0, 1.0f0 - trough / support)
+            support_fraction = min(1.0f0, support / candidate_peak)
+            score = depth_fraction * support_fraction
+            if score > best_score
+                best_score = score
+                ratio = log2((trough + floor_value) / (support + floor_value))
+                best_log2_ratio = isfinite(ratio) ? Float32(clamp(ratio, -20.0f0, 0.0f0)) : 0.0f0
+            end
+        end
+
+        return (best_score, best_log2_ratio)
+    end
+
     function boundaryCandidateFeatures(
         scan_range::UnitRange{Int},
         u::Vector{Float32},
+        baseline_subtracted::Vector{Float32},
         N::Int,
         apex_scan::Int,
         n_pad::Int,
@@ -784,6 +1026,11 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                 log2_smoothed_apex_weight = log2_smoothed_apex_weight,
                 secondary_peak_penalty = 1.0f0,
                 asymmetry_penalty = 1.0f0,
+                irt_asymmetry_delta = irtAsymmetryDelta(scan_range, apex_scan),
+                baseline_disconnected_signal_fraction = 0.0f0,
+                baseline_largest_nonapex_lobe_log2_ratio = -10.0f0,
+                baseline_internal_trough_score = 0.0f0,
+                baseline_internal_trough_log2_ratio = 0.0f0,
                 left_excluded_signal_fraction = 0.0f0,
                 right_excluded_signal_fraction = 0.0f0,
                 left_boundary_recovery_fraction = 0.0f0,
@@ -791,6 +1038,10 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                 left_outside_peak_fraction = 0.0f0,
                 right_outside_peak_fraction = 0.0f0,
                 internal_dip_recovery_score = 0.0f0,
+                left_edge_valley_log2_ratio = 0.0f0,
+                right_edge_valley_log2_ratio = 0.0f0,
+                included_nonapex_max_log2_ratio = 0.0f0,
+                included_nonapex_max_irt_distance = 0.0f0,
                 mainsearch_exclusion_penalty = mainsearchEvidenceExclusionPenalty(scan_range, mainsearch_evidence_range),
                 mainsearch_left_bound_delta = mainsearch_left_bound_delta,
                 mainsearch_right_bound_delta = mainsearch_right_bound_delta,
@@ -839,10 +1090,50 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
             n_pad,
             apex_height,
         )
+        left_edge_valley_log2_ratio = edgeValleyLog2Ratio(
+            u,
+            left,
+            apex_scan,
+            N,
+            n_pad,
+            apex_height;
+            left_side = true,
+        )
+        right_edge_valley_log2_ratio = edgeValleyLog2Ratio(
+            u,
+            right,
+            apex_scan,
+            N,
+            n_pad,
+            apex_height;
+            left_side = false,
+        )
+        included_nonapex_max_log2_ratio, included_nonapex_max_irt_distance =
+            includedNonApexMaxFeatures(
+                u,
+                scan_range,
+                apex_scan,
+                n_pad,
+                apex_height,
+        )
 
-        left_span = indexIrtDistance(left, apex_scan)
-        right_span = indexIrtDistance(apex_scan, right)
-        asymmetry_penalty = abs(left_span - right_span) / max(left_span + right_span, eps(Float32))
+        asymmetry_penalty = areaAsymmetryPenalty(u, scan_range, apex_scan, n_pad)
+        irt_asymmetry_delta = irtAsymmetryDelta(scan_range, apex_scan)
+        baseline_disconnected_signal_fraction, baseline_largest_nonapex_lobe_log2_ratio =
+            baselineDisconnectedLobeFeatures(
+                baseline_subtracted,
+                scan_range,
+                apex_scan,
+                n_pad,
+                apex_height,
+            )
+        baseline_internal_trough_score, baseline_internal_trough_log2_ratio =
+            baselineInternalTroughFeatures(
+                baseline_subtracted,
+                scan_range,
+                n_pad,
+                apex_height,
+            )
         mainsearch_exclusion_penalty = mainsearchEvidenceExclusionPenalty(
             scan_range,
             mainsearch_evidence_range,
@@ -860,6 +1151,11 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
             log2_smoothed_apex_weight = log2_smoothed_apex_weight,
             secondary_peak_penalty = secondary_peak_penalty,
             asymmetry_penalty = asymmetry_penalty,
+            irt_asymmetry_delta = irt_asymmetry_delta,
+            baseline_disconnected_signal_fraction = baseline_disconnected_signal_fraction,
+            baseline_largest_nonapex_lobe_log2_ratio = baseline_largest_nonapex_lobe_log2_ratio,
+            baseline_internal_trough_score = baseline_internal_trough_score,
+            baseline_internal_trough_log2_ratio = baseline_internal_trough_log2_ratio,
             left_excluded_signal_fraction = left_excluded_signal_fraction,
             right_excluded_signal_fraction = right_excluded_signal_fraction,
             left_boundary_recovery_fraction = left_boundary_recovery_fraction,
@@ -867,6 +1163,10 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
             left_outside_peak_fraction = left_outside_peak_fraction,
             right_outside_peak_fraction = right_outside_peak_fraction,
             internal_dip_recovery_score = internal_dip_recovery_score,
+            left_edge_valley_log2_ratio = left_edge_valley_log2_ratio,
+            right_edge_valley_log2_ratio = right_edge_valley_log2_ratio,
+            included_nonapex_max_log2_ratio = included_nonapex_max_log2_ratio,
+            included_nonapex_max_irt_distance = included_nonapex_max_irt_distance,
             mainsearch_exclusion_penalty = mainsearch_exclusion_penalty,
             mainsearch_left_bound_delta = mainsearch_left_bound_delta,
             mainsearch_right_bound_delta = mainsearch_right_bound_delta,
@@ -1015,7 +1315,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         end
     end
 
-    function integrateCandidateRange(
+    function candidateBaselineSubtractedTrace(
         scan_range::UnitRange{Int},
         smoothed::Vector{Float32},
         n_active::Int,
@@ -1028,7 +1328,13 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
             scan_range,
             n_pad,
         )
+        return candidate_u
+    end
 
+    function integrateCandidateRange(
+        scan_range::UnitRange{Int},
+        candidate_u::Vector{Float32},
+    )
         apex_val = candidate_u[apex_scan + n_pad]
         if apex_val <= 0.0f0 || isnan(apex_val)
             return 0.0f0, UInt32(scan_idx_col[apex_scan]), UInt32(0)
@@ -1069,16 +1375,18 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
 
         for (candidate_index, candidate) in enumerate(candidates)
             scan_range = candidate.scan_range
+            baseline_subtracted = candidateBaselineSubtractedTrace(scan_range, smoothed, n_active)
             features = boundaryCandidateFeatures(
                 scan_range,
                 smoothed,
+                baseline_subtracted,
                 m,
                 apex_scan,
                 n_pad,
                 mainsearch_evidence_range,
                 fallback_range,
             )
-            area, best_scan, points = integrateCandidateRange(scan_range, smoothed, n_active)
+            area, best_scan, points = integrateCandidateRange(scan_range, baseline_subtracted)
             push!(rows, (;
                 candidate_index = UInt16(candidate_index),
                 candidate_start_idx = UInt16(first(scan_range)),

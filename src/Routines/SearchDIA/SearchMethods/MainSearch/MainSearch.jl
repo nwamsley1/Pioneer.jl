@@ -215,10 +215,8 @@ function process_search_results!(
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm = time()
 
-    # Refine predicted iRTs from the initial per-run model, refresh features
-    # that consume :irt_pred, then train a second per-run LGBM where positives
-    # are restricted to the same high-confidence target precursors that would
-    # pass the prescore q-value gate into downstream analysis.
+    # Refine predicted iRTs from the initial per-run model and refresh features
+    # that consume :irt_pred for downstream models.
     precursors = getPrecursors(getSpecLib(search_context))
     irt_refinement = MainSearchIrtRefinement(
         precursors;
@@ -234,45 +232,9 @@ function process_search_results!(
     refined_training_target_set = Set{UInt32}()
     if irt_refinement_result.refined
         refined_training_target_set = Set{UInt32}(irt_refinement_result.training_target_precursors)
-        label_col = :mainsearch_refined_training_target
-        psms[!, label_col] = Bool[
-            Bool(psms.target[i]) && (UInt32(psms.precursor_idx[i]) in refined_training_target_set)
-            for i in 1:nrow(psms)
-        ]
-        refined_training_mask = _mainsearch_refined_lgbm_training_mask(psms, refined_training_target_set)
-        n_refined_targets = count(psms[!, label_col] .& refined_training_mask)
-        n_refined_negatives = count((.!psms[!, label_col]) .& refined_training_mask)
-        n_refined_excluded_targets = count(Bool(psms.target[i]) && !refined_training_mask[i] for i in 1:nrow(psms))
-        if n_refined_targets > 0 && n_refined_negatives > 0
-            best_psms2, scores2, lgbm_timings2 = train_lgbm_and_select_best(
-                psms;
-                integration_q_value_threshold = params.integration_q_value_threshold,
-                training_label_col = label_col,
-                training_row_mask = refined_training_mask,
-            )
-            if hasproperty(best_psms2, label_col)
-                select!(best_psms2, Not(label_col))
-            end
-            select!(psms, Not(label_col))
-            best_psms = best_psms2
-            scores = scores2
-            best_psms[!, :lgbm_prob] = scores
-            lgbm_timings = (
-                matrix = lgbm_timings.matrix + lgbm_timings2.matrix,
-                train_cv = lgbm_timings.train_cv + lgbm_timings2.train_cv,
-                best = lgbm_timings.best + lgbm_timings2.best,
-            )
-            @user_info "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
-                       "$(length(refined_training_target_set)) high-confidence target precursors; " *
-                       "second LGBM positives=$n_refined_targets negatives=$n_refined_negatives " *
-                       "excluded_low_conf_targets=$n_refined_excluded_targets"
-            _summarize_psm_counts(best_psms, "after refined-iRT LGBM", ms_file_idx, file_name)
-        else
-            select!(psms, Not(label_col))
-            @user_info "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
-                       "skipping second LGBM due to one-class refinement labels " *
-                       "(positives=$n_refined_targets negatives=$n_refined_negatives)"
-        end
+        @user_info "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
+                   "updated predicted iRTs from $(length(refined_training_target_set)) " *
+                   "high-confidence target precursors; second per-run LGBM disabled"
     else
         @user_info "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
                    "skipped; $(length(irt_refinement_result.training_target_precursors)) " *
@@ -369,36 +331,10 @@ function process_search_results!(
                 add_ms1_features!(psms2, spectra, search_context, ms_file_idx)
 
                 # Re-train LGBM and re-select best per precursor on pass-2 PSMs
-                pass2_label_col = :target
-                pass2_training_mask = nothing
-                refined_pass2_label_col = :mainsearch_refined_training_target
-                if irt_refinement_result.refined && !isempty(refined_training_target_set)
-                    psms2[!, refined_pass2_label_col] = Bool[
-                        Bool(psms2.target[i]) && (UInt32(psms2.precursor_idx[i]) in refined_training_target_set)
-                        for i in 1:nrow(psms2)
-                    ]
-                    refined_pass2_training_mask = _mainsearch_refined_lgbm_training_mask(psms2, refined_training_target_set)
-                    n_pass2_refined_targets = count(psms2[!, refined_pass2_label_col] .& refined_pass2_training_mask)
-                    n_pass2_refined_negatives = count((.!psms2[!, refined_pass2_label_col]) .& refined_pass2_training_mask)
-                    if n_pass2_refined_targets > 0 && n_pass2_refined_negatives > 0
-                        pass2_label_col = refined_pass2_label_col
-                        pass2_training_mask = refined_pass2_training_mask
-                    else
-                        select!(psms2, Not(refined_pass2_label_col))
-                    end
-                end
                 best_psms2, scores2, _ = train_lgbm_and_select_best(
                     psms2;
                     integration_q_value_threshold = params.integration_q_value_threshold,
-                    training_label_col = pass2_label_col,
-                    training_row_mask = pass2_training_mask,
                 )
-                if hasproperty(best_psms2, refined_pass2_label_col)
-                    select!(best_psms2, Not(refined_pass2_label_col))
-                end
-                if hasproperty(psms2, refined_pass2_label_col)
-                    select!(psms2, Not(refined_pass2_label_col))
-                end
                 best_psms2[!, :lgbm_prob] = scores2
                 pass2_precs_n = nrow(best_psms2)
                 @user_info "  PEP-filter 2-pass (file_idx=$ms_file_idx): pass2 LGBM → " *
