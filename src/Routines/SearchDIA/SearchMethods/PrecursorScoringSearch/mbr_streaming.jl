@@ -239,13 +239,98 @@ function build_mbr_donor_dict_streaming_with_pass1(refs::Vector{<:Any})
     return all_entries
 end
 
+# Find the donor entry for `pid` from a file OTHER than `my_file`. Pulled
+# out of the inner loop so Julia specializes on the donor_dict value type.
+@inline function _donor_for_pid(donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+                                 pid::UInt32, my_file::UInt32)
+    entries = get(donor_dict, pid, nothing)
+    entries === nothing && return nothing
+    @inbounds for e in entries
+        e.ms_file_idx != my_file && return e
+    end
+    return nothing
+end
+
+# Inner per-row MBR-feature compute. Extracted from
+# compute_mbr_features_per_file_to_sidecar_with_pass1! so Julia specializes
+# on the concrete column types (Arrow.Primitive{T} or Vector{T}) and the
+# Union{Nothing, ...} branch on logby_v / rt_v becomes a one-time call-site
+# decision instead of per-row dispatch.
+@inline function _compute_mbr_inner!(
+    out_max_t::Vector{Float32}, out_max_f::Vector{Float32},
+    out_lw_t::Vector{Float32},  out_lw_f::Vector{Float32},
+    out_le_t::Vector{Float32},  out_le_f::Vector{Float32},
+    out_ir_t::Vector{Float32},  out_ir_f::Vector{Float32},
+    out_miss_t::BitVector,      out_miss_f::BitVector,
+    out_log_by_t::Vector{Float32}, out_log_by_f::Vector{Float32},
+    out_rt_t::Vector{Float32},   out_rt_f::Vector{Float32},
+    pid_v::AbstractVector{UInt32},
+    file_v::AbstractVector{UInt32},
+    weight_v::AbstractVector{Float32},
+    l2ie_v::AbstractVector{Float16},
+    irtp_v::AbstractVector{Float32},
+    irto_v::AbstractVector{Float32},
+    logby_v::Union{Nothing, AbstractVector{Float16}},
+    rt_v::Union{Nothing, AbstractVector{Float32}},
+    donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
+    partner_col::Vector{UInt32},
+)
+    n = length(pid_v)
+    plen = length(partner_col)
+    has_logby = logby_v !== nothing
+    has_rt    = rt_v    !== nothing
+    @inbounds for i in 1:n
+        my_file = file_v[i]
+        my_pid  = pid_v[i]
+        my_partner = my_pid <= UInt32(plen) ? partner_col[Int(my_pid)] : UInt32(0)
+
+        donor_t = _donor_for_pid(donor_dict, my_pid, my_file)
+        if donor_t !== nothing
+            out_max_t[i] = donor_t.trace_prob
+            wi = weight_v[i]
+            if donor_t.weight > 0 && wi > 0
+                out_lw_t[i] = log2(wi / donor_t.weight)
+            end
+            out_le_t[i] = Float32(l2ie_v[i]) - donor_t.log2_intensity_explained
+            out_ir_t[i] = abs((irtp_v[i] - irto_v[i]) - donor_t.irt_residual)
+            if has_logby
+                out_log_by_t[i] = Float32(logby_v[i]) - donor_t.log_by_ratio
+            end
+            if has_rt
+                out_rt_t[i] = abs(rt_v[i] - donor_t.rt_obs)
+            end
+            out_miss_t[i] = false
+        end
+        if my_partner != UInt32(0)
+            donor_f = _donor_for_pid(donor_dict, my_partner, my_file)
+            if donor_f !== nothing
+                out_max_f[i] = donor_f.trace_prob
+                wi = weight_v[i]
+                if donor_f.weight > 0 && wi > 0
+                    out_lw_f[i] = log2(wi / donor_f.weight)
+                end
+                out_le_f[i] = Float32(l2ie_v[i]) - donor_f.log2_intensity_explained
+                out_ir_f[i] = abs((irtp_v[i] - irto_v[i]) - donor_f.irt_residual)
+                if has_logby
+                    out_log_by_f[i] = Float32(logby_v[i]) - donor_f.log_by_ratio
+                end
+                if has_rt
+                    out_rt_f[i] = abs(rt_v[i] - donor_f.rt_obs)
+                end
+                out_miss_f[i] = false
+            end
+        end
+    end
+    return nothing
+end
+
 # Per-file MBR feature compute + sidecar write, reading trace_prob_prepass
 # from the Pass-1 sidecar. Mirrors compute_mbr_features_per_file_to_sidecar!
 # but for the streaming-with-Pass-1 flow.
-function compute_mbr_features_per_file_to_sidecar_with_pass1!(ref::Any,
+function compute_mbr_features_per_file_to_sidecar_with_pass1!(
+        main_path::AbstractString,
         donor_dict::Dict{UInt32, Vector{_MBRDonorEntry}},
-        partner_col::AbstractVector)
-    main_path = ref isa AbstractString ? ref : file_path(ref)
+        partner_col::Vector{UInt32})
     pass1_path = main_path * PASS1_SIDECAR_SUFFIX
     isfile(pass1_path) || error("Missing Pass-1 sidecar at $pass1_path")
     main = Arrow.Table(main_path)
@@ -276,52 +361,16 @@ function compute_mbr_features_per_file_to_sidecar_with_pass1!(ref::Any,
     out_miss_t = trues(n);     out_miss_f = trues(n)
     out_log_by_t = fill(-1f0, n); out_log_by_f = fill(-1f0, n)
     out_rt_t = fill(-1f0, n); out_rt_f = fill(-1f0, n)
-    has_logby = logby_v !== nothing
-    has_rt    = rt_v    !== nothing
 
-    @inline function _donor_for(pid::UInt32, my_file::UInt32)
-        entries = get(donor_dict, pid, nothing)
-        entries === nothing && return nothing
-        @inbounds for e in entries
-            e.ms_file_idx != my_file && return e
-        end
-        return nothing
-    end
-
-    @inbounds for i in 1:n
-        my_file = UInt32(file_v[i])
-        my_pid  = UInt32(pid_v[i])
-        my_partner = my_pid <= UInt32(length(partner_col)) ?
-                      (ismissing(partner_col[Int(my_pid)]) ? UInt32(0) : UInt32(partner_col[Int(my_pid)])) :
-                      UInt32(0)
-
-        donor_t = _donor_for(my_pid, my_file)
-        if donor_t !== nothing
-            out_max_t[i] = donor_t.trace_prob
-            if donor_t.weight > 0 && weight_v[i] > 0
-                out_lw_t[i] = log2(Float32(weight_v[i]) / donor_t.weight)
-            end
-            out_le_t[i] = Float32(l2ie_v[i]) - donor_t.log2_intensity_explained
-            out_ir_t[i] = abs(Float32(irtp_v[i] - irto_v[i]) - donor_t.irt_residual)
-            has_logby && (out_log_by_t[i] = Float32(logby_v[i]) - donor_t.log_by_ratio)
-            has_rt    && (out_rt_t[i]     = abs(Float32(rt_v[i]) - donor_t.rt_obs))
-            out_miss_t[i] = false
-        end
-        if my_partner != UInt32(0)
-            donor_f = _donor_for(my_partner, my_file)
-            if donor_f !== nothing
-                out_max_f[i] = donor_f.trace_prob
-                if donor_f.weight > 0 && weight_v[i] > 0
-                    out_lw_f[i] = log2(Float32(weight_v[i]) / donor_f.weight)
-                end
-                out_le_f[i] = Float32(l2ie_v[i]) - donor_f.log2_intensity_explained
-                out_ir_f[i] = abs(Float32(irtp_v[i] - irto_v[i]) - donor_f.irt_residual)
-                has_logby && (out_log_by_f[i] = Float32(logby_v[i]) - donor_f.log_by_ratio)
-                has_rt    && (out_rt_f[i]     = abs(Float32(rt_v[i]) - donor_f.rt_obs))
-                out_miss_f[i] = false
-            end
-        end
-    end
+    _compute_mbr_inner!(
+        out_max_t, out_max_f, out_lw_t, out_lw_f,
+        out_le_t, out_le_f, out_ir_t, out_ir_f,
+        out_miss_t, out_miss_f,
+        out_log_by_t, out_log_by_f, out_rt_t, out_rt_f,
+        pid_v, file_v, weight_v, l2ie_v, irtp_v, irto_v,
+        logby_v, rt_v,
+        donor_dict, partner_col,
+    )
 
     side_path = main_path * MBR_SIDECAR_SUFFIX
     side_df = DataFrame(
