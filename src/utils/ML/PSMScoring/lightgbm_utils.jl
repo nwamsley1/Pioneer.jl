@@ -13,40 +13,34 @@ const LightGBMModelWrapper = LightGBMModel
     feature_matrix(df, features) -> Matrix{Float32}
 
 Construct a dense matrix with the columns in `features` converted to `Float32`.
-Missing values are imputed with sensible defaults per type.
+Missing values are imputed with `0.0f0`. Columns are filled in parallel via a
+typed inner helper to avoid Float64 intermediates and per-column broadcast
+temporaries.
 """
+function _fill_column!(M::Matrix{Float32}, j::Int, col::AbstractVector{T}) where {T<:Real}
+    @inbounds @simd for i in eachindex(col)
+        M[i, j] = Float32(col[i])
+    end
+end
+
+function _fill_column!(M::Matrix{Float32}, j::Int, col::AbstractVector{<:Union{Missing, T}}) where {T<:Real}
+    @inbounds for i in eachindex(col)
+        v = col[i]
+        M[i, j] = v === missing ? 0.0f0 : Float32(v)
+    end
+end
+
+_fill_column!(::Matrix{Float32}, ::Int, col::AbstractVector) =
+    throw(ArgumentError("Unsupported feature type $(eltype(col)) for LightGBM"))
+
 function feature_matrix(df::AbstractDataFrame, features::Vector{Symbol})
     n = nrow(df)
     m = length(features)
     matrix = Matrix{Float32}(undef, n, m)
-
-    for (j, feat) in enumerate(features)
-        column = df[!, feat]
-        T = nonmissingtype(eltype(column))
-
-        if T <: AbstractFloat
-            if eltype(column) <: Union{Missing, T}
-                matrix[:, j] = Float32.(coalesce.(column, zero(T)))
-            else
-                matrix[:, j] = Float32.(column)
-            end
-        elseif T <: Integer
-            if eltype(column) <: Union{Missing, T}
-                matrix[:, j] = Float32.(coalesce.(column, zero(T)))
-            else
-                matrix[:, j] = Float32.(column)
-            end
-        elseif T <: Bool
-            if eltype(column) <: Union{Missing, Bool}
-                matrix[:, j] = Float32.(coalesce.(column, false))
-            else
-                matrix[:, j] = Float32.(column)
-            end
-        else
-            throw(ArgumentError("Unsupported feature type $(eltype(column)) for LightGBM"))
-        end
+    cols = AbstractVector[df[!, f] for f in features]
+    Threads.@threads for j in 1:m
+        _fill_column!(matrix, j, cols[j])
     end
-
     return matrix
 end
 
