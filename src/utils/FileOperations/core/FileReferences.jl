@@ -186,6 +186,8 @@ plain `FileReference` (no sidecars), behaves identically to
 `DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))`.
 """
 function load_with_sidecars(ref::FileReference)
+    # DataFrame's default copycols=true gives us mutable Vector{T} columns
+    # (downstream pipeline ops like filter/empty! require this).
     return DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
 end
 
@@ -194,6 +196,9 @@ function load_with_sidecars(ref::PSMFileReference)
     for s in ref.sidecars
         side = Arrow.Table(s.path)
         for c in s.cols
+            # collect ensures the column is a mutable Vector{T}, matching the
+            # mutability invariant used by the rest of the pipeline (filter!,
+            # empty!, transform!).
             df[!, c] = collect(Tables.getcolumn(side, c))
         end
     end
