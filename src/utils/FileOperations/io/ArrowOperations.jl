@@ -320,13 +320,13 @@ Does not modify the original file.
 """
 function transform_and_write!(transform_fn::Function, ref::FileReference, output_path::String)
     validate_exists(ref)
-    
+
     # Ensure output directory exists
     output_dir = dirname(output_path)
     !isdir(output_dir) && mkpath(output_dir)
-    
-    # Load entire file into memory
-    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+
+    # Load main file + any registered sidecars (PSMFileReference specialization)
+    df = load_with_sidecars(ref)
     
     # Apply transformation
     transformed_df = transform_fn(df)

@@ -46,9 +46,14 @@ Per-file precursor probability aggregation (no MBR filtering).
 """
 function aggregate_per_file!(refs::Vector{PSMFileReference})
     for ref in refs
-        df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+        df = load_with_sidecars(ref)
         _aggregate_trace_to_precursor_probs!(df)
-        write_arrow_file(ref, df)
+        # Write only :prec_prob as a row-aligned sidecar instead of rewriting
+        # the entire main file. Downstream readers locate :prec_prob via the
+        # PSMFileReference's sidecar registry.
+        side_path = file_path(ref) * ".prec_prob.sidecar.arrow"
+        writeArrow(side_path, DataFrame(prec_prob = df.prec_prob))
+        register_sidecar!(ref, side_path, [:prec_prob])
     end
     return nothing
 end
@@ -99,12 +104,14 @@ function build_precursor_global_prob_dicts(
     sizehint!(target_dict, n_precursors)
 
     for ref in refs
-        tbl = Arrow.Table(file_path(ref))
-        n = length(tbl.precursor_idx)
+        # prec_prob lives in a sidecar after aggregate_per_file!; pull it
+        # from wherever it's registered.
+        cols_df = materialize_columns(ref, [:precursor_idx, :prec_prob, :target])
+        n = nrow(cols_df)
         n == 0 && continue
-        prec_ids = tbl.precursor_idx
-        prec_probs = tbl.prec_prob
-        targets = tbl.target
+        prec_ids = cols_df.precursor_idx
+        prec_probs = cols_df.prec_prob
+        targets = cols_df.target
 
         @inbounds for i in 1:n
             pid = prec_ids[i]
@@ -201,13 +208,14 @@ function write_score_sidecars(
 )
     sidecar_refs = PSMFileReference[]
     for ref in refs
-        tbl = Arrow.Table(file_path(ref))
-        n = length(Tables.getcolumn(tbl, first(columns)))
-        n == 0 && continue
-
-        col_data = NamedTuple{Tuple(columns)}(Tuple(collect(Tables.getcolumn(tbl, c)) for c in columns))
+        # Use materialize_columns so columns are pulled from main OR any
+        # registered sidecar (e.g. :prec_prob now lives in a sidecar after
+        # aggregate_per_file!).
+        df = ref isa PSMFileReference ? materialize_columns(ref, columns) :
+             DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))[!, columns]
+        nrow(df) == 0 && continue
         temp_path = tempname() * "_$(temp_prefix).arrow"
-        writeArrow(temp_path, DataFrame(; col_data...))
+        writeArrow(temp_path, df)
         push!(sidecar_refs, PSMFileReference(temp_path))
     end
     return sidecar_refs

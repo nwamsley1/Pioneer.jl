@@ -178,6 +178,29 @@ function locate_column(ref::PSMFileReference, col::Symbol)
 end
 
 """
+    load_with_sidecars(ref::FileReference) -> DataFrame
+
+Read every column from the main file (and from any sidecars registered on a
+`PSMFileReference`) into a single DataFrame, joined by row position. For
+plain `FileReference` (no sidecars), behaves identically to
+`DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))`.
+"""
+function load_with_sidecars(ref::FileReference)
+    return DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+end
+
+function load_with_sidecars(ref::PSMFileReference)
+    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    for s in ref.sidecars
+        side = Arrow.Table(s.path)
+        for c in s.cols
+            df[!, c] = collect(Tables.getcolumn(side, c))
+        end
+    end
+    return df
+end
+
+"""
     materialize_columns(ref::PSMFileReference, cols::Vector{Symbol}) -> DataFrame
 
 Read just `cols` from wherever they live (main or sidecars) and return a
