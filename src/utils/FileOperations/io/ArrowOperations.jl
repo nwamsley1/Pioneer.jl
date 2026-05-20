@@ -52,21 +52,27 @@ sort_file_by_keys!(ref, :score; reverse=true)
 sort_file_by_keys!(ref, :score, :target; reverse=[true, true])
 ```
 """
-function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; 
+function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...;
                            reverse::Union{Bool, Vector{Bool}}=false,
                            show_progress::Bool=true)
     validate_exists(ref)
-    
-    # Validate that all sort keys exist in schema
+
+    # Validate that all sort keys exist in schema (or in any sidecar, for
+    # PSMFileReference). This is the natural consolidation point: the sort
+    # produces a flat file that includes previously-sidecarred columns.
     for key in sort_keys
-        if !has_column(schema(ref), key)
-            error("Sort key $key not found in file schema")
+        if ref isa PSMFileReference
+            has_column_anywhere(ref, key) ||
+                error("Sort key $key not found in file schema or any sidecar")
+        else
+            has_column(schema(ref), key) ||
+                error("Sort key $key not found in file schema")
         end
     end
-    
-    # Load file into memory (not memory-mapped)
-    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-    
+
+    # Load file (and any registered sidecars) into memory.
+    df = load_with_sidecars(ref)
+
     # Build sort order vector
     rev_vec = if reverse isa Bool
         fill(reverse, length(sort_keys))
@@ -77,16 +83,24 @@ function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...;
         end
         reverse
     end
-    
+
     # Sort dataframe
     fast_df_sort!(df, collect(sort_keys), rev=rev_vec)
-    
-    # Write back to same file using writeArrow for Windows compatibility
+
+    # Write back to same file using writeArrow for Windows compatibility.
+    # This is now the consolidation point — main + sidecar columns are
+    # merged into one file.
     writeArrow(file_path(ref), df)
-    
+
+    # Sidecars are now stale (their data is in main); clear them and
+    # unlink the on-disk sidecar files.
+    if ref isa PSMFileReference && !isempty(ref.sidecars)
+        clear_sidecars!(ref; delete_files=true)
+    end
+
     # Update reference metadata
     mark_sorted!(ref, sort_keys...)
-    
+
     return ref
 end
 
@@ -301,15 +315,24 @@ For operations that need full dataset access (like sorting).
 """
 function transform_and_write!(transform_fn::Function, ref::FileReference)
     validate_exists(ref)
-    
-    # Load entire file into memory
-    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-    
+
+    # Load main + any registered sidecars. The in-place rewrite is the
+    # natural consolidation point for the sidecar architecture: after this
+    # function returns, all sidecar columns have been baked into the main
+    # file and the stale sidecar files on disk are deleted.
+    had_sidecars = ref isa PSMFileReference && !isempty(ref.sidecars)
+    df = load_with_sidecars(ref)
+
     # Apply transformation
     transformed_df = transform_fn(df)
-    
+
     # Write back using writeArrow for Windows compatibility
-    return write_arrow_file(ref, transformed_df)
+    write_arrow_file(ref, transformed_df)
+
+    # Sidecar data is now in main; remove the orphaned sidecar files.
+    had_sidecars && clear_sidecars!(ref; delete_files=true)
+
+    return ref
 end
 
 """

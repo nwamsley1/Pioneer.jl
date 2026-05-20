@@ -156,55 +156,50 @@ function update_psms_with_probit_scores_refs(
             pg_score_lookup[key] = (pg_table[:pg_score][i], pep_val)
         end
 
-        transform_and_write!(psm_ref) do psms_df
-            n_psms = nrow(psms_df)
-            probit_pg_scores = Vector{Union{Missing, Float32}}(missing, n_psms)
-            global_pg_scores = Vector{Union{Missing, Float32}}(missing, n_psms)
-            pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
-            global_pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
-            pg_peps = Vector{Union{Missing, Float32}}(missing, n_psms)
+        # Compute the 5 new score columns without rewriting the whole PSM file.
+        # We read only the (small) columns we need to derive them, then write
+        # the 5 new columns to a sidecar registered on psm_ref. The full file
+        # rewrite happens later at the MaxLFQ-boundary sort, which is the
+        # natural consolidation point for main + sidecars.
+        needed = materialize_columns(psm_ref,
+            [:inferred_protein_group, :use_for_protein_quant,
+             :target, :entrapment_group_id])
+        n_psms = nrow(needed)
+        probit_pg_scores = Vector{Union{Missing, Float32}}(missing, n_psms)
+        global_pg_scores = Vector{Union{Missing, Float32}}(missing, n_psms)
+        pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
+        global_pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
+        pg_peps = Vector{Union{Missing, Float32}}(missing, n_psms)
 
-            for i in 1:n_psms
-                if ismissing(psms_df[i, :inferred_protein_group])
-                    continue
-                end
+        ipg_col = needed[!, :inferred_protein_group]
+        uq_col  = needed[!, :use_for_protein_quant]
+        tgt_col = needed[!, :target]
+        ent_col = needed[!, :entrapment_group_id]
 
-                if psms_df[i, :use_for_protein_quant] == false
-                    continue
-                end
-
-                key = ProteinKey(
-                    psms_df[i, :inferred_protein_group],
-                    psms_df[i, :target],
-                    psms_df[i, :entrapment_group_id]
-                )
-
-                if !haskey(pg_score_lookup, key)
-                    continue
-                end
-                scores_tuple = pg_score_lookup[key]
-                probit_pg_scores[i] = scores_tuple[1]
-                pg_peps[i] = scores_tuple[2]
-
-                if !haskey(pg_name_to_global_pg_score, key)
-                    throw("Missing global pg score lookup key!!!")
-                end
-                global_pg_scores[i] = pg_name_to_global_pg_score[key]
-
-                pg_qvals[i] = pg_score_to_qval(probit_pg_scores[i])
-                dict_key = (key.name, key.is_target, key.entrap_id)
-                global_pg_qvals[i] = get(global_pg_score_to_qval_dict, dict_key, missing)
-            end
-
-            psms_df[!, :pg_score] = probit_pg_scores
-            psms_df[!, :global_pg_score] = global_pg_scores
-            psms_df[!, :pg_qval] = pg_qvals
-            psms_df[!, :qlobal_pg_qval] = global_pg_qvals
-            psms_df[!, :pg_pep] = pg_peps
-
-            total_psms_updated += n_psms
-            return psms_df
+        for i in 1:n_psms
+            ismissing(ipg_col[i]) && continue
+            uq_col[i] == false && continue
+            key = ProteinKey(ipg_col[i], tgt_col[i], ent_col[i])
+            haskey(pg_score_lookup, key) || continue
+            scores_tuple = pg_score_lookup[key]
+            probit_pg_scores[i] = scores_tuple[1]
+            pg_peps[i] = scores_tuple[2]
+            haskey(pg_name_to_global_pg_score, key) ||
+                throw("Missing global pg score lookup key!!!")
+            global_pg_scores[i] = pg_name_to_global_pg_score[key]
+            pg_qvals[i] = pg_score_to_qval(probit_pg_scores[i])
+            dict_key = (key.name, key.is_target, key.entrap_id)
+            global_pg_qvals[i] = get(global_pg_score_to_qval_dict, dict_key, missing)
         end
+
+        add_columns_via_sidecar!(psm_ref,
+            :pg_score        => probit_pg_scores,
+            :global_pg_score => global_pg_scores,
+            :pg_qval         => pg_qvals,
+            :qlobal_pg_qval  => global_pg_qvals,
+            :pg_pep          => pg_peps;
+            tag = "pg_scores")
+        total_psms_updated += n_psms
 
         files_processed += 1
     end

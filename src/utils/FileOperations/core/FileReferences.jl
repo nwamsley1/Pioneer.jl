@@ -77,7 +77,11 @@ mutable struct PSMFileReference <: FileReference
     file_exists::Bool
     sidecars::Vector{Sidecar}     # Row-aligned auxiliary files (added Phase 2)
 
-    # Constructor that validates file and extracts metadata
+    # Constructor that validates file and extracts metadata. Any on-disk
+    # sidecar files matching `{file_path}.<tag>.sidecar.arrow` and whose
+    # row count matches the main file are auto-discovered and registered.
+    # This ensures fresh PSMFileReferences built from a path inherit any
+    # sidecars produced upstream by `add_columns_via_sidecar!`.
     function PSMFileReference(file_path::String)
         if !isfile(file_path)
             return new(file_path, FileSchema(Symbol[]), (), 0, false, Sidecar[])
@@ -90,8 +94,43 @@ mutable struct PSMFileReference <: FileReference
         col_names = Tables.columnnames(tbl)
         row_count = isempty(col_names) ? 0 : length(Tables.getcolumn(tbl, 1))
 
-        new(file_path, schema, (), row_count, true, Sidecar[])
+        ref = new(file_path, schema, (), row_count, true, Sidecar[])
+        _discover_sidecars_from_disk!(ref)
+        return ref
     end
+end
+
+# Scan the directory containing `ref.file_path` for files named
+# "{basename}.<tag>.sidecar.arrow" and register any that have the matching
+# row count + no schema collisions. Used by the PSMFileReference constructor.
+function _discover_sidecars_from_disk!(ref::PSMFileReference)
+    dir = dirname(ref.file_path)
+    base = basename(ref.file_path)
+    isdir(dir) || return ref
+    pattern = base * "."
+    for entry in readdir(dir)
+        startswith(entry, pattern) || continue
+        endswith(entry, ".sidecar.arrow") || continue
+        side_path = joinpath(dir, entry)
+        # Skip self-collisions: if the main path itself has a .sidecar.arrow
+        # tail (shouldn't, but be defensive), don't register it as its own sidecar.
+        side_path == ref.file_path && continue
+        try
+            tbl = Arrow.Table(side_path)
+            side_cols = Symbol.(Tables.columnnames(tbl))
+            n = isempty(side_cols) ? 0 : length(Tables.getcolumn(tbl, 1))
+            n == ref.row_count || continue
+            # Skip cols that already exist in main or another sidecar
+            already = filter(c -> has_column(ref.schema, c) ||
+                             any(s -> c in s.cols, ref.sidecars), side_cols)
+            isempty(already) || continue
+            push!(ref.sidecars, Sidecar(side_path, collect(side_cols)))
+        catch
+            # Skip unreadable / malformed sidecar candidates
+            continue
+        end
+    end
+    return ref
 end
 
 """
@@ -203,6 +242,36 @@ function load_with_sidecars(ref::PSMFileReference)
         end
     end
     return df
+end
+
+"""
+    add_columns_via_sidecar!(ref::PSMFileReference, name_to_col::Pair{Symbol, <:AbstractVector}...;
+                             tag::AbstractString="cols") -> PSMFileReference
+
+Write the supplied column(s) to a row-aligned sidecar Arrow file and
+register them on `ref`. Avoids rewriting the main file when the only
+operation is to append new columns. All columns must have length equal to
+`ref.row_count`. `tag` is used to disambiguate the sidecar filename.
+"""
+function add_columns_via_sidecar!(ref::PSMFileReference,
+                                  name_to_col::Pair{Symbol, <:AbstractVector}...;
+                                  tag::AbstractString="cols")
+    validate_exists(ref)
+    isempty(name_to_col) && return ref
+    n = ref.row_count
+    cols = Symbol[]
+    pairs = Pair[]
+    for (k, v) in name_to_col
+        length(v) == n ||
+            error("Column $k has length $(length(v)); expected $n (main row count)")
+        push!(cols, k)
+        push!(pairs, k => v)
+    end
+    side_path = file_path(ref) * "." * tag * ".sidecar.arrow"
+    side_df = DataFrame(pairs...)
+    writeArrow(side_path, side_df)
+    register_sidecar!(ref, side_path, cols)
+    return ref
 end
 
 """
