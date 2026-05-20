@@ -153,6 +153,100 @@ function sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...;
 end
 
 """
+    compute_sortperm(ref::FileReference, sort_keys::Symbol...;
+                     reverse::Union{Bool, Vector{Bool}}=false) -> Vector{Int32}
+
+Compute a permutation that would sort `ref` by `sort_keys` without rewriting
+the file. Only the sort-key columns are read from disk. The returned vector
+can be applied to one or more files (e.g. main + sidecars) via
+`apply_sortperm!` so they end up in lockstep order without each being sorted
+independently.
+
+`reverse` accepts a single Bool (applied to all keys) or a Vector{Bool} (one
+per key). Returns a `Vector{Int32}` permutation (sufficient for ≤ 2^31 rows).
+"""
+function compute_sortperm(ref::FileReference, sort_keys::Symbol...;
+                          reverse::Union{Bool, Vector{Bool}}=false)
+    validate_exists(ref)
+    for k in sort_keys
+        has_column(schema(ref), k) || error("Sort key $k not found in file schema")
+    end
+    rev_vec = reverse isa Bool ? fill(reverse, length(sort_keys)) : reverse
+    length(rev_vec) == length(sort_keys) ||
+        error("Length of reverse vector ($(length(rev_vec))) must match number of sort keys ($(length(sort_keys)))")
+
+    tbl = Arrow.Table(file_path(ref))
+    key_cols = Any[collect(Tables.getcolumn(tbl, k)) for k in sort_keys]
+    n = isempty(key_cols) ? 0 : length(key_cols[1])
+    perm = collect(Int32(1):Int32(n))
+    nkeys = length(key_cols)
+
+    @inline function key_lt(i::Int32, j::Int32)
+        @inbounds for c in 1:nkeys
+            a = key_cols[c][i]; b = key_cols[c][j]
+            if !isequal(a, b)
+                return rev_vec[c] ? isless(b, a) : isless(a, b)
+            end
+        end
+        return false
+    end
+    sort!(perm; lt=key_lt)
+    return perm
+end
+
+"""
+    apply_sortperm!(ref::FileReference, perm::AbstractVector{<:Integer};
+                    mark_sort_keys::Tuple{Vararg{Symbol}}=()) -> FileReference
+
+Apply `perm` to every column of the file referenced by `ref`. The file is
+read, permuted, and written back via the Windows-safe `writeArrow` path.
+If `mark_sort_keys` is non-empty, the reference's `sorted_by` metadata is
+updated to that tuple.
+
+The intended use is to compute one permutation via `compute_sortperm` and
+then apply it to the main file plus any registered sidecars so they all share
+the same row order.
+"""
+function apply_sortperm!(ref::FileReference, perm::AbstractVector{<:Integer};
+                         mark_sort_keys::Tuple{Vararg{Symbol}}=())
+    validate_exists(ref)
+    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    n = nrow(df)
+    length(perm) == n ||
+        error("perm length $(length(perm)) ≠ file row count $n for $(file_path(ref))")
+    df_sorted = df[perm, :]
+    writeArrow(file_path(ref), df_sorted)
+    if !isempty(mark_sort_keys)
+        mark_sorted!(ref, mark_sort_keys...)
+    else
+        ref.sorted_by = ()
+    end
+    return ref
+end
+
+"""
+    apply_sortperm!(refs::Vector{<:FileReference}, perm::AbstractVector{<:Integer};
+                    mark_sort_keys::Tuple{Vararg{Symbol}}=(), parallel::Bool=true)
+
+Apply the same permutation to multiple files (e.g. main + sidecars). All
+files must share the same row count and original row order. Optionally
+parallelized across files.
+"""
+function apply_sortperm!(refs::Vector{<:FileReference}, perm::AbstractVector{<:Integer};
+                         mark_sort_keys::Tuple{Vararg{Symbol}}=(), parallel::Bool=true)
+    if parallel && length(refs) > 1
+        Threads.@threads for ref in refs
+            exists(ref) && apply_sortperm!(ref, perm; mark_sort_keys=mark_sort_keys)
+        end
+    else
+        for ref in refs
+            exists(ref) && apply_sortperm!(ref, perm; mark_sort_keys=mark_sort_keys)
+        end
+    end
+    return refs
+end
+
+"""
     write_arrow_file(ref::FileReference, df::DataFrame) -> FileReference
     
 Write a DataFrame to the file referenced by ref, updating all metadata.
