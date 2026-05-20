@@ -181,15 +181,66 @@ function write_pass1_score_sidecars!(best_psms::DataFrame, file_paths::Vector{St
     return n_written
 end
 
+# Inner per-file row loop for build_mbr_donor_dict_streaming_with_pass1.
+# Extracted so Julia specializes on the concrete Arrow column types and the
+# Union{Nothing, ...} branch on logby_c / rt_c becomes a one-time call-site
+# decision instead of per-row dispatch.
+@inline function _accumulate_donor_entries!(
+    all_entries::Dict{UInt32, Vector{_MBRDonorEntry}},
+    pid_c::AbstractVector{UInt32},
+    side_pid::AbstractVector{UInt32},
+    main_scn::AbstractVector{UInt32},
+    side_scn::AbstractVector{UInt32},
+    score_c::AbstractVector{Float32},
+    w_c::AbstractVector{Float32},
+    l2ie_c::AbstractVector{Float16},
+    irtp_c::AbstractVector{Float32},
+    irto_c::AbstractVector{Float32},
+    logby_c::Union{Nothing, AbstractVector{Float16}},
+    rt_c::Union{Nothing, AbstractVector{Float32}},
+    fidx_c::AbstractVector{UInt32},
+    side_path::String,
+)
+    n = length(pid_c)
+    K = 2
+    has_logby = logby_c !== nothing
+    has_rt    = rt_c    !== nothing
+    @inbounds for i in 1:n
+        # Sanity-check alignment (cheap: one cmp per row)
+        (pid_c[i] == side_pid[i] && main_scn[i] == side_scn[i]) ||
+            error("Pass-1 sidecar misaligned at row $i of $side_path")
+        pid = pid_c[i]
+        e = _MBRDonorEntry(
+            score_c[i], w_c[i], Float32(l2ie_c[i]),
+            irtp_c[i] - irto_c[i],
+            irto_c[i],
+            has_logby ? Float32(logby_c[i]) : 0f0,
+            has_rt    ? rt_c[i]             : 0f0,
+            fidx_c[i], false,
+        )
+        entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
+        if length(entries) < K
+            push!(entries, e)
+            if length(entries) > 1 && entries[end-1].trace_prob < e.trace_prob
+                entries[end-1], entries[end] = entries[end], entries[end-1]
+            end
+        elseif e.trace_prob > entries[end].trace_prob
+            entries[end] = e
+            if entries[1].trace_prob < e.trace_prob
+                entries[1], entries[end] = entries[end], entries[1]
+            end
+        end
+    end
+    return nothing
+end
+
 # Streaming version: like build_mbr_donor_dict_streaming, but reads
 # `trace_prob_prepass` from the Pass-1 sidecar (rather than expecting it
 # in the main file). All other donor columns come from the main file.
 # Alignment between main and sidecar is asserted via (:precursor_idx, :scan_idx).
-function build_mbr_donor_dict_streaming_with_pass1(refs::Vector{<:Any})
-    K = 2
+function build_mbr_donor_dict_streaming_with_pass1(file_paths::Vector{String})
     all_entries = Dict{UInt32, Vector{_MBRDonorEntry}}()
-    for ref in refs
-        main_path = ref isa AbstractString ? ref : file_path(ref)
+    for main_path in file_paths
         side_path = main_path * PASS1_SIDECAR_SUFFIX
         isfile(side_path) || error("Missing Pass-1 sidecar at $side_path")
         main = Arrow.Table(main_path)
@@ -197,44 +248,19 @@ function build_mbr_donor_dict_streaming_with_pass1(refs::Vector{<:Any})
         n = length(main.precursor_idx)
         n == length(side.precursor_idx) ||
             error("Pass-1 sidecar row count mismatch at $side_path")
-        pid_c   = main.precursor_idx
-        side_pid = side.precursor_idx
-        side_scn = side.scan_idx
-        main_scn = main.scan_idx
-        score_c = side.trace_prob_prepass    # from sidecar
-        w_c     = main.weight
-        l2ie_c  = main.log2_intensity_explained
-        irtp_c  = main.irt_pred
-        irto_c  = main.irt_obs
-        logby_c = hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing
-        rt_c    = hasproperty(main, :rt)             ? main.rt             : nothing
-        fidx_c  = main.ms_file_idx
-        @inbounds for i in 1:n
-            # Sanity-check alignment (cheap: one cmp per row)
-            (pid_c[i] == side_pid[i] && main_scn[i] == side_scn[i]) ||
-                error("Pass-1 sidecar misaligned at row $i of $side_path")
-            pid = UInt32(pid_c[i])
-            e = _MBRDonorEntry(
-                Float32(score_c[i]), Float32(w_c[i]), Float32(l2ie_c[i]),
-                Float32(irtp_c[i] - irto_c[i]),
-                Float32(irto_c[i]),
-                logby_c === nothing ? 0f0 : Float32(logby_c[i]),
-                rt_c    === nothing ? 0f0 : Float32(rt_c[i]),
-                UInt32(fidx_c[i]), false,
-            )
-            entries = get!(() -> _MBRDonorEntry[], all_entries, pid)
-            if length(entries) < K
-                push!(entries, e)
-                if length(entries) > 1 && entries[end-1].trace_prob < e.trace_prob
-                    entries[end-1], entries[end] = entries[end], entries[end-1]
-                end
-            elseif e.trace_prob > entries[end].trace_prob
-                entries[end] = e
-                if entries[1].trace_prob < e.trace_prob
-                    entries[1], entries[end] = entries[end], entries[1]
-                end
-            end
-        end
+        _accumulate_donor_entries!(
+            all_entries,
+            main.precursor_idx, side.precursor_idx,
+            main.scan_idx, side.scan_idx,
+            side.trace_prob_prepass,
+            main.weight,
+            main.log2_intensity_explained,
+            main.irt_pred, main.irt_obs,
+            hasproperty(main, :log_by_ratio_m0) ? main.log_by_ratio_m0 : nothing,
+            hasproperty(main, :rt) ? main.rt : nothing,
+            main.ms_file_idx,
+            side_path,
+        )
     end
     return all_entries
 end
