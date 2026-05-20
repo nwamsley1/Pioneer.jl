@@ -279,13 +279,28 @@ function train_psm_classifier_with_fallback(
                      _fold_oof_psms_at_1pct(targets_col[idx1], fs[2])
 
     # Adaptive model selection: if the default LGBM's OOF target count at q≤0.01
-    # is below ADAPTIVE_HP_TARGET_THRESHOLD, the dataset is small enough that
-    # competing alternative HP configs (medium=md50/leaves31, simple=md20/leaves15)
-    # might learn better despite the default's complexity advantage on bigger
-    # data. Below LOW_DATA_THRESHOLD per fold, probit also joins the competition.
-    # Winner = highest OOF target count at 1% FDR.
-    n_lgbm_default = _oof_count(lgbm_scores)
-    adaptive = n_lgbm_default < ADAPTIVE_HP_TARGET_THRESHOLD
+    # is below ADAPTIVE_HP_TARGET_THRESHOLD (5_000), the dataset is small enough
+    # that competing alternative HP configs (medium=md50/leaves31,
+    # simple=md20/leaves15) might learn better despite the default's complexity
+    # advantage on bigger data. Below LOW_DATA_THRESHOLD per fold, probit also
+    # joins the competition. Winner = highest OOF target count at 1% FDR.
+    #
+    # Perf shortcut: on large datasets the OOF count at q≤0.01 will be tens of
+    # thousands of targets, well above the 5_000 adaptive threshold — adaptive
+    # will always be false. Computing _oof_count is ~1.2s/file (two sortperms
+    # over ~7M Float32 each), and gating on min_fold_size lets us skip it
+    # entirely in the large-data regime without changing the model picked.
+    # Threshold of 50_000 per fold is conservative — empirically on Astral
+    # (n_fold ~ 7M), OOF q≤0.01 target count is ~100k+ even on the cheap
+    # configurations.
+    skip_oof_probe = min_fold_size > 50_000
+    if skip_oof_probe
+        n_lgbm_default = -1   # sentinel: not computed
+        adaptive = false
+    else
+        n_lgbm_default = _oof_count(lgbm_scores)
+        adaptive = n_lgbm_default < ADAPTIVE_HP_TARGET_THRESHOLD
+    end
     candidates = [(name="lgbm_default", scores=lgbm_scores, infold=lgbm_infold_scores,
                    last=last_classifier, oof=n_lgbm_default)]
 
@@ -404,8 +419,7 @@ function train_lgbm_and_select_best(
     scores = psms[!, :lgbm_score]
     t_best = time()
 
-    # Feature importances — top 15 by gain. Promoted from debug_l2 to user_info
-    # for the tuning phase; revert to @debug_l2 once feature set stabilizes.
+    # Feature importances — diagnostic only.
     let imp = importance(model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
