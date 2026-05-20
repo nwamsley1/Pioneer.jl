@@ -196,6 +196,7 @@ function process_file!(
     else
         @elapsed permute_psms_by_precursor_idx!(psms)
     end
+
     results.psms[] = psms
 
     @user_info "  MainSearch process_file! (file_idx=$ms_file_idx, $file_name): " *

@@ -689,6 +689,11 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     psms[!, :n_correlated_fragments]      = zeros(UInt8,  n)  # threshold 0.7
     psms[!, :frag_corr_best_m0]           = zeros(Float32, n)
     psms[!, :delta_frame_peak_center]     = zeros(Float32, n)
+    # :n_scans (per-precursor PSM count) — also a PRESCORE_FEATURES feature.
+    # Populated inside the same threaded per-precursor loop below (saves a
+    # second pass and the Dict-build that train_lgbm_and_select_best would
+    # otherwise do over ~14M rows).
+    psms[!, :n_scans]                     = ones(UInt32, n)   # default 1 for single-PSM precs
     n == 0 && return
 
     if !all(c -> hasproperty(psms, c), (:precursor_idx, :frag1_int, :frag2_int, :frag3_int,
@@ -704,6 +709,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
               psms.frag4_int, psms.frag5_int, psms.frag6_int)
     has_m0 = hasproperty(psms, :ms1_m0_intensity)
     m0_int = has_m0 ? psms.ms1_m0_intensity : nothing
+    n_scans_col = psms.n_scans::Vector{UInt32}
 
     # Reuse the shared precursor grouping (perm + starts/ends) if the caller
     # has already computed it; otherwise build it locally. Per-precursor row
@@ -715,12 +721,20 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     n_prec = length(starts)
 
     # Parallel per-precursor walk. Each precursor writes to disjoint row indices
-    # in the 4 output columns; all input arrays are read-only.
+    # in the 5 output columns; all input arrays are read-only.
     Threads.@threads :static for p in 1:n_prec
         @inbounds begin
             i_start = Int(starts[p])
             i_end   = Int(ends[p])
             npts    = i_end - i_start + 1
+            # Write :n_scans for every row in this precursor's group — done
+            # BEFORE the npts<2 early exit so all groups get a value (default 1
+            # from initialization is the right answer for the npts==1 case,
+            # but we still write to be explicit and correct under any ordering).
+            len_u32 = UInt32(npts)
+            for k in 0:(npts-1)
+                n_scans_col[perm[i_start + k]] = len_u32
+            end
             npts < 2 && continue
 
             # Extract chromatograms for the 6 fragments + weight + iRT
