@@ -82,17 +82,26 @@ function _sample_both_folds(
     X1 = Matrix{Float32}(undef, k1, nfeat)
     y0 = Vector{Bool}(undef, k0)
     y1 = Vector{Bool}(undef, k1)
+    n_files = length(file_paths)
+
+    # Phase A (serial): run the reservoir-sampling decision logic to build a
+    # per-file plan of (src_row_in_file => dst_row_in_matrix) pairs. We also
+    # fill y0/y1 here. Keeping this serial preserves the existing RNG
+    # sequence so IDs are bit-stable vs the prior column-major loop.
+    plan0 = Vector{Vector{Tuple{Int32, Int32}}}(undef, n_files)
+    plan1 = Vector{Vector{Tuple{Int32, Int32}}}(undef, n_files)
+    all_feat_cols = Vector{Vector{AbstractVector}}(undef, n_files)
     seen0 = 0
     seen1 = 0
-
-    for fpath in file_paths
+    for (file_idx, fpath) in enumerate(file_paths)
         tbl = Arrow.Table(fpath)
         n = length(tbl.cv_fold)
+        plan0[file_idx] = Tuple{Int32, Int32}[]
+        plan1[file_idx] = Tuple{Int32, Int32}[]
+        all_feat_cols[file_idx] = AbstractVector[getproperty(tbl, f) for f in features]
         n == 0 && continue
         fold_c = tbl.cv_fold
         target_c = tbl.target
-        feat_cols = ntuple(j -> getproperty(tbl, features[j]), nfeat)
-
         @inbounds for i in 1:n
             f = UInt8(fold_c[i])
             if f == UInt8(0)
@@ -104,9 +113,7 @@ function _sample_both_folds(
                     draw > k0 && continue
                     draw
                 end
-                for j in 1:nfeat
-                    X0[pos, j] = Float32(feat_cols[j][i])
-                end
+                push!(plan0[file_idx], (Int32(i), Int32(pos)))
                 y0[pos] = Bool(target_c[i])
             elseif f == UInt8(1)
                 seen1 += 1
@@ -117,15 +124,34 @@ function _sample_both_folds(
                     draw > k1 && continue
                     draw
                 end
-                for j in 1:nfeat
-                    X1[pos, j] = Float32(feat_cols[j][i])
-                end
+                push!(plan1[file_idx], (Int32(i), Int32(pos)))
                 y1[pos] = Bool(target_c[i])
             end
         end
     end
     @assert seen0 == n0 "Sampler saw $seen0 rows for fold=0 but Pass-1 metadata counted $n0"
     @assert seen1 == n1 "Sampler saw $seen1 rows for fold=1 but Pass-1 metadata counted $n1"
+
+    # Phase B (column-parallel): execute the plan. Each thread takes one
+    # output column j, walks every file's plan, and copies the source values
+    # at planned indices into X0[:, j] and X1[:, j]. Plans are independent
+    # of thread, so all threads write disjoint matrix locations.
+    Threads.@threads for j in 1:nfeat
+        for file_idx in 1:n_files
+            col = all_feat_cols[file_idx][j]
+            p0 = plan0[file_idx]
+            @inbounds for k in eachindex(p0)
+                src_i, dst_i = p0[k]
+                X0[dst_i, j] = Float32(col[src_i])
+            end
+            p1 = plan1[file_idx]
+            @inbounds for k in eachindex(p1)
+                src_i, dst_i = p1[k]
+                X1[dst_i, j] = Float32(col[src_i])
+            end
+        end
+    end
+
     return X0, y0, X1, y1
 end
 
@@ -171,11 +197,14 @@ function _predict_pass1_to_sidecar(
     end
 
     # Build the full file's feature matrix once (one mmap-touch per col).
+    # Parallelize across columns: each thread fills one column independently
+    # via the typed _fill_column! helper from lightgbm_utils.jl (same pattern
+    # as feature_matrix). Avoids the serial column-major loop.
     nfeat = length(features)
     X = Matrix{Float32}(undef, n, nfeat)
-    feat_cols = ntuple(j -> getproperty(tbl, features[j]), nfeat)
-    @inbounds for j in 1:nfeat, i in 1:n
-        X[i, j] = Float32(feat_cols[j][i])
+    feat_cols = AbstractVector[getproperty(tbl, features[j]) for j in 1:nfeat]
+    Threads.@threads for j in 1:nfeat
+        _fill_column!(X, j, feat_cols[j])
     end
 
     fold_c = tbl.cv_fold
