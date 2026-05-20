@@ -284,13 +284,8 @@ end
 # `scan_to_ms1` is a precomputed mapping (scan_id → nearest MS1 scan id),
 # built once in the caller. This eliminates the per-PSM
 # `getRetentionTime` + `searchsortedfirst` work.
-#
-# `pred_ratio_by_pid` is a precomputed predicted-M1/M0-ratio per precursor,
-# built once in the caller. Eliminates two per-PSM `iso_splines(...)` calls
-# (each ~500ns-1µs B-spline evaluation) when the M0+M1 branch is taken.
 function _ms1_lookup_chunk!(psms, spectra,
-                             prec_mzs, prec_charges,
-                             pred_ratio_by_pid::Vector{Float32},
+                             prec_mzs, prec_charges, prec_sulfurs, iso_splines,
                              scan_to_ms1::Vector{Int32},
                              ms1_ppm_tol::Float32, NEUTRON::Float32,
                              chunk_start::Int, chunk_end::Int)
@@ -328,9 +323,14 @@ function _ms1_lookup_chunk!(psms, spectra,
         end
         if m0_hit && m0_int > 0f0 && m1_hit
             obs_ratio = m1_int / m0_int
-            pred_ratio = pred_ratio_by_pid[Int(pid)]
-            psms.ms1_m1_to_m0_ratio[i] = Float32(obs_ratio)
-            psms.ms1_m1_to_m0_pred[i]  = pred_ratio
+            sulf_raw = Int(prec_sulfurs[pid])
+            sulf = clamp(sulf_raw, 0, 5)
+            prec_mass_approx = prec_mz * Float32(prec_chg)
+            p0 = max(iso_splines(Int64(sulf), Int64(0), prec_mass_approx), 1f-12)
+            p1 = max(iso_splines(Int64(sulf), Int64(1), prec_mass_approx), 1f-12)
+            pred_ratio = Float32(p1 / p0)
+            psms.ms1_m1_to_m0_ratio[i]    = Float32(obs_ratio)
+            psms.ms1_m1_to_m0_pred[i]     = pred_ratio
             # ms1_envelope_dev_log2 = log2(obs_ratio / pred_ratio) was dropped
             # in 143d6b87 (smart-composite reduction); compute deleted 2026-05-19.
         end
@@ -414,28 +414,6 @@ function add_ms1_lookup_features!(psms::DataFrame,
 
     NEUTRON = Float32(1.00335)
 
-    # 2b. Precompute predicted M1/M0 ratio per precursor. Pure function of
-    # (prec_mz, prec_charge, prec_sulfur) → same answer for every PSM of the
-    # same precursor. The two iso_splines(...) B-spline evaluations are the
-    # bulk of the per-PSM compute on the M0+M1-hit branch; precomputing
-    # once per library precursor replaces ~9M-14M of them with a single
-    # array load per PSM.
-    # Threaded — at 6M precursors × 2 spline evals ≈ 12M total, the serial
-    # version was ~3 s/file. Threaded over 10 cores it's ~0.3 s/file.
-    n_lib = length(prec_mzs)
-    pred_ratio_by_pid = Vector{Float32}(undef, n_lib)
-    parallel_foreach!(n_lib) do chunk
-        @inbounds for pid in chunk
-            pmz  = Float32(prec_mzs[pid])
-            pchg = max(Int(prec_charges[pid]), 1)
-            sulf = clamp(Int(prec_sulfurs[pid]), 0, 5)
-            m_approx = pmz * Float32(pchg)
-            p0 = max(iso_splines(Int64(sulf), Int64(0), m_approx), 1f-12)
-            p1 = max(iso_splines(Int64(sulf), Int64(1), m_approx), 1f-12)
-            pred_ratio_by_pid[pid] = Float32(p1 / p0)
-        end
-    end
-
     # Parallel per-PSM lookup. Each PSM writes to disjoint indices in the output
     # columns (ms1_m0_intensity[i], etc.) so no synchronization needed. We use
     # Threads.@spawn per chunk so each task keeps its own ms1-spectrum cache.
@@ -449,8 +427,7 @@ function add_ms1_lookup_features!(psms::DataFrame,
         chunk_end = min(t * chunk_size, n)
         Threads.@spawn _ms1_lookup_chunk!(
             psms, spectra,
-            prec_mzs, prec_charges,
-            pred_ratio_by_pid,
+            prec_mzs, prec_charges, prec_sulfurs, iso_splines,
             scan_to_ms1,
             ms1_ppm_tol, NEUTRON,
             chunk_start, chunk_end
