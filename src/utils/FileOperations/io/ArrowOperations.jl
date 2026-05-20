@@ -372,7 +372,11 @@ Load entire Arrow file as DataFrame. Hides direct Arrow.Table access.
 """
 function load_dataframe(ref::FileReference)
     validate_exists(ref)
-    return DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    # Sidecar-aware read: for PSMFileReference with registered sidecars, this
+    # returns a DataFrame containing main + all sidecar columns. For plain
+    # FileReferences, identical to the original DataFrame(Tables.columntable(...))
+    # behavior.
+    return load_with_sidecars(ref)
 end
 
 """

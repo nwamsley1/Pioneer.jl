@@ -260,14 +260,54 @@ function run_protein_inference!(
         infer_proteins(proteins_vec, peptides_vec)
     end
 
-    # Pass 3: annotate each file with peptide metadata and apply the single
-    # global inference result. Combined into one file rewrite per file.
-    final_pipeline = annotation_pipeline |>
-        add_inferred_protein_column(inference_result) |>
-        add_quantification_flag(inference_result)
+    # Pass 3: compute peptide metadata + inferred protein group +
+    # use_for_protein_quant directly into row-aligned arrays and write them
+    # as a single sidecar instead of rewriting the main file. The sidecar is
+    # consolidated into the main file later (at MaxLFQ's sort).
+    all_base_pep_ids = getBasePepId(precursors)::AbstractVector{UInt32}
+
     for psm_ref in ProgressBar(passing_refs)
         exists(psm_ref) || continue
-        apply_pipeline!(psm_ref, final_pipeline)
+        # By the time ProteinInference runs, IntegrateChromatograms has
+        # already populated :sequence, :accession_numbers, :species,
+        # :structural_mods, :isotopic_mods on the main file. We only need
+        # to add the 5 columns it does NOT already provide:
+        #   :is_decoy, :entrap_id, :base_pep_id  (from library lookup)
+        #   :inferred_protein_group, :use_for_protein_quant  (from inference)
+        # The old code redundantly overwrote the IntegrateChromatograms cols.
+        pidx = materialize_columns(psm_ref, [:precursor_idx])[!, :precursor_idx]::AbstractVector{UInt32}
+        n = length(pidx)
+        is_decoys     = Vector{Bool}(undef, n)
+        entrap_ids    = Vector{UInt8}(undef, n)
+        base_pep_ids  = Vector{UInt32}(undef, n)
+        inferred      = Vector{Union{Missing, String}}(undef, n)
+        use_for_quant = Vector{Bool}(undef, n)
+
+        @inbounds for i in 1:n
+            p = pidx[i]
+            seq = all_seqs[p]
+            dec = all_decoys[p]
+            ent = all_entraps[p]
+            is_decoys[i]    = dec
+            entrap_ids[i]   = ent
+            base_pep_ids[i] = all_base_pep_ids[p]
+            pep_key = PeptideKey(seq, !dec, ent)
+            if haskey(inference_result.peptide_to_protein, pep_key)
+                inferred[i]       = inference_result.peptide_to_protein[pep_key].name
+                use_for_quant[i]  = true
+            else
+                inferred[i]       = missing
+                use_for_quant[i]  = false
+            end
+        end
+
+        add_columns_via_sidecar!(psm_ref,
+            :is_decoy               => is_decoys,
+            :entrap_id              => entrap_ids,
+            :base_pep_id            => base_pep_ids,
+            :inferred_protein_group => inferred,
+            :use_for_protein_quant  => use_for_quant;
+            tag = "ProteinInference")
     end
 
     return nothing
