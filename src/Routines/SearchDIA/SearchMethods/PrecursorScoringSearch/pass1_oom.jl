@@ -188,7 +188,13 @@ function _predict_pass1_to_sidecar(
 
     @inline function _predict_block(cls, rows::Vector{Int})
         isempty(rows) && return Float32[]
-        raw = LightGBM.predict(cls, X[rows, :])
+        # num_threads=1: this function runs inside a parallel_foreach! over
+        # files (one Julia task per file). Letting LightGBM's internal
+        # OpenMP fan out to all cores per call → 8 files × 10 OpenMP threads
+        # competing for 10 physical cores (oversubscription). With
+        # num_threads=1 each predict is single-threaded internally and
+        # parallelism comes from the Julia-level file loop.
+        raw = LightGBM.predict(cls, X[rows, :]; num_threads=1)
         s = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
         return clamp.(Float32.(s), 1f-6, 1f0 - 1f-4)
     end
@@ -284,11 +290,19 @@ function train_and_predict_pass1_oom!(
     y0 = Bool[]; y1 = Bool[]
     GC.gc()
 
-    # Pass 3: per-file predict + sidecar write.
+    # Pass 3: per-file predict + sidecar write, parallelized across files.
+    # Each file's matrix-build + LightGBM.predict + Arrow.write are
+    # independent (read-only on the shared booster handles, disjoint output
+    # paths). LightGBM's C API documents `LGBM_BoosterPredictForMat` as
+    # thread-safe so long as no thread is updating the booster (we aren't).
+    # `_predict_block` passes num_threads=1 to avoid OpenMP oversubscription
+    # under the Julia-level parallel loop.
     cls_trained_on = (fold0 = cls_trained_on_fold0, fold1 = cls_trained_on_fold1)
     t_predict_start = time()
-    for fpath in file_paths
-        _predict_pass1_to_sidecar(fpath, available, cls_trained_on, compute_infold)
+    parallel_foreach!(length(file_paths)) do chunk
+        for f_idx in chunk
+            _predict_pass1_to_sidecar(file_paths[f_idx], available, cls_trained_on, compute_infold)
+        end
     end
     t_predict = time() - t_predict_start
 
