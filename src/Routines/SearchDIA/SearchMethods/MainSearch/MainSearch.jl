@@ -32,11 +32,21 @@ struct MainSearch <: SearchMethod end
 
 Compute per-file q-values and PEPs from `best_psms[!, :lgbm_prob]` + `:target`
 and emit a one-line @user_info summary with target counts at q≤.001, q≤.01,
-PEP≤.01, PEP≤.05. Diagnostic only — purely transparent (no mutation of
-best_psms columns). Promoted from @debug_l2 during the tuning phase.
+PEP≤.01, PEP≤.05. **Diagnostic only** — purely transparent (no mutation of
+best_psms columns).
+
+Gated on `DEBUG_CONSOLE_LEVEL[] >= 1` because the q-value + PEP calculation
+underneath (two sorts of up to ~3.98M rows each, called 3× per file) is
+non-trivial — ~0.6 s/file × 8 files = ~5 s on Astral. The default debug
+level is 0, so this is a no-op in production. Set
+`logging.debug_console_level: 1` in the config to re-enable.
 """
 function _summarize_psm_counts(best_psms::DataFrame, stage_label::AbstractString,
                                 ms_file_idx::Integer, file_name::AbstractString)
+    # Early-return before any computation. The @user_info macro itself
+    # always prints, but the body's get_qvalues!/get_PEP! work is the
+    # actual cost — gating function entry on the debug level skips both.
+    Pioneer.DEBUG_CONSOLE_LEVEL[] >= 1 || return
     nrow(best_psms) == 0 && return
     probs = Float32.(best_psms[!, :lgbm_prob])
     is_t  = Vector{Bool}(best_psms[!, :target])
