@@ -119,7 +119,11 @@ function sort_chromatograms_for_integration!(chromatograms::DataFrame)
 end
 
 const DEBUG_CHROM_TARGET_PRECURSOR_IDXS = Ref{Set{UInt32}}(
-    Set(UInt32[370714, 1197075, 1047223, 591443, 909488])
+    Set(UInt32[
+    214221, 722557, 450059,
+    730983, 673283,
+    439879, 768427, 304430,
+    370714, 1197075, 1047223, 591443, 909488])
 )
 const DEBUG_CHROM_TARGET_PRECURSOR_IDX = DEBUG_CHROM_TARGET_PRECURSOR_IDXS
 
@@ -211,10 +215,23 @@ function debug_write_target_chromatogram_plots(
         N = length(ordered_rows)
         N <= 0 && continue
         avg_cycle_time = N < 2 ? 1.0f0 : (rt_all[last(ordered_rows)] - rt_all[first(ordered_rows)]) / N
-        target_scan = hasproperty(passing_psms, :scan_idx) ?
+        expected_apex_scan = hasproperty(passing_psms, :scan_idx) ?
             UInt32(passing_psms[row_idx, :scan_idx]) :
-            scan_idx_all[ordered_rows[argmax(@view(intensity_all[ordered_rows]))]]
+            UInt32(0)
+        selected_apex_scan = hasproperty(passing_psms, :new_best_scan) ?
+            UInt32(passing_psms[row_idx, :new_best_scan]) :
+            UInt32(0)
+        target_scan = selected_apex_scan != UInt32(0) ?
+            selected_apex_scan :
+            (
+                expected_apex_scan != UInt32(0) ?
+                    expected_apex_scan :
+                    scan_idx_all[ordered_rows[argmax(@view(intensity_all[ordered_rows]))]]
+            )
         apex_scan = find_nearest_scan(scan_idx_all[ordered_rows], target_scan)
+        debug_apex_scan = expected_apex_scan != UInt32(0) ?
+            find_nearest_scan(scan_idx_all[ordered_rows], expected_apex_scan) :
+            apex_scan
         plot_path = debug_chromatogram_plot_path(
             output_root,
             ms_file_idx,
@@ -243,6 +260,7 @@ function debug_write_target_chromatogram_plots(
             debug_plot_path = plot_path,
             debug_plot_title = plot_title,
             debug_plot_data = plot_data_ref,
+            debug_apex_scan = debug_apex_scan,
             mainsearch_1pct_start_scan = hasproperty(passing_psms, :mainsearch_1pct_start_scan) ?
                 UInt32(passing_psms[row_idx, :mainsearch_1pct_start_scan]) :
                 UInt32(0),

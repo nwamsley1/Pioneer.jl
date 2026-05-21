@@ -14,7 +14,11 @@ function _with_debug_chromatogram_plot_state(f::Function)
     end
 end
 
-@testset "mainsearch q-value intervals are captured before best scan selection" begin
+@testset "default chromatogram debug targets include requested precursors" begin
+    @test UInt32(304430) in Pioneer.DEBUG_CHROM_TARGET_PRECURSOR_IDXS[]
+end
+
+@testset "mainsearch PEP intervals are captured before best scan selection" begin
     psms = DataFrame(
         precursor_idx = UInt32[1, 1, 99, 1, 2],
         scan_idx = UInt32[10, 20, 25, 30, 40],
@@ -25,13 +29,29 @@ end
 
     Pioneer.add_mainsearch_integration_interval_columns!(psms, :lgbm_score)
 
-    @test psms.mainsearch_1pct_start_scan == UInt32[10, 10, 0, 10, 0]
-    @test psms.mainsearch_1pct_stop_scan == UInt32[20, 20, 0, 20, 0]
-    @test isequal(psms.mainsearch_1pct_start_rt, Float32[1.0, 1.0, NaN, 1.0, NaN])
-    @test isequal(psms.mainsearch_1pct_stop_rt, Float32[2.0, 2.0, NaN, 2.0, NaN])
+    @test psms.mainsearch_1pct_start_scan == UInt32[10, 10, 0, 10, 40]
+    @test psms.mainsearch_1pct_stop_scan == UInt32[30, 30, 0, 30, 40]
+    @test isequal(psms.mainsearch_1pct_start_rt, Float32[1.0, 1.0, NaN, 1.0, 4.0])
+    @test isequal(psms.mainsearch_1pct_stop_rt, Float32[3.0, 3.0, NaN, 3.0, 4.0])
 end
 
-@testset "mainsearch q-value evidence is retained as learned boundary features" begin
+@testset "mainsearch integration interval defaults to fifty percent PEP" begin
+    psms = DataFrame(
+        precursor_idx = fill(UInt32(1), 6),
+        scan_idx = UInt32.(1:6),
+        rt = Float32.(1:6),
+        target = Bool[true, true, false, true, true, true],
+        lgbm_score = Float32[4, 3, 6, 5, 2, 1],
+        weight = Float32[1, 1, 1, 100, 1, 1],
+    )
+
+    Pioneer.add_mainsearch_integration_interval_columns!(psms, :lgbm_score)
+
+    @test psms.mainsearch_1pct_start_scan == fill(UInt32(4), 6)
+    @test psms.mainsearch_1pct_stop_scan == fill(UInt32(6), 6)
+end
+
+@testset "mainsearch PEP evidence is retained for debug plots" begin
     rt = Float32.(1:10)
     scan_idx = UInt32.(1:10)
     fraction = fill(1.0f0, length(rt))
@@ -60,12 +80,11 @@ end
 
     @test debug_plot_data[].mainsearch_evidence_range == 3:8
     candidates = DataFrame(candidate_data[])
-    @test :mainsearch_exclusion_penalty in propertynames(candidates)
-    @test :mainsearch_left_bound_delta in propertynames(candidates)
-    @test :mainsearch_right_bound_delta in propertynames(candidates)
-    @test :mainsearch_distance_penalty ∉ propertynames(candidates)
-    @test :mainsearch_center_distance_penalty ∉ propertynames(candidates)
-    @test :mainsearch_width_penalty ∉ propertynames(candidates)
+    @test nrow(candidates) > 0
+    @test :shape_fit_loss in propertynames(candidates)
+    @test :mainsearch_exclusion_penalty ∉ propertynames(candidates)
+    @test :mainsearch_left_bound_delta ∉ propertynames(candidates)
+    @test :mainsearch_right_bound_delta ∉ propertynames(candidates)
 end
 
 @testset "single-scan evidence still produces at least three integration points" begin
@@ -97,7 +116,7 @@ end
     @test debug_plot_data[].points_integrated == UInt32(1)
 end
 
-@testset "wide mainsearch q-value evidence does not override fallback bounds" begin
+@testset "wide mainsearch PEP evidence does not override fallback bounds" begin
     rt = Float32.(1:19)
     scan_idx = UInt32.(1:19)
     fraction = fill(1.0f0, length(rt))
@@ -184,7 +203,39 @@ end
     @test debug_plot_data[].baseline_subtracted[first(scan_range)] == 0.0f0
 end
 
-@testset "shoulder inside mainsearch evidence remains a feature, not a candidate source" begin
+@testset "baseline subtraction uses selected boundary endpoints" begin
+    rt = Float32.(1:8)
+    scan_idx = UInt32.(1:8)
+    fraction = fill(1.0f0, length(rt))
+    intensity = Float32[0, 0.1, 1.0, 0.05, 0.0, 100.0, 50.0, 0.0]
+    ws = Pioneer.WHWorkspace(length(rt))
+    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
+    debug_plot_data = Ref{Any}(nothing)
+
+    Pioneer.integrate_chrom(
+        rt,
+        scan_idx,
+        intensity,
+        fraction,
+        3,
+        ws,
+        state,
+        1.0f0,
+        0.0f0;
+        min_fraction_transmitted = 0.25f0,
+        forced_boundary_start_scan = UInt32(1),
+        forced_boundary_stop_scan = UInt32(8),
+        debug_plot_data = debug_plot_data,
+    )
+
+    @test debug_plot_data[].scan_range == 1:8
+    @test debug_plot_data[].baseline_subtracted[1] == 0.0f0
+    @test debug_plot_data[].baseline_subtracted[8] == 0.0f0
+    @test debug_plot_data[].baseline_subtracted[6] >
+        0.5f0 * debug_plot_data[].wh_smoothed[6]
+end
+
+@testset "mainsearch evidence does not force whole interval as candidate" begin
     rt = Float32.(1:19)
     scan_idx = UInt32.(1:19)
     fraction = fill(1.0f0, length(rt))
@@ -215,9 +266,12 @@ end
     )
 
     candidates = DataFrame(candidate_data[])
-    @test :mainsearch_left_bound_delta in propertynames(candidates)
-    @test :mainsearch_right_bound_delta in propertynames(candidates)
-    @test all(candidates.candidate_width .>= 0)
+    @test debug_plot_data[].mainsearch_evidence_range == 1:15
+    @test !any(
+        (candidates.candidate_start_idx .== UInt16(1)) .&
+        (candidates.candidate_stop_idx .== UInt16(15))
+    )
+    @test :shape_fit_loss in propertynames(candidates)
 end
 
 @testset "boundary candidates include full chromatogram valley combinations" begin
@@ -267,15 +321,8 @@ end
     @test category_by_range[(2, 10)] == "fallback"
     @test category_by_range[(1, 11)] == "valley_combination"
 
-    deltas_by_range = Dict(
-        (Int(row.candidate_start_idx), Int(row.candidate_stop_idx)) => (
-            row.mainsearch_left_bound_delta,
-            row.mainsearch_right_bound_delta,
-        )
-        for row in eachrow(candidates)
-    )
-    @test deltas_by_range[(1, 11)] == (0.0f0, 0.0f0)
-    @test deltas_by_range[(2, 10)] == (1.0f0, -1.0f0)
+    @test :mainsearch_left_bound_delta ∉ propertynames(candidates)
+    @test :mainsearch_right_bound_delta ∉ propertynames(candidates)
 end
 
 @testset "recovered outside peak contributes valley combination candidates" begin
@@ -304,7 +351,7 @@ end
     )
 
     candidates = DataFrame(candidate_data[])
-    fallback = only(candidates[candidates.is_fallback, :])
+    fallback = only(candidates[candidates.is_fallback .& candidates.is_primary_apex, :])
     @test debug_plot_data[].scan_range == first(fallback.candidate_start_idx):last(fallback.candidate_stop_idx)
     @test any(
         (candidates.candidate_category .== "valley_combination") .&
@@ -337,7 +384,10 @@ end
     )
 
     candidates = DataFrame(candidate_data[])
-    valley_candidates = candidates[candidates.candidate_category .== "valley_combination", :]
+    valley_candidates = candidates[
+        (candidates.candidate_category .== "valley_combination") .& candidates.is_primary_apex,
+        :,
+    ]
     allowed_left = Set(UInt16[5, 7, 9])
     allowed_right = Set(UInt16[11, 13, 15])
 
@@ -348,7 +398,50 @@ end
     @test length(unique(valley_candidates.candidate_stop_idx)) <= 3
 end
 
-@testset "mainsearch q-value intervals merge across trace rows" begin
+@testset "boundary candidates include local apexes across deconvolution span" begin
+    rt = Float32.(1:21)
+    scan_idx = UInt32.(1:21)
+    fraction = fill(1.0f0, length(rt))
+    intensity = Float32[
+        0, 0, 0, 0,
+        1, 5, 1,
+        0, 0, 0, 0, 0,
+        4, 30, 120, 30, 4,
+        0, 0, 0, 0,
+    ]
+    ws = Pioneer.WHWorkspace(length(rt))
+    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
+    candidate_data = Ref{Any}(nothing)
+
+    Pioneer.integrate_chrom(
+        rt,
+        scan_idx,
+        intensity,
+        fraction,
+        2,
+        ws,
+        state,
+        1.0f0,
+        0.0f0;
+        min_fraction_transmitted = 0.25f0,
+        mainsearch_1pct_start_scan = UInt32(13),
+        mainsearch_1pct_stop_scan = UInt32(17),
+        boundary_candidate_data = candidate_data,
+    )
+
+    candidates = DataFrame(candidate_data[])
+    apex_scans = sort(unique(candidates.new_best_scan))
+
+    @test nrow(candidates) > 0
+    @test all(
+        (candidates.candidate_start_idx .<= UInt16(2)) .&
+            (UInt16(2) .<= candidates.candidate_stop_idx),
+    )
+    @test apex_scans == UInt32[2, 6, 15]
+    @test any(candidates.is_primary_apex)
+end
+
+@testset "mainsearch PEP intervals merge across trace rows" begin
     psms = DataFrame(
         precursor_idx = UInt32[7, 7, 8],
         ms_file_idx = UInt32[3, 3, 3],
@@ -367,445 +460,257 @@ end
     @test psms.mainsearch_1pct_stop_rt == Float32[1.5, 1.5, 3.2]
 end
 
-@testset "boundary candidate training labels follow cross-run protein ratios" begin
-    candidates = DataFrame(
-        boundary_group_id = UInt64[1, 2, 3, 4, 4],
-        precursor_idx = UInt32[10, 10, 20, 20, 20],
-        protein_key = ["P1", "P1", "P1", "P1", "P1"],
-        ms_file_idx = UInt16[1, 2, 1, 2, 2],
-        candidate_index = UInt16[1, 1, 1, 1, 2],
-        peak_area = Float32[100, 200, 50, 400, 100],
-        is_fallback = Bool[true, true, true, true, false],
-    )
+@testset "EGH boundary shape fit penalizes disconnected internal signal" begin
+    clean_irt = Float32[-2, -1, 0, 1, 2]
+    clean_signal = Float32[0, 0.35, 1.0, 0.35, 0]
+    disconnected_irt = Float32[-2, -1, 0, 1, 2, 3, 4]
+    disconnected_signal = Float32[0, 0.35, 1.0, 0, 0.7, 0.35, 0]
 
-    Pioneer.label_boundary_candidate_targets!(candidates; min_crossrun_refs = 1)
+    clean = Pioneer.fit_egh_boundary_shape(clean_irt, clean_signal, 3)
+    disconnected = Pioneer.fit_egh_boundary_shape(disconnected_irt, disconnected_signal, 3)
 
-    group4 = candidates[candidates.boundary_group_id .== UInt64(4), :]
-    @test group4.boundary_candidate_target == Bool[false, true]
-    @test group4.boundary_consistency_loss[2] < group4.boundary_consistency_loss[1]
+    @test clean.valid
+    @test disconnected.valid
+    @test clean.fit_loss < disconnected.fit_loss
+    @test clean.overshoot_penalty == 0.0f0
+    @test disconnected.fit_loss > clean.fit_loss * 2.0f0
 end
 
-@testset "boundary candidate training labels use isotope traces from combined mode" begin
-    candidates = DataFrame(
-        boundary_group_id = UInt64[1, 2, 2],
-        precursor_idx = UInt32[10, 10, 10],
-        protein_key = ["P1", "P1", "P1"],
-        isotope_key = Tuple{Int8, Int8}[(1, 1), (2, 2), (2, 2)],
-        quant_trace_selected = Bool[false, false, false],
-        ms_file_idx = UInt16[1, 1, 1],
-        candidate_index = UInt16[1, 1, 2],
-        peak_area = Float32[100, 400, 100],
-        is_fallback = Bool[true, true, false],
-    )
+@testset "EGH boundary shape fit loss uses normalized squared error" begin
+    irt = Float32[-1, 0, 1]
+    signal = Float32[0, 1, 1]
+    widths = Pioneer._shape_point_widths(irt)
+    loss = Pioneer._egh_fit_loss(irt, signal, 2, 1.0f0, widths, 1.0f0, 0.0f0)
+    predicted = Float32[
+        Pioneer.egh_boundary_value(irt[i], 0.0f0, 1.0f0, 1.0f0, 0.0f0)
+        for i in eachindex(irt)
+    ]
+    residuals = (signal .- predicted) ./ 1.0f0
+    expected_loss = sum(widths .* residuals .* residuals) / sum(widths)
 
-    Pioneer.label_boundary_candidate_targets!(
-        candidates;
-        min_crossrun_refs = 100,
-        min_isotope_refs = 1,
-    )
-
-    group2 = candidates[candidates.boundary_group_id .== UInt64(2), :]
-    @test group2.boundary_candidate_target == Bool[false, true]
-    @test group2.boundary_isotope_loss[2] < group2.boundary_isotope_loss[1]
+    @test loss.fit_loss ≈ expected_loss
+    @test loss.fit_loss > 0.1f0
 end
 
-@testset "cross-run boundary loss uses only quant-selected traces" begin
-    candidates = DataFrame(
-        boundary_group_id = UInt64[1, 1, 2, 3, 4, 5],
-        precursor_idx = UInt32[10, 10, 10, 20, 20, 10],
-        protein_key = ["P1", "P1", "P1", "P1", "P1", "P1"],
-        isotope_key = Tuple{Int8, Int8}[
-            (0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (1, 1),
-        ],
-        quant_trace_selected = Bool[true, true, true, true, true, false],
-        ms_file_idx = UInt16[1, 1, 2, 1, 2, 2],
-        candidate_index = UInt16[1, 2, 1, 1, 1, 1],
-        peak_area = Float32[100, 50, 100, 50, 100, 6400],
-        is_fallback = Bool[true, false, true, true, true, true],
-    )
-
-    Pioneer.label_boundary_candidate_targets!(
-        candidates;
-        min_crossrun_refs = 1,
-        min_isotope_refs = 100,
-    )
-
-    group1 = candidates[candidates.boundary_group_id .== UInt64(1), :]
-    @test group1.boundary_candidate_target == Bool[false, true]
-    @test group1.boundary_consistency_loss[2] ≈ 0.0f0
-end
-
-@testset "boundary labels skip groups without self-supervised objective" begin
-    candidates = DataFrame(
-        boundary_group_id = UInt64[1, 1, 1],
-        precursor_idx = UInt32[10, 10, 10],
-        protein_key = ["P1", "P1", "P1"],
-        ms_file_idx = UInt16[1, 1, 1],
-        candidate_index = UInt16[1, 2, 3],
-        peak_area = Float32[100, 200, 300],
-        is_fallback = Bool[true, false, false],
-    )
-
-    Pioneer.label_boundary_candidate_targets!(
-        candidates;
-        min_crossrun_refs = 100,
-        min_isotope_refs = 100,
-    )
-
-    @test all(isinf, candidates.boundary_training_loss)
-    @test !any(candidates.boundary_candidate_target)
-end
-
-@testset "boundary candidate sampling keeps whole candidate groups" begin
-    candidates = DataFrame(
-        boundary_group_id = UInt64[1, 1, 2, 2, 3, 3],
-        candidate_index = UInt16[1, 2, 1, 2, 1, 2],
-        peak_area = Float32[1, 2, 3, 4, 5, 6],
-    )
-
-    sampled = Pioneer.sample_boundary_candidate_groups(
-        candidates;
-        max_groups = 2,
-        rng = Random.MersenneTwister(1776),
-    )
-
-    sampled_groups = unique(sampled.boundary_group_id)
-    @test length(sampled_groups) == 2
-    @test all(count(==(group_id), sampled.boundary_group_id) == 2 for group_id in sampled_groups)
-end
-
-@testset "boundary ranking labels preserve within-group loss ordering" begin
-    candidates = DataFrame(
-        boundary_group_id = UInt64[2, 1, 1, 2, 1],
-        candidate_index = UInt16[1, 1, 2, 2, 3],
-        boundary_training_loss = Float32[0.5, 0.0, 4.0, 0.5, 1.0],
-        candidate_width = Float32[3, 4, 5, 6, 7],
-    )
-
-    frame, relevance, group_sizes = Pioneer.boundary_ranking_training_data(
-        candidates,
-        [:candidate_width],
-    )
-
-    @test group_sizes == [3, 2]
-    @test relevance == Int32[2, 0, 1, 1, 1]
-    @test frame.candidate_width == Float32[4, 5, 7, 3, 6]
-end
-
-@testset "boundary ranking skips groups without finite objective loss" begin
+@testset "shape boundary selection uses lowest deterministic shape score" begin
     candidates = DataFrame(
         boundary_group_id = UInt64[1, 1, 2, 2],
         candidate_index = UInt16[1, 2, 1, 2],
-        boundary_training_loss = Float32[Inf, Inf, 0, 1],
-        candidate_width = Float32[1, 2, 3, 4],
+        ms_file_idx = UInt16[1, 1, 1, 1],
+        is_fallback = Bool[true, false, true, false],
+        shape_model_valid = Bool[true, true, false, false],
+        shape_fit_loss = Float32[0.4, 0.1, Inf32, Inf32],
+        shape_edge_fraction = Float32[0.0, 0.0, 0.0, 0.0],
+        shape_overshoot_penalty = Float32[0.0, 0.0, 0.0, 0.0],
+        shape_sigma_irt = Float32[1.0, 1.0, 1.0, 1.0],
+        shape_tau_irt = Float32[0.0, 0.0, 0.0, 0.0],
+        shape_apex_irt = Float32[0.0, 0.0, 0.0, 0.0],
+        shape_apex_height = Float32[10.0, 10.0, 8.0, 8.0],
+        shape_deconvolution_area_fraction = Float32[0.5, 0.5, 0.5, 0.5],
     )
 
-    frame, relevance, group_sizes = Pioneer.boundary_ranking_training_data(
-        candidates,
-        [:candidate_width],
-    )
+    Pioneer.score_boundary_candidates_by_shape!(candidates)
+    selected = Pioneer.select_boundary_candidate_rows_by_shape(candidates)
 
-    @test group_sizes == [2]
-    @test relevance == Int32[1, 0]
-    @test frame.candidate_width == Float32[3, 4]
+    @test candidates.boundary_shape_score[2] < candidates.boundary_shape_score[1]
+    @test selected.candidate_index == UInt16[2, 1]
+    @test selected.boundary_group_id == UInt64[1, 2]
 end
 
-@testset "boundary ranking labels fit LightGBM default label mapping" begin
+@testset "shape score best-margin normalizes shape loss against plausible alternatives" begin
     candidates = DataFrame(
-        boundary_group_id = fill(UInt64(1), 53),
-        candidate_index = UInt16.(1:53),
-        boundary_training_loss = Float32.(0:52),
-        candidate_width = Float32.(1:53),
+        boundary_group_id = UInt64[1, 1],
+        candidate_index = UInt16[1, 2],
+        ms_file_idx = UInt16[1, 1],
+        is_fallback = Bool[false, false],
+        shape_model_valid = Bool[true, true],
+        shape_fit_loss = Float32[0.10, 0.08],
+        shape_edge_fraction = Float32[0.0, 0.0],
+        shape_overshoot_penalty = Float32[0.0, 0.0],
+        shape_sigma_irt = Float32[1.0, 1.0],
+        shape_tau_irt = Float32[0.0, 0.0],
+        shape_apex_irt = Float32[0.0, 2.0],
+        shape_apex_height = Float32[10.0, 10.0],
+        shape_deconvolution_area_fraction = Float32[0.9, 0.1],
     )
 
-    _, relevance, group_sizes = Pioneer.boundary_ranking_training_data(
-        candidates,
-        [:candidate_width],
-    )
+    Pioneer.score_boundary_candidates_by_shape!(candidates)
+    selected = Pioneer.select_boundary_candidate_rows_by_shape(candidates)
 
-    @test group_sizes == [53]
-    @test maximum(relevance) <= 30
-    @test relevance[1] == 30
-    @test relevance[end] == 0
-    @test all(diff(relevance) .<= 0)
+    @test candidates.shape_unexplained_area_penalty[1] ≈ 0.1f0
+    @test candidates.shape_unexplained_area_penalty[2] ≈ 0.9f0
+    @test candidates.shape_normalized_fit_prior_score[1] ≈ 1.0f0
+    @test candidates.shape_normalized_fit_prior_score[2] ≈ 0.0f0
+    @test Pioneer.BOUNDARY_SHAPE_FIT_PRIOR_SCORE_WEIGHT >= 1.0f0
+    @test candidates.boundary_shape_score[1] ≈
+        Pioneer.BOUNDARY_SHAPE_FIT_PRIOR_SCORE_WEIGHT * 1.0f0 + 0.1f0
+    @test candidates.boundary_shape_score[2] ≈
+        Pioneer.BOUNDARY_SHAPE_FIT_PRIOR_SCORE_WEIGHT * 0.0f0 + 0.9f0
+    @test candidates.boundary_shape_score[2] < candidates.boundary_shape_score[1]
+    @test selected.candidate_index == UInt16[2]
 end
 
-@testset "boundary model trains a LightGBM ranker" begin
-    rows = NamedTuple[]
-    for group_id in UInt64(1):UInt64(30), candidate_index in UInt16(1):UInt16(3)
-        push!(rows, (;
-            boundary_group_id = group_id,
-            candidate_index = candidate_index,
-            boundary_training_loss = Float32(3 - candidate_index),
-            boundary_candidate_target = candidate_index == UInt16(3),
-            candidate_width = Float32(candidate_index),
-        ))
-    end
-    candidates = DataFrame(rows)
-
-    model = Pioneer.train_boundary_candidate_model(
-        candidates;
-        features = [:candidate_width],
-        max_groups = 30,
-        min_positive = 1,
-        min_negative = 1,
-        rng = Random.MersenneTwister(1776),
-    )
-
-    @test model !== nothing
-    @test model.booster isa LightGBM.LGBMRanking
-    @test model.features == [:candidate_width]
-end
-
-@testset "boundary model trains when candidate groups exceed default label gain length" begin
-    rows = NamedTuple[]
-    for group_id in UInt64(1):UInt64(30), candidate_index in UInt16(1):UInt16(53)
-        push!(rows, (;
-            boundary_group_id = group_id,
-            candidate_index = candidate_index,
-            boundary_training_loss = Float32(candidate_index - UInt16(1)),
-            boundary_candidate_target = candidate_index == UInt16(1),
-            candidate_width = Float32(candidate_index),
-        ))
-    end
-    candidates = DataFrame(rows)
-
-    model = Pioneer.train_boundary_candidate_model(
-        candidates;
-        features = [:candidate_width],
-        max_groups = 30,
-        min_positive = 1,
-        min_negative = 1,
-        rng = Random.MersenneTwister(1776),
-    )
-
-    @test model !== nothing
-    @test model.booster isa LightGBM.LGBMRanking
-end
-
-@testset "boundary cross-fold helpers exclude held-out cv folds" begin
+@testset "shape score is not compressed by awful candidates" begin
     candidates = DataFrame(
-        boundary_group_id = UInt64[1, 1, 2, 2, 3, 3],
-        candidate_index = UInt16[1, 2, 1, 2, 1, 2],
-        cv_fold = UInt8[0, 0, 1, 1, 2, 2],
-        boundary_training_loss = Float32[1, 0, 1, 0, 1, 0],
-        boundary_candidate_target = Bool[false, true, false, true, false, true],
-        candidate_width = Float32[1, 2, 1, 2, 1, 2],
+        boundary_group_id = UInt64[1, 1, 1],
+        candidate_index = UInt16[1, 2, 3],
+        ms_file_idx = UInt16[1, 1, 1],
+        is_fallback = Bool[false, false, false],
+        shape_model_valid = Bool[true, true, true],
+        shape_fit_loss = Float32[0.10, 0.12, 4.0],
+        shape_edge_fraction = Float32[0.0, 0.0, 0.0],
+        shape_overshoot_penalty = Float32[0.0, 0.0, 0.0],
+        shape_sigma_irt = Float32[1.0, 1.0, 1.0],
+        shape_tau_irt = Float32[0.0, 0.0, 0.0],
+        shape_apex_irt = Float32[0.0, 0.0, 0.0],
+        shape_apex_height = Float32[10.0, 10.0, 10.0],
+        shape_deconvolution_area_fraction = Float32[0.5, 1.0, 1.0],
     )
 
-    fold1_training = Pioneer.boundary_training_candidates_for_cv_fold(candidates, UInt8(1))
+    Pioneer.score_boundary_candidates_by_shape!(candidates)
+    selected = Pioneer.select_boundary_candidate_rows_by_shape(candidates)
 
-    @test all(fold1_training.cv_fold .!= UInt8(1))
-    @test sort(unique(fold1_training.boundary_group_id)) == UInt64[1, 3]
+    @test candidates.shape_normalized_fit_prior_score[1] ≈ 0.0f0
+    @test candidates.shape_normalized_fit_prior_score[2] ≈ 1.0f0
+    @test candidates.shape_normalized_fit_prior_score[3] ≈ 1.0f0
+    @test selected.candidate_index == UInt16[1]
 end
 
-@testset "boundary model trains and selects candidates by held-out cv fold" begin
+@testset "shape score has no expected apex bounds penalty" begin
+    candidates = DataFrame(
+        boundary_group_id = UInt64[1, 1, 1],
+        candidate_index = UInt16[1, 2, 3],
+        ms_file_idx = UInt16[1, 1, 1],
+        is_fallback = Bool[false, false, false],
+        shape_model_valid = Bool[true, true, true],
+        shape_fit_loss = Float32[0.10, 0.095, 0.115],
+        shape_edge_fraction = Float32[0.0, 0.0, 0.0],
+        shape_overshoot_penalty = Float32[0.0, 0.0, 0.0],
+        shape_sigma_irt = Float32[0.05, 0.05, 0.05],
+        shape_tau_irt = Float32[0.0, 0.0, 0.0],
+        shape_apex_irt = Float32[0.0, 0.2, 0.0],
+        shape_apex_height = Float32[10.0, 10.0, 10.0],
+        shape_deconvolution_area_fraction = Float32[1.0, 1.0, 1.0],
+    )
+
+    Pioneer.score_boundary_candidates_by_shape!(candidates)
+    selected = Pioneer.select_boundary_candidate_rows_by_shape(candidates)
+
+    @test :shape_expected_apex_bounds_penalty ∉ propertynames(candidates)
+    @test candidates.shape_normalized_fit_prior_score[2] == 0.0f0
+    @test candidates.boundary_shape_score[2] < candidates.boundary_shape_score[1]
+    @test selected.candidate_index == UInt16[2]
+end
+
+@testset "shape score ignores edge and overshoot penalties" begin
+    candidates = DataFrame(
+        boundary_group_id = UInt64[1, 1],
+        candidate_index = UInt16[1, 2],
+        ms_file_idx = UInt16[1, 1],
+        is_fallback = Bool[false, false],
+        shape_model_valid = Bool[true, true],
+        shape_fit_loss = Float32[0.05, 0.10],
+        shape_edge_fraction = Float32[10.0, 0.0],
+        shape_overshoot_penalty = Float32[10.0, 0.0],
+        shape_sigma_irt = Float32[1.0, 1.0],
+        shape_tau_irt = Float32[0.0, 0.0],
+        shape_apex_irt = Float32[0.0, 0.0],
+        shape_apex_height = Float32[10.0, 10.0],
+        shape_deconvolution_area_fraction = Float32[0.5, 0.5],
+    )
+
+    Pioneer.score_boundary_candidates_by_shape!(candidates)
+    selected = Pioneer.select_boundary_candidate_rows_by_shape(candidates)
+
+    @test candidates.boundary_shape_score[1] < candidates.boundary_shape_score[2]
+    @test selected.candidate_index == UInt16[1]
+end
+
+@testset "shape sigma prior follows apex iRT trend" begin
     rows = NamedTuple[]
-    for cv_fold in UInt8[0, 1], group_idx in UInt64(1):UInt64(30), candidate_index in UInt16(1):UInt16(3)
+    for i in 1:180
+        apex_irt = Float32(24 * (i - 1) / 179)
+        sigma = Float32(0.08 + 0.0012 * (apex_irt - 12)^2)
         push!(rows, (;
-            boundary_group_id = UInt64(cv_fold) << 32 | group_idx,
-            cv_fold = cv_fold,
-            candidate_index = candidate_index,
-            is_fallback = candidate_index == UInt16(1),
-            quant_trace_selected = true,
-            boundary_training_loss = Float32(3 - candidate_index),
-            boundary_candidate_target = candidate_index == UInt16(3),
-            candidate_width = Float32(candidate_index),
+            boundary_group_id = UInt64(i),
+            candidate_index = UInt16(1),
+            ms_file_idx = UInt16(1),
+            is_fallback = true,
+            shape_model_valid = true,
+            shape_fit_loss = 0.0f0,
+            shape_edge_fraction = 0.0f0,
+            shape_overshoot_penalty = 0.0f0,
+            shape_sigma_irt = sigma,
+            shape_tau_irt = 0.0f0,
+            shape_apex_irt = apex_irt,
+            shape_apex_height = 1_000.0f0,
+            shape_deconvolution_area_fraction = 0.5f0,
         ))
     end
+    test_sigma = 0.24f0
+    push!(rows, (;
+        boundary_group_id = UInt64(10_001),
+        candidate_index = UInt16(1),
+        ms_file_idx = UInt16(1),
+        is_fallback = false,
+        shape_model_valid = true,
+        shape_fit_loss = 0.0f0,
+        shape_edge_fraction = 0.0f0,
+        shape_overshoot_penalty = 0.0f0,
+        shape_sigma_irt = test_sigma,
+        shape_tau_irt = 0.0f0,
+        shape_apex_irt = 1.0f0,
+        shape_apex_height = 1_000.0f0,
+        shape_deconvolution_area_fraction = 0.5f0,
+    ))
+    push!(rows, (;
+        boundary_group_id = UInt64(10_002),
+        candidate_index = UInt16(1),
+        ms_file_idx = UInt16(1),
+        is_fallback = false,
+        shape_model_valid = true,
+        shape_fit_loss = 0.0f0,
+        shape_edge_fraction = 0.0f0,
+        shape_overshoot_penalty = 0.0f0,
+        shape_sigma_irt = test_sigma,
+        shape_tau_irt = 0.0f0,
+        shape_apex_irt = 12.0f0,
+        shape_apex_height = 1_000.0f0,
+        shape_deconvolution_area_fraction = 0.5f0,
+    ))
     candidates = DataFrame(rows)
 
-    models = Pioneer.train_boundary_candidate_models_by_cv_fold(
-        candidates;
-        features = [:candidate_width],
-        max_groups = 60,
-        min_positive = 1,
-        min_negative = 1,
-        rng = Random.MersenneTwister(1776),
-    )
-    selected = Pioneer.select_boundary_candidate_rows_crossfold(candidates, models)
+    Pioneer.score_boundary_candidates_by_shape!(candidates)
 
-    @test sort(collect(keys(models))) == UInt8[0, 1]
-    @test all(model !== nothing for model in values(models))
-    @test nrow(selected) == 60
-    @test all(selected.candidate_index .== UInt16(3))
+    edge_row = findfirst(==(UInt64(10_001)), candidates.boundary_group_id)
+    middle_row = findfirst(==(UInt64(10_002)), candidates.boundary_group_id)
+    @test candidates.shape_prior_penalty[edge_row] < candidates.shape_prior_penalty[middle_row] / 2
 end
 
-@testset "boundary model feature importance log lines are sorted by gain" begin
-    importances = [
-        (:candidate_width, 3.2),
-        (:peak_prominence_score, 15.8),
-        (:endpoint_valley_score, 8.1),
-    ]
-    lines = Pioneer.boundary_model_feature_importance_lines(importances)
+@testset "boundary shape parameter QC plots are written per run" begin
+    candidates = DataFrame(
+        boundary_group_id = UInt64[1, 2, 3, 4, 5],
+        ms_file_idx = UInt16[1, 1, 1, 2, 2],
+        is_fallback = Bool[true, true, true, true, false],
+        shape_model_valid = Bool[true, true, true, true, true],
+        shape_sigma_irt = Float32[0.22, 0.28, 0.31, 0.45, 0.8],
+        shape_tau_irt = Float32[-0.05, 0.0, 0.08, 0.12, 0.9],
+        shape_apex_irt = Float32[10, 20, 30, 15, 25],
+        shape_apex_height = Float32[1_000, 4_000, 16_000, 8_000, 32_000],
+    )
+    tmp = mktempdir()
 
-    @test first(lines) == "Learned chromatogram boundary LGBM feature gains (all 3):"
-    @test occursin("peak_prominence_score", lines[2])
-    @test occursin("endpoint_valley_score", lines[3])
-    @test occursin("candidate_width", lines[4])
-
-    old_level = Pioneer.DEBUG_CONSOLE_LEVEL[]
-    old_debug_file = Pioneer.DEBUG_FILE[]
-    try
-        Pioneer.DEBUG_CONSOLE_LEVEL[] = 0
-        silent_path = tempname()
-        open(silent_path, "w") do io
-            Pioneer.DEBUG_FILE[] = io
-            Pioneer.log_boundary_model_feature_importances(importances)
-        end
-        @test isempty(read(silent_path, String))
-
-        Pioneer.DEBUG_CONSOLE_LEVEL[] = 1
-        debug_path = tempname()
-        open(debug_path, "w") do io
-            Pioneer.DEBUG_FILE[] = io
-            redirect_stdout(devnull) do
-                Pioneer.log_boundary_model_feature_importances(importances)
-            end
-        end
-        @test occursin("Learned chromatogram boundary LGBM feature gains", read(debug_path, String))
-    finally
-        Pioneer.DEBUG_CONSOLE_LEVEL[] = old_level
-        Pioneer.DEBUG_FILE[] = old_debug_file
-    end
-end
-
-@testset "boundary shape features flag outside signal and recovered internal dips" begin
-    rt = Float32.(1:11)
-    scan_idx = UInt32.(1:11)
-    fraction = fill(1.0f0, length(rt))
-    intensity = Float32[0, 1, 4, 10, 9, 6, 7, 8, 6, 3, 0]
-    ws = Pioneer.WHWorkspace(length(rt))
-    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
-    candidate_data = Ref{Any}(nothing)
-
-    Pioneer.integrate_chrom(
-        rt,
-        scan_idx,
-        intensity,
-        fraction,
-        4,
-        ws,
-        state,
-        1.0f0,
-        0.0f0;
-        min_fraction_transmitted = 0.25f0,
-        boundary_candidate_data = candidate_data,
+    paths = Pioneer.write_boundary_shape_parameter_qc_plots(
+        candidates,
+        tmp;
+        file_name_by_idx = Dict(UInt16(1) => "run A.raw", UInt16(2) => "run B.raw"),
     )
 
-    candidates = DataFrame(candidate_data[])
-    narrow = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(2)) .&
-        (candidates.candidate_stop_idx .== UInt16(6)),
-        :,
-    ])
-    wide = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(1)) .&
-        (candidates.candidate_stop_idx .== UInt16(11)),
-        :,
-    ])
-
-    @test narrow.right_excluded_signal_fraction ≈ 0.6f0
-    @test narrow.right_boundary_recovery_fraction ≈ 0.2f0
-    @test narrow.right_outside_peak_fraction ≈ 0.8f0
-    @test narrow.left_boundary_recovery_fraction == 0.0f0
-    @test wide.right_excluded_signal_fraction == 0.0f0
-    @test wide.right_boundary_recovery_fraction == 0.0f0
-    @test wide.right_outside_peak_fraction == 0.0f0
-    @test narrow.internal_dip_recovery_score == 0.0f0
-    @test wide.internal_dip_recovery_score > 0.0f0
-    @test wide.internal_dip_recovery_score > narrow.internal_dip_recovery_score
-end
-
-@testset "edge valley ratio features compare against included internal valleys" begin
-    rt = Float32.(1:11)
-    scan_idx = UInt32.(1:11)
-    fraction = fill(1.0f0, length(rt))
-    intensity = Float32[5, 0, 4, 1, 3, 10, 3, 0, 4, 2, 5]
-    ws = Pioneer.WHWorkspace(length(rt))
-    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
-    candidate_data = Ref{Any}(nothing)
-
-    Pioneer.integrate_chrom(
-        rt,
-        scan_idx,
-        intensity,
-        fraction,
-        6,
-        ws,
-        state,
-        1.0f0,
-        0.0f0;
-        min_fraction_transmitted = 0.25f0,
-        boundary_candidate_data = candidate_data,
-    )
-
-    candidates = DataFrame(candidate_data[])
-    nearest = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(4)) .&
-        (candidates.candidate_stop_idx .== UInt16(8)),
-        :,
-    ])
-    lower_outer_left = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(2)) .&
-        (candidates.candidate_stop_idx .== UInt16(8)),
-        :,
-    ])
-    higher_outer_right = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(4)) .&
-        (candidates.candidate_stop_idx .== UInt16(10)),
-        :,
-    ])
-
-    @test nearest.left_edge_valley_log2_ratio == 0.0f0
-    @test nearest.right_edge_valley_log2_ratio == 0.0f0
-    @test lower_outer_left.left_edge_valley_log2_ratio < 0.0f0
-    @test lower_outer_left.right_edge_valley_log2_ratio == 0.0f0
-    @test higher_outer_right.left_edge_valley_log2_ratio == 0.0f0
-    @test higher_outer_right.right_edge_valley_log2_ratio > 0.0f0
-end
-
-@testset "included non-apex max features describe competing signal near or far from apex" begin
-    rt = Float32.(1:13)
-    scan_idx = UInt32.(1:13)
-    fraction = fill(1.0f0, length(rt))
-    intensity = Float32[5, 3, 4, 1, 5, 10, 5, 0, 8, 20, 8, 0, 5]
-    rt_to_irt = Pioneer.LinearRtConversionModel(2.0f0, 10.0f0)
-    ws = Pioneer.WHWorkspace(length(rt))
-    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
-    candidate_data = Ref{Any}(nothing)
-
-    Pioneer.integrate_chrom(
-        rt,
-        scan_idx,
-        intensity,
-        fraction,
-        6,
-        ws,
-        state,
-        1.0f0,
-        0.0f0;
-        min_fraction_transmitted = 0.25f0,
-        rt_to_irt_model = rt_to_irt,
-        boundary_candidate_data = candidate_data,
-    )
-
-    candidates = DataFrame(candidate_data[])
-    expected_peak_only = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(4)) .&
-        (candidates.candidate_stop_idx .== UInt16(8)),
-        :,
-    ])
-    competing_peak_included = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(4)) .&
-        (candidates.candidate_stop_idx .== UInt16(12)),
-        :,
-    ])
-
-    @test expected_peak_only.included_nonapex_max_log2_ratio ≈ -1.0f0
-    @test expected_peak_only.included_nonapex_max_irt_distance ≈ 2.0f0
-    @test competing_peak_included.included_nonapex_max_log2_ratio ≈ 1.0f0
-    @test competing_peak_included.included_nonapex_max_irt_distance ≈ 8.0f0
+    @test length(paths) == 2
+    @test all(isfile, paths)
+    @test any(occursin("file_1_run_A_raw", basename(path)) for path in paths)
+    @test any(occursin("file_2_run_B_raw", basename(path)) for path in paths)
+    @test all(path -> filesize(path) > 0, paths)
 end
 
 @testset "boundary selected category tally logs at debug level" begin
@@ -818,7 +723,7 @@ end
     )
 
     lines = Pioneer.boundary_candidate_category_tally_lines(selected)
-    @test first(lines) == "Learned chromatogram boundary selected candidate categories (total 3):"
+    @test first(lines) == "Chromatogram boundary shape-model selected candidate categories (total 3):"
     @test any(occursin("fallback", line) && occursin("2", line) for line in lines)
     @test any(occursin("valley_combination", line) && occursin("1", line) for line in lines)
 
@@ -842,7 +747,7 @@ end
             end
         end
         @test occursin(
-            "Learned chromatogram boundary selected candidate categories",
+            "Chromatogram boundary shape-model selected candidate categories",
             read(debug_path, String),
         )
     finally
@@ -858,9 +763,16 @@ end
         candidate_category = ["fallback", "valley_combination", "fallback", "valley_combination"],
         is_fallback = Bool[true, false, true, false],
         quant_trace_selected = Bool[true, true, false, false],
+        ms_file_idx = UInt16[1, 1, 1, 1],
+        shape_model_valid = Bool[true, true, true, true],
+        shape_fit_loss = Float32[0.3, 0.1, 0.2, 0.0],
+        shape_edge_fraction = Float32[0, 0, 0, 0],
+        shape_overshoot_penalty = Float32[0, 0, 0, 0],
+        shape_sigma_irt = Float32[1, 1, 1, 1],
+        shape_tau_irt = Float32[0, 0, 0, 0],
     )
 
-    selected = Pioneer.select_boundary_candidate_rows(candidates, nothing)
+    selected = Pioneer.select_boundary_candidate_rows_by_shape(candidates)
 
     @test nrow(selected) == 1
     @test selected.boundary_group_id == UInt64[1]
@@ -884,19 +796,13 @@ end
         points_integrated = UInt32[5, 8, 4, 7],
         is_fallback = Bool[true, false, true, true],
         boundary_model_score = Float32[0.1, 0.9, 0.2, 0.7],
-        boundary_training_loss = Float32[1.5, 0.2, 0.8, 0.3],
-        boundary_crossrun_loss = Float32[1.0, 0.1, 0.5, 0.4],
-        boundary_isotope_loss = Float32[Inf32, Inf32, Inf32, Inf32],
-        candidate_width = Float32[6, 9, 6, 7],
-        endpoint_valley_score = Float32[0.9, 0.4, 0.8, 0.7],
-        endpoint_height_fraction = Float32[0.2, 0.3, 0.2, 0.25],
-        secondary_peak_penalty = Float32[0.0, 0.3, 0.0, 0.2],
-        internal_dip_recovery_score = Float32[0.0, 0.5, 0.1, 0.4],
-        right_excluded_signal_fraction = Float32[0.4, 0.0, 0.0, 0.2],
-        right_boundary_recovery_fraction = Float32[0.3, 0.0, 0.0, 0.1],
-        right_outside_peak_fraction = Float32[0.6, 0.0, 0.0, 0.3],
-        mainsearch_left_bound_delta = Float32[1, 1, 0, -1],
-        mainsearch_right_bound_delta = Float32[-2, 1, 0, 2],
+        boundary_shape_score = Float32[0.9, 0.1, 0.8, 0.3],
+        shape_fit_loss = Float32[0.8, 0.05, 0.7, 0.2],
+        shape_prior_penalty = Float32[0.1, 0.05, 0.1, 0.1],
+        shape_sigma_irt = Float32[0.4, 0.5, 0.4, 0.6],
+        shape_tau_irt = Float32[0.0, 0.1, 0.0, 0.2],
+        shape_edge_fraction = Float32[0.2, 0.1, 0.2, 0.3],
+        shape_overshoot_penalty = Float32[0.0, 0.0, 0.1, 0.0],
     )
     selected = candidates[[2, 3, 4], :]
 
@@ -963,7 +869,7 @@ end
     end
 end
 
-@testset "integrate_chrom exposes candidate features for boundary learner" begin
+@testset "integrate_chrom exposes shape-model candidate rows" begin
     rt = Float32.(1:9)
     scan_idx = UInt32.(1:9)
     fraction = fill(1.0f0, length(rt))
@@ -990,341 +896,38 @@ end
     candidates = DataFrame(candidate_data[])
     @test nrow(candidates) > 1
     @test any(candidates.is_fallback)
-    @test all(candidates.candidate_width .>= 0)
     @test all(isfinite, candidates.peak_area)
-    @test :candidate_category in propertynames(candidates)
+    @test all(col in propertynames(candidates) for col in (
+        :candidate_index,
+        :candidate_start_idx,
+        :candidate_stop_idx,
+        :candidate_start_scan,
+        :candidate_stop_scan,
+        :candidate_category,
+        :peak_area,
+        :new_best_scan,
+        :points_integrated,
+        :is_fallback,
+        :is_primary_apex,
+        :shape_model_valid,
+        :shape_fit_loss,
+        :shape_sigma_irt,
+        :shape_tau_irt,
+        :shape_apex_irt,
+        :shape_apex_height,
+        :shape_edge_fraction,
+        :shape_overshoot_penalty,
+        :shape_deconvolution_area_fraction,
+    ))
+    @test any(candidates.shape_model_valid)
     @test :hardcoded_score ∉ propertynames(candidates)
-    @test :mainsearch_distance_penalty ∉ propertynames(candidates)
-    @test :mainsearch_center_distance_penalty ∉ propertynames(candidates)
-    @test :mainsearch_width_penalty ∉ propertynames(candidates)
+    @test :candidate_width ∉ propertynames(candidates)
+    @test :endpoint_height_fraction ∉ propertynames(candidates)
+    @test :internal_dip_recovery_score ∉ propertynames(candidates)
+    @test :mainsearch_left_bound_delta ∉ propertynames(candidates)
+    @test :mainsearch_right_bound_delta ∉ propertynames(candidates)
     @test :fallback_start_delta ∉ propertynames(candidates)
     @test :fallback_stop_delta ∉ propertynames(candidates)
-    @test all(Symbol(feature) in propertynames(candidates) for feature in Pioneer.BOUNDARY_CANDIDATE_FEATURES)
-    @test :mainsearch_distance_penalty ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :mainsearch_center_distance_penalty ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :mainsearch_width_penalty ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :fallback_start_delta ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :fallback_stop_delta ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :endpoint_valley_score ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :secondary_peak_penalty ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :mainsearch_exclusion_penalty ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :mainsearch_left_bound_delta in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :mainsearch_right_bound_delta in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :smoothed_apex_weight ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :log2_smoothed_apex_weight in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :left_excluded_signal_fraction in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :right_excluded_signal_fraction in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :left_boundary_recovery_fraction in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :right_boundary_recovery_fraction in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :left_outside_peak_fraction in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :right_outside_peak_fraction in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :internal_dip_recovery_score in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :left_edge_valley_log2_ratio in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :right_edge_valley_log2_ratio in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :included_nonapex_max_log2_ratio in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :included_nonapex_max_irt_distance in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :irt_asymmetry_delta in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :baseline_disconnected_signal_fraction ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :baseline_largest_nonapex_lobe_log2_ratio ∉ Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :baseline_internal_trough_score in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :baseline_internal_trough_log2_ratio in Pioneer.BOUNDARY_CANDIDATE_FEATURES
-    @test :baseline_disconnected_signal_fraction in propertynames(candidates)
-    @test :baseline_largest_nonapex_lobe_log2_ratio in propertynames(candidates)
-    @test :smoothed_apex_weight ∉ propertynames(candidates)
-    @test all(candidates.log2_smoothed_apex_weight .≈ log2(9.0f0))
-end
-
-@testset "boundary candidate width uses iRT span" begin
-    rt = Float32[0.0, 0.25, 1.0, 2.5, 5.0, 8.0]
-    scan_idx = UInt32.(1:length(rt))
-    fraction = fill(1.0f0, length(rt))
-    intensity = Float32[0, 1, 8, 20, 5, 0]
-    rt_to_irt = Pioneer.LinearRtConversionModel(2.0f0, 10.0f0)
-    ws = Pioneer.WHWorkspace(length(rt))
-    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
-    candidate_data = Ref{Any}(nothing)
-
-    Pioneer.integrate_chrom(
-        rt,
-        scan_idx,
-        intensity,
-        fraction,
-        4,
-        ws,
-        state,
-        1.0f0,
-        0.0f0;
-        min_fraction_transmitted = 0.25f0,
-        rt_to_irt_model = rt_to_irt,
-        boundary_candidate_data = candidate_data,
-    )
-
-    candidates = DataFrame(candidate_data[])
-    @test nrow(candidates) > 0
-    for candidate in eachrow(candidates)
-        expected_width = abs(
-            Float32(rt_to_irt(rt[Int(candidate.candidate_stop_idx)])) -
-            Float32(rt_to_irt(rt[Int(candidate.candidate_start_idx)])),
-        )
-        scan_count_width = Float32(
-            Int(candidate.candidate_stop_idx) - Int(candidate.candidate_start_idx) + 1,
-        )
-        @test candidate.candidate_width ≈ expected_width
-        @test candidate.candidate_width != scan_count_width
-    end
-end
-
-@testset "boundary distance features use iRT geometry" begin
-    rt = Float32[0.0, 0.2, 0.55, 1.4, 2.0, 3.8, 4.1, 6.5]
-    scan_idx = UInt32.(10:10:(10 * length(rt)))
-    fraction = fill(1.0f0, length(rt))
-    intensity = Float32[0, 1, 4, 10, 6, 3, 1, 0]
-    rt_to_irt = Pioneer.LinearRtConversionModel(2.0f0, 10.0f0)
-    ws = Pioneer.WHWorkspace(length(rt))
-    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
-    candidate_data = Ref{Any}(nothing)
-    apex_idx = 4
-    evidence_range = 2:7
-
-    Pioneer.integrate_chrom(
-        rt,
-        scan_idx,
-        intensity,
-        fraction,
-        apex_idx,
-        ws,
-        state,
-        1.0f0,
-        0.0f0;
-        min_fraction_transmitted = 0.25f0,
-        rt_to_irt_model = rt_to_irt,
-        mainsearch_1pct_start_scan = scan_idx[first(evidence_range)],
-        mainsearch_1pct_stop_scan = scan_idx[last(evidence_range)],
-        boundary_candidate_data = candidate_data,
-    )
-
-    candidates = DataFrame(candidate_data[])
-    evidence_start_irt = Float32(rt_to_irt(rt[first(evidence_range)]))
-    evidence_stop_irt = Float32(rt_to_irt(rt[last(evidence_range)]))
-    evidence_width = evidence_stop_irt - evidence_start_irt
-    apex_irt = Float32(rt_to_irt(rt[apex_idx]))
-    function expected_area(start_idx::Int, stop_idx::Int)
-        start_idx >= stop_idx && return 0.0f0
-        area = 0.0f0
-        for i in start_idx:(stop_idx - 1)
-            left_val = max(0.0f0, intensity[i])
-            right_val = max(0.0f0, intensity[i + 1])
-            span = abs(Float32(rt_to_irt(rt[i + 1])) - Float32(rt_to_irt(rt[i])))
-            area += 0.5f0 * (left_val + right_val) * span
-        end
-        return area
-    end
-    for candidate in eachrow(candidates)
-        start_idx = Int(candidate.candidate_start_idx)
-        stop_idx = Int(candidate.candidate_stop_idx)
-        start_irt = Float32(rt_to_irt(rt[start_idx]))
-        stop_irt = Float32(rt_to_irt(rt[stop_idx]))
-
-        overlap_start = max(start_idx, first(evidence_range))
-        overlap_stop = min(stop_idx, last(evidence_range))
-        overlap_width = overlap_start <= overlap_stop ?
-            max(
-                Float32(rt_to_irt(rt[overlap_stop])) -
-                Float32(rt_to_irt(rt[overlap_start])),
-                0.0f0,
-            ) :
-            0.0f0
-        expected_exclusion = 1.0f0 - overlap_width / evidence_width
-        expected_left_delta = start_irt - evidence_start_irt
-        expected_right_delta = stop_irt - evidence_stop_irt
-        expected_irt_asymmetry = (stop_irt - apex_irt) - (apex_irt - start_irt)
-        left_area = expected_area(start_idx, apex_idx)
-        right_area = expected_area(apex_idx, stop_idx)
-        expected_asymmetry = log2(max(right_area, eps(Float32)) / max(left_area, eps(Float32)))
-
-        @test candidate.mainsearch_exclusion_penalty ≈ expected_exclusion
-        @test candidate.mainsearch_left_bound_delta ≈ expected_left_delta
-        @test candidate.mainsearch_right_bound_delta ≈ expected_right_delta
-        @test candidate.asymmetry_penalty ≈ expected_asymmetry
-        @test candidate.irt_asymmetry_delta ≈ expected_irt_asymmetry
-    end
-end
-
-@testset "boundary asymmetry preserves left/right area direction" begin
-    rt = Float32.(1:11)
-    scan_idx = UInt32.(1:11)
-    fraction = fill(1.0f0, length(rt))
-    intensity = Float32[0, 8, 7, 10, 2, 1, 0, 0, 0, 0, 0]
-    ws = Pioneer.WHWorkspace(length(rt))
-    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
-    candidate_data = Ref{Any}(nothing)
-
-    Pioneer.integrate_chrom(
-        rt,
-        scan_idx,
-        intensity,
-        fraction,
-        4,
-        ws,
-        state,
-        1.0f0,
-        0.0f0;
-        min_fraction_transmitted = 0.25f0,
-        boundary_candidate_data = candidate_data,
-    )
-
-    candidates = DataFrame(candidate_data[])
-    left_heavy = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(1)) .&
-        (candidates.candidate_stop_idx .== UInt16(7)),
-        :,
-    ])
-
-    @test left_heavy.asymmetry_penalty ≈ log2(8.0f0 / 20.0f0)
-end
-
-@testset "boundary shape features use WH-smoothed signal" begin
-    rt = Float32.(1:7)
-    scan_idx = UInt32.(1:7)
-    fraction = fill(1.0f0, length(rt))
-    intensity = Float32[5, 6, 8, 15, 8, 6, 5]
-    ws = Pioneer.WHWorkspace(length(rt))
-    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
-    candidate_data = Ref{Any}(nothing)
-
-    Pioneer.integrate_chrom(
-        rt,
-        scan_idx,
-        intensity,
-        fraction,
-        4,
-        ws,
-        state,
-        1.0f0,
-        0.0f0;
-        min_fraction_transmitted = 0.25f0,
-        boundary_candidate_data = candidate_data,
-    )
-
-    candidates = DataFrame(candidate_data[])
-    wide = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(1)) .&
-        (candidates.candidate_stop_idx .== UInt16(7)),
-        :,
-    ])
-
-    @test wide.endpoint_height_fraction ≈ (5.0f0 + 5.0f0) / (2.0f0 * 15.0f0)
-    @test wide.peak_prominence_score ≈ ((15.0f0 - 5.0f0) / 15.0f0) / sqrt(wide.candidate_width)
-    @test wide.included_nonapex_max_log2_ratio ≈ log2(8.0f0 / 15.0f0)
-    @test wide.included_nonapex_max_irt_distance ≈ 1.0f0
-end
-
-@testset "baseline lobe features flag disconnected non-apex residual peaks" begin
-    rt = Float32.(1:10)
-    scan_idx = UInt32.(1:10)
-    fraction = fill(1.0f0, length(rt))
-    intensity = Float32[20, 22, 30, 50, 35, 7, 25, 35, 20, 0]
-    ws = Pioneer.WHWorkspace(length(rt))
-    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
-    candidate_data = Ref{Any}(nothing)
-
-    Pioneer.integrate_chrom(
-        rt,
-        scan_idx,
-        intensity,
-        fraction,
-        4,
-        ws,
-        state,
-        1.0f0,
-        0.0f0;
-        min_fraction_transmitted = 0.25f0,
-        boundary_candidate_data = candidate_data,
-    )
-
-    candidates = DataFrame(candidate_data[])
-    connected = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(1)) .&
-        (candidates.candidate_stop_idx .== UInt16(6)),
-        :,
-    ])
-    disconnected = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(1)) .&
-        (candidates.candidate_stop_idx .== UInt16(10)),
-        :,
-    ])
-
-    @test connected.baseline_disconnected_signal_fraction == 0.0f0
-    @test connected.baseline_largest_nonapex_lobe_log2_ratio == -10.0f0
-    @test connected.baseline_internal_trough_score == 0.0f0
-    @test connected.baseline_internal_trough_log2_ratio == 0.0f0
-    @test disconnected.baseline_disconnected_signal_fraction > 0.2f0
-    @test disconnected.baseline_largest_nonapex_lobe_log2_ratio > -2.0f0
-    @test disconnected.baseline_internal_trough_score > 0.2f0
-    @test disconnected.baseline_internal_trough_log2_ratio < -2.0f0
-end
-
-@testset "internal dip recovery uses iRT distance" begin
-    rt = Float32[0.0, 0.2, 0.6, 1.0, 1.5, 2.4, 2.55, 4.2, 4.4, 4.6, 6.0]
-    scan_idx = UInt32.(1:length(rt))
-    fraction = fill(1.0f0, length(rt))
-    intensity = Float32[0, 1, 4, 10, 9, 6, 7, 8, 6, 3, 0]
-    rt_to_irt = Pioneer.LinearRtConversionModel(2.0f0, 10.0f0)
-    ws = Pioneer.WHWorkspace(length(rt))
-    state = Pioneer.Chromatogram(zeros(Float32, length(rt)), zeros(Float32, length(rt)), 0)
-    candidate_data = Ref{Any}(nothing)
-    apex_idx = 4
-
-    Pioneer.integrate_chrom(
-        rt,
-        scan_idx,
-        intensity,
-        fraction,
-        apex_idx,
-        ws,
-        state,
-        1.0f0,
-        0.0f0;
-        min_fraction_transmitted = 0.25f0,
-        rt_to_irt_model = rt_to_irt,
-        boundary_candidate_data = candidate_data,
-    )
-
-    candidates = DataFrame(candidate_data[])
-    wide = only(candidates[
-        (candidates.candidate_start_idx .== UInt16(1)) .&
-        (candidates.candidate_stop_idx .== UInt16(11)),
-        :,
-    ])
-
-    apex_height = intensity[apex_idx]
-    expected = 0.0f0
-    min_seen = apex_height
-    min_idx = apex_idx
-    for i in (apex_idx - 1):-1:Int(wide.candidate_start_idx)
-        val = max(0.0f0, intensity[i])
-        if val < min_seen
-            min_seen = val
-            min_idx = i
-        else
-            distance = abs(Float32(rt_to_irt(rt[i])) - Float32(rt_to_irt(rt[min_idx])))
-            expected = max(expected, (val - min_seen) / (apex_height * sqrt(max(distance, eps(Float32)))))
-        end
-    end
-    min_seen = apex_height
-    min_idx = apex_idx
-    for i in (apex_idx + 1):Int(wide.candidate_stop_idx)
-        val = max(0.0f0, intensity[i])
-        if val < min_seen
-            min_seen = val
-            min_idx = i
-        else
-            distance = abs(Float32(rt_to_irt(rt[i])) - Float32(rt_to_irt(rt[min_idx])))
-            expected = max(expected, (val - min_seen) / (apex_height * sqrt(max(distance, eps(Float32)))))
-        end
-    end
-
-    @test wide.internal_dip_recovery_score ≈ expected
 end
 
 @testset "integrate_precursors can collect boundary candidate data" begin
@@ -1358,22 +961,23 @@ end
     @test peak_area[1] > 0.0f0
 end
 
-@testset "targeted debug plots use learned selected candidate bounds" begin
+@testset "targeted debug plots use selected bounds with initial expected apex" begin
     chromatograms = DataFrame(
         precursor_idx = fill(UInt32(42), 9),
         rt = Float32.(1:9),
         scan_idx = UInt32.(10:10:90),
-        intensity = Float32[0, 1, 3, 6, 10, 6, 3, 1, 0],
+        intensity = Float32[0, 1, 10, 6, 1, 6, 12, 6, 0],
         precursor_fraction_transmitted = fill(1.0f0, 9),
     )
     passing_psms = DataFrame(
         precursor_idx = UInt32[42],
-        scan_idx = UInt32[50],
+        scan_idx = UInt32[30],
+        new_best_scan = UInt32[70],
     )
     selected = DataFrame(
         ms_file_idx = UInt16[1],
         precursor_idx = UInt32[42],
-        candidate_start_scan = UInt32[30],
+        candidate_start_scan = UInt32[20],
         candidate_stop_scan = UInt32[80],
     )
     debug_data_by_precursor = Dict{UInt32, Any}()
@@ -1398,7 +1002,8 @@ end
         )
 
         @test haskey(debug_data_by_precursor, UInt32(42))
-        @test debug_data_by_precursor[UInt32(42)].scan_range == 3:8
+        @test debug_data_by_precursor[UInt32(42)].scan_range == 2:8
+        @test debug_data_by_precursor[UInt32(42)].apex_scan_idx == UInt32(30)
     finally
         Pioneer.DEBUG_CONSOLE_LEVEL[] = old_level
         Pioneer.DEBUG_CHROM_TARGET_PRECURSOR_IDXS[] = old_targets

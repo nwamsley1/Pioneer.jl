@@ -135,10 +135,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     isotope_tracetype::I
     prec_estimation::P
     boundary_selection_method::String
-    learned_boundary_max_train_groups::Int64
-    learned_boundary_min_positive::Int64
-    learned_boundary_min_negative::Int64
-    learned_boundary_min_crossrun_refs::Int64
     learned_boundary_max_isotope_trace_groups_per_file::Int64
 
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
@@ -171,26 +167,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
                 "expected \"second_derivative\" or \"learned\".",
             ))
         end
-        learned_boundary_max_train_groups = Int64(get(
-            chrom_params,
-            :learned_boundary_max_train_groups,
-            20_000,
-        ))
-        learned_boundary_min_positive = Int64(get(
-            chrom_params,
-            :learned_boundary_min_positive,
-            25,
-        ))
-        learned_boundary_min_negative = Int64(get(
-            chrom_params,
-            :learned_boundary_min_negative,
-            25,
-        ))
-        learned_boundary_min_crossrun_refs = Int64(get(
-            chrom_params,
-            :learned_boundary_min_crossrun_refs,
-            1,
-        ))
         learned_boundary_max_isotope_trace_groups_per_file = Int64(get(
             chrom_params,
             :learned_boundary_max_isotope_trace_groups_per_file,
@@ -215,10 +191,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             isotope_trace_type,
             prec_estimation,
             boundary_selection_method,
-            learned_boundary_max_train_groups,
-            learned_boundary_min_positive,
-            learned_boundary_min_negative,
-            learned_boundary_min_crossrun_refs,
             learned_boundary_max_isotope_trace_groups_per_file,
         )
     end
@@ -329,8 +301,8 @@ function process_file!(
         )
     else
         # Combined-trace quantification still integrates all scan points together,
-        # but we also keep isotope-capture states so the learned boundary model
-        # can train on isotope-specific side traces.
+        # but we also keep isotope-capture states so shape priors can use
+        # isotope-specific side traces.
         get_isotopes_captured!(
             chromatograms,
             getQuadTransmissionModel(search_context, ms_file_idx),
@@ -549,42 +521,15 @@ function summarize_results!(
     candidates = load_boundary_candidate_tables(search_context)
     nrow(candidates) == 0 && return nothing
 
-    training_candidates = hasproperty(candidates, :target) ?
-        candidates[candidates.target .== true, :] :
-        copy(candidates)
-    if nrow(training_candidates) == 0
-        @user_warn "Learned chromatogram boundary model skipped: no target candidate rows available; keeping second-derivative bounds."
-        return nothing
-    end
-
-    models = train_boundary_candidate_models_by_cv_fold(
-        training_candidates;
-        max_groups = params.learned_boundary_max_train_groups,
-        min_positive = params.learned_boundary_min_positive,
-        min_negative = params.learned_boundary_min_negative,
-        min_crossrun_refs = params.learned_boundary_min_crossrun_refs,
-        rng = Random.MersenneTwister(1776),
-    )
-
-    if isempty(models) || all(isnothing, values(models))
-        @user_warn "Learned chromatogram boundary models skipped: insufficient labeled candidate diversity; keeping second-derivative bounds."
-        return nothing
-    end
-
-    log_boundary_cv_model_feature_importances(models)
-    selected = select_boundary_candidate_rows_crossfold(candidates, models)
+    score_boundary_candidates_by_shape!(candidates)
+    write_boundary_shape_parameter_qc_plots(candidates, search_context)
+    selected = select_boundary_candidate_rows_by_shape(candidates)
     log_boundary_candidate_category_tally(selected)
     if DEBUG_CONSOLE_LEVEL[] >= 1
-        debug_candidates = copy(candidates)
-        label_boundary_candidate_targets!(
-            debug_candidates;
-            min_crossrun_refs = params.learned_boundary_min_crossrun_refs,
-        )
-        score_boundary_candidates_crossfold!(debug_candidates, models)
-        log_boundary_candidate_debug(debug_candidates, selected)
+        log_boundary_candidate_debug(candidates, selected)
     end
     updated = apply_selected_boundary_candidates!(selected, search_context)
     debug_write_selected_boundary_chromatogram_plots(selected, params, search_context)
-    @user_info "Learned chromatogram boundary model selected bounds for $updated precursor traces."
+    @user_info "Chromatogram boundary shape model selected bounds for $updated precursor traces."
     return nothing
 end

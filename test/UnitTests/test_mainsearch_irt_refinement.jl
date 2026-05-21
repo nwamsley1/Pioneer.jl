@@ -4,6 +4,7 @@ using Pioneer
 
 using Pioneer: MainSearchIrtCorrectionModel, MainSearchIrtRefinement, _compute_phase2_columns!
 using Pioneer: _passing_precursor_targets, refine_mainsearch_irt_predictions!
+using Pioneer: reapply_psm_classifier_and_select_best!, train_lgbm_and_select_best
 
 struct MainSearchMockPrecursors <: Pioneer.LibraryPrecursors
     sequence::Vector{String}
@@ -33,7 +34,7 @@ Pioneer.getIrt(p::MainSearchMockPrecursors) = p.irt
         @test irt_corrections == Float32[2.0]
     end
 
-    @testset "refinement updates predictions and errors before second LGBM" begin
+    @testset "refinement updates predictions and errors before classifier reapply" begin
         precursors = MainSearchMockPrecursors(
             ["AAAA", "CCCC", "AAAA", "CCCC", "DDDD", "DDDD"],
             fill(missing, 6),
@@ -48,8 +49,8 @@ Pioneer.getIrt(p::MainSearchMockPrecursors) = p.irt
             irt_error = fill(0.0f0, 6),
         )
         psms[!, :irt_error] = abs.(psms.irt_obs .- psms.irt_pred)
-        best_psms = copy(psms)
         scores = Float32[0.99, 0.98, 0.01, 0.99, 0.98, 0.01]
+        best_psms = copy(psms)
 
         result = refine_mainsearch_irt_predictions!(
             psms,
@@ -68,7 +69,7 @@ Pioneer.getIrt(p::MainSearchMockPrecursors) = p.irt
         @test psms.irt_error[2] ≈ 0.0f0 atol = 1f-4
     end
 
-    @testset "refinement uses one model when cv_fold is present" begin
+    @testset "refinement trains out-of-fold models when cv_fold is present" begin
         precursors = MainSearchMockPrecursors(
             fill("AAAA", 6),
             fill(missing, 6),
@@ -94,9 +95,15 @@ Pioneer.getIrt(p::MainSearchMockPrecursors) = p.irt
         )
 
         @test result.refined
-        @test result.model isa MainSearchIrtCorrectionModel
-        @test psms.irt_pred[1] ≈ 10.5f0 atol = 1f-4
-        @test psms.irt_pred[3] ≈ 10.5f0 atol = 1f-4
+        @test result.model isa Dict{UInt8, MainSearchIrtCorrectionModel}
+        @test sort(collect(keys(result.model))) == UInt8[0, 1]
+        @test Set(result.training_target_precursors) == Set(UInt32[1, 2, 3, 4])
+        @test psms.irt_pred[1] ≈ 13.0f0 atol = 1f-4
+        @test psms.irt_pred[2] ≈ 13.0f0 atol = 1f-4
+        @test psms.irt_pred[3] ≈ 8.0f0 atol = 1f-4
+        @test psms.irt_pred[4] ≈ 8.0f0 atol = 1f-4
+        @test best_psms.irt_pred[1] ≈ 13.0f0 atol = 1f-4
+        @test best_psms.irt_pred[3] ≈ 8.0f0 atol = 1f-4
     end
 
     @testset "phase two iRT difference uses refined prediction column" begin
@@ -123,6 +130,35 @@ Pioneer.getIrt(p::MainSearchMockPrecursors) = p.irt
         @test prec_mz_col == Float32[401.0, 402.0]
         @test pair_id_col == UInt32[101, 102]
         @test entrap_col == UInt8[0, 1]
+    end
+
+    @testset "per-run classifier can reapply after iRT feature updates" begin
+        n = 40
+        psms = DataFrame(
+            precursor_idx = UInt32.(repeat(1:20, inner = 2)),
+            scan_idx = UInt32.(repeat([10, 20], 20)),
+            rt = Float32.(repeat([1, 2], 20)),
+            cv_fold = UInt8[isodd(i) ? 0 : 1 for i in 1:n],
+            target = Bool[isodd(cld(i, 2)) for i in 1:n],
+            x = Float32[isodd(cld(i, 2)) ? 5 + (i % 2) : -5 - (i % 2) for i in 1:n],
+        )
+
+        _, _, _, predictor = train_lgbm_and_select_best(
+            psms;
+            features = [:x],
+        )
+        first_pass_scores = copy(psms.lgbm_score)
+        psms.x .= .-psms.x
+
+        best_psms, scores, _ = reapply_psm_classifier_and_select_best!(
+            psms,
+            predictor,
+        )
+
+        @test nrow(best_psms) == 20
+        @test length(scores) == 20
+        @test psms.lgbm_score != first_pass_scores
+        @test all(isfinite, scores)
     end
 
     @testset "MBR nearest-neighbor pairing uses refined iRT column" begin

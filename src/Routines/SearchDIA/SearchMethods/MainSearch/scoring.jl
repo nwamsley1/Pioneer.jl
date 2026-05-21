@@ -42,7 +42,7 @@ const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
 const SHARED_LGBM_MAX_TRAIN = 250_000
 # Low-data threshold per fold: below this we CV-select between LightGBM and probit.
 const SHARED_LGBM_LOW_DATA_THRESHOLD = 10_000
-const MAINSEARCH_INTEGRATION_QVALUE_THRESHOLD = 0.01f0
+const MAINSEARCH_INTEGRATION_PEP_THRESHOLD = 0.50f0
 
 # Diagnostic dump: when nonzero, dump pre-reduction psms (with lgbm_score) to
 # DIAG_DUMP_DIR/<file_idx>.arrow inside train_lgbm_and_select_best.
@@ -50,7 +50,7 @@ const DIAG_DUMP_FILE_IDX = Ref{Int64}(0)
 const DIAG_DUMP_DIR      = Ref{String}("")
 
 """
-    train_psm_classifier_with_fallback(psms; features) -> (scores, last_classifier, info)
+    train_psm_classifier_with_fallback(psms; features) -> (scores, infold_scores, last_classifier, info)
 
 Two-fold CV LightGBM training with the shared hyperparameters
 (`SHARED_LGBM_HP`). The function:
@@ -65,8 +65,8 @@ Two-fold CV LightGBM training with the shared hyperparameters
    - `all_scores :: Vector{Float64}` — fold-assigned per-PSM scores (psms order)
    - `last_classifier` — the LightGBM classifier object from the last fold,
      or `nothing` if a fold was unanimous-class
-   - `info :: NamedTuple` — `(slice, fit, predict, low_data, lgbm_psms_at_1pct,
-     probit_psms_at_1pct, winner)` for diagnostics
+   - `info :: NamedTuple` — diagnostics plus `available_features` and a
+     reusable fold predictor for reapplying scores after feature refreshes
 
 Used by both `train_lgbm_and_select_best` (MainSearch) and
 `score_precursor_isotope_traces` (PrecursorScoringSearch).
@@ -119,6 +119,7 @@ function train_psm_classifier_with_fallback(
     function _lgbm_cv()
         fold_scores  = Vector{Vector{Float64}}(undef, 2)
         infold_scores = compute_infold ? Vector{Vector{Float64}}(undef, 2) : nothing
+        fold_predictors = Vector{Any}(undef, 2)
         last_cls = nothing
         t_slice = 0.0; t_fit = 0.0; t_predict = 0.0
         for (fi, (train_idx, test_idx)) in enumerate(fold_pairs)
@@ -128,9 +129,16 @@ function train_psm_classifier_with_fallback(
             y_lbl = _prepare_labels(targets_col[sub_pos])
             t_slice += time() - ts
             if length(unique(y_lbl)) == 1
-                fold_scores[fi] = fill(y_lbl[1] == 0 ? 0.0 : 1.0, length(test_idx))
+                constant_score = y_lbl[1] == 0 ? 0.0 : 1.0
+                fold_scores[fi] = fill(constant_score, length(test_idx))
+                fold_predictors[fi] = (
+                    kind = :constant,
+                    value = constant_score,
+                    model = nothing,
+                    beta = nothing,
+                )
                 if compute_infold
-                    infold_scores[fi] = fill(y_lbl[1] == 0 ? 0.0 : 1.0, length(train_idx))
+                    infold_scores[fi] = fill(constant_score, length(train_idx))
                 end
             else
                 cls = build_lightgbm_classifier(; lgbm_hp...)
@@ -138,6 +146,12 @@ function train_psm_classifier_with_fallback(
                 ts2 = time(); X_te = X_all[test_idx, :]; t_slice += time() - ts2
                 tp = time(); raw = LightGBM.predict(cls, X_te); t_predict += time() - tp
                 fold_scores[fi] = ndims(raw) == 2 ? dropdims(raw; dims=2) : raw
+                fold_predictors[fi] = (
+                    kind = :lgbm,
+                    value = NaN,
+                    model = cls,
+                    beta = nothing,
+                )
                 if compute_infold
                     ts3 = time(); X_tr_full = X_all[train_idx, :]; t_slice += time() - ts3
                     tp2 = time(); raw_in = LightGBM.predict(cls, X_tr_full); t_predict += time() - tp2
@@ -146,7 +160,13 @@ function train_psm_classifier_with_fallback(
                 last_cls = cls
             end
         end
-        fold_scores, infold_scores, last_cls, (slice=t_slice, fit=t_fit, predict=t_predict)
+        return (
+            fold_scores,
+            infold_scores,
+            fold_predictors,
+            last_cls,
+            (slice = t_slice, fit = t_fit, predict = t_predict),
+        )
     end
 
     # Probit CV — only runs in low-data branch, so build fold DataFrames lazily here.
@@ -157,25 +177,30 @@ function train_psm_classifier_with_fallback(
             df[!, :intercept] = ones(Float64, nrow(df))
             df
         end
-        df_folds = [_mk_df(idx0), _mk_df(idx1)]  # indexed by fold number (0/1) → +1
         fold_scores  = Vector{Vector{Float64}}(undef, 2)
         infold_scores = compute_infold ? Vector{Vector{Float64}}(undef, 2) : nothing
+        fold_predictors = Vector{Any}(undef, 2)
         for (fi, (train_idx, test_idx)) in enumerate(fold_pairs)
-            train_fold = cv_fold[train_idx[1]] + 1  # 1 or 2
-            test_fold  = cv_fold[test_idx[1]] + 1
-            df_tr_full = df_folds[train_fold]
-            df_te = df_folds[test_fold]
             sub_pos = sub_positions[fi]
-            tr = df_tr_full[sub_pos, :]
-            y_bool = Vector{Bool}(targets_col[train_idx[sub_pos]])
+            train_sub_idx = train_idx[sub_pos]
+            tr = _mk_df(train_sub_idx)
+            df_te = _mk_df(test_idx)
+            y_bool = Vector{Bool}(targets_col[train_sub_idx])
             β = zeros(Float64, ncol(tr))
             tr_chunks = Iterators.partition(1:length(y_bool), max(1, cld(length(y_bool), Threads.nthreads())))
             ProbitRegression(β, tr, y_bool, tr_chunks; max_iter=15)
+            fold_predictors[fi] = (
+                kind = :probit,
+                value = NaN,
+                model = nothing,
+                beta = copy(β),
+            )
             s = zeros(Float64, nrow(df_te))
             te_chunks = Iterators.partition(1:nrow(df_te), max(1, cld(nrow(df_te), Threads.nthreads())))
             ModelPredictProbs!(s, df_te, β, te_chunks)
             fold_scores[fi] = s
             if compute_infold
+                df_tr_full = _mk_df(train_idx)
                 s_in = zeros(Float64, nrow(df_tr_full))
                 tr_full_chunks = Iterators.partition(1:nrow(df_tr_full),
                                                      max(1, cld(nrow(df_tr_full), Threads.nthreads())))
@@ -183,7 +208,7 @@ function train_psm_classifier_with_fallback(
                 infold_scores[fi] = s_in
             end
         end
-        fold_scores, infold_scores
+        return fold_scores, infold_scores, fold_predictors
     end
 
     function _fold_oof_psms_at_1pct(y_fold::AbstractVector, scores_on_test::AbstractVector)
@@ -195,20 +220,22 @@ function train_psm_classifier_with_fallback(
 
     @debug_l1 "  LightGBM CV: fold0=$(length(idx0)) fold1=$(length(idx1)) PSMs; train $(length.(sub_positions))"
 
-    lgbm_scores, lgbm_infold_scores, last_classifier, lgbm_timings = _lgbm_cv()
+    lgbm_scores, lgbm_infold_scores, lgbm_predictors, last_classifier, lgbm_timings = _lgbm_cv()
     @debug_l1 "  LightGBM timings: slice=$(round(lgbm_timings.slice, digits=2))s fit=$(round(lgbm_timings.fit, digits=2))s predict=$(round(lgbm_timings.predict, digits=2))s"
 
     info_winner = "lgbm"
     info_n_lgbm = -1
     info_n_probit = -1
+    chosen_predictors = lgbm_predictors
     if low_data
-        probit_scores, probit_infold_scores = _probit_cv()
+        probit_scores, probit_infold_scores, probit_predictors = _probit_cv()
         n_lgbm   = _fold_oof_psms_at_1pct(targets_col[idx0], lgbm_scores[1])   + _fold_oof_psms_at_1pct(targets_col[idx1], lgbm_scores[2])
         n_probit = _fold_oof_psms_at_1pct(targets_col[idx0], probit_scores[1]) + _fold_oof_psms_at_1pct(targets_col[idx1], probit_scores[2])
         winner = n_lgbm >= n_probit ? "lgbm" : "probit"
         @debug_l1 "  Low-data CV selection (min fold=$min_fold_size < $LOW_DATA_THRESHOLD): lgbm=$n_lgbm probit=$n_probit → $winner"
         chosen        = n_lgbm >= n_probit ? lgbm_scores       : probit_scores
         chosen_infold = n_lgbm >= n_probit ? lgbm_infold_scores : probit_infold_scores
+        chosen_predictors = n_lgbm >= n_probit ? lgbm_predictors : probit_predictors
         all_scores[idx0] .= chosen[1]
         all_scores[idx1] .= chosen[2]
         if compute_infold
@@ -237,12 +264,55 @@ function train_psm_classifier_with_fallback(
         probit_psms_at_1pct = info_n_probit,
         winner = info_winner,
         available_features = available_features,
+        predictor = (
+            available_features = available_features,
+            fold_predictors = chosen_predictors,
+        ),
     )
     return all_scores, infold_all, last_classifier, info
 end
 
+function _predict_psm_classifier_fold(fold_predictor, X::AbstractMatrix)
+    n = size(X, 1)
+    if fold_predictor.kind == :constant
+        return fill(Float64(fold_predictor.value), n)
+    elseif fold_predictor.kind == :lgbm
+        raw = LightGBM.predict(fold_predictor.model, X)
+        return ndims(raw) == 2 ? dropdims(raw; dims=2) : raw
+    elseif fold_predictor.kind == :probit
+        df = DataFrame(Float64.(X), :auto)
+        df[!, :intercept] = ones(Float64, nrow(df))
+        scores = zeros(Float64, nrow(df))
+        chunks = Iterators.partition(1:nrow(df), max(1, cld(nrow(df), Threads.nthreads())))
+        ModelPredictProbs!(scores, df, fold_predictor.beta, chunks)
+        return scores
+    else
+        throw(ArgumentError("unknown PSM classifier predictor kind $(fold_predictor.kind)"))
+    end
+end
+
+function predict_psm_classifier_scores(
+    psms::DataFrame,
+    predictor,
+)
+    available_features = Vector{Symbol}(predictor.available_features)
+    X_all = feature_matrix(psms, available_features)
+    cv_fold = psms[!, :cv_fold]
+    test_indices = [findall(cv_fold .== 0), findall(cv_fold .== 1)]
+    scores = Vector{Float64}(undef, nrow(psms))
+    for fi in 1:2
+        idx = test_indices[fi]
+        isempty(idx) && continue
+        scores[idx] .= _predict_psm_classifier_fold(
+            predictor.fold_predictors[fi],
+            X_all[idx, :],
+        )
+    end
+    return scores
+end
+
 """
-    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, timings)
+    train_lgbm_and_select_best(psms; features) -> (best_psms, scores, timings, predictor)
 
 Train LightGBM (with low-data probit fallback) on ALL PSMs (all scans) using
 the shared `train_psm_classifier_with_fallback` helper, then select the best
@@ -252,11 +322,13 @@ Returns:
 - best_psms: DataFrame with one row per precursor (best by LightGBM score)
 - scores: Vector{Float32} of LightGBM probabilities for best_psms
 - timings: NamedTuple with timing breakdowns
+- predictor: fold predictor from the fitted classifier, reusable for refreshed features
 """
 function train_lgbm_and_select_best(
     psms::DataFrame;
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
-    integration_q_value_threshold::Float32 = MAINSEARCH_INTEGRATION_QVALUE_THRESHOLD,
+    integration_pep_threshold::Float32 = MAINSEARCH_INTEGRATION_PEP_THRESHOLD,
+    lgbm_hp = SHARED_LGBM_HP,
 )
     t0 = time()
     # Per-precursor PSM count, broadcast to every row so MainSearch's per-file
@@ -268,7 +340,11 @@ function train_lgbm_and_select_best(
         end
         psms[!, :n_scans] = UInt32[counts[pid] for pid in psms[!, :precursor_idx]]
     end
-    all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(psms; features=features)
+    all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
+        psms;
+        features = features,
+        lgbm_hp = lgbm_hp,
+    )
     t_train_cv = time()
 
     model = if last_classifier !== nothing
@@ -282,7 +358,7 @@ function train_lgbm_and_select_best(
     add_mainsearch_integration_interval_columns!(
         psms,
         :lgbm_score;
-        qvalue_threshold = integration_q_value_threshold,
+        pep_threshold = integration_pep_threshold,
     )
 
     # Diagnostic dump: pre-reduction PSMs WITH lgbm_score
@@ -320,13 +396,46 @@ function train_lgbm_and_select_best(
         best = t_best - t_train_cv,
     )
 
-    return psms, Vector{Float32}(scores), timings
+    return psms, Vector{Float32}(scores), timings, info.predictor
+end
+
+function reapply_psm_classifier_and_select_best!(
+    psms::DataFrame,
+    predictor;
+    integration_pep_threshold::Float32 = MAINSEARCH_INTEGRATION_PEP_THRESHOLD,
+)
+    t0 = time()
+    if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
+        counts = Dict{UInt32, UInt32}()
+        @inbounds for pid in psms[!, :precursor_idx]::Vector{UInt32}
+            counts[pid] = get(counts, pid, UInt32(0)) + UInt32(1)
+        end
+        psms[!, :n_scans] = UInt32[counts[pid] for pid in psms[!, :precursor_idx]]
+    end
+
+    all_scores = predict_psm_classifier_scores(psms, predictor)
+    t_predict = time()
+    psms[!, :lgbm_score] = Float32.(all_scores)
+    add_mainsearch_integration_interval_columns!(
+        psms,
+        :lgbm_score;
+        pep_threshold = integration_pep_threshold,
+    )
+    best_psms = select_best_per_precursor!(psms, :lgbm_score)
+    scores = best_psms[!, :lgbm_score]
+    t_best = time()
+
+    timings = (
+        predict = t_predict - t0,
+        best = t_best - t_predict,
+    )
+    return best_psms, Vector{Float32}(scores), timings
 end
 
 function add_mainsearch_integration_interval_columns!(
     psms::DataFrame,
     score_col::Symbol;
-    qvalue_threshold::Float32 = MAINSEARCH_INTEGRATION_QVALUE_THRESHOLD,
+    pep_threshold::Float32 = MAINSEARCH_INTEGRATION_PEP_THRESHOLD,
 )
     n = nrow(psms)
     start_scan = zeros(UInt32, n)
@@ -342,7 +451,7 @@ function add_mainsearch_integration_interval_columns!(
 
     scores = Float32.(psms[!, score_col])
     targets = Bool.(psms[!, :target])
-    qvals = Vector{Float32}(undef, n)
+    peps = Vector{Float32}(undef, n)
     if hasproperty(psms, :ms_file_idx)
         file_ids = psms[!, :ms_file_idx]
         file_perm = sortperm(file_ids)
@@ -357,16 +466,16 @@ function add_mainsearch_integration_interval_columns!(
             rows = @view file_perm[file_group_start:file_group_stop]
             file_scores = scores[rows]
             file_targets = targets[rows]
-            file_qvals = Vector{Float32}(undef, length(rows))
-            get_qvalues!(file_scores, file_targets, file_qvals; doSort = true)
+            file_peps = Vector{Float32}(undef, length(rows))
+            get_PEP!(file_scores, file_targets, file_peps; doSort = true)
             @inbounds for (j, row) in enumerate(rows)
-                qvals[row] = file_qvals[j]
+                peps[row] = file_peps[j]
             end
 
             file_group_start = file_group_stop + 1
         end
     else
-        get_qvalues!(scores, targets, qvals; doSort = true)
+        get_PEP!(scores, targets, peps; doSort = true)
     end
 
     prec_ids = psms[!, :precursor_idx]::AbstractVector{UInt32}
@@ -422,7 +531,7 @@ function add_mainsearch_integration_interval_columns!(
         current_scan = UInt32(0)
         @inbounds for row in group_rows
             scan = scan_idxs[row]
-            row_passes = targets[row] && qvals[row] <= qvalue_threshold
+            row_passes = targets[row] && peps[row] <= pep_threshold
             if isempty(scan_rows) || scan != current_scan
                 push!(scan_rows, row)
                 push!(scan_passes, row_passes)

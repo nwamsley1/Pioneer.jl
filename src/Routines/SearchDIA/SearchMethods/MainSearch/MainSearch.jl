@@ -207,16 +207,18 @@ function process_search_results!(
     else
         Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     end
-    best_psms, scores, lgbm_timings = train_lgbm_and_select_best(
+    best_psms, scores, lgbm_timings, lgbm_predictor = train_lgbm_and_select_best(
         psms;
-        integration_q_value_threshold = params.integration_q_value_threshold,
+        integration_pep_threshold = params.integration_pep_threshold,
     )
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm = time()
 
-    # Refine predicted iRTs from the initial per-run model and refresh features
-    # that consume :irt_pred for downstream models.
+    # Refine predicted iRTs with out-of-fold correction models, refresh features
+    # that consume :irt_pred, then re-apply the same per-run classifier to the
+    # updated feature matrix. This lets the iRT-dependent features move the
+    # selected scan without fitting a second classifier.
     precursors = getPrecursors(getSpecLib(search_context))
     irt_refinement = MainSearchIrtRefinement(
         precursors;
@@ -229,12 +231,18 @@ function process_search_results!(
         scores,
         irt_refinement,
     )
-    refined_training_target_set = Set{UInt32}()
     if irt_refinement_result.refined
-        refined_training_target_set = Set{UInt32}(irt_refinement_result.training_target_precursors)
+        best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(
+            psms,
+            lgbm_predictor;
+            integration_pep_threshold = params.integration_pep_threshold,
+        )
+        best_psms[!, :lgbm_prob] = scores
         @user_info "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
-                   "updated predicted iRTs from $(length(refined_training_target_set)) " *
-                   "high-confidence target precursors; second per-run LGBM disabled"
+                   "$(length(irt_refinement_result.training_target_precursors)) high-confidence target precursors; " *
+                   "reapplied initial LGBM after iRT feature refresh " *
+                   "(predict=$(round(reapply_timings.predict, digits=2))s best=$(round(reapply_timings.best, digits=2))s)"
+        _summarize_psm_counts(best_psms, "after refined-iRT reapply", ms_file_idx, file_name)
     else
         @user_info "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
                    "skipped; $(length(irt_refinement_result.training_target_precursors)) " *
@@ -330,10 +338,13 @@ function process_search_results!(
                 add_apex_distance_feature!(psms2)
                 add_ms1_features!(psms2, spectra, search_context, ms_file_idx)
 
-                # Re-train LGBM and re-select best per precursor on pass-2 PSMs
-                best_psms2, scores2, _ = train_lgbm_and_select_best(
+                # Re-train LGBM and re-select best per precursor on pass-2 PSMs.
+                # This optional re-deconvolution pass is separate from the
+                # refined-iRT reapplication above and keeps the ordinary
+                # target/decoy labels.
+                best_psms2, scores2, _, _ = train_lgbm_and_select_best(
                     psms2;
-                    integration_q_value_threshold = params.integration_q_value_threshold,
+                    integration_pep_threshold = params.integration_pep_threshold,
                 )
                 best_psms2[!, :lgbm_prob] = scores2
                 pass2_precs_n = nrow(best_psms2)

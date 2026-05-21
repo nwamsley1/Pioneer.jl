@@ -1,35 +1,9 @@
-# Learned chromatogram-boundary ranking utilities.
-#
-# The learner is deliberately scoped to candidate-level peak-shape features and
-# self-supervised quant consistency targets. Context features such as charge,
-# precursor m/z, file intensity percentile, and transmission state are avoided so
-# the model learns how good the proposed bounds look rather than which precursor
-# class it came from.
+# Chromatogram-boundary shape-model scoring utilities.
+const BOUNDARY_SHAPE_SIGMA_IRT_MAX_BINS = 24
+const BOUNDARY_SHAPE_SIGMA_IRT_MIN_BIN_ROWS = 25
+const BOUNDARY_SHAPE_FIT_PRIOR_SCORE_WEIGHT = 1.0f0
+const BOUNDARY_SHAPE_FIT_PRIOR_NORMALIZATION_FLOOR = 0.02f0
 
-const BOUNDARY_CANDIDATE_FEATURES = Symbol[
-    :candidate_width,
-    :endpoint_height_fraction,
-    :peak_prominence_score,
-    :log2_smoothed_apex_weight,
-    :asymmetry_penalty,
-    :irt_asymmetry_delta,
-    :baseline_internal_trough_score,
-    :baseline_internal_trough_log2_ratio,
-    :left_excluded_signal_fraction,
-    :right_excluded_signal_fraction,
-    :left_boundary_recovery_fraction,
-    :right_boundary_recovery_fraction,
-    :left_outside_peak_fraction,
-    :right_outside_peak_fraction,
-    :internal_dip_recovery_score,
-    :left_edge_valley_log2_ratio,
-    :right_edge_valley_log2_ratio,
-    :included_nonapex_max_log2_ratio,
-    :included_nonapex_max_irt_distance,
-    :mainsearch_left_bound_delta,
-    :mainsearch_right_bound_delta,
-]
-const BOUNDARY_RANKING_MAX_LABEL = 30
 const DEBUG_BOUNDARY_CANDIDATE_TARGETS = Ref{Set{Tuple{UInt32,UInt16}}}(
     Set([
         (UInt32(370714), UInt16(1)),
@@ -38,56 +12,208 @@ const DEBUG_BOUNDARY_CANDIDATE_TARGETS = Ref{Set{Tuple{UInt32,UInt16}}}(
     ])
 )
 
-@inline function _boundary_log_area(area)
-    area_f = Float32(area)
-    return isfinite(area_f) && area_f > 0.0f0 ? log2(area_f) : Inf32
+@inline function egh_boundary_value(
+    t::Real,
+    apex_t::Real,
+    height::Real,
+    sigma::Real,
+    tau::Real,
+)
+    height_f = Float32(height)
+    sigma_f = Float32(sigma)
+    sigma_f > 0.0f0 || return 0.0f0
+
+    delta = Float32(t - apex_t)
+    denom = 2.0f0 * sigma_f * sigma_f + Float32(tau) * delta
+    denom > eps(Float32) || return 0.0f0
+    val = height_f * exp(-(delta * delta) / denom)
+    return isfinite(val) ? Float32(max(0.0f0, val)) : 0.0f0
 end
 
-function _median_or_nothing(values::Vector{Float32})
-    isempty(values) && return nothing
-    return Float32(median(values))
-end
-
-function _median_excluding_group(entries::Vector{Tuple{UInt64, Float32}}, excluded_group::UInt64)
-    vals = Float32[]
-    sizehint!(vals, length(entries))
-    for (group_id, value) in entries
-        group_id == excluded_group && continue
-        isfinite(value) || continue
-        push!(vals, value)
+function _shape_point_widths(x::AbstractVector{<:Real})
+    n = length(x)
+    widths = Vector{Float32}(undef, n)
+    if n == 1
+        widths[1] = 1.0f0
+        return widths
     end
-    return _median_or_nothing(vals)
+
+    @inbounds for i in 1:n
+        left = i == 1 ? 0.0f0 : abs(Float32(x[i] - x[i - 1]))
+        right = i == n ? 0.0f0 : abs(Float32(x[i + 1] - x[i]))
+        widths[i] = max(0.5f0 * (left + right), eps(Float32))
+    end
+    return widths
+end
+
+function _fit_egh_linearized(
+    irt::AbstractVector{<:Real},
+    signal::AbstractVector{<:Real},
+    apex_pos::Int,
+    height::Float32,
+    widths::Vector{Float32},
+)
+    floor_ratio = 1.0f-4
+    ceiling_ratio = 0.98f0
+    apex_t = Float32(irt[apex_pos])
+
+    s00 = 0.0f0
+    s01 = 0.0f0
+    s11 = 0.0f0
+    b0 = 0.0f0
+    b1 = 0.0f0
+
+    @inbounds for i in eachindex(signal)
+        i == apex_pos && continue
+        delta = Float32(irt[i]) - apex_t
+        abs(delta) > eps(Float32) || continue
+        ratio = clamp(Float32(signal[i]) / height, floor_ratio, ceiling_ratio)
+        denom_obs = (delta * delta) / max(-log(ratio), eps(Float32))
+        weight = widths[i] * max(0.25f0, sqrt(max(ratio, floor_ratio)))
+        s00 += weight
+        s01 += weight * delta
+        s11 += weight * delta * delta
+        b0 += weight * denom_obs
+        b1 += weight * delta * denom_obs
+    end
+
+    det = s00 * s11 - s01 * s01
+    if det <= eps(Float32)
+        return nothing
+    end
+
+    intercept = (b0 * s11 - b1 * s01) / det
+    tau = (s00 * b1 - s01 * b0) / det
+    if !isfinite(intercept) || intercept <= eps(Float32) || !isfinite(tau)
+        return nothing
+    end
+
+    sigma = sqrt(0.5f0 * intercept)
+    sigma > eps(Float32) || return nothing
+    return (sigma = Float32(sigma), tau = Float32(tau))
+end
+
+function _fit_gaussian_moment_fallback(
+    irt::AbstractVector{<:Real},
+    signal::AbstractVector{<:Real},
+    apex_pos::Int,
+    height::Float32,
+    widths::Vector{Float32},
+)
+    apex_t = Float32(irt[apex_pos])
+    moment = 0.0f0
+    total = 0.0f0
+
+    @inbounds for i in eachindex(signal)
+        val = max(0.0f0, Float32(signal[i]))
+        weight = widths[i] * max(val / height, 0.05f0)
+        delta = Float32(irt[i]) - apex_t
+        moment += weight * delta * delta
+        total += weight
+    end
+
+    total > eps(Float32) || return nothing
+    sigma = sqrt(moment / total)
+    sigma > eps(Float32) || return nothing
+    return (sigma = Float32(sigma), tau = 0.0f0)
+end
+
+function _egh_fit_loss(
+    irt::AbstractVector{<:Real},
+    signal::AbstractVector{<:Real},
+    apex_pos::Int,
+    height::Float32,
+    widths::Vector{Float32},
+    sigma::Float32,
+    tau::Float32,
+)
+    apex_t = Float32(irt[apex_pos])
+    total_weight = 0.0f0
+    fit_loss = 0.0f0
+    overshoot_penalty = 0.0f0
+
+    @inbounds for i in eachindex(signal)
+        observed = max(0.0f0, Float32(signal[i]))
+        predicted = egh_boundary_value(irt[i], apex_t, height, sigma, tau)
+        residual = (observed - predicted) / height
+        point_loss = residual * residual
+        weight = widths[i]
+        fit_loss += weight * point_loss
+        total_weight += weight
+
+        overshoot = max(0.0f0, observed / height - 1.0f0)
+        overshoot_penalty += weight * overshoot * overshoot
+    end
+
+    total_weight = max(total_weight, eps(Float32))
+    edge_fraction = 0.5f0 * (
+        egh_boundary_value(first(irt), apex_t, height, sigma, tau) +
+        egh_boundary_value(last(irt), apex_t, height, sigma, tau)
+    ) / height
+
+    return (
+        fit_loss = Float32(fit_loss / total_weight),
+        edge_fraction = Float32(edge_fraction),
+        overshoot_penalty = Float32(overshoot_penalty / total_weight),
+    )
+end
+
+function fit_egh_boundary_shape(
+    irt::AbstractVector{<:Real},
+    signal::AbstractVector{<:Real},
+    apex_pos::Integer,
+)
+    n = length(irt)
+    if n != length(signal) || n < 3 || apex_pos < 1 || apex_pos > n
+        return (
+            valid = false,
+            fit_loss = Inf32,
+            sigma = 0.0f0,
+            tau = 0.0f0,
+            edge_fraction = 1.0f0,
+            overshoot_penalty = Inf32,
+        )
+    end
+
+    apex_i = Int(apex_pos)
+    height = Float32(signal[apex_i])
+    if !isfinite(height) || height <= eps(Float32)
+        return (
+            valid = false,
+            fit_loss = Inf32,
+            sigma = 0.0f0,
+            tau = 0.0f0,
+            edge_fraction = 1.0f0,
+            overshoot_penalty = Inf32,
+        )
+    end
+
+    widths = _shape_point_widths(irt)
+    fit = _fit_egh_linearized(irt, signal, apex_i, height, widths)
+    fit === nothing && (fit = _fit_gaussian_moment_fallback(irt, signal, apex_i, height, widths))
+    fit === nothing && return (
+        valid = false,
+        fit_loss = Inf32,
+        sigma = 0.0f0,
+        tau = 0.0f0,
+        edge_fraction = 1.0f0,
+        overshoot_penalty = Inf32,
+    )
+
+    loss = _egh_fit_loss(irt, signal, apex_i, height, widths, fit.sigma, fit.tau)
+    return (
+        valid = true,
+        fit_loss = loss.fit_loss,
+        sigma = fit.sigma,
+        tau = fit.tau,
+        edge_fraction = loss.edge_fraction,
+        overshoot_penalty = loss.overshoot_penalty,
+    )
 end
 
 function _get_column_or_fill(df::AbstractDataFrame, col::Symbol, default)
     hasproperty(df, col) && return df[!, col]
     return fill(default, nrow(df))
-end
-
-"""
-    sample_boundary_candidate_groups(candidates; max_groups, rng, group_col)
-
-Randomly sample whole boundary-candidate groups. Keeping complete groups avoids
-training examples where one candidate for a chromatogram is present but its
-alternatives were discarded.
-"""
-function sample_boundary_candidate_groups(
-    candidates::DataFrame;
-    max_groups::Integer,
-    rng::AbstractRNG = Random.default_rng(),
-    group_col::Symbol = :boundary_group_id,
-)
-    max_groups <= 0 && return candidates[1:0, :]
-    nrow(candidates) == 0 && return copy(candidates)
-
-    groups = unique(candidates[!, group_col])
-    length(groups) <= max_groups && return copy(candidates)
-
-    shuffled = collect(groups)
-    Random.shuffle!(rng, shuffled)
-    keep = Set(shuffled[1:Int(max_groups)])
-    mask = [group_id in keep for group_id in candidates[!, group_col]]
-    return candidates[mask, :]
 end
 
 function _fallback_rows_by_group(
@@ -119,588 +245,647 @@ function _fallback_rows_by_group(
     return rows_by_group, fallback_row
 end
 
-function _fallback_log_entries(
-    candidates::AbstractDataFrame,
-    fallback_row::Dict{UInt64, Int},
-    group_col::Symbol,
-    precursor_col::Symbol,
-    file_col::Symbol,
-    protein_col::Symbol,
-    area_col::Symbol,
-    isotope_col::Union{Nothing, Symbol},
-)
-    pid_col = candidates[!, precursor_col]
-    file_ids = candidates[!, file_col]
-    protein_keys = candidates[!, protein_col]
-    isotope_keys = isotope_col === nothing ? nothing : candidates[!, isotope_col]
-    quant_selected = _get_column_or_fill(candidates, :quant_trace_selected, true)
-    areas = candidates[!, area_col]
-
-    by_precursor = Dict{UInt32, Vector{Tuple{UInt64, Float32}}}()
-    by_precursor_run_isotope = Dict{Tuple{UInt32, UInt16}, Vector{Tuple{Any, UInt64, Float32}}}()
-    entries = NamedTuple[]
-
-    for (group_id, row) in fallback_row
-        log_area = _boundary_log_area(areas[row])
-        isfinite(log_area) || continue
-
-        pid = UInt32(pid_col[row])
-        file_id = UInt16(file_ids[row])
-        protein_key = protein_keys[row]
-        isotope_key = isotope_col === nothing ? nothing : isotope_keys[row]
-        is_quant_selected = Bool(quant_selected[row])
-
-        if is_quant_selected
-            push!(get!(() -> Tuple{UInt64, Float32}[], by_precursor, pid), (group_id, log_area))
-        end
-        if isotope_col !== nothing
-            push!(
-                get!(() -> Tuple{Any, UInt64, Float32}[], by_precursor_run_isotope, (pid, file_id)),
-                (isotope_key, group_id, log_area),
-            )
-        end
-        push!(entries, (
-            group_id = UInt64(group_id),
-            row = row,
-            precursor_idx = pid,
-            ms_file_idx = file_id,
-            protein_key = protein_key,
-            isotope_key = isotope_key,
-            quant_trace_selected = is_quant_selected,
-            log_area = log_area,
-        ))
-    end
-
-    return entries, by_precursor, by_precursor_run_isotope
+function _median_mad_scale(values::Vector{Float32}; floor::Float32)
+    isempty(values) && return (median = 0.0f0, scale = floor)
+    med = Float32(median(values))
+    deviations = Float32[abs(v - med) for v in values]
+    mad = isempty(deviations) ? 0.0f0 : Float32(median(deviations))
+    scale = max(1.4826f0 * mad, floor)
+    return (median = med, scale = scale)
 end
 
-function _crossrun_reference_residuals(
-    entries::Vector{NamedTuple},
-    by_precursor::Dict{UInt32, Vector{Tuple{UInt64, Float32}}},
+function _smooth_curve_values(values::Vector{Float32})
+    length(values) < 3 && return copy(values)
+    smoothed = similar(values)
+    @inbounds for i in eachindex(values)
+        start = max(firstindex(values), i - 1)
+        stop = min(lastindex(values), i + 1)
+        smoothed[i] = Float32(median(@view values[start:stop]))
+    end
+    return smoothed
+end
+
+function _shape_sigma_irt_curve(
+    apex_irt::Vector{Float32},
+    log_sigma::Vector{Float32};
+    max_bins::Integer = BOUNDARY_SHAPE_SIGMA_IRT_MAX_BINS,
+    min_bin_rows::Integer = BOUNDARY_SHAPE_SIGMA_IRT_MIN_BIN_ROWS,
 )
-    residuals = Dict{Tuple{Any, UInt16}, Vector{Tuple{UInt32, UInt64, Float32}}}()
-    for entry in entries
-        entry.quant_trace_selected || continue
-        center = _median_excluding_group(by_precursor[entry.precursor_idx], entry.group_id)
-        center === nothing && continue
-        residual = Float32(entry.log_area - center)
-        push!(
-            get!(() -> Tuple{UInt32, UInt64, Float32}[], residuals,
-                (entry.protein_key, entry.ms_file_idx)),
-            (entry.precursor_idx, entry.group_id, residual),
+    n = length(log_sigma)
+    if n == 0 || length(apex_irt) != n
+        return (irt = Float32[], log_sigma = Float32[])
+    end
+
+    if n < 2 * min_bin_rows
+        return (
+            irt = Float32[Float32(median(apex_irt))],
+            log_sigma = Float32[Float32(median(log_sigma))],
         )
     end
-    return residuals
+
+    order = sortperm(apex_irt)
+    n_bins = max(2, min(Int(max_bins), n ÷ Int(min_bin_rows)))
+    knots_irt = Float32[]
+    knots_log_sigma = Float32[]
+    sizehint!(knots_irt, n_bins)
+    sizehint!(knots_log_sigma, n_bins)
+
+    for bin in 1:n_bins
+        start = floor(Int, (bin - 1) * n / n_bins) + 1
+        stop = floor(Int, bin * n / n_bins)
+        stop >= start || continue
+        idxs = @view order[start:stop]
+        bin_irt = Float32[apex_irt[idx] for idx in idxs]
+        bin_log_sigma = Float32[log_sigma[idx] for idx in idxs]
+        push!(knots_irt, Float32(median(bin_irt)))
+        push!(knots_log_sigma, Float32(median(bin_log_sigma)))
+    end
+
+    smoothed_log_sigma = _smooth_curve_values(knots_log_sigma)
+    keep_irt = Float32[]
+    keep_log_sigma = Float32[]
+    for i in eachindex(knots_irt)
+        if isempty(keep_irt) || knots_irt[i] > last(keep_irt) + eps(Float32)
+            push!(keep_irt, knots_irt[i])
+            push!(keep_log_sigma, smoothed_log_sigma[i])
+        else
+            keep_log_sigma[end] = 0.5f0 * (keep_log_sigma[end] + smoothed_log_sigma[i])
+        end
+    end
+
+    return (irt = keep_irt, log_sigma = keep_log_sigma)
 end
 
-function _crossrun_loss_for_candidate(
-    row::Int,
-    candidates::AbstractDataFrame,
-    by_precursor::Dict{UInt32, Vector{Tuple{UInt64, Float32}}},
-    crossrun_residuals::Dict{Tuple{Any, UInt16}, Vector{Tuple{UInt32, UInt64, Float32}}},
-    group_col::Symbol,
-    precursor_col::Symbol,
-    file_col::Symbol,
-    protein_col::Symbol,
-    area_col::Symbol,
-    min_crossrun_refs::Integer,
+function _interpolate_shape_log_sigma(
+    apex_irt::Float32,
+    knots_irt::Vector{Float32},
+    knots_log_sigma::Vector{Float32},
+    fallback::Float32,
 )
-    quant_selected = _get_column_or_fill(candidates, :quant_trace_selected, true)
-    Bool(quant_selected[row]) || return Inf32
+    n = min(length(knots_irt), length(knots_log_sigma))
+    n == 0 && return fallback
+    n == 1 && return knots_log_sigma[1]
+    apex_irt <= knots_irt[1] && return knots_log_sigma[1]
+    apex_irt >= knots_irt[n] && return knots_log_sigma[n]
 
-    group_id = UInt64(candidates[row, group_col])
-    pid = UInt32(candidates[row, precursor_col])
-    center = get(by_precursor, pid, nothing)
-    center === nothing && return Inf32
-    precursor_center = _median_excluding_group(center, group_id)
-    precursor_center === nothing && return Inf32
-
-    refs = get(crossrun_residuals, (candidates[row, protein_col], UInt16(candidates[row, file_col])), nothing)
-    refs === nothing && return Inf32
-
-    vals = Float32[]
-    for (ref_pid, ref_group, residual) in refs
-        ref_pid == pid && continue
-        ref_group == group_id && continue
-        isfinite(residual) || continue
-        push!(vals, residual)
-    end
-    length(vals) < min_crossrun_refs && return Inf32
-
-    expected = Float32(precursor_center + median(vals))
-    log_area = _boundary_log_area(candidates[row, area_col])
-    isfinite(log_area) || return Inf32
-    return abs(log_area - expected)
+    right = searchsortedfirst(knots_irt, apex_irt)
+    left = max(1, right - 1)
+    denom = max(knots_irt[right] - knots_irt[left], eps(Float32))
+    frac = clamp((apex_irt - knots_irt[left]) / denom, 0.0f0, 1.0f0)
+    return Float32((1.0f0 - frac) * knots_log_sigma[left] + frac * knots_log_sigma[right])
 end
 
-function _isotope_loss_for_candidate(
-    row::Int,
-    candidates::AbstractDataFrame,
-    by_precursor_run_isotope::Dict{Tuple{UInt32, UInt16}, Vector{Tuple{Any, UInt64, Float32}}},
-    group_col::Symbol,
-    precursor_col::Symbol,
-    file_col::Symbol,
-    area_col::Symbol,
-    isotope_col::Union{Nothing, Symbol},
-    min_isotope_refs::Integer,
-)
-    isotope_col === nothing && return Inf32
+function _shape_sigma_curve_inputs(candidates::AbstractDataFrame, rows::Vector{Int})
+    apex_irt = Float32[]
+    log_sigma = Float32[]
+    hasproperty(candidates, :shape_apex_irt) || return apex_irt, log_sigma
+    sizehint!(apex_irt, length(rows))
+    sizehint!(log_sigma, length(rows))
 
-    group_id = UInt64(candidates[row, group_col])
-    pid = UInt32(candidates[row, precursor_col])
-    isotope_key = candidates[row, isotope_col]
-    refs = get(by_precursor_run_isotope, (pid, UInt16(candidates[row, file_col])), nothing)
-    refs === nothing && return Inf32
-
-    vals = Float32[]
-    for (ref_isotope, ref_group, log_area) in refs
-        ref_isotope == isotope_key && continue
-        ref_group == group_id && continue
-        isfinite(log_area) || continue
-        push!(vals, log_area)
+    for row in rows
+        sigma = Float32(candidates[row, :shape_sigma_irt])
+        irt = Float32(candidates[row, :shape_apex_irt])
+        if isfinite(sigma) && sigma > eps(Float32) && isfinite(irt)
+            push!(apex_irt, irt)
+            push!(log_sigma, log2(sigma))
+        end
     end
-    length(vals) < min_isotope_refs && return Inf32
 
-    expected = Float32(median(vals))
-    log_area = _boundary_log_area(candidates[row, area_col])
-    isfinite(log_area) || return Inf32
-    return abs(log_area - expected)
+    return apex_irt, log_sigma
 end
 
-function _combined_boundary_loss(
-    crossrun_loss::Float32,
-    isotope_loss::Float32,
-    is_fallback::Bool,
-    crossrun_weight::Float32,
-    isotope_weight::Float32,
-)
-    total = 0.0f0
-    weight = 0.0f0
-    if isfinite(crossrun_loss)
-        total += crossrun_weight * crossrun_loss
-        weight += crossrun_weight
+function _shape_sigma_prior(candidates::AbstractDataFrame, rows::Vector{Int}, fallback)
+    log_sigma = Float32[
+        log2(Float32(candidates[row, :shape_sigma_irt])) for row in rows
+    ]
+    base = isempty(log_sigma) ? fallback : _median_mad_scale(log_sigma; floor = 0.5f0)
+    apex_irt, curve_log_sigma = _shape_sigma_curve_inputs(candidates, rows)
+    if isempty(curve_log_sigma)
+        return (
+            median = base.median,
+            scale = base.scale,
+            curve_irt = Float32[],
+            curve_log_sigma = Float32[],
+        )
     end
-    if isfinite(isotope_loss)
-        total += isotope_weight * isotope_loss
-        weight += isotope_weight
-    end
-    weight > 0.0f0 && return total / weight
 
-    # No self-supervised objective is available for this candidate group.
-    # Leave it unlabeled so it does not teach the model that fallback bounds
-    # are correct just because they are the fallback.
-    return Inf32
+    curve = _shape_sigma_irt_curve(apex_irt, curve_log_sigma)
+    residuals = Float32[
+        curve_log_sigma[i] - _interpolate_shape_log_sigma(
+            apex_irt[i],
+            curve.irt,
+            curve.log_sigma,
+            base.median,
+        )
+        for i in eachindex(curve_log_sigma)
+    ]
+    residual_scale = _median_mad_scale(residuals; floor = 0.5f0)
+    return (
+        median = base.median,
+        scale = residual_scale.scale,
+        curve_irt = curve.irt,
+        curve_log_sigma = curve.log_sigma,
+    )
 end
 
-"""
-    label_boundary_candidate_targets!(candidates; ...)
+function boundary_shape_priors(candidates::AbstractDataFrame)
+    valid_cols = all(hasproperty(candidates, col) for col in (
+        :shape_model_valid,
+        :shape_sigma_irt,
+        :shape_tau_irt,
+        :ms_file_idx,
+    ))
+    valid_cols || return Dict{UInt16, NamedTuple}()
 
-Add self-supervised training labels for candidate boundary ranking.
+    fallback = _get_column_or_fill(candidates, :is_fallback, false)
+    primary_apex = hasproperty(candidates, :is_primary_apex) ?
+        candidates[!, :is_primary_apex] :
+        fill(true, nrow(candidates))
+    valid = candidates[!, :shape_model_valid]
+    files = sort(unique(UInt16.(candidates[!, :ms_file_idx])))
+    priors = Dict{UInt16, NamedTuple}()
 
-Targets are selected within each `boundary_group_id`. If enough related
-precursors exist, candidates are ranked by how well their log area agrees with
-the leave-one-group-out run shift of other precursors from the same protein.
-When isotope traces are present, a second loss compares each candidate against
-the fallback areas of other isotope traces from the same precursor and run.
-Groups without either signal remain unlabeled; the second-derivative candidate
-is still used as the runtime fallback when the model cannot be trained.
-"""
-function label_boundary_candidate_targets!(
+    all_rows = [
+        i for i in 1:nrow(candidates)
+        if Bool(fallback[i]) && Bool(primary_apex[i]) && Bool(valid[i]) &&
+           isfinite(Float32(candidates[i, :shape_sigma_irt])) &&
+           Float32(candidates[i, :shape_sigma_irt]) > eps(Float32)
+    ]
+    if isempty(all_rows)
+        all_rows = [
+            i for i in 1:nrow(candidates)
+            if Bool(fallback[i]) && Bool(valid[i]) &&
+               isfinite(Float32(candidates[i, :shape_sigma_irt])) &&
+               Float32(candidates[i, :shape_sigma_irt]) > eps(Float32)
+        ]
+    end
+    isempty(all_rows) && return priors
+
+    global_log_sigma = Float32[
+        log2(Float32(candidates[row, :shape_sigma_irt])) for row in all_rows
+    ]
+    global_tau_ratio = Float32[
+        Float32(candidates[row, :shape_tau_irt]) /
+            max(Float32(candidates[row, :shape_sigma_irt]), eps(Float32))
+        for row in all_rows
+    ]
+    global_sigma_prior = _median_mad_scale(global_log_sigma; floor = 0.5f0)
+    global_sigma_curve_prior = _shape_sigma_prior(candidates, all_rows, global_sigma_prior)
+    global_tau_prior = _median_mad_scale(global_tau_ratio; floor = 1.0f0)
+
+    for file_idx in files
+        rows = [
+            i for i in all_rows
+            if UInt16(candidates[i, :ms_file_idx]) == file_idx
+        ]
+        sigma_prior = isempty(rows) ? global_sigma_curve_prior :
+            _shape_sigma_prior(candidates, rows, global_sigma_prior)
+        tau_ratio = isempty(rows) ? global_tau_ratio : Float32[
+            Float32(candidates[row, :shape_tau_irt]) /
+                max(Float32(candidates[row, :shape_sigma_irt]), eps(Float32))
+            for row in rows
+        ]
+        tau_prior = isempty(tau_ratio) ? global_tau_prior :
+            _median_mad_scale(tau_ratio; floor = 1.0f0)
+        priors[file_idx] = (
+            log_sigma_median = sigma_prior.median,
+            log_sigma_scale = sigma_prior.scale,
+            sigma_irt_knots = sigma_prior.curve_irt,
+            log_sigma_knots = sigma_prior.curve_log_sigma,
+            tau_ratio_median = tau_prior.median,
+            tau_ratio_scale = tau_prior.scale,
+        )
+    end
+
+    return priors
+end
+
+function _boundary_shape_prior_penalty(candidates::AbstractDataFrame, row::Int, priors)
+    hasproperty(candidates, :ms_file_idx) || return 0.0f0
+    hasproperty(candidates, :shape_sigma_irt) || return 0.0f0
+    hasproperty(candidates, :shape_tau_irt) || return 0.0f0
+
+    sigma = Float32(candidates[row, :shape_sigma_irt])
+    isfinite(sigma) && sigma > eps(Float32) || return 0.0f0
+    file_idx = UInt16(candidates[row, :ms_file_idx])
+    haskey(priors, file_idx) || return 0.0f0
+    prior = priors[file_idx]
+
+    log_sigma = log2(sigma)
+    apex_irt = hasproperty(candidates, :shape_apex_irt) ?
+        Float32(candidates[row, :shape_apex_irt]) :
+        NaN32
+    expected_log_sigma = isfinite(apex_irt) ?
+        _interpolate_shape_log_sigma(
+            apex_irt,
+            prior.sigma_irt_knots,
+            prior.log_sigma_knots,
+            prior.log_sigma_median,
+        ) :
+        prior.log_sigma_median
+    tau_ratio = Float32(candidates[row, :shape_tau_irt]) / sigma
+    z_sigma = clamp(
+        (log_sigma - expected_log_sigma) / prior.log_sigma_scale,
+        -4.0f0,
+        4.0f0,
+    )
+    z_tau = clamp(
+        (tau_ratio - prior.tau_ratio_median) / prior.tau_ratio_scale,
+        -4.0f0,
+        4.0f0,
+    )
+    return Float32(0.05f0 * (z_sigma * z_sigma + z_tau * z_tau))
+end
+
+function _boundary_shape_unexplained_area_penalty(candidates::AbstractDataFrame, row::Int)
+    hasproperty(candidates, :shape_deconvolution_area_fraction) || return 0.0f0
+    fraction = Float32(candidates[row, :shape_deconvolution_area_fraction])
+    isfinite(fraction) || return 0.0f0
+    explained_fraction = clamp(fraction, 0.0f0, 1.0f0)
+    return 1.0f0 - explained_fraction
+end
+
+function score_boundary_candidates_by_shape!(
     candidates::DataFrame;
-    group_col::Symbol = :boundary_group_id,
-    precursor_col::Symbol = :precursor_idx,
-    protein_col::Symbol = :protein_key,
-    file_col::Symbol = :ms_file_idx,
-    area_col::Symbol = :peak_area,
-    fallback_col::Symbol = :is_fallback,
-    isotope_col::Union{Nothing, Symbol} = hasproperty(candidates, :isotope_key) ? :isotope_key : nothing,
-    min_crossrun_refs::Integer = 2,
-    min_isotope_refs::Integer = 1,
-    crossrun_weight::Real = 1.0f0,
-    isotope_weight::Real = 1.0f0,
+    score_col::Symbol = :boundary_model_score,
 )
     n = nrow(candidates)
-    candidates[!, :boundary_consistency_loss] = fill(Inf32, n)
-    candidates[!, :boundary_isotope_loss] = fill(Inf32, n)
-    candidates[!, :boundary_training_loss] = fill(Inf32, n)
-    candidates[!, :boundary_candidate_target] = fill(false, n)
+    candidates[!, :boundary_shape_score] = fill(Inf32, n)
+    candidates[!, :shape_prior_penalty] = zeros(Float32, n)
+    candidates[!, :shape_fit_prior_score] = zeros(Float32, n)
+    candidates[!, :shape_normalized_fit_prior_score] = zeros(Float32, n)
+    candidates[!, :shape_unexplained_area_penalty] = zeros(Float32, n)
+    candidates[!, score_col] = fill(-Inf32, n)
     n == 0 && return candidates
 
-    rows_by_group, fallback_row = _fallback_rows_by_group(candidates, group_col, fallback_col)
-    entries, by_precursor, by_precursor_run_isotope = _fallback_log_entries(
-        candidates,
-        fallback_row,
-        group_col,
-        precursor_col,
-        file_col,
-        protein_col,
-        area_col,
-        isotope_col,
+    required = (
+        :shape_model_valid,
+        :shape_fit_loss,
+        :shape_sigma_irt,
+        :shape_tau_irt,
     )
-    crossrun_residuals = _crossrun_reference_residuals(entries, by_precursor)
-    fallback = _get_column_or_fill(candidates, fallback_col, false)
-
-    for row in 1:n
-        crossrun_loss = _crossrun_loss_for_candidate(
-            row,
-            candidates,
-            by_precursor,
-            crossrun_residuals,
-            group_col,
-            precursor_col,
-            file_col,
-            protein_col,
-            area_col,
-            min_crossrun_refs,
-        )
-        isotope_loss = _isotope_loss_for_candidate(
-            row,
-            candidates,
-            by_precursor_run_isotope,
-            group_col,
-            precursor_col,
-            file_col,
-            area_col,
-            isotope_col,
-            min_isotope_refs,
-        )
-        candidates[row, :boundary_consistency_loss] = crossrun_loss
-        candidates[row, :boundary_isotope_loss] = isotope_loss
-        candidates[row, :boundary_training_loss] = _combined_boundary_loss(
-            crossrun_loss,
-            isotope_loss,
-            Bool(fallback[row]),
-            Float32(crossrun_weight),
-            Float32(isotope_weight),
-        )
-    end
-
-    for (_, rows) in rows_by_group
-        best_row = rows[1]
-        best_loss = candidates[best_row, :boundary_training_loss]
-        for row in rows
-            loss = candidates[row, :boundary_training_loss]
-            if loss < best_loss ||
-               (loss == best_loss && Bool(fallback[row]) && !Bool(fallback[best_row]))
-                best_row = row
-                best_loss = loss
-            end
-        end
-        if isfinite(best_loss)
-            candidates[best_row, :boundary_candidate_target] = true
-        end
-    end
-
-    return candidates
-end
-
-function _available_boundary_features(candidates::AbstractDataFrame, features::Vector{Symbol})
-    return [feature for feature in features if hasproperty(candidates, feature)]
-end
-
-function _boundary_feature_frame(candidates::AbstractDataFrame, features::Vector{Symbol})
-    feature_data = DataFrame()
-    for feature in features
-        vals = Vector{Float32}(undef, nrow(candidates))
-        col = candidates[!, feature]
-        for i in eachindex(vals)
-            value = Float32(coalesce(col[i], 0.0f0))
-            vals[i] = isfinite(value) ? value : 0.0f0
-        end
-        feature_data[!, feature] = vals
-    end
-    return feature_data
-end
-
-function _boundary_relevance_from_losses(losses::AbstractVector)
-    n = length(losses)
-    finite_losses = sort(unique(Float32(loss) for loss in losses if isfinite(Float32(loss))))
-    isempty(finite_losses) && return zeros(Int32, n)
-
-    loss_rank = Dict{Float32, Int}()
-    for (rank, loss) in enumerate(finite_losses)
-        loss_rank[loss] = rank
-    end
-
-    relevance = Vector{Int32}(undef, n)
-    @inbounds for i in 1:n
-        loss = Float32(losses[i])
-        relevance[i] = isfinite(loss) ?
-            Int32(n - loss_rank[loss]) :
-            Int32(0)
-    end
-    max_relevance = maximum(relevance)
-    if max_relevance > BOUNDARY_RANKING_MAX_LABEL
-        @inbounds for i in eachindex(relevance)
-            raw = relevance[i]
-            if raw > 0
-                scaled = ceil(
-                    Int,
-                    Float64(raw) * Float64(BOUNDARY_RANKING_MAX_LABEL) / Float64(max_relevance),
-                )
-                relevance[i] = Int32(clamp(scaled, 1, BOUNDARY_RANKING_MAX_LABEL))
-            end
-        end
-    end
-    return relevance
-end
-
-function boundary_ranking_training_data(
-    candidates::AbstractDataFrame,
-    features::Vector{Symbol};
-    group_col::Symbol = :boundary_group_id,
-    loss_col::Symbol = :boundary_training_loss,
-)
-    nrow(candidates) == 0 && return DataFrame(), Int32[], Int[]
-
-    groups = sort(unique(candidates[!, group_col]))
-    sorted_rows = Int[]
-    group_sizes = Int[]
-    relevance = Int32[]
-    sizehint!(sorted_rows, nrow(candidates))
-    sizehint!(relevance, nrow(candidates))
-
-    for group_id in groups
-        rows = findall(==(group_id), candidates[!, group_col])
-        isempty(rows) && continue
-        any(isfinite(Float32(candidates[row, loss_col])) for row in rows) || continue
-        append!(sorted_rows, rows)
-        push!(group_sizes, length(rows))
-        append!(relevance, _boundary_relevance_from_losses(candidates[rows, loss_col]))
-    end
-
-    training = candidates[sorted_rows, :]
-    return _boundary_feature_frame(training, features), relevance, group_sizes
-end
-
-function _build_boundary_ranker(;
-    num_iterations::Integer = 100,
-    max_depth::Integer = 4,
-    num_leaves::Integer = 15,
-    learning_rate::Real = 0.05,
-    feature_fraction::Real = 0.85,
-    bagging_fraction::Real = 0.85,
-    bagging_freq::Integer = 1,
-    min_data_in_leaf::Integer = 5,
-    min_gain_to_split::Real = 0.0,
-    lambda_l2::Real = 1.0,
-)
-    return LightGBM.LGBMRanking(
-        objective = "lambdarank",
-        metric = ["ndcg"],
-        eval_at = [1, 3, 5],
-        learning_rate = float(learning_rate),
-        num_iterations = Int(num_iterations),
-        num_leaves = Int(num_leaves),
-        max_depth = Int(max_depth),
-        feature_fraction = float(feature_fraction),
-        bagging_fraction = float(bagging_fraction),
-        bagging_freq = Int(bagging_freq),
-        min_data_in_leaf = Int(min_data_in_leaf),
-        min_gain_to_split = float(min_gain_to_split),
-        lambda_l2 = float(lambda_l2),
-        num_threads = Threads.nthreads(),
-        verbosity = -1,
-        seed = 1776,
-        deterministic = true,
-        force_row_wise = true,
-    )
-end
-
-"""
-    train_boundary_candidate_model(candidates; ...)
-
-Train a small LightGBM ranker to order boundary candidates. Returns `nothing`
-when there is not enough relevance diversity, preserving the second-derivative
-fallback.
-"""
-function train_boundary_candidate_model(
-    candidates::DataFrame;
-    features::Vector{Symbol} = BOUNDARY_CANDIDATE_FEATURES,
-    max_groups::Integer = 20_000,
-    min_positive::Integer = 25,
-    min_negative::Integer = 25,
-    rng::AbstractRNG = Random.default_rng(),
-)
-    nrow(candidates) == 0 && return nothing
-
-    training = sample_boundary_candidate_groups(candidates; max_groups = max_groups, rng = rng)
-    hasproperty(training, :boundary_candidate_target) ||
-        label_boundary_candidate_targets!(training)
-
-    available = _available_boundary_features(training, features)
-    isempty(available) && return nothing
-
-    feature_frame, relevance, group_sizes = boundary_ranking_training_data(training, available)
-    isempty(relevance) && return nothing
-
-    n_positive = count(>(0), relevance)
-    n_negative = count(==(0), relevance)
-    (n_positive < min_positive || n_negative < min_negative) && return nothing
-
-    model = _build_boundary_ranker(
-        num_iterations = 100,
-        learning_rate = 0.05,
-        max_depth = 4,
-        num_leaves = 15,
-        feature_fraction = 0.85,
-        bagging_fraction = 0.85,
-        bagging_freq = 1,
-        min_data_in_leaf = max(5, min(100, length(relevance) ÷ 50)),
-        min_gain_to_split = 0.0,
-        lambda_l2 = 1.0,
-    )
-    LightGBM.fit!(model, feature_matrix(feature_frame, available), relevance; group = group_sizes, verbosity = -1)
-    return LightGBMModel(model, available, nothing)
-end
-
-function boundary_cv_folds(candidates::AbstractDataFrame)
-    return sort(unique(UInt8.(candidates[!, :cv_fold])))
-end
-
-function boundary_training_candidates_for_cv_fold(
-    candidates::AbstractDataFrame,
-    heldout_fold::UInt8,
-)
-    mask = UInt8.(candidates[!, :cv_fold]) .!= heldout_fold
-    return candidates[mask, :]
-end
-
-function train_boundary_candidate_model_for_cv_fold(
-    candidates::DataFrame,
-    heldout_fold::UInt8;
-    features::Vector{Symbol} = BOUNDARY_CANDIDATE_FEATURES,
-    max_groups::Integer = 20_000,
-    min_positive::Integer = 25,
-    min_negative::Integer = 25,
-    min_crossrun_refs::Integer = 2,
-    rng::AbstractRNG = Random.default_rng(),
-)
-    training = DataFrame(boundary_training_candidates_for_cv_fold(candidates, heldout_fold))
-    nrow(training) == 0 && return nothing
-    if !hasproperty(training, :boundary_candidate_target) ||
-       !hasproperty(training, :boundary_training_loss)
-        label_boundary_candidate_targets!(
-            training;
-            min_crossrun_refs = min_crossrun_refs,
-        )
-    end
-
-    return train_boundary_candidate_model(
-        training;
-        features = features,
-        max_groups = max_groups,
-        min_positive = min_positive,
-        min_negative = min_negative,
-        rng = rng,
-    )
-end
-
-function train_boundary_candidate_models_by_cv_fold(
-    candidates::DataFrame;
-    features::Vector{Symbol} = BOUNDARY_CANDIDATE_FEATURES,
-    max_groups::Integer = 20_000,
-    min_positive::Integer = 25,
-    min_negative::Integer = 25,
-    min_crossrun_refs::Integer = 2,
-    rng::AbstractRNG = Random.default_rng(),
-)
-    models = Dict{UInt8, Union{LightGBMModel, Nothing}}()
-    for heldout_fold in boundary_cv_folds(candidates)
-        models[heldout_fold] = train_boundary_candidate_model_for_cv_fold(
-            candidates,
-            heldout_fold;
-            features = features,
-            max_groups = max_groups,
-            min_positive = min_positive,
-            min_negative = min_negative,
-            min_crossrun_refs = min_crossrun_refs,
-            rng = rng,
-        )
-    end
-    return models
-end
-
-function score_boundary_candidates!(
-    candidates::DataFrame,
-    model::Union{LightGBMModel, Nothing};
-    score_col::Symbol = :boundary_model_score,
-)
-    if model === nothing
+    if !all(hasproperty(candidates, col) for col in required)
         fallback = _get_column_or_fill(candidates, :is_fallback, false)
         candidates[!, score_col] = Float32[Bool(x) ? 1.0f0 : 0.0f0 for x in fallback]
+        candidates[!, :boundary_shape_score] = Float32[Bool(x) ? 0.0f0 : Inf32 for x in fallback]
         return candidates
     end
 
-    available = [feature for feature in model.features if hasproperty(candidates, feature)]
-    if length(available) != length(model.features)
-        fallback = _get_column_or_fill(candidates, :is_fallback, false)
-        candidates[!, score_col] = Float32[Bool(x) ? 1.0f0 : 0.0f0 for x in fallback]
-        return candidates
-    end
-
-    candidates[!, score_col] = Float32.(predict(model, _boundary_feature_frame(candidates, model.features)))
-    return candidates
-end
-
-function score_boundary_candidates_crossfold!(
-    candidates::DataFrame,
-    models::AbstractDict{UInt8, <:Union{LightGBMModel, Nothing}};
-    score_col::Symbol = :boundary_model_score,
-)
-    candidates[!, score_col] = zeros(Float32, nrow(candidates))
-    for cv_fold in boundary_cv_folds(candidates)
-        rows = findall(==(cv_fold), UInt8.(candidates[!, :cv_fold]))
-        isempty(rows) && continue
-        fold_candidates = candidates[rows, :]
-        score_boundary_candidates!(
-            fold_candidates,
-            get(models, cv_fold, nothing);
-            score_col = score_col,
-        )
-        candidates[rows, score_col] = fold_candidates[!, score_col]
-    end
-    return candidates
-end
-
-function boundary_model_feature_importance_lines(importances)
-    sorted_imp = sort(collect(importances), by = x -> -x[2])
-    lines = ["Learned chromatogram boundary LGBM feature gains (all $(length(sorted_imp))):"]
-    for (fname, gain) in sorted_imp
-        push!(lines, "    $(rpad(string(fname), 40)) $(round(Int, gain))")
-    end
-    return lines
-end
-
-function log_boundary_model_feature_importances(importances)
-    lines = boundary_model_feature_importance_lines(importances)
-    @debug_l1 join(lines, "\n")
-    return nothing
-end
-
-function log_boundary_model_feature_importances(model::LightGBMModel)
-    imp = importance(model)
-    imp === nothing && return nothing
-    log_boundary_model_feature_importances(imp)
-    return nothing
-end
-
-function log_boundary_cv_model_feature_importances(
-    models::AbstractDict{UInt8, <:Union{LightGBMModel, Nothing}},
-)
-    for fold in sort(collect(keys(models)))
-        model = models[fold]
-        if model === nothing
-            @debug_l1 "Learned chromatogram boundary LGBM feature gains fold=$(fold): skipped=true reason=insufficient_training_data"
+    priors = boundary_shape_priors(candidates)
+    valid_rows = Int[]
+    best_fit_prior_by_group = Dict{UInt64, Tuple{Float32,Float32}}()
+    @inbounds for row in 1:n
+        if !Bool(candidates[row, :shape_model_valid])
             continue
         end
-        imp = importance(model)
-        imp === nothing && continue
-        lines = boundary_model_feature_importance_lines(imp)
-        lines[1] = lines[1] * " fold=$(fold)"
-        @debug_l1 join(lines, "\n")
+
+        fit_loss = Float32(candidates[row, :shape_fit_loss])
+        if !isfinite(fit_loss)
+            continue
+        end
+
+        prior_penalty = _boundary_shape_prior_penalty(candidates, row, priors)
+        fit_prior_score = fit_loss + prior_penalty
+        group_id = hasproperty(candidates, :boundary_group_id) ?
+            UInt64(candidates[row, :boundary_group_id]) :
+            UInt64(0)
+        best_fit_prior, second_best_fit_prior = get(
+            best_fit_prior_by_group,
+            group_id,
+            (Inf32, Inf32),
+        )
+        if fit_prior_score <= best_fit_prior
+            second_best_fit_prior = best_fit_prior
+            best_fit_prior = fit_prior_score
+        elseif fit_prior_score < second_best_fit_prior
+            second_best_fit_prior = fit_prior_score
+        end
+        best_fit_prior_by_group[group_id] = (best_fit_prior, second_best_fit_prior)
+
+        candidates[row, :shape_prior_penalty] = prior_penalty
+        candidates[row, :shape_fit_prior_score] = fit_prior_score
+        candidates[row, :shape_unexplained_area_penalty] =
+            _boundary_shape_unexplained_area_penalty(candidates, row)
+        push!(valid_rows, row)
     end
-    return nothing
+
+    @inbounds for row in valid_rows
+        group_id = hasproperty(candidates, :boundary_group_id) ?
+            UInt64(candidates[row, :boundary_group_id]) :
+            UInt64(0)
+        best_fit_prior, second_best_fit_prior = get(
+            best_fit_prior_by_group,
+            group_id,
+            (0.0f0, Inf32),
+        )
+        normalization_scale = isfinite(second_best_fit_prior) ?
+            max(
+                second_best_fit_prior - best_fit_prior,
+                BOUNDARY_SHAPE_FIT_PRIOR_NORMALIZATION_FLOOR,
+            ) :
+            BOUNDARY_SHAPE_FIT_PRIOR_NORMALIZATION_FLOOR
+        fit_prior_delta = max(
+            Float32(candidates[row, :shape_fit_prior_score]) - best_fit_prior,
+            0.0f0,
+        )
+        normalized_fit_prior = clamp(fit_prior_delta / normalization_scale, 0.0f0, 1.0f0)
+        shape_score = BOUNDARY_SHAPE_FIT_PRIOR_SCORE_WEIGHT * normalized_fit_prior +
+            Float32(candidates[row, :shape_unexplained_area_penalty])
+
+        candidates[row, :shape_normalized_fit_prior_score] = normalized_fit_prior
+        candidates[row, :boundary_shape_score] = Float32(shape_score)
+        candidates[row, score_col] = -Float32(shape_score)
+    end
+
+    return candidates
+end
+
+function _boundary_shape_qc_rows(candidates::AbstractDataFrame)
+    required = (
+        :ms_file_idx,
+        :is_fallback,
+        :shape_model_valid,
+        :shape_sigma_irt,
+        :shape_tau_irt,
+        :shape_apex_irt,
+        :shape_apex_height,
+    )
+    all(hasproperty(candidates, col) for col in required) || return Int[]
+
+    primary_apex = hasproperty(candidates, :is_primary_apex) ?
+        candidates[!, :is_primary_apex] :
+        fill(true, nrow(candidates))
+    rows = Int[]
+    sizehint!(rows, nrow(candidates))
+    @inbounds for row in 1:nrow(candidates)
+        sigma = Float32(candidates[row, :shape_sigma_irt])
+        tau = Float32(candidates[row, :shape_tau_irt])
+        apex_irt = Float32(candidates[row, :shape_apex_irt])
+        apex_height = Float32(candidates[row, :shape_apex_height])
+        if Bool(candidates[row, :is_fallback]) &&
+           Bool(primary_apex[row]) &&
+           Bool(candidates[row, :shape_model_valid]) &&
+           isfinite(sigma) && sigma > eps(Float32) &&
+           isfinite(tau) &&
+           isfinite(apex_irt) &&
+           isfinite(apex_height) && apex_height > eps(Float32)
+            push!(rows, row)
+        end
+    end
+    return rows
+end
+
+function _downsample_boundary_shape_qc_rows(rows::Vector{Int}, max_points::Integer)
+    max_points <= 0 && return rows
+    length(rows) <= max_points && return rows
+
+    step = ceil(Int, length(rows) / max_points)
+    sampled = rows[1:step:end]
+    if length(sampled) > max_points
+        sampled = sampled[1:Int(max_points)]
+    end
+    return collect(sampled)
+end
+
+function _boundary_shape_qc_plot(
+    sigma::Vector{Float64},
+    tau::Vector{Float64},
+    tau_ratio::Vector{Float64},
+    apex_irt::Vector{Float64},
+    log2_apex_height::Vector{Float64},
+    title_prefix::AbstractString;
+    sigma_curve_irt::Vector{Float64} = Float64[],
+    sigma_curve::Vector{Float64} = Float64[],
+)
+    n = length(sigma)
+    bins = max(5, min(60, ceil(Int, sqrt(max(n, 1)))))
+    scatter_alpha = n > 1000 ? 0.25 : 0.55
+
+    p_sigma_hist = Plots.histogram(
+        sigma;
+        bins = bins,
+        title = "$(title_prefix) sigma",
+        xlabel = "sigma (iRT)",
+        ylabel = "count",
+        legend = false,
+        color = :dodgerblue,
+        alpha = 0.75,
+    )
+    p_tau_hist = Plots.histogram(
+        tau;
+        bins = bins,
+        title = "$(title_prefix) tau",
+        xlabel = "tau (iRT)",
+        ylabel = "count",
+        legend = false,
+        color = :darkorange,
+        alpha = 0.75,
+    )
+    p_ratio_hist = Plots.histogram(
+        tau_ratio;
+        bins = bins,
+        title = "$(title_prefix) tau / sigma",
+        xlabel = "tau / sigma",
+        ylabel = "count",
+        legend = false,
+        color = :seagreen,
+        alpha = 0.75,
+    )
+
+    p_sigma_irt = Plots.scatter(
+        apex_irt,
+        sigma;
+        title = "sigma vs apex iRT",
+        xlabel = "apex iRT",
+        ylabel = "sigma (iRT)",
+        legend = false,
+        alpha = scatter_alpha,
+        markersize = 2,
+        markerstrokewidth = 0,
+        color = :dodgerblue,
+    )
+    if !isempty(sigma_curve_irt) && length(sigma_curve_irt) == length(sigma_curve)
+        Plots.plot!(
+            p_sigma_irt,
+            sigma_curve_irt,
+            sigma_curve;
+            label = "sigma prior",
+            legend = :topright,
+            color = :black,
+            linewidth = 3,
+        )
+    end
+    p_tau_irt = Plots.scatter(
+        apex_irt,
+        tau;
+        title = "tau vs apex iRT",
+        xlabel = "apex iRT",
+        ylabel = "tau (iRT)",
+        legend = false,
+        alpha = scatter_alpha,
+        markersize = 2,
+        markerstrokewidth = 0,
+        color = :darkorange,
+    )
+    p_ratio_irt = Plots.scatter(
+        apex_irt,
+        tau_ratio;
+        title = "tau / sigma vs apex iRT",
+        xlabel = "apex iRT",
+        ylabel = "tau / sigma",
+        legend = false,
+        alpha = scatter_alpha,
+        markersize = 2,
+        markerstrokewidth = 0,
+        color = :seagreen,
+    )
+
+    p_sigma_intensity = Plots.scatter(
+        log2_apex_height,
+        sigma;
+        title = "sigma vs log2 apex height",
+        xlabel = "log2 apex height",
+        ylabel = "sigma (iRT)",
+        legend = false,
+        alpha = scatter_alpha,
+        markersize = 2,
+        markerstrokewidth = 0,
+        color = :dodgerblue,
+    )
+    p_tau_intensity = Plots.scatter(
+        log2_apex_height,
+        tau;
+        title = "tau vs log2 apex height",
+        xlabel = "log2 apex height",
+        ylabel = "tau (iRT)",
+        legend = false,
+        alpha = scatter_alpha,
+        markersize = 2,
+        markerstrokewidth = 0,
+        color = :darkorange,
+    )
+    p_ratio_intensity = Plots.scatter(
+        log2_apex_height,
+        tau_ratio;
+        title = "tau / sigma vs log2 apex height",
+        xlabel = "log2 apex height",
+        ylabel = "tau / sigma",
+        legend = false,
+        alpha = scatter_alpha,
+        markersize = 2,
+        markerstrokewidth = 0,
+        color = :seagreen,
+    )
+
+    return Plots.plot(
+        p_sigma_hist,
+        p_tau_hist,
+        p_ratio_hist,
+        p_sigma_irt,
+        p_tau_irt,
+        p_ratio_irt,
+        p_sigma_intensity,
+        p_tau_intensity,
+        p_ratio_intensity;
+        layout = (3, 3),
+        size = (1500, 1200),
+        dpi = 150,
+    )
+end
+
+function write_boundary_shape_parameter_qc_plots(
+    candidates::AbstractDataFrame,
+    output_root::AbstractString;
+    file_name_by_idx::AbstractDict = Dict{UInt16, String}(),
+    max_points_per_file::Integer = 5000,
+)
+    rows = _boundary_shape_qc_rows(candidates)
+    isempty(rows) && return String[]
+
+    out_dir = joinpath(
+        String(output_root),
+        "qc_plots",
+        "chromatogram_boundary_shape_parameters",
+    )
+    isdir(out_dir) || mkpath(out_dir)
+
+    paths = String[]
+    files = sort(unique(UInt16(candidates[row, :ms_file_idx]) for row in rows))
+    priors = boundary_shape_priors(candidates)
+    withenv("GKSwstype" => "100", "GKS_WSTYPE" => "100") do
+        Plots.gr()
+
+        for file_idx in files
+            file_rows = [row for row in rows if UInt16(candidates[row, :ms_file_idx]) == file_idx]
+            isempty(file_rows) && continue
+            plot_rows = _downsample_boundary_shape_qc_rows(file_rows, max_points_per_file)
+
+            sigma = Float64[Float64(candidates[row, :shape_sigma_irt]) for row in plot_rows]
+            tau = Float64[Float64(candidates[row, :shape_tau_irt]) for row in plot_rows]
+            tau_ratio = Float64[
+                Float64(candidates[row, :shape_tau_irt]) /
+                    max(Float64(candidates[row, :shape_sigma_irt]), eps(Float64))
+                for row in plot_rows
+            ]
+            apex_irt = Float64[Float64(candidates[row, :shape_apex_irt]) for row in plot_rows]
+            log2_apex_height = Float64[
+                log2(max(Float64(candidates[row, :shape_apex_height]), eps(Float64)))
+                for row in plot_rows
+            ]
+            prior = get(priors, file_idx, nothing)
+            sigma_curve_irt = Float64[]
+            sigma_curve = Float64[]
+            if prior !== nothing && length(prior.sigma_irt_knots) > 0
+                sigma_curve_irt = Float64.(prior.sigma_irt_knots)
+                sigma_curve = Float64.(2.0f0 .^ prior.log_sigma_knots)
+            end
+
+            file_name = string(get(file_name_by_idx, file_idx, "run"))
+            safe_name = debug_sanitize_chromatogram_filename(file_name)
+            path = joinpath(
+                out_dir,
+                "egh_shape_parameters_file_$(Int(file_idx))_$(safe_name).png",
+            )
+            plot_obj = _boundary_shape_qc_plot(
+                sigma,
+                tau,
+                tau_ratio,
+                apex_irt,
+                log2_apex_height,
+                "file $(Int(file_idx))";
+                sigma_curve_irt = sigma_curve_irt,
+                sigma_curve = sigma_curve,
+            )
+            Plots.savefig(plot_obj, path)
+            push!(paths, path)
+        end
+    end
+
+    joined_paths = join(paths, ",")
+    isempty(paths) || @debug_l1 "boundary_shape_parameter_qc_plots paths=$(joined_paths)"
+    return paths
+end
+
+function write_boundary_shape_parameter_qc_plots(
+    candidates::AbstractDataFrame,
+    search_context::SearchContext;
+    kwargs...,
+)
+    if !hasproperty(candidates, :ms_file_idx)
+        return String[]
+    end
+
+    ms_data = getMSData(search_context)
+    file_name_by_idx = Dict{UInt16, String}()
+    for file_idx in sort(unique(UInt16.(candidates[!, :ms_file_idx])))
+        file_name_by_idx[file_idx] = string(getFileIdToName(ms_data, Int(file_idx)))
+    end
+    return write_boundary_shape_parameter_qc_plots(
+        candidates,
+        getDataOutDir(search_context);
+        file_name_by_idx = file_name_by_idx,
+        kwargs...,
+    )
 end
 
 function boundary_candidate_category_counts(selected_candidates::AbstractDataFrame)
@@ -717,7 +902,7 @@ end
 function boundary_candidate_category_tally_lines(selected_candidates::AbstractDataFrame)
     total = nrow(selected_candidates)
     counts = boundary_candidate_category_counts(selected_candidates)
-    lines = ["Learned chromatogram boundary selected candidate categories (total $(total)):"]
+    lines = ["Chromatogram boundary shape-model selected candidate categories (total $(total)):"]
 
     for label in BOUNDARY_CANDIDATE_CATEGORY_LABELS
         push!(lines, "    $(rpad(label, 24)) $(counts[label])")
@@ -810,31 +995,24 @@ function boundary_candidate_debug_lines(
             "category=$(_boundary_debug_value(candidates, row, :candidate_category))",
             "range_idx=$(range_idx)",
             "range_scan=$(range_scan)",
+            "apex_scan=$(_boundary_debug_value(candidates, row, :new_best_scan))",
             "area=$(_boundary_debug_value(candidates, row, :peak_area))",
             "points=$(_boundary_debug_value(candidates, row, :points_integrated))",
             "score=$(_boundary_debug_value(candidates, row, :boundary_model_score))",
-            "loss=$(_boundary_debug_value(candidates, row, :boundary_training_loss))",
-            "crossrun_loss=$(_boundary_debug_value(candidates, row, :boundary_crossrun_loss))",
-            "isotope_loss=$(_boundary_debug_value(candidates, row, :boundary_isotope_loss))",
+            "shape_score=$(_boundary_debug_value(candidates, row, :boundary_shape_score))",
+            "shape_fit=$(_boundary_debug_value(candidates, row, :shape_fit_loss))",
+            "shape_prior=$(_boundary_debug_value(candidates, row, :shape_prior_penalty))",
+            "shape_fit_prior=$(_boundary_debug_value(candidates, row, :shape_fit_prior_score))",
+            "shape_fit_prior_norm=$(_boundary_debug_value(candidates, row, :shape_normalized_fit_prior_score))",
+            "deconv_area_explained=$(_boundary_debug_value(candidates, row, :shape_deconvolution_area_fraction))",
+            "unexplained_area_penalty=$(_boundary_debug_value(candidates, row, :shape_unexplained_area_penalty))",
+            "shape_sigma_tau=$(_boundary_debug_value(candidates, row, :shape_sigma_irt)):$(_boundary_debug_value(candidates, row, :shape_tau_irt))",
+            "shape_edge=$(_boundary_debug_value(candidates, row, :shape_edge_fraction))",
+            "shape_overshoot=$(_boundary_debug_value(candidates, row, :shape_overshoot_penalty))",
             "fallback=$(_boundary_debug_value(candidates, row, :is_fallback))",
+            "primary_apex=$(_boundary_debug_value(candidates, row, :is_primary_apex))",
             "quant_trace_selected=$(_boundary_debug_value(candidates, row, :quant_trace_selected))",
             "isotope_key=$(_boundary_debug_value(candidates, row, :isotope_key))",
-            "width=$(_boundary_debug_value(candidates, row, :candidate_width))",
-            "endpoint_valley=$(_boundary_debug_value(candidates, row, :endpoint_valley_score))",
-            "endpoint_height=$(_boundary_debug_value(candidates, row, :endpoint_height_fraction))",
-            "secondary_peak=$(_boundary_debug_value(candidates, row, :secondary_peak_penalty))",
-            "irt_asymmetry=$(_boundary_debug_value(candidates, row, :irt_asymmetry_delta))",
-            "baseline_disconnect=$(_boundary_debug_value(candidates, row, :baseline_disconnected_signal_fraction))",
-            "baseline_nonapex_lobe=$(_boundary_debug_value(candidates, row, :baseline_largest_nonapex_lobe_log2_ratio))",
-            "baseline_trough=$(_boundary_debug_value(candidates, row, :baseline_internal_trough_score)):$(_boundary_debug_value(candidates, row, :baseline_internal_trough_log2_ratio))",
-            "dip_recovery=$(_boundary_debug_value(candidates, row, :internal_dip_recovery_score))",
-            "edge_valley_ratio=$(_boundary_debug_value(candidates, row, :left_edge_valley_log2_ratio)):$(_boundary_debug_value(candidates, row, :right_edge_valley_log2_ratio))",
-            "included_nonapex=$(_boundary_debug_value(candidates, row, :included_nonapex_max_log2_ratio))",
-            "included_nonapex_irt=$(_boundary_debug_value(candidates, row, :included_nonapex_max_irt_distance))",
-            "right_excluded=$(_boundary_debug_value(candidates, row, :right_excluded_signal_fraction))",
-            "right_recovery=$(_boundary_debug_value(candidates, row, :right_boundary_recovery_fraction))",
-            "right_outside_peak=$(_boundary_debug_value(candidates, row, :right_outside_peak_fraction))",
-            "mainsearch_delta=$(_boundary_debug_value(candidates, row, :mainsearch_left_bound_delta)):$(_boundary_debug_value(candidates, row, :mainsearch_right_bound_delta))",
         ), " "))
     end
 
@@ -866,16 +1044,16 @@ function log_boundary_candidate_debug(
     return nothing
 end
 
-function select_boundary_candidate_rows(
-    candidates::DataFrame,
-    model::Union{LightGBMModel, Nothing};
+function select_boundary_candidate_rows_by_shape(
+    candidates::DataFrame;
     group_col::Symbol = :boundary_group_id,
     score_col::Symbol = :boundary_model_score,
 )
     selection_candidates = quant_boundary_candidate_rows(candidates)
     nrow(selection_candidates) == 0 && return copy(selection_candidates)
-    scored = copy(selection_candidates)
-    score_boundary_candidates!(scored, model; score_col = score_col)
+    scored = hasproperty(selection_candidates, score_col) ?
+        copy(selection_candidates) :
+        score_boundary_candidates_by_shape!(copy(selection_candidates); score_col = score_col)
 
     rows_by_group, _ = _fallback_rows_by_group(scored, group_col, :is_fallback)
     fallback = _get_column_or_fill(scored, :is_fallback, false)
@@ -884,9 +1062,9 @@ function select_boundary_candidate_rows(
 
     for (_, rows) in rows_by_group
         best_row = rows[1]
-        best_score = scored[best_row, score_col]
+        best_score = Float32(scored[best_row, score_col])
         for row in rows
-            score = scored[row, score_col]
+            score = Float32(scored[row, score_col])
             if score > best_score ||
                (score == best_score && Bool(fallback[row]) && !Bool(fallback[best_row]))
                 best_row = row
@@ -898,31 +1076,6 @@ function select_boundary_candidate_rows(
 
     sort!(selected_rows)
     return scored[selected_rows, :]
-end
-
-function select_boundary_candidate_rows_crossfold(
-    candidates::DataFrame,
-    models::AbstractDict{UInt8, <:Union{LightGBMModel, Nothing}};
-)
-    selection_candidates = quant_boundary_candidate_rows(candidates)
-    nrow(selection_candidates) == 0 && return copy(selection_candidates)
-
-    selected_by_fold = DataFrame[]
-    for cv_fold in boundary_cv_folds(selection_candidates)
-        rows = findall(==(cv_fold), UInt8.(selection_candidates[!, :cv_fold]))
-        isempty(rows) && continue
-        fold_candidates = DataFrame(selection_candidates[rows, :])
-        push!(
-            selected_by_fold,
-            select_boundary_candidate_rows(
-                fold_candidates,
-                get(models, cv_fold, nothing),
-            ),
-        )
-    end
-
-    isempty(selected_by_fold) && return selection_candidates[1:0, :]
-    return reduce(vcat, selected_by_fold; cols = :union)
 end
 
 function append_boundary_candidate_rows!(

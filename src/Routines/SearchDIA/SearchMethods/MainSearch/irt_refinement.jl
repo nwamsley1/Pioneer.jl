@@ -3,7 +3,8 @@
 # MainSearch first trains a per-run classifier on the library iRT predictions.
 # High-confidence target precursors from that pass provide observed residuals
 # (irt_obs - irt_pred). This helper fits a small peptide-composition correction
-# model and applies it to every candidate row before the second per-run LGBM.
+# model out-of-fold and applies it to every candidate row before the per-run
+# classifier is reapplied to the refreshed iRT-dependent features.
 
 struct MainSearchIrtCorrectionModel
     intercept::Float32
@@ -260,6 +261,37 @@ function apply_mainsearch_irt_refinement_model!(
     return nothing
 end
 
+function apply_mainsearch_irt_refinement_model!(
+    psms::DataFrame,
+    strategy::MainSearchIrtRefinement,
+    models::Dict{UInt8, MainSearchIrtCorrectionModel},
+)
+    nrow(psms) == 0 && return nothing
+    !(hasproperty(psms, :irt_pred) && hasproperty(psms, :precursor_idx) && hasproperty(psms, :cv_fold)) &&
+        return nothing
+    isempty(models) && return nothing
+
+    current_pred = Float32.(psms[!, :irt_pred])
+    refined_pred = copy(current_pred)
+    folds = UInt8.(psms[!, :cv_fold])
+    @inbounds for row_idx in 1:nrow(psms)
+        model = get(models, folds[row_idx], nothing)
+        isnothing(model) && continue
+        correction = predict_irt_refinement(
+            strategy,
+            model,
+            psms.precursor_idx[row_idx],
+            current_pred[row_idx],
+        )
+        if isfinite(correction)
+            refined_pred[row_idx] = current_pred[row_idx] + correction
+        end
+    end
+    psms[!, :irt_pred] = refined_pred
+    _refresh_predicted_irt_dependent_features!(psms)
+    return nothing
+end
+
 function refine_mainsearch_irt_predictions!(
     psms::DataFrame,
     best_psms::DataFrame,
@@ -268,8 +300,58 @@ function refine_mainsearch_irt_predictions!(
 )
     required = (:precursor_idx, :target, :irt_pred, :irt_obs)
     if !all(c -> hasproperty(best_psms, c), required) ||
-       !all(c -> hasproperty(psms, c), (:precursor_idx, :irt_pred))
+       !all(c -> hasproperty(psms, c), (:precursor_idx, :irt_pred)) ||
+       length(scores) != nrow(best_psms)
         return (refined = false, training_target_precursors = UInt32[], model = nothing)
+    end
+
+    if hasproperty(best_psms, :cv_fold) && hasproperty(psms, :cv_fold)
+        best_folds = UInt8.(best_psms[!, :cv_fold])
+        fold_values = sort!(unique(best_folds))
+        models = Dict{UInt8, MainSearchIrtCorrectionModel}()
+        training_target_precursors = UInt32[]
+
+        for fold in fold_values
+            train_rows = findall(!=(fold), best_folds)
+            isempty(train_rows) && continue
+
+            precursor_ids, irt_pred_inputs, irt_corrections = _passing_precursor_targets(
+                best_psms.precursor_idx[train_rows],
+                best_psms.target[train_rows],
+                scores[train_rows],
+                best_psms.irt_pred[train_rows],
+                best_psms.irt_obs[train_rows],
+                strategy.q_value_threshold,
+            )
+            append!(training_target_precursors, precursor_ids)
+
+            model = fit_irt_refinement_model(
+                strategy,
+                precursor_ids,
+                irt_pred_inputs,
+                irt_corrections,
+            )
+            isnothing(model) && continue
+            models[fold] = model
+        end
+
+        training_target_precursors = sort!(unique(training_target_precursors))
+        if isempty(models)
+            return (
+                refined = false,
+                training_target_precursors = training_target_precursors,
+                model = nothing,
+            )
+        end
+
+        apply_mainsearch_irt_refinement_model!(psms, strategy, models)
+        apply_mainsearch_irt_refinement_model!(best_psms, strategy, models)
+
+        return (
+            refined = true,
+            training_target_precursors = training_target_precursors,
+            model = models,
+        )
     end
 
     precursor_ids, irt_pred_inputs, irt_corrections = _passing_precursor_targets(
