@@ -77,6 +77,9 @@ const ADVANCED_FEATURE_SET = [
     # Re-trying 3 of the Tier-2-dropped per-precursor aggregates in
     # combination with the max_* additions above.
     :n_above_hm, :num_scans, :rt_fwhm,
+    # Per-precursor MIN aggregates (2026-05-20 experiment) — worst-quality
+    # PSM observed for the precursor across all its scans.
+    :min_gof, :min_max_matched_residual, :min_fitted_hellinger,
     # Tier-2 drop-all-5 (2026-05-13): rt_fwhm, num_scans, irt_pred,
     # best_rank_iso, total_ions_iso removed.
     # Tier-4 drop-top-10 (2026-05-14): max_matched_residual, lys_count,

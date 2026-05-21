@@ -370,6 +370,21 @@ Returns:
 - scores: Vector{Float32} of LightGBM probabilities for best_psms
 - timings: NamedTuple with timing breakdowns
 """
+function _broadcast_min!(psms::DataFrame, pids::Vector{UInt32},
+                         src::Symbol, dst::Symbol)
+    (hasproperty(psms, src) && !hasproperty(psms, dst)) || return
+    col = psms[!, src]
+    T = eltype(col)
+    mins = Dict{UInt32, T}()
+    @inbounds for i in eachindex(pids)
+        pid = pids[i]; v = col[i]
+        cur = get(mins, pid, typemax(T))
+        v < cur && (mins[pid] = v)
+    end
+    psms[!, dst] = T[mins[pid] for pid in pids]
+    return
+end
+
 function train_lgbm_and_select_best(
     psms::DataFrame;
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
@@ -383,6 +398,15 @@ function train_lgbm_and_select_best(
             counts[pid] = get(counts, pid, UInt32(0)) + UInt32(1)
         end
         psms[!, :n_scans] = UInt32[counts[pid] for pid in psms[!, :precursor_idx]]
+    end
+    # 2026-05-20 experiment: also broadcast per-precursor min over scans of
+    # (gof, max_matched_residual, fitted_hellinger) so the MainSearch LGBM
+    # can use them as per-scan features.
+    if nrow(psms) > 0
+        pids = psms[!, :precursor_idx]::Vector{UInt32}
+        _broadcast_min!(psms, pids, :gof, :min_gof)
+        _broadcast_min!(psms, pids, :max_matched_residual, :min_max_matched_residual)
+        _broadcast_min!(psms, pids, :fitted_hellinger, :min_fitted_hellinger)
     end
     all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(psms; features=features)
     t_train_cv = time()
@@ -463,6 +487,11 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     # Astral. Identified 2026-05-19.
     gof_vec  = hasproperty(psms, :gof) ? (psms[!, :gof]::Vector{Float16}) : nothing
     fmd_vec  = hasproperty(psms, :fitted_manhattan_distance) ? (psms[!, :fitted_manhattan_distance]::Vector{Float16}) : nothing
+    # 2026-05-20 experiment: per-precursor min over all PSMs of these 3 metrics
+    # (gof, max_matched_residual, fitted_hellinger). For all three, larger is
+    # better, so min = worst-quality PSM observed for this precursor.
+    mmr_vec  = hasproperty(psms, :max_matched_residual) ? (psms[!, :max_matched_residual]::Vector{Float16}) : nothing
+    fhe_vec  = hasproperty(psms, :fitted_hellinger) ? (psms[!, :fitted_hellinger]::Vector{Float16}) : nothing
     n = nrow(psms)
 
     # sortperm groups PSMs by precursor_idx for contiguous processing
@@ -489,6 +518,10 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     out_max_weight = weights !== nothing ? Vector{Float32}() : nothing
     out_max_gof    = gof_vec  !== nothing ? Vector{eltype(gof_vec)}()  : nothing
     out_max_fmd    = fmd_vec  !== nothing ? Vector{eltype(fmd_vec)}()  : nothing
+    # Per-precursor MIN aggregates (2026-05-20 experiment)
+    out_min_gof    = gof_vec  !== nothing ? Vector{eltype(gof_vec)}()  : nothing
+    out_min_mmr    = mmr_vec  !== nothing ? Vector{eltype(mmr_vec)}()  : nothing
+    out_min_fhe    = fhe_vec  !== nothing ? Vector{eltype(fhe_vec)}()  : nothing
 
     if compute_fwhm
         sizehint!(out_irt_fwhm, n ÷ 10)
@@ -507,6 +540,9 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     out_max_weight !== nothing && sizehint!(out_max_weight, n ÷ 10)
     out_max_gof    !== nothing && sizehint!(out_max_gof,    n ÷ 10)
     out_max_fmd    !== nothing && sizehint!(out_max_fmd,    n ÷ 10)
+    out_min_gof    !== nothing && sizehint!(out_min_gof,    n ÷ 10)
+    out_min_mmr    !== nothing && sizehint!(out_min_mmr,    n ÷ 10)
+    out_min_fhe    !== nothing && sizehint!(out_min_fhe,    n ÷ 10)
 
     # Reusable buffers
     p75_buf = Vector{Float32}(undef, 128)
@@ -530,6 +566,9 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
         mw = 0f0
         max_gof_val = out_max_gof !== nothing ? typemin(eltype(out_max_gof)) : nothing
         max_fmd_val = out_max_fmd !== nothing ? typemin(eltype(out_max_fmd)) : nothing
+        min_gof_val = out_min_gof !== nothing ? typemax(eltype(out_min_gof)) : nothing
+        min_mmr_val = out_min_mmr !== nothing ? typemax(eltype(out_min_mmr)) : nothing
+        min_fhe_val = out_min_fhe !== nothing ? typemax(eltype(out_min_fhe)) : nothing
 
         @inbounds for k in 0:(group_len - 1)
             row = perm[group_start + k]
@@ -547,10 +586,19 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
             if max_gof_val !== nothing
                 g = gof_vec[row]
                 g > max_gof_val && (max_gof_val = g)
+                g < min_gof_val && (min_gof_val = g)
             end
             if max_fmd_val !== nothing
                 f = fmd_vec[row]
                 f > max_fmd_val && (max_fmd_val = f)
+            end
+            if min_mmr_val !== nothing
+                mr = mmr_vec[row]
+                mr < min_mmr_val && (min_mmr_val = mr)
+            end
+            if min_fhe_val !== nothing
+                fh = fhe_vec[row]
+                fh < min_fhe_val && (min_fhe_val = fh)
             end
         end
 
@@ -670,6 +718,9 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
         out_max_weight !== nothing && push!(out_max_weight, mw)
         out_max_gof    !== nothing && push!(out_max_gof,    max_gof_val)
         out_max_fmd    !== nothing && push!(out_max_fmd,    max_fmd_val)
+        out_min_gof    !== nothing && push!(out_min_gof,    min_gof_val)
+        out_min_mmr    !== nothing && push!(out_min_mmr,    min_mmr_val)
+        out_min_fhe    !== nothing && push!(out_min_fhe,    min_fhe_val)
     end  # while gi <= n
 
     # Build result from selected rows
@@ -693,6 +744,9 @@ function select_best_per_precursor!(psms::DataFrame, score_col::Symbol)
     out_max_weight !== nothing && (result[!, :max_weight] = out_max_weight)
     out_max_gof    !== nothing && (result[!, :max_gof]    = out_max_gof)
     out_max_fmd    !== nothing && (result[!, :max_fitted_manhattan_distance] = out_max_fmd)
+    out_min_gof    !== nothing && (result[!, :min_gof]    = out_min_gof)
+    out_min_mmr    !== nothing && (result[!, :min_max_matched_residual] = out_min_mmr)
+    out_min_fhe    !== nothing && (result[!, :min_fitted_hellinger] = out_min_fhe)
 
     return result
 end
