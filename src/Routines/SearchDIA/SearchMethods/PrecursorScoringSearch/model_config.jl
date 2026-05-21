@@ -74,6 +74,9 @@ const ADVANCED_FEATURE_SET = [
     # selection). max_matched_residual was previously dropped in Tier-4; trying
     # it again at the ScoringSearch stage only.
     :max_matched_residual, :max_unmatched_residual,
+    # Re-trying 3 of the Tier-2-dropped per-precursor aggregates in
+    # combination with the max_* additions above.
+    :n_above_hm, :num_scans, :rt_fwhm,
     # Tier-2 drop-all-5 (2026-05-13): rt_fwhm, num_scans, irt_pred,
     # best_rank_iso, total_ions_iso removed.
     # Tier-4 drop-top-10 (2026-05-14): max_matched_residual, lys_count,
