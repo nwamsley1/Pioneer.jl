@@ -110,16 +110,10 @@ function _write_trace_mode_params(
     path::AbstractString;
     trace_mode = nothing,
     deconvolution_solver = nothing,
-    boundary_selection_method = nothing,
-    use_boundary_candidate_scoring = nothing,
 )
     chrom_fields = String[]
     trace_mode !== nothing && push!(chrom_fields, "\"trace_mode\": \"$(trace_mode)\"")
     deconvolution_solver !== nothing && push!(chrom_fields, "\"deconvolution_solver\": \"$(deconvolution_solver)\"")
-    boundary_selection_method !== nothing &&
-        push!(chrom_fields, "\"boundary_selection_method\": \"$(boundary_selection_method)\"")
-    use_boundary_candidate_scoring !== nothing &&
-        push!(chrom_fields, "\"use_boundary_candidate_scoring\": $(use_boundary_candidate_scoring)")
 
     trace_mode_json = isempty(chrom_fields) ? "" : """
         ,
@@ -150,10 +144,6 @@ end
     default_params = Pioneer.parse_pioneer_parameters(default_path)
     default_integration = Pioneer.IntegrateChromatogramSearchParameters(default_params)
     @test default_integration.isotope_tracetype isa Pioneer.CombineTraces
-    @test default_integration.boundary_selection_method == "learned"
-    @test !hasproperty(default_integration, :use_boundary_candidate_scoring)
-    @test !hasproperty(default_integration, :learned_boundary_max_train_groups)
-    @test default_integration.learned_boundary_max_isotope_trace_groups_per_file == 2000
     @test isdefined(Pioneer, :HuberSolver)
     if isdefined(Pioneer, :HuberSolver)
         HuberSolver = getproperty(Pioneer, :HuberSolver)
@@ -173,26 +163,6 @@ end
     @test Pioneer.chromatogram_integration_solver_label(pmm_integration.deconvolution_solver) ==
         "PoissonMMSolver"
 
-    legacy_candidate_path = joinpath(tmp, "legacy_candidate.json")
-    _write_trace_mode_params(legacy_candidate_path; use_boundary_candidate_scoring = true)
-    legacy_candidate_params = Pioneer.parse_pioneer_parameters(legacy_candidate_path)
-    legacy_candidate_integration = Pioneer.IntegrateChromatogramSearchParameters(legacy_candidate_params)
-    @test legacy_candidate_integration.boundary_selection_method == "learned"
-    @test !hasproperty(legacy_candidate_integration, :use_boundary_candidate_scoring)
-    @test !Pioneer.write_intermediate_chromatogram_debug_plots(legacy_candidate_integration)
-
-    second_derivative_path = joinpath(tmp, "second_derivative.json")
-    _write_trace_mode_params(second_derivative_path; boundary_selection_method = "second_derivative")
-    second_derivative_params = Pioneer.parse_pioneer_parameters(second_derivative_path)
-    second_derivative_integration = Pioneer.IntegrateChromatogramSearchParameters(second_derivative_params)
-    @test second_derivative_integration.boundary_selection_method == "second_derivative"
-    @test Pioneer.write_intermediate_chromatogram_debug_plots(second_derivative_integration)
-
-    explicit_candidate_path = joinpath(tmp, "explicit_candidate.json")
-    _write_trace_mode_params(explicit_candidate_path; boundary_selection_method = "candidate_score")
-    explicit_candidate_params = Pioneer.parse_pioneer_parameters(explicit_candidate_path)
-    @test_throws ArgumentError Pioneer.IntegrateChromatogramSearchParameters(explicit_candidate_params)
-
     separate_path = joinpath(tmp, "separate.json")
     _write_trace_mode_params(separate_path; trace_mode = "separate")
     checked = Pioneer.checkParams(separate_path)
@@ -201,4 +171,9 @@ end
     separate_params = Pioneer.parse_pioneer_parameters(separate_path)
     separate_integration = Pioneer.IntegrateChromatogramSearchParameters(separate_params)
     @test separate_integration.isotope_tracetype isa Pioneer.SeperateTraces
+end
+
+@testset "chromatogram transmission annotation keeps combined mode weighted" begin
+    @test !Pioneer.compute_chromatogram_isotope_sets(Pioneer.CombineTraces(0.25f0))
+    @test Pioneer.compute_chromatogram_isotope_sets(Pioneer.SeperateTraces())
 end

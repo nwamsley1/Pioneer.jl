@@ -45,16 +45,6 @@ function _resolve_q_value_threshold(global_section)
     end
 end
 
-function _resolve_chromatogram_integration_property(optimization_section, key::Symbol, default)
-    if optimization_section isa NamedTuple &&
-       hasproperty(optimization_section, :chromatogram_integration) &&
-       getproperty(optimization_section, :chromatogram_integration) isa NamedTuple &&
-       hasproperty(getproperty(optimization_section, :chromatogram_integration), key)
-        return getproperty(getproperty(optimization_section, :chromatogram_integration), key)
-    end
-    return default
-end
-
 """
 Parameters for main search (deconvolution, scoring, and prescore aggregation).
 """
@@ -93,9 +83,6 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
     # Pre-filter: require marginal candidates to appear in ≥ N scans
     prefilter_min_scan_count::Int64
 
-    # Main-search PEP interval used later as chromatogram-bound evidence
-    integration_pep_threshold::Float32
-
     function MainSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         quant_params = params.search
@@ -118,13 +105,6 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
         # the legacy nested location search.fragment_settings.n_isotopes
         # so old configs keep working.
         n_isotopes_val = _resolve_n_isotopes(quant_params)
-        integration_pep_threshold = Float32(
-            _resolve_chromatogram_integration_property(
-                params.optimization,
-                :mainsearch_integration_pep_threshold,
-                0.50f0,
-            ),
-        )
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             isotope_bounds,
@@ -172,7 +152,6 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
             DEFAULT_INDEX_SEARCH_MIN_SCORE,
 
             0,                  # prefilter_min_scan_count (formerly fragment_index_search.prefilter_min_scan_count; never overridden)
-            integration_pep_threshold,
         )
     end
 end

@@ -42,7 +42,6 @@ const SCORING_LGBM_HP = (num_iterations=200, learning_rate=0.10, max_depth=8,
 const SHARED_LGBM_MAX_TRAIN = 250_000
 # Low-data threshold per fold: below this we CV-select between LightGBM and probit.
 const SHARED_LGBM_LOW_DATA_THRESHOLD = 10_000
-const MAINSEARCH_INTEGRATION_PEP_THRESHOLD = 0.50f0
 
 # Diagnostic dump: when nonzero, dump pre-reduction psms (with lgbm_score) to
 # DIAG_DUMP_DIR/<file_idx>.arrow inside train_lgbm_and_select_best.
@@ -322,12 +321,13 @@ Returns:
 - best_psms: DataFrame with one row per precursor (best by LightGBM score)
 - scores: Vector{Float32} of LightGBM probabilities for best_psms
 - timings: NamedTuple with timing breakdowns
-- predictor: fold predictor from the fitted classifier, reusable for refreshed features
+- predictor: fold predictor from the fitted classifier; after iRT refinement,
+  refreshed candidate features are scored with this same model before
+  best-scan selection is repeated
 """
 function train_lgbm_and_select_best(
     psms::DataFrame;
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
-    integration_pep_threshold::Float32 = MAINSEARCH_INTEGRATION_PEP_THRESHOLD,
     lgbm_hp = SHARED_LGBM_HP,
 )
     t0 = time()
@@ -355,11 +355,6 @@ function train_lgbm_and_select_best(
 
     # Add scores to psms for best-per-precursor selection
     psms[!, :lgbm_score] = Float32.(all_scores)
-    add_mainsearch_integration_interval_columns!(
-        psms,
-        :lgbm_score;
-        pep_threshold = integration_pep_threshold,
-    )
 
     # Diagnostic dump: pre-reduction PSMs WITH lgbm_score
     if DIAG_DUMP_FILE_IDX[] != 0
@@ -377,8 +372,7 @@ function train_lgbm_and_select_best(
     scores = psms[!, :lgbm_score]
     t_best = time()
 
-    # Feature importances — top 15 by gain. Promoted from debug_l2 to user_info
-    # for the tuning phase; revert to @debug_l2 once feature set stabilizes.
+    # Per-file model diagnostic: gains for the features available to this run.
     let imp = importance(model)
         if imp !== nothing
             sorted_imp = sort(imp, by = x -> -x[2])
@@ -401,8 +395,7 @@ end
 
 function reapply_psm_classifier_and_select_best!(
     psms::DataFrame,
-    predictor;
-    integration_pep_threshold::Float32 = MAINSEARCH_INTEGRATION_PEP_THRESHOLD,
+    predictor,
 )
     t0 = time()
     if nrow(psms) > 0 && !hasproperty(psms, :n_scans)
@@ -416,11 +409,6 @@ function reapply_psm_classifier_and_select_best!(
     all_scores = predict_psm_classifier_scores(psms, predictor)
     t_predict = time()
     psms[!, :lgbm_score] = Float32.(all_scores)
-    add_mainsearch_integration_interval_columns!(
-        psms,
-        :lgbm_score;
-        pep_threshold = integration_pep_threshold,
-    )
     best_psms = select_best_per_precursor!(psms, :lgbm_score)
     scores = best_psms[!, :lgbm_score]
     t_best = time()
@@ -430,172 +418,6 @@ function reapply_psm_classifier_and_select_best!(
         best = t_best - t_predict,
     )
     return best_psms, Vector{Float32}(scores), timings
-end
-
-function add_mainsearch_integration_interval_columns!(
-    psms::DataFrame,
-    score_col::Symbol;
-    pep_threshold::Float32 = MAINSEARCH_INTEGRATION_PEP_THRESHOLD,
-)
-    n = nrow(psms)
-    start_scan = zeros(UInt32, n)
-    stop_scan = zeros(UInt32, n)
-    start_rt = fill(Float32(NaN), n)
-    stop_rt = fill(Float32(NaN), n)
-
-    psms[!, :mainsearch_1pct_start_scan] = start_scan
-    psms[!, :mainsearch_1pct_stop_scan] = stop_scan
-    psms[!, :mainsearch_1pct_start_rt] = start_rt
-    psms[!, :mainsearch_1pct_stop_rt] = stop_rt
-    n == 0 && return psms
-
-    scores = Float32.(psms[!, score_col])
-    targets = Bool.(psms[!, :target])
-    peps = Vector{Float32}(undef, n)
-    if hasproperty(psms, :ms_file_idx)
-        file_ids = psms[!, :ms_file_idx]
-        file_perm = sortperm(file_ids)
-        file_group_start = 1
-        while file_group_start <= n
-            file_id = file_ids[file_perm[file_group_start]]
-            file_group_stop = file_group_start
-            while file_group_stop < n && file_ids[file_perm[file_group_stop + 1]] == file_id
-                file_group_stop += 1
-            end
-
-            rows = @view file_perm[file_group_start:file_group_stop]
-            file_scores = scores[rows]
-            file_targets = targets[rows]
-            file_peps = Vector{Float32}(undef, length(rows))
-            get_PEP!(file_scores, file_targets, file_peps; doSort = true)
-            @inbounds for (j, row) in enumerate(rows)
-                peps[row] = file_peps[j]
-            end
-
-            file_group_start = file_group_stop + 1
-        end
-    else
-        get_PEP!(scores, targets, peps; doSort = true)
-    end
-
-    prec_ids = psms[!, :precursor_idx]::AbstractVector{UInt32}
-    scan_idxs = psms[!, :scan_idx]::AbstractVector{UInt32}
-    rt_vals = psms[!, :rt]::AbstractVector{Float32}
-    weights = hasproperty(psms, :weight) ? psms[!, :weight] : nothing
-    file_ids = hasproperty(psms, :ms_file_idx) ? psms[!, :ms_file_idx] : nothing
-    perm = file_ids === nothing ?
-        sortperm(prec_ids) :
-        sortperm(1:n, by = i -> (file_ids[i], prec_ids[i]))
-
-    function bestMainsearchIntervalAnchor(group_rows::Vector{Int})
-        best_s = typemin(Float32)
-        best_row = group_rows[1]
-        @inbounds for row in group_rows
-            s = scores[row]
-            if s > best_s
-                best_s = s
-                best_row = row
-            end
-        end
-
-        if weights !== nothing && length(group_rows) >= 4
-            score_buf = Vector{Float32}(undef, length(group_rows))
-            @inbounds for (i, row) in enumerate(group_rows)
-                score_buf[i] = scores[row]
-            end
-            p75_idx = ceil(Int, 0.75 * length(group_rows))
-            score_threshold = partialsort!(score_buf, p75_idx)
-
-            best_w = typemin(Float32)
-            @inbounds for row in group_rows
-                scores[row] >= score_threshold || continue
-                w = Float32(weights[row])
-                if w > best_w
-                    best_w = w
-                    best_row = row
-                end
-            end
-        end
-
-        return best_row
-    end
-
-    function passingMainsearchInterval(group_rows::Vector{Int}, best_row::Int)
-        sort!(group_rows, by = row -> scan_idxs[row])
-
-        scan_rows = Int[]
-        scan_passes = Bool[]
-        sizehint!(scan_rows, length(group_rows))
-        sizehint!(scan_passes, length(group_rows))
-
-        current_scan = UInt32(0)
-        @inbounds for row in group_rows
-            scan = scan_idxs[row]
-            row_passes = targets[row] && peps[row] <= pep_threshold
-            if isempty(scan_rows) || scan != current_scan
-                push!(scan_rows, row)
-                push!(scan_passes, row_passes)
-                current_scan = scan
-            else
-                scan_passes[end] |= row_passes
-            end
-        end
-
-        anchor_scan = scan_idxs[best_row]
-        anchor_scan_pos = findfirst(row -> scan_idxs[row] == anchor_scan, scan_rows)
-        (anchor_scan_pos === nothing || !scan_passes[anchor_scan_pos]) && return nothing
-
-        start_pos = anchor_scan_pos
-        while start_pos > 1 && scan_passes[start_pos - 1]
-            start_pos -= 1
-        end
-
-        stop_pos = anchor_scan_pos
-        while stop_pos < length(scan_rows) && scan_passes[stop_pos + 1]
-            stop_pos += 1
-        end
-
-        return scan_rows[start_pos], scan_rows[stop_pos]
-    end
-
-    group_start = 1
-    while group_start <= n
-        first_row = perm[group_start]
-        pid = prec_ids[first_row]
-        file_id = file_ids === nothing ? nothing : file_ids[first_row]
-        group_stop = group_start
-        while group_stop < n
-            next_row = perm[group_stop + 1]
-            if prec_ids[next_row] != pid ||
-               (file_ids !== nothing && file_ids[next_row] != file_id)
-                break
-            end
-            group_stop += 1
-        end
-
-        group_rows = collect(@view perm[group_start:group_stop])
-        best_row = bestMainsearchIntervalAnchor(group_rows)
-        interval_rows = passingMainsearchInterval(group_rows, best_row)
-
-        if interval_rows !== nothing
-            interval_start_row, interval_stop_row = interval_rows
-            group_start_scan = scan_idxs[interval_start_row]
-            group_stop_scan = scan_idxs[interval_stop_row]
-            group_start_rt = rt_vals[interval_start_row]
-            group_stop_rt = rt_vals[interval_stop_row]
-            @inbounds for pos in group_start:group_stop
-                row = perm[pos]
-                start_scan[row] = group_start_scan
-                stop_scan[row] = group_stop_scan
-                start_rt[row] = group_start_rt
-                stop_rt[row] = group_stop_rt
-            end
-        end
-
-        group_start = group_stop + 1
-    end
-
-    return psms
 end
 
 """

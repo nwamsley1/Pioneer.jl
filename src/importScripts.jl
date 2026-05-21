@@ -309,7 +309,6 @@ function importScripts()
     # Chromatogram integration (explicit order so new files are precompile-tracked)
     include_files!(joinpath(search_methods_dir, "IntegrateChromatogramsSearch"), [
         "integrate_chrom.jl",
-        "learned_boundary_scoring.jl",
         "IntegrateChromatogramsSearch.jl",
         "utils.jl"
     ])

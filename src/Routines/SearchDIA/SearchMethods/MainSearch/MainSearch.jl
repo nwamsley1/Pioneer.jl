@@ -207,23 +207,19 @@ function process_search_results!(
     else
         Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     end
-    best_psms, scores, lgbm_timings, lgbm_predictor = train_lgbm_and_select_best(
-        psms;
-        integration_pep_threshold = params.integration_pep_threshold,
-    )
+    best_psms, scores, lgbm_timings, lgbm_predictor = train_lgbm_and_select_best(psms)
     best_psms[!, :lgbm_prob] = scores
     _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm = time()
 
-    # Refine predicted iRTs with out-of-fold correction models, refresh features
-    # that consume :irt_pred, then re-apply the same per-run classifier to the
-    # updated feature matrix. This lets the iRT-dependent features move the
-    # selected scan without fitting a second classifier.
+    # Refine predicted iRTs with out-of-fold correction models. The correction
+    # changes iRT-dependent features for every candidate PSM, so reapply the
+    # same per-run classifier before reducing to one best scan per precursor.
     precursors = getPrecursors(getSpecLib(search_context))
     irt_refinement = MainSearchIrtRefinement(
         precursors;
         q_value_threshold = PRESCORE_QVALUE_THRESHOLD,
-        min_precursors = parse(Int, get(ENV, "PIONEER_MAIN_IRT_MIN_PRECURSORS", "30")),
+        min_precursors = parse(Int, get(ENV, "PIONEER_MAIN_IRT_MIN_PRECURSORS", "250")),
     )
     irt_refinement_result = refine_mainsearch_irt_predictions!(
         psms,
@@ -232,15 +228,11 @@ function process_search_results!(
         irt_refinement,
     )
     if irt_refinement_result.refined
-        best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(
-            psms,
-            lgbm_predictor;
-            integration_pep_threshold = params.integration_pep_threshold,
-        )
+        best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(psms, lgbm_predictor)
         best_psms[!, :lgbm_prob] = scores
         @user_info "  MainSearch iRT refinement (file_idx=$ms_file_idx, $file_name): " *
                    "$(length(irt_refinement_result.training_target_precursors)) high-confidence target precursors; " *
-                   "reapplied initial LGBM after iRT feature refresh " *
+                   "reapplied LGBM after iRT feature refresh " *
                    "(predict=$(round(reapply_timings.predict, digits=2))s best=$(round(reapply_timings.best, digits=2))s)"
         _summarize_psm_counts(best_psms, "after refined-iRT reapply", ms_file_idx, file_name)
     else
@@ -342,10 +334,7 @@ function process_search_results!(
                 # This optional re-deconvolution pass is separate from the
                 # refined-iRT reapplication above and keeps the ordinary
                 # target/decoy labels.
-                best_psms2, scores2, _, _ = train_lgbm_and_select_best(
-                    psms2;
-                    integration_pep_threshold = params.integration_pep_threshold,
-                )
+                best_psms2, scores2, _, _ = train_lgbm_and_select_best(psms2)
                 best_psms2[!, :lgbm_prob] = scores2
                 pass2_precs_n = nrow(best_psms2)
                 @user_info "  PEP-filter 2-pass (file_idx=$ms_file_idx): pass2 LGBM → " *
@@ -733,13 +722,14 @@ function summarize_results!(
     overall_pct = round(100.0 * n_kept_precs / max(1, n_total_precs), digits=1)
     @debug_l1 "MainSearch passing PSMs: $n_kept_precs / $n_total_precs precursors ($overall_pct%) across $n_processed_files files"
 
-    # Step 3: Compute chromatographic tolerance from fold files
+    # Step 3: Compute the RT-binned chromatographic tolerance used when
+    # extracting chromatograms around each precursor's refined RT.
     t3_start = time()
     if n_processed_files > 0
         if rt_binned_tol !== nothing
             compute_rt_binned_tolerance!(search_context, rt_binned_tol, ms_data, n_files)
         else
-            @debug_l1 "No RT-binned tolerance available — chromatogram integration will use per-file iRT tolerance from recalibrate_rt!"
+            @debug_l1 "No RT-binned tolerance registered — chromatogram extraction will fall back to the per-file iRT tolerance from recalibrate_rt!"
         end
     else
         @warn "No files processed in MainSearch — skipping chromatographic tolerance computation"

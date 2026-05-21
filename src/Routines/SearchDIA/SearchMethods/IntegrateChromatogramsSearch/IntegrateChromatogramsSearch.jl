@@ -21,10 +21,15 @@
 Search method for analyzing chromatograms to get quantitative information.
 
 This search:
-1. Uses precursor and trace information from previous searches
-2. Builds chromatograms for each precursor
-3. Integrates areas for quantification
-4. Incorporates isotope pattern information
+1. Loads the best PSMs selected by `MainSearch`
+2. Builds MS2 chromatograms around each precursor's refined RT
+3. Annotates chromatogram rows with precursor transmission for weighted smoothing
+4. Integrates each peak with WH smoothing, second-derivative bounds, baseline
+   subtraction, and trapezoidal area calculation
+
+When separate isotope traces are requested, chromatogram rows also get an
+`:isotopes_captured` grouping label so integration can choose one trace per
+precursor.
 """
 struct IntegrateChromatogramSearch <: SearchMethod end
 
@@ -36,7 +41,7 @@ Type Definitions
 Results container for chromatogram integration search.
 """
 struct IntegrateChromatogramSearchResults <: SearchResults
-    psms::Base.Ref{DataFrame}  # Chromatogram data per file
+    psms::Base.Ref{DataFrame}  # PSM rows for one file after integration
 end
 
 function _resolve_chromatogram_trace_type(
@@ -112,6 +117,9 @@ end
 
 """
 Parameters for chromatogram integration search.
+
+This stage configures trace mode and the deconvolution solver. Peak bounds are
+selected inside `integrate_chrom`.
 """
 struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentIndexSearchParameters
     # Core parameters
@@ -134,13 +142,10 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     # Analysis strategies
     isotope_tracetype::I
     prec_estimation::P
-    boundary_selection_method::String
-    learned_boundary_max_isotope_trace_groups_per_file::Int64
 
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         search_params = params.search
-        chrom_params = params.optimization.chromatogram_integration
 
         min_fraction_transmitted = 0.25f0
         isotope_trace_type = _resolve_chromatogram_trace_type(
@@ -156,22 +161,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         # n_isotopes lives at search.n_isotopes; falls back to the legacy
         # nested location for old configs (see _resolve_n_isotopes).
         n_isotopes_val = _resolve_n_isotopes(search_params)
-        boundary_selection_method = String(get(
-            chrom_params,
-            :boundary_selection_method,
-            "learned",
-        ))
-        if !(boundary_selection_method in ("second_derivative", "learned"))
-            throw(ArgumentError(
-                "Invalid optimization.chromatogram_integration.boundary_selection_method=$(repr(boundary_selection_method)); " *
-                "expected \"second_derivative\" or \"learned\".",
-            ))
-        end
-        learned_boundary_max_isotope_trace_groups_per_file = Int64(get(
-            chrom_params,
-            :learned_boundary_max_isotope_trace_groups_per_file,
-            2_000,
-        ))
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(1), UInt8(0)),  # isotope err_bounds
@@ -190,8 +179,6 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
 
             isotope_trace_type,
             prec_estimation,
-            boundary_selection_method,
-            learned_boundary_max_isotope_trace_groups_per_file,
         )
     end
 end
@@ -204,9 +191,9 @@ Interface Implementation
 get_parameters(::IntegrateChromatogramSearch, params::Any) = IntegrateChromatogramSearchParameters(params)
 
 function write_intermediate_chromatogram_debug_plots(
-    params::IntegrateChromatogramSearchParameters,
+    ::IntegrateChromatogramSearchParameters,
 )
-    return params.boundary_selection_method != "learned"
+    return DEBUG_CONSOLE_LEVEL[] >= 1
 end
 
 function init_search_results(::IntegrateChromatogramSearchParameters, search_context::SearchContext)
@@ -217,6 +204,10 @@ end
 
 """
 Process a single file for chromatogram integration.
+
+The integration input is the passing PSM table from `MainSearch`; no main-search
+intervals are passed to the bound picker. Chromatograms are extracted,
+transmission-annotated, sorted for the configured trace mode, then integrated.
 """
 function process_file!(
     results::IntegrateChromatogramSearchResults,
@@ -254,15 +245,10 @@ function process_file!(
         return results
     end
 
-    # Initialize columns to store integration results
-    # peak_area: Integrated area of chromatographic peak
-    # new_best_scan: Updated apex scan after refinement
+    # Initialize columns written by chromatogram integration.
     passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
     passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
     passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
-
-    @debug_l1 "Chromatogram integration solver for file $ms_file_idx: " *
-              "$(chromatogram_integration_solver_label(calibrated_chromatogram_deconvolution_solver(search_context, params.deconvolution_solver)))"
 
     # Extract chromatograms for all passing PSMs
     chromatograms = extract_chromatograms(
@@ -274,20 +260,16 @@ function process_file!(
         ms_file_idx,
         MS2CHROM(),
     )
-    # Save unsorted chromatograms for sorting benchmarks (first file only)
-    if ms_file_idx == 1
-        out_dir = getDataOutDir(search_context)
-        bench_df = copy(chromatograms)
-        bench_df[!, :rt_milliminutes] = round.(UInt32, bench_df.rt .* 1000)
-        Arrow.write(joinpath(out_dir, "unsorted_chroms_ms2.arrow"), bench_df)
-    end
     # MS1 chromatogram extraction is currently unwired; the MS1
     # build_chromatograms body is block-commented in utils.jl pending a
     # fused port. The ms1_quant knob has been removed from the public
     # config schema.
     #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
     #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
-    if seperateTraces(params.isotope_tracetype)
+    if nrow(chromatograms) > 0
+        # WH smoothing uses precursor transmission as both a correction factor
+        # and an observation weight. Separate-trace mode also uses isotope
+        # labels for chromatogram grouping.
         get_isotopes_captured!(
             chromatograms,
             getQuadTransmissionModel(search_context, ms_file_idx),
@@ -297,22 +279,8 @@ function process_file!(
             getMz(getPrecursors(getSpecLib(search_context))),
             getSulfurCount(getPrecursors(getSpecLib(search_context))),
             getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
-        )
-    else
-        # Combined-trace quantification still integrates all scan points together,
-        # but we also keep isotope-capture states so shape priors can use
-        # isotope-specific side traces.
-        get_isotopes_captured!(
-            chromatograms,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            chromatograms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra)
+            getIsolationWidthMzs(spectra),
+            compute_isotope_set = compute_chromatogram_isotope_sets(params.isotope_tracetype),
         )
     end
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
@@ -320,8 +288,10 @@ function process_file!(
     # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)
     if nrow(chromatograms) > 0
         psm_isotopes_captured = nothing
-        selected_quant_trace = nothing
         if seperateTraces(params.isotope_tracetype)
+            # In separate-trace mode, choose the transmitted isotope trace used
+            # for quantification and mirror that choice onto the PSM/output
+            # columns. Combined mode keeps the upstream PSM isotope metadata.
             selected_quant_trace = select_quant_trace_by_transmission(chromatograms)
             apply_quant_trace_selection!(
                 passing_psms,
@@ -329,9 +299,6 @@ function process_file!(
             )
             psm_isotopes_captured = passing_psms[!, :isotopes_captured]
         end
-        boundary_candidate_data = params.boundary_selection_method == "learned" ?
-            Vector{Any}(nothing, nrow(passing_psms)) :
-            nothing
         integrate_precursors(
             chromatograms,
             params.isotope_tracetype,
@@ -343,39 +310,7 @@ function process_file!(
             passing_psms[!, :points_integrated],
             isotopes_captured = psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
-            mainsearch_1pct_start_scan = hasproperty(passing_psms, :mainsearch_1pct_start_scan) ?
-                passing_psms[!, :mainsearch_1pct_start_scan] :
-                nothing,
-            mainsearch_1pct_stop_scan = hasproperty(passing_psms, :mainsearch_1pct_stop_scan) ?
-                passing_psms[!, :mainsearch_1pct_stop_scan] :
-                nothing,
-            rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx),
-            boundary_candidate_data = boundary_candidate_data,
         )
-        if boundary_candidate_data !== nothing
-            extra_candidate_rows = if hasproperty(chromatograms, :isotopes_captured)
-                collect_isotope_boundary_candidate_rows(
-                    chromatograms,
-                    passing_psms,
-                    selected_quant_trace,
-                    search_context,
-                    ms_file_idx,
-                    params.min_fraction_transmitted,
-                    params.wh_smoothing_strength,
-                    max_groups = params.learned_boundary_max_isotope_trace_groups_per_file,
-                    rng = Random.MersenneTwister(1776 + ms_file_idx),
-                )
-            else
-                NamedTuple[]
-            end
-            write_boundary_candidate_table!(
-                boundary_candidate_data,
-                passing_psms,
-                search_context,
-                ms_file_idx,
-                extra_candidate_rows,
-            )
-        end
         if write_intermediate_chromatogram_debug_plots(params)
             debug_write_target_chromatogram_plots(
                 chromatograms,
@@ -433,106 +368,10 @@ function reset_results!(results::IntegrateChromatogramSearchResults)
     return nothing
 end
 
-function debug_write_selected_boundary_chromatogram_plots(
-    selected_candidates::AbstractDataFrame,
-    params::P,
-    search_context::SearchContext,
-) where {P<:IntegrateChromatogramSearchParameters}
-    DEBUG_CONSOLE_LEVEL[] >= 1 || return nothing
-    target_precursor_idxs = DEBUG_CHROM_TARGET_PRECURSOR_IDXS[]
-    isempty(target_precursor_idxs) && return nothing
-    nrow(selected_candidates) == 0 && return nothing
-
-    selected_targets = selected_candidates[
-        in.(UInt32.(selected_candidates.precursor_idx), Ref(target_precursor_idxs)),
-        :,
-    ]
-    nrow(selected_targets) == 0 && return nothing
-
-    ms_data = getMSData(search_context)
-    for group in groupby(selected_targets, :ms_file_idx)
-        ms_file_idx = Int(first(group.ms_file_idx))
-        rt_index_path = getRtIndex(ms_data, ms_file_idx)
-        passing_psms_path = getPassingPsms(ms_data, ms_file_idx)
-        if isempty(rt_index_path) || isempty(passing_psms_path) ||
-           !isfile(rt_index_path) || !isfile(passing_psms_path)
-            debug_l1("chromatogram_debug_plot ms_file_idx=$(ms_file_idx) " *
-                     "skipped=true reason=missing_final_debug_inputs")
-            continue
-        end
-
-        target_group_precursors = Set(UInt32.(group.precursor_idx))
-        passing_psms = DataFrame(Tables.columntable(Arrow.Table(passing_psms_path)))
-        psm_mask = in.(UInt32.(passing_psms.precursor_idx), Ref(target_group_precursors))
-        passing_psms = passing_psms[psm_mask, :]
-        nrow(passing_psms) == 0 && continue
-
-        rt_index = buildRtIndex(
-            DataFrame(Arrow.Table(rt_index_path)),
-            bin_rt_size = 0.1,
-        )
-        spectra = getMSData(ms_data, ms_file_idx)
-        chromatograms = extract_chromatograms(
-            spectra,
-            passing_psms,
-            rt_index,
-            search_context,
-            params,
-            ms_file_idx,
-            MS2CHROM(),
-        )
-        nrow(chromatograms) == 0 && continue
-
-        get_isotopes_captured!(
-            chromatograms,
-            getQuadTransmissionModel(search_context, ms_file_idx),
-            getSearchData(search_context),
-            chromatograms[!, :scan_idx],
-            getCharge(getPrecursors(getSpecLib(search_context))),
-            getMz(getPrecursors(getSpecLib(search_context))),
-            getSulfurCount(getPrecursors(getSpecLib(search_context))),
-            getCenterMzs(spectra),
-            getIsolationWidthMzs(spectra),
-        )
-        sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
-
-        debug_write_target_chromatogram_plots(
-            chromatograms,
-            passing_psms,
-            params.min_fraction_transmitted,
-            params.wh_smoothing_strength,
-            getDataOutDir(search_context),
-            ms_file_idx,
-            getFileIdToName(ms_data, ms_file_idx);
-            selected_boundary_candidates = group,
-        )
-    end
-
-    return nothing
-end
-
 function summarize_results!(
     ::IntegrateChromatogramSearchResults,
-    params::P,
-    search_context::SearchContext
+    ::P,
+    ::SearchContext
 ) where {P<:IntegrateChromatogramSearchParameters}
-    params.boundary_selection_method == "learned" || return nothing
-
-    candidates = load_boundary_candidate_tables(search_context)
-    nrow(candidates) == 0 && return nothing
-
-    score_boundary_candidates_by_shape!(candidates)
-    write_boundary_shape_parameter_qc_plots(candidates, search_context)
-    selected = FORCE_FALLBACK_CHROMATOGRAM_BOUNDS ?
-        select_fallback_boundary_candidate_rows(candidates) :
-        select_boundary_candidate_rows_by_shape(candidates)
-    log_boundary_candidate_category_tally(selected)
-    if DEBUG_CONSOLE_LEVEL[] >= 1
-        log_boundary_candidate_debug(candidates, selected)
-    end
-    updated = apply_selected_boundary_candidates!(selected, search_context)
-    debug_write_selected_boundary_chromatogram_plots(selected, params, search_context)
-    selection_label = FORCE_FALLBACK_CHROMATOGRAM_BOUNDS ? "fallback override" : "shape model"
-    @user_info "Chromatogram boundary $selection_label selected bounds for $updated precursor traces."
     return nothing
 end

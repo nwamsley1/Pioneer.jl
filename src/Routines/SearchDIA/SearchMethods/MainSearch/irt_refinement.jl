@@ -23,7 +23,7 @@ end
 function MainSearchIrtRefinement(
     precursors::LibraryPrecursors;
     q_value_threshold::Float32 = PRESCORE_QVALUE_THRESHOLD,
-    min_precursors::Int = 30,
+    min_precursors::Int = 250,
 )
     return MainSearchIrtRefinement(
         precursors,

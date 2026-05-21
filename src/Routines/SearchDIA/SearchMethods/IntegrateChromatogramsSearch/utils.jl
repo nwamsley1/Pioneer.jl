@@ -87,7 +87,7 @@ end
 
 Return the 1-based position within `scan_indices` whose value is closest to
 `target_scan`. Used to map the PSM's apex scan index (global scan number) into
-the local chromatogram coordinate after trimming zero-intensity edges.
+the local chromatogram coordinate for a sorted precursor trace.
 """
 function find_nearest_scan(scan_indices::AbstractVector{<:Integer}, target_scan::Integer)
     nearest_idx = 1
@@ -118,13 +118,21 @@ function sort_chromatograms_for_integration!(chromatograms::DataFrame)
     return sort_chromatograms_for_integration!(chromatograms, CombineTraces(0.25f0))
 end
 
-const DEBUG_CHROM_TARGET_PRECURSOR_IDXS = Ref{Set{UInt32}}(
-    Set(UInt32[
-    214221, 722557, 450059,
-    730983, 673283,
-    439879, 768427, 304430,
-    370714, 1197075, 1047223, 591443, 909488])
-)
+"""
+    compute_chromatogram_isotope_sets(trace_type)
+
+Return whether chromatogram rows need a temporary `:isotopes_captured` grouping
+column.
+
+All trace modes still need row-level `:precursor_fraction_transmitted`; separate
+trace mode additionally needs row-level isotope labels so rows can be grouped by
+`(precursor_idx, isotopes_captured)`.
+"""
+compute_chromatogram_isotope_sets(trace_type::IsotopeTraceType) = seperateTraces(trace_type)
+
+# Explicit debug-only target list for writing a small set of chromatogram plots.
+# Plot generation is still gated by `DEBUG_CONSOLE_LEVEL[] >= 1`.
+const DEBUG_CHROM_TARGET_PRECURSOR_IDXS = Ref{Set{UInt32}}(Set{UInt32}())
 const DEBUG_CHROM_TARGET_PRECURSOR_IDX = DEBUG_CHROM_TARGET_PRECURSOR_IDXS
 
 @inline function debug_should_plot_chromatogram(precursor_idx::Integer)
@@ -153,6 +161,14 @@ function debug_chromatogram_plot_path(
     )
 end
 
+"""
+    debug_write_target_chromatogram_plots(...)
+
+Write targeted chromatogram debug plots only when debug logging is enabled and
+the precursor is listed in `DEBUG_CHROM_TARGET_PRECURSOR_IDXS`. Plots rerun the
+same integration path used for quantification and show the original expected
+PSM apex as the red line.
+"""
 function debug_write_target_chromatogram_plots(
     chromatograms::DataFrame,
     passing_psms::DataFrame,
@@ -162,7 +178,6 @@ function debug_write_target_chromatogram_plots(
     ms_file_idx::Integer,
     file_name::AbstractString,
     ;
-    selected_boundary_candidates::Union{Nothing,AbstractDataFrame} = nothing,
     debug_plot_data_by_precursor::Union{Nothing,AbstractDict} = nothing,
 )
     DEBUG_CONSOLE_LEVEL[] >= 1 || return nothing
@@ -175,41 +190,18 @@ function debug_write_target_chromatogram_plots(
     )
     isempty(target_rows) && return nothing
 
-    if nrow(chromatograms) == 0
-        debug_l1("chromatogram_debug_plot precursor_idxs=$(collect(target_precursor_idxs)) " *
-                 "ms_file_idx=$(ms_file_idx) skipped=true reason=no_chromatograms")
-        return nothing
-    end
+    nrow(chromatograms) == 0 && return nothing
 
     prec_col = chromatograms[!, :precursor_idx]::AbstractVector{UInt32}
     rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
     scan_idx_all = chromatograms[!, :scan_idx]::AbstractVector{UInt32}
     intensity_all = chromatograms[!, :intensity]::AbstractVector{Float32}
     fraction_all = chromatograms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
-    selected_bounds = Dict{UInt32, Tuple{UInt32, UInt32}}()
-    if selected_boundary_candidates !== nothing && nrow(selected_boundary_candidates) > 0
-        selected_cols = propertynames(selected_boundary_candidates)
-        if :candidate_start_scan in selected_cols && :candidate_stop_scan in selected_cols
-            for row in eachrow(selected_boundary_candidates)
-                if (:ms_file_idx in selected_cols) && Int(row.ms_file_idx) != Int(ms_file_idx)
-                    continue
-                end
-                selected_bounds[UInt32(row.precursor_idx)] = (
-                    UInt32(row.candidate_start_scan),
-                    UInt32(row.candidate_stop_scan),
-                )
-            end
-        end
-    end
 
     for row_idx in target_rows
         target_precursor_idx = UInt32(passing_psms[row_idx, :precursor_idx])
         chrom_rows = findall(==(target_precursor_idx), prec_col)
-        if isempty(chrom_rows)
-            debug_l1("chromatogram_debug_plot precursor_idx=$(target_precursor_idx) " *
-                     "ms_file_idx=$(ms_file_idx) skipped=true reason=target_chromatogram_missing")
-            continue
-        end
+        isempty(chrom_rows) && continue
 
         ordered_rows = chrom_rows[sortperm(@view(rt_all[chrom_rows]))]
         N = length(ordered_rows)
@@ -239,9 +231,6 @@ function debug_write_target_chromatogram_plots(
             target_precursor_idx,
         )
         plot_title = "file $(Int(ms_file_idx)) $(file_name) precursor $(target_precursor_idx)"
-        selected_bound = get(selected_bounds, target_precursor_idx, nothing)
-        forced_start_scan = selected_bound === nothing ? UInt32(0) : first(selected_bound)
-        forced_stop_scan = selected_bound === nothing ? UInt32(0) : last(selected_bound)
         plot_data_ref = debug_plot_data_by_precursor === nothing ? nothing : Ref{Any}(nothing)
 
         ws = WHWorkspace(N)
@@ -261,14 +250,6 @@ function debug_write_target_chromatogram_plots(
             debug_plot_title = plot_title,
             debug_plot_data = plot_data_ref,
             debug_apex_scan = debug_apex_scan,
-            mainsearch_1pct_start_scan = hasproperty(passing_psms, :mainsearch_1pct_start_scan) ?
-                UInt32(passing_psms[row_idx, :mainsearch_1pct_start_scan]) :
-                UInt32(0),
-            mainsearch_1pct_stop_scan = hasproperty(passing_psms, :mainsearch_1pct_stop_scan) ?
-                UInt32(passing_psms[row_idx, :mainsearch_1pct_stop_scan]) :
-                UInt32(0),
-            forced_boundary_start_scan = forced_start_scan,
-            forced_boundary_stop_scan = forced_stop_scan,
         )
         if debug_plot_data_by_precursor !== nothing
             debug_plot_data_by_precursor[target_precursor_idx] = plot_data_ref[]
@@ -278,6 +259,13 @@ function debug_write_target_chromatogram_plots(
     return nothing
 end
 
+"""
+    select_quant_trace_by_transmission(chromatograms)
+
+For separate-trace quantification, choose one isotope-capture trace per
+precursor using the highest precursor transmission fraction. Ties are resolved
+by the isotope tuple for deterministic output.
+"""
 function select_quant_trace_by_transmission(chromatograms::DataFrame)
     prec_col = chromatograms[!, :precursor_idx]::AbstractVector{UInt32}
     iso_col = chromatograms[!, :isotopes_captured]::AbstractVector{Tuple{Int8, Int8}}
@@ -297,6 +285,13 @@ function select_quant_trace_by_transmission(chromatograms::DataFrame)
     return selected
 end
 
+"""
+    apply_quant_trace_selection!(psms, selected_quant_trace)
+
+Mirror the selected separate-trace quantification channel onto the PSM table.
+This updates the final `:isotopes_captured` and
+`:precursor_fraction_transmitted` output columns for separate-trace runs.
+"""
 function apply_quant_trace_selection!(psms::DataFrame, selected_quant_trace::Dict{UInt32, Tuple{Tuple{Int8, Int8}, Float32}})
     prec_col = psms[!, :precursor_idx]::AbstractVector{UInt32}
     iso_col = psms[!, :isotopes_captured]::AbstractVector{Tuple{Int8, Int8}}
@@ -331,16 +326,21 @@ end
 end
 
 """
-    integrate_precursors(chromatograms, min_fraction_transmitted, precursor_idx,
+    integrate_precursors(chromatograms, isotope_trace_type, min_fraction_transmitted, precursor_idx,
                          apex_scan_idx, peak_area, new_best_scan, points_integrated;
                          isotopes_captured=nothing, λ=1.0f0)
 
 Integrate chromatographic peaks for multiple precursors in parallel.
 
-For each precursor, looks up its chromatogram rows via `build_chrom_index`,
-trims leading/trailing zero-intensity scans, maps the PSM apex into the trimmed
-coordinate, then calls `integrate_chrom` (Whittaker-Henderson smooth → boundary
-detection → trapezoidal integration). Results are written into the output vectors
+The input chromatogram table must already be sorted for `isotope_trace_type`
+and must contain row-level `:precursor_fraction_transmitted`. Combined mode
+uses one trace per precursor; separate mode keys rows by
+`(precursor_idx, isotopes_captured)` and receives the PSM-level
+`isotopes_captured` vector identifying the chosen quantification trace.
+
+For each precursor, this maps the PSM apex scan into the local trace and calls
+`integrate_chrom` (WH smoothing -> second-derivative bounds -> baseline
+subtraction -> trapezoidal integration). Results are written into
 `peak_area`, `new_best_scan`, and `points_integrated`.
 """
 function integrate_precursors(chromatograms::DataFrame,
@@ -353,10 +353,6 @@ function integrate_precursors(chromatograms::DataFrame,
                              points_integrated::AbstractVector{UInt32};
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
-                             mainsearch_1pct_start_scan::Union{Nothing,AbstractVector{<:Integer}} = nothing,
-                             mainsearch_1pct_stop_scan::Union{Nothing,AbstractVector{<:Integer}} = nothing,
-                             rt_to_irt_model::RtConversionModel = IdentityModel(),
-                             boundary_candidate_data::Union{Nothing,AbstractVector} = nothing
                              )
     n_pad = Int64(0)
     rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
@@ -411,7 +407,6 @@ function integrate_precursors(chromatograms::DataFrame,
                     @view(scan_idx_all[chrom_range]), apex_scan
                 )
 
-                candidate_ref = boundary_candidate_data === nothing ? nothing : Ref{Any}(nothing)
                 peak_area[i], new_best_scan[i], points_integrated[i] = integrate_chrom(
                     @view(rt_all[chrom_range]),
                     @view(scan_idx_all[chrom_range]),
@@ -424,18 +419,7 @@ function integrate_precursors(chromatograms::DataFrame,
                     λ,
                     min_fraction_transmitted = min_fraction_transmitted,
                     n_pad = n_pad,
-                    mainsearch_1pct_start_scan = mainsearch_1pct_start_scan === nothing ?
-                        UInt32(0) :
-                        UInt32(mainsearch_1pct_start_scan[i]),
-                    mainsearch_1pct_stop_scan = mainsearch_1pct_stop_scan === nothing ?
-                        UInt32(0) :
-                        UInt32(mainsearch_1pct_stop_scan[i]),
-                    rt_to_irt_model = rt_to_irt_model,
-                    boundary_candidate_data = candidate_ref,
                 )
-                if boundary_candidate_data !== nothing
-                    boundary_candidate_data[i] = candidate_ref[]
-                end
                 reset!(state)
             end
         end
@@ -465,10 +449,6 @@ function integrate_precursors(chromatograms::DataFrame,
                              new_best_scan::AbstractVector{UInt32},
                              points_integrated::AbstractVector{UInt32};
                              λ::Float32 = 1.0f0,
-                             mainsearch_1pct_start_scan::Union{Nothing,AbstractVector{<:Integer}} = nothing,
-                             mainsearch_1pct_stop_scan::Union{Nothing,AbstractVector{<:Integer}} = nothing,
-                             rt_to_irt_model::RtConversionModel = IdentityModel(),
-                             boundary_candidate_data::Union{Nothing,AbstractVector} = nothing
                              )
     return integrate_precursors(
         chromatograms,
@@ -480,10 +460,6 @@ function integrate_precursors(chromatograms::DataFrame,
         new_best_scan,
         points_integrated;
         λ = λ,
-        mainsearch_1pct_start_scan = mainsearch_1pct_start_scan,
-        mainsearch_1pct_stop_scan = mainsearch_1pct_stop_scan,
-        rt_to_irt_model = rt_to_irt_model,
-        boundary_candidate_data = boundary_candidate_data,
     )
 end
 

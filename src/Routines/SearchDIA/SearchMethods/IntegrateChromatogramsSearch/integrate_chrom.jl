@@ -15,12 +15,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-const BOUNDARY_CANDIDATE_CATEGORY_LABELS = (
-    "fallback",
-    "valley_combination",
-)
-const MAX_BOUNDARY_VALLEY_ENDPOINTS_PER_SIDE = 3
-
 """
     mutable struct Chromatogram{T<:Real, J<:Integer}
         t::Vector{T}
@@ -30,7 +24,8 @@ const MAX_BOUNDARY_VALLEY_ENDPOINTS_PER_SIDE = 3
 
 Container for chromatogram data during integration.
 
-Holds time points, intensities, and current array size.
+Holds the normalized, baseline-subtracted peak trace used by trapezoidal
+integration.
 """
 mutable struct Chromatogram{T<:Real, J<:Integer}
     t::Vector{T}
@@ -51,6 +46,13 @@ function reset!(state::Chromatogram)
     return
 end
 
+"""
+    debug_save_chromatogram_integration_plot(...)
+
+Save the final debug view for one integrated chromatogram. The figure shows raw
+points, WH-smoothed signal, the baseline-subtracted segment that was integrated,
+the expected PSM apex, the selected bounds, and precursor transmission.
+"""
 function debug_save_chromatogram_integration_plot(
     plot_path::AbstractString,
     rt_col::AbstractVector{<:AbstractFloat},
@@ -66,7 +68,6 @@ function debug_save_chromatogram_integration_plot(
     min_fraction_transmitted::Float32,
     status::AbstractString,
     title::AbstractString,
-    mainsearch_evidence_range::Union{Nothing,UnitRange{Int}} = nothing,
 )
     isempty(plot_path) && return nothing
     isempty(rt_col) && return nothing
@@ -118,20 +119,6 @@ function debug_save_chromatogram_integration_plot(
             ls = :dot,
             label = "bounds",
         )
-        if mainsearch_evidence_range !== nothing
-            evidence_range = max(first(mainsearch_evidence_range), 1):min(last(mainsearch_evidence_range), length(rt_vals))
-            if !isempty(evidence_range)
-                Plots.vline!(
-                    p_signal,
-                    unique([rt_vals[first(evidence_range)], rt_vals[last(evidence_range)]]),
-                    color = :green,
-                    lw = 1.2,
-                    ls = :dashdot,
-                    label = "main search PEP interval",
-                )
-            end
-        end
-
         p_fraction = Plots.plot(
             rt_vals,
             fraction_vals,
@@ -155,7 +142,6 @@ function debug_save_chromatogram_integration_plot(
         Plots.savefig(plot_obj, String(plot_path))
     end
 
-    debug_l1("chromatogram_debug_plot path=$(plot_path)")
     return nothing
 end
 
@@ -174,26 +160,26 @@ No SubArray views escape into the caller — every downstream function operates
 on concrete `Vector{Float32}` fields of `ws`, eliminating GC-root / view-lifetime issues.
 
 # Process
-1. Applies Whittaker-Henderson smoothing
-2. Calculates second derivative
-3. Finds true apex within allowed offset
-4. Determines integration bounds
-5. Subtracts baseline
-6. Normalizes and fills state
-7. Performs trapezoidal integration
+1. Applies transmission-corrected Whittaker-Henderson smoothing
+2. Calculates the second derivative of the smoothed trace
+3. Moves from the expected PSM apex to the adjacent local maximum when needed
+4. Determines bounds from second-derivative extrema and nearby valleys
+5. Ensures at least three points are covered when possible
+6. Subtracts a linear baseline through the selected endpoint values
+7. Normalizes the selected segment and performs trapezoidal integration
 
 # Returns
 - Peak area
 - Updated apex scan index
 - Number of points integrated
 
-#Internal Chromatogram Processing Functions:
+# Internal Chromatogram Processing Functions
 
 - `WHSmooth!`: Apply Whittaker-Henderson smoothing (result in ws.z)
 - `fillU2!`: Calculate second derivatives (result in ws.u2)
-- `getApexScan`: Find true apex within allowed offset
-- `getIntegrationBounds!`: Determine integration boundaries
-- `subtractBaseline!`: Remove linear baseline
+- `getApexScan`: Move to the local maximum reachable from the expected apex
+- `getIntegrationBounds!`: Determine second-derivative/valley boundaries
+- `subtractBaseline!`: Remove a linear baseline anchored at selected endpoints
 - `fillState!`: Normalize and fill chromatogram state
 - `integrateTrapezoidal`: Perform trapezoidal integration
 """
@@ -213,12 +199,8 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                                 debug_plot_title::AbstractString = "",
                                 debug_plot_data::Union{Nothing, Base.RefValue} = nothing,
                                 debug_apex_scan::Union{Nothing, Int64} = nothing,
-                                mainsearch_1pct_start_scan::UInt32 = UInt32(0),
-                                mainsearch_1pct_stop_scan::UInt32 = UInt32(0),
-                                rt_to_irt_model::RtConversionModel = IdentityModel(),
                                 forced_boundary_start_scan::UInt32 = UInt32(0),
-                                forced_boundary_stop_scan::UInt32 = UInt32(0),
-                                boundary_candidate_data::Union{Nothing, Base.RefValue} = nothing)
+                                forced_boundary_stop_scan::UInt32 = UInt32(0))
 
     m = length(rt_col)
 
@@ -471,241 +453,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         return start:stop
     end
 
-    function pushBoundaryCandidate!(
-        candidates::Vector,
-        seen::Set{Tuple{Int,Int}},
-        start::Int,
-        stop::Int,
-        apex_scan::Int,
-        required_scan::Int,
-        N::Int,
-        category::AbstractString,
-    )
-        start = clamp(start, 1, N)
-        stop = clamp(stop, 1, N)
-        required_scan = clamp(required_scan, 1, N)
-        start = min(start, required_scan)
-        stop = max(stop, required_scan)
-        start <= stop || return nothing
-        start <= apex_scan <= stop || return nothing
-        scan_range = ensureMinimumScanRange(start:stop, apex_scan, N)
-        key = (first(scan_range), last(scan_range))
-        if key ∉ seen
-            push!(seen, key)
-            push!(candidates, (scan_range = scan_range, category = String(category)))
-        end
-        return nothing
-    end
-
-    function isLocalMinimumEndpoint(
-        u::Vector{Float32},
-        idx::Int,
-        N::Int,
-        n_pad::Int,
-    )
-        padded_idx = idx + n_pad
-        val = u[padded_idx]
-        left_ok = idx == 1 || val <= u[padded_idx - 1]
-        right_ok = idx == N || val <= u[padded_idx + 1]
-        return left_ok && right_ok
-    end
-
-    function collectValleyEndpoints(
-        u::Vector{Float32},
-        scan_range::UnitRange{Int},
-        apex_scan::Int,
-        N::Int,
-        n_pad::Int;
-        left_side::Bool,
-    )
-        valleys = Int[]
-        start = left_side ? first(scan_range) : max(apex_scan + 1, first(scan_range))
-        stop = left_side ? min(apex_scan - 1, last(scan_range)) : last(scan_range)
-        start <= stop || return valleys
-
-        if left_side
-            for i in stop:-1:start
-                if isLocalMinimumEndpoint(u, i, N, n_pad)
-                    push!(valleys, i)
-                    length(valleys) >= MAX_BOUNDARY_VALLEY_ENDPOINTS_PER_SIDE && break
-                end
-            end
-        else
-            for i in start:stop
-                if isLocalMinimumEndpoint(u, i, N, n_pad)
-                    push!(valleys, i)
-                    length(valleys) >= MAX_BOUNDARY_VALLEY_ENDPOINTS_PER_SIDE && break
-                end
-            end
-        end
-        return valleys
-    end
-
-    function addValleyCombinationCandidates!(
-        candidates::Vector,
-        seen::Set{Tuple{Int,Int}},
-        u::Vector{Float32},
-        current_range::UnitRange{Int},
-        N::Int,
-        apex_scan::Int,
-        required_scan::Int,
-        n_pad::Int,
-    )
-        left_valleys = collectValleyEndpoints(
-            u,
-            current_range,
-            apex_scan,
-            N,
-            n_pad;
-            left_side = true,
-        )
-        right_valleys = collectValleyEndpoints(
-            u,
-            current_range,
-            apex_scan,
-            N,
-            n_pad;
-            left_side = false,
-        )
-
-        for left in left_valleys, right in right_valleys
-            pushBoundaryCandidate!(
-                candidates,
-                seen,
-                left,
-                right,
-                apex_scan,
-                required_scan,
-                N,
-                "valley_combination",
-            )
-        end
-        return nothing
-    end
-
-    function isLocalMaximumApex(
-        u::Vector{Float32},
-        idx::Int,
-        N::Int,
-        n_pad::Int,
-    )
-        padded_idx = idx + n_pad
-        val = u[padded_idx]
-        isfinite(val) && val > 0.0f0 || return false
-        left_val = idx == 1 ? -Inf32 : u[padded_idx - 1]
-        right_val = idx == N ? -Inf32 : u[padded_idx + 1]
-        return val >= left_val &&
-            val >= right_val &&
-            (val > left_val || val > right_val)
-    end
-
-    function pushApexCandidate!(
-        apex_candidates::Vector{Int},
-        seen::Set{Int},
-        apex_scan::Int,
-        N::Int,
-    )
-        apex_scan = clamp(apex_scan, 1, N)
-        if apex_scan ∉ seen
-            push!(seen, apex_scan)
-            push!(apex_candidates, apex_scan)
-        end
-        return nothing
-    end
-
-    function collectBoundaryApexCandidates(
-        u::Vector{Float32},
-        N::Int,
-        n_pad::Int,
-        primary_apex_scan::Int,
-        evidence_range::Union{Nothing,UnitRange{Int}},
-    )
-        apex_candidates = Int[]
-        seen = Set{Int}()
-
-        if evidence_range === nothing
-            pushApexCandidate!(apex_candidates, seen, primary_apex_scan, N)
-            return apex_candidates
-        end
-
-        evidence_start = clamp(first(evidence_range), 1, N)
-        evidence_stop = clamp(last(evidence_range), 1, N)
-        evidence_start, evidence_stop = minmax(evidence_start, evidence_stop)
-
-        if evidence_start <= primary_apex_scan <= evidence_stop
-            pushApexCandidate!(apex_candidates, seen, primary_apex_scan, N)
-        end
-
-        @inbounds for idx in evidence_start:evidence_stop
-            if isLocalMaximumApex(u, idx, N, n_pad)
-                pushApexCandidate!(apex_candidates, seen, idx, N)
-            end
-        end
-
-        if isempty(apex_candidates)
-            pushApexCandidate!(
-                apex_candidates,
-                seen,
-                clamp(primary_apex_scan, evidence_start, evidence_stop),
-                N,
-            )
-        end
-
-        return apex_candidates
-    end
-
-    function generateBoundaryCandidates(
-        current_range::UnitRange{Int},
-        u::Vector{Float32},
-        N::Int,
-        apex_scan::Int,
-        required_scan::Int,
-        n_pad::Int,
-    )
-        candidates = NamedTuple{(:scan_range, :category), Tuple{UnitRange{Int}, String}}[]
-        seen = Set{Tuple{Int,Int}}()
-
-        pushBoundaryCandidate!(
-            candidates,
-            seen,
-            first(current_range),
-            last(current_range),
-            apex_scan,
-            required_scan,
-            N,
-            "fallback",
-        )
-        addValleyCombinationCandidates!(
-            candidates,
-            seen,
-            u,
-            1:N,
-            N,
-            apex_scan,
-            required_scan,
-            n_pad,
-        )
-
-        return candidates
-    end
-
-    function indexIrt(idx::Int)
-        irt = Float32(rt_to_irt_model(rt_col[idx]))
-        return isfinite(irt) ? irt : 0.0f0
-    end
-
-    function getMainsearchEvidenceRange(
-        scan_idx_col::AbstractVector{<:Integer},
-        start_scan::UInt32,
-        stop_scan::UInt32,
-    )
-        (start_scan == 0 || stop_scan == 0) && return nothing
-        start_idx = find_nearest_scan(scan_idx_col, start_scan)
-        stop_idx = find_nearest_scan(scan_idx_col, stop_scan)
-        start_idx, stop_idx = minmax(start_idx, stop_idx)
-        return start_idx:stop_idx
-    end
-
     function getForcedBoundaryRange(
         scan_idx_col::AbstractVector{<:Integer},
         start_scan::UInt32,
@@ -801,162 +548,8 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         end
     end
 
-    function candidateBaselineSubtractedTrace(
-        scan_range::UnitRange{Int},
-        smoothed::Vector{Float32},
-        n_active::Int,
-        candidate_apex_scan::Int,
-    )
-        candidate_u = copy(@view smoothed[1:n_active])
-        subtractBaseline!(
-            x,
-            candidate_u,
-            candidate_apex_scan,
-            scan_range,
-            n_pad,
-        )
-        return candidate_u
-    end
-
-    function uncorrectedSmoothedArea(scan_range::UnitRange{Int}, smoothed::Vector{Float32})
-        start_idx = clamp(first(scan_range), 1, m)
-        stop_idx = clamp(last(scan_range), 1, m)
-        start_idx, stop_idx = minmax(start_idx, stop_idx)
-        if start_idx == stop_idx
-            return max(0.0f0, smoothed[start_idx + n_pad])
-        end
-
-        area = 0.0f0
-        @inbounds for i in start_idx:(stop_idx - 1)
-            left_val = max(0.0f0, smoothed[i + n_pad])
-            right_val = max(0.0f0, smoothed[i + 1 + n_pad])
-            dx = max(x[i + 1 + n_pad] - x[i + n_pad], eps(Float32))
-            area += 0.5f0 * (left_val + right_val) * dx
-        end
-        return Float32(area)
-    end
-
-    function deconvolutionAreaFractionExplained(
-        scan_range::UnitRange{Int},
-        smoothed::Vector{Float32},
-        deconvolution_evidence_range::UnitRange{Int},
-    )
-        evidence_start = clamp(first(deconvolution_evidence_range), 1, m)
-        evidence_stop = clamp(last(deconvolution_evidence_range), 1, m)
-        evidence_start, evidence_stop = minmax(evidence_start, evidence_stop)
-        evidence_range = evidence_start:evidence_stop
-        evidence_area = uncorrectedSmoothedArea(evidence_range, smoothed)
-        evidence_area > eps(Float32) || return 1.0f0
-
-        overlap_start = max(first(scan_range), evidence_start)
-        overlap_stop = min(last(scan_range), evidence_stop)
-        overlap_start <= overlap_stop || return 0.0f0
-        overlap_area = uncorrectedSmoothedArea(overlap_start:overlap_stop, smoothed)
-        return Float32(clamp(overlap_area / evidence_area, 0.0f0, 1.0f0))
-    end
-
-    function integrateCandidateRange(
-        scan_range::UnitRange{Int},
-        candidate_u::Vector{Float32},
-        candidate_apex_scan::Int,
-    )
-        apex_val = candidate_u[candidate_apex_scan + n_pad]
-        if apex_val <= 0.0f0 || isnan(apex_val)
-            return 0.0f0, UInt32(scan_idx_col[candidate_apex_scan]), UInt32(0)
-        end
-
-        candidate_state = Chromatogram(zeros(Float32, m), zeros(Float32, m), 0)
-        norm_factor, _, rt_norm, _ = fillState!(
-            candidate_state,
-            candidate_u,
-            rt_col,
-            first(scan_range),
-            last(scan_range),
-            candidate_apex_scan,
-            n_pad,
-        )
-        raw_trap = integrateTrapezoidal(candidate_state, avg_cycle_time)
-        area = Float32(rt_norm * norm_factor * raw_trap)
-        if isnan(area) || area < 0.0f0
-            area = 0.0f0
-        end
-
-        min_abundance = 0.1f0 * norm_factor
-        scan_start = first(scan_range) + n_pad
-        scan_stop = last(scan_range) + n_pad
-        points = count(i -> candidate_u[i] >= min_abundance, scan_start:scan_stop)
-        return area, UInt32(scan_idx_col[candidate_apex_scan]), UInt32(points)
-    end
-
-    function collectBoundaryCandidateData(
-        candidates::Vector,
-        fallback_range::UnitRange{Int},
-        smoothed::Vector{Float32},
-        n_active::Int,
-        candidate_apex_scan::Int,
-        deconvolution_evidence_range::UnitRange{Int},
-        candidate_index_offset::Int,
-        is_primary_apex::Bool,
-    )
-        rows = NamedTuple[]
-        sizehint!(rows, length(candidates))
-
-        for (candidate_index, candidate) in enumerate(candidates)
-            scan_range = candidate.scan_range
-            baseline_subtracted = candidateBaselineSubtractedTrace(
-                scan_range,
-                smoothed,
-                n_active,
-                candidate_apex_scan,
-            )
-            area, best_scan, points = integrateCandidateRange(
-                scan_range,
-                baseline_subtracted,
-                candidate_apex_scan,
-            )
-            candidate_irt = Float32[indexIrt(i) for i in scan_range]
-            candidate_signal = Float32[
-                max(0.0f0, baseline_subtracted[i + n_pad]) for i in scan_range
-            ]
-            shape_apex_pos = candidate_apex_scan - first(scan_range) + 1
-            shape_fit = fit_egh_boundary_shape(
-                candidate_irt,
-                candidate_signal,
-                shape_apex_pos,
-            )
-            push!(rows, (;
-                candidate_index = UInt16(candidate_index_offset + candidate_index),
-                candidate_start_idx = UInt16(first(scan_range)),
-                candidate_stop_idx = UInt16(last(scan_range)),
-                candidate_start_scan = UInt32(scan_idx_col[first(scan_range)]),
-                candidate_stop_scan = UInt32(scan_idx_col[last(scan_range)]),
-                candidate_category = candidate.category,
-                peak_area = Float32(area),
-                new_best_scan = UInt32(best_scan),
-                points_integrated = UInt32(points),
-                is_fallback = first(scan_range) == first(fallback_range) &&
-                    last(scan_range) == last(fallback_range),
-                is_primary_apex = Bool(is_primary_apex),
-                shape_model_valid = Bool(shape_fit.valid),
-                shape_fit_loss = Float32(shape_fit.fit_loss),
-                shape_sigma_irt = Float32(shape_fit.sigma),
-                shape_tau_irt = Float32(shape_fit.tau),
-                shape_apex_irt = Float32(candidate_irt[shape_apex_pos]),
-                shape_apex_height = Float32(candidate_signal[shape_apex_pos]),
-                shape_edge_fraction = Float32(shape_fit.edge_fraction),
-                shape_overshoot_penalty = Float32(shape_fit.overshoot_penalty),
-                shape_deconvolution_area_fraction = deconvolutionAreaFractionExplained(
-                    scan_range,
-                    smoothed,
-                    deconvolution_evidence_range,
-                ),
-            ))
-        end
-
-        return rows
-    end
-
-    #Whittaker Henderson Smoothing — result written into ws.z
+    # Whittaker-Henderson smoothing. `fraction_col` corrects transmitted
+    # precursor signal and controls observation weights.
     WHSmooth!(ws, intensity_col, fraction_col, rt_col, m, n_pad, min_fraction_transmitted, λ)
 
     # Local aliases to workspace vectors (concrete Vector{Float32}, no SubArray views)
@@ -965,10 +558,9 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
     x  = ws.x_tmp
     u2 = ws.u2
 
-    #Second discrete derivative of smoothed data
+    # Second discrete derivative of smoothed data.
     fillU2!(u2, z, x, n_active)
 
-    expected_apex_scan = clamp(apex_scan, 1, m)
     apex_scan = clamp(getApexScan(
         apex_scan,
         n_pad,
@@ -976,14 +568,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
         n_active
     ), 1, m)
 
-    mainsearch_evidence_range = getMainsearchEvidenceRange(
-        scan_idx_col,
-        mainsearch_1pct_start_scan,
-        mainsearch_1pct_stop_scan,
-    )
-    deconvolution_evidence_range = 1:m
-
-    #Integration boundaries based on smoothed second derivative
+    # Integration boundaries based on the smoothed second derivative.
     scan_range = getIntegrationBounds!(
         u2,
         z,
@@ -1000,53 +585,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
     debug_display_apex_scan = debug_apex_scan === nothing ?
         apex_scan :
         clamp(Int(debug_apex_scan), 1, m)
-    if boundary_candidate_data !== nothing
-        boundary_apex_candidates = collectBoundaryApexCandidates(
-            z,
-            m,
-            n_pad,
-            apex_scan,
-            deconvolution_evidence_range,
-        )
-        candidate_rows = NamedTuple[]
-        candidate_index_offset = 0
-        for candidate_apex_scan in boundary_apex_candidates
-            candidate_fallback_range = ensureMinimumScanRange(
-                getIntegrationBounds!(
-                    u2,
-                    z,
-                    m,
-                    candidate_apex_scan,
-                    n_pad,
-                ),
-                candidate_apex_scan,
-                m,
-            )
-            candidates = generateBoundaryCandidates(
-                candidate_fallback_range,
-                z,
-                m,
-                candidate_apex_scan,
-                expected_apex_scan,
-                n_pad,
-            )
-            append!(
-                candidate_rows,
-                collectBoundaryCandidateData(
-                    candidates,
-                    candidate_fallback_range,
-                    z,
-                    n_active,
-                    candidate_apex_scan,
-                    deconvolution_evidence_range,
-                    candidate_index_offset,
-                    candidate_apex_scan == apex_scan,
-                ),
-            )
-            candidate_index_offset += length(candidates)
-        end
-        boundary_candidate_data[] = candidate_rows
-    end
     scan_range = forced_boundary_range === nothing ? fallback_scan_range : forced_boundary_range
     scan_range = ensureMinimumScanRange(scan_range, apex_scan, m)
 
@@ -1063,7 +601,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
 
     baseline_subtracted_debug = debug_enabled ? copy(@view z[(n_pad + 1):(n_pad + m)]) : Float32[]
 
-    #File `state` to fit EGH function. Get the inensity, and rt normalization factors
+    # Fill integration state and get the intensity/RT normalization factors.
     # Guard: if smoothed apex is zero or NaN after baseline subtraction, skip integration
     _apex_val = z[apex_scan + n_pad]
     if _apex_val <= 0f0 || isnan(_apex_val)
@@ -1077,7 +615,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                 peak_area = 0.0f0,
                 points_integrated = UInt32(0),
                 status = status,
-                mainsearch_evidence_range = mainsearch_evidence_range,
             ))
             if debug_plot_path !== nothing
                 debug_save_chromatogram_integration_plot(
@@ -1095,7 +632,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                     min_fraction_transmitted,
                     status,
                     debug_plot_title,
-                    mainsearch_evidence_range,
                 )
             end
         end
@@ -1154,7 +690,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
             peak_area = trapezoid_area,
             points_integrated = UInt32(num_points_integrated),
             status = status,
-            mainsearch_evidence_range = mainsearch_evidence_range,
         ))
         if debug_plot_path !== nothing
             debug_save_chromatogram_integration_plot(
@@ -1172,7 +707,6 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                 min_fraction_transmitted,
                 status,
                 debug_plot_title,
-                mainsearch_evidence_range,
             )
         end
     end
@@ -1194,12 +728,8 @@ function integrate_chrom(chrom::SubDataFrame,
                                 debug_plot_title::AbstractString = "",
                                 debug_plot_data::Union{Nothing, Base.RefValue} = nothing,
                                 debug_apex_scan::Union{Nothing, Int64} = nothing,
-                                mainsearch_1pct_start_scan::UInt32 = UInt32(0),
-                                mainsearch_1pct_stop_scan::UInt32 = UInt32(0),
-                                rt_to_irt_model::RtConversionModel = IdentityModel(),
                                 forced_boundary_start_scan::UInt32 = UInt32(0),
-                                forced_boundary_stop_scan::UInt32 = UInt32(0),
-                                boundary_candidate_data::Union{Nothing, Base.RefValue} = nothing)
+                                forced_boundary_stop_scan::UInt32 = UInt32(0))
     return integrate_chrom(
         chrom[!, :rt],
         chrom[!, :scan_idx],
@@ -1217,11 +747,7 @@ function integrate_chrom(chrom::SubDataFrame,
         debug_plot_title = debug_plot_title,
         debug_plot_data = debug_plot_data,
         debug_apex_scan = debug_apex_scan,
-        mainsearch_1pct_start_scan = mainsearch_1pct_start_scan,
-        mainsearch_1pct_stop_scan = mainsearch_1pct_stop_scan,
-        rt_to_irt_model = rt_to_irt_model,
         forced_boundary_start_scan = forced_boundary_start_scan,
         forced_boundary_stop_scan = forced_boundary_stop_scan,
-        boundary_candidate_data = boundary_candidate_data,
     )
 end
