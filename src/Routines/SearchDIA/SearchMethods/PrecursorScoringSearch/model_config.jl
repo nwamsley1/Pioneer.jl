@@ -66,26 +66,16 @@ const ADVANCED_FEATURE_SET = [
     :irt_fwhm,
     :smoothness,
     :log2_intensity_explained, :longest_y,
-    # Per-precursor aggregates added 2026-05-20: previously computed by
-    # MainSearch's select_best_per_precursor! but never used as features.
-    # Trying as ScoringSearch-LGBM-only features (NOT in PRESCORE_FEATURES).
-    :max_weight, :max_gof, :max_fitted_manhattan_distance,
-    # Per-scan residuals (taken from the best-scan row after best-per-precursor
-    # selection). max_matched_residual was previously dropped in Tier-4; trying
-    # it again at the ScoringSearch stage only.
-    :max_matched_residual, :max_unmatched_residual,
-    # Re-trying 3 of the Tier-2-dropped per-precursor aggregates in
-    # combination with the max_* additions above.
-    :n_above_hm, :num_scans, :rt_fwhm,
-    # Per-precursor MIN aggregates (2026-05-20 experiment) — worst-quality
-    # PSM observed for the precursor across all its scans.
-    :min_gof, :min_max_matched_residual, :min_fitted_hellinger,
     # Tier-2 drop-all-5 (2026-05-13): rt_fwhm, num_scans, irt_pred,
     # best_rank_iso, total_ions_iso removed.
     # Tier-4 drop-top-10 (2026-05-14): max_matched_residual, lys_count,
     # frag_corr_min_pairwise, ms1_corr_weight_m0, irt_dist_to_weight_apex,
     # best_rank, ms1_envelope_dev_log2, n_above_hm, topn, topn_iso removed —
     # 8-file Olsen: −476 IDs (−0.11%), +203 PGs (+0.39%), pf −864 (−0.24%).
+    # 2026-05-21: removed 11 features added during the 2026-05-20 experiment
+    # (5 max_*, 3 Tier-2 re-adds, 3 min_*). 8-file Olsen showed only ~+1% ID
+    # gain (commit 8f2a1583) — not worth the compute + disk cost. Reverted
+    # along with their computation in select_best_per_precursor!.
 ]
 
 """

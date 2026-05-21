@@ -183,9 +183,8 @@ const PRESCORE_FEATURES = [
     :irt_fwhm,
     :smoothness,
     :log2_intensity_explained, :longest_y,
-    # 2026-05-20 experiment: per-precursor min over all PSMs, broadcast to
-    # each row by train_lgbm_and_select_best so per-scan LGBM can see them.
-    :min_gof, :min_max_matched_residual, :min_fitted_hellinger,
+    # 2026-05-21: min_* features removed (added 2026-05-20, ~+1% IDs not
+    # worth the compute cost).
 
     # Neighborhood (windowed PSM-quality) family DROPPED 2026-05-18:
     # best_max_residual_3scan, best_gof_5scan, best_manhattan_5scan,
