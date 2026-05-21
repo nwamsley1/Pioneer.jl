@@ -307,6 +307,59 @@ function apply_quant_trace_selection!(psms::DataFrame, selected_quant_trace::Dic
     return psms
 end
 
+function combined_trace_seed_score_column(psms::DataFrame)
+    hasproperty(psms, :lgbm_score) && return :lgbm_score
+    throw(ArgumentError(
+        "Combined trace seed selection requires :lgbm_score on passing PSMs",
+    ))
+end
+
+"""
+    select_combined_trace_seed_rows_by_score(psms)
+
+For combined-trace chromatogram integration, choose one MainSearch seed row per
+precursor. The selected `scan_idx` is the scan whose PSM had the highest
+LightGBM score, not the final chromatographic apex. Ties are resolved by lower
+`scan_idx`.
+"""
+function select_combined_trace_seed_rows_by_score(
+    precursor_idx::AbstractVector{UInt32},
+    scan_idx::AbstractVector{UInt32},
+    score::AbstractVector{<:Real},
+)
+    selected = Dict{UInt32, Tuple{Float32, UInt32, Int}}()
+
+    for row in eachindex(precursor_idx)
+        pid = precursor_idx[row]
+        scan = scan_idx[row]
+        score_val = Float32(score[row])
+        current = get(selected, pid, nothing)
+
+        if current === nothing ||
+           score_val > current[1] ||
+           (score_val == current[1] && scan < current[2])
+            selected[pid] = (score_val, scan, Int(row))
+        end
+    end
+
+    selected_rows = Int[current[3] for current in values(selected)]
+    sort!(selected_rows)
+    return selected_rows
+end
+
+function select_combined_trace_seed_rows_by_score(psms::DataFrame)
+    score_col = psms[!, combined_trace_seed_score_column(psms)]
+    return select_combined_trace_seed_rows_by_score(
+        psms[!, :precursor_idx]::AbstractVector{UInt32},
+        psms[!, :scan_idx]::AbstractVector{UInt32},
+        score_col,
+    )
+end
+
+function select_combined_trace_seed_psms_by_score(psms::DataFrame)
+    return psms[select_combined_trace_seed_rows_by_score(psms), :]
+end
+
 @inline function chromatogram_index_key(
     ::CombineTraces,
     precursor_idx::AbstractVector{UInt32},
@@ -338,8 +391,8 @@ uses one trace per precursor; separate mode keys rows by
 `(precursor_idx, isotopes_captured)` and receives the PSM-level
 `isotopes_captured` vector identifying the chosen quantification trace.
 
-For each precursor, this maps the PSM apex scan into the local trace and calls
-`integrate_chrom` (WH smoothing -> second-derivative bounds -> baseline
+For each precursor, this maps the MainSearch seed scan into the local trace and
+calls `integrate_chrom` (WH smoothing -> second-derivative bounds -> baseline
 subtraction -> trapezoidal integration). Results are written into
 `peak_area`, `new_best_scan`, and `points_integrated`.
 """

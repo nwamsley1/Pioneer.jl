@@ -245,6 +245,10 @@ function process_file!(
         return results
     end
 
+    if !seperateTraces(params.isotope_tracetype)
+        passing_psms = select_combined_trace_seed_psms_by_score(passing_psms)
+    end
+
     # Initialize columns written by chromatogram integration.
     passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
     passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))

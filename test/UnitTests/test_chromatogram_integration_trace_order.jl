@@ -81,6 +81,23 @@ end
     @test passing_psms.precursor_fraction_transmitted == Float32[0.82, 0.55]
 end
 
+@testset "combined trace seed selection uses highest score then lower scan" begin
+    passing_psms = DataFrame(
+        precursor_idx = UInt32[10, 10, 10, 20, 20],
+        scan_idx = UInt32[40, 20, 30, 80, 60],
+        lgbm_score = Float32[0.80, 0.95, 0.95, 0.70, 0.70],
+        precursor_fraction_transmitted = Float32[0.95, 0.40, 0.80, 0.80, 0.70],
+    )
+
+    selected_rows = Pioneer.select_combined_trace_seed_rows_by_score(passing_psms)
+    selected_psms = Pioneer.select_combined_trace_seed_psms_by_score(passing_psms)
+
+    @test selected_rows == [2, 5]
+    @test selected_psms.precursor_idx == UInt32[10, 20]
+    @test selected_psms.scan_idx == UInt32[20, 60]
+    @test selected_psms.lgbm_score == Float32[0.95, 0.70]
+end
+
 @testset "legacy chromatogram integration sort defaults to combined" begin
     chromatograms = DataFrame(
         precursor_idx = UInt32[10, 10, 10, 10, 11],
