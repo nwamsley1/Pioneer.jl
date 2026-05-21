@@ -523,13 +523,16 @@ function summarize_results!(
 
     score_boundary_candidates_by_shape!(candidates)
     write_boundary_shape_parameter_qc_plots(candidates, search_context)
-    selected = select_boundary_candidate_rows_by_shape(candidates)
+    selected = FORCE_FALLBACK_CHROMATOGRAM_BOUNDS ?
+        select_fallback_boundary_candidate_rows(candidates) :
+        select_boundary_candidate_rows_by_shape(candidates)
     log_boundary_candidate_category_tally(selected)
     if DEBUG_CONSOLE_LEVEL[] >= 1
         log_boundary_candidate_debug(candidates, selected)
     end
     updated = apply_selected_boundary_candidates!(selected, search_context)
     debug_write_selected_boundary_chromatogram_plots(selected, params, search_context)
-    @user_info "Chromatogram boundary shape model selected bounds for $updated precursor traces."
+    selection_label = FORCE_FALLBACK_CHROMATOGRAM_BOUNDS ? "fallback override" : "shape model"
+    @user_info "Chromatogram boundary $selection_label selected bounds for $updated precursor traces."
     return nothing
 end

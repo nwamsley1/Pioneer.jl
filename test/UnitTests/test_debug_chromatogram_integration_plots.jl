@@ -517,6 +517,22 @@ end
     @test selected.boundary_group_id == UInt64[1, 2]
 end
 
+@testset "temporary fallback boundary override selects fallback rows" begin
+    candidates = DataFrame(
+        boundary_group_id = UInt64[1, 1, 2, 2],
+        candidate_index = UInt16[1, 2, 1, 2],
+        ms_file_idx = UInt16[1, 1, 1, 1],
+        is_fallback = Bool[true, false, true, false],
+        quant_trace_selected = Bool[true, true, true, true],
+        boundary_model_score = Float32[0.1, 0.9, 0.2, 0.8],
+    )
+
+    selected = Pioneer.select_fallback_boundary_candidate_rows(candidates)
+
+    @test selected.candidate_index == UInt16[1, 1]
+    @test all(selected.is_fallback)
+end
+
 @testset "shape score best-margin normalizes shape loss against plausible alternatives" begin
     candidates = DataFrame(
         boundary_group_id = UInt64[1, 1],

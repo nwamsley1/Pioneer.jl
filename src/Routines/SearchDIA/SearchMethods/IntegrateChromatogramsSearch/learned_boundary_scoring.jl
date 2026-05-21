@@ -4,6 +4,9 @@ const BOUNDARY_SHAPE_SIGMA_IRT_MIN_BIN_ROWS = 25
 const BOUNDARY_SHAPE_FIT_PRIOR_SCORE_WEIGHT = 1.0f0
 const BOUNDARY_SHAPE_FIT_PRIOR_NORMALIZATION_FLOOR = 0.02f0
 
+# Temporary hardcoded override: set to false to re-enable shape-model bounds.
+const FORCE_FALLBACK_CHROMATOGRAM_BOUNDS = true
+
 const DEBUG_BOUNDARY_CANDIDATE_TARGETS = Ref{Set{Tuple{UInt32,UInt16}}}(
     Set([
         (UInt32(370714), UInt16(1)),
@@ -1076,6 +1079,18 @@ function select_boundary_candidate_rows_by_shape(
 
     sort!(selected_rows)
     return scored[selected_rows, :]
+end
+
+function select_fallback_boundary_candidate_rows(
+    candidates::AbstractDataFrame;
+    group_col::Symbol = :boundary_group_id,
+)
+    selection_candidates = quant_boundary_candidate_rows(candidates)
+    nrow(selection_candidates) == 0 && return copy(selection_candidates)
+
+    _, fallback_row_by_group = _fallback_rows_by_group(selection_candidates, group_col, :is_fallback)
+    selected_rows = sort!(collect(values(fallback_row_by_group)))
+    return selection_candidates[selected_rows, :]
 end
 
 function append_boundary_candidate_rows!(
