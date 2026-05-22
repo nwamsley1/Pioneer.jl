@@ -600,18 +600,25 @@ function fit_intensity_mass_error_model(
     max_da_observed = Float32(maximum(abs_residuals))
     max_da_tolerance = Float32(quantile(abs_residuals, 0.99))
 
-    # Precompute linear extrapolation at [2%, 98%] quantiles of training data.
-    # Splines are fit on all data but evaluation switches to linear outside
-    # these boundaries to avoid trusting the spline in sparse tail regions.
+    # Precompute extrapolation boundaries at 2%/98% quantiles of training data.
+    # Splines are fit on all data but evaluation switches to extrapolation
+    # outside these boundaries.
+    # The SPREAD spline uses CONSTANT extrapolation on both ends. The
+    # low-intensity tail can be sparsely sampled and the monotone-convex
+    # spline's linear extrapolation tended to blow up the spread there,
+    # which derails BitVecCalibration (admits more low-intensity noise →
+    # fewer bits clear the target/decoy excess threshold → narrower
+    # candidate set → fewer PSMs). Constant extrapolation beyond [q02, q98]
+    # caps the spread at its value at the boundary.
     mz_q02, mz_q98 = Float32.(quantile(mz_f64, [0.02, 0.98]))
-    I_q02, I_q98 = Float32.(quantile(log2I, [0.02, 0.98]))
+    I_q02, I_q98   = Float32.(quantile(log2I, [0.02, 0.98]))
     mz_extrap = make_spline_extrap(mz_spline, mz_q02, mz_q98)
     int_extrap = make_spline_extrap(I_spline, I_q02, I_q98)
     spread_extrap_raw = make_spline_extrap(spread_spline, I_q02, I_q98)
     spread_extrap = SplineExtrap{Float32}(
         spread_extrap_raw.lo, spread_extrap_raw.hi,
-        spread_extrap_raw.lo_val, spread_extrap_raw.lo_slope,
-        spread_extrap_raw.hi_val, Float32(0)  # constant extrapolation on right (high intensity)
+        spread_extrap_raw.lo_val, Float32(0),  # constant extrap on left  (low intensity)
+        spread_extrap_raw.hi_val, Float32(0)   # constant extrap on right (high intensity)
     )
 
     model = IntensityMassErrorModel(
