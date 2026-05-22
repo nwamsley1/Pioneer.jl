@@ -676,7 +676,7 @@ function process_file!(
                         ms1_dir = joinpath(getDataOutDir(search_context), "qc_plots", "ms1_mass_error_plots")
                         isdir(ms1_dir) || mkpath(ms1_dir)
                         generate_ms1_residual_histogram(ms1_residuals, parsed_fname_ms1,
-                            joinpath(ms1_dir, "$(parsed_fname_ms1).pdf"))
+                            joinpath(ms1_dir, "$(parsed_fname_ms1).png"))
                         fit = fit_ms1_model_from_residuals(ms1_residuals)
                         if fit !== nothing
                             ms1_model, ms1_med, ms1_mad = fit
